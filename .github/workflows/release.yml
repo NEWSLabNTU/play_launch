@@ -1,9 +1,5 @@
 name: Release
 
-# Builds Debian packages for both amd64 and arm64 using Docker + QEMU.
-# amd64 builds: ~3min (native Docker)
-# arm64 builds: ~20-30min (QEMU-emulated Docker)
-
 on:
   push:
     tags:
@@ -11,16 +7,10 @@ on:
 
 jobs:
   build-debian-packages:
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-          - arch: arm64
-            platform: linux/arm64
-      fail-fast: false
-
-    runs-on: ubuntu-22.04
+        arch: [amd64, arm64]
 
     steps:
     - name: Checkout code
@@ -29,40 +19,49 @@ jobs:
         submodules: recursive
         fetch-depth: 0
 
-    - name: Set up QEMU
+    - name: Set up QEMU (for arm64)
+      if: matrix.arch == 'arm64'
       uses: docker/setup-qemu-action@v3
       with:
-        platforms: ${{ matrix.platform }}
+        platforms: arm64
 
-    - name: Build Debian package in Docker (${{ matrix.arch }})
+    - name: Build Debian package (${{ matrix.arch }})
       run: |
         # Get version from tag
         VERSION="${GITHUB_REF#refs/tags/v}"
-        echo "Building version $VERSION for ${{ matrix.arch }} on platform ${{ matrix.platform }}"
+        echo "Building version $VERSION for ${{ matrix.arch }}"
 
-        # Build inside Docker container with proper architecture
-        docker run --rm --platform=${{ matrix.platform }} \
-          -v $(pwd):/workspace \
+        # Set up architecture-specific variables
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          DOCKER_ARCH="linux/arm64"
+          DEB_ARCH="arm64"
+        else
+          DOCKER_ARCH="linux/amd64"
+          DEB_ARCH="amd64"
+        fi
+
+        # Build in Docker container with correct architecture
+        docker run --rm --platform=${DOCKER_ARCH} \
+          -v $PWD:/workspace \
           -w /workspace \
           ubuntu:22.04 \
           bash -c "
             set -e
-            echo 'Updating package lists...'
+            export DEBIAN_FRONTEND=noninteractive
+
+            # Install basic build dependencies
             apt-get update
+            apt-get install -y software-properties-common curl git build-essential
 
-            echo 'Installing basic dependencies...'
-            DEBIAN_FRONTEND=noninteractive apt-get install -y \
-              software-properties-common curl git build-essential \
-              debhelper cmake pkg-config \
-              python3-pip python3-dev python3-venv python3-colcon-common-extensions
-
-            echo 'Adding ROS 2 repository...'
+            # Add ROS 2 repository
             curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
-            echo 'deb [arch=\$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main' > /etc/apt/sources.list.d/ros2.list
+            echo \"deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main\" > /etc/apt/sources.list.d/ros2.list
 
-            echo 'Installing ROS 2 Humble packages...'
+            # Install build dependencies from debian/control
             apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            apt-get install -y \
+              debhelper git curl build-essential cmake pkg-config \
+              python3-pip python3-dev python3-venv python3-colcon-common-extensions \
               ros-humble-ros-core \
               ros-humble-ament-index-python \
               ros-humble-launch \
@@ -79,14 +78,15 @@ jobs:
               ros-humble-example-interfaces \
               ros-humble-test-msgs
 
-            echo 'Building Debian package...'
-            dpkg-buildpackage -us -uc -b -d
+            # Build Debian package
+            cd /workspace
+            dpkg-buildpackage -us -uc -b -d -a${DEB_ARCH}
 
-            echo 'Moving artifacts...'
+            # Move artifacts to dist/
             mkdir -p dist
             mv ../*.deb ../*.ddeb ../*.buildinfo ../*.changes dist/ 2>/dev/null || true
 
-            echo 'Built packages:'
+            # List built packages
             ls -lh dist/
           "
 
@@ -130,17 +130,13 @@ jobs:
         VERSION="${GITHUB_REF#refs/tags/v}"
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-        # Generate release notes
-        echo "## Available Packages" > release-notes.md
-        echo "" >> release-notes.md
-        echo "**Architectures:** amd64, arm64" >> release-notes.md
-        echo "" >> release-notes.md
-        echo "## Changes" >> release-notes.md
-        echo "" >> release-notes.md
+        # Extract changelog entry for this version
         if [ -f debian/changelog ]; then
+          echo "## Changes" > release-notes.md
+          echo "" >> release-notes.md
           echo "See [debian/changelog](debian/changelog) for details." >> release-notes.md
         else
-          echo "Release $VERSION" >> release-notes.md
+          echo "Release $VERSION" > release-notes.md
         fi
 
     - name: Create GitHub Release
