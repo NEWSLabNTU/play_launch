@@ -3,6 +3,9 @@
 export DH_VERBOSE = 1
 export HOME = $(CURDIR)/debian/home
 
+# Colcon flags (no --symlink-install for packaging - we need real files)
+COLCON_FLAGS = --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release
+
 %:
 	dh $@
 
@@ -12,78 +15,66 @@ override_dh_auto_configure:
 		mkdir -p $(HOME)/.cargo; \
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path; \
 	fi
+	# Ensure rustup has a default toolchain
 	export PATH="$(HOME)/.cargo/bin:$$PATH"; \
-	# Install Python dependencies
+	if command -v rustup >/dev/null 2>&1; then \
+		rustup default stable 2>/dev/null || true; \
+	fi
+	# Install colcon-cargo-ros2 and Python dependencies
 	pip3 install --user --upgrade \
-		git+https://github.com/colcon/colcon-cargo.git \
-		git+https://github.com/colcon/colcon-ros-cargo.git \
+		colcon-cargo-ros2 \
 		pyyaml lark packaging plotly pandas
-	# Install cargo-ament-build
-	export PATH="$(HOME)/.cargo/bin:$$PATH"; \
-	command -v cargo-ament-build >/dev/null 2>&1 || $(HOME)/.cargo/bin/cargo install cargo-ament-build
 
 override_dh_auto_build:
 	export PATH="$(HOME)/.cargo/bin:$(HOME)/.local/bin:$$PATH"; \
 	export PYTHONPATH="$(HOME)/.local/lib/python3.10/site-packages:$$PYTHONPATH"; \
 	git submodule update --init --recursive; \
-	just build
-	# Build Python wheels for proper packaging
-	mkdir -p wheels
-	cd src/dump_launch && python3 -m pip wheel --no-deps -w ../../wheels .
-	cd src/play_launch_analyzer && python3 -m pip wheel --no-deps -w ../../wheels .
+	. /opt/ros/humble/setup.sh && \
+	colcon build $(COLCON_FLAGS) --base-paths src
 
 override_dh_auto_install:
-	# Install binaries
-	install -Dm755 install/play_launch/lib/play_launch/play_launch \
-		debian/play-launch/usr/bin/play_launch
-	install -Dm755 install/play_launch/lib/play_launch/play_launch_io_helper \
-		debian/play-launch/usr/lib/play-launch/play_launch_io_helper
-	# Install Python packages from wheels (includes proper metadata)
-	if [ -d wheels ]; then \
-		TEMP_VENV=$$(mktemp -d); \
-		python3 -m venv "$$TEMP_VENV"; \
-		"$$TEMP_VENV/bin/pip" install --no-deps wheels/*.whl; \
-		mkdir -p debian/play-launch/usr/lib/python3.10/dist-packages; \
-		cp -r "$$TEMP_VENV"/lib/python3.10/site-packages/* \
-			debian/play-launch/usr/lib/python3.10/dist-packages/; \
-		rm -rf debian/play-launch/usr/lib/python3.10/dist-packages/{_virtualenv.*,pip*,setuptools*,pkg_resources,distutils-precedence.pth}; \
-		find debian/play-launch/usr/lib/python3.10/dist-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true; \
-		rm -rf "$$TEMP_VENV"; \
+	# Install to /opt/ros/humble for ROS2 integration
+	mkdir -p debian/play-launch/opt/ros/humble
+	cp -r install/* debian/play-launch/opt/ros/humble/
+
+	# Move main binaries to /usr/bin for FHS compliance and user convenience
+	mkdir -p debian/play-launch/usr/bin
+	if [ -f debian/play-launch/opt/ros/humble/play_launch/lib/play_launch/play_launch ]; then \
+		mv debian/play-launch/opt/ros/humble/play_launch/lib/play_launch/play_launch \
+			debian/play-launch/usr/bin/play_launch; \
+		ln -sf /usr/bin/play_launch \
+			debian/play-launch/opt/ros/humble/play_launch/lib/play_launch/play_launch; \
 	fi
-	# Install Python scripts
-	if [ -f install/dump_launch/lib/dump_launch/dump_launch ]; then \
-		install -Dm755 install/dump_launch/lib/dump_launch/dump_launch \
+	if [ -f debian/play-launch/opt/ros/humble/dump_launch/lib/dump_launch/dump_launch ]; then \
+		mv debian/play-launch/opt/ros/humble/dump_launch/lib/dump_launch/dump_launch \
 			debian/play-launch/usr/bin/dump_launch; \
-	fi
-	if [ -f install/play_launch_analyzer/lib/play_launch_analyzer/play_launch_analyzer ]; then \
-		install -Dm755 install/play_launch_analyzer/lib/play_launch_analyzer/play_launch_analyzer \
-			debian/play-launch/usr/bin/play_launch_analyzer; \
-	fi
-	# Install ROS2 package metadata for dump_launch
-	if [ -d install/dump_launch ]; then \
-		install -Dm644 install/dump_launch/share/dump_launch/package.xml \
-			debian/play-launch/opt/ros/humble/share/dump_launch/package.xml; \
-		mkdir -p debian/play-launch/opt/ros/humble/share/ament_index/resource_index/packages; \
-		touch debian/play-launch/opt/ros/humble/share/ament_index/resource_index/packages/dump_launch; \
-		mkdir -p debian/play-launch/opt/ros/humble/lib/dump_launch; \
 		ln -sf /usr/bin/dump_launch \
-			debian/play-launch/opt/ros/humble/lib/dump_launch/dump_launch; \
+			debian/play-launch/opt/ros/humble/dump_launch/lib/dump_launch/dump_launch; \
 	fi
-	# Install ROS2 package metadata for play_launch_analyzer
-	if [ -d install/play_launch_analyzer ]; then \
-		install -Dm644 install/play_launch_analyzer/share/play_launch_analyzer/package.xml \
-			debian/play-launch/opt/ros/humble/share/play_launch_analyzer/package.xml; \
-		touch debian/play-launch/opt/ros/humble/share/ament_index/resource_index/packages/play_launch_analyzer; \
-		mkdir -p debian/play-launch/opt/ros/humble/lib/play_launch_analyzer; \
+	if [ -f debian/play-launch/opt/ros/humble/play_launch_analyzer/lib/play_launch_analyzer/play_launch_analyzer ]; then \
+		mv debian/play-launch/opt/ros/humble/play_launch_analyzer/lib/play_launch_analyzer/play_launch_analyzer \
+			debian/play-launch/usr/bin/play_launch_analyzer; \
 		ln -sf /usr/bin/play_launch_analyzer \
-			debian/play-launch/opt/ros/humble/lib/play_launch_analyzer/play_launch_analyzer; \
+			debian/play-launch/opt/ros/humble/play_launch_analyzer/lib/play_launch_analyzer/play_launch_analyzer; \
 	fi
-	# Install docs
+
+	# Move I/O helper to /usr/lib/play-launch
+	mkdir -p debian/play-launch/usr/lib/play-launch
+	if [ -f debian/play-launch/opt/ros/humble/play_launch/lib/play_launch/play_launch_io_helper ]; then \
+		mv debian/play-launch/opt/ros/humble/play_launch/lib/play_launch/play_launch_io_helper \
+			debian/play-launch/usr/lib/play-launch/play_launch_io_helper; \
+		ln -sf /usr/lib/play-launch/play_launch_io_helper \
+			debian/play-launch/opt/ros/humble/play_launch/lib/play_launch/play_launch_io_helper; \
+	fi
+
+	# Install documentation
+	mkdir -p debian/play-launch/usr/share/doc/play-launch
 	install -Dm644 README.md debian/play-launch/usr/share/doc/play-launch/README.md
 	install -Dm644 CLAUDE.md debian/play-launch/usr/share/doc/play-launch/CLAUDE.md
 	if [ -d docs ]; then \
 		cp -r docs/* debian/play-launch/usr/share/doc/play-launch/ 2>/dev/null || true; \
 	fi
+
 	# Install examples
 	if [ -d test ]; then \
 		mkdir -p debian/play-launch/usr/share/play-launch/examples; \
@@ -91,5 +82,5 @@ override_dh_auto_install:
 	fi
 
 override_dh_auto_clean:
-	rm -rf build install log .cargo build_logs debian/home wheels
+	rm -rf build install log debian/home
 	dh_auto_clean

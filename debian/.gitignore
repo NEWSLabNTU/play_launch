@@ -1,0 +1,20 @@
+# Build artifacts
+.debhelper/
+debhelper-build-stamp
+files
+*.substvars
+tmp/
+
+# Package staging directories
+play-launch/
+play-launch-dbgsym/
+
+# Build cache (custom for our build)
+home/
+
+# Debhelper logs
+*.debhelper.log
+*.debhelper
+
+# Source package artifacts
+.pc/
