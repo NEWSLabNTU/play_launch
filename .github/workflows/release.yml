@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-debian-packages:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Set up QEMU (for arm64)
+      if: matrix.arch == 'arm64'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+
+    - name: Build Debian package (${{ matrix.arch }})
+      run: |
+        # Get version from tag
+        VERSION="${GITHUB_REF#refs/tags/v}"
+        echo "Building version $VERSION for ${{ matrix.arch }}"
+
+        # Set up architecture-specific variables
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          DOCKER_ARCH="linux/arm64"
+          DEB_ARCH="arm64"
+        else
+          DOCKER_ARCH="linux/amd64"
+          DEB_ARCH="amd64"
+        fi
+
+        # Build in Docker container with correct architecture
+        docker run --rm --platform=${DOCKER_ARCH} \
+          -v $PWD:/workspace \
+          -w /workspace \
+          ubuntu:22.04 \
+          bash -c "
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+
+            # Install basic build dependencies
+            apt-get update
+            apt-get install -y software-properties-common curl git build-essential
+
+            # Add ROS 2 repository
+            curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+            echo \"deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main\" > /etc/apt/sources.list.d/ros2.list
+
+            # Install build dependencies from debian/control
+            apt-get update
+            apt-get install -y \
+              debhelper git curl build-essential cmake pkg-config \
+              python3-pip python3-dev python3-venv python3-colcon-common-extensions \
+              ros-humble-ros-core ros-humble-ament-index-python ros-humble-launch
+
+            # Build Debian package
+            cd /workspace
+            dpkg-buildpackage -us -uc -b -d -a${DEB_ARCH}
+
+            # Move artifacts to dist/
+            mkdir -p dist
+            mv ../*.deb ../*.ddeb ../*.buildinfo ../*.changes dist/ 2>/dev/null || true
+
+            # List built packages
+            ls -lh dist/
+          "
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: debian-packages-${{ matrix.arch }}
+        path: dist/*.deb
+        retention-days: 7
+
+  create-release:
+    needs: build-debian-packages
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download amd64 packages
+      uses: actions/download-artifact@v4
+      with:
+        name: debian-packages-amd64
+        path: dist-amd64
+
+    - name: Download arm64 packages
+      uses: actions/download-artifact@v4
+      with:
+        name: debian-packages-arm64
+        path: dist-arm64
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+        cp dist-amd64/*.deb release-assets/
+        cp dist-arm64/*.deb release-assets/
+        ls -lh release-assets/
+
+    - name: Extract release notes
+      id: release_notes
+      run: |
+        VERSION="${GITHUB_REF#refs/tags/v}"
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+        # Extract changelog entry for this version
+        if [ -f debian/changelog ]; then
+          echo "## Changes" > release-notes.md
+          echo "" >> release-notes.md
+          echo "See [debian/changelog](debian/changelog) for details." >> release-notes.md
+        else
+          echo "Release $VERSION" > release-notes.md
+        fi
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: Release ${{ steps.release_notes.outputs.version }}
+        body_path: release-notes.md
+        files: |
+          release-assets/*.deb
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
