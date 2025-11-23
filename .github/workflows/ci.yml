@@ -65,7 +65,7 @@ jobs:
         source /opt/ros/humble/setup.bash
         # Non-interactive mode: update submodules and remove conflicting packages
         git submodule update --init --recursive
-        pip3 install --user colcon-cargo-ros2
+        pip3 install --user colcon-cargo-ros2 ruff
         sudo apt install -y python3-pip python3-rosdep
         sudo rosdep init || true
         rosdep update
