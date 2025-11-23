@@ -330,13 +330,16 @@ Packages are built to `dist/` directory.
 **Release Workflow** (`.github/workflows/release.yml`):
 - Triggers on version tags (`v*`, e.g., `v0.2.0`)
 - Builds Debian packages for both amd64 and arm64 architectures
-- Uses Docker with QEMU emulation for cross-architecture builds
+- Uses native runners for each architecture:
+  - amd64: `ubuntu-22.04` runner (free tier)
+  - arm64: `ubuntu-22.04-arm64` runner (requires GitHub Team/Enterprise or self-hosted)
+- Much faster than QEMU emulation (~3min vs 20+min for arm64 builds)
 - Creates GitHub release with .deb packages as downloadable assets
 - Release packages follow naming: `play-launch_<version>_<arch>.deb`
 
 ## Key Recent Fixes
 
-- **2025-11-23**: GitHub Actions CI/CD - Created automated workflows for continuous integration (build/test/lint on every push) and release automation (multi-architecture Debian package building on version tags). Release workflow builds for both amd64 and arm64 using Docker with QEMU emulation.
+- **2025-11-23**: GitHub Actions CI/CD - Created automated workflows for continuous integration (build/test/lint on every push) and release automation (multi-architecture Debian package building on version tags). Updated release workflow to use native ARM64 runners instead of QEMU emulation for 10x faster builds (~3min vs 20+min).
 - **2025-11-23**: Build system refactoring - Migrated to colcon-cargo-ros2 (single-stage build). Removed boilerplate packages from src/ros2_rust and src/interface. Simplified debian/rules to use single-stage colcon build (removed wheel-building complexity, fixed symlink issues). Enhanced justfile with install-deps recipe (interactive conflict resolution), run recipe, and verify-io-helper. All recipes now properly source /opt/ros/humble/setup.bash.
 - **2025-11-04**: Build system migration - Replaced Makefile with justfile for cleaner syntax. Created Debian packaging with proper Ubuntu 22.04 paths.
 - **2025-11-03**: Binary optimization - 94% size reduction (137MB → 8.7MB) via Cargo release profile with strip+LTO.
