@@ -1,8 +1,8 @@
 name: Release
 
-# NOTE: ARM64 builds require either GitHub Team/Enterprise or self-hosted runners.
-# Free tier repositories: ARM64 jobs will queue indefinitely. See README for alternatives.
-# amd64 builds work on free tier and complete in ~3min.
+# Builds Debian packages for both amd64 and arm64 using QEMU emulation.
+# amd64 builds: ~3min (native)
+# arm64 builds: ~20min (QEMU emulation)
 
 on:
   push:
@@ -13,15 +13,10 @@ jobs:
   build-debian-packages:
     strategy:
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-22.04
-          - arch: arm64
-            runner: ubuntu-22.04-arm64
-      fail-fast: false  # Continue amd64 even if arm64 fails
+        arch: [amd64, arm64]
+      fail-fast: false
 
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30  # Cancel if queued too long
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout code
@@ -30,43 +25,94 @@ jobs:
         submodules: recursive
         fetch-depth: 0
 
+    - name: Set up QEMU (for arm64)
+      if: matrix.arch == 'arm64'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+
     - name: Build Debian package (${{ matrix.arch }})
       run: |
         # Get version from tag
         VERSION="${GITHUB_REF#refs/tags/v}"
-        echo "Building version $VERSION for ${{ matrix.arch }} on native ${{ matrix.runner }}"
+        echo "Building version $VERSION for ${{ matrix.arch }}"
+
+        # Set platform variables
+        if [ "${{ matrix.arch }}" = "amd64" ]; then
+          PLATFORM="linux/amd64"
+        else
+          PLATFORM="linux/arm64"
+        fi
 
         # Install basic build dependencies
         sudo apt-get update
         sudo apt-get install -y software-properties-common curl git build-essential
 
         # Add ROS 2 repository
-        curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+        sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
         echo "deb [arch=${{ matrix.arch }} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
 
         # Install build dependencies from debian/control
         sudo apt-get update
-        sudo apt-get install -y \
-          debhelper git curl build-essential cmake pkg-config \
-          python3-pip python3-dev python3-venv python3-colcon-common-extensions \
-          ros-humble-ros-core \
-          ros-humble-ament-index-python \
-          ros-humble-launch \
-          ros-humble-rcl \
-          ros-humble-rcutils \
-          ros-humble-rmw \
-          ros-humble-rosidl-typesupport-c \
-          ros-humble-composition-interfaces \
-          ros-humble-rcl-interfaces \
-          ros-humble-builtin-interfaces \
-          ros-humble-action-msgs \
-          ros-humble-unique-identifier-msgs \
-          ros-humble-rosgraph-msgs \
-          ros-humble-example-interfaces \
-          ros-humble-test-msgs
 
-        # Build Debian package on native architecture
-        dpkg-buildpackage -us -uc -b -d
+        # For arm64, we need to add arm64 architecture and install cross-build tools
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+
+          # Install cross-compilation tools
+          sudo apt-get install -y \
+            debhelper git curl build-essential cmake pkg-config \
+            python3-pip python3-dev python3-venv python3-colcon-common-extensions \
+            crossbuild-essential-arm64
+
+          # Install ROS packages (will pull arm64 versions due to dpkg --add-architecture)
+          sudo apt-get install -y \
+            ros-humble-ros-core:arm64 \
+            ros-humble-ament-index-python \
+            ros-humble-launch \
+            ros-humble-rcl:arm64 \
+            ros-humble-rcutils:arm64 \
+            ros-humble-rmw:arm64 \
+            ros-humble-rosidl-typesupport-c:arm64 \
+            ros-humble-composition-interfaces:arm64 \
+            ros-humble-rcl-interfaces:arm64 \
+            ros-humble-builtin-interfaces:arm64 \
+            ros-humble-action-msgs:arm64 \
+            ros-humble-unique-identifier-msgs:arm64 \
+            ros-humble-rosgraph-msgs:arm64 \
+            ros-humble-example-interfaces:arm64 \
+            ros-humble-test-msgs:arm64
+        else
+          # Native amd64 build
+          sudo apt-get install -y \
+            debhelper git curl build-essential cmake pkg-config \
+            python3-pip python3-dev python3-venv python3-colcon-common-extensions \
+            ros-humble-ros-core \
+            ros-humble-ament-index-python \
+            ros-humble-launch \
+            ros-humble-rcl \
+            ros-humble-rcutils \
+            ros-humble-rmw \
+            ros-humble-rosidl-typesupport-c \
+            ros-humble-composition-interfaces \
+            ros-humble-rcl-interfaces \
+            ros-humble-builtin-interfaces \
+            ros-humble-action-msgs \
+            ros-humble-unique-identifier-msgs \
+            ros-humble-rosgraph-msgs \
+            ros-humble-example-interfaces \
+            ros-humble-test-msgs
+        fi
+
+        # Build Debian package
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          # Cross-compile for arm64
+          dpkg-buildpackage -us -uc -b -d -aarm64
+        else
+          # Native build
+          dpkg-buildpackage -us -uc -b -d
+        fi
 
         # Move artifacts to dist/
         mkdir -p dist
@@ -85,7 +131,6 @@ jobs:
   create-release:
     needs: build-debian-packages
     runs-on: ubuntu-22.04
-    if: always()  # Run even if some builds fail/timeout
 
     steps:
     - name: Checkout code
@@ -93,14 +138,12 @@ jobs:
 
     - name: Download amd64 packages
       uses: actions/download-artifact@v4
-      continue-on-error: true  # Don't fail if artifact missing
       with:
         name: debian-packages-amd64
         path: dist-amd64
 
     - name: Download arm64 packages
       uses: actions/download-artifact@v4
-      continue-on-error: true  # Don't fail if artifact missing
       with:
         name: debian-packages-arm64
         path: dist-arm64
@@ -108,17 +151,8 @@ jobs:
     - name: Prepare release assets
       run: |
         mkdir -p release-assets
-        # Copy only available packages
-        [ -d dist-amd64 ] && cp dist-amd64/*.deb release-assets/ || echo "No amd64 packages"
-        [ -d dist-arm64 ] && cp dist-arm64/*.deb release-assets/ || echo "No arm64 packages"
-
-        # Ensure at least one package exists
-        if [ -z "$(ls -A release-assets/*.deb 2>/dev/null)" ]; then
-          echo "Error: No packages built"
-          exit 1
-        fi
-
-        echo "Available packages:"
+        cp dist-amd64/*.deb release-assets/
+        cp dist-arm64/*.deb release-assets/
         ls -lh release-assets/
 
     - name: Extract release notes
@@ -127,15 +161,10 @@ jobs:
         VERSION="${GITHUB_REF#refs/tags/v}"
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-        # Detect available architectures
-        ARCHES=""
-        [ -d dist-amd64 ] && ARCHES="$ARCHES amd64"
-        [ -d dist-arm64 ] && ARCHES="$ARCHES arm64"
-
         # Generate release notes
         echo "## Available Packages" > release-notes.md
         echo "" >> release-notes.md
-        echo "**Architectures:**$ARCHES" >> release-notes.md
+        echo "**Architectures:** amd64, arm64" >> release-notes.md
         echo "" >> release-notes.md
         echo "## Changes" >> release-notes.md
         echo "" >> release-notes.md

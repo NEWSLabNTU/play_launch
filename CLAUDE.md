@@ -330,23 +330,24 @@ Packages are built to `dist/` directory.
 **Release Workflow** (`.github/workflows/release.yml`):
 - Triggers on version tags (`v*`, e.g., `v0.2.0`)
 - Builds Debian packages for both amd64 and arm64 architectures
-- Uses native runners for each architecture:
-  - **amd64**: `ubuntu-22.04` runner (✅ available on free tier, ~3min builds)
-  - **arm64**: `ubuntu-22.04-arm64` runner (⚠️ requires GitHub Team/Enterprise or self-hosted runners)
-- **Partial build support**: Creates releases with available packages (works with amd64-only on free tier)
-- **30-minute timeout**: ARM64 jobs timeout after 30min if no runner available
-- **Auto-detection**: Release notes show which architectures are included
+- Uses cross-compilation with QEMU emulation:
+  - **amd64**: Native build on `ubuntu-22.04` (~3min)
+  - **arm64**: Cross-compilation with QEMU on `ubuntu-22.04` (~20-30min)
+- Works on GitHub free tier (no special runners required)
+- Creates GitHub release with both .deb packages as downloadable assets
 - Release packages follow naming: `play-launch_<version>_<arch>.deb`
 
-**How it works on free tier**:
-1. amd64 build completes successfully (~3min)
-2. arm64 build times out after 30min (no runner available)
-3. Release is created with just amd64 package
-4. When ARM64 runners are added, both packages are included automatically
+**Build process**:
+1. Checkout code with submodules
+2. Set up QEMU for ARM64 emulation (arm64 only)
+3. Install ROS2 Humble and build dependencies
+4. Cross-compile with `dpkg-buildpackage -aarm64` (arm64 only)
+5. Upload artifacts
+6. Create GitHub release with both packages
 
 ## Key Recent Fixes
 
-- **2025-11-23**: GitHub Actions CI/CD - Created automated workflows for continuous integration (build/test/lint on every push) and release automation (multi-architecture Debian package building on version tags). Updated release workflow to use native ARM64 runners instead of QEMU emulation for 10x faster builds (~3min vs 20+min).
+- **2025-11-23**: GitHub Actions CI/CD - Created automated workflows for continuous integration (build/test/lint on every push) and release automation (multi-architecture Debian package building on version tags). Release workflow uses QEMU cross-compilation for ARM64 packages (~20-30min), works on GitHub free tier without special runners.
 - **2025-11-23**: Build system refactoring - Migrated to colcon-cargo-ros2 (single-stage build). Removed boilerplate packages from src/ros2_rust and src/interface. Simplified debian/rules to use single-stage colcon build (removed wheel-building complexity, fixed symlink issues). Enhanced justfile with install-deps recipe (interactive conflict resolution), run recipe, and verify-io-helper. All recipes now properly source /opt/ros/humble/setup.bash.
 - **2025-11-04**: Build system migration - Replaced Makefile with justfile for cleaner syntax. Created Debian packaging with proper Ubuntu 22.04 paths.
 - **2025-11-03**: Binary optimization - 94% size reduction (137MB → 8.7MB) via Cargo release profile with strip+LTO.
