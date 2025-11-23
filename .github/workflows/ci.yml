@@ -45,7 +45,8 @@ jobs:
           ros-humble-rosgraph-msgs \
           ros-humble-example-interfaces \
           ros-humble-test-msgs \
-          ros-humble-ros2launch
+          ros-humble-ros2launch \
+          ros-humble-demo-nodes-cpp
 
     - name: Install Rust
       run: |
@@ -80,6 +81,9 @@ jobs:
       run: |
         source $HOME/.cargo/env
         source /opt/ros/humble/setup.bash
+        source install/setup.bash
+        # Verify dump_launch is in PATH
+        which dump_launch || echo "Warning: dump_launch not found in PATH"
         just test
 
     - name: Run linters

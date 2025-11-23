@@ -110,7 +110,8 @@ test:
     set -e
     source /opt/ros/humble/setup.bash
     source install/setup.bash
-    colcon test --packages-select dump_launch play_launch
+    # Only test Python packages (Rust testing not compatible with colcon-cargo-ros2)
+    colcon test --packages-select dump_launch
     colcon test-result --all --verbose
 
 # Run linters (clippy + ruff)
