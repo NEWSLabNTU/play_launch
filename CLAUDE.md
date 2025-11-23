@@ -319,8 +319,24 @@ Packages are built to `dist/` directory.
 - `build`: Build Debian package to dist/ directory
 - `clean`: Remove dist/ and build artifacts
 
+### GitHub Workflows
+
+**CI Workflow** (`.github/workflows/ci.yml`):
+- Triggers on push to main and pull requests
+- Runs on Ubuntu 22.04 with ROS2 Humble
+- Executes: `just build`, `just test`, `just lint`
+- Verifies code quality and functionality
+
+**Release Workflow** (`.github/workflows/release.yml`):
+- Triggers on version tags (`v*`, e.g., `v0.2.0`)
+- Builds Debian packages for both amd64 and arm64 architectures
+- Uses Docker with QEMU emulation for cross-architecture builds
+- Creates GitHub release with .deb packages as downloadable assets
+- Release packages follow naming: `play-launch_<version>_<arch>.deb`
+
 ## Key Recent Fixes
 
+- **2025-11-23**: GitHub Actions CI/CD - Created automated workflows for continuous integration (build/test/lint on every push) and release automation (multi-architecture Debian package building on version tags). Release workflow builds for both amd64 and arm64 using Docker with QEMU emulation.
 - **2025-11-23**: Build system refactoring - Migrated to colcon-cargo-ros2 (single-stage build). Removed boilerplate packages from src/ros2_rust and src/interface. Simplified debian/rules to use single-stage colcon build (removed wheel-building complexity, fixed symlink issues). Enhanced justfile with install-deps recipe (interactive conflict resolution), run recipe, and verify-io-helper. All recipes now properly source /opt/ros/humble/setup.bash.
 - **2025-11-04**: Build system migration - Replaced Makefile with justfile for cleaner syntax. Created Debian packaging with proper Ubuntu 22.04 paths.
 - **2025-11-03**: Binary optimization - 94% size reduction (137MB → 8.7MB) via Cargo release profile with strip+LTO.
