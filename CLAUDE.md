@@ -269,8 +269,10 @@ Autoware planning simulator integration test in `test/autoware_planning_simulati
 Build Debian package for Ubuntu 22.04:
 
 ```bash
-just build-deb  # Creates play-launch_0.2.0-3_amd64.deb
+just build-deb  # Creates dist/play-launch_0.2.0-3_amd64.deb
 ```
+
+Packages are built to `dist/` directory.
 
 **Package details:**
 - **Naming convention**: Package name uses `play-launch` (Debian requirement), installed files use `play_launch` (source code consistency)
@@ -290,6 +292,7 @@ just build-deb  # Creates play-launch_0.2.0-3_amd64.deb
 - `override_dh_auto_configure`: Install Rust (if needed), colcon-cargo-ros2, Python dependencies
 - `override_dh_auto_build`: Single `colcon build` command (no --symlink-install for proper packaging)
 - `override_dh_auto_install`: Copy install/* to /opt/ros/humble, move binaries to /usr, create symlinks
+- Build artifacts are moved to `dist/` directory after successful build
 
 **Binary optimization** (completed 2025-11-03):
 - Release profile with `strip = true` and `lto = "thin"`
@@ -307,10 +310,14 @@ just build-deb  # Creates play-launch_0.2.0-3_amd64.deb
   - `setcap-io-helper`: Apply CAP_SYS_PTRACE to I/O helper (requires sudo)
   - `verify-io-helper`: Verify I/O helper capability status
   - `clean`: Remove build/install/log directories
-  - `build-deb`: Build Debian package
+  - `build-deb`: Build Debian package (outputs to dist/)
   - `test`: Run package tests
   - `lint`: Run clippy and ruff
   - `format`: Format Rust and Python code
+
+**debian/justfile**: Debian packaging recipes
+- `build`: Build Debian package to dist/ directory
+- `clean`: Remove dist/ and build artifacts
 
 ## Key Recent Fixes
 

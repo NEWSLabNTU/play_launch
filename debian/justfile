@@ -6,8 +6,18 @@ default:
 build:
     #!/usr/bin/env bash
     set -e
-    cd "{{justfile_directory()}}/.."
+    PROJECT_ROOT="{{justfile_directory()}}/.."
+
+    # Build package (outputs to parent directory by default)
+    cd "${PROJECT_ROOT}"
     dpkg-buildpackage -us -uc -b -d
+
+    # Create dist directory and move artifacts
+    mkdir -p "${PROJECT_ROOT}/dist"
+    mv ../*.deb ../*.ddeb ../*.buildinfo ../*.changes "${PROJECT_ROOT}/dist/" 2>/dev/null || true
+
+    echo "✓ Debian packages built in dist/"
+    ls -lh "${PROJECT_ROOT}/dist/"
 
 # Remove built Debian packages and build artifacts
 clean:
@@ -15,9 +25,8 @@ clean:
     set -e
     PROJECT_ROOT="{{justfile_directory()}}/.."
 
-    # Remove Debian build artifacts in parent directory of project root
-    rm -f "${PROJECT_ROOT}"/../play-launch_*.deb "${PROJECT_ROOT}"/../play-launch-dbgsym_*.ddeb
-    rm -f "${PROJECT_ROOT}"/../play-launch_*.buildinfo "${PROJECT_ROOT}"/../play-launch_*.changes
+    # Remove dist/ directory
+    rm -rf "${PROJECT_ROOT}"/dist
 
     # Remove build artifacts in debian/ (staging uses package name with hyphen)
     rm -rf "${PROJECT_ROOT}"/debian/.debhelper "${PROJECT_ROOT}"/debian/debhelper-build-stamp
