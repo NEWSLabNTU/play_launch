@@ -1,5 +1,9 @@
 name: Release
 
+# NOTE: ARM64 builds require either GitHub Team/Enterprise or self-hosted runners.
+# Free tier repositories: ARM64 jobs will queue indefinitely. See README for alternatives.
+# amd64 builds work on free tier and complete in ~3min.
+
 on:
   push:
     tags:

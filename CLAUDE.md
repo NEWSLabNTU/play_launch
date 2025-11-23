@@ -331,11 +331,19 @@ Packages are built to `dist/` directory.
 - Triggers on version tags (`v*`, e.g., `v0.2.0`)
 - Builds Debian packages for both amd64 and arm64 architectures
 - Uses native runners for each architecture:
-  - amd64: `ubuntu-22.04` runner (free tier)
-  - arm64: `ubuntu-22.04-arm64` runner (requires GitHub Team/Enterprise or self-hosted)
-- Much faster than QEMU emulation (~3min vs 20+min for arm64 builds)
+  - **amd64**: `ubuntu-22.04` runner (✅ available on free tier, ~3min builds)
+  - **arm64**: `ubuntu-22.04-arm64` runner (⚠️ requires GitHub Team/Enterprise or self-hosted runners)
 - Creates GitHub release with .deb packages as downloadable assets
 - Release packages follow naming: `play-launch_<version>_<arch>.deb`
+
+**ARM64 Build Status**:
+- The workflow is correctly configured but ARM64 jobs will queue indefinitely on free tier
+- Native ARM64 runners are 10x faster than QEMU emulation (~3min vs 20+min)
+- **Alternatives if ARM64 runners unavailable**:
+  1. **Self-hosted runner**: Set up your own ARM64 machine with GitHub Actions runner
+  2. **QEMU fallback**: Modify workflow to use `docker/setup-qemu-action@v3` (slower but works on free tier)
+  3. **Manual builds**: Build locally on ARM64 hardware with `just build-deb`
+  4. **amd64 only**: Remove arm64 from workflow matrix if not needed
 
 ## Key Recent Fixes
 
