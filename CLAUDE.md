@@ -13,8 +13,15 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch file executions f
 ## Build & Usage
 
 ```sh
-# Build workspace (3-stage colcon build)
+# Install dependencies (first-time setup)
+just install-deps        # Install colcon-cargo-ros2, update submodules, run rosdep
+
+# Build workspace (single-stage colcon build with colcon-cargo-ros2)
 just build
+
+# Run play_launch with arguments (automatically sources workspace)
+just run launch <package> <launch_file>         # Example: just run launch demo_nodes_cpp talker_listener.launch.py
+just run --help                                 # Show play_launch help
 
 # Enable I/O monitoring for privileged processes (containers with capabilities)
 just setcap-io-helper    # Requires sudo, reapply after rebuild
@@ -22,10 +29,10 @@ just setcap-io-helper    # Requires sudo, reapply after rebuild
 # Verify I/O helper status
 just verify-io-helper
 
-# Source workspace
+# Source workspace (when running commands outside of just)
 . install/setup.bash
 
-# Launch commands
+# Launch commands (when sourced manually)
 play_launch launch <package> <launch_file>      # Record & replay
 play_launch run <package> <executable>          # Run single node
 play_launch dump launch <package> <launch_file> # Record only
@@ -290,10 +297,21 @@ just build-deb  # Creates play-launch_0.1.0-1_arm64.deb
 
 - **justfile**: Task runner (replaced Makefile 2025-11-04)
 - Use `just --list` to see all available recipes
-- Main recipes: `build`, `build-deb`, `clean`, `test`, `lint`, `format`
+- Main recipes:
+  - `install-deps`: Install colcon-cargo-ros2, check/update submodules, run rosdep (interactive prompts for conflicts)
+  - `build`: Single-stage colcon build (sources /opt/ros/humble/setup.bash automatically)
+  - `run *ARGS`: Run play_launch with arguments (e.g., `just run launch demo_nodes_cpp talker_listener.launch.py`)
+  - `setcap-io-helper`: Apply CAP_SYS_PTRACE to I/O helper (requires sudo)
+  - `verify-io-helper`: Verify I/O helper capability status
+  - `clean`: Remove build/install/log directories
+  - `build-deb`: Build Debian package
+  - `test`: Run package tests
+  - `lint`: Run clippy and ruff
+  - `format`: Format Rust and Python code
 
 ## Key Recent Fixes
 
+- **2025-11-23**: Build system refactoring - Migrated to colcon-cargo-ros2 (single-stage build). Removed boilerplate packages from src/ros2_rust and src/interface. Enhanced justfile with install-deps recipe (interactive conflict resolution), run recipe, and verify-io-helper. All recipes now properly source /opt/ros/humble/setup.bash.
 - **2025-11-04**: Build system migration - Replaced Makefile with justfile for cleaner syntax. Created Debian packaging with proper Ubuntu 22.04 paths. Extracted build-deb logic to `scripts/build-deb.sh`.
 - **2025-11-03**: Binary optimization - 94% size reduction (137MB → 8.7MB) via Cargo release profile with strip+LTO.
 - **2025-11-03**: Fixed Python dependency - Replaced ruamel.yaml with standard PyYAML (system package).

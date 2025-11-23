@@ -178,6 +178,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-stream"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
+dependencies = [
+ "async-stream-impl",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "async-stream-impl"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "async-task"
 version = "4.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -338,7 +360,6 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 name = "composition_interfaces"
 version = "1.2.2"
 dependencies = [
- "builtin_interfaces",
  "rcl_interfaces",
  "rosidl_runtime_rs",
 ]
@@ -1052,13 +1073,20 @@ dependencies = [
 
 [[package]]
 name = "rclrs"
-version = "0.5.1"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b79c46ba8be755c1c0976a660ea0bb1cbd46724d25801fa11d23b0b73fe686e3"
 dependencies = [
  "async-std",
+ "async-stream",
  "cfg-if",
  "futures",
+ "futures-lite",
  "rosidl_runtime_rs",
  "rustflags",
+ "tokio",
+ "tokio-stream",
+ "uuid",
 ]
 
 [[package]]
@@ -1080,7 +1108,9 @@ checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
 name = "rosidl_runtime_rs"
-version = "0.4.2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b00ea2ee34606be89514fe2ba100b5fc6165e0f682824f1462f9b09105975566"
 dependencies = [
  "cfg-if",
 ]
@@ -1336,6 +1366,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-stream"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eca58d7bba4a75707817a2c44174253f9236b2d5fbd055602e9d5c07c139a047"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "tracing"
 version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1413,6 +1454,17 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "uuid"
+version = "1.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f87b8aa10b915a06587d0dec516c282ff295b475d94abf425d62b57710070a2"
+dependencies = [
+ "getrandom",
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "valuable"
@@ -1848,75 +1900,3 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[patch.unused]]
-name = "action_msgs"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "actionlib_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "diagnostic_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "example_interfaces"
-version = "0.9.3"
-
-[[patch.unused]]
-name = "geometry_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "lifecycle_msgs"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "nav_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "rosgraph_msgs"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "sensor_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "shape_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "statistics_msgs"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "std_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "std_srvs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "stereo_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "test_msgs"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "trajectory_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "unique_identifier_msgs"
-version = "2.2.1"
-
-[[patch.unused]]
-name = "visualization_msgs"
-version = "4.9.0"
