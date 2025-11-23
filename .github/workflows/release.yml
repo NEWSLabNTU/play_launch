@@ -18,8 +18,10 @@ jobs:
             runner: ubuntu-22.04
           - arch: arm64
             runner: ubuntu-22.04-arm64
+      fail-fast: false  # Continue amd64 even if arm64 fails
 
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30  # Cancel if queued too long
 
     steps:
     - name: Checkout code
@@ -83,6 +85,7 @@ jobs:
   create-release:
     needs: build-debian-packages
     runs-on: ubuntu-22.04
+    if: always()  # Run even if some builds fail/timeout
 
     steps:
     - name: Checkout code
@@ -90,12 +93,14 @@ jobs:
 
     - name: Download amd64 packages
       uses: actions/download-artifact@v4
+      continue-on-error: true  # Don't fail if artifact missing
       with:
         name: debian-packages-amd64
         path: dist-amd64
 
     - name: Download arm64 packages
       uses: actions/download-artifact@v4
+      continue-on-error: true  # Don't fail if artifact missing
       with:
         name: debian-packages-arm64
         path: dist-arm64
@@ -103,8 +108,17 @@ jobs:
     - name: Prepare release assets
       run: |
         mkdir -p release-assets
-        cp dist-amd64/*.deb release-assets/
-        cp dist-arm64/*.deb release-assets/
+        # Copy only available packages
+        [ -d dist-amd64 ] && cp dist-amd64/*.deb release-assets/ || echo "No amd64 packages"
+        [ -d dist-arm64 ] && cp dist-arm64/*.deb release-assets/ || echo "No arm64 packages"
+
+        # Ensure at least one package exists
+        if [ -z "$(ls -A release-assets/*.deb 2>/dev/null)" ]; then
+          echo "Error: No packages built"
+          exit 1
+        fi
+
+        echo "Available packages:"
         ls -lh release-assets/
 
     - name: Extract release notes
@@ -113,13 +127,22 @@ jobs:
         VERSION="${GITHUB_REF#refs/tags/v}"
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-        # Extract changelog entry for this version
+        # Detect available architectures
+        ARCHES=""
+        [ -d dist-amd64 ] && ARCHES="$ARCHES amd64"
+        [ -d dist-arm64 ] && ARCHES="$ARCHES arm64"
+
+        # Generate release notes
+        echo "## Available Packages" > release-notes.md
+        echo "" >> release-notes.md
+        echo "**Architectures:**$ARCHES" >> release-notes.md
+        echo "" >> release-notes.md
+        echo "## Changes" >> release-notes.md
+        echo "" >> release-notes.md
         if [ -f debian/changelog ]; then
-          echo "## Changes" > release-notes.md
-          echo "" >> release-notes.md
           echo "See [debian/changelog](debian/changelog) for details." >> release-notes.md
         else
-          echo "Release $VERSION" > release-notes.md
+          echo "Release $VERSION" >> release-notes.md
         fi
 
     - name: Create GitHub Release
