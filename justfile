@@ -117,10 +117,17 @@ test:
 lint:
     #!/usr/bin/env bash
     set -e
-    source /opt/ros/humble/setup.bash
     source install/setup.bash
-    (cd src/play_launch && cargo clippy --all-targets --all-features -- -D warnings)
-    (cd src/dump_launch && python3 -m ruff check .)
+
+    (
+    cd src/play_launch &&
+    cargo clippy --config ../../build/ros2_cargo_config.toml --all-targets --all-features -- -D warnings
+    )
+
+    (
+    cd src/dump_launch &&
+    python3 -m ruff check .
+    )
 
 # Format code (Rust + Python)
 format:
