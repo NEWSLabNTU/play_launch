@@ -11,21 +11,21 @@ use tracing::{debug, info};
 
 /// Wrapper for invoking dump_launch as a subprocess
 pub struct DumpLauncher {
-    ros2_path: PathBuf,
+    python_path: PathBuf,
 }
 
 impl DumpLauncher {
-    /// Find ros2 command in PATH
+    /// Find python3 command in PATH
     pub fn new() -> Result<Self> {
-        // Find ros2 binary (which should be in PATH after sourcing setup.bash)
-        let ros2_path = which::which("ros2").wrap_err(
-            "ros2 command not found in PATH. \
-             Ensure the ROS 2 workspace is sourced (source /opt/ros/humble/setup.bash)",
+        // Find python3 binary (should be in PATH)
+        let python_path = which::which("python3").wrap_err(
+            "python3 command not found in PATH. \
+             Ensure Python 3 is installed.",
         )?;
 
-        debug!("Found ros2 at: {}", ros2_path.display());
+        debug!("Found python3 at: {}", python_path.display());
 
-        Ok(Self { ros2_path })
+        Ok(Self { python_path })
     }
 
     /// Execute dump_launch for a launch file
@@ -42,10 +42,9 @@ impl DumpLauncher {
         args: &[String],
         output: &Path,
     ) -> Result<()> {
-        let mut cmd = Command::new(&self.ros2_path);
-        cmd.arg("run")
-            .arg("dump_launch")
-            .arg("dump_launch")
+        let mut cmd = Command::new(&self.python_path);
+        cmd.arg("-m")
+            .arg("play_launch.dump")
             .arg(package_or_path);
 
         // Add launch file if provided (package-based launch)
@@ -134,10 +133,9 @@ impl DumpLauncher {
         args: &[String],
         output: &Path,
     ) -> Result<()> {
-        let mut cmd = Command::new(&self.ros2_path);
-        cmd.arg("run")
-            .arg("dump_launch")
-            .arg("dump_launch")
+        let mut cmd = Command::new(&self.python_path);
+        cmd.arg("-m")
+            .arg("play_launch.dump")
             .arg(package)
             .arg(executable);
 

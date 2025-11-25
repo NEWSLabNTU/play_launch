@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Substitution, Tuple
+from typing import Any, List, Optional, Tuple
 
 from launch.actions.execute_local import ExecuteLocal
 from launch.actions.opaque_function import OpaqueFunction

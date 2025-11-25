@@ -46,8 +46,6 @@ dev = [
 
 [project.scripts]
 play_launch = "play_launch.cli:main"
-dump_launch = "play_launch.dump:main"
-play_launch_plot = "play_launch.analyzer:main"
 
 [project.urls]
 Repository = "https://github.com/NEWSLabNTU/play_launch"

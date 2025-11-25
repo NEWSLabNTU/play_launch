@@ -46,9 +46,8 @@ impl PlotLauncher {
     ) -> Result<()> {
         let mut cmd = Command::new(&self.python_path);
 
-        // Execute as Python module: python3 -m play_launch_analyzer.plot_resource_usage
-        cmd.arg("-m")
-            .arg("play_launch_analyzer.plot_resource_usage");
+        // Execute as Python module: python3 -m play_launch.analyzer
+        cmd.arg("-m").arg("play_launch.analyzer");
 
         // Add log directory argument if provided
         if let Some(dir) = log_dir {
