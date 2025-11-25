@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "play-launch"
+version = "0.3.0"
+description = "ROS2 Launch Inspection Tool - Record and replay launch executions for performance analysis"
+readme = "README.md"
+license = "BSD-3-Clause"
+requires-python = ">=3.10"
+authors = [
+    {name = "Lin, Hsiang-Jui", email = "jerry73204@gmail.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Monitoring",
+]
+keywords = ["ros2", "launch", "profiling", "monitoring", "robotics"]
+
+dependencies = [
+    "pyyaml>=6.0",
+    "lark>=1.2",
+    "packaging>=24.0",
+    "plotly>=5.0",
+    "pandas>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+    "pytest-mock>=3.12",
+    "ruff>=0.8.0",
+    "build",
+]
+
+[project.scripts]
+play_launch = "play_launch.cli:main"
+dump_launch = "play_launch.dump:main"
+play_launch_plot = "play_launch.analyzer:main"
+
+[project.urls]
+Repository = "https://github.com/NEWSLabNTU/play_launch"
+Documentation = "https://github.com/NEWSLabNTU/play_launch#readme"
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools.package-data]
+"play_launch" = ["bin/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "python/play_launch"]
+python_files = ["test_*.py"]

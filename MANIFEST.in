@@ -1,0 +1,16 @@
+# Include documentation
+include README.md
+include CLAUDE.md
+include LICENSE
+
+# Include Python package data
+recursive-include python *.py
+
+# Include binaries (when present, for wheel building)
+include python/play_launch/bin/*
+
+# Exclude build artifacts
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.so
+global-exclude .git*

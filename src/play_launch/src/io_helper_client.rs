@@ -239,29 +239,70 @@ impl Drop for IoHelperClient {
     }
 }
 
-/// Find the helper binary (same directory as current executable)
+/// Find the helper binary with fallback chain:
+/// 1. PLAY_LAUNCH_IO_HELPER environment variable (development override)
+/// 2. Same directory as current executable (pip install or colcon)
+/// 3. ROS2 install paths (/opt/ros/humble/lib/play_launch/)
+/// 4. PATH search (fallback)
 fn find_helper_binary() -> Result<PathBuf> {
-    let exe_path = std::env::current_exe().wrap_err("Failed to get current executable path")?;
-
-    let exe_dir = exe_path
-        .parent()
-        .ok_or_else(|| eyre::eyre!("Failed to get executable directory"))?;
-
-    let helper_path = exe_dir.join("play_launch_io_helper");
-
-    if !helper_path.exists() {
-        return Err(eyre::eyre!(
-            "Helper binary not found at: {:?}\n\
-             Make sure play_launch_io_helper is built and installed in the same directory as play_launch.\n\
-             Run: make build-io-helper",
-            helper_path
-        ));
+    // 1. Check environment variable (development override)
+    if let Ok(path) = std::env::var("PLAY_LAUNCH_IO_HELPER") {
+        let p = PathBuf::from(&path);
+        if p.exists() {
+            debug!("Using I/O helper from environment: {}", path);
+            check_helper_capabilities(&p)?;
+            return Ok(p);
+        }
+        warn!("PLAY_LAUNCH_IO_HELPER set but not found: {}", path);
     }
 
-    // Check if helper has CAP_SYS_PTRACE capability
-    check_helper_capabilities(&helper_path)?;
+    // 2. Check same directory as current executable (pip install or colcon layout)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let helper_path = exe_dir.join("play_launch_io_helper");
+            if helper_path.exists() {
+                debug!("Using I/O helper from exe dir: {:?}", helper_path);
+                check_helper_capabilities(&helper_path)?;
+                return Ok(helper_path);
+            }
+        }
+    }
 
-    Ok(helper_path)
+    // 3. Check ROS2 install locations
+    let ros2_paths = [
+        "/opt/ros/humble/lib/play_launch/play_launch_io_helper",
+        "/usr/lib/play_launch/play_launch_io_helper",
+    ];
+
+    for path_str in &ros2_paths {
+        let path = PathBuf::from(path_str);
+        if path.exists() {
+            debug!("Using I/O helper from ROS2 path: {}", path_str);
+            check_helper_capabilities(&path)?;
+            return Ok(path);
+        }
+    }
+
+    // 4. Search in PATH
+    if let Ok(path) = which::which("play_launch_io_helper") {
+        debug!("Using I/O helper from PATH: {:?}", path);
+        check_helper_capabilities(&path)?;
+        return Ok(path);
+    }
+
+    Err(eyre::eyre!(
+        "Helper binary not found.\n\
+         Searched locations:\n\
+         - PLAY_LAUNCH_IO_HELPER environment variable\n\
+         - Same directory as play_launch binary\n\
+         - /opt/ros/humble/lib/play_launch/\n\
+         - /usr/lib/play_launch/\n\
+         - PATH\n\
+         \n\
+         Make sure play_launch_io_helper is installed.\n\
+         For pip install: Binary should be in site-packages/play_launch/bin/\n\
+         For colcon: Run 'just build'"
+    ))
 }
 
 /// Check if helper binary has required capabilities

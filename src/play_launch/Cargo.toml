@@ -6,8 +6,8 @@ authors = ["Lin, Hsiang-Jui <jerry73204@gmail.com>"]
 description = "ROS launch record player"
 homepage = "https://github.com/NEWSLabNTU/play_launch"
 repository = "https://github.com/NEWSLabNTU/play_launch.git"
-readme = "README.md"
-license = "BSD"
+readme = "../../README.md"
+license = "BSD-3-Clause"
 
 # Main binary
 [[bin]]

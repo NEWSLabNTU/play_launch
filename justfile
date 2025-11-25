@@ -9,23 +9,6 @@ install-deps:
     #!/usr/bin/env bash
     set -e
 
-    # Check for dirty submodules
-    if git submodule status | grep -E '^\+'; then
-        echo "Warning: Some submodules have uncommitted changes."
-        git submodule status | grep -E '^\+'
-        read -p "Discard untracked changes and update submodules? [y/N] " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            git submodule foreach --recursive git clean -fd
-            git submodule update --init --recursive
-        else
-            echo "Skipping submodule update. Please resolve manually."
-            exit 1
-        fi
-    else
-        git submodule update --init --recursive
-    fi
-
     # Check for conflicting colcon packages
     if pip show colcon-ros-cargo &>/dev/null || pip show colcon-cargo &>/dev/null; then
         echo "Warning: Conflicting packages detected:"
@@ -48,12 +31,40 @@ install-deps:
     rosdep update
     rosdep install --from-paths src --ignore-src -r -y
 
-# Build all packages
+# Build all packages with colcon
 build:
     #!/usr/bin/env bash
     set -e
     source /opt/ros/humble/setup.bash
     colcon build {{colcon_flags}} --base-paths src
+
+# Build Python wheel with setuptools (copies binaries from colcon build)
+build-wheel:
+    #!/usr/bin/env bash
+    set -e
+
+    # Check if binaries exist from colcon build
+    if [ ! -f install/play_launch/lib/play_launch/play_launch ]; then
+        echo "Error: play_launch binary not found. Run 'just build' first."
+        exit 1
+    fi
+
+    # Create bin directory and copy binaries
+    echo "Copying binaries to python/play_launch/bin/..."
+    mkdir -p python/play_launch/bin
+    cp install/play_launch/lib/play_launch/play_launch python/play_launch/bin/
+    cp install/play_launch/lib/play_launch/play_launch_io_helper python/play_launch/bin/
+    chmod +x python/play_launch/bin/*
+
+    # Build wheel with setuptools
+    echo "Building wheel..."
+    pip install --quiet build
+    python -m build --wheel
+
+    # Show output
+    echo ""
+    echo "Wheel built successfully:"
+    ls -lh dist/*.whl
 
 # Run play_launch with optional arguments (e.g., just run launch demo_nodes_cpp talker_listener.launch.py)
 run *ARGS:
@@ -98,7 +109,93 @@ verify-io-helper:
 
 # Clean all build artifacts
 clean:
-    rm -rf build install log
+    rm -rf build install log dist target python/play_launch/bin/play_launch python/play_launch/bin/play_launch_io_helper
+
+# Build source distribution
+build-sdist:
+    #!/usr/bin/env bash
+    set -e
+    pip install --quiet build
+    python -m build --sdist
+
+# Install wheel locally for testing
+install-wheel:
+    #!/usr/bin/env bash
+    set -e
+    pip install dist/play_launch-*.whl --force-reinstall
+
+# Test pip-installed wheel (in a fresh venv)
+test-wheel:
+    #!/usr/bin/env bash
+    set -e
+
+    if ! ls dist/play_launch-*.whl &>/dev/null; then
+        echo "Error: No wheel found in dist/. Run 'just build-wheel' first."
+        exit 1
+    fi
+
+    # Create temp venv
+    VENV_DIR=$(mktemp -d)
+    python3 -m venv "$VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+
+    # Source ROS2 (required runtime dependency)
+    source /opt/ros/humble/setup.bash
+
+    # Install wheel
+    pip install dist/play_launch-*.whl pytest
+
+    # Run tests
+    echo "Testing pip-installed package..."
+    play_launch --help
+    python -c "from play_launch.dump import LaunchInspector; print('dump module: OK')"
+    python -c "from play_launch.analyzer import main; print('analyzer module: OK')"
+
+    # Run integration tests
+    pytest tests/test_pip_install.py -v
+
+    # Cleanup
+    deactivate
+    rm -rf "$VENV_DIR"
+    echo "All tests passed!"
+
+# Publish wheel to PyPI (requires PYPI_TOKEN env var)
+publish-pypi:
+    #!/usr/bin/env bash
+    set -e
+
+    if [ -z "$PYPI_TOKEN" ]; then
+        echo "Error: PYPI_TOKEN environment variable not set."
+        echo "Get a token from https://pypi.org/manage/account/token/"
+        exit 1
+    fi
+
+    if ! ls dist/*.whl &>/dev/null; then
+        echo "Error: No wheel found in dist/. Run 'just build-wheel' first."
+        exit 1
+    fi
+
+    pip install twine
+    twine upload dist/*.whl -u __token__ -p "$PYPI_TOKEN"
+
+# Publish wheel to TestPyPI (for testing)
+publish-testpypi:
+    #!/usr/bin/env bash
+    set -e
+
+    if [ -z "$TESTPYPI_TOKEN" ]; then
+        echo "Error: TESTPYPI_TOKEN environment variable not set."
+        echo "Get a token from https://test.pypi.org/manage/account/token/"
+        exit 1
+    fi
+
+    if ! ls dist/*.whl &>/dev/null; then
+        echo "Error: No wheel found in dist/. Run 'just build-wheel' first."
+        exit 1
+    fi
+
+    pip install twine
+    twine upload --repository testpypi dist/*.whl -u __token__ -p "$TESTPYPI_TOKEN"
 
 # Build Debian package using standard Debian tools
 build-deb:
