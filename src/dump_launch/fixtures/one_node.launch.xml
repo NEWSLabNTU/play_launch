@@ -1,7 +1,0 @@
-<?xml version="1.0"?>
-<launch>
-  <node pkg="dummy_perception_publisher" exec="dummy_perception_publisher_node" name="dummy_perception_publisher" output="screen">
-    <remap from="~/input" to="dummy_input"/>
-    <param name="number" value="123"/>
-  </node>
-</launch>
