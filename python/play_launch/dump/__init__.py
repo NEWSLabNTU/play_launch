@@ -25,7 +25,7 @@ def main() -> int:
     parser.add_argument("-o", "--output", default="record.json")
     args = parser.parse_args()
 
-    launch_arguments = list()
+    launch_arguments = []
     if os.path.isfile(args.package_name):
         launch_path = args.package_name
         if args.launch_file_name is not None:
@@ -38,11 +38,9 @@ def main() -> int:
                 package_name=args.package_name, file_name=args.launch_file_name
             )
         except PackageNotFoundError as exc:
-            raise RuntimeError(
-                "Package '{}' not found: {}".format(args.package_name, exc)
-            )
+            raise RuntimeError(f"Package '{args.package_name}' not found: {exc}") from exc
         except (FileNotFoundError, MultipleLaunchFilesError) as exc:
-            raise RuntimeError(str(exc))
+            raise RuntimeError(str(exc)) from exc
 
     launch_arguments.extend(args.launch_arguments)
 
@@ -71,20 +69,14 @@ def main() -> int:
     return 0
 
 
-def parse_launch_arguments(launch_arguments: List[Text]) -> List[Tuple[Text, Text]]:
+def parse_launch_arguments(launch_arguments: list[str]) -> list[tuple[str, str]]:
     """Parse the given launch arguments from the command line, into list of tuples for launch."""
     parsed_launch_arguments = OrderedDict()  # type: ignore
     for argument in launch_arguments:
         count = argument.count(":=")
-        if (
-            count == 0
-            or argument.startswith(":=")
-            or (count == 1 and argument.endswith(":="))
-        ):
+        if count == 0 or argument.startswith(":=") or (count == 1 and argument.endswith(":=")):
             raise RuntimeError(
-                "malformed launch argument '{}', expected format '<name>:=<value>'".format(
-                    argument
-                )
+                f"malformed launch argument '{argument}', expected format '<name>:=<value>'"
             )
         name, value = argument.split(":=", maxsplit=1)
         parsed_launch_arguments[name] = value  # last one wins is intentional

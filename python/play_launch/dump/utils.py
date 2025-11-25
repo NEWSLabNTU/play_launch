@@ -1,5 +1,4 @@
 import decimal
-from typing import Optional, Text, Tuple
 
 import yaml
 from rcl_interfaces.msg import Parameter
@@ -18,7 +17,7 @@ def float_to_str(f):
     return format(d, "f")
 
 
-def log_level_code_to_text(code: int) -> Optional[Text]:
+def log_level_code_to_text(code: int) -> str | None:
     match code:
         case 0:
             return None
@@ -36,11 +35,11 @@ def log_level_code_to_text(code: int) -> Optional[Text]:
             raise ValueError(f"unknown log level code {code}")
 
 
-def text_to_kv(expr: Text):
+def text_to_kv(expr: str):
     return tuple(expr.split(":=", 1))
 
 
-def param_to_kv(param: Parameter) -> Tuple[Text, Text]:
+def param_to_kv(param: Parameter) -> tuple[str, str]:
     pvalue = param.value
 
     match pvalue.type:
@@ -69,11 +68,7 @@ def param_to_kv(param: Parameter) -> Tuple[Text, Text]:
             # command. It uses an alternative way to work around.
 
             # value = dump_yaml(list(pvalue.double_array_value))
-            value = (
-                "["
-                + ", ".join(float_to_str(f) for f in pvalue.double_array_value)
-                + "]"
-            )
+            value = "[" + ", ".join(float_to_str(f) for f in pvalue.double_array_value) + "]"
         case 9:
             value = dump_yaml(list(pvalue.string_array_value))
         case _:
@@ -82,7 +77,7 @@ def param_to_kv(param: Parameter) -> Tuple[Text, Text]:
     return param.name, value
 
 
-def dump_yaml(value) -> Text:
+def dump_yaml(value) -> str:
     result = yaml.dump(
         value,
         default_flow_style=True,

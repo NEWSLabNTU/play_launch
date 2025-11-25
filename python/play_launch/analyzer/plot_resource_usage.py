@@ -16,19 +16,16 @@ Process names are shown in hover tooltips.
 import argparse
 import csv
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-import sys
 
 try:
+    import pandas as pd
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
-    import pandas as pd
 except ImportError:
-    print(
-        "Error: plotly and pandas are required. Install with: pip install plotly pandas"
-    )
+    print("Error: plotly and pandas are required. Install with: pip install plotly pandas")
     sys.exit(1)
 
 
@@ -46,7 +43,7 @@ def find_latest_log_dir(base_log_dir: Path) -> Path:
     return latest
 
 
-def parse_csv_file(csv_path: Path) -> Optional[Dict]:
+def parse_csv_file(csv_path: Path) -> dict | None:
     """
     Parse a CSV file and extract all metrics.
 
@@ -74,7 +71,7 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
     io_storage_write_list = []
     io_cancelled_write_list = []
 
-    with open(csv_path, "r") as f:
+    with open(csv_path) as f:
         reader = csv.DictReader(f)
         for row in reader:
             ts = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
@@ -99,7 +96,9 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
             gpu_powers.append(int(gpu_power_str) if gpu_power_str else None)
 
             gpu_graphics_clock_str = row.get("gpu_graphics_clock_mhz", "").strip()
-            gpu_graphics_clocks.append(int(gpu_graphics_clock_str) if gpu_graphics_clock_str else None)
+            gpu_graphics_clocks.append(
+                int(gpu_graphics_clock_str) if gpu_graphics_clock_str else None
+            )
 
             gpu_memory_clock_str = row.get("gpu_memory_clock_mhz", "").strip()
             gpu_memory_clocks.append(int(gpu_memory_clock_str) if gpu_memory_clock_str else None)
@@ -166,13 +165,19 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
         "num_threads": num_threads_list,
         "io_syscr": io_syscr_list,
         "io_syscw": io_syscw_list,
-        "io_storage_read_mb": [sr / (1024**2) if sr is not None else None for sr in io_storage_read_list],
-        "io_storage_write_mb": [sw / (1024**2) if sw is not None else None for sw in io_storage_write_list],
-        "io_cancelled_write_kb": [cw / 1024 if cw is not None else None for cw in io_cancelled_write_list],
+        "io_storage_read_mb": [
+            sr / (1024**2) if sr is not None else None for sr in io_storage_read_list
+        ],
+        "io_storage_write_mb": [
+            sw / (1024**2) if sw is not None else None for sw in io_storage_write_list
+        ],
+        "io_cancelled_write_kb": [
+            cw / 1024 if cw is not None else None for cw in io_cancelled_write_list
+        ],
     }
 
 
-def collect_metrics(log_dir: Path) -> Dict[str, Dict]:
+def collect_metrics(log_dir: Path) -> dict[str, dict]:
     """
     Collect metrics from all node CSV files in the log directory.
 
@@ -202,7 +207,7 @@ def collect_metrics(log_dir: Path) -> Dict[str, Dict]:
     return metrics
 
 
-def has_data(metrics: Dict[str, Dict], metric_key: str) -> bool:
+def has_data(metrics: dict[str, dict], metric_key: str) -> bool:
     """Check if any node has non-None data for the given metric."""
     for node_data in metrics.values():
         if any(v is not None for v in node_data.get(metric_key, [])):
@@ -210,7 +215,7 @@ def has_data(metrics: Dict[str, Dict], metric_key: str) -> bool:
     return False
 
 
-def load_all_metadata(log_dir: Path) -> Dict[str, Dict]:
+def load_all_metadata(log_dir: Path) -> dict[str, dict]:
     """
     Load all metadata.json files from node/ and load_node/ directories.
 
@@ -228,7 +233,7 @@ def load_all_metadata(log_dir: Path) -> Dict[str, Dict]:
 
             metadata_file = node_subdir / "metadata.json"
             if metadata_file.exists():
-                with open(metadata_file, 'r') as f:
+                with open(metadata_file) as f:
                     metadata[node_subdir.name] = json.load(f)
 
     # Load composable node metadata
@@ -240,13 +245,13 @@ def load_all_metadata(log_dir: Path) -> Dict[str, Dict]:
 
             metadata_file = node_subdir / "metadata.json"
             if metadata_file.exists():
-                with open(metadata_file, 'r') as f:
+                with open(metadata_file) as f:
                     metadata[node_subdir.name] = json.load(f)
 
     return metadata
 
 
-def build_container_mapping(metadata: Dict[str, Dict]) -> Dict[str, List[str]]:
+def build_container_mapping(metadata: dict[str, dict]) -> dict[str, list[str]]:
     """
     Build a mapping from container names to lists of composable nodes they contain.
 
@@ -286,10 +291,12 @@ def abbreviate_name(name: str, max_len: int = 15) -> str:
     """
     if len(name) <= max_len:
         return name
-    return name[:max_len-3] + "..."
+    return name[: max_len - 3] + "..."
 
 
-def inject_statistics_panel(html_path: Path, unit: str = "%", container_map: Dict[str, List[str]] = None):
+def inject_statistics_panel(
+    html_path: Path, unit: str = "%", container_map: dict[str, list[str]] = None
+):
     """
     Inject JavaScript into HTML file to add a statistics panel that shows box plot statistics.
 
@@ -304,7 +311,7 @@ def inject_statistics_panel(html_path: Path, unit: str = "%", container_map: Dic
         container_map: Dictionary mapping container names to lists of contained node names
     """
     # Read the HTML file
-    with open(html_path, 'r', encoding='utf-8') as f:
+    with open(html_path, encoding="utf-8") as f:
         html_content = f.read()
 
     # Embed container map as JSON
@@ -431,14 +438,14 @@ window.addEventListener('load', function() {{
 '''
 
     # Insert JavaScript before </body> tag
-    html_content = html_content.replace('</body>', js_code + '\n</body>')
+    html_content = html_content.replace("</body>", js_code + "\n</body>")
 
     # Write back to file
-    with open(html_path, 'w', encoding='utf-8') as f:
+    with open(html_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
 
-def inject_container_panel(html_path: Path, container_map: Dict[str, List[str]]):
+def inject_container_panel(html_path: Path, container_map: dict[str, list[str]]):
     """
     Inject JavaScript into HTML file to add a container panel for timeline charts.
 
@@ -451,14 +458,14 @@ def inject_container_panel(html_path: Path, container_map: Dict[str, List[str]])
         container_map: Dictionary mapping container names to lists of contained node names
     """
     # Read the HTML file
-    with open(html_path, 'r', encoding='utf-8') as f:
+    with open(html_path, encoding="utf-8") as f:
         html_content = f.read()
 
     # Embed container map as JSON
     container_map_json = json.dumps(container_map or {})
 
     # JavaScript code to add container panel
-    js_code = f'''
+    js_code = f"""
 <script>
 window.addEventListener('load', function() {{
     // Find the Plotly div (first div with class 'plotly-graph-div')
@@ -521,21 +528,18 @@ window.addEventListener('load', function() {{
     }});
 }});
 </script>
-'''
+"""
 
     # Insert JavaScript before </body> tag
-    html_content = html_content.replace('</body>', js_code + '\n</body>')
+    html_content = html_content.replace("</body>", js_code + "\n</body>")
 
     # Write back to file
-    with open(html_path, 'w', encoding='utf-8') as f:
+    with open(html_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
 
 def create_individual_charts(
-    metrics: Dict[str, Dict],
-    output_dir: Path,
-    log_dir: Path,
-    metrics_to_plot: List[str] = None
+    metrics: dict[str, dict], output_dir: Path, log_dir: Path, metrics_to_plot: list[str] = None
 ):
     """
     Create individual interactive HTML charts (one file per chart).
@@ -574,19 +578,21 @@ def create_individual_charts(
     has_network = has_data(metrics, "tcp") or has_data(metrics, "udp")
     has_threads = has_data(metrics, "num_threads")
     has_syscalls = has_data(metrics, "io_syscr") or has_data(metrics, "io_syscw")
-    has_storage_io = has_data(metrics, "io_storage_read_mb") or has_data(metrics, "io_storage_write_mb")
+    has_storage_io = has_data(metrics, "io_storage_read_mb") or has_data(
+        metrics, "io_storage_write_mb"
+    )
 
     chart_config = {
-        'displayModeBar': True,
-        'displaylogo': False,
-        'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
-        'toImageButtonOptions': {
-            'format': 'png',
-            'filename': 'chart',
-            'height': 1000,
-            'width': 1600,
-            'scale': 2
-        }
+        "displayModeBar": True,
+        "displaylogo": False,
+        "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+        "toImageButtonOptions": {
+            "format": "png",
+            "filename": "chart",
+            "height": 1000,
+            "width": 1600,
+            "scale": 2,
+        },
     }
 
     charts_created = []
@@ -597,7 +603,7 @@ def create_individual_charts(
         for node_name, node_data in sorted(metrics.items()):
             times = node_data["times"]
             cpu_values = node_data["cpu"]
-            plot_times = [t for t, v in zip(times, cpu_values) if v is not None]
+            plot_times = [t for t, v in zip(times, cpu_values, strict=False) if v is not None]
             plot_values = [v for v in cpu_values if v is not None]
 
             if plot_values:
@@ -611,22 +617,22 @@ def create_individual_charts(
                     if contained_nodes:
                         nodes_list = "<br>Contains: " + ", ".join(contained_nodes[:5])
                         if len(contained_nodes) > 5:
-                            nodes_list += f", ... ({len(contained_nodes)-5} more)"
+                            nodes_list += f", ... ({len(contained_nodes) - 5} more)"
                     else:
                         nodes_list = "<br>Contains: (empty)"
 
-                    hovertemplate = f'<b>Container: %{{fullData.name}}</b><br>Time: %{{x:.2f}}s<br>CPU: %{{y:.2f}}%{nodes_list}<extra></extra>'
+                    hovertemplate = f"<b>Container: %{{fullData.name}}</b><br>Time: %{{x:.2f}}s<br>CPU: %{{y:.2f}}%{nodes_list}<extra></extra>"
                 else:
                     # Regular node: simple hover
-                    hovertemplate = '<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>CPU: %{y:.2f}%<extra></extra>'
+                    hovertemplate = "<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>CPU: %{y:.2f}%<extra></extra>"
 
                 fig.add_trace(
                     go.Scatter(
                         x=plot_times,
                         y=plot_values,
-                        mode='lines',
+                        mode="lines",
                         name=node_name,
-                        hovertemplate=hovertemplate
+                        hovertemplate=hovertemplate,
                     )
                 )
 
@@ -635,9 +641,9 @@ def create_individual_charts(
             xaxis_title="Time (s)",
             yaxis_title="CPU Usage (%)",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "cpu_timeline.html"
@@ -654,7 +660,7 @@ def create_individual_charts(
         for node_name, node_data in sorted(metrics.items()):
             times = node_data["times"]
             mem_values = node_data["rss_mb"]
-            plot_times = [t for t, v in zip(times, mem_values) if v is not None]
+            plot_times = [t for t, v in zip(times, mem_values, strict=False) if v is not None]
             plot_values = [v for v in mem_values if v is not None]
 
             if plot_values:
@@ -668,22 +674,22 @@ def create_individual_charts(
                     if contained_nodes:
                         nodes_list = "<br>Contains: " + ", ".join(contained_nodes[:5])
                         if len(contained_nodes) > 5:
-                            nodes_list += f", ... ({len(contained_nodes)-5} more)"
+                            nodes_list += f", ... ({len(contained_nodes) - 5} more)"
                     else:
                         nodes_list = "<br>Contains: (empty)"
 
-                    hovertemplate = f'<b>Container: %{{fullData.name}}</b><br>Time: %{{x:.2f}}s<br>Memory: %{{y:.2f}} MB{nodes_list}<extra></extra>'
+                    hovertemplate = f"<b>Container: %{{fullData.name}}</b><br>Time: %{{x:.2f}}s<br>Memory: %{{y:.2f}} MB{nodes_list}<extra></extra>"
                 else:
                     # Regular node: simple hover
-                    hovertemplate = '<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Memory: %{y:.2f} MB<extra></extra>'
+                    hovertemplate = "<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Memory: %{y:.2f} MB<extra></extra>"
 
                 fig.add_trace(
                     go.Scatter(
                         x=plot_times,
                         y=plot_values,
-                        mode='lines',
+                        mode="lines",
                         name=node_name,
-                        hovertemplate=hovertemplate
+                        hovertemplate=hovertemplate,
                     )
                 )
 
@@ -692,9 +698,9 @@ def create_individual_charts(
             xaxis_title="Time (s)",
             yaxis_title="Memory Usage (MB)",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "memory_timeline.html"
@@ -719,7 +725,7 @@ def create_individual_charts(
         cpu_data.sort(key=lambda x: x[2], reverse=False)
 
         fig = go.Figure()
-        for node_name, cpu_values, avg_cpu in cpu_data:
+        for node_name, cpu_values, _avg_cpu in cpu_data:
             # Abbreviate label, store full name for hover
             abbreviated_name = abbreviate_name(node_name, max_len=15)
 
@@ -727,10 +733,10 @@ def create_individual_charts(
                 go.Box(
                     y=cpu_values,
                     name=abbreviated_name,
-                    boxmean='sd',
+                    boxmean="sd",
                     customdata=[node_name] * len(cpu_values),  # Array with repeated value
-                    hovertemplate='<b>%{customdata}</b><br>%{y:.2f}%<extra></extra>',
-                    hoveron='points'  # Only show hover for actual data points, not box components
+                    hovertemplate="<b>%{customdata}</b><br>%{y:.2f}%<extra></extra>",
+                    hoveron="points",  # Only show hover for actual data points, not box components
                 )
             )
 
@@ -738,9 +744,9 @@ def create_individual_charts(
             title="CPU Usage Distribution (sorted by average, low to high)",
             yaxis_title="CPU Usage (%)",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "cpu_distribution.html"
@@ -765,7 +771,7 @@ def create_individual_charts(
         mem_data.sort(key=lambda x: x[2], reverse=False)
 
         fig = go.Figure()
-        for node_name, mem_values, avg_mem in mem_data:
+        for node_name, mem_values, _avg_mem in mem_data:
             # Abbreviate label, store full name for hover
             abbreviated_name = abbreviate_name(node_name, max_len=15)
 
@@ -773,10 +779,10 @@ def create_individual_charts(
                 go.Box(
                     y=mem_values,
                     name=abbreviated_name,
-                    boxmean='sd',
+                    boxmean="sd",
                     customdata=[node_name] * len(mem_values),  # Array with repeated value
-                    hovertemplate='<b>%{customdata}</b><br>%{y:.2f} MB<extra></extra>',
-                    hoveron='points'  # Only show hover for actual data points, not box components
+                    hovertemplate="<b>%{customdata}</b><br>%{y:.2f} MB<extra></extra>",
+                    hoveron="points",  # Only show hover for actual data points, not box components
                 )
             )
 
@@ -784,9 +790,9 @@ def create_individual_charts(
             title="Memory Usage Distribution (sorted by average, low to high)",
             yaxis_title="Memory Usage (MB)",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "memory_distribution.html"
@@ -805,7 +811,7 @@ def create_individual_charts(
 
             # Plot read rates
             read_values = node_data["io_read_mbps"]
-            plot_times_read = [t for t, v in zip(times, read_values) if v is not None]
+            plot_times_read = [t for t, v in zip(times, read_values, strict=False) if v is not None]
             plot_values_read = [v for v in read_values if v is not None]
 
             if plot_values_read:
@@ -813,16 +819,18 @@ def create_individual_charts(
                     go.Scatter(
                         x=plot_times_read,
                         y=plot_values_read,
-                        mode='lines',
+                        mode="lines",
                         name=f"{node_name} (read)",
-                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Rate: %{y:.2f} MB/s<extra></extra>',
-                        line=dict(dash='solid')
+                        hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Rate: %{y:.2f} MB/s<extra></extra>",
+                        line={"dash": "solid"},
                     )
                 )
 
             # Plot write rates
             write_values = node_data["io_write_mbps"]
-            plot_times_write = [t for t, v in zip(times, write_values) if v is not None]
+            plot_times_write = [
+                t for t, v in zip(times, write_values, strict=False) if v is not None
+            ]
             plot_values_write = [v for v in write_values if v is not None]
 
             if plot_values_write:
@@ -830,10 +838,10 @@ def create_individual_charts(
                     go.Scatter(
                         x=plot_times_write,
                         y=plot_values_write,
-                        mode='lines',
+                        mode="lines",
                         name=f"{node_name} (write)",
-                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Rate: %{y:.2f} MB/s<extra></extra>',
-                        line=dict(dash='dash')
+                        hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Rate: %{y:.2f} MB/s<extra></extra>",
+                        line={"dash": "dash"},
                     )
                 )
 
@@ -842,9 +850,9 @@ def create_individual_charts(
             xaxis_title="Time (s)",
             yaxis_title="I/O Rate (MB/s)",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "io_timeline.html"
@@ -860,7 +868,9 @@ def create_individual_charts(
             # Plot GPU memory
             if has_gpu_mem:
                 gpu_mem_values = node_data["gpu_mem_mb"]
-                plot_times = [t for t, v in zip(times, gpu_mem_values) if v is not None]
+                plot_times = [
+                    t for t, v in zip(times, gpu_mem_values, strict=False) if v is not None
+                ]
                 plot_values = [v for v in gpu_mem_values if v is not None]
 
                 if plot_values:
@@ -868,9 +878,9 @@ def create_individual_charts(
                         go.Scatter(
                             x=plot_times,
                             y=plot_values,
-                            mode='lines',
+                            mode="lines",
                             name=f"{node_name}",
-                            hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>GPU Mem: %{y:.2f} MB<extra></extra>'
+                            hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>GPU Mem: %{y:.2f} MB<extra></extra>",
                         )
                     )
 
@@ -879,9 +889,9 @@ def create_individual_charts(
             xaxis_title="Time (s)",
             yaxis_title="GPU Memory (MB)",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "gpu_timeline.html"
@@ -896,7 +906,7 @@ def create_individual_charts(
 
             if has_gpu_temp:
                 temp_values = node_data["gpu_temp"]
-                plot_times = [t for t, v in zip(times, temp_values) if v is not None]
+                plot_times = [t for t, v in zip(times, temp_values, strict=False) if v is not None]
                 plot_values = [v for v in temp_values if v is not None]
 
                 if plot_values:
@@ -904,9 +914,9 @@ def create_individual_charts(
                         go.Scatter(
                             x=plot_times,
                             y=plot_values,
-                            mode='lines',
+                            mode="lines",
                             name=node_name,
-                            hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Temp: %{y:.0f}°C<extra></extra>'
+                            hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Temp: %{y:.0f}°C<extra></extra>",
                         )
                     )
 
@@ -915,9 +925,9 @@ def create_individual_charts(
             xaxis_title="Time (s)",
             yaxis_title="GPU Temperature (°C)",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "gpu_temp_power.html"
@@ -931,7 +941,7 @@ def create_individual_charts(
             times = node_data["times"]
 
             tcp_values = node_data["tcp"]
-            plot_times = [t for t, v in zip(times, tcp_values) if v is not None]
+            plot_times = [t for t, v in zip(times, tcp_values, strict=False) if v is not None]
             plot_values = [v for v in tcp_values if v is not None]
 
             if plot_values:
@@ -939,9 +949,9 @@ def create_individual_charts(
                     go.Scatter(
                         x=plot_times,
                         y=plot_values,
-                        mode='lines',
+                        mode="lines",
                         name=node_name,
-                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>TCP: %{y:.0f}<extra></extra>'
+                        hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>TCP: %{y:.0f}<extra></extra>",
                     )
                 )
 
@@ -950,9 +960,9 @@ def create_individual_charts(
             xaxis_title="Time (s)",
             yaxis_title="Connections",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "network_timeline.html"
@@ -966,7 +976,7 @@ def create_individual_charts(
             times = node_data["times"]
 
             graphics_values = node_data["gpu_graphics_clock"]
-            plot_times = [t for t, v in zip(times, graphics_values) if v is not None]
+            plot_times = [t for t, v in zip(times, graphics_values, strict=False) if v is not None]
             plot_values = [v for v in graphics_values if v is not None]
 
             if plot_values:
@@ -974,9 +984,9 @@ def create_individual_charts(
                     go.Scatter(
                         x=plot_times,
                         y=plot_values,
-                        mode='lines',
+                        mode="lines",
                         name=node_name,
-                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Clock: %{y:.0f} MHz<extra></extra>'
+                        hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Clock: %{y:.0f} MHz<extra></extra>",
                     )
                 )
 
@@ -985,9 +995,9 @@ def create_individual_charts(
             xaxis_title="Time (s)",
             yaxis_title="Clock Frequency (MHz)",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "gpu_clocks.html"
@@ -1000,7 +1010,7 @@ def create_individual_charts(
         for node_name, node_data in sorted(metrics.items()):
             times = node_data["times"]
             thread_values = node_data["num_threads"]
-            plot_times = [t for t, v in zip(times, thread_values) if v is not None]
+            plot_times = [t for t, v in zip(times, thread_values, strict=False) if v is not None]
             plot_values = [v for v in thread_values if v is not None]
 
             if plot_values:
@@ -1008,9 +1018,9 @@ def create_individual_charts(
                     go.Scatter(
                         x=plot_times,
                         y=plot_values,
-                        mode='lines',
+                        mode="lines",
                         name=node_name,
-                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Threads: %{y:.0f}<extra></extra>'
+                        hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Threads: %{y:.0f}<extra></extra>",
                     )
                 )
 
@@ -1019,9 +1029,9 @@ def create_individual_charts(
             xaxis_title="Time (s)",
             yaxis_title="Thread Count",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "threads_timeline.html"
@@ -1036,7 +1046,9 @@ def create_individual_charts(
 
             # Plot read syscalls
             syscr_values = node_data["io_syscr"]
-            plot_times_read = [t for t, v in zip(times, syscr_values) if v is not None]
+            plot_times_read = [
+                t for t, v in zip(times, syscr_values, strict=False) if v is not None
+            ]
             plot_values_read = [v for v in syscr_values if v is not None]
 
             if plot_values_read:
@@ -1044,16 +1056,18 @@ def create_individual_charts(
                     go.Scatter(
                         x=plot_times_read,
                         y=plot_values_read,
-                        mode='lines',
+                        mode="lines",
                         name=f"{node_name} (read)",
-                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Read syscalls: %{y:.0f}<extra></extra>',
-                        line=dict(dash='solid')
+                        hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Read syscalls: %{y:.0f}<extra></extra>",
+                        line={"dash": "solid"},
                     )
                 )
 
             # Plot write syscalls
             syscw_values = node_data["io_syscw"]
-            plot_times_write = [t for t, v in zip(times, syscw_values) if v is not None]
+            plot_times_write = [
+                t for t, v in zip(times, syscw_values, strict=False) if v is not None
+            ]
             plot_values_write = [v for v in syscw_values if v is not None]
 
             if plot_values_write:
@@ -1061,10 +1075,10 @@ def create_individual_charts(
                     go.Scatter(
                         x=plot_times_write,
                         y=plot_values_write,
-                        mode='lines',
+                        mode="lines",
                         name=f"{node_name} (write)",
-                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Write syscalls: %{y:.0f}<extra></extra>',
-                        line=dict(dash='dash')
+                        hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Write syscalls: %{y:.0f}<extra></extra>",
+                        line={"dash": "dash"},
                     )
                 )
 
@@ -1073,9 +1087,9 @@ def create_individual_charts(
             xaxis_title="Time (s)",
             yaxis_title="System Call Count",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "io_syscalls_timeline.html"
@@ -1090,7 +1104,9 @@ def create_individual_charts(
 
             # Plot storage read
             storage_read_values = node_data["io_storage_read_mb"]
-            plot_times_read = [t for t, v in zip(times, storage_read_values) if v is not None]
+            plot_times_read = [
+                t for t, v in zip(times, storage_read_values, strict=False) if v is not None
+            ]
             plot_values_read = [v for v in storage_read_values if v is not None]
 
             if plot_values_read:
@@ -1098,16 +1114,18 @@ def create_individual_charts(
                     go.Scatter(
                         x=plot_times_read,
                         y=plot_values_read,
-                        mode='lines',
+                        mode="lines",
                         name=f"{node_name} (read)",
-                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Storage Read: %{y:.2f} MB<extra></extra>',
-                        line=dict(dash='solid')
+                        hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Storage Read: %{y:.2f} MB<extra></extra>",
+                        line={"dash": "solid"},
                     )
                 )
 
             # Plot storage write
             storage_write_values = node_data["io_storage_write_mb"]
-            plot_times_write = [t for t, v in zip(times, storage_write_values) if v is not None]
+            plot_times_write = [
+                t for t, v in zip(times, storage_write_values, strict=False) if v is not None
+            ]
             plot_values_write = [v for v in storage_write_values if v is not None]
 
             if plot_values_write:
@@ -1115,10 +1133,10 @@ def create_individual_charts(
                     go.Scatter(
                         x=plot_times_write,
                         y=plot_values_write,
-                        mode='lines',
+                        mode="lines",
                         name=f"{node_name} (write)",
-                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Storage Write: %{y:.2f} MB<extra></extra>',
-                        line=dict(dash='dash')
+                        hovertemplate="<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Storage Write: %{y:.2f} MB<extra></extra>",
+                        line={"dash": "dash"},
                     )
                 )
 
@@ -1127,9 +1145,9 @@ def create_individual_charts(
             xaxis_title="Time (s)",
             yaxis_title="Storage I/O (MB)",
             height=800,
-            hovermode='closest',
-            template='plotly_white',
-            showlegend=False
+            hovermode="closest",
+            template="plotly_white",
+            showlegend=False,
         )
 
         output_path = output_dir / "io_storage_timeline.html"
@@ -1140,7 +1158,7 @@ def create_individual_charts(
     return charts_created
 
 
-def calculate_statistics(metrics: Dict[str, Dict], output_path: Path):
+def calculate_statistics(metrics: dict[str, dict], output_path: Path):
     """Generate comprehensive statistics report."""
     if not metrics:
         return
@@ -1156,18 +1174,22 @@ def calculate_statistics(metrics: Dict[str, Dict], output_path: Path):
     for node_name, node_data in metrics.items():
         cpu_values = [v for v in node_data["cpu"] if v is not None]
         if cpu_values:
-            cpu_stats.append({
-                'node': node_name,
-                'max': max(cpu_values),
-                'avg': sum(cpu_values) / len(cpu_values)
-            })
+            cpu_stats.append(
+                {
+                    "node": node_name,
+                    "max": max(cpu_values),
+                    "avg": sum(cpu_values) / len(cpu_values),
+                }
+            )
 
     if cpu_stats:
         stats_lines.append("CPU USAGE (Top 10)")
         stats_lines.append("-" * 80)
-        cpu_stats.sort(key=lambda x: x['max'], reverse=True)
+        cpu_stats.sort(key=lambda x: x["max"], reverse=True)
         for i, stat in enumerate(cpu_stats[:10], 1):
-            stats_lines.append(f"{i:2d}. {stat['node']:50s} Max: {stat['max']:6.2f}%  Avg: {stat['avg']:6.2f}%")
+            stats_lines.append(
+                f"{i:2d}. {stat['node']:50s} Max: {stat['max']:6.2f}%  Avg: {stat['avg']:6.2f}%"
+            )
         stats_lines.append("")
 
     # Memory statistics
@@ -1175,18 +1197,22 @@ def calculate_statistics(metrics: Dict[str, Dict], output_path: Path):
     for node_name, node_data in metrics.items():
         mem_values = [v for v in node_data["rss_mb"] if v is not None]
         if mem_values:
-            mem_stats.append({
-                'node': node_name,
-                'max': max(mem_values),
-                'avg': sum(mem_values) / len(mem_values)
-            })
+            mem_stats.append(
+                {
+                    "node": node_name,
+                    "max": max(mem_values),
+                    "avg": sum(mem_values) / len(mem_values),
+                }
+            )
 
     if mem_stats:
         stats_lines.append("MEMORY USAGE (Top 10)")
         stats_lines.append("-" * 80)
-        mem_stats.sort(key=lambda x: x['max'], reverse=True)
+        mem_stats.sort(key=lambda x: x["max"], reverse=True)
         for i, stat in enumerate(mem_stats[:10], 1):
-            stats_lines.append(f"{i:2d}. {stat['node']:50s} Max: {stat['max']:8.2f} MB  Avg: {stat['avg']:8.2f} MB")
+            stats_lines.append(
+                f"{i:2d}. {stat['node']:50s} Max: {stat['max']:8.2f} MB  Avg: {stat['avg']:8.2f} MB"
+            )
         stats_lines.append("")
 
     # Thread count statistics
@@ -1194,28 +1220,32 @@ def calculate_statistics(metrics: Dict[str, Dict], output_path: Path):
     for node_name, node_data in metrics.items():
         thread_values = [v for v in node_data["num_threads"] if v is not None]
         if thread_values:
-            thread_stats.append({
-                'node': node_name,
-                'max': max(thread_values),
-                'avg': sum(thread_values) / len(thread_values)
-            })
+            thread_stats.append(
+                {
+                    "node": node_name,
+                    "max": max(thread_values),
+                    "avg": sum(thread_values) / len(thread_values),
+                }
+            )
 
     if thread_stats:
         stats_lines.append("THREAD COUNT (Top 10)")
         stats_lines.append("-" * 80)
-        thread_stats.sort(key=lambda x: x['max'], reverse=True)
+        thread_stats.sort(key=lambda x: x["max"], reverse=True)
         for i, stat in enumerate(thread_stats[:10], 1):
-            stats_lines.append(f"{i:2d}. {stat['node']:50s} Max: {stat['max']:6.0f}  Avg: {stat['avg']:6.1f}")
+            stats_lines.append(
+                f"{i:2d}. {stat['node']:50s} Max: {stat['max']:6.0f}  Avg: {stat['avg']:6.1f}"
+            )
         stats_lines.append("")
 
     stats_lines.append("=" * 80)
 
     # Write to file
-    with open(output_path, 'w') as f:
-        f.write('\n'.join(stats_lines))
+    with open(output_path, "w") as f:
+        f.write("\n".join(stats_lines))
 
 
-def list_available_metrics(metrics: Dict[str, Dict]):
+def list_available_metrics(metrics: dict[str, dict]):
     """List which metrics are available in the dataset."""
     print("\nAvailable metrics in this dataset:")
     print("=" * 50)
@@ -1254,30 +1284,28 @@ def main():
         "--log-dir",
         type=Path,
         help="Path to specific log directory (e.g., play_log/2025-10-29_12-00-00). "
-             "If not provided, uses latest log in base-log-dir."
+        "If not provided, uses latest log in base-log-dir.",
     )
     parser.add_argument(
         "--base-log-dir",
         type=Path,
         default=Path("./play_log"),
-        help="Base directory containing timestamped log directories (default: ./play_log)"
+        help="Base directory containing timestamped log directories (default: ./play_log)",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        help="Directory to save dashboard and statistics (default: same as log-dir)"
+        help="Directory to save dashboard and statistics (default: same as log-dir)",
     )
     parser.add_argument(
         "--metrics",
-        nargs='+',
-        choices=['cpu', 'memory', 'io', 'gpu', 'network', 'all'],
-        default=['all'],
-        help="Which metrics to include in the dashboard (default: all)"
+        nargs="+",
+        choices=["cpu", "memory", "io", "gpu", "network", "all"],
+        default=["all"],
+        help="Which metrics to include in the dashboard (default: all)",
     )
     parser.add_argument(
-        "--list-metrics",
-        action="store_true",
-        help="List available metrics in the log and exit"
+        "--list-metrics", action="store_true", help="List available metrics in the log and exit"
     )
 
     args = parser.parse_args()
@@ -1326,9 +1354,9 @@ def main():
     # Print minimalist summary of generated charts
     if charts_created:
         print("\nGenerated:")
-        for chart_name, chart_path in charts_created:
+        for _chart_name, chart_path in charts_created:
             print(f"  {chart_path.name}")
-        print(f"  statistics.txt")
+        print("  statistics.txt")
 
     # List charts not generated with reasons
     requested_metrics = set(args.metrics)
@@ -1350,9 +1378,13 @@ def main():
             not_generated.append("I/O charts (no data)")
 
     if "gpu" in requested_metrics:
-        has_any_gpu = (has_data(metrics, "gpu_mem_mb") or has_data(metrics, "gpu_util") or
-                       has_data(metrics, "gpu_temp") or has_data(metrics, "gpu_power_w") or
-                       has_data(metrics, "gpu_graphics_clock"))
+        has_any_gpu = (
+            has_data(metrics, "gpu_mem_mb")
+            or has_data(metrics, "gpu_util")
+            or has_data(metrics, "gpu_temp")
+            or has_data(metrics, "gpu_power_w")
+            or has_data(metrics, "gpu_graphics_clock")
+        )
         if not has_any_gpu:
             not_generated.append("GPU charts (no data)")
 

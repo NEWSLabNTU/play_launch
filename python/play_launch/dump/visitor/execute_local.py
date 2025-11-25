@@ -1,5 +1,3 @@
-from typing import Any, List, Optional, Tuple
-
 from launch.actions.execute_local import ExecuteLocal
 from launch.actions.opaque_function import OpaqueFunction
 from launch.event_handler import EventHandler
@@ -14,7 +12,7 @@ from ..launch_dump import LaunchDump
 
 def visit_execute_local(
     process: ExecuteLocal, context: LaunchContext, dump: LaunchDump
-) -> Optional[List[LaunchDescriptionEntity]]:
+) -> list[LaunchDescriptionEntity] | None:
     """
     Execute the action.
 
@@ -48,15 +46,11 @@ def visit_execute_local(
     event_handlers = [
         EventHandler(
             matcher=lambda event: is_a_subclass(event, ShutdownProcess),
-            entities=OpaqueFunction(
-                function=process._ExecuteLocal__on_shutdown_process_event
-            ),
+            entities=OpaqueFunction(function=process._ExecuteLocal__on_shutdown_process_event),
         ),
         EventHandler(
             matcher=lambda event: is_a_subclass(event, SignalProcess),
-            entities=OpaqueFunction(
-                function=process._ExecuteLocal__on_signal_process_event
-            ),
+            entities=OpaqueFunction(function=process._ExecuteLocal__on_signal_process_event),
         ),
         OnProcessIO(
             target_action=process,

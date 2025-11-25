@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from launch.actions import ExecuteProcess
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
@@ -10,5 +8,5 @@ from .execute_local import visit_execute_local
 
 def visit_execute_process(
     process: ExecuteProcess, context: LaunchContext, dump: LaunchDump
-) -> Optional[List[LaunchDescriptionEntity]]:
+) -> list[LaunchDescriptionEntity] | None:
     visit_execute_local(process, context, dump)

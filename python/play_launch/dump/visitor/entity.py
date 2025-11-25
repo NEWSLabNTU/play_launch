@@ -1,7 +1,6 @@
 """Module for entity visitors."""
 
 import asyncio
-from typing import List, Tuple
 
 from launch.action import Action
 from launch.launch_context import LaunchContext
@@ -14,7 +13,7 @@ from .action import visit_action
 
 def visit_entity(
     entity: LaunchDescriptionEntity, context: LaunchContext, dump: LaunchDump
-) -> List[Tuple[LaunchDescriptionEntity, asyncio.Future]]:
+) -> list[tuple[LaunchDescriptionEntity, asyncio.Future]]:
     """
     Visit given entity, as well as all sub-entities, and collect any futures.
 
@@ -38,6 +37,4 @@ def visit_entity(
     if sub_entities is not None:
         for sub_entity in sub_entities:
             futures_to_return += visit_entity(sub_entity, context, dump)
-    return [
-        future_pair for future_pair in futures_to_return if future_pair[1] is not None
-    ]
+    return [future_pair for future_pair in futures_to_return if future_pair[1] is not None]

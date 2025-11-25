@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch_ros.actions.composable_node_container import ComposableNodeContainer
@@ -10,7 +8,7 @@ from .node import visit_node
 
 def visit_composable_node_container(
     container: ComposableNodeContainer, context: LaunchContext, dump: LaunchDump
-) -> Optional[List[LaunchDescriptionEntity]]:
+) -> list[LaunchDescriptionEntity] | None:
     """
     Execute the action.
 
@@ -24,9 +22,7 @@ def visit_composable_node_container(
 
     if descriptions:
         for node_object in descriptions:
-            if node_object.condition() is None or node_object.condition().evaluate(
-                context
-            ):
+            if node_object.condition() is None or node_object.condition().evaluate(context):
                 valid_composable_nodes.append(node_object)
 
     if valid_composable_nodes is not None and len(valid_composable_nodes) > 0:

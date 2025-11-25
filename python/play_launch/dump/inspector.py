@@ -8,7 +8,7 @@ import logging
 import platform
 import signal
 import threading
-from typing import Coroutine, Iterable, List, Optional, Set, Text, Tuple
+from collections.abc import Coroutine, Iterable
 
 import launch.logging
 import osrf_pycommon.process_utils
@@ -33,7 +33,7 @@ class LaunchInspector:
     def __init__(
         self,
         *,
-        argv: Optional[Iterable[Text]] = None,
+        argv: Iterable[str] | None = None,
         noninteractive: bool = False,
         debug: bool = False,
     ) -> None:
@@ -59,12 +59,8 @@ class LaunchInspector:
         # self.__context.register_event_handler(
         #     OnProcessStart(on_start=self.__on_process_start)
         # )
-        self.__context.register_event_handler(
-            OnProcessExit(on_exit=self.__on_process_exit)
-        )
-        self.__context.register_event_handler(
-            OnShutdown(on_shutdown=self.__on_shutdown)
-        )
+        self.__context.register_event_handler(OnProcessExit(on_exit=self.__on_process_exit))
+        self.__context.register_event_handler(OnShutdown(on_shutdown=self.__on_shutdown))
 
         # Setup storage for state.
         self._entity_future_pairs = []  # type: List[Tuple[LaunchDescriptionEntity, asyncio.Future]]
@@ -84,11 +80,11 @@ class LaunchInspector:
 
         # Used to collect executed nodes in this launch
         self.__launch_dump: LaunchDump = LaunchDump(
-            load_node=list(),
-            file_data=dict(),
-            node=list(),
-            container=list(),
-            lifecycle_node=list(),
+            load_node=[],
+            file_data={},
+            node=[],
+            container=[],
+            lifecycle_node=[],
         )
 
     def emit_event(self, event: Event) -> None:
@@ -144,12 +140,8 @@ class LaunchInspector:
 
     def _is_idle(self):
         number_of_entity_future_pairs = self._prune_and_count_entity_future_pairs()
-        number_of_entity_future_pairs += (
-            self._prune_and_count_context_completion_futures()
-        )
-        return (
-            number_of_entity_future_pairs == 0 and self.__context._event_queue.empty()
-        )
+        number_of_entity_future_pairs += self._prune_and_count_context_completion_futures()
+        return number_of_entity_future_pairs == 0 and self.__context._event_queue.empty()
 
     @contextlib.contextmanager
     def _prepare_run_loop(self):
@@ -157,9 +149,7 @@ class LaunchInspector:
             # Acquire the lock and initialize the loop.
             with self.__loop_from_run_thread_lock:
                 if self.__loop_from_run_thread is not None:
-                    raise RuntimeError(
-                        "LaunchInspector cannot be run multiple times concurrently."
-                    )
+                    raise RuntimeError("LaunchInspector cannot be run multiple times concurrently.")
                 this_loop = asyncio.get_event_loop()
 
                 if self.__debug:
@@ -199,17 +189,13 @@ class LaunchInspector:
                     assert ret is None, ret
                     sigint_received = True
                 else:
-                    self.__logger.warning("{} again, ignoring...".format(base_msg))
+                    self.__logger.warning(f"{base_msg} again, ignoring...")
 
             def _on_sigterm(signum):
                 signame = signal.Signals(signum).name
-                self.__logger.error(
-                    "user interrupted with ctrl-\\ ({}), terminating...".format(signame)
-                )
+                self.__logger.error(f"user interrupted with ctrl-\\ ({signame}), terminating...")
                 # TODO(wjwwood): try to terminate running subprocesses before exiting.
-                self.__logger.error(
-                    "using {} can result in orphaned processes".format(signame)
-                )
+                self.__logger.error(f"using {signame} can result in orphaned processes")
                 self.__logger.error("make sure no processes launched are still running")
                 this_loop.call_soon(this_task.cancel)
 
@@ -233,27 +219,21 @@ class LaunchInspector:
         await self.__process_event(next_event)
 
     async def __process_event(self, event: Event) -> None:
-        self.__logger.debug("processing event: '{}'".format(event))
+        self.__logger.debug(f"processing event: '{event}'")
 
         for event_handler in tuple(self.__context._event_handlers):
             if event_handler.matches(event):
-                self.__logger.debug(
-                    "processing event: '{}' ✓ '{}'".format(event, event_handler)
-                )
+                self.__logger.debug(f"processing event: '{event}' ✓ '{event_handler}'")
                 self.__context._push_locals()
                 entities = event_handler.handle(event, self.__context)
                 entities = (
-                    entities
-                    if isinstance(entities, collections.abc.Iterable)
-                    else (entities,)
+                    entities if isinstance(entities, collections.abc.Iterable) else (entities,)
                 )
 
                 for entity in [e for e in entities if e is not None]:
                     if not is_a_subclass(entity, LaunchDescriptionEntity):
                         raise RuntimeError(
-                            "expected a LaunchDescriptionEntity from event_handler, got '{}'".format(
-                                entity
-                            )
+                            f"expected a LaunchDescriptionEntity from event_handler, got '{entity}'"
                         )
 
                     pairs = visit_entity(entity, self.__context, self.__launch_dump)
@@ -300,9 +280,7 @@ class LaunchInspector:
                 try:
                     # Check if we're idle, i.e. no on-going entities (actions) or events in
                     # the queue
-                    is_idle = (
-                        self._is_idle()
-                    )  # self._entity_future_pairs is pruned here
+                    is_idle = self._is_idle()  # self._entity_future_pairs is pruned here
                     if not self.__shutting_down and shutdown_when_idle and is_idle:
                         ret = self._shutdown(reason="idle", due_to_sigint=False)
                         if ret is not None:
@@ -312,10 +290,7 @@ class LaunchInspector:
 
                     # Stop running if we're shutting down and there's no more work
                     if self.__shutting_down and is_idle:
-                        if (
-                            process_one_event_task is not None
-                            and not process_one_event_task.done()
-                        ):
+                        if process_one_event_task is not None and not process_one_event_task.done():
                             process_one_event_task.cancel()
                         break
 
@@ -324,7 +299,7 @@ class LaunchInspector:
                     entity_futures = []
 
                     if self.__context._event_queue.empty():
-                        for entity, future in self._entity_future_pairs:
+                        for _entity, future in self._entity_future_pairs:
                             # NOTE: Do NOT filter futures here. It's not working.
                             entity_futures.append(future)
                         entity_futures.extend(self.__context._completion_futures)
@@ -332,30 +307,22 @@ class LaunchInspector:
                     # If the current task is done, create a new task to process any events
                     # in the queue
                     if process_one_event_task is None or process_one_event_task.done():
-                        process_one_event_task = this_loop.create_task(
-                            self._process_one_event()
-                        )
+                        process_one_event_task = this_loop.create_task(self._process_one_event())
 
                     # Add the process event task to the list of awaitables
                     entity_futures.append(process_one_event_task)
 
                     # Wait on events and futures
-                    self.__logger.debug("await on futures: '{}'".format(entity_futures))
+                    self.__logger.debug(f"await on futures: '{entity_futures}'")
 
                     completed_tasks, _ = await asyncio.wait(
                         entity_futures, return_when=asyncio.FIRST_COMPLETED
                     )
                     # Propagate exception from completed tasks
-                    completed_tasks_exceptions = [
-                        task.exception() for task in completed_tasks
-                    ]
-                    completed_tasks_exceptions = list(
-                        filter(None, completed_tasks_exceptions)
-                    )
+                    completed_tasks_exceptions = [task.exception() for task in completed_tasks]
+                    completed_tasks_exceptions = list(filter(None, completed_tasks_exceptions))
                     if completed_tasks_exceptions:
-                        self.__logger.debug(
-                            "An exception was raised in an async action/event"
-                        )
+                        self.__logger.debug("An exception was raised in an async action/event")
                         # in case there is more than one completed_task, log other exceptions
                         for completed_tasks_exception in completed_tasks_exceptions[1:]:
                             self.__logger.error(completed_tasks_exception)
@@ -382,9 +349,7 @@ class LaunchInspector:
         :param: shutdown_when_idle if True (default), the service will shutdown when idle
         """
         loop = osrf_pycommon.process_utils.get_loop()
-        run_async_task = loop.create_task(
-            self.run_async(shutdown_when_idle=shutdown_when_idle)
-        )
+        run_async_task = loop.create_task(self.run_async(shutdown_when_idle=shutdown_when_idle))
         while True:
             try:
                 return loop.run_until_complete(run_async_task)
@@ -417,9 +382,7 @@ class LaunchInspector:
 
     #     return None
 
-    def __on_process_exit(
-        self, event: Event, context: LaunchContext
-    ) -> Optional[SomeActionsType]:
+    def __on_process_exit(self, event: Event, context: LaunchContext) -> SomeActionsType | None:
         action = event.action
         cmdline = action.cmd
         parse_cmdline = parse_ros_cmdline(cmdline)
@@ -428,30 +391,26 @@ class LaunchInspector:
 
         for path in parse_cmdline.params_files:
             try:
-                with open(path, "r") as fp:
+                with open(path) as fp:
                     file_data[path] = fp.read()
-            except (FileNotFoundError, IOError) as e:
+            except (OSError, FileNotFoundError) as e:
                 self.__logger.warning(f"Unable to read params file {path}: {e}")
 
         if parse_cmdline.log_config_file is not None:
             try:
-                with open(parse_cmdline.log_config_file, "r") as fp:
+                with open(parse_cmdline.log_config_file) as fp:
                     file_data[parse_cmdline.log_config_file] = fp.read()
-            except (FileNotFoundError, IOError) as e:
+            except (OSError, FileNotFoundError) as e:
                 self.__logger.warning(
                     f"Unable to read log config file {parse_cmdline.log_config_file}: {e}"
                 )
 
-    def __on_shutdown(
-        self, event: Event, context: LaunchContext
-    ) -> Optional[SomeActionsType]:
+    def __on_shutdown(self, event: Event, context: LaunchContext) -> SomeActionsType | None:
         self.__shutting_down = True
         self.__context._set_is_shutdown(True)
         return None
 
-    def _shutdown(
-        self, *, reason, due_to_sigint, force_sync=False
-    ) -> Optional[Coroutine]:
+    def _shutdown(self, *, reason, due_to_sigint, force_sync=False) -> Coroutine | None:
         # Assumption is that this method is only called when running.
         retval = None
         if not self.__shutting_down:
@@ -475,7 +434,7 @@ class LaunchInspector:
         self.__context._set_is_shutdown(True)
         return retval
 
-    def shutdown(self, force_sync=False) -> Optional[Coroutine]:
+    def shutdown(self, force_sync=False) -> Coroutine | None:
         """
         Shutdown all on-going activities and then stop the asyncio run loop.
 

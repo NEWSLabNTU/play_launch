@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from launch.action import Action
 from launch.actions.include_launch_description import IncludeLaunchDescription
 from launch.events import ExecutionComplete  # noqa
@@ -21,7 +19,7 @@ from .node import visit_node
 
 def visit_action(
     action: Action, context: LaunchContext, dump: LaunchDump
-) -> Optional[List[LaunchDescriptionEntity]]:
+) -> list[LaunchDescriptionEntity] | None:
     condition = action.condition
 
     if condition is None or condition.evaluate(context):
@@ -40,7 +38,7 @@ def visit_action(
 
 def visit_action_by_class(
     action: Action, context: LaunchContext, dump: LaunchDump
-) -> Optional[List[LaunchDescriptionEntity]]:
+) -> list[LaunchDescriptionEntity] | None:
     if is_a(action, LoadComposableNodes):
         return visit_load_composable_nodes(action, context, dump)
 

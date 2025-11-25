@@ -1,5 +1,3 @@
-from typing import Dict, List, Optional, Union
-
 import launch
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
@@ -22,7 +20,7 @@ _on_exit_warning_shown = False
 
 def visit_node(
     node: Node, context: LaunchContext, dump: LaunchDump
-) -> Optional[List[LaunchDescriptionEntity]]:
+) -> list[LaunchDescriptionEntity] | None:
     node._perform_substitutions(context)
 
     def substitute(subst):
@@ -33,12 +31,12 @@ def visit_node(
     package = substitute(node.node_package)
 
     if node._Node__ros_arguments is not None:
-        ros_args = list(substitute(subst) for subst in node._Node__ros_arguments)
+        ros_args = [substitute(subst) for subst in node._Node__ros_arguments]
     else:
         ros_args = None
 
     if node._Node__arguments is not None:
-        args = list(substitute(subst) for subst in node._Node__arguments)
+        args = [substitute(subst) for subst in node._Node__arguments]
     else:
         args = None
 
@@ -49,15 +47,11 @@ def visit_node(
 
     # Prepare the ros_specific_arguments list and add it to the context so that the
     # LocalSubstitution placeholders added to the the cmd can be expanded using the contents.
-    ros_specific_arguments: Dict[str, Union[str, List[str]]] = {}
+    ros_specific_arguments: dict[str, str | list[str]] = {}
     if node._Node__node_name is not None:
-        ros_specific_arguments["name"] = "__node:={}".format(
-            node._Node__expanded_node_name
-        )
+        ros_specific_arguments["name"] = f"__node:={node._Node__expanded_node_name}"
     if node._Node__expanded_node_namespace != "":
-        ros_specific_arguments["ns"] = "__ns:={}".format(
-            node._Node__expanded_node_namespace
-        )
+        ros_specific_arguments["ns"] = f"__ns:={node._Node__expanded_node_namespace}"
 
     # Give extensions a chance to prepare for execution
     for extension in node._Node__extensions.values():
@@ -76,13 +70,13 @@ def visit_node(
         if node_name_count > 1:
             execute_process_logger = launch.logging.get_logger(node.name)
             execute_process_logger.warning(
-                "there are now at least {} nodes with the name {} created within this "
-                "launch context".format(node_name_count, node.node_name)
+                f"there are now at least {node_name_count} nodes with the name {node.node_name} created within this "
+                "launch context"
             )
 
     # Extract parameters
-    params_files = list()
-    params = list()
+    params_files = []
+    params = []
     node_params = node._Node__expanded_parameter_arguments
 
     if node_params is not None:
@@ -90,15 +84,13 @@ def visit_node(
             if is_file:
                 path = entry
                 try:
-                    with open(path, "r") as fp:
+                    with open(path) as fp:
                         data = fp.read()
                         params_files.append(data)
                         dump.file_data[path] = data
-                except (FileNotFoundError, IOError) as e:
+                except (OSError, FileNotFoundError) as e:
                     execute_process_logger = launch.logging.get_logger(node.name)
-                    execute_process_logger.error(
-                        f"Unable to read parameter file {path}: {e}"
-                    )
+                    execute_process_logger.error(f"Unable to read parameter file {path}: {e}")
                     # Continue without this params file
             else:
                 assert is_a(entry, Parameter)
@@ -106,12 +98,12 @@ def visit_node(
                 params.append((name, value))
 
     if node.expanded_remapping_rules is None:
-        remaps = list()
+        remaps = []
     else:
         remaps = node.expanded_remapping_rules
 
     # Extract environment variables
-    env_vars = list()
+    env_vars = []
     if hasattr(node, "additional_env") and node.additional_env is not None:
         # additional_env can be either a dict or a list of tuples
         if isinstance(node.additional_env, dict):
@@ -126,9 +118,7 @@ def visit_node(
                     key, value = item
                     # Perform substitutions on key and value
                     key_str = substitute(key) if not isinstance(key, str) else key
-                    value_str = (
-                        substitute(value) if not isinstance(value, str) else value
-                    )
+                    value_str = substitute(value) if not isinstance(value, str) else value
                     env_vars.append((key_str, value_str))
 
     # Extract respawn configuration

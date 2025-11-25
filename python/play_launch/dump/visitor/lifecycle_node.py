@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch_ros.actions.lifecycle_node import LifecycleNode
@@ -10,7 +8,7 @@ from .node import visit_node
 
 def visit_lifecycle_node(
     node: LifecycleNode, context: LaunchContext, dump: LaunchDump
-) -> Optional[List[LaunchDescriptionEntity]]:
+) -> list[LaunchDescriptionEntity] | None:
     """
     Execute the action.
 

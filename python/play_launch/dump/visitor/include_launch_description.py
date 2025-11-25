@@ -1,5 +1,3 @@
-from typing import List
-
 from launch.actions.include_launch_description import IncludeLaunchDescription
 from launch.actions.set_launch_configuration import SetLaunchConfiguration
 from launch.launch_context import LaunchContext
@@ -11,11 +9,9 @@ from ..launch_dump import LaunchDump
 
 def visit_include_launch_description(
     include: IncludeLaunchDescription, context: LaunchContext, dump: LaunchDump
-) -> List[LaunchDescriptionEntity]:
+) -> list[LaunchDescriptionEntity]:
     """Execute the action."""
-    launch_description = include.launch_description_source.get_launch_description(
-        context
-    )
+    launch_description = include.launch_description_source.get_launch_description(context)
     # If the location does not exist, then it's likely set to '<script>' or something.
     context.extend_locals(
         {
@@ -34,16 +30,16 @@ def visit_include_launch_description(
         perform_substitutions(context, normalize_to_list_of_substitutions(arg_name))
         for arg_name, arg_value in include.launch_arguments
     ]
-    declared_launch_arguments = launch_description.get_launch_arguments_with_include_launch_description_actions()
+    declared_launch_arguments = (
+        launch_description.get_launch_arguments_with_include_launch_description_actions()
+    )
     for argument, ild_actions in declared_launch_arguments:
         if argument._conditionally_included or argument.default_value is not None:
             continue
         argument_names = my_argument_names
         if ild_actions is not None:
             for ild_action in ild_actions:
-                argument_names.extend(
-                    ild_action._try_get_arguments_names_without_context()
-                )
+                argument_names.extend(ild_action._try_get_arguments_names_without_context())
         if argument.name not in argument_names:
             raise RuntimeError(
                 "Included launch description missing required argument '{}' "
