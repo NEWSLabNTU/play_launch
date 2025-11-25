@@ -1,0 +1,206 @@
+name: Release Python Wheel
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-wheel:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        submodules: recursive
+
+    - name: Set up QEMU (for arm64)
+      if: matrix.arch == 'arm64'
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+
+    - name: Build Python wheel (${{ matrix.arch }})
+      run: |
+        # Get version from tag or pyproject.toml
+        if [ -n "${GITHUB_REF#refs/tags/v}" ] && [ "${GITHUB_REF#refs/tags/v}" != "$GITHUB_REF" ]; then
+          VERSION="${GITHUB_REF#refs/tags/v}"
+        else
+          VERSION=$(grep -m1 'version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
+        fi
+        echo "Building version $VERSION for ${{ matrix.arch }}"
+
+        # Set up architecture-specific variables
+        if [ "${{ matrix.arch }}" = "arm64" ]; then
+          DOCKER_ARCH="linux/arm64"
+          DEB_ARCH="arm64"
+          WHEEL_PLATFORM="linux_aarch64"
+        else
+          DOCKER_ARCH="linux/amd64"
+          DEB_ARCH="amd64"
+          WHEEL_PLATFORM="linux_x86_64"
+        fi
+
+        # Build in Docker container with correct architecture
+        docker run --rm --platform=${DOCKER_ARCH} \
+          -v $PWD:/workspace \
+          -w /workspace \
+          ubuntu:22.04 \
+          bash -c "
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+
+            # Install basic build dependencies
+            apt-get update
+            apt-get install -y software-properties-common curl git build-essential pkg-config
+
+            # Add ROS 2 repository
+            curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+            echo \"deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main\" > /etc/apt/sources.list.d/ros2.list
+
+            # Install ROS2 and Python build dependencies
+            apt-get update
+            apt-get install -y \
+              python3-pip python3-dev python3-venv python3-colcon-common-extensions \
+              ros-humble-ros-core \
+              ros-humble-ament-index-python \
+              ros-humble-launch \
+              ros-humble-rcl \
+              ros-humble-rcutils \
+              ros-humble-rmw \
+              ros-humble-rosidl-typesupport-c \
+              ros-humble-composition-interfaces \
+              ros-humble-rcl-interfaces \
+              ros-humble-builtin-interfaces \
+              ros-humble-action-msgs \
+              ros-humble-unique-identifier-msgs \
+              ros-humble-rosgraph-msgs \
+              ros-humble-example-interfaces \
+              ros-humble-test-msgs
+
+            # Install Rust
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source ~/.cargo/env
+
+            # Install colcon-cargo-ros2
+            pip3 install colcon-cargo-ros2 build wheel
+
+            # Build with colcon
+            cd /workspace
+            source /opt/ros/humble/setup.bash
+            echo 'Building with colcon...'
+            colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release --base-paths src
+
+            # Copy binaries to Python package
+            echo 'Copying binaries...'
+            mkdir -p python/play_launch/bin
+            cp install/play_launch/lib/play_launch/play_launch python/play_launch/bin/
+            cp install/play_launch/lib/play_launch/play_launch_io_helper python/play_launch/bin/
+            chmod +x python/play_launch/bin/*
+
+            # Build wheel with setuptools
+            echo 'Building wheel...'
+            python3 -m build --wheel
+
+            # Rename wheel with platform tag
+            mkdir -p dist-final
+            for whl in dist/*.whl; do
+              # Replace 'any' platform with actual platform
+              new_name=\$(basename \"\$whl\" | sed \"s/-py3-none-any.whl/-py3-none-${WHEEL_PLATFORM}.whl/\")
+              mv \"\$whl\" \"dist-final/\$new_name\"
+            done
+
+            # Show built wheels
+            ls -lh dist-final/
+
+            # Fix file ownership for GitHub Actions runner
+            chown -R \$(stat -c '%u:%g' /workspace) dist-final/ dist/ build/ install/ || true
+          "
+
+        # Move final wheels to dist
+        mkdir -p dist
+        mv dist-final/*.whl dist/ 2>/dev/null || true
+        ls -lh dist/
+
+    - name: Upload wheel artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: wheel-${{ matrix.arch }}
+        path: dist/*.whl
+        retention-days: 7
+
+  release:
+    needs: build-wheel
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write  # Required for creating releases
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download amd64 wheel
+      uses: actions/download-artifact@v4
+      with:
+        name: wheel-amd64
+        path: dist-amd64
+
+    - name: Download arm64 wheel
+      uses: actions/download-artifact@v4
+      with:
+        name: wheel-arm64
+        path: dist-arm64
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+        cp dist-amd64/*.whl release-assets/
+        cp dist-arm64/*.whl release-assets/
+        ls -lh release-assets/
+
+    - name: Extract version
+      id: version
+      run: |
+        VERSION="${GITHUB_REF#refs/tags/v}"
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Upload wheels to GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: release-assets/*.whl
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-pypi:
+    needs: build-wheel
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: pypi
+    permissions:
+      id-token: write  # Required for trusted publishing
+
+    steps:
+    - name: Download amd64 wheel
+      uses: actions/download-artifact@v4
+      with:
+        name: wheel-amd64
+        path: dist
+
+    - name: Download arm64 wheel
+      uses: actions/download-artifact@v4
+      with:
+        name: wheel-arm64
+        path: dist
+
+    - name: Show wheels to publish
+      run: ls -lh dist/
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
