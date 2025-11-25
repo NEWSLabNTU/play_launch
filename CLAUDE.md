@@ -10,20 +10,34 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch file executions f
 3. **play_launch_wrapper** (CMake): Provides `play_launch` command in PATH
 4. **play_launch_analyzer** (Python): Analyzes and visualizes logs
 
-## Build & Usage
+## Installation
+
+### Option 1: pip install (Recommended for Users)
+
+```sh
+# Prerequisites: ROS2 Humble must be installed and sourced
+source /opt/ros/humble/setup.bash
+
+# Install from wheel (when available)
+pip install play_launch
+
+# Or install from local wheel after building
+pip install target/wheels/play_launch-*.whl
+
+# Optional: Enable privileged I/O monitoring
+sudo setcap cap_sys_ptrace+ep $(which play_launch_io_helper)
+```
+
+### Option 2: Build from Source (For Development)
 
 ```sh
 # Install dependencies (first-time setup)
-just install-deps        # Install colcon-cargo-ros2, update submodules, run rosdep
+just install-deps        # Install colcon-cargo-ros2, maturin, run rosdep
 
 # Build workspace (single-stage colcon build with colcon-cargo-ros2)
 just build
 
-# Run play_launch with arguments (automatically sources workspace)
-just run launch <package> <launch_file>         # Example: just run launch demo_nodes_cpp talker_listener.launch.py
-just run --help                                 # Show play_launch help
-
-# Enable I/O monitoring for privileged processes (containers with capabilities)
+# Enable I/O monitoring for privileged processes
 just setcap-io-helper    # Requires sudo, reapply after rebuild
 
 # Verify I/O helper status
@@ -31,8 +45,28 @@ just verify-io-helper
 
 # Source workspace (when running commands outside of just)
 . install/setup.bash
+```
 
-# Launch commands (when sourced manually)
+### Building Wheel for Distribution
+
+```sh
+# Build with colcon first
+just build
+
+# Build wheel (copies binaries to python package)
+just build-wheel
+
+# Wheel will be in dist/play_launch-*.whl
+```
+
+## Usage
+
+```sh
+# Run play_launch with arguments (colcon build: use just run, pip: use directly)
+just run launch <package> <launch_file>         # Example: just run launch demo_nodes_cpp talker_listener.launch.py
+just run --help                                 # Show play_launch help
+
+# Or if installed via pip or sourced:
 play_launch launch <package> <launch_file>      # Record & replay
 play_launch run <package> <executable>          # Run single node
 play_launch dump launch <package> <launch_file> # Record only
@@ -304,13 +338,17 @@ Packages are built to `dist/` directory.
 - **justfile**: Task runner (replaced Makefile 2025-11-04)
 - Use `just --list` to see all available recipes
 - Main recipes:
-  - `install-deps`: Install colcon-cargo-ros2, check/update submodules, run rosdep (interactive prompts for conflicts)
+  - `install-deps`: Install colcon-cargo-ros2, run rosdep (interactive prompts for conflicts)
   - `build`: Single-stage colcon build (sources /opt/ros/humble/setup.bash automatically)
+  - `build-wheel`: Build Python wheel (copies binaries, outputs to dist/)
   - `run *ARGS`: Run play_launch with arguments (e.g., `just run launch demo_nodes_cpp talker_listener.launch.py`)
   - `setcap-io-helper`: Apply CAP_SYS_PTRACE to I/O helper (requires sudo)
   - `verify-io-helper`: Verify I/O helper capability status
-  - `clean`: Remove build/install/log directories
+  - `clean`: Remove build/install/log/dist directories and copied binaries
   - `build-deb`: Build Debian package (outputs to dist/)
+  - `test-wheel`: Test wheel installation in fresh venv
+  - `publish-pypi`: Publish wheel to PyPI (requires PYPI_TOKEN env var)
+  - `publish-testpypi`: Publish wheel to TestPyPI (requires TESTPYPI_TOKEN env var)
   - `test`: Run package tests
   - `lint`: Run clippy and ruff
   - `format`: Format Rust and Python code
@@ -338,15 +376,34 @@ Packages are built to `dist/` directory.
 - Release packages follow naming: `play-launch_<version>_<arch>.deb`
 
 **Build process**:
-1. Checkout code with submodules
+1. Checkout code
 2. Set up QEMU for ARM64 emulation (arm64 only)
 3. Install ROS2 Humble and build dependencies
 4. Cross-compile with `dpkg-buildpackage -aarm64` (arm64 only)
 5. Upload artifacts
 6. Create GitHub release with both packages
 
+**Wheel Release Workflow** (`.github/workflows/release-wheel.yml`):
+- Triggers on version tags (`v*`) or manual dispatch
+- Builds Python wheels for both amd64 and arm64 architectures
+- Uses Docker containers with QEMU emulation for cross-compilation
+- Build process:
+  1. Set up Docker container with ROS2 Humble
+  2. Build Rust binaries with colcon (colcon-cargo-ros2)
+  3. Copy binaries to `python/play_launch/bin/`
+  4. Build wheel with setuptools
+  5. Rename wheel with platform-specific tag (linux_x86_64 or linux_aarch64)
+- Uploads wheels as GitHub release assets
+- Note: Wheels are platform-specific due to embedded Rust binaries
+
+**PyPI Publishing** (manual via justfile):
+- `just publish-testpypi`: Publish to TestPyPI (requires TESTPYPI_TOKEN env var)
+- `just publish-pypi`: Publish to PyPI (requires PYPI_TOKEN env var)
+- Obtain tokens from https://pypi.org/manage/account/token/
+
 ## Key Recent Fixes
 
+- **2025-11-26**: pip installation support - Added unified Python package in `python/play_launch/` that embeds dump_launch and play_launch_analyzer. Build workflow: `just build` then `just build-wheel`. Python CLI wrapper finds bundled Rust binary in package `bin/` directory. Wheel includes both Rust binaries (~3.3MB total). GitHub Actions workflow builds wheels for amd64 and arm64.
 - **2025-11-23**: GitHub Actions CI/CD - Created automated workflows for continuous integration (build/test/lint on every push) and release automation (multi-architecture Debian package building on version tags). Release workflow uses QEMU cross-compilation for ARM64 packages (~20-30min), works on GitHub free tier without special runners.
 - **2025-11-23**: Build system refactoring - Migrated to colcon-cargo-ros2 (single-stage build). Removed boilerplate packages from src/ros2_rust and src/interface. Simplified debian/rules to use single-stage colcon build (removed wheel-building complexity, fixed symlink issues). Enhanced justfile with install-deps recipe (interactive conflict resolution), run recipe, and verify-io-helper. All recipes now properly source /opt/ros/humble/setup.bash.
 - **2025-11-04**: Build system migration - Replaced Makefile with justfile for cleaner syntax. Created Debian packaging with proper Ubuntu 22.04 paths.
