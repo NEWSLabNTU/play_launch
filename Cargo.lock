@@ -743,6 +743,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "indoc"
+version = "2.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -839,6 +848,15 @@ name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
+
+[[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
+]
 
 [[package]]
 name = "mio"
@@ -988,6 +1006,7 @@ dependencies = [
  "num_cpus",
  "nvml-wrapper",
  "pkg-config",
+ "pyo3",
  "rayon",
  "rcl_interfaces",
  "rclrs",
@@ -1020,12 +1039,81 @@ dependencies = [
 ]
 
 [[package]]
+name = "portable-atomic"
+version = "1.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89ae43fd86e4158d6db51ad8e2b80f313af9cc74f5c0e03ccb87de09998732de"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "pyo3"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7778bffd85cf38175ac1f545509665d0b9b92a198ca7941f131f85f7a4f9a872"
+dependencies = [
+ "cfg-if",
+ "indoc",
+ "libc",
+ "memoffset",
+ "once_cell",
+ "portable-atomic",
+ "pyo3-build-config",
+ "pyo3-ffi",
+ "pyo3-macros",
+ "unindent",
+]
+
+[[package]]
+name = "pyo3-build-config"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94f6cbe86ef3bf18998d9df6e0f3fc1050a8c5efa409bf712e661a4366e010fb"
+dependencies = [
+ "once_cell",
+ "target-lexicon",
+]
+
+[[package]]
+name = "pyo3-ffi"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9f1b4c431c0bb1c8fb0a338709859eed0d030ff6daa34368d3b152a63dfdd8d"
+dependencies = [
+ "libc",
+ "pyo3-build-config",
+]
+
+[[package]]
+name = "pyo3-macros"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbc2201328f63c4710f68abdf653c89d8dbc2858b88c5d88b0ff38a75288a9da"
+dependencies = [
+ "proc-macro2",
+ "pyo3-macros-backend",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "pyo3-macros-backend"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fca6726ad0f3da9c9de093d6f116a93c1a38e417ed73bf138472cf4064f72028"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "pyo3-build-config",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -1298,6 +1386,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "target-lexicon"
+version = "0.12.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
+
+[[package]]
 name = "tempfile"
 version = "3.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1442,6 +1536,12 @@ name = "unicode-ident"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "462eeb75aeb73aea900253ce739c8e18a67423fadf006037cd3ff27e82748a06"
+
+[[package]]
+name = "unindent"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 
 [[package]]
 name = "unsafe-libyaml"
@@ -1900,279 +2000,3 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[patch.unused]]
-name = "action_msgs"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "action_tutorials_interfaces"
-version = "0.20.6"
-
-[[patch.unused]]
-name = "actionlib_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "actuator_msgs"
-version = "0.0.1"
-
-[[patch.unused]]
-name = "autoware_common_msgs"
-version = "1.9.0"
-
-[[patch.unused]]
-name = "autoware_control_msgs"
-version = "1.9.0"
-
-[[patch.unused]]
-name = "autoware_internal_debug_msgs"
-version = "1.12.0"
-
-[[patch.unused]]
-name = "autoware_map_msgs"
-version = "1.9.0"
-
-[[patch.unused]]
-name = "autoware_perception_msgs"
-version = "1.9.0"
-
-[[patch.unused]]
-name = "autoware_planning_msgs"
-version = "1.9.0"
-
-[[patch.unused]]
-name = "autoware_sensing_msgs"
-version = "1.9.0"
-
-[[patch.unused]]
-name = "autoware_vehicle_msgs"
-version = "1.9.0"
-
-[[patch.unused]]
-name = "bond"
-version = "4.1.2"
-
-[[patch.unused]]
-name = "can_msgs"
-version = "2.0.0"
-
-[[patch.unused]]
-name = "cob_srvs"
-version = "2.7.10"
-
-[[patch.unused]]
-name = "control_msgs"
-version = "4.8.0"
-
-[[patch.unused]]
-name = "data_tamer_msgs"
-version = "0.9.3"
-
-[[patch.unused]]
-name = "diagnostic_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "example_interfaces"
-version = "0.9.3"
-
-[[patch.unused]]
-name = "ffmpeg_image_transport_msgs"
-version = "1.1.2"
-
-[[patch.unused]]
-name = "geographic_msgs"
-version = "1.0.6"
-
-[[patch.unused]]
-name = "geometry_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "gps_msgs"
-version = "2.1.1"
-
-[[patch.unused]]
-name = "grid_map_msgs"
-version = "2.0.1"
-
-[[patch.unused]]
-name = "lifecycle_msgs"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "logging_demo"
-version = "0.20.6"
-
-[[patch.unused]]
-name = "map_msgs"
-version = "2.1.0"
-
-[[patch.unused]]
-name = "moveit_msgs"
-version = "2.2.1"
-
-[[patch.unused]]
-name = "nav2_msgs"
-version = "1.1.19"
-
-[[patch.unused]]
-name = "nav_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "nmea_msgs"
-version = "2.0.0"
-
-[[patch.unused]]
-name = "object_recognition_msgs"
-version = "2.0.0"
-
-[[patch.unused]]
-name = "octomap_msgs"
-version = "2.0.1"
-
-[[patch.unused]]
-name = "pacmod2_msgs"
-version = "1.0.0"
-
-[[patch.unused]]
-name = "pacmod3_msgs"
-version = "1.0.0"
-
-[[patch.unused]]
-name = "pcl_msgs"
-version = "1.0.0"
-
-[[patch.unused]]
-name = "pendulum_msgs"
-version = "0.20.6"
-
-[[patch.unused]]
-name = "plotjuggler_msgs"
-version = "0.2.3"
-
-[[patch.unused]]
-name = "point_cloud_interfaces"
-version = "1.0.12"
-
-[[patch.unused]]
-name = "radar_msgs"
-version = "0.2.1"
-
-[[patch.unused]]
-name = "rmw_dds_common"
-version = "1.6.0"
-
-[[patch.unused]]
-name = "robot_localization"
-version = "3.5.4"
-
-[[patch.unused]]
-name = "ros_gz_interfaces"
-version = "0.244.20"
-
-[[patch.unused]]
-name = "ros_ign_interfaces"
-version = "0.244.20"
-
-[[patch.unused]]
-name = "rosapi_msgs"
-version = "2.0.1"
-
-[[patch.unused]]
-name = "rosbag2_interfaces"
-version = "0.15.15"
-
-[[patch.unused]]
-name = "rosbridge_msgs"
-version = "2.0.1"
-
-[[patch.unused]]
-name = "rosgraph_msgs"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "rtcm_msgs"
-version = "1.1.6"
-
-[[patch.unused]]
-name = "sensor_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "septentrio_gnss_driver"
-version = "1.4.5"
-
-[[patch.unused]]
-name = "shape_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "statistics_msgs"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "std_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "std_srvs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "stereo_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "test_msgs"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "tf2_msgs"
-version = "0.25.16"
-
-[[patch.unused]]
-name = "theora_image_transport"
-version = "2.5.4"
-
-[[patch.unused]]
-name = "topic_tools_interfaces"
-version = "1.1.1"
-
-[[patch.unused]]
-name = "trajectory_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "turtlesim"
-version = "1.4.3"
-
-[[patch.unused]]
-name = "ublox_msgs"
-version = "2.3.0"
-
-[[patch.unused]]
-name = "udp_msgs"
-version = "0.0.5"
-
-[[patch.unused]]
-name = "unique_identifier_msgs"
-version = "2.2.1"
-
-[[patch.unused]]
-name = "velodyne_msgs"
-version = "2.5.1"
-
-[[patch.unused]]
-name = "vision_msgs"
-version = "4.1.1"
-
-[[patch.unused]]
-name = "visualization_msgs"
-version = "4.9.0"
-
-[[patch.unused]]
-name = "zed_msgs"
-version = "5.1.0"

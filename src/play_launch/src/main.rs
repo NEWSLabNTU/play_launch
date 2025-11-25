@@ -11,6 +11,7 @@ mod node_cmdline;
 mod node_error_monitor;
 mod options;
 mod plot_launcher;
+mod python_bridge;
 mod resource_monitor;
 
 use crate::{
