@@ -37,14 +37,15 @@ jobs:
         echo "Building version $VERSION for ${{ matrix.arch }}"
 
         # Set up architecture-specific variables
+        # Use manylinux_2_35 (Ubuntu 22.04 glibc version) for PyPI compatibility
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           DOCKER_ARCH="linux/arm64"
           DEB_ARCH="arm64"
-          WHEEL_PLATFORM="linux_aarch64"
+          WHEEL_PLATFORM="manylinux_2_35_aarch64"
         else
           DOCKER_ARCH="linux/amd64"
           DEB_ARCH="amd64"
-          WHEEL_PLATFORM="linux_x86_64"
+          WHEEL_PLATFORM="manylinux_2_35_x86_64"
         fi
 
         # Build in Docker container with correct architecture
