@@ -223,13 +223,10 @@ lint:
     cargo clippy --config ../../build/ros2_cargo_config.toml --all-targets --all-features -- -D warnings
     )
 
-    (
-    cd src/dump_launch &&
-    python3 -m ruff check .
-    )
+    python3 -m ruff check python/
 
 # Format code (Rust + Python)
 format:
     #!/usr/bin/env bash
     (cd src/play_launch && cargo +nightly fmt)
-    (cd src/dump_launch && ruff format .)
+    ruff format python/
