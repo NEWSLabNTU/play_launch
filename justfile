@@ -191,10 +191,6 @@ publish-testpypi:
     pip install twine
     twine upload --repository testpypi dist/*.whl -u __token__ -p "$TESTPYPI_TOKEN"
 
-# Build Debian package using standard Debian tools
-build-deb:
-    cd debian && just build
-
 # Run all tests
 test:
     #!/usr/bin/env bash
