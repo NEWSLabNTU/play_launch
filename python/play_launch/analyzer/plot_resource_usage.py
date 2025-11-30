@@ -21,11 +21,9 @@ from datetime import datetime
 from pathlib import Path
 
 try:
-    import pandas as pd
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 except ImportError:
-    print("Error: plotly and pandas are required. Install with: pip install plotly pandas")
+    print("Error: plotly is required. Install with: pip install plotly")
     sys.exit(1)
 
 

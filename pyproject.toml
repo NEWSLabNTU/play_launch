@@ -31,8 +31,8 @@ dependencies = [
     "pyyaml>=6.0",
     "lark>=1.2",
     "packaging>=24.0",
-    "plotly>=5.0",
-    "pandas>=1.0",
+    # Version matches Ubuntu 22.04 APT package (python3-plotly)
+    "plotly>=5.4.1",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +46,7 @@ dev = [
 
 [project.scripts]
 play_launch = "play_launch.cli:main"
+play_launch_io_helper = "play_launch.io_helper_cli:main"
 
 [project.urls]
 Repository = "https://github.com/NEWSLabNTU/play_launch"
@@ -71,8 +72,6 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Imports used for availability check in try/except
-"python/play_launch/analyzer/plot_resource_usage.py" = ["F401"]
 # Re-exports and compatibility imports
 "python/play_launch/dump/__init__.py" = ["F401", "UP035"]
 
