@@ -46,6 +46,14 @@ pub enum Command {
         play_launch plot --log-dir play_log/2025-10-28_16-17-56\n  \
         play_launch plot --metrics cpu memory")]
     Plot(PlotArgs),
+
+    /// Set CAP_SYS_PTRACE capability on I/O helper binary (requires sudo)
+    #[command(name = "setcap-io-helper")]
+    SetcapIoHelper,
+
+    /// Check if I/O helper has required capabilities
+    #[command(name = "verify-io-helper")]
+    VerifyIoHelper,
 }
 
 /// Arguments for launching a launch file
