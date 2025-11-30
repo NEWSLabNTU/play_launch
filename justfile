@@ -1,3 +1,5 @@
+# Detect ROS2 distro based on Ubuntu version
+ros_distro := if `lsb_release -rs 2>/dev/null || echo "22.04"` == "24.04" { "jazzy" } else { "humble" }
 colcon_flags := "--symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release"
 
 # Show available recipes
@@ -27,43 +29,35 @@ install-deps:
     # Install colcon-cargo-ros2
     pip install colcon-cargo-ros2
 
-    source /opt/ros/humble/setup.bash
+    source /opt/ros/{{ros_distro}}/setup.bash
     rosdep update
     rosdep install --from-paths src --ignore-src -r -y
 
-# Build all packages with colcon
+# Build Rust binaries with colcon and package Python wheel
 build:
     #!/usr/bin/env bash
     set -e
-    source /opt/ros/humble/setup.bash
+    source /opt/ros/{{ros_distro}}/setup.bash
+
+    # Step 1: Build Rust binaries with colcon
+    echo "Building Rust binaries with colcon..."
     colcon build {{colcon_flags}} --base-paths src
 
-# Build Python wheel with setuptools (copies binaries from colcon build)
-build-wheel:
-    #!/usr/bin/env bash
-    set -e
-
-    # Check if binaries exist from colcon build
-    if [ ! -f install/play_launch/lib/play_launch/play_launch ]; then
-        echo "Error: play_launch binary not found. Run 'just build' first."
-        exit 1
-    fi
-
-    # Create bin directory and copy binaries
+    # Step 2: Copy binaries to Python package
     echo "Copying binaries to python/play_launch/bin/..."
     mkdir -p python/play_launch/bin
     cp install/play_launch/lib/play_launch/play_launch python/play_launch/bin/
     cp install/play_launch/lib/play_launch/play_launch_io_helper python/play_launch/bin/
     chmod +x python/play_launch/bin/*
 
-    # Build wheel with setuptools
+    # Step 3: Build wheel with setuptools
     echo "Building wheel..."
     pip install --quiet build
     python -m build --wheel
 
     # Show output
     echo ""
-    echo "Wheel built successfully:"
+    echo "Build complete:"
     ls -lh dist/*.whl
 
 # Run play_launch with optional arguments (e.g., just run launch demo_nodes_cpp talker_listener.launch.py)
@@ -130,7 +124,7 @@ test-wheel:
     set -e
 
     if ! ls dist/play_launch-*.whl &>/dev/null; then
-        echo "Error: No wheel found in dist/. Run 'just build-wheel' first."
+        echo "Error: No wheel found in dist/. Run 'just build' first."
         exit 1
     fi
 
@@ -140,7 +134,7 @@ test-wheel:
     source "$VENV_DIR/bin/activate"
 
     # Source ROS2 (required runtime dependency)
-    source /opt/ros/humble/setup.bash
+    source /opt/ros/{{ros_distro}}/setup.bash
 
     # Install wheel
     pip install dist/play_launch-*.whl pytest
@@ -171,7 +165,7 @@ publish-pypi:
     fi
 
     if ! ls dist/*.whl &>/dev/null; then
-        echo "Error: No wheel found in dist/. Run 'just build-wheel' first."
+        echo "Error: No wheel found in dist/. Run 'just build' first."
         exit 1
     fi
 
@@ -190,7 +184,7 @@ publish-testpypi:
     fi
 
     if ! ls dist/*.whl &>/dev/null; then
-        echo "Error: No wheel found in dist/. Run 'just build-wheel' first."
+        echo "Error: No wheel found in dist/. Run 'just build' first."
         exit 1
     fi
 
@@ -205,7 +199,7 @@ build-deb:
 test:
     #!/usr/bin/env bash
     set -e
-    source /opt/ros/humble/setup.bash
+    source /opt/ros/{{ros_distro}}/setup.bash
     source install/setup.bash
     # Only test Python packages (Rust testing not compatible with colcon-cargo-ros2)
     # Skip integration tests that require dump_launch command in PATH
