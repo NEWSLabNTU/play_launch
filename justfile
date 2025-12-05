@@ -220,3 +220,15 @@ format:
     #!/usr/bin/env bash
     (cd src/play_launch && cargo +nightly fmt)
     ruff format python/
+
+# Check version consistency across all files
+version-check:
+    python3 scripts/bump_version.py --check
+
+# Bump version (patch, minor, or major)
+bump-version TYPE:
+    python3 scripts/bump_version.py {{TYPE}}
+
+# Set explicit version
+set-version VERSION:
+    python3 scripts/bump_version.py --set {{VERSION}}
