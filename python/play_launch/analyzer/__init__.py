@@ -2,8 +2,6 @@
 
 from .plot_resource_usage import main as plot_main
 
-__version__ = "0.3.0"
-
 __all__ = ["plot_main", "main"]
 
 
