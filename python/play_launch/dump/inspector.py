@@ -20,7 +20,7 @@ from launch.launch_description import LaunchDescription
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch.some_actions_type import SomeActionsType
 from launch.utilities import AsyncSafeSignalManager, is_a_subclass
-from ros_cmdline import parse_ros_cmdline
+from .ros_cmdline import parse_ros_cmdline
 
 from .event_handlers import OnIncludeLaunchDescription
 from .launch_dump import LaunchDump
