@@ -10,7 +10,6 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <!-- Rust dependencies -->
-  <depend>rclrs</depend>
   <depend>rcl_interfaces</depend>
   <depend>composition_interfaces</depend>
 

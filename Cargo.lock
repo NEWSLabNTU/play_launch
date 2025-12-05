@@ -1010,7 +1010,6 @@ dependencies = [
  "rayon",
  "rcl_interfaces",
  "rclrs",
- "rosidl_runtime_rs",
  "serde",
  "serde_json",
  "serde_yaml",

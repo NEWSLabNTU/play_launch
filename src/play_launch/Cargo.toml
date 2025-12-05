@@ -35,7 +35,6 @@ nvml-wrapper = "0.11"
 rcl_interfaces = "*"
 thiserror = "1.0"
 rclrs = "*"
-rosidl_runtime_rs = "*"
 rayon = "1.10.0"
 serde = { version = "1.0.209", features = ["derive"] }
 bincode = "1.3"
