@@ -1,28 +1,27 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 
 @dataclass
 class CommandLine:
     command: str
-    user_args: List[str]
-    remaps: Dict[str, str]
-    params: Dict[str, str]
-    params_files: List[str]
-    log_level: Optional[str]
-    log_config_file: Optional[str]
-    enable_rosout_logs: Optional[bool]
-    enable_stdout_logs: Optional[bool]
-    enclave: Optional[str]
+    user_args: list[str]
+    remaps: dict[str, str]
+    params: dict[str, str]
+    params_files: list[str]
+    log_level: str | None
+    log_config_file: str | None
+    enable_rosout_logs: bool | None
+    enable_stdout_logs: bool | None
+    enclave: str | None
 
 
-def parse_ros_cmdline(cmdline: List[str]):
+def parse_ros_cmdline(cmdline: list[str]):
     command = cmdline[0]
     args = cmdline[1:]
 
     remain_args = args
-    user_args = list()
-    ros_args = list()
+    user_args = []
+    ros_args = []
 
     while True:
 
@@ -44,14 +43,14 @@ def parse_ros_cmdline(cmdline: List[str]):
         ros_args.extend(filter(lambda arg: arg != "--ros-args", remain_args[:ix]))
         remain_args = remain_args[(ix + 1) :]
 
-    remaps: Dict[str, str] = dict()
-    params: Dict[str, str] = dict()
-    params_files: List[str] = list()
-    log_level: Optional[str] = None
-    log_config_file: Optional[str] = None
-    enable_rosout_logs: Optional[bool] = None
-    enable_stdout_logs: Optional[bool] = None
-    enclave: Optional[str] = None
+    remaps: dict[str, str] = {}
+    params: dict[str, str] = {}
+    params_files: list[str] = []
+    log_level: str | None = None
+    log_config_file: str | None = None
+    enable_rosout_logs: bool | None = None
+    enable_stdout_logs: bool | None = None
+    enclave: str | None = None
 
     ros_args_iter = iter(ros_args)
 
