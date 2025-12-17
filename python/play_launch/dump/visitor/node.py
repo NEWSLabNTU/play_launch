@@ -155,6 +155,19 @@ def visit_node(
             )
             _on_exit_warning_shown = True
 
+    # Extract global parameters from context (set via SetParameter action)
+    # These are scope-aware - context already resolves which params apply to this node
+    # See: launch_ros/actions/set_parameter.py and launch_ros/actions/node.py
+    global_params_raw = context.launch_configurations.get("global_params", [])
+    global_params = []
+    for param in global_params_raw:
+        if isinstance(param, tuple):
+            # Direct parameter from SetParameter action
+            name, value = param
+            global_params.append((name, str(value)))
+        # Note: file paths (strings from SetParametersFromFile) are already handled
+        # via __expanded_parameter_arguments by Node._perform_substitutions
+
     # Store a node record
     node_name = node._Node__expanded_node_name
     if "<node_name_unspecified>" in node_name:
@@ -175,6 +188,7 @@ def visit_node(
         env=env_vars if env_vars else None,
         respawn=respawn,
         respawn_delay=respawn_delay,
+        global_params=global_params if global_params else None,
     )
     dump.node.append(record)
 

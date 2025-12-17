@@ -17,6 +17,7 @@ class NodeRecord:
     env: list[tuple[str, str]] | None = None
     respawn: bool | None = None
     respawn_delay: float | None = None
+    global_params: list[tuple[str, str]] | None = None  # From SetParameter action
 
 
 @dataclass

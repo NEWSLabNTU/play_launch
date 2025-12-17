@@ -44,6 +44,7 @@ impl NodeCommandLine {
             env,
             respawn: _,
             respawn_delay: _,
+            global_params,
         } = record;
 
         let Some(package) = package else {
@@ -87,10 +88,18 @@ impl NodeCommandLine {
             chain!(name_remap, namespace_remap, other_remaps).collect()
         };
 
-        let params: HashMap<_, _> = params
-            .iter()
-            .map(|(name, value)| (name.to_string(), value.to_string()))
-            .collect();
+        // Build params: global_params first, then node-specific params (so node-specific can override)
+        let params: HashMap<_, _> = {
+            let global = global_params
+                .iter()
+                .flatten()
+                .map(|(name, value)| (name.to_string(), value.to_string()));
+            let node_specific = params
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()));
+            // Chain global first, then node-specific (later values override earlier in HashMap)
+            chain!(global, node_specific).collect()
+        };
 
         let params_files: HashSet<_> = params_file_contents
             .iter()

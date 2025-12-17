@@ -330,6 +330,7 @@ fn handle_run(args: &options::RunArgs) -> eyre::Result<()> {
         env: None,
         respawn: None,
         respawn_delay: None,
+        global_params: None,
     };
 
     let launch_dump = LaunchDump {

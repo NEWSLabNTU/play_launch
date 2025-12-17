@@ -56,6 +56,9 @@ pub struct NodeRecord {
     pub respawn: Option<bool>,
     #[serde(default)]
     pub respawn_delay: Option<f64>,
+    /// Global parameters from SetParameter action (scope-aware)
+    #[serde(default)]
+    pub global_params: Option<Vec<(String, ParameterValue)>>,
 }
 
 /// The serialization format for a composable node record.
