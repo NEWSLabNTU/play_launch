@@ -18,7 +18,7 @@ from launch.events import IncludeLaunchDescription, Shutdown
 from launch.launch_context import LaunchContext
 from launch.launch_description import LaunchDescription
 from launch.launch_description_entity import LaunchDescriptionEntity
-from launch.some_actions_type import SomeActionsType
+from launch.some_entities_type import SomeEntitiesType as SomeActionsType
 from launch.utilities import AsyncSafeSignalManager, is_a_subclass
 from .ros_cmdline import parse_ros_cmdline
 
