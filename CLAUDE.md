@@ -349,6 +349,7 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 
 ## Key Recent Fixes
 
+- **2025-12-18**: SetParameter (global params) support - Global parameters from `<set_parameter>` XML tag or `SetParameter` Python action are now captured in a separate `NodeRecord.global_params` field (not merged into `params`). dump_launch extracts from `context.launch_configurations['global_params']` (the same source ROS2 launch uses internally). play_launch (Rust) reads this field and passes them as `-p` flags, with node-specific params able to override. Clean separation between global and node-specific params for better debugging.
 - **2025-11-30**: Simplified packaging - Removed Debian packaging (PyPI-only distribution). Merged `build` and `build-wheel` recipes. Added `setcap-io-helper` and `verify-io-helper` CLI commands to Rust binary. Removed unused pandas/numpy dependencies from plot script (pure plotly). Auto-detect ROS2 distro (humble for Ubuntu 22.04, jazzy for 24.04) in justfile.
 - **2025-11-26**: pip installation support - Added unified Python package in `python/play_launch/` that embeds dump_launch and play_launch_analyzer. Build workflow: `just build` then `just build-wheel`. Python CLI wrapper finds bundled Rust binary in package `bin/` directory. Wheel includes both Rust binaries (~3.3MB total). GitHub Actions workflow builds wheels for amd64 and arm64.
 - **2025-11-23**: GitHub Actions CI/CD - Created automated workflows for continuous integration (build/test/lint on every push) and release automation (multi-architecture Debian package building on version tags). Release workflow uses QEMU cross-compilation for ARM64 packages (~20-30min), works on GitHub free tier without special runners.
@@ -370,3 +371,14 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 - **2025-10-25**: AMENT_PREFIX_PATH explicit preservation
 - **2025-10-22**: Service-based component loading (rclrs, no subprocess overhead)
 - **2025-10-22**: Process group isolation for proper cleanup
+
+## Development Practices
+
+### Temporary Files
+- Store all temporary files in `tmp/` directory at the project root
+- This directory is gitignored and used for testing, debugging, and experimentation
+- Do NOT use system `/tmp` for project-related temporary files
+
+## Known Issues / TODO
+
+(No known issues at this time)
