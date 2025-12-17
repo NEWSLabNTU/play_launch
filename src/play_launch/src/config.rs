@@ -18,10 +18,6 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub container_readiness: ContainerReadinessSettings,
 
-    /// Error monitoring settings
-    #[serde(default)]
-    pub error_monitoring: ErrorMonitoringSettings,
-
     /// Per-process configurations
     #[serde(default)]
     pub processes: Vec<ProcessConfig>,
@@ -147,50 +143,6 @@ fn default_service_poll_interval_ms() -> u64 {
     500
 }
 
-/// Error monitoring settings
-#[derive(Debug, Clone, Deserialize)]
-pub struct ErrorMonitoringSettings {
-    /// Enable error monitoring (default: true)
-    #[serde(default = "default_error_monitoring_enabled")]
-    pub enabled: bool,
-
-    /// Check interval in seconds (default: 30)
-    #[serde(default = "default_check_interval_secs")]
-    pub check_interval_secs: u64,
-
-    /// Threshold for warning (lines per check interval, default: 10)
-    #[serde(default = "default_error_threshold_lines")]
-    pub error_threshold_lines: usize,
-
-    /// Rate limit for warnings (seconds between warnings for same node, default: 300)
-    #[serde(default = "default_rate_limit_secs")]
-    pub rate_limit_secs: u64,
-}
-
-impl Default for ErrorMonitoringSettings {
-    fn default() -> Self {
-        Self {
-            enabled: default_error_monitoring_enabled(),
-            check_interval_secs: default_check_interval_secs(),
-            error_threshold_lines: default_error_threshold_lines(),
-            rate_limit_secs: default_rate_limit_secs(),
-        }
-    }
-}
-
-fn default_error_monitoring_enabled() -> bool {
-    true
-}
-fn default_check_interval_secs() -> u64 {
-    30
-}
-fn default_error_threshold_lines() -> usize {
-    10
-}
-fn default_rate_limit_secs() -> u64 {
-    60 // Warn at most once per minute (2x check interval)
-}
-
 /// Configuration for individual process control
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProcessConfig {
@@ -311,7 +263,6 @@ pub struct ResolvedRuntimeConfig {
     pub monitoring: ResolvedMonitoringConfig,
     pub composable_node_loading: ComposableNodeLoadingSettings,
     pub container_readiness: ContainerReadinessSettings,
-    pub error_monitoring: ErrorMonitoringSettings,
 }
 
 /// Resolved monitoring configuration
@@ -428,7 +379,6 @@ pub fn load_runtime_config(
         },
         composable_node_loading: config.composable_node_loading,
         container_readiness: config.container_readiness,
-        error_monitoring: config.error_monitoring,
     })
 }
 
