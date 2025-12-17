@@ -8,10 +8,12 @@ mod execution;
 mod io_helper_client;
 mod launch_dump;
 mod node_cmdline;
+mod node_registry;
 mod options;
 mod plot_launcher;
 mod python_bridge;
 mod resource_monitor;
+mod web;
 
 use crate::{
     config::load_runtime_config,
@@ -25,6 +27,7 @@ use crate::{
         ComposableNodeTasks, SpawnComposableNodeConfig,
     },
     launch_dump::{load_launch_dump, NodeContainerRecord},
+    node_registry::{create_shared_registry, populate_registry_from_contexts, SharedNodeRegistry},
     options::Options,
     resource_monitor::{spawn_monitor_thread, MonitorConfig},
 };
@@ -977,9 +980,50 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
         load_node_contexts.len()
     );
 
-    // Create shutdown signal for graceful respawn termination
+    // Create node registry for web UI (if enabled)
+    let node_registry: Option<SharedNodeRegistry> = if common.web_ui {
+        debug!("Creating node registry for web UI...");
+        let registry = create_shared_registry(log_dir.clone());
+
+        // Populate registry from contexts
+        populate_registry_from_contexts(
+            &registry,
+            &container_contexts,
+            &pure_node_contexts,
+            &load_node_contexts,
+        );
+
+        // Set pgid for node control operations
+        if let Ok(mut reg) = registry.try_lock() {
+            reg.set_pgid(pgid);
+        }
+
+        info!(
+            "Node registry created with {} nodes",
+            registry.try_lock().map(|r| r.len()).unwrap_or(0)
+        );
+        Some(registry)
+    } else {
+        None
+    };
+
+    // Create shutdown signal for graceful termination (shared with web server and respawn)
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutdown_signal = shutdown_rx;
+
+    // Start web server if enabled
+    if let Some(ref registry) = node_registry {
+        let web_state = std::sync::Arc::new(web::WebState::new(registry.clone(), log_dir.clone()));
+        let port = common.web_ui_port;
+        let web_shutdown = shutdown_signal.clone();
+
+        // Spawn web server as a background task
+        tokio::spawn(async move {
+            if let Err(e) = web::run_server(web_state, port, web_shutdown).await {
+                error!("Web server error: {}", e);
+            }
+        });
+    }
 
     // Spawn non-container nodes
     info!("Spawning non-container nodes...");

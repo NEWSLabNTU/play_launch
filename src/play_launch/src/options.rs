@@ -163,6 +163,14 @@ pub struct CommonOptions {
     /// Disable automatic respawn even if configured in launch file
     #[arg(long)]
     pub disable_respawn: bool,
+
+    /// Enable web UI for node management and log viewing
+    #[arg(long)]
+    pub web_ui: bool,
+
+    /// Web UI port (only used when --web-ui is enabled)
+    #[arg(long, default_value = "8080")]
+    pub web_ui_port: u16,
 }
 
 /// Arguments for plot command
