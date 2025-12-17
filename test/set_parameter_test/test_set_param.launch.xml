@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Declare launch argument -->
+  <arg name="use_sim_time" default="true"/>
+
+  <!-- Set global parameter - should apply to all nodes after this -->
+  <set_parameter name="use_sim_time" value="$(var use_sim_time)"/>
+  <set_parameter name="global_rate" value="50.0"/>
+  <set_parameter name="global_string" value="hello_world"/>
+
+  <!-- Node 1: Should inherit global params -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker1" namespace="/test">
+    <!-- Node-specific param that should override global -->
+    <param name="node_specific" value="talker1_value"/>
+  </node>
+
+  <!-- Node 2: Should also inherit global params -->
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener1" namespace="/test">
+    <param name="node_specific" value="listener1_value"/>
+  </node>
+
+  <!-- Test with a group scope -->
+  <group>
+    <set_parameter name="group_param" value="inside_group"/>
+
+    <node pkg="demo_nodes_cpp" exec="talker" name="talker2" namespace="/group_test">
+      <param name="node_specific" value="talker2_value"/>
+    </node>
+  </group>
+
+  <!-- Node 3: Outside group - should NOT have group_param -->
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener2" namespace="/outside_group">
+    <param name="node_specific" value="listener2_value"/>
+  </node>
+</launch>
