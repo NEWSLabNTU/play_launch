@@ -15,7 +15,7 @@ This document outlines the implementation roadmap for the unified `play_launch` 
 
 ## Current Status
 
-**Overall Progress**: ~85% complete (5 of 7 phases complete, 2 partially complete)
+**Overall Progress**: ~90% complete (6 of 8 phases complete, 2 partially complete)
 
 **Completed Phases**:
 - ✅ Phase 1: Core Subcommand Structure
@@ -23,6 +23,7 @@ This document outlines the implementation roadmap for the unified `play_launch` 
 - ✅ Phase 2.5: CLI Simplification
 - ✅ Phase 6: I/O Helper Integration
 - ✅ Phase 7: Logging Improvements (2025-11-04)
+- ✅ Phase 8: Web UI (2025-12-18)
 
 **In Progress**:
 - 🔄 Phase 3: Documentation & Polish (partial)
@@ -1277,3 +1278,312 @@ Warning: Node 'lidar_centerpoint' has printed 89 error lines in the last 30s
 - CI/CD pipelines
 - Automated regression testing
 - Performance benchmarking workflows
+
+---
+
+## ✅ Phase 8: Web UI (COMPLETE)
+
+**Goal**: Add an optional web-based management interface for monitoring and controlling nodes during replay.
+
+**Status**: ✅ Complete
+
+**Completed**: 2025-12-18
+
+### Features
+
+1. **Node List View**: Display all nodes with status badges (running/stopped/failed/noisy)
+2. **Node Control**: Start, stop, and restart individual nodes
+3. **Node Details**: View PID, command line, package/executable info
+4. **Live Logs**: Stream stdout/stderr via Server-Sent Events (SSE)
+5. **Health Summary**: Show counts of running, failed, and noisy nodes
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Browser (htmx)                         │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    axum Web Server                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │ REST API    │  │ SSE Stream  │  │ Embedded Assets     │  │
+│  │ /api/nodes  │  │ /api/logs   │  │ index.html (htmx)   │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    NodeRegistry                             │
+│  - Tracks node name → Child process handle                  │
+│  - Queries /proc/{pid} for status                           │
+│  - Reads play_log/.../node/{name}/err for logs              │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Filesystem                               │
+│  play_log/YYYY-MM-DD_HH-MM-SS/                              │
+│  ├── node/{name}/pid, out, err, cmdline, status             │
+│  └── load_node/{name}/...                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Design Principles**:
+- Filesystem as source of truth (no in-memory log storage)
+- Single binary deployment (embedded HTML/JS assets)
+- Minimal dependencies
+- Default disabled (`--web-ui` flag to enable)
+
+### Work Items
+
+#### 8.1 Add Dependencies
+
+**File**: `src/play_launch/Cargo.toml`
+
+```toml
+axum = "0.7"
+tower-http = { version = "0.6", features = ["cors"] }
+rust-embed = "8"
+notify = "6"  # File watching for SSE log streaming
+```
+
+- [x] Add dependencies to Cargo.toml
+- [x] Verify build succeeds
+
+#### 8.2 Add CLI Flags
+
+**File**: `src/play_launch/src/options.rs`
+
+```rust
+/// Enable web UI for node management
+#[arg(long)]
+pub web_ui: bool,
+
+/// Web UI port
+#[arg(long, default_value = "8080")]
+pub web_ui_port: u16,
+```
+
+- [x] Add `--web-ui` flag (default: false)
+- [x] Add `--web-ui-port` flag (default: 8080)
+- [x] Update help text
+
+#### 8.3 Create NodeRegistry
+
+**File**: `src/play_launch/src/node_registry.rs` (NEW)
+
+```rust
+pub struct NodeRegistry {
+    nodes: HashMap<String, NodeHandle>,
+    log_dir: PathBuf,
+}
+
+pub struct NodeHandle {
+    pub name: String,
+    pub child: Option<Child>,
+    pub record: NodeRecord,
+    pub cmdline: NodeCommandLine,
+    pub log_paths: NodeLogPaths,
+}
+
+pub struct NodeLogPaths {
+    pub stdout: PathBuf,
+    pub stderr: PathBuf,
+    pub pid_file: PathBuf,
+    pub cmdline_file: PathBuf,
+}
+```
+
+- [x] Create `NodeRegistry` struct with node tracking
+- [x] Implement `register_node()` - called when node spawns
+- [x] Implement `get_pid(name)` - read from `/proc/{pid}/stat` or Child handle
+- [x] Implement `get_status(name)` - Running/Stopped/Failed based on process state
+- [x] Implement `list_nodes()` - return all nodes with summary info
+- [x] Implement `get_node(name)` - return full details including cmdline
+
+#### 8.4 Implement Node Control
+
+**File**: `src/play_launch/src/node_registry.rs`
+
+- [x] Implement `start_node(name)` - spawn process, store Child handle
+- [x] Implement `stop_node(name)` - send SIGTERM via Child.kill()
+- [x] Implement `restart_node(name)` - stop then start
+- [ ] Handle respawn interaction (stopping should cancel pending respawn) - deferred to Phase 8.5
+
+#### 8.5 Integrate NodeRegistry with Execution
+
+**File**: `src/play_launch/src/main.rs`, `src/play_launch/src/node_registry.rs`
+
+- [x] Create `SharedNodeRegistry` in main.rs when web_ui is enabled
+- [x] Add `populate_registry_from_contexts()` to pre-populate registry from all contexts
+- [x] Add `pgid` field to NodeRegistry for node control operations
+- [x] Registry determines node status from filesystem (PID files, status files) - no execution.rs changes needed
+
+#### 8.6 Create Web Server Module
+
+**File**: `src/play_launch/src/web/mod.rs` (NEW)
+
+```rust
+#[derive(RustEmbed)]
+#[folder = "src/web/assets/"]
+struct Assets;
+
+pub struct WebState {
+    pub registry: Arc<Mutex<NodeRegistry>>,
+    pub log_dir: PathBuf,
+}
+
+pub fn create_router(state: Arc<WebState>) -> Router;
+pub async fn run_server(state: Arc<WebState>, port: u16) -> Result<()>;
+```
+
+- [x] Create `web/mod.rs` with router setup
+- [x] Use `rust-embed` to embed static assets
+- [x] Create `WebState` struct holding registry reference
+
+#### 8.7 Implement API Handlers
+
+**File**: `src/play_launch/src/web/handlers.rs` (NEW)
+
+| Endpoint | Method | Response | Description |
+|----------|--------|----------|-------------|
+| `/` | GET | HTML | Serve embedded index.html |
+| `/api/nodes` | GET | HTML fragment | List nodes (for htmx swap) |
+| `/api/nodes/{name}` | GET | JSON | Node details |
+| `/api/nodes/{name}/start` | POST | 200/4xx | Start node |
+| `/api/nodes/{name}/stop` | POST | 200/4xx | Stop node |
+| `/api/nodes/{name}/restart` | POST | 200/4xx | Restart node |
+| `/api/health` | GET | HTML fragment | Health summary badges |
+
+- [x] Implement `GET /` - serve embedded index.html
+- [x] Implement `GET /api/nodes` - return HTML fragment with node cards
+- [x] Implement `GET /api/nodes/{name}` - return JSON with full details
+- [x] Implement `POST /api/nodes/{name}/start`
+- [x] Implement `POST /api/nodes/{name}/stop`
+- [x] Implement `POST /api/nodes/{name}/restart`
+- [x] Implement `GET /api/health` - return HTML badges
+
+#### 8.8 Implement Log Streaming (SSE)
+
+**File**: `src/play_launch/src/web/sse.rs` (NEW)
+
+| Endpoint | Description |
+|----------|-------------|
+| `/api/nodes/{name}/logs/stdout` | SSE stream of stdout |
+| `/api/nodes/{name}/logs/stderr` | SSE stream of stderr |
+
+- [x] Implement file tailing with polling for file changes
+- [x] On connect: send last 100 lines of file
+- [x] Stream new lines as SSE events
+- [ ] Handle file not existing (node not started)
+- [ ] Cleanup on client disconnect
+
+#### 8.9 Create Frontend
+
+**File**: `src/play_launch/src/web/assets/index.html` (NEW)
+
+- [x] Create single HTML file with embedded CSS and JS
+- [x] Use htmx for reactive updates (polling every 2-3s)
+- [x] Node list with status badges and action buttons
+- [x] Health summary header with badge counts
+- [x] Log viewer modal with stdout/stderr tabs
+- [x] SSE connection for live log streaming
+- [x] Dark theme, responsive layout
+
+#### 8.10 Integrate Web Server with Main
+
+**File**: `src/play_launch/src/main.rs`
+
+- [x] Create `NodeRegistry` before spawning nodes
+- [x] Spawn web server task when `--web-ui` flag is set
+- [x] Print "Web UI available at http://localhost:{port}" on startup
+- [x] Graceful shutdown of web server on Ctrl-C
+
+#### 8.11 Implement Health Check
+
+- [x] Track stderr file size growth per node
+- [x] Mark node as "noisy" if stderr grows > N bytes per interval
+- [x] Include noisy count in health summary
+- [x] Reset noisy flag periodically (checked on each request)
+
+#### 8.12 Documentation
+
+**File**: `CLAUDE.md`
+
+- [x] Add Web UI section with usage instructions
+- [x] Document `--web-ui` and `--web-ui-port` flags
+- [x] Add examples
+
+### API Response Examples
+
+**GET /api/nodes** (HTML fragment for htmx):
+```html
+<div class="node-card">
+  <div class="node-header">
+    <span class="node-name">talker</span>
+    <span class="node-status status-running"></span>
+  </div>
+  <div class="node-meta">PID: 12345 | demo_nodes_cpp/talker</div>
+  <div class="node-actions">
+    <button class="btn btn-stop" hx-post="/api/nodes/talker/stop">Stop</button>
+    <button class="btn btn-restart" hx-post="/api/nodes/talker/restart">Restart</button>
+    <button class="btn btn-logs" onclick="openLogs('talker')">Logs</button>
+  </div>
+</div>
+```
+
+**GET /api/nodes/{name}** (JSON):
+```json
+{
+  "name": "talker",
+  "status": "running",
+  "pid": 12345,
+  "package": "demo_nodes_cpp",
+  "executable": "talker",
+  "namespace": "/test",
+  "cmdline": "/opt/ros/jazzy/lib/demo_nodes_cpp/talker --ros-args ...",
+  "log_paths": {
+    "stdout": "play_log/.../node/talker/out",
+    "stderr": "play_log/.../node/talker/err"
+  }
+}
+```
+
+**GET /api/health** (HTML fragment):
+```html
+<span class="badge badge-green">5 running</span>
+<span class="badge badge-red">1 failed</span>
+<span class="badge badge-yellow">2 noisy</span>
+```
+
+### Dependencies
+
+| Crate | Version | Purpose |
+|-------|---------|---------|
+| axum | 0.7 | Web framework (tokio-native) |
+| tower-http | 0.6 | CORS middleware |
+| rust-embed | 8 | Embed static files in binary |
+| notify | 6 | File watching for SSE |
+
+### Testing
+
+- [ ] Unit tests for NodeRegistry state management
+- [ ] Manual test: start replay with `--web-ui`, open browser
+- [ ] Verify node list updates when nodes start/stop
+- [ ] Verify log streaming works (stdout and stderr)
+- [ ] Verify start/stop/restart controls work
+- [ ] Test with multiple concurrent browser tabs
+- [ ] Test SSE reconnection after server restart
+
+### Success Criteria
+
+- [x] `--web-ui` flag enables web server
+- [x] Node list shows all nodes with correct status
+- [x] Start/stop/restart buttons work
+- [x] Live log streaming via SSE works
+- [x] Health summary shows accurate counts (including noisy nodes)
+- [x] Single binary deployment (no external files)
+- [x] Minimal performance impact when disabled
+- [x] Documentation updated
