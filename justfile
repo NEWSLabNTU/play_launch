@@ -50,10 +50,9 @@ build:
     cp install/play_launch/lib/play_launch/play_launch_io_helper python/play_launch/bin/
     chmod +x python/play_launch/bin/*
 
-    # Step 3: Build wheel with setuptools
+    # Step 3: Build wheel with uv
     echo "Building wheel..."
-    pip install --quiet build
-    python -m build --wheel
+    uv build --wheel
 
     # Show output
     echo ""
@@ -109,8 +108,7 @@ clean:
 build-sdist:
     #!/usr/bin/env bash
     set -e
-    pip install --quiet build
-    python -m build --sdist
+    uv build --sdist
 
 # Install wheel locally for testing
 install-wheel:
