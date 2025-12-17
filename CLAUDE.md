@@ -89,6 +89,10 @@ play_launch plot --metrics cpu memory           # Plot specific metrics
 - **resource_monitor.rs**: Per-node and system-wide metrics collection
 - **config.rs**: YAML configuration with process control (CPU affinity, nice)
 - **options.rs**: CLI parsing
+- **node_registry.rs**: Node tracking and control for web UI
+- **web/mod.rs**: axum web server with embedded assets
+- **web/handlers.rs**: HTTP API handlers for node control
+- **web/sse.rs**: Server-Sent Events for log streaming
 
 ## Configuration
 
@@ -101,6 +105,8 @@ play_launch plot --metrics cpu memory           # Plot specific metrics
 - `--standalone-composable-nodes`: Run composable nodes standalone
 - `--load-orphan-composable-nodes`: Load nodes without matching containers
 - `--disable-respawn`: Disable automatic respawn even if configured in launch file
+- `--web-ui`: Enable web-based management interface (default: disabled)
+- `--web-ui-port <PORT>`: Web UI port (default: 8080)
 
 ### Config YAML Example
 
@@ -273,9 +279,54 @@ Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop 
 - **on_exit Handlers**: Not supported - warning logged if detected in launch files
 - **Infinite Restarts**: Matches ROS2 launch behavior (no retry limit by default)
 
+## Web UI
+
+Optional web-based interface for monitoring and controlling nodes during replay.
+
+### Enabling
+
+```sh
+# Start replay with web UI
+play_launch replay --web-ui
+
+# Custom port
+play_launch replay --web-ui --web-ui-port 3000
+```
+
+### Features
+
+- **Node List**: All registered nodes with live status (running/stopped/failed/pending)
+- **Node Control**: Start, stop, restart individual nodes via web buttons
+- **Node Details**: View PID, package, executable, namespace, command line
+- **Log Viewer**: Modal with stdout/stderr tabs, live streaming via SSE
+- **Health Summary**: Badge counts for running/stopped/failed/pending/noisy nodes
+- **Search/Filter**: Filter node list by name
+- **Noisy Detection**: Nodes with >10KB stderr output are flagged
+
+### Architecture
+
+- **Framework**: axum web server with embedded static assets
+- **Frontend**: htmx for reactive updates, no build step required
+- **Log Streaming**: Server-Sent Events (SSE) with file tailing
+- **Registry**: NodeRegistry tracks all nodes, determines status from filesystem
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Serve embedded index.html |
+| `/api/nodes` | GET | HTML fragment with node cards |
+| `/api/nodes/{name}` | GET | JSON node details |
+| `/api/nodes/{name}/start` | POST | Start node |
+| `/api/nodes/{name}/stop` | POST | Stop node |
+| `/api/nodes/{name}/restart` | POST | Restart node |
+| `/api/nodes/{name}/logs/stdout` | GET | SSE stream of stdout |
+| `/api/nodes/{name}/logs/stderr` | GET | SSE stream of stderr |
+| `/api/health` | GET | HTML health summary badges |
+
 ## Dependencies
 
-**Rust**: tokio, rayon, eyre, clap, serde/serde_json/serde_yaml, bincode, rclrs, composition_interfaces, rcl_interfaces, sysinfo, nvml-wrapper, csv
+**Rust**: tokio, rayon, eyre, clap, serde/serde_json/serde_yaml, bincode, rclrs, composition_interfaces, rcl_interfaces, sysinfo, nvml-wrapper, csv, axum, tower-http, rust-embed, mime_guess
 
 **Python**: pyyaml, lark, packaging, plotly (visualization)
 
