@@ -18,7 +18,12 @@ from launch.events import IncludeLaunchDescription, Shutdown
 from launch.launch_context import LaunchContext
 from launch.launch_description import LaunchDescription
 from launch.launch_description_entity import LaunchDescriptionEntity
-from launch.some_entities_type import SomeEntitiesType as SomeActionsType
+try:
+    # ROS Humble
+    from launch.some_actions_type import SomeActionsType
+except ImportError:
+    # ROS Jazzy
+    from launch.some_entities_type import SomeEntitiesType as SomeActionsType
 from launch.utilities import AsyncSafeSignalManager, is_a_subclass
 
 from .event_handlers import OnIncludeLaunchDescription
