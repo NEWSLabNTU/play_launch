@@ -17,18 +17,7 @@ This directory contains test scripts for `dump_launch` and `play_launch` with Au
    $HOME/autoware_map/sample-map-planning
    ```
 
-3. **(Optional) Install ros2systemd** for systemd-managed launches:
-   ```bash
-   # Install via pip
-   pip3 install ros2systemd
-
-   # Or install from source
-   git clone https://github.com/ros-sys/ros2systemd.git
-   cd ros2systemd
-   pip3 install -e .
-   ```
-
-   With ros2systemd, you can run Autoware as a systemd user service, which provides:
+3. **Systemd user services** are available for running Autoware as a managed service (no additional installation required):
    - Automatic process cleanup when stopping the service
    - Log management via journalctl
    - Service status monitoring
@@ -38,7 +27,7 @@ This directory contains test scripts for `dump_launch` and `play_launch` with Au
 
 ```
 test/autoware_planning_simulation/
-├── Makefile              # Main test automation
+├── justfile              # Main test automation
 ├── README.md             # This file
 ├── autoware              # Symlink to Autoware workspace
 ├── cyclonedds.xml        # CycloneDDS configuration
@@ -47,6 +36,8 @@ test/autoware_planning_simulation/
 ├── play_log/             # Execution logs and metrics (generated)
 └── scripts/              # Utility scripts
     ├── start-sim.sh                # Start simulator with play_launch
+    ├── start-demo-systemd.sh       # Start demo with play_launch (for systemd)
+    ├── start-sim-and-drive.sh      # Start simulator + test with play_launch
     ├── test_autonomous_drive.py    # Autonomous driving test
     ├── plot_resource_usage.py      # Plot generation tool
     └── kill_orphan_nodes.sh        # Cleanup utility
@@ -54,45 +45,48 @@ test/autoware_planning_simulation/
 
 ## Usage
 
-### Using Makefile (Recommended)
+### Using justfile (Recommended)
 
 ```bash
-# Show available targets
-make help
+# Show available recipes
+just --list
 
-# Start Autoware planning simulator with play_launch
-make start-sim
+# Start Autoware simulator with systemd-run (runs as systemd user service)
+just start-sim
 
-# Start Autoware with ros2 systemd launch (runs as systemd user service)
-make start-sim-systemd
-
-# Manage the systemd service
-make status-sim-systemd    # Check service status
-make logs-sim-systemd      # View logs (follows in real-time)
-make stop-sim-systemd      # Stop the service
+# Manage the simulator service
+just status-sim    # Check service status
+just logs-sim      # View logs (follows in real-time)
+just stop-sim      # Stop the service
 
 # Run autonomous driving test (requires simulator running)
-make drive
+just drive
 
-# Run complete test sequence (simulator + autonomous test)
-make start-sim-and-drive
+# Start complete demo (simulator + autonomous test) as systemd service
+just start-demo
+
+# Manage the demo service
+just status-demo  - Check demo service status
+just logs-demo    - View demo logs (follows in real-time)
+just restart-demo - Restart the demo service
+just stop-demo    - Stop the demo service
 
 # Clean up orphan ROS nodes
-make kill-orphans
+just kill-orphans
 ```
 
-The Makefile automatically sources the Autoware environment from `autoware/install/setup.bash`.
+The justfile automatically sources the Autoware environment from `autoware/install/setup.bash`.
 
 ### Systemd Launch Benefits
 
-When using `make start-sim-systemd`, the launch runs as a systemd user service, which provides several advantages:
+When using `just start-sim` or `just start-demo`, the launch runs as a systemd user service, which provides several advantages:
 
 1. **Automatic Cleanup**: All ROS nodes are properly terminated when the service is stopped (no orphan processes)
-2. **Log Management**: Logs are stored in journalctl and can be viewed with `make logs-sim-systemd`
-3. **Service Monitoring**: Check service status with `make status-sim-systemd`
+2. **Log Management**: Logs are stored in journalctl and can be viewed with `just logs-sim` or `just logs-demo`
+3. **Service Monitoring**: Check service status with `just status-sim` or `just status-demo`
 4. **Persistent Logs**: Logs are preserved even after the service stops
 
-The systemd service automatically handles environment setup (sources Autoware workspace) and CycloneDDS configuration.
+The systemd services automatically handle environment setup (sources Autoware workspace) and CycloneDDS configuration.
 
 ### Using Scripts Directly
 
@@ -106,9 +100,11 @@ python3 scripts/test_autonomous_drive.py
 
 ## Files
 
-- `Makefile` - Build automation for Autoware tests
+- `justfile` - Build automation for Autoware tests
 - `cyclonedds.xml` - CycloneDDS configuration for localhost-only communication
 - `scripts/start-sim.sh` - Starts Autoware planning simulator with play_launch
+- `scripts/start-demo-systemd.sh` - Starts Autoware demo (simulator + test) with play_launch
+- `scripts/start-sim-and-drive.sh` - Starts Autoware + test with play_launch (parallel execution)
 - `scripts/test_autonomous_drive.py` - Python script to automate autonomous driving test
 - `scripts/plot_resource_usage.py` - Resource usage plotting tool
 - `scripts/kill_orphan_nodes.sh` - Cleanup orphan ROS nodes
@@ -119,35 +115,40 @@ python3 scripts/test_autonomous_drive.py
 
 ## Autonomous Driving Test
 
-### Quick Start - Automated Test
+### Quick Start - Automated Demo
 
-Run the complete test sequence automatically:
+Run the complete demo sequence as a systemd service:
 
 ```bash
-make start-sim-and-drive
+just start-demo
 ```
 
 This will:
-1. Start Autoware with play_launch
+1. Start Autoware with `play_launch launch` (via systemd service)
 2. Wait for system to be ready (~60s)
 3. Set initial pose
 4. Set goal pose
 5. Engage autonomous mode
 6. Monitor for 60 seconds
-7. Keep system running (press Ctrl+C to stop)
+7. Keep simulator running (managed by systemd)
+
+Manage the demo with:
+- `just status-demo` - Check if demo is running
+- `just logs-demo` - View real-time logs
+- `just stop-demo` - Stop the demo service
 
 ### Manual Test (Step-by-step)
 
 1. Start Autoware planning simulator in one terminal:
    ```bash
-   make start-sim
+   just start-sim
    ```
 
 2. Wait ~60 seconds for system to initialize
 
 3. In another terminal, run the autonomous driving test:
    ```bash
-   make drive
+   just drive
    ```
 
 ### Test Sequence Details
@@ -198,12 +199,12 @@ ls -la autoware/install/setup.bash
 
 ## Configuration
 
-### Makefile Variables
+### justfile Variables
 
-You can override these variables when running make:
+You can override these variables using environment variables:
 
 ```bash
-make start-sim MAP_PATH=/path/to/map
+MAP_PATH=/path/to/map just start-sim
 ```
 
 Available variables:
@@ -223,20 +224,22 @@ These conservative timeouts are appropriate for Autoware's large number of conta
 
 ## Comparison Testing
 
-To compare different launch methods:
+To test different modes:
 
 ```bash
-# Test with play_launch
-make start-sim
+# Test simulator only
+just start-sim
 
-# Test with ros2 systemd launch (in a new terminal after killing play_launch)
-make start-sim-systemd
+# Test complete demo (simulator + autonomous test)
+just start-demo
 
-# View systemd service logs
-make logs-sim-systemd
+# View service logs
+just logs-sim   # For simulator service
+just logs-demo  # For demo service
 
-# Stop the systemd service
-make stop-sim-systemd
+# Stop services
+just stop-sim   # Stop simulator service
+just stop-demo  # Stop demo service
 ```
 
 All methods use the same:
@@ -257,21 +260,22 @@ The `CYCLONEDDS_URI` environment variable is set before launching to ensure all 
 
 ### Systemd Service Details
 
-When using `make start-sim-systemd`, the service:
-- Runs as a user service (no sudo required)
-- Automatically sources `autoware/install/setup.bash`
-- Sets `CYCLONEDDS_URI` environment variable
-- Copies `DISPLAY` environment variable for GUI applications (e.g., rviz2)
+Both `just start-sim` and `just start-demo` run as systemd user services:
+- Run as user services (no sudo required)
+- Automatically source `autoware/install/setup.bash`
+- Set `CYCLONEDDS_URI` environment variable
+- Copy `DISPLAY` environment variable for GUI applications (e.g., rviz2)
 - Can be managed with standard systemd commands:
   ```bash
-  # Check service status
-  systemctl --user status ros2-autoware-planning-sim
+  # Simulator service
+  systemctl --user status autoware-planning-sim
+  journalctl --user -u autoware-planning-sim -f
+  systemctl --user stop autoware-planning-sim
 
-  # View logs with journalctl
-  journalctl --user -u ros2-autoware-planning-sim -f
-
-  # Stop the service
-  systemctl --user stop ros2-autoware-planning-sim
+  # Demo service (simulator + autonomous test)
+  systemctl --user status autoware-demo
+  journalctl --user -u autoware-demo -f
+  systemctl --user stop autoware-demo
   ```
 
-The Makefile targets (`make status-sim-systemd`, `make logs-sim-systemd`, etc.) provide convenient wrappers around these commands.
+The justfile recipes provide convenient wrappers around these systemd commands.
