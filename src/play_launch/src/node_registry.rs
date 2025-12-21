@@ -19,6 +19,32 @@ use std::{
 };
 use tokio::{process::Child, sync::Mutex};
 
+/// Helper function to write stop marker to log files
+fn write_stop_marker(log_paths: &NodeLogPaths) {
+    use std::io::Write;
+
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    let stop_marker = format!("\n========== STOPPED at {} ==========\n", timestamp);
+
+    // Write to stdout log
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_paths.stdout)
+    {
+        let _ = file.write_all(stop_marker.as_bytes());
+    }
+
+    // Write to stderr log
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_paths.stderr)
+    {
+        let _ = file.write_all(stop_marker.as_bytes());
+    }
+}
+
 /// Node status for regular nodes and containers (process-based)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -378,6 +404,11 @@ pub struct NodeSummary {
     pub exec_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_name: Option<String>,
+    /// Unix timestamp (seconds) when stderr was last modified
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr_last_modified: Option<u64>,
+    /// Size of stderr file in bytes
+    pub stderr_size: u64,
 }
 
 /// Detailed information about a node (for API responses)
@@ -479,18 +510,35 @@ impl NodeRegistry {
     pub fn list_nodes(&self) -> Vec<NodeSummary> {
         self.nodes
             .values()
-            .map(|handle| NodeSummary {
-                name: handle.name.clone(),
-                node_type: handle.node_type,
-                status: handle.get_status(),
-                pid: handle.get_pid(),
-                package: handle.get_package().map(String::from),
-                executable: handle.get_executable().to_string(),
-                namespace: handle.get_namespace().map(String::from),
-                target_container: handle.get_target_container().map(String::from),
-                is_container: handle.is_container,
-                exec_name: handle.get_exec_name().map(String::from),
-                node_name: handle.get_node_name().map(String::from),
+            .map(|handle| {
+                // Get stderr file metadata
+                let (stderr_last_modified, stderr_size) =
+                    if let Ok(metadata) = std::fs::metadata(&handle.log_paths.stderr) {
+                        let mtime = metadata
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs());
+                        (mtime, metadata.len())
+                    } else {
+                        (None, 0)
+                    };
+
+                NodeSummary {
+                    name: handle.name.clone(),
+                    node_type: handle.node_type,
+                    status: handle.get_status(),
+                    pid: handle.get_pid(),
+                    package: handle.get_package().map(String::from),
+                    executable: handle.get_executable().to_string(),
+                    namespace: handle.get_namespace().map(String::from),
+                    target_container: handle.get_target_container().map(String::from),
+                    is_container: handle.is_container,
+                    exec_name: handle.get_exec_name().map(String::from),
+                    node_name: handle.get_node_name().map(String::from),
+                    stderr_last_modified,
+                    stderr_size,
+                }
             })
             .collect()
     }
@@ -505,6 +553,19 @@ impl NodeRegistry {
                 None
             };
 
+            // Get stderr file metadata
+            let (stderr_last_modified, stderr_size) =
+                if let Ok(metadata) = std::fs::metadata(&handle.log_paths.stderr) {
+                    let mtime = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs());
+                    (mtime, metadata.len())
+                } else {
+                    (None, 0)
+                };
+
             NodeDetails {
                 summary: NodeSummary {
                     name: handle.name.clone(),
@@ -518,6 +579,8 @@ impl NodeRegistry {
                     is_container: handle.is_container,
                     exec_name: handle.get_exec_name().map(String::from),
                     node_name: handle.get_node_name().map(String::from),
+                    stderr_last_modified,
+                    stderr_size,
                 },
                 output_dir: handle.output_dir.clone(),
                 log_paths: handle.log_paths.clone(),
@@ -670,6 +733,9 @@ impl NodeRegistry {
                 handle.last_pid = Some(pid);
             }
 
+            // Write stop marker to log files
+            write_stop_marker(&handle.log_paths);
+
             return Ok(true);
         }
 
@@ -685,6 +751,10 @@ impl NodeRegistry {
                     kill(Pid::from_raw(pid as i32), Signal::SIGTERM)
                         .map_err(|e| eyre!("Failed to send SIGTERM to PID {}: {}", pid, e))?;
                 }
+
+                // Write stop marker to log files
+                write_stop_marker(&handle.log_paths);
+
                 return Ok(true);
             }
         }
@@ -730,11 +800,38 @@ impl NodeRegistry {
         std::fs::create_dir_all(&handle.output_dir)
             .wrap_err_with(|| format!("Failed to create output directory for {}", name))?;
 
-        // Set up output files
-        let stdout_file = File::create(&handle.log_paths.stdout)
-            .wrap_err_with(|| format!("Failed to create stdout file for {}", name))?;
-        let stderr_file = File::create(&handle.log_paths.stderr)
-            .wrap_err_with(|| format!("Failed to create stderr file for {}", name))?;
+        // Write start marker to log files
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let start_marker = format!("\n========== STARTED at {} ==========\n", timestamp);
+
+        // Open log files in append mode
+        use std::io::Write;
+        let mut stdout_file = File::options()
+            .create(true)
+            .append(true)
+            .open(&handle.log_paths.stdout)
+            .wrap_err_with(|| format!("Failed to open stdout file for {}", name))?;
+        let mut stderr_file = File::options()
+            .create(true)
+            .append(true)
+            .open(&handle.log_paths.stderr)
+            .wrap_err_with(|| format!("Failed to open stderr file for {}", name))?;
+
+        // Write start markers
+        let _ = stdout_file.write_all(start_marker.as_bytes());
+        let _ = stderr_file.write_all(start_marker.as_bytes());
+
+        // Reopen files for process stdout/stderr (need to reopen to avoid sharing issues)
+        let stdout_file = File::options()
+            .create(true)
+            .append(true)
+            .open(&handle.log_paths.stdout)
+            .wrap_err_with(|| format!("Failed to reopen stdout file for {}", name))?;
+        let stderr_file = File::options()
+            .create(true)
+            .append(true)
+            .open(&handle.log_paths.stderr)
+            .wrap_err_with(|| format!("Failed to reopen stderr file for {}", name))?;
 
         // Build the command
         let args = cmdline.to_cmdline(false);

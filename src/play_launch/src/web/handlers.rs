@@ -142,8 +142,18 @@ fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str
         }
     };
 
+    // Format stderr data attributes
+    let stderr_attrs = if let Some(mtime) = node.stderr_last_modified {
+        format!(
+            r#" data-stderr-mtime="{}" data-stderr-size="{}""#,
+            mtime, node.stderr_size
+        )
+    } else {
+        String::new()
+    };
+
     format!(
-        r##"<div class="node-card {} {}" data-node="{}">
+        r##"<div class="node-card {} {}" data-node="{}"{}>
   <div class="node-info">
     <div class="node-header">
       <span class="node-type {}">{}</span>
@@ -162,6 +172,7 @@ fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str
         status_class,
         indent_class,
         node.name,
+        stderr_attrs,
         node_type_class,
         node_type_label,
         display_name,
@@ -378,6 +389,17 @@ pub async fn stop_node(State(state): State<Arc<WebState>>, Path(name): Path<Stri
         }
         Err(e) => {
             info!("[Web UI] Failed to stop node '{}': {}", name, e);
+            // Log additional debug info
+            let registry = state.registry.lock().await;
+            if let Some(handle) = registry.get(&name) {
+                info!(
+                    "[Web UI] Node '{}' debug: type={:?}, pid={:?}, has_child={}",
+                    name,
+                    handle.node_type,
+                    handle.get_pid(),
+                    handle.child.is_some()
+                );
+            }
             (
                 StatusCode::BAD_REQUEST,
                 format!("Failed to stop node '{}': {}", name, e),
@@ -602,23 +624,12 @@ pub async fn health_summary(State(state): State<Arc<WebState>>) -> Response {
     let registry = state.registry.lock().await;
     let summary = registry.get_health_summary();
 
-    // Only show noisy badge if there are noisy nodes
-    let noisy_badge = if summary.noisy > 0 {
-        format!(
-            r#"<span class="badge badge-noisy">Noisy: {}</span>"#,
-            summary.noisy
-        )
-    } else {
-        String::new()
-    };
-
     let html = format!(
         r#"<div class="health-summary">
   <span class="badge badge-nodes">Nodes: {} running / {} total</span>
   <span class="badge badge-containers">Containers: {} running / {} total</span>
   <span class="badge badge-composable">Composable: {} loaded / {} total</span>
   <span class="badge badge-processes">Processes: {} running</span>
-  {}
 </div>"#,
         summary.nodes_running,
         summary.nodes_total,
@@ -627,7 +638,6 @@ pub async fn health_summary(State(state): State<Arc<WebState>>) -> Response {
         summary.composable_loaded,
         summary.composable_total,
         summary.processes_running,
-        noisy_badge
     );
 
     Html(html).into_response()
@@ -735,6 +745,30 @@ pub async fn stop_all(State(state): State<Arc<WebState>>) -> Response {
                         info!("[Web UI] Stopped '{}'", node.name);
                         results.push(format!("✓ {}", node.name));
                         success_count += 1;
+
+                        // If it's a container, mark all composable nodes as terminated
+                        if node.node_type == NodeType::Container {
+                            let composable_nodes =
+                                registry.get_container_composable_nodes(&node.name);
+                            for comp_name in &composable_nodes {
+                                if let Some(handle) = registry.get(comp_name) {
+                                    let terminated_path = handle.output_dir.join("terminated");
+                                    if let Err(e) =
+                                        std::fs::write(&terminated_path, "container_stopped")
+                                    {
+                                        info!(
+                                            "[Web UI] Failed to write termination marker for '{}': {}",
+                                            comp_name, e
+                                        );
+                                    } else {
+                                        info!(
+                                            "[Web UI] Marked composable node '{}' as terminated",
+                                            comp_name
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                     Ok(false) => {
                         // Already stopped, skip

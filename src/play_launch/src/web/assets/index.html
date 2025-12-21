@@ -116,75 +116,6 @@
             flex-wrap: wrap;
         }
 
-        .bulk-controls {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .btn-bulk {
-            padding: 6px 12px;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            background: var(--bg-tertiary);
-            color: var(--text-primary);
-            font-size: 0.85rem;
-            cursor: pointer;
-            transition: all 0.2s;
-            position: relative;
-        }
-
-        .btn-bulk:hover:not(:disabled) {
-            background: var(--border-color);
-        }
-
-        .btn-bulk:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-
-        .btn-bulk .htmx-indicator {
-            display: none;
-        }
-
-        .btn-bulk.htmx-request .htmx-indicator {
-            display: inline;
-        }
-
-        .btn-bulk.htmx-request .btn-text {
-            display: none;
-        }
-
-        .btn-start-all {
-            background: #10b981;
-            color: white;
-            border-color: #059669;
-        }
-
-        .btn-start-all:hover:not(:disabled) {
-            background: #059669;
-        }
-
-        .btn-stop-all {
-            background: #ef4444;
-            color: white;
-            border-color: #dc2626;
-        }
-
-        .btn-stop-all:hover:not(:disabled) {
-            background: #dc2626;
-        }
-
-        .btn-restart-all {
-            background: #f59e0b;
-            color: white;
-            border-color: #d97706;
-        }
-
-        .btn-restart-all:hover:not(:disabled) {
-            background: #d97706;
-        }
-
         /* Node control button loading states */
         .node-controls button .btn-loading {
             display: none;
@@ -417,6 +348,36 @@
         .node-card.status-pending {
             background: var(--pending-bg);
             border-left-color: var(--pending-border);
+        }
+
+        /* Stderr activity icon */
+        .stderr-icon {
+            font-size: 0.9rem;
+            margin-left: 6px;
+            flex-shrink: 0;
+            line-height: 1;
+        }
+
+        .stderr-icon.hot {
+            color: #fbbf24; /* Bright yellow - active output */
+        }
+
+        .stderr-icon.warm {
+            color: #f59e0b; /* Mild orange - recent output */
+        }
+
+        /* Jumping animation for active stderr */
+        @keyframes jump {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-4px);
+            }
+        }
+
+        .stderr-icon.jumping {
+            animation: jump 0.6s ease-in-out infinite;
         }
 
         /* Container and child node hierarchy */
@@ -702,32 +663,6 @@
                  hx-get="/api/health"
                  hx-trigger="load, every 5s">
                 <span class="badge">Loading...</span>
-            </div>
-            <div class="bulk-controls">
-                <button class="btn-bulk btn-start-all"
-                        hx-post="/api/nodes/all/start"
-                        hx-swap="none"
-                        hx-indicator="#start-all-spinner"
-                        hx-disabled-elt="this">
-                    <span class="htmx-indicator" id="start-all-spinner">Starting...</span>
-                    <span class="btn-text">Start All</span>
-                </button>
-                <button class="btn-bulk btn-stop-all"
-                        hx-post="/api/nodes/all/stop"
-                        hx-swap="none"
-                        hx-indicator="#stop-all-spinner"
-                        hx-disabled-elt="this">
-                    <span class="htmx-indicator" id="stop-all-spinner">Stopping...</span>
-                    <span class="btn-text">Stop All</span>
-                </button>
-                <button class="btn-bulk btn-restart-all"
-                        hx-post="/api/nodes/all/restart"
-                        hx-swap="none"
-                        hx-indicator="#restart-all-spinner"
-                        hx-disabled-elt="this">
-                    <span class="htmx-indicator" id="restart-all-spinner">Restarting...</span>
-                    <span class="btn-text">Restart All</span>
-                </button>
             </div>
             <button class="theme-toggle" onclick="toggleTheme()">
                 <span id="theme-icon">◐</span>
@@ -1086,6 +1021,80 @@
             autoScroll = Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 50;
         });
 
+        // Stderr icon updater
+        let lastStderrSizes = new Map(); // Track sizes to detect frequent activity
+
+        function updateStderrIcons() {
+            const now = Math.floor(Date.now() / 1000); // Current time in seconds
+
+            document.querySelectorAll('.node-card[data-stderr-mtime]').forEach(card => {
+                const mtimeStr = card.getAttribute('data-stderr-mtime');
+                const sizeStr = card.getAttribute('data-stderr-size');
+
+                if (!mtimeStr) return;
+
+                const mtime = parseInt(mtimeStr);
+                const size = parseInt(sizeStr) || 0;
+                const nodeName = card.getAttribute('data-node');
+                const elapsed = now - mtime;
+
+                // Find or create icon element
+                let icon = card.querySelector('.stderr-icon');
+                const header = card.querySelector('.node-header');
+
+                if (!header) return;
+
+                // Remove icon if no stderr content or > 60 seconds
+                if (size === 0 || elapsed >= 60) {
+                    if (icon) {
+                        icon.remove();
+                    }
+                    lastStderrSizes.delete(nodeName);
+                    return;
+                }
+
+                // Create icon if it doesn't exist
+                if (!icon) {
+                    icon = document.createElement('span');
+                    icon.className = 'stderr-icon';
+                    icon.textContent = '📋'; // Clipboard icon for logs/output
+                    // Insert after PID element
+                    const pid = header.querySelector('.node-pid');
+                    if (pid) {
+                        // Insert right after PID
+                        if (pid.nextSibling) {
+                            header.insertBefore(icon, pid.nextSibling);
+                        } else {
+                            header.appendChild(icon);
+                        }
+                    } else {
+                        // No PID, append to end of header
+                        header.appendChild(icon);
+                    }
+                }
+
+                // Update icon based on time since last modification
+                icon.classList.remove('hot', 'warm', 'jumping');
+
+                if (elapsed < 10) {
+                    // 0-10 seconds: bright yellow, jumping
+                    icon.classList.add('hot', 'jumping');
+                } else {
+                    // 10-60 seconds: mild orange, static
+                    icon.classList.add('warm');
+                }
+
+                // Update size tracking
+                lastStderrSizes.set(nodeName, size);
+            });
+        }
+
+        // Run updater every second
+        setInterval(updateStderrIcons, 1000);
+
+        // Run once on page load
+        updateStderrIcons();
+
         // HTMX event handlers
         document.body.addEventListener('htmx:afterRequest', function(evt) {
             const path = evt.detail.pathInfo?.requestPath || '';
@@ -1103,6 +1112,8 @@
                 if (searchTerm) {
                     filterNodes(searchTerm);
                 }
+                // Update stderr icons immediately after node list refresh
+                updateStderrIcons();
             }
         });
 
