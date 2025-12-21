@@ -35,9 +35,10 @@ test/autoware_planning_simulation/
 ├── poses_config.yaml     # Test poses configuration
 ├── play_log/             # Execution logs and metrics (generated)
 └── scripts/              # Utility scripts
-    ├── start-sim.sh                # Start simulator with play_launch
-    ├── start-demo-systemd.sh       # Start demo with play_launch (for systemd)
-    ├── start-sim-and-drive.sh      # Start simulator + test with play_launch
+    ├── start-sim.sh                # Start simulator as systemd service (calls start-sim-inner.sh)
+    ├── start-sim-inner.sh          # Simulator execution logic (runs inside systemd)
+    ├── start-demo.sh               # Start demo as systemd service (calls start-demo-inner.sh)
+    ├── start-demo-inner.sh         # Demo execution logic (runs inside systemd)
     ├── test_autonomous_drive.py    # Autonomous driving test
     ├── plot_resource_usage.py      # Plot generation tool
     └── kill_orphan_nodes.sh        # Cleanup utility
@@ -51,25 +52,26 @@ test/autoware_planning_simulation/
 # Show available recipes
 just --list
 
-# Start Autoware simulator with systemd-run (runs as systemd user service)
-just start-sim
+# Start Autoware simulator as systemd service (with web UI)
+just start-sim       # ✓ Simulator service started (Web UI: http://localhost:8080)
 
 # Manage the simulator service
-just status-sim    # Check service status
-just logs-sim      # View logs (follows in real-time)
-just stop-sim      # Stop the service
+just stop-sim        # ✓ Simulator service stopped
+just restart-sim     # ✓ Simulator service restarted
+just status-sim      # Show detailed service status
+just logs-sim        # Follow logs in real-time (Ctrl+C to exit)
 
 # Run autonomous driving test (requires simulator running)
 just drive
 
 # Start complete demo (simulator + autonomous test) as systemd service
-just start-demo
+just start-demo      # ✓ Demo service started (Web UI: http://localhost:7777)
 
 # Manage the demo service
-just status-demo  - Check demo service status
-just logs-demo    - View demo logs (follows in real-time)
-just restart-demo - Restart the demo service
-just stop-demo    - Stop the demo service
+just stop-demo       # ✓ Demo service stopped
+just restart-demo    # ✓ Demo service restarted
+just status-demo     # Show detailed service status
+just logs-demo       # Follow logs in real-time (Ctrl+C to exit)
 
 # Clean up orphan ROS nodes
 just kill-orphans
@@ -77,16 +79,25 @@ just kill-orphans
 
 The justfile automatically sources the Autoware environment from `autoware/install/setup.bash`.
 
-### Systemd Launch Benefits
+### Launch Methods
 
-When using `just start-sim` or `just start-demo`, the launch runs as a systemd user service, which provides several advantages:
+Both launch methods run as systemd user services for reliable process management:
 
-1. **Automatic Cleanup**: All ROS nodes are properly terminated when the service is stopped (no orphan processes)
-2. **Log Management**: Logs are stored in journalctl and can be viewed with `just logs-sim` or `just logs-demo`
-3. **Service Monitoring**: Check service status with `just status-sim` or `just status-demo`
-4. **Persistent Logs**: Logs are preserved even after the service stops
+**`just start-sim`** - Simulator service (autoware-sim):
+- Web UI enabled on port 8080 (accessible at http://0.0.0.0:8080)
+- Resource monitoring enabled (--enable-monitoring)
+- Automatic cleanup on service stop
+- Log management via `just logs-sim`
+- Service control via `just {stop,restart,status}-sim`
 
-The systemd services automatically handle environment setup (sources Autoware workspace) and CycloneDDS configuration.
+**`just start-demo`** - Demo service (autoware-demo):
+- Runs simulator + autonomous driving test sequentially
+- Web UI enabled on port 7777 (accessible at http://0.0.0.0:7777)
+- Automatic cleanup on service stop
+- Log management via `just logs-demo`
+- Service control via `just {stop,restart,status}-demo`
+
+Both methods automatically source the Autoware workspace and set CycloneDDS configuration.
 
 ### Using Scripts Directly
 
@@ -102,9 +113,10 @@ python3 scripts/test_autonomous_drive.py
 
 - `justfile` - Build automation for Autoware tests
 - `cyclonedds.xml` - CycloneDDS configuration for localhost-only communication
-- `scripts/start-sim.sh` - Starts Autoware planning simulator with play_launch
-- `scripts/start-demo-systemd.sh` - Starts Autoware demo (simulator + test) with play_launch
-- `scripts/start-sim-and-drive.sh` - Starts Autoware + test with play_launch (parallel execution)
+- `scripts/start-sim.sh` - Launches simulator as systemd service (calls start-sim-inner.sh)
+- `scripts/start-sim-inner.sh` - Simulator execution logic (runs inside systemd)
+- `scripts/start-demo.sh` - Launches demo as systemd service (calls start-demo-inner.sh)
+- `scripts/start-demo-inner.sh` - Demo execution logic (simulator + test, runs inside systemd)
 - `scripts/test_autonomous_drive.py` - Python script to automate autonomous driving test
 - `scripts/plot_resource_usage.py` - Resource usage plotting tool
 - `scripts/kill_orphan_nodes.sh` - Cleanup orphan ROS nodes
@@ -139,10 +151,13 @@ Manage the demo with:
 
 ### Manual Test (Step-by-step)
 
-1. Start Autoware planning simulator in one terminal:
+1. Start Autoware planning simulator:
    ```bash
    just start-sim
    ```
+   This runs in the foreground with:
+   - Web UI at http://localhost:8080
+   - Resource monitoring enabled
 
 2. Wait ~60 seconds for system to initialize
 
@@ -227,19 +242,16 @@ These conservative timeouts are appropriate for Autoware's large number of conta
 To test different modes:
 
 ```bash
-# Test simulator only
+# Test simulator only (foreground with web UI)
 just start-sim
 
-# Test complete demo (simulator + autonomous test)
+# Test complete demo (systemd service, automated sequence)
 just start-demo
 
-# View service logs
-just logs-sim   # For simulator service
-just logs-demo  # For demo service
-
-# Stop services
-just stop-sim   # Stop simulator service
-just stop-demo  # Stop demo service
+# Manage demo service
+just logs-demo     # View demo logs
+just status-demo   # Check demo status
+just stop-demo     # Stop demo service
 ```
 
 All methods use the same:
@@ -261,16 +273,16 @@ The `CYCLONEDDS_URI` environment variable is set before launching to ensure all 
 ### Systemd Service Details
 
 Both `just start-sim` and `just start-demo` run as systemd user services:
-- Run as user services (no sudo required)
-- Automatically source `autoware/install/setup.bash`
-- Set `CYCLONEDDS_URI` environment variable
-- Copy `DISPLAY` environment variable for GUI applications (e.g., rviz2)
+- Runs as user service (no sudo required)
+- Automatically sources `autoware/install/setup.bash`
+- Sets `CYCLONEDDS_URI` environment variable
+- Copies `DISPLAY` environment variable for GUI applications
 - Can be managed with standard systemd commands:
   ```bash
   # Simulator service
-  systemctl --user status autoware-planning-sim
-  journalctl --user -u autoware-planning-sim -f
-  systemctl --user stop autoware-planning-sim
+  systemctl --user status autoware-sim
+  journalctl --user -u autoware-sim -f
+  systemctl --user stop autoware-sim
 
   # Demo service (simulator + autonomous test)
   systemctl --user status autoware-demo
@@ -278,4 +290,6 @@ Both `just start-sim` and `just start-demo` run as systemd user services:
   systemctl --user stop autoware-demo
   ```
 
-The justfile recipes provide convenient wrappers around these systemd commands.
+The justfile recipes provide convenient wrappers:
+- Simulator: `just {status,logs,restart,stop}-sim`
+- Demo: `just {status,logs,restart,stop}-demo`

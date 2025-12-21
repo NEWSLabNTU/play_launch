@@ -8,9 +8,7 @@ default:
 script_dir := justfile_directory()
 autoware_link := script_dir / "autoware"
 map_path := env_var_or_default('MAP_PATH', env_var('HOME') / 'autoware_map/sample-map-planning')
-service_timeout := env_var_or_default('SERVICE_TIMEOUT', '300')
-load_timeout := env_var_or_default('LOAD_TIMEOUT', '60000')
-systemd_service_name := "autoware-planning-sim"
+sim_service_name := "autoware-sim"
 demo_service_name := "autoware-demo"
 
 # Verify Autoware installation
@@ -31,129 +29,69 @@ check-autoware:
         echo "ERROR: install/setup.bash not found"
         exit 1
     fi
-    echo "Autoware installation: $AUTOWARE_PATH"
 
-# Start Autoware with systemd-run (as systemd user service)
+# Start Autoware simulator service
 start-sim: check-autoware
-    #!/usr/bin/env bash
-    set -e
-    echo "Starting Autoware as systemd user service..."
-    echo "Service name: {{systemd_service_name}}"
-    echo "Map path: {{map_path}}"
-    echo "CycloneDDS config: {{script_dir}}/cyclonedds.xml"
-    echo "DISPLAY: ${DISPLAY:-<not set>}"
+    @MAP_PATH={{map_path}} ./scripts/start-sim.sh 2>&1 | tail -1
 
-    if [ ! -f "{{script_dir}}/cyclonedds.xml" ]; then
-        echo "ERROR: CycloneDDS configuration file not found at {{script_dir}}/cyclonedds.xml"
-        exit 1
+# Stop Autoware simulator service
+stop-sim:
+    @systemctl --user stop {{sim_service_name}} 2>&1 && echo "✓ Simulator service stopped" || echo "⚠ Service not running"
+
+# Restart Autoware simulator service
+restart-sim: check-autoware
+    #!/usr/bin/env bash
+    if systemctl --user is-active {{sim_service_name}} >/dev/null 2>&1; then
+        systemctl --user restart {{sim_service_name}} 2>&1 >/dev/null && echo "✓ Simulator service restarted" || echo "✗ Failed to restart service"
+    else
+        MAP_PATH={{map_path}} ./scripts/start-sim.sh 2>&1 | tail -1
     fi
 
-    AUTOWARE_PATH=$(readlink -f "{{autoware_link}}")
-
-    # Stop existing service if running
-    systemctl --user stop {{systemd_service_name}} 2>/dev/null || true
-
-    # Start service with systemd-run
-    systemd-run --user \
-        --unit={{systemd_service_name}} \
-        --description="Autoware Planning Simulator" \
-        --collect \
-        --setenv=DISPLAY="${DISPLAY}" \
-        --setenv=CYCLONEDDS_URI="file://{{script_dir}}/cyclonedds.xml" \
-        bash -c "source '$AUTOWARE_PATH/install/setup.bash' && source {{script_dir}}/../../install/setup.bash && play_launch launch autoware_launch planning_simulator.launch.xml map_path:={{map_path}}"
-
-    echo ""
-    echo "Service started! Use the following commands to manage it:"
-    echo "  just status-sim  - Check service status"
-    echo "  just logs-sim    - View logs"
-    echo "  just stop-sim    - Stop the service"
-
-# Stop the Autoware systemd service
-stop-sim:
-    @echo "Stopping Autoware systemd service..."
-    @systemctl --user stop {{systemd_service_name}} || echo "Service may not be running"
-
-# Show status of the Autoware systemd service
+# Show status of simulator service
 status-sim:
-    @echo "Checking status of Autoware systemd service..."
-    @systemctl --user status {{systemd_service_name}}
+    @systemctl --user status {{sim_service_name}}
 
-# View recent logs from the Autoware systemd service
+# View logs from simulator service
 logs-sim:
-    @echo "Showing recent logs from Autoware systemd service..."
-    @echo "Press Ctrl+C to exit log viewer"
-    @journalctl --user -u {{systemd_service_name}} -n 100 -f
+    @journalctl --user -u {{sim_service_name}} -n 100 -f
 
-# Run autonomous driving test
+# Start Autoware demo service (simulator + autonomous test)
+start-demo: check-autoware
+    @MAP_PATH={{map_path}} ./scripts/start-demo.sh 2>&1 | tail -1
+
+# Stop Autoware demo service
+stop-demo:
+    @systemctl --user stop {{demo_service_name}} 2>&1 && echo "✓ Demo service stopped" || echo "⚠ Service not running"
+
+# Restart Autoware demo service
+restart-demo: check-autoware
+    #!/usr/bin/env bash
+    if systemctl --user is-active {{demo_service_name}} >/dev/null 2>&1; then
+        systemctl --user restart {{demo_service_name}} 2>&1 >/dev/null && echo "✓ Demo service restarted" || echo "✗ Failed to restart service"
+    else
+        MAP_PATH={{map_path}} ./scripts/start-demo.sh 2>&1 | tail -1
+    fi
+
+# Show status of demo service
+status-demo:
+    @systemctl --user status {{demo_service_name}}
+
+# View logs from demo service
+logs-demo:
+    @journalctl --user -u {{demo_service_name}} -n 100 -f
+
+# Run autonomous driving test (requires simulator running)
 drive: check-autoware
     #!/usr/bin/env bash
     set -e
-    echo "Running autonomous driving test..."
     AUTOWARE_PATH=$(readlink -f "{{autoware_link}}")
     cd "$AUTOWARE_PATH/install" && source setup.bash 2>&1 >/dev/null && cd "{{script_dir}}" && \
     python3 scripts/test_autonomous_drive.py
 
-# Start complete demo (simulator + autonomous test) with systemd-run
-start-demo: check-autoware
-    #!/usr/bin/env bash
-    set -e
-    echo "Starting Autoware demo as systemd user service..."
-    echo "Service name: {{demo_service_name}}"
-    echo "Map path: {{map_path}}"
-    echo "DISPLAY: ${DISPLAY:-<not set>}"
-
-    if [ ! -f "{{script_dir}}/cyclonedds.xml" ]; then
-        echo "ERROR: CycloneDDS configuration file not found at {{script_dir}}/cyclonedds.xml"
-        exit 1
-    fi
-
-    # Stop existing service if running
-    systemctl --user stop {{demo_service_name}} 2>/dev/null || true
-
-    # Start service with systemd-run
-    systemd-run --user \
-        --unit={{demo_service_name}} \
-        --description="Autoware Demo (Simulator + Autonomous Test)" \
-        --collect \
-        --setenv=DISPLAY="${DISPLAY}" \
-        --setenv=MAP_PATH="{{map_path}}" \
-        --working-directory="{{script_dir}}" \
-        bash {{script_dir}}/scripts/start-demo-systemd.sh
-
-    echo ""
-    echo "Demo service started! Use the following commands to manage it:"
-    echo "  just status-demo  - Check service status"
-    echo "  just logs-demo    - View logs"
-    echo "  just restart-demo - Restart the service"
-    echo "  just stop-demo    - Stop the service"
-
-# Stop the Autoware demo service
-stop-demo:
-    @echo "Stopping Autoware demo service..."
-    @systemctl --user stop {{demo_service_name}} || echo "Service may not be running"
-
-# Restart the Autoware demo service
-restart-demo:
-    @echo "Restarting Autoware demo service..."
-    @systemctl --user restart {{demo_service_name}}
-
-# Show status of the Autoware demo service
-status-demo:
-    @echo "Checking status of Autoware demo service..."
-    @systemctl --user status {{demo_service_name}}
-
-# View recent logs from the Autoware demo service
-logs-demo:
-    @echo "Showing recent logs from Autoware demo service..."
-    @echo "Press Ctrl+C to exit log viewer"
-    @journalctl --user -u {{demo_service_name}} -n 100 -f
-
 # Generate resource usage plots from latest play_log
 plot:
-    @echo "Generating resource usage plots from latest play_log..."
     @play_launch plot
 
 # Kill orphan ROS nodes
 kill-orphans:
-    @echo "Killing orphan ROS nodes..."
     @./scripts/kill_orphan_nodes.sh

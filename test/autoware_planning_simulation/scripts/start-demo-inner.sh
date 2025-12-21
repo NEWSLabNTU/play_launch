@@ -19,15 +19,36 @@ echo "[Demo] Starting Autoware planning simulator..."
 source "$SCRIPT_DIR/../../install/setup.bash"
 
 # Start Autoware in the background
-play_launch launch autoware_launch planning_simulator.launch.xml map_path:="$MAP_PATH" &
+play_launch launch \
+    --web-ui \
+    --web-ui-addr 0.0.0.0 \
+    --web-ui-port 7777 \
+    --enable-monitoring \
+    autoware_launch planning_simulator.launch.xml \
+    map_path:="$MAP_PATH" &
 SIM_PID=$!
 
 # Function to cleanup on exit
 cleanup() {
     echo "[Demo] Shutting down..."
     if kill -0 $SIM_PID 2>/dev/null; then
+        # Send SIGTERM
         kill $SIM_PID
-        wait $SIM_PID 2>/dev/null || true
+
+        # Wait up to 10 seconds for graceful shutdown
+        local timeout=10
+        local elapsed=0
+        while kill -0 $SIM_PID 2>/dev/null && [ $elapsed -lt $timeout ]; do
+            sleep 0.5
+            elapsed=$((elapsed + 1))
+        done
+
+        # If still running, send SIGKILL
+        if kill -0 $SIM_PID 2>/dev/null; then
+            echo "[Demo] Process still running after ${timeout}s, sending SIGKILL..."
+            kill -9 $SIM_PID 2>/dev/null || true
+            wait $SIM_PID 2>/dev/null || true
+        fi
     fi
 }
 trap cleanup EXIT INT TERM
