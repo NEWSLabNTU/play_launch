@@ -65,7 +65,7 @@ just logs-sim        # Follow logs in real-time (Ctrl+C to exit)
 just drive
 
 # Start complete demo (simulator + autonomous test) as systemd service
-just start-demo      # ✓ Demo service started (Web UI: http://localhost:7777)
+just start-demo      # ✓ Demo service started (Web UI: http://localhost:8080)
 
 # Manage the demo service
 just stop-demo       # ✓ Demo service stopped
@@ -92,7 +92,7 @@ Both launch methods run as systemd user services for reliable process management
 
 **`just start-demo`** - Demo service (autoware-demo):
 - Runs simulator + autonomous driving test sequentially
-- Web UI enabled on port 7777 (accessible at http://0.0.0.0:7777)
+- Web UI enabled on port 8080 (accessible at http://0.0.0.0:8080)
 - Automatic cleanup on service stop
 - Log management via `just logs-demo`
 - Service control via `just {stop,restart,status}-demo`

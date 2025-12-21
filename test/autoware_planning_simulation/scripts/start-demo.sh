@@ -31,5 +31,5 @@ fi
 
 # Start service
 "${SYSTEMD_CMD[@]}" bash "$SCRIPT_DIR/scripts/start-demo-inner.sh" 2>&1 | grep -q "Running as unit" && \
-echo "✓ Demo service started (Web UI: http://localhost:7777)" || \
+echo "✓ Demo service started (Web UI: http://localhost:8080)" || \
 echo "✗ Failed to start demo service"
