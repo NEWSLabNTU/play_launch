@@ -472,6 +472,28 @@
             white-space: nowrap;
         }
 
+        /* Clickable namespace segments */
+        .ns-segment {
+            cursor: pointer;
+            transition: all 0.15s;
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+
+        .ns-segment:hover {
+            color: var(--btn-primary);
+            background: var(--bg-tertiary);
+        }
+
+        .ns-sep {
+            color: var(--text-muted);
+            margin: 0 1px;
+        }
+
+        .ns-leaf {
+            font-weight: 600;  /* Node name (last segment) slightly bolder */
+        }
+
         /* Stderr preview tooltip */
         .stderr-tooltip {
             position: fixed;
@@ -877,18 +899,30 @@
             document.getElementById('content-logs').style.display = 'flex';
         }
 
-        // Node filter
+        // Node filter - searches both node name and ROS name
         function filterNodes(term) {
             const cards = document.querySelectorAll('.node-card');
             const lowerTerm = term.toLowerCase();
             cards.forEach(card => {
                 const name = card.getAttribute('data-node') || '';
-                if (name.toLowerCase().includes(lowerTerm)) {
+                const rosNameElem = card.querySelector('.node-ros-name');
+                const rosName = rosNameElem ? rosNameElem.textContent : '';
+
+                // Match if term is in node name OR ROS name
+                if (name.toLowerCase().includes(lowerTerm) || rosName.toLowerCase().includes(lowerTerm)) {
                     card.classList.remove('hidden');
                 } else {
                     card.classList.add('hidden');
                 }
             });
+        }
+
+        // Filter by namespace - populates search box and triggers filter
+        function filterByNamespace(namespace) {
+            const searchBox = document.getElementById('search');
+            searchBox.value = namespace;
+            searchBox.focus();
+            filterNodes(namespace);
         }
 
         // Details view

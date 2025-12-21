@@ -44,6 +44,70 @@ impl Drop for OperationGuard {
     }
 }
 
+/// Helper to parse ROS name into clickable namespace segments
+fn render_clickable_ros_name(ros_name: &str) -> String {
+    if ros_name.is_empty() {
+        return String::new();
+    }
+
+    // Split by '/' and filter out empty segments
+    let segments: Vec<&str> = ros_name.split('/').filter(|s| !s.is_empty()).collect();
+
+    if segments.is_empty() {
+        return String::new();
+    }
+
+    let mut html = String::new();
+    let mut current_path = String::new();
+
+    // Add root '/' if the name starts with it
+    if ros_name.starts_with('/') {
+        html.push_str(r#"<span class="ns-segment" data-ns="/" onclick="filterByNamespace('/')">/</span>"#);
+        current_path.push('/');
+    }
+
+    for (i, segment) in segments.iter().enumerate() {
+        // Build cumulative namespace path
+        if i > 0 || !ros_name.starts_with('/') {
+            current_path.push('/');
+        }
+        current_path.push_str(segment);
+
+        // Escape segment for HTML
+        let escaped_segment = segment
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#39;");
+
+        // Escape path for attribute
+        let escaped_path = current_path
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#39;");
+
+        // Add separator before segment (except first)
+        if i > 0 {
+            html.push_str(r#"<span class="ns-sep">/</span>"#);
+        }
+
+        // Add segment - mark last one as leaf
+        let class = if i == segments.len() - 1 {
+            "ns-segment ns-leaf"
+        } else {
+            "ns-segment"
+        };
+
+        html.push_str(&format!(
+            r#"<span class="{}" data-ns="{}" onclick="filterByNamespace('{}')">{}</span>"#,
+            class, escaped_path, escaped_path, escaped_segment
+        ));
+    }
+
+    html
+}
+
 /// Helper to generate node card HTML
 fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str) -> String {
     let status_class = match node.status {
@@ -64,7 +128,7 @@ fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str
     let display_name = node.exec_name.as_deref().unwrap_or(&node.name);
 
     // Construct full ROS node name (namespace + node_name)
-    let ros_full_name = if let (Some(ns), Some(node_name)) = (&node.namespace, &node.node_name) {
+    let ros_full_name_plain = if let (Some(ns), Some(node_name)) = (&node.namespace, &node.node_name) {
         if ns == "/" {
             format!("/{}", node_name)
         } else if ns.ends_with('/') {
@@ -75,6 +139,9 @@ fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str
     } else {
         String::new()
     };
+
+    // Render ROS name with clickable segments
+    let ros_full_name = render_clickable_ros_name(&ros_full_name_plain);
 
     // Node type with CSS class for coloring
     let (node_type_label, node_type_class) = match node.node_type {
