@@ -12,7 +12,7 @@ use axum::{
 use rust_embed::Embed;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tower_http::cors::{Any, CorsLayer};
-use tracing::info;
+use tracing::{info, warn};
 
 mod handlers;
 mod sse;
@@ -81,7 +81,7 @@ pub fn create_router(state: Arc<WebState>) -> Router {
     Router::new()
         // Static files
         .route("/", get(index_handler))
-        .route("/static/{*path}", get(static_handler))
+        .route("/static/*path", get(static_handler))
         // API endpoints
         .route("/api/nodes", get(handlers::list_nodes))
         .route("/api/nodes/:name", get(handlers::get_node))
@@ -99,13 +99,22 @@ pub fn create_router(state: Arc<WebState>) -> Router {
 /// Run the web server with graceful shutdown support
 pub async fn run_server(
     state: Arc<WebState>,
+    bind_addr: &str,
     port: u16,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> eyre::Result<()> {
     let app = create_router(state);
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
-    info!("Web UI available at http://localhost:{}", port);
+    // Parse bind address
+    let ip: std::net::IpAddr = bind_addr
+        .parse()
+        .map_err(|e| eyre::eyre!("Invalid bind address '{}': {}", bind_addr, e))?;
+    let addr = SocketAddr::new(ip, port);
+
+    info!("Web UI available at http://{}:{}", bind_addr, port);
+    if bind_addr == "0.0.0.0" {
+        warn!("Web UI is exposed to network (0.0.0.0) - ensure this is intentional!");
+    }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
 

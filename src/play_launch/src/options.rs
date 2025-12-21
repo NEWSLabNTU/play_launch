@@ -168,6 +168,12 @@ pub struct CommonOptions {
     #[arg(long)]
     pub web_ui: bool,
 
+    /// Web UI bind address (only used when --web-ui is enabled)
+    /// Default: 127.0.0.1 (localhost only, secure)
+    /// Use 0.0.0.0 to expose to network (insecure, use with caution)
+    #[arg(long, default_value = "127.0.0.1")]
+    pub web_ui_addr: String,
+
     /// Web UI port (only used when --web-ui is enabled)
     #[arg(long, default_value = "8080")]
     pub web_ui_port: u16,
