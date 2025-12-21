@@ -330,10 +330,26 @@ play_launch replay --web-ui --web-ui-addr 192.168.1.100 --web-ui-port 3000
 
 **Node List:**
 - Compact cards with status reflected in background color (running=green, stopped=gray, failed=red, pending=yellow)
+- Container hierarchy: composable nodes indented under their containers
 - Live status updates every 5 seconds
-- Quick-access control buttons (Start, Stop, Restart, Details, Logs)
-- Search/filter by node name
-- Health summary badges at top
+- Per-node control buttons (Start, Stop, Restart, Details, Logs)
+- Search/filter by node name or ROS namespace
+- Health summary badges showing running/total counts
+- Clickable ROS namespace segments for instant filtering
+
+**Stderr Activity Indicator:**
+- 📋 icon appears next to PID when node has stderr output
+- Yellow (jumping) for active output (0-10 seconds old)
+- Orange (static) for recent output (10-60 seconds old)
+- Hover over icon → tooltip shows last 5 stderr lines
+- Icon auto-disappears after 60 seconds of no activity
+
+**Namespace Filtering:**
+- ROS names rendered as clickable segments (e.g., `/planning/mission/planner`)
+- Click any segment → filters to that namespace
+- Clicked namespace populates search box (editable)
+- Progressive filtering: click deeper segments for narrower results
+- Hover highlights show which segments are clickable
 
 **Node Details:**
 - Firefox-style JSON viewer with expandable rows
@@ -346,12 +362,14 @@ play_launch replay --web-ui --web-ui-addr 192.168.1.100 --web-ui-port 3000
 - Switch between stdout/stderr tabs
 - Real-time streaming via Server-Sent Events (SSE)
 - Auto-scroll with manual override
+- Append mode: logs preserved across restarts with timestamped markers
+- Start/stop markers show when nodes were started/stopped
 - Clear and scroll-to-bottom controls
 
 **Node Control:**
-- Start, stop, restart nodes via buttons
+- Individual node controls: Start, Stop, Restart buttons per card
 - Automatic refresh after control actions
-- Noisy node detection (>10KB stderr)
+- Prevents concurrent operations on same node
 
 ### Architecture
 
@@ -454,6 +472,7 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 
 ## Key Recent Fixes
 
+- **2025-12-22**: Web UI enhancements - Added clickable namespace segments for instant filtering (click any segment in ROS name like `/planning` to filter nodes by namespace). Implemented stderr activity indicator (📋 icon) next to PID with hover tooltip showing last 5 stderr lines (yellow/jumping for active output 0-10s, orange/static for recent 10-60s). Changed log files to append mode with timestamped start/stop markers. Removed buggy bulk control buttons (Start/Stop/Restart All). Enhanced search to match both node names and ROS namespaces.
 - **2025-12-21**: Autoware justfile cleanup - Simplified recipe output to show only one line for start/stop/restart operations with clear status indicators (✓/⚠/✗). Ensured all {stop,restart,logs,status}-{sim,demo} recipes are available. Updated start scripts to output single-line success messages with Web UI URLs. Removed verbose multi-line output for cleaner CLI experience.
 - **2025-12-21**: Complete Web UI redesign - Implemented two-panel IDE-style layout with collapsible right sidebar for details/logs. Added light/dark theme support with system default detection and toggle button. Created Firefox-style expandable JSON viewer for node details. Moved log viewer from modal overlay to right panel with stdout/stderr tabs. Made node list more compact with status reflected in background colors (running=green, stopped=gray, failed=red, pending=yellow). Right panel hidden by default with close button (×).
 - **2025-12-21**: Autoware test scripts reorganization - Simplified script structure by moving systemd-run logic into wrapper scripts. Created start-{sim,demo}.sh (wrappers with systemd-run) and start-{sim,demo}-inner.sh (execution logic). Removed duplicated start-sim-and-drive.sh. Fixed "Access denied" error by resolving absolute paths and conditionally setting DISPLAY environment variable only when non-empty.
