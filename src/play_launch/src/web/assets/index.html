@@ -7,20 +7,69 @@
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/sse.js"></script>
     <style>
-        :root {
-            --bg-color: #1a1a2e;
-            --card-bg: #16213e;
-            --modal-bg: #0f172a;
-            --text-color: #eee;
-            --text-muted: #888;
-            --border-color: #333;
-            --running: #4ade80;
-            --stopped: #94a3b8;
-            --failed: #f87171;
-            --pending: #fbbf24;
+        /* Theme variables */
+        :root[data-theme="light"] {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --bg-tertiary: #e9ecef;
+            --text-primary: #212529;
+            --text-secondary: #6c757d;
+            --text-muted: #adb5bd;
+            --border-color: #dee2e6;
+            --shadow: rgba(0,0,0,0.1);
+
+            --running-bg: #d1e7dd;
+            --running-border: #0f5132;
+            --running-text: #0f5132;
+
+            --stopped-bg: #e2e3e5;
+            --stopped-border: #41464b;
+            --stopped-text: #41464b;
+
+            --failed-bg: #f8d7da;
+            --failed-border: #842029;
+            --failed-text: #842029;
+
+            --pending-bg: #fff3cd;
+            --pending-border: #664d03;
+            --pending-text: #664d03;
+
+            --btn-primary: #0d6efd;
+            --btn-success: #198754;
+            --btn-danger: #dc3545;
+            --btn-secondary: #6c757d;
+        }
+
+        :root[data-theme="dark"] {
+            --bg-primary: #1a1d23;
+            --bg-secondary: #22252b;
+            --bg-tertiary: #2a2d35;
+            --text-primary: #e4e6eb;
+            --text-secondary: #b0b3b8;
+            --text-muted: #8a8d91;
+            --border-color: #3a3d45;
+            --shadow: rgba(0,0,0,0.3);
+
+            --running-bg: #0a3622;
+            --running-border: #4ade80;
+            --running-text: #86efac;
+
+            --stopped-bg: #2d2f35;
+            --stopped-border: #94a3b8;
+            --stopped-text: #cbd5e1;
+
+            --failed-bg: #3d1419;
+            --failed-border: #f87171;
+            --failed-text: #fca5a5;
+
+            --pending-bg: #3d3319;
+            --pending-border: #fbbf24;
+            --pending-text: #fde047;
+
             --btn-primary: #3b82f6;
-            --btn-danger: #ef4444;
             --btn-success: #22c55e;
+            --btn-danger: #ef4444;
+            --btn-secondary: #6b7280;
         }
 
         * {
@@ -31,45 +80,48 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg-color);
-            color: var(--text-color);
+            background: var(--bg-primary);
+            color: var(--text-primary);
             min-height: 100vh;
-            padding: 20px;
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
+            margin: 0;
+            overflow: hidden;
+            transition: background-color 0.2s, color 0.2s;
         }
 
         header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 12px 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 20px;
-            border-bottom: 1px solid var(--border-color);
+            gap: 16px;
             flex-wrap: wrap;
-            gap: 12px;
+            z-index: 100;
         }
 
         h1 {
-            font-size: 1.5rem;
+            font-size: 1.3rem;
             font-weight: 600;
         }
 
         .header-controls {
             display: flex;
             align-items: center;
-            gap: 16px;
+            gap: 12px;
+            flex-wrap: wrap;
         }
 
         .search-box {
-            padding: 8px 12px;
+            padding: 6px 12px;
             border: 1px solid var(--border-color);
             border-radius: 6px;
-            background: var(--card-bg);
-            color: var(--text-color);
+            background: var(--bg-primary);
+            color: var(--text-primary);
             font-size: 0.9rem;
             width: 200px;
         }
@@ -80,134 +132,325 @@
 
         .health-summary {
             display: flex;
-            gap: 10px;
+            gap: 8px;
             flex-wrap: wrap;
         }
 
         .badge {
-            padding: 4px 12px;
+            padding: 3px 10px;
             border-radius: 12px;
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             font-weight: 500;
+            white-space: nowrap;
         }
 
-        .badge-total { background: #475569; }
-        .badge-running { background: var(--running); color: #000; }
-        .badge-stopped { background: var(--stopped); color: #000; }
-        .badge-failed { background: var(--failed); color: #000; }
-        .badge-pending { background: var(--pending); color: #000; }
+        .badge-total { background: var(--bg-tertiary); color: var(--text-primary); }
+        .badge-running { background: var(--running-bg); color: var(--running-text); }
+        .badge-stopped { background: var(--stopped-bg); color: var(--stopped-text); }
+        .badge-failed { background: var(--failed-bg); color: var(--failed-text); }
+        .badge-pending { background: var(--pending-bg); color: var(--pending-text); }
         .badge-noisy { background: #a855f7; color: #fff; }
+        .badge-nodes { background: #3b82f6; color: #fff; }
+        .badge-containers { background: #8b5cf6; color: #fff; }
+        .badge-composable { background: #06b6d4; color: #fff; }
 
-        .main-content {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
+        .theme-toggle {
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            cursor: pointer;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            transition: background 0.2s;
         }
 
-        @media (max-width: 1000px) {
-            .main-content {
-                grid-template-columns: 1fr;
-            }
+        .theme-toggle:hover {
+            background: var(--border-color);
         }
 
-        .panel {
-            background: var(--card-bg);
-            border-radius: 8px;
+        .main-container {
+            position: fixed;
+            top: 70px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow: hidden;
+        }
+
+        .left-panel {
+            width: 100%;
+            height: 100%;
+            overflow-y: auto;
+            padding: 16px;
+            transition: width 0.3s;
+        }
+
+        .left-panel.with-sidebar {
+            width: calc(100% - var(--right-panel-width));
+            min-width: 300px;
+        }
+
+        .panel-resizer {
+            position: fixed;
+            top: 70px;
+            right: var(--right-panel-width);
+            width: 0;
+            bottom: 0;
+            background: transparent;
+            cursor: col-resize;
+            z-index: 1001;
+            transition: width 0.3s, right 0.3s;
+        }
+
+        .panel-resizer.visible {
+            width: 4px;
+        }
+
+        .panel-resizer:hover,
+        .panel-resizer.dragging {
+            background: var(--btn-primary);
+        }
+
+        .right-panel {
+            position: fixed;
+            top: 70px;
+            right: 0;
+            width: 0;
+            bottom: 0;
+            overflow: hidden;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            transition: width 0.3s;
+            z-index: 1000;
+        }
+
+        .right-panel.open {
+            width: var(--right-panel-width);
+        }
+
+        .right-panel-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-tertiary);
+        }
+
+        .right-panel-title {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .close-btn:hover {
+            color: var(--text-primary);
+        }
+
+        .right-panel-content {
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .right-panel-content.scrollable {
+            overflow-y: auto;
             padding: 16px;
         }
 
-        .panel-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 16px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid var(--border-color);
+        .content-details {
+            padding: 16px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .content-logs {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
         }
 
         .node-list {
             display: flex;
             flex-direction: column;
-            gap: 12px;
-            max-height: 70vh;
-            overflow-y: auto;
+            gap: 6px;
         }
 
         .node-card {
-            background: rgba(255,255,255,0.05);
+            background: var(--bg-secondary);
             border-radius: 6px;
-            padding: 12px;
-            border-left: 3px solid var(--stopped);
-            transition: background 0.2s;
+            padding: 8px 12px;
+            border-left: 3px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            transition: all 0.2s;
         }
 
         .node-card:hover {
-            background: rgba(255,255,255,0.08);
+            box-shadow: 0 2px 4px var(--shadow);
         }
-
-        .node-card.status-running { border-left-color: var(--running); }
-        .node-card.status-stopped { border-left-color: var(--stopped); }
-        .node-card.status-failed { border-left-color: var(--failed); }
-        .node-card.status-pending { border-left-color: var(--pending); }
 
         .node-card.hidden {
             display: none;
         }
 
+        .node-card.status-running {
+            background: var(--running-bg);
+            border-left-color: var(--running-border);
+        }
+
+        .node-card.status-stopped {
+            background: var(--stopped-bg);
+            border-left-color: var(--stopped-border);
+        }
+
+        .node-card.status-failed {
+            background: var(--failed-bg);
+            border-left-color: var(--failed-border);
+        }
+
+        .node-card.status-pending {
+            background: var(--pending-bg);
+            border-left-color: var(--pending-border);
+        }
+
+        /* Container and child node hierarchy */
+        .node-card.container-node {
+            border-left-width: 4px;
+            font-weight: 500;
+        }
+
+        .node-card.child-node {
+            margin-left: 24px;
+            border-left-width: 2px;
+            opacity: 0.95;
+        }
+
+        .node-card.child-node .node-name::before {
+            content: "└─ ";
+            color: var(--text-muted);
+            margin-right: 4px;
+        }
+
+        .node-info {
+            flex: 1;
+            min-width: 0;
+        }
+
         .node-header {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            margin-bottom: 8px;
+            gap: 8px;
         }
 
         .node-name {
             font-weight: 600;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .node-type {
-            font-size: 0.75rem;
-            color: var(--text-muted);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 600;
             text-transform: uppercase;
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
-        .node-info {
+        .type-node {
+            background: #3b82f6;
+            color: #fff;
+        }
+
+        .type-container {
+            background: #8b5cf6;
+            color: #fff;
+        }
+
+        .type-composable {
+            background: #06b6d4;
+            color: #fff;
+        }
+
+        .node-pid {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .node-meta {
             display: flex;
-            gap: 16px;
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            margin-bottom: 12px;
+            gap: 12px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .node-ros-name {
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            color: var(--text-primary);
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .node-controls {
             display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
+            gap: 4px;
+            flex-shrink: 0;
         }
 
         button {
-            padding: 6px 12px;
+            padding: 4px 10px;
             border: none;
             border-radius: 4px;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             cursor: pointer;
             transition: opacity 0.2s;
+            color: white;
         }
 
         button:disabled {
-            opacity: 0.5;
+            opacity: 0.4;
             cursor: not-allowed;
         }
 
         button:hover:not(:disabled) {
-            opacity: 0.8;
+            opacity: 0.85;
         }
 
-        .btn-start { background: var(--btn-success); color: #fff; }
-        .btn-stop { background: var(--btn-danger); color: #fff; }
-        .btn-restart { background: var(--btn-primary); color: #fff; }
-        .btn-details { background: #475569; color: #fff; }
-        .btn-logs { background: #7c3aed; color: #fff; }
+        .btn-start { background: var(--btn-success); }
+        .btn-stop { background: var(--btn-danger); }
+        .btn-restart { background: var(--btn-primary); }
+        .btn-details { background: var(--btn-secondary); }
+        .btn-logs { background: #7c3aed; }
 
         .no-nodes {
             color: var(--text-muted);
@@ -215,141 +458,78 @@
             padding: 40px;
         }
 
-        #node-details {
-            min-height: 200px;
+        /* JSON Viewer (Firefox-style) */
+        .json-viewer {
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.85rem;
         }
 
-        .details-placeholder {
-            color: var(--text-muted);
-            text-align: center;
-            padding: 40px;
-        }
-
-        .details-content {
-            font-size: 0.9rem;
-        }
-
-        .details-content pre {
-            background: rgba(0,0,0,0.3);
-            padding: 12px;
-            border-radius: 4px;
-            overflow-x: auto;
-            font-size: 0.8rem;
-            margin-top: 8px;
-        }
-
-        .details-row {
-            display: flex;
-            padding: 8px 0;
+        .json-row {
+            padding: 4px 8px;
             border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
         }
 
-        .details-label {
-            width: 120px;
-            color: var(--text-muted);
+        .json-row:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .json-key {
+            font-weight: 600;
+            color: var(--text-primary);
+            min-width: 140px;
             flex-shrink: 0;
         }
 
-        .details-value {
-            word-break: break-all;
+        .json-value {
+            word-break: break-word;
+            color: var(--text-secondary);
+            flex: 1;
         }
 
-        /* Modal */
-        .modal-overlay {
+        .json-value.string { color: #e74c3c; }
+        .json-value.number { color: #9b59b6; }
+        .json-value.boolean { color: #3498db; }
+        .json-value.null { color: var(--text-muted); font-style: italic; }
+
+        .json-expandable {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .json-expand-icon {
+            display: inline-block;
+            width: 12px;
+            margin-right: 4px;
+            transition: transform 0.2s;
+        }
+
+        .json-expand-icon.expanded {
+            transform: rotate(90deg);
+        }
+
+        .json-children {
+            margin-left: 20px;
+        }
+
+        .json-children.collapsed {
             display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.7);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
         }
 
-        .modal-overlay.active {
-            display: flex;
-        }
-
-        .modal {
-            background: var(--modal-bg);
-            border-radius: 8px;
-            width: 100%;
-            max-width: 900px;
-            max-height: 80vh;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 16px;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .modal-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
-
-        .modal-close {
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            font-size: 1.5rem;
-            cursor: pointer;
-            padding: 0;
-            line-height: 1;
-        }
-
-        .modal-close:hover {
-            color: var(--text-color);
-        }
-
-        .tabs {
-            display: flex;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .tab {
-            padding: 12px 20px;
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            border-bottom: 2px solid transparent;
-            margin-bottom: -1px;
-        }
-
-        .tab.active {
-            color: var(--text-color);
-            border-bottom-color: var(--btn-primary);
-        }
-
-        .tab:hover:not(.active) {
-            color: var(--text-color);
-        }
-
-        .modal-body {
-            flex: 1;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-
+        /* Log Viewer */
         .log-viewer {
-            flex: 1;
-            background: #0d1117;
+            background: var(--bg-primary);
             font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
             font-size: 0.8rem;
             line-height: 1.5;
-            overflow-y: auto;
             padding: 12px;
-            min-height: 400px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+            flex: 1;
+            overflow-y: auto;
+            margin: 12px;
         }
 
         .log-line {
@@ -359,15 +539,25 @@
         }
 
         .log-line:hover {
-            background: rgba(255,255,255,0.05);
+            background: var(--bg-tertiary);
         }
 
         .log-controls {
             display: flex;
             justify-content: space-between;
-            padding: 12px 16px;
+            padding: 12px;
             border-top: 1px solid var(--border-color);
-            background: var(--card-bg);
+            flex-shrink: 0;
+        }
+
+        .log-controls button {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .log-controls button:hover:not(:disabled) {
+            background: var(--border-color);
         }
 
         .log-status {
@@ -376,86 +566,230 @@
         }
 
         .log-status.connected {
-            color: var(--running);
+            color: var(--running-border);
         }
 
-        .htmx-indicator {
-            opacity: 0;
-            transition: opacity 0.2s;
+        .log-type-selector {
+            display: flex;
+            gap: 8px;
+            padding: 12px 12px 0 12px;
+            flex-shrink: 0;
         }
 
-        .htmx-request .htmx-indicator {
-            opacity: 1;
+        .log-type-btn {
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .log-type-btn.active {
+            background: var(--btn-primary);
+            color: white;
+            border-color: var(--btn-primary);
+        }
+
+        @media (max-width: 768px) {
+            .left-panel.with-sidebar {
+                width: 100%;
+            }
+
+            .right-panel.open {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                width: 100%;
+                z-index: 1000;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>play_launch</h1>
-            <div class="header-controls">
-                <input type="text" class="search-box" id="search" placeholder="Filter nodes..." oninput="filterNodes(this.value)">
-                <div id="health-badges"
-                     hx-get="/api/health"
-                     hx-trigger="load, every 5s">
-                    <span class="badge">Loading...</span>
-                </div>
+    <header>
+        <h1>play_launch</h1>
+        <div class="header-controls">
+            <input type="text" class="search-box" id="search" placeholder="Filter nodes..." oninput="filterNodes(this.value)">
+            <div id="health-badges"
+                 hx-get="/api/health"
+                 hx-trigger="load, every 5s">
+                <span class="badge">Loading...</span>
             </div>
-        </header>
+            <button class="theme-toggle" onclick="toggleTheme()">
+                <span id="theme-icon">◐</span>
+            </button>
+        </div>
+    </header>
 
-        <div class="main-content">
-            <div class="panel">
-                <div class="panel-title">Nodes</div>
-                <div id="node-list"
-                     class="node-list"
-                     hx-get="/api/nodes"
-                     hx-trigger="load, every 5s">
-                    <div class="no-nodes">Loading nodes...</div>
-                </div>
+    <div class="main-container">
+        <div class="left-panel" id="left-panel">
+            <div id="node-list"
+                 class="node-list"
+                 hx-get="/api/nodes"
+                 hx-trigger="load, every 5s">
+                <div class="no-nodes">Loading nodes...</div>
             </div>
+        </div>
 
-            <div class="panel">
-                <div class="panel-title">Details</div>
-                <div id="node-details">
-                    <div class="details-placeholder">
-                        Select a node to view details
+        <div class="panel-resizer" id="panel-resizer"></div>
+
+        <div class="right-panel" id="right-panel">
+            <div class="right-panel-header">
+                <span class="right-panel-title" id="right-panel-title">Details</span>
+                <button class="close-btn" onclick="closeRightPanel()">&times;</button>
+            </div>
+            <div class="right-panel-content" id="right-panel-content">
+                <div id="content-details" class="content-details">
+                    <div class="no-nodes">Click "Details" or "Logs" on a node to view information</div>
+                </div>
+                <div id="content-logs" class="content-logs" style="display:none;">
+                    <div class="log-type-selector">
+                        <button class="log-type-btn active" onclick="switchLogType('stdout')">stdout</button>
+                        <button class="log-type-btn" onclick="switchLogType('stderr')">stderr</button>
+                    </div>
+                    <div class="log-viewer" id="log-content"></div>
+                    <div class="log-controls">
+                        <span class="log-status" id="log-status">Not connected</span>
+                        <div>
+                            <button onclick="clearLogs()">Clear</button>
+                            <button onclick="scrollToBottom()">↓ Bottom</button>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Log Viewer Modal -->
-    <div class="modal-overlay" id="log-modal">
-        <div class="modal">
-            <div class="modal-header">
-                <span class="modal-title">Logs: <span id="log-node-name">-</span></span>
-                <button class="modal-close" onclick="closeLogModal()">&times;</button>
-            </div>
-            <div class="tabs">
-                <button class="tab active" data-tab="stdout" onclick="switchLogTab('stdout')">stdout</button>
-                <button class="tab" data-tab="stderr" onclick="switchLogTab('stderr')">stderr</button>
-            </div>
-            <div class="modal-body">
-                <div class="log-viewer" id="log-content"></div>
-            </div>
-            <div class="log-controls">
-                <span class="log-status" id="log-status">Connecting...</span>
-                <div>
-                    <button onclick="clearLogs()">Clear</button>
-                    <button onclick="scrollToBottom()">Scroll to Bottom</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <script>
-        let currentLogNode = null;
+        // Theme management
+        function getSystemTheme() {
+            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+
+        function setTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('theme', theme);
+            updateThemeIcon();
+        }
+
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme');
+            const next = current === 'dark' ? 'light' : 'dark';
+            setTheme(next);
+        }
+
+        function updateThemeIcon() {
+            const theme = document.documentElement.getAttribute('data-theme');
+            document.getElementById('theme-icon').textContent = theme === 'dark' ? '☀' : '🌙';
+        }
+
+        // Initialize theme
+        const savedTheme = localStorage.getItem('theme') || getSystemTheme();
+        setTheme(savedTheme);
+
+        // Watch for system theme changes
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+            if (!localStorage.getItem('theme')) {
+                setTheme(e.matches ? 'dark' : 'light');
+            }
+        });
+
+        // Panel resize functionality
+        let rightPanelWidth = parseInt(localStorage.getItem('rightPanelWidth')) || 60; // Default 60%
+
+        function setRightPanelWidth(widthPercent) {
+            // Clamp between 30% and 80%
+            widthPercent = Math.max(30, Math.min(80, widthPercent));
+            rightPanelWidth = widthPercent;
+            document.documentElement.style.setProperty('--right-panel-width', widthPercent + '%');
+            localStorage.setItem('rightPanelWidth', widthPercent);
+        }
+
+        // Initialize right panel width
+        setRightPanelWidth(rightPanelWidth);
+
+        // Resizer drag functionality
+        const resizer = document.getElementById('panel-resizer');
+        let isResizing = false;
+
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            resizer.classList.add('dragging');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+
+            const windowWidth = window.innerWidth;
+            const rightPx = windowWidth - e.clientX;
+            const widthPercent = (rightPx / windowWidth) * 100;
+
+            setRightPanelWidth(widthPercent);
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                resizer.classList.remove('dragging');
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            }
+        });
+
+        // Right panel management
+        let currentNode = null;
         let currentLogType = 'stdout';
         let eventSource = null;
         let autoScroll = true;
 
-        // Filter nodes by search term
+        function openRightPanel(nodeName) {
+            currentNode = nodeName;
+
+            document.getElementById('left-panel').classList.add('with-sidebar');
+            document.getElementById('right-panel').classList.add('open');
+            document.getElementById('panel-resizer').classList.add('visible');
+            document.getElementById('right-panel-title').textContent = nodeName;
+        }
+
+        function closeRightPanel() {
+            document.getElementById('left-panel').classList.remove('with-sidebar');
+            document.getElementById('right-panel').classList.remove('open');
+            document.getElementById('panel-resizer').classList.remove('visible');
+
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            currentNode = null;
+
+            // Hide both content areas
+            document.getElementById('content-details').style.display = 'none';
+            document.getElementById('content-logs').style.display = 'none';
+        }
+
+        function showDetailsContent() {
+            document.getElementById('content-details').style.display = 'block';
+            document.getElementById('content-logs').style.display = 'none';
+
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+        }
+
+        function showLogsContent() {
+            document.getElementById('content-details').style.display = 'none';
+            document.getElementById('content-logs').style.display = 'flex';
+        }
+
+        // Node filter
         function filterNodes(term) {
             const cards = document.querySelectorAll('.node-card');
             const lowerTerm = term.toLowerCase();
@@ -469,48 +803,109 @@
             });
         }
 
-        // Open log viewer modal
-        function openLogModal(nodeName) {
-            currentLogNode = nodeName;
-            document.getElementById('log-node-name').textContent = nodeName;
-            document.getElementById('log-modal').classList.add('active');
-            document.getElementById('log-content').innerHTML = '';
-            switchLogTab('stdout');
+        // Details view
+        function showNodeDetails(nodeName) {
+            openRightPanel(nodeName);
+            showDetailsContent();
+
+            fetch(`/api/nodes/${encodeURIComponent(nodeName)}`)
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('content-details').innerHTML = renderJSON(data);
+                })
+                .catch(err => {
+                    document.getElementById('content-details').innerHTML =
+                        `<div style="color: var(--failed-text);">Error loading details: ${err.message}</div>`;
+                });
         }
 
-        // Close log viewer modal
-        function closeLogModal() {
-            document.getElementById('log-modal').classList.remove('active');
-            if (eventSource) {
-                eventSource.close();
-                eventSource = null;
+        // Firefox-style JSON renderer
+        function renderJSON(obj, depth = 0) {
+            const rows = [];
+
+            function renderValue(val) {
+                if (val === null) {
+                    return '<span class="json-value null">null</span>';
+                } else if (typeof val === 'string') {
+                    return `<span class="json-value string">"${escapeHtml(val)}"</span>`;
+                } else if (typeof val === 'number') {
+                    return `<span class="json-value number">${val}</span>`;
+                } else if (typeof val === 'boolean') {
+                    return `<span class="json-value boolean">${val}</span>`;
+                } else if (Array.isArray(val)) {
+                    if (val.length === 0) return '<span class="json-value">[]</span>';
+                    return `<span class="json-value">[Array(${val.length})]</span>`;
+                } else if (typeof val === 'object') {
+                    const keys = Object.keys(val);
+                    if (keys.length === 0) return '<span class="json-value">{}</span>';
+                    return `<span class="json-value">{Object}</span>`;
+                }
+                return `<span class="json-value">${val}</span>`;
             }
-            currentLogNode = null;
+
+            for (const [key, value] of Object.entries(obj)) {
+                if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+                    const childRows = Object.entries(value).map(([k, v]) => {
+                        return `<div class="json-row">
+                            <div class="json-key">${escapeHtml(k)}</div>
+                            <div>${renderValue(v)}</div>
+                        </div>`;
+                    }).join('');
+
+                    rows.push(`
+                        <div class="json-row">
+                            <div class="json-key">${escapeHtml(key)}</div>
+                            <div class="json-value">{...}</div>
+                        </div>
+                        <div class="json-children" style="margin-left: 20px;">
+                            ${childRows}
+                        </div>
+                    `);
+                } else {
+                    rows.push(`
+                        <div class="json-row">
+                            <div class="json-key">${escapeHtml(key)}</div>
+                            <div>${renderValue(value)}</div>
+                        </div>
+                    `);
+                }
+            }
+
+            return '<div class="json-viewer">' + rows.join('') + '</div>';
         }
 
-        // Switch between stdout and stderr tabs
-        function switchLogTab(type) {
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Log viewer
+        function showNodeLogs(nodeName) {
+            openRightPanel(nodeName);
+            showLogsContent();
+            connectToLogs();
+        }
+
+        function switchLogType(type) {
             currentLogType = type;
 
-            // Update tab styles
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.classList.toggle('active', tab.dataset.tab === type);
+            document.querySelectorAll('.log-type-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.textContent === type);
             });
 
-            // Clear and reconnect
             document.getElementById('log-content').innerHTML = '';
             connectToLogs();
         }
 
-        // Connect to SSE log stream
         function connectToLogs() {
             if (eventSource) {
                 eventSource.close();
             }
 
-            if (!currentLogNode) return;
+            if (!currentNode) return;
 
-            const url = `/api/nodes/${encodeURIComponent(currentLogNode)}/logs/${currentLogType}`;
+            const url = `/api/nodes/${encodeURIComponent(currentNode)}/logs/${currentLogType}`;
             const statusEl = document.getElementById('log-status');
 
             statusEl.textContent = 'Connecting...';
@@ -533,7 +928,6 @@
             };
         }
 
-        // Append a log line
         function appendLogLine(text) {
             const container = document.getElementById('log-content');
             const line = document.createElement('div');
@@ -541,39 +935,35 @@
             line.textContent = text;
             container.appendChild(line);
 
-            // Limit lines to prevent memory issues
+            // Limit lines
             while (container.children.length > 5000) {
                 container.removeChild(container.firstChild);
             }
 
-            // Auto-scroll if at bottom
             if (autoScroll) {
                 scrollToBottom();
             }
         }
 
-        // Clear log content
         function clearLogs() {
             document.getElementById('log-content').innerHTML = '';
         }
 
-        // Scroll to bottom of logs
         function scrollToBottom() {
             const container = document.getElementById('log-content');
             container.scrollTop = container.scrollHeight;
         }
 
-        // Track scroll position for auto-scroll
+        // Track scroll position
         document.getElementById('log-content')?.addEventListener('scroll', function() {
             const el = this;
             autoScroll = Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 50;
         });
 
-        // Handle node control button clicks
+        // HTMX event handlers
         document.body.addEventListener('htmx:afterRequest', function(evt) {
             const path = evt.detail.pathInfo?.requestPath || '';
             if (path.includes('/start') || path.includes('/stop') || path.includes('/restart')) {
-                // Refresh node list after control action
                 setTimeout(() => {
                     htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
                     htmx.ajax('GET', '/api/health', {target: '#health-badges'});
@@ -581,39 +971,19 @@
             }
         });
 
-        // Re-apply search filter after node list updates
         document.body.addEventListener('htmx:afterSwap', function(evt) {
             if (evt.detail.target.id === 'node-list') {
                 const searchTerm = document.getElementById('search').value;
                 if (searchTerm) {
                     filterNodes(searchTerm);
                 }
-                // Re-attach log button handlers
-                attachLogButtonHandlers();
             }
         });
 
-        // Attach log button click handlers
-        function attachLogButtonHandlers() {
-            document.querySelectorAll('.btn-logs').forEach(btn => {
-                btn.onclick = function() {
-                    const nodeName = this.closest('.node-card').getAttribute('data-node');
-                    openLogModal(nodeName);
-                };
-            });
-        }
-
-        // Close modal on escape key
+        // Keyboard shortcuts
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
-                closeLogModal();
-            }
-        });
-
-        // Close modal on overlay click
-        document.getElementById('log-modal').addEventListener('click', function(e) {
-            if (e.target === this) {
-                closeLogModal();
+                closeRightPanel();
             }
         });
     </script>

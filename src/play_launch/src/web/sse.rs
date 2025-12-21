@@ -102,6 +102,11 @@ async fn stream_file_to_channel(
     path: &PathBuf,
     tx: mpsc::Sender<Result<Event, Infallible>>,
 ) -> eyre::Result<()> {
+    // Send immediate connection confirmation to prevent "Connecting..." delay
+    let _ = tx
+        .send(Ok(Event::default().comment("connected")))
+        .await;
+
     // Wait for file to exist
     let mut attempts = 0;
     while !path.exists() && attempts < 10 {

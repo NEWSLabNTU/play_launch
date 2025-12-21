@@ -257,6 +257,22 @@ impl NodeHandle {
             NodeInfo::Composable(info) => Some(&info.record.target_container_name),
         }
     }
+
+    /// Get the exec_name (unique execution name)
+    pub fn get_exec_name(&self) -> Option<&str> {
+        match &self.info {
+            NodeInfo::Regular(info) => info.record.exec_name.as_deref(),
+            NodeInfo::Composable(_) => None,
+        }
+    }
+
+    /// Get the ROS node name
+    pub fn get_node_name(&self) -> Option<&str> {
+        match &self.info {
+            NodeInfo::Regular(info) => info.record.name.as_deref(),
+            NodeInfo::Composable(info) => Some(&info.record.node_name),
+        }
+    }
 }
 
 /// Check if a process with given PID is still running
@@ -289,6 +305,10 @@ pub struct NodeSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_container: Option<String>,
     pub is_container: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exec_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_name: Option<String>,
 }
 
 /// Detailed information about a node (for API responses)
@@ -400,6 +420,8 @@ impl NodeRegistry {
                 namespace: handle.get_namespace().map(String::from),
                 target_container: handle.get_target_container().map(String::from),
                 is_container: handle.is_container,
+                exec_name: handle.get_exec_name().map(String::from),
+                node_name: handle.get_node_name().map(String::from),
             })
             .collect()
     }
@@ -425,6 +447,8 @@ impl NodeRegistry {
                     namespace: handle.get_namespace().map(String::from),
                     target_container: handle.get_target_container().map(String::from),
                     is_container: handle.is_container,
+                    exec_name: handle.get_exec_name().map(String::from),
+                    node_name: handle.get_node_name().map(String::from),
                 },
                 output_dir: handle.output_dir.clone(),
                 log_paths: handle.log_paths.clone(),
@@ -440,6 +464,9 @@ impl NodeRegistry {
         let mut failed = 0;
         let mut pending = 0;
         let mut noisy = 0;
+        let mut nodes = 0;
+        let mut containers = 0;
+        let mut composable_nodes = 0;
 
         // Threshold for noisy nodes: 10KB of stderr output
         const NOISY_THRESHOLD_BYTES: u64 = 10 * 1024;
@@ -450,6 +477,13 @@ impl NodeRegistry {
                 NodeStatus::Stopped => stopped += 1,
                 NodeStatus::Failed => failed += 1,
                 NodeStatus::Pending => pending += 1,
+            }
+
+            // Count node types
+            match handle.node_type {
+                NodeType::Node => nodes += 1,
+                NodeType::Container => containers += 1,
+                NodeType::ComposableNode => composable_nodes += 1,
             }
 
             // Check if node is noisy (has significant stderr output)
@@ -469,6 +503,9 @@ impl NodeRegistry {
             failed,
             pending,
             noisy,
+            nodes,
+            containers,
+            composable_nodes,
         }
     }
 
@@ -709,6 +746,12 @@ pub struct HealthSummary {
     pub pending: usize,
     /// Number of nodes with significant stderr output (>10KB)
     pub noisy: usize,
+    /// Number of regular nodes
+    pub nodes: usize,
+    /// Number of containers
+    pub containers: usize,
+    /// Number of composable nodes
+    pub composable_nodes: usize,
 }
 
 /// Thread-safe handle to the node registry
