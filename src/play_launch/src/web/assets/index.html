@@ -356,6 +356,12 @@
             margin-left: 6px;
             flex-shrink: 0;
             line-height: 1;
+            cursor: help;
+            transition: transform 0.2s;
+        }
+
+        .stderr-icon:hover {
+            transform: scale(1.15);
         }
 
         .stderr-icon.hot {
@@ -464,6 +470,43 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+
+        /* Stderr preview tooltip */
+        .stderr-tooltip {
+            position: fixed;
+            z-index: 10000;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid #f59e0b;
+            border-radius: 4px;
+            padding: 8px 12px;
+            box-shadow: 0 4px 12px var(--shadow);
+            max-width: 500px;
+            pointer-events: none;
+        }
+
+        .stderr-tooltip-header {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+        }
+
+        .stderr-tooltip-content {
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.7rem;
+            line-height: 1.4;
+            color: var(--text-primary);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .stderr-tooltip-line {
+            white-space: pre-wrap;
+            word-break: break-all;
+            padding: 2px 0;
         }
 
         .node-controls {
@@ -1021,6 +1064,77 @@
             autoScroll = Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 50;
         });
 
+        // Stderr tooltip management
+        let currentTooltip = null;
+
+        function showStderrTooltip(icon, card) {
+            // Get preview data from card
+            const previewData = card.getAttribute('data-stderr-preview');
+            if (!previewData) return;
+
+            try {
+                const lines = JSON.parse(previewData);
+                if (!lines || lines.length === 0) return;
+
+                // Remove existing tooltip if any
+                hideStderrTooltip();
+
+                // Create tooltip
+                const tooltip = document.createElement('div');
+                tooltip.className = 'stderr-tooltip';
+
+                const header = document.createElement('div');
+                header.className = 'stderr-tooltip-header';
+                header.textContent = 'Recent stderr:';
+
+                const content = document.createElement('div');
+                content.className = 'stderr-tooltip-content';
+
+                lines.forEach(line => {
+                    const lineDiv = document.createElement('div');
+                    lineDiv.className = 'stderr-tooltip-line';
+                    lineDiv.textContent = line;
+                    content.appendChild(lineDiv);
+                });
+
+                tooltip.appendChild(header);
+                tooltip.appendChild(content);
+                document.body.appendChild(tooltip);
+
+                // Position tooltip near icon
+                const iconRect = icon.getBoundingClientRect();
+                const tooltipRect = tooltip.getBoundingClientRect();
+
+                // Position below icon by default
+                let top = iconRect.bottom + 8;
+                let left = iconRect.left;
+
+                // Adjust if tooltip goes off right edge
+                if (left + tooltipRect.width > window.innerWidth) {
+                    left = window.innerWidth - tooltipRect.width - 10;
+                }
+
+                // Adjust if tooltip goes off bottom edge
+                if (top + tooltipRect.height > window.innerHeight) {
+                    top = iconRect.top - tooltipRect.height - 8;
+                }
+
+                tooltip.style.top = top + 'px';
+                tooltip.style.left = left + 'px';
+
+                currentTooltip = tooltip;
+            } catch (e) {
+                console.error('Error parsing stderr preview:', e);
+            }
+        }
+
+        function hideStderrTooltip() {
+            if (currentTooltip) {
+                currentTooltip.remove();
+                currentTooltip = null;
+            }
+        }
+
         // Stderr icon updater
         let lastStderrSizes = new Map(); // Track sizes to detect frequent activity
 
@@ -1058,6 +1172,17 @@
                     icon = document.createElement('span');
                     icon.className = 'stderr-icon';
                     icon.textContent = '📋'; // Clipboard icon for logs/output
+                    icon.title = 'Hover to see recent stderr';
+
+                    // Add hover handlers to show/hide tooltip
+                    icon.addEventListener('mouseenter', function(e) {
+                        showStderrTooltip(e.target, card);
+                    });
+
+                    icon.addEventListener('mouseleave', function() {
+                        hideStderrTooltip();
+                    });
+
                     // Insert after PID element
                     const pid = header.querySelector('.node-pid');
                     if (pid) {

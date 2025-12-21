@@ -45,6 +45,34 @@ fn write_stop_marker(log_paths: &NodeLogPaths) {
     }
 }
 
+/// Helper function to read last N lines from a file
+fn read_last_lines(path: &std::path::Path, max_lines: usize) -> Option<Vec<String>> {
+    use std::io::{BufRead, BufReader};
+
+    let file = std::fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+
+    // Read all lines and keep only the last N non-empty lines
+    let lines: Vec<String> = reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .filter(|l| !l.trim().is_empty())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .take(max_lines)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines)
+    }
+}
+
 /// Node status for regular nodes and containers (process-based)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -409,6 +437,9 @@ pub struct NodeSummary {
     pub stderr_last_modified: Option<u64>,
     /// Size of stderr file in bytes
     pub stderr_size: u64,
+    /// Last few lines of stderr for quick preview
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr_preview: Option<Vec<String>>,
 }
 
 /// Detailed information about a node (for API responses)
@@ -511,17 +542,24 @@ impl NodeRegistry {
         self.nodes
             .values()
             .map(|handle| {
-                // Get stderr file metadata
-                let (stderr_last_modified, stderr_size) =
+                // Get stderr file metadata and preview
+                let (stderr_last_modified, stderr_size, stderr_preview) =
                     if let Ok(metadata) = std::fs::metadata(&handle.log_paths.stderr) {
                         let mtime = metadata
                             .modified()
                             .ok()
                             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                             .map(|d| d.as_secs());
-                        (mtime, metadata.len())
+                        let size = metadata.len();
+                        // Read last 5 lines for preview (only if file has content)
+                        let preview = if size > 0 {
+                            read_last_lines(&handle.log_paths.stderr, 5)
+                        } else {
+                            None
+                        };
+                        (mtime, size, preview)
                     } else {
-                        (None, 0)
+                        (None, 0, None)
                     };
 
                 NodeSummary {
@@ -538,6 +576,7 @@ impl NodeRegistry {
                     node_name: handle.get_node_name().map(String::from),
                     stderr_last_modified,
                     stderr_size,
+                    stderr_preview,
                 }
             })
             .collect()
@@ -553,17 +592,24 @@ impl NodeRegistry {
                 None
             };
 
-            // Get stderr file metadata
-            let (stderr_last_modified, stderr_size) =
+            // Get stderr file metadata and preview
+            let (stderr_last_modified, stderr_size, stderr_preview) =
                 if let Ok(metadata) = std::fs::metadata(&handle.log_paths.stderr) {
                     let mtime = metadata
                         .modified()
                         .ok()
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs());
-                    (mtime, metadata.len())
+                    let size = metadata.len();
+                    // Read last 5 lines for preview (only if file has content)
+                    let preview = if size > 0 {
+                        read_last_lines(&handle.log_paths.stderr, 5)
+                    } else {
+                        None
+                    };
+                    (mtime, size, preview)
                 } else {
-                    (None, 0)
+                    (None, 0, None)
                 };
 
             NodeDetails {
@@ -581,6 +627,7 @@ impl NodeRegistry {
                     node_name: handle.get_node_name().map(String::from),
                     stderr_last_modified,
                     stderr_size,
+                    stderr_preview,
                 },
                 output_dir: handle.output_dir.clone(),
                 log_paths: handle.log_paths.clone(),

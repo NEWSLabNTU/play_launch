@@ -142,11 +142,18 @@ fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str
         }
     };
 
-    // Format stderr data attributes
+    // Format stderr data attributes (including preview as JSON)
     let stderr_attrs = if let Some(mtime) = node.stderr_last_modified {
+        let preview_json = if let Some(ref lines) = node.stderr_preview {
+            // Escape JSON string
+            serde_json::to_string(lines).unwrap_or_else(|_| "[]".to_string())
+        } else {
+            "[]".to_string()
+        };
+
         format!(
-            r#" data-stderr-mtime="{}" data-stderr-size="{}""#,
-            mtime, node.stderr_size
+            r#" data-stderr-mtime="{}" data-stderr-size="{}" data-stderr-preview='{}'"#,
+            mtime, node.stderr_size, preview_json
         )
     } else {
         String::new()
