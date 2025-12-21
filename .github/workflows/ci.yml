@@ -67,6 +67,10 @@ jobs:
         rosdep update
         rosdep install --from-paths src --ignore-src -r -y
 
+        # Install uv for wheel building
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
     - name: Build workspace
       run: |
         source $HOME/.cargo/env
