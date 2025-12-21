@@ -190,11 +190,12 @@
             display: none;
         }
 
-        .node-controls button.htmx-request .btn-loading {
+        /* When any button in the controls is loading, show loading state on all buttons */
+        .node-controls:has(button.htmx-request) button .btn-loading {
             display: inline;
         }
 
-        .node-controls button.htmx-request .btn-text {
+        .node-controls:has(button.htmx-request) button .btn-text {
             display: none;
         }
 
@@ -1008,11 +1009,16 @@
         }
 
         function connectToLogs() {
+            // Close old connection
             if (eventSource) {
                 eventSource.close();
+                eventSource = null;
             }
 
             if (!currentNode) return;
+
+            // Clear log content to prevent duplication
+            document.getElementById('log-content').innerHTML = '';
 
             const url = `/api/nodes/${encodeURIComponent(currentNode)}/logs/${currentLogType}`;
             const statusEl = document.getElementById('log-status');
@@ -1020,21 +1026,32 @@
             statusEl.textContent = 'Connecting...';
             statusEl.classList.remove('connected');
 
-            eventSource = new EventSource(url);
+            const newEventSource = new EventSource(url);
 
-            eventSource.onopen = function() {
-                statusEl.textContent = 'Connected - streaming';
-                statusEl.classList.add('connected');
+            newEventSource.onopen = function() {
+                // Only update if this is still the current event source
+                if (newEventSource === eventSource) {
+                    statusEl.textContent = 'Connected - streaming';
+                    statusEl.classList.add('connected');
+                }
             };
 
-            eventSource.onmessage = function(event) {
-                appendLogLine(event.data);
+            newEventSource.onmessage = function(event) {
+                // Only append if this is still the current event source
+                if (newEventSource === eventSource) {
+                    appendLogLine(event.data);
+                }
             };
 
-            eventSource.onerror = function() {
-                statusEl.textContent = 'Connection lost - retrying...';
-                statusEl.classList.remove('connected');
+            newEventSource.onerror = function() {
+                // Only update if this is still the current event source
+                if (newEventSource === eventSource) {
+                    statusEl.textContent = 'Connection lost - retrying...';
+                    statusEl.classList.remove('connected');
+                }
             };
+
+            eventSource = newEventSource;
         }
 
         function appendLogLine(text) {

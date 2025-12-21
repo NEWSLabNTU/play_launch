@@ -10,7 +10,8 @@ use axum::{
     Router,
 };
 use rust_embed::Embed;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc};
+use tokio::sync::Mutex as TokioMutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
@@ -31,6 +32,8 @@ pub struct WebState {
     pub log_dir: PathBuf,
     /// Component loader for loading composable nodes (optional)
     pub component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
+    /// Track nodes currently being operated on (to prevent racing conditions)
+    pub operations_in_progress: TokioMutex<HashSet<String>>,
 }
 
 impl WebState {
@@ -44,6 +47,7 @@ impl WebState {
             registry,
             log_dir,
             component_loader,
+            operations_in_progress: TokioMutex::new(HashSet::new()),
         }
     }
 }

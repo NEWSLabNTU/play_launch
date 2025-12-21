@@ -264,10 +264,16 @@ impl NodeHandle {
         NodeStatus::Pending
     }
 
-    /// Check composable node status by reading service_response file and termination marker
+    /// Check composable node status by reading service_response file and marker files
     fn check_composable_node_status(&self) -> ComposableNodeStatus {
         let response_path = self.output_dir.join("service_response");
         let terminated_path = self.output_dir.join("terminated");
+        let loading_path = self.output_dir.join("loading");
+
+        // If loading marker exists, the composable node is being loaded
+        if loading_path.exists() {
+            return ComposableNodeStatus::Pending;
+        }
 
         // If terminated marker exists, the composable node is no longer loaded
         if terminated_path.exists() {
@@ -473,20 +479,18 @@ impl NodeRegistry {
     pub fn list_nodes(&self) -> Vec<NodeSummary> {
         self.nodes
             .values()
-            .map(|handle| {
-                NodeSummary {
-                    name: handle.name.clone(),
-                    node_type: handle.node_type,
-                    status: handle.get_status(),
-                    pid: handle.get_pid(),
-                    package: handle.get_package().map(String::from),
-                    executable: handle.get_executable().to_string(),
-                    namespace: handle.get_namespace().map(String::from),
-                    target_container: handle.get_target_container().map(String::from),
-                    is_container: handle.is_container,
-                    exec_name: handle.get_exec_name().map(String::from),
-                    node_name: handle.get_node_name().map(String::from),
-                }
+            .map(|handle| NodeSummary {
+                name: handle.name.clone(),
+                node_type: handle.node_type,
+                status: handle.get_status(),
+                pid: handle.get_pid(),
+                package: handle.get_package().map(String::from),
+                executable: handle.get_executable().to_string(),
+                namespace: handle.get_namespace().map(String::from),
+                target_container: handle.get_target_container().map(String::from),
+                is_container: handle.is_container,
+                exec_name: handle.get_exec_name().map(String::from),
+                node_name: handle.get_node_name().map(String::from),
             })
             .collect()
     }

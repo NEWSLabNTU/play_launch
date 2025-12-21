@@ -9,11 +9,43 @@ use axum::{
 };
 use std::sync::Arc;
 
+/// RAII guard for tracking operations in progress
+struct OperationGuard {
+    node_name: String,
+    state: Arc<WebState>,
+}
+
+impl OperationGuard {
+    /// Try to acquire operation lock for a node
+    async fn try_acquire(node_name: String, state: Arc<WebState>) -> Result<Self, String> {
+        {
+            let mut ops = state.operations_in_progress.lock().await;
+            if ops.contains(&node_name) {
+                return Err(format!(
+                    "Operation already in progress for node '{}'",
+                    node_name
+                ));
+            }
+            ops.insert(node_name.clone());
+        } // Drop the lock here
+        Ok(Self { node_name, state })
+    }
+}
+
+impl Drop for OperationGuard {
+    fn drop(&mut self) {
+        // Remove from operations_in_progress when guard is dropped
+        let node_name = self.node_name.clone();
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            let mut ops = state.operations_in_progress.lock().await;
+            ops.remove(&node_name);
+        });
+    }
+}
+
 /// Helper to generate node card HTML
-fn render_node_card(
-    node: &crate::node_registry::NodeSummary,
-    indent_class: &str,
-) -> String {
+fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str) -> String {
     let status_class = match node.status {
         crate::node_registry::UnifiedStatus::Process(status) => match status {
             crate::node_registry::NodeStatus::Running => "status-running",
@@ -75,7 +107,9 @@ fn render_node_card(
         crate::node_registry::NodeType::Container | crate::node_registry::NodeType::Node => {
             // Full controls: Start/Stop, Restart, Details, Logs
             let start_stop_button = match node.status {
-                crate::node_registry::UnifiedStatus::Process(crate::node_registry::NodeStatus::Running) => {
+                crate::node_registry::UnifiedStatus::Process(
+                    crate::node_registry::NodeStatus::Running,
+                ) => {
                     format!(
                         r#"<button hx-post="/api/nodes/{}/stop" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-stop">
     <span class="btn-text">Stop</span>
@@ -149,16 +183,17 @@ pub async fn list_nodes(State(state): State<Arc<WebState>>) -> Response {
         html.push_str(r#"<div class="no-nodes">No nodes registered</div>"#);
     } else {
         // Separate containers, composable nodes, and regular nodes
-        let (containers, composables, regulars): (Vec<_>, Vec<_>, Vec<_>) = nodes
-            .iter()
-            .fold((Vec::new(), Vec::new(), Vec::new()), |mut acc, node| {
-                match node.node_type {
-                    crate::node_registry::NodeType::Container => acc.0.push(node),
-                    crate::node_registry::NodeType::ComposableNode => acc.1.push(node),
-                    crate::node_registry::NodeType::Node => acc.2.push(node),
-                }
-                acc
-            });
+        let (containers, composables, regulars): (Vec<_>, Vec<_>, Vec<_>) =
+            nodes
+                .iter()
+                .fold((Vec::new(), Vec::new(), Vec::new()), |mut acc, node| {
+                    match node.node_type {
+                        crate::node_registry::NodeType::Container => acc.0.push(node),
+                        crate::node_registry::NodeType::ComposableNode => acc.1.push(node),
+                        crate::node_registry::NodeType::Node => acc.2.push(node),
+                    }
+                    acc
+                });
 
         // Render regular nodes first
         for node in &regulars {
@@ -186,7 +221,8 @@ pub async fn list_nodes(State(state): State<Arc<WebState>>) -> Response {
             let children: Vec<_> = composables
                 .iter()
                 .filter(|n| {
-                    n.target_container.as_ref().map(|s| s.as_str()) == Some(container_full_name.as_str())
+                    n.target_container.as_ref().map(|s| s.as_str())
+                        == Some(container_full_name.as_str())
                 })
                 .collect();
 
@@ -215,6 +251,14 @@ pub async fn start_node(State(state): State<Arc<WebState>>, Path(name): Path<Str
     use crate::node_registry::NodeType;
     use tracing::info;
 
+    // Acquire operation lock to prevent racing conditions
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+        Ok(guard) => guard,
+        Err(e) => {
+            return (StatusCode::CONFLICT, e).into_response();
+        }
+    };
+
     // Check if this is a container and remove termination markers for composable nodes
     let is_container = {
         let registry = state.registry.lock().await;
@@ -231,14 +275,28 @@ pub async fn start_node(State(state): State<Arc<WebState>>, Path(name): Path<Str
             registry.get_container_composable_nodes(&name)
         };
 
-        // Remove termination markers so composable nodes can be reloaded
+        // Remove termination markers and write loading markers
         for comp_name in &composable_nodes {
             let registry = state.registry.lock().await;
             if let Some(handle) = registry.get(comp_name) {
                 let terminated_path = handle.output_dir.join("terminated");
                 if terminated_path.exists() {
                     let _ = std::fs::remove_file(&terminated_path);
-                    info!("[Web UI] Removed termination marker for composable node '{}'", comp_name);
+                    info!(
+                        "[Web UI] Removed termination marker for composable node '{}'",
+                        comp_name
+                    );
+                }
+
+                // Write loading marker to indicate loading is in progress
+                let loading_path = handle.output_dir.join("loading");
+                if let Err(e) = std::fs::write(&loading_path, "loading") {
+                    info!(
+                        "[Web UI] Failed to write loading marker for '{}': {}",
+                        comp_name, e
+                    );
+                } else {
+                    info!("[Web UI] Marked composable node '{}' as loading", comp_name);
                 }
             }
         }
@@ -271,6 +329,14 @@ pub async fn stop_node(State(state): State<Arc<WebState>>, Path(name): Path<Stri
     use crate::node_registry::NodeType;
     use tracing::info;
 
+    // Acquire operation lock to prevent racing conditions
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+        Ok(guard) => guard,
+        Err(e) => {
+            return (StatusCode::CONFLICT, e).into_response();
+        }
+    };
+
     // Check if this is a container
     let is_container = {
         let registry = state.registry.lock().await;
@@ -298,7 +364,10 @@ pub async fn stop_node(State(state): State<Arc<WebState>>, Path(name): Path<Stri
                                 comp_name, e
                             );
                         } else {
-                            info!("[Web UI] Marked composable node '{}' as terminated", comp_name);
+                            info!(
+                                "[Web UI] Marked composable node '{}' as terminated",
+                                comp_name
+                            );
                         }
                     }
                 }
@@ -329,6 +398,14 @@ pub async fn restart_node(
     use crate::node_registry::NodeType;
     use tracing::info;
 
+    // Acquire operation lock to prevent racing conditions
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+        Ok(guard) => guard,
+        Err(e) => {
+            return (StatusCode::CONFLICT, e).into_response();
+        }
+    };
+
     // Check if this is a container
     let is_container = {
         let registry = state.registry.lock().await;
@@ -339,12 +416,33 @@ pub async fn restart_node(
     };
 
     if is_container && state.component_loader.is_some() {
-        info!("[Web UI] Restarting container '{}' (will reload composable nodes)", name);
+        info!(
+            "[Web UI] Restarting container '{}' (will reload composable nodes)",
+            name
+        );
         // Get composable nodes before restarting container
         let composable_nodes = {
             let registry = state.registry.lock().await;
             registry.get_container_composable_nodes(&name)
         };
+
+        // Write loading markers for all composable nodes
+        {
+            let registry = state.registry.lock().await;
+            for comp_name in &composable_nodes {
+                if let Some(handle) = registry.get(comp_name) {
+                    let loading_path = handle.output_dir.join("loading");
+                    if let Err(e) = std::fs::write(&loading_path, "loading") {
+                        info!(
+                            "[Web UI] Failed to write loading marker for '{}': {}",
+                            comp_name, e
+                        );
+                    } else {
+                        info!("[Web UI] Marked composable node '{}' as loading", comp_name);
+                    }
+                }
+            }
+        }
 
         // Restart the container process
         let restart_result = {
@@ -354,7 +452,12 @@ pub async fn restart_node(
 
         match restart_result {
             Ok(pid) => {
-                info!("[Web UI] Container '{}' restarted with PID {}, reloading {} composable nodes", name, pid, composable_nodes.len());
+                info!(
+                    "[Web UI] Container '{}' restarted with PID {}, reloading {} composable nodes",
+                    name,
+                    pid,
+                    composable_nodes.len()
+                );
 
                 // Reload composable nodes
                 let mut reload_results = Vec::new();
@@ -367,7 +470,10 @@ pub async fn restart_node(
                         }
                         Err(e) => {
                             // Mark as failed but continue
-                            info!("[Web UI] Failed to reload composable node '{}': {}", comp_name, e);
+                            info!(
+                                "[Web UI] Failed to reload composable node '{}': {}",
+                                comp_name, e
+                            );
                             reload_results.push(format!("✗ {}: {}", comp_name, e));
                         }
                     }
@@ -457,7 +563,11 @@ async fn reload_composable_node(node_name: &str, state: &Arc<WebState>) -> eyre:
         .collect();
 
     // Prepare extra args
-    let extra_args: Vec<(String, String)> = record.extra_args.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let extra_args: Vec<(String, String)> = record
+        .extra_args
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
 
     // Load timeout (30 seconds)
     let timeout = Duration::from_secs(30);
@@ -477,6 +587,15 @@ async fn reload_composable_node(node_name: &str, state: &Arc<WebState>) -> eyre:
         )
         .await
         .wrap_err_with(|| format!("Failed to reload composable node '{}'", node_name))?;
+
+    // Remove loading marker after successful load
+    let registry = state.registry.lock().await;
+    if let Some(handle) = registry.get(node_name) {
+        let loading_path = handle.output_dir.join("loading");
+        if loading_path.exists() {
+            let _ = std::fs::remove_file(&loading_path);
+        }
+    }
 
     Ok(())
 }
@@ -537,9 +656,10 @@ pub async fn start_all(State(state): State<Arc<WebState>>) -> Response {
             // Check if stopped
             if matches!(
                 node.status,
-                UnifiedStatus::Process(NodeStatus::Stopped) | UnifiedStatus::Process(NodeStatus::Failed)
+                UnifiedStatus::Process(NodeStatus::Stopped)
+                    | UnifiedStatus::Process(NodeStatus::Failed)
             ) {
-                // If it's a container, remove termination markers for composable nodes
+                // If it's a container, remove termination markers and write loading markers
                 if node.node_type == NodeType::Container {
                     let composable_nodes = registry.get_container_composable_nodes(&node.name);
                     for comp_name in &composable_nodes {
@@ -547,7 +667,21 @@ pub async fn start_all(State(state): State<Arc<WebState>>) -> Response {
                             let terminated_path = handle.output_dir.join("terminated");
                             if terminated_path.exists() {
                                 let _ = std::fs::remove_file(&terminated_path);
-                                info!("[Web UI] Removed termination marker for composable node '{}'", comp_name);
+                                info!(
+                                    "[Web UI] Removed termination marker for composable node '{}'",
+                                    comp_name
+                                );
+                            }
+
+                            // Write loading marker
+                            let loading_path = handle.output_dir.join("loading");
+                            if let Err(e) = std::fs::write(&loading_path, "loading") {
+                                info!(
+                                    "[Web UI] Failed to write loading marker for '{}': {}",
+                                    comp_name, e
+                                );
+                            } else {
+                                info!("[Web UI] Marked composable node '{}' as loading", comp_name);
                             }
                         }
                     }
