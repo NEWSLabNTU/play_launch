@@ -1014,12 +1014,13 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
     // Start web server if enabled
     if let Some(ref registry) = node_registry {
         let web_state = std::sync::Arc::new(web::WebState::new(registry.clone(), log_dir.clone()));
+        let addr = common.web_ui_addr.clone();
         let port = common.web_ui_port;
         let web_shutdown = shutdown_signal.clone();
 
         // Spawn web server as a background task
         tokio::spawn(async move {
-            if let Err(e) = web::run_server(web_state, port, web_shutdown).await {
+            if let Err(e) = web::run_server(web_state, &addr, port, web_shutdown).await {
                 error!("Web server error: {}", e);
             }
         });
