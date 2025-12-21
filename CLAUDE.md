@@ -135,25 +135,31 @@ See `test/autoware_planning_simulation/autoware_config.yaml` and `docs/resource-
 ## Log Directory Structure
 
 ```
-play_log/YYYY-MM-DD_HH-MM-SS/
-├── params_files/              # Cached parameter files
-├── system_stats.csv           # System-wide metrics
-├── node/<node_name>/          # Regular nodes (flat structure)
-│   ├── metadata.json          # Package, namespace, container info
-│   ├── metrics.csv            # Resource metrics (when enabled)
-│   ├── out/err/pid/status     # Process logs
-│   └── cmdline                # Executed command
-└── load_node/<node_name>/     # Composable nodes (flat structure)
-    ├── metadata.json
-    ├── metrics.csv
-    ├── service_response.*     # LoadNode responses
-    └── status
+play_log/
+├── latest -> 2025-12-21_09-44-52/  # Symlink to most recent run
+├── 2025-12-21_09-44-40/
+├── 2025-12-21_09-44-46/
+└── 2025-12-21_09-44-52/
+    ├── params_files/              # Cached parameter files
+    ├── system_stats.csv           # System-wide metrics
+    ├── node/<node_name>/          # Regular nodes (flat structure)
+    │   ├── metadata.json          # Package, namespace, container info
+    │   ├── metrics.csv            # Resource metrics (when enabled)
+    │   ├── out/err/pid/status     # Process logs
+    │   └── cmdline                # Executed command
+    └── load_node/<node_name>/     # Composable nodes (flat structure)
+        ├── metadata.json
+        ├── metrics.csv
+        ├── service_response.*     # LoadNode responses
+        └── status
 ```
 
 **Features**:
+- **`latest` symlink**: Automatically updated to point to the most recent run
 - Flat 1-level structure for easy scripting
 - Short directory names (e.g., `control_evaluator`) with deduplication (`_2`, `_3`)
 - Each node directory is self-contained with all data
+- `play_launch plot` uses `latest` symlink by default (no need to specify log directory)
 
 ## Resource Monitoring
 
@@ -261,6 +267,8 @@ Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop 
 - **Signal Handlers**: SIGTERM/SIGINT call `kill_all_descendants()`
 - **Process Group Isolation**: `.process_group(0)` prevents children from receiving terminal signals
 - Only play_launch receives Ctrl-C, then explicitly kills all descendants
+- **Graceful Shutdown**: SIGTERM triggers 5-second grace period before SIGKILL (allows large systems like Autoware to shut down cleanly)
+- **Progressive SIGINT**: Multiple Ctrl-C presses escalate from SIGTERM → SIGQUIT → SIGKILL for manual control
 
 ### Composable Node Loading
 - Service-based only (direct rclrs service calls to LoadNode)
@@ -286,29 +294,75 @@ Optional web-based interface for monitoring and controlling nodes during replay.
 ### Enabling
 
 ```sh
-# Start replay with web UI
+# Start replay with web UI (localhost only, default port 8080)
 play_launch replay --web-ui
 
 # Custom port
 play_launch replay --web-ui --web-ui-port 3000
+
+# Expose to network (INSECURE - use with caution on trusted networks only)
+play_launch replay --web-ui --web-ui-addr 0.0.0.0
+
+# Bind to specific interface
+play_launch replay --web-ui --web-ui-addr 192.168.1.100 --web-ui-port 3000
 ```
+
+### Security
+
+- **Default: Localhost Only**: Web server binds to `127.0.0.1` by default for security
+- **Configurable**: Use `--web-ui-addr` to bind to specific interface or expose to network
+- **Warning**: Binding to `0.0.0.0` exposes the web UI to the network without authentication
+- **No Authentication**: Designed for trusted local or network access only
+- **Recommendation**: Only use `0.0.0.0` on isolated/trusted networks
 
 ### Features
 
-- **Node List**: All registered nodes with live status (running/stopped/failed/pending)
-- **Node Control**: Start, stop, restart individual nodes via web buttons
-- **Node Details**: View PID, package, executable, namespace, command line
-- **Log Viewer**: Modal with stdout/stderr tabs, live streaming via SSE
-- **Health Summary**: Badge counts for running/stopped/failed/pending/noisy nodes
-- **Search/Filter**: Filter node list by name
-- **Noisy Detection**: Nodes with >10KB stderr output are flagged
+**Two-Panel Layout:**
+- **Left Panel**: Compact node list with status-based background colors
+- **Right Panel**: Collapsible details/logs panel (hidden by default)
+- **Close Button**: Hide the right panel when done viewing
+
+**Theme Support:**
+- **Light Theme**: Clean, bright interface
+- **Dark Theme**: Eye-friendly dark mode
+- **System Default**: Automatically follows OS theme preference
+- **Theme Toggle**: Switch themes with button click (☀/🌙 icon)
+
+**Node List:**
+- Compact cards with status reflected in background color (running=green, stopped=gray, failed=red, pending=yellow)
+- Live status updates every 5 seconds
+- Quick-access control buttons (Start, Stop, Restart, Details, Logs)
+- Search/filter by node name
+- Health summary badges at top
+
+**Node Details:**
+- Firefox-style JSON viewer with expandable rows
+- Formatted key-value pairs for easy reading
+- Type-specific color coding (strings=red, numbers=purple, booleans=blue)
+- Shows all node metadata (PID, package, paths, command line)
+
+**Log Viewer:**
+- Integrated into right panel (no modal overlay)
+- Switch between stdout/stderr tabs
+- Real-time streaming via Server-Sent Events (SSE)
+- Auto-scroll with manual override
+- Clear and scroll-to-bottom controls
+
+**Node Control:**
+- Start, stop, restart nodes via buttons
+- Automatic refresh after control actions
+- Noisy node detection (>10KB stderr)
 
 ### Architecture
 
 - **Framework**: axum web server with embedded static assets
-- **Frontend**: htmx for reactive updates, no build step required
+- **Frontend**: htmx for reactive updates + vanilla JavaScript for interactions
+- **UI Pattern**: Two-panel IDE-style layout with collapsible sidebar
 - **Log Streaming**: Server-Sent Events (SSE) with file tailing
 - **Registry**: NodeRegistry tracks all nodes, determines status from filesystem
+- **Theme Management**: CSS variables + localStorage persistence + system theme detection
+- **Binding**: Configurable via `--web-ui-addr` (default: `127.0.0.1` localhost only)
+- **Port**: Configurable via `--web-ui-port` (default: 8080)
 
 ### API Endpoints
 
@@ -400,6 +454,14 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 
 ## Key Recent Fixes
 
+- **2025-12-21**: Autoware justfile cleanup - Simplified recipe output to show only one line for start/stop/restart operations with clear status indicators (✓/⚠/✗). Ensured all {stop,restart,logs,status}-{sim,demo} recipes are available. Updated start scripts to output single-line success messages with Web UI URLs. Removed verbose multi-line output for cleaner CLI experience.
+- **2025-12-21**: Complete Web UI redesign - Implemented two-panel IDE-style layout with collapsible right sidebar for details/logs. Added light/dark theme support with system default detection and toggle button. Created Firefox-style expandable JSON viewer for node details. Moved log viewer from modal overlay to right panel with stdout/stderr tabs. Made node list more compact with status reflected in background colors (running=green, stopped=gray, failed=red, pending=yellow). Right panel hidden by default with close button (×).
+- **2025-12-21**: Autoware test scripts reorganization - Simplified script structure by moving systemd-run logic into wrapper scripts. Created start-{sim,demo}.sh (wrappers with systemd-run) and start-{sim,demo}-inner.sh (execution logic). Removed duplicated start-sim-and-drive.sh. Fixed "Access denied" error by resolving absolute paths and conditionally setting DISPLAY environment variable only when non-empty.
+- **2025-12-21**: Improved shutdown speed for large systems - Increased SIGTERM grace period from 200ms to 5 seconds in play_launch to allow large systems (like Autoware) to shut down cleanly. Added timeout-based cleanup (10s) in start-demo-systemd.sh script with automatic SIGKILL fallback. Fixes slow `just stop-demo` issue where systemd would wait for 90s timeout.
+- **2025-12-21**: Web UI route fix - Fixed Axum routing panic with catch-all parameter. Changed `/static/{*path}` to `/static/*path` for compatibility with newer Axum versions. Web UI now works correctly with `play_launch launch --web-ui` command.
+- **2025-12-21**: Web UI security and configurability - Changed default bind address from `0.0.0.0` (network-exposed) to `127.0.0.1` (localhost-only) for security. Added `--web-ui-addr` flag to allow users to explicitly configure bind address when network access is needed. Logs warning when binding to `0.0.0.0`.
+- **2025-12-21**: Log directory symlink - Added `play_log/latest` symlink that automatically points to the most recent timestamped log directory. Updated after each run. `play_launch plot` uses this symlink by default, eliminating the need to specify log directories manually.
+- **2025-12-21**: ROS Jazzy compatibility - Fixed import compatibility for both ROS Humble and Jazzy. Humble uses `launch.some_actions_type.SomeActionsType` while Jazzy uses `launch.some_entities_type.SomeEntitiesType`. Added try/except fallback to support both.
 - **2025-12-18**: SetParameter (global params) support - Global parameters from `<set_parameter>` XML tag or `SetParameter` Python action are now captured in a separate `NodeRecord.global_params` field (not merged into `params`). dump_launch extracts from `context.launch_configurations['global_params']` (the same source ROS2 launch uses internally). play_launch (Rust) reads this field and passes them as `-p` flags, with node-specific params able to override. Clean separation between global and node-specific params for better debugging.
 - **2025-11-30**: Simplified packaging - Removed Debian packaging (PyPI-only distribution). Merged `build` and `build-wheel` recipes. Added `setcap-io-helper` and `verify-io-helper` CLI commands to Rust binary. Removed unused pandas/numpy dependencies from plot script (pure plotly). Auto-detect ROS2 distro (humble for Ubuntu 22.04, jazzy for 24.04) in justfile.
 - **2025-11-26**: pip installation support - Added unified Python package in `python/play_launch/` that embeds dump_launch and play_launch_analyzer. Build workflow: `just build` then `just build-wheel`. Python CLI wrapper finds bundled Rust binary in package `bin/` directory. Wheel includes both Rust binaries (~3.3MB total). GitHub Actions workflow builds wheels for amd64 and arm64.
@@ -426,9 +488,32 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 ## Development Practices
 
 ### Temporary Files
-- Store all temporary files in `tmp/` directory at the project root
+- **ALWAYS** store all temporary files in `tmp/` directory at the project root (`/home/aeon/repos/play_launch/tmp/`)
 - This directory is gitignored and used for testing, debugging, and experimentation
-- Do NOT use system `/tmp` for project-related temporary files
+- **NEVER** use system `/tmp` for project-related temporary files
+- Use `$project/tmp/` for all test runs, temporary log directories, and scratch work
+- Example: `cd /home/aeon/repos/play_launch/tmp && play_launch ...`
+
+### External Dependencies (Study/Reference)
+- `external/` directory contains cloned ROS repositories for study and reference
+- **Gitignored** - not part of the project build
+- Currently contains:
+  - `external/launch/` - ROS 2 launch (humble branch)
+  - `external/launch_ros/` - ROS 2 launch_ros (humble branch)
+- Used for understanding ROS launch architecture for potential Rust rewrite
+- See `docs/launch-rust-rewrite-analysis.md` for analysis
+
+## Performance Optimization Roadmap
+
+### dump_launch Performance
+- **Current**: Python-based launch introspection (slow for large launch files)
+- **Analysis**: See `docs/launch-rust-rewrite-analysis.md`
+- **Options**:
+  1. Short-term: Optimize Python implementation (1-2 weeks)
+  2. Medium-term: Rust XML/YAML parser + visitor (2-3 months)
+  3. Long-term: Full Rust launch implementation (6+ months)
+- **Challenge**: Python `.launch.py` files have arbitrary code execution
+- **Target**: 10x speedup for Autoware-sized launch files
 
 ## Known Issues / TODO
 
