@@ -55,7 +55,7 @@ fn read_last_lines(path: &std::path::Path, max_lines: usize) -> Option<Vec<Strin
     // Read all lines and keep only the last N non-empty lines
     let lines: Vec<String> = reader
         .lines()
-        .filter_map(|l| l.ok())
+        .map_while(Result::ok)
         .filter(|l| !l.trim().is_empty())
         .collect::<Vec<_>>()
         .into_iter()
