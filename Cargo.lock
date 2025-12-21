@@ -339,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "builtin_interfaces"
-version = "2.0.3"
+version = "1.2.2"
 dependencies = [
  "rosidl_runtime_rs",
 ]
@@ -439,7 +439,7 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
 name = "composition_interfaces"
-version = "2.0.3"
+version = "1.2.2"
 dependencies = [
  "rcl_interfaces",
  "rosidl_runtime_rs",
@@ -1490,7 +1490,7 @@ dependencies = [
 
 [[package]]
 name = "rcl_interfaces"
-version = "2.0.3"
+version = "1.2.2"
 dependencies = [
  "builtin_interfaces",
  "rosidl_runtime_rs",
@@ -2586,15 +2586,3 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[patch.unused]]
-name = "action_msgs"
-version = "2.0.3"
-
-[[patch.unused]]
-name = "service_msgs"
-version = "2.0.3"
-
-[[patch.unused]]
-name = "unique_identifier_msgs"
-version = "2.5.0"
