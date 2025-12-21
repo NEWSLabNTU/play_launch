@@ -220,10 +220,7 @@ pub async fn list_nodes(State(state): State<Arc<WebState>>) -> Response {
             // Find composable nodes that belong to this container
             let children: Vec<_> = composables
                 .iter()
-                .filter(|n| {
-                    n.target_container.as_ref().map(|s| s.as_str())
-                        == Some(container_full_name.as_str())
-                })
+                .filter(|n| n.target_container.as_deref() == Some(container_full_name.as_str()))
                 .collect();
 
             // Render children with indentation

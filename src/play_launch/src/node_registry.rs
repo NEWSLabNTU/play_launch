@@ -857,7 +857,7 @@ impl NodeRegistry {
 
                 // Get target_container from composable node record
                 if let NodeInfo::Composable(info) = &handle.info {
-                    return &info.record.target_container_name == &container_full_name;
+                    return info.record.target_container_name == container_full_name;
                 }
 
                 false
@@ -978,9 +978,11 @@ mod tests {
     fn test_health_summary() {
         let registry = NodeRegistry::new(PathBuf::from("/tmp/test"));
         let summary = registry.get_health_summary();
-        assert_eq!(summary.total, 0);
-        assert_eq!(summary.running, 0);
-        assert_eq!(summary.failed, 0);
+        assert_eq!(summary.nodes_total, 0);
+        assert_eq!(summary.containers_total, 0);
+        assert_eq!(summary.composable_total, 0);
+        assert_eq!(summary.processes_running, 0);
+        assert_eq!(summary.processes_stopped, 0);
         assert_eq!(summary.noisy, 0);
     }
 }
