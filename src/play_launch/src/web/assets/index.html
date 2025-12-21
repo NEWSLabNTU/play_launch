@@ -116,6 +116,88 @@
             flex-wrap: wrap;
         }
 
+        .bulk-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-bulk {
+            padding: 6px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .btn-bulk:hover:not(:disabled) {
+            background: var(--border-color);
+        }
+
+        .btn-bulk:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-bulk .htmx-indicator {
+            display: none;
+        }
+
+        .btn-bulk.htmx-request .htmx-indicator {
+            display: inline;
+        }
+
+        .btn-bulk.htmx-request .btn-text {
+            display: none;
+        }
+
+        .btn-start-all {
+            background: #10b981;
+            color: white;
+            border-color: #059669;
+        }
+
+        .btn-start-all:hover:not(:disabled) {
+            background: #059669;
+        }
+
+        .btn-stop-all {
+            background: #ef4444;
+            color: white;
+            border-color: #dc2626;
+        }
+
+        .btn-stop-all:hover:not(:disabled) {
+            background: #dc2626;
+        }
+
+        .btn-restart-all {
+            background: #f59e0b;
+            color: white;
+            border-color: #d97706;
+        }
+
+        .btn-restart-all:hover:not(:disabled) {
+            background: #d97706;
+        }
+
+        /* Node control button loading states */
+        .node-controls button .btn-loading {
+            display: none;
+        }
+
+        .node-controls button.htmx-request .btn-loading {
+            display: inline;
+        }
+
+        .node-controls button.htmx-request .btn-text {
+            display: none;
+        }
+
         .search-box {
             padding: 6px 12px;
             border: 1px solid var(--border-color);
@@ -144,15 +226,11 @@
             white-space: nowrap;
         }
 
-        .badge-total { background: var(--bg-tertiary); color: var(--text-primary); }
-        .badge-running { background: var(--running-bg); color: var(--running-text); }
-        .badge-stopped { background: var(--stopped-bg); color: var(--stopped-text); }
-        .badge-failed { background: var(--failed-bg); color: var(--failed-text); }
-        .badge-pending { background: var(--pending-bg); color: var(--pending-text); }
-        .badge-noisy { background: #a855f7; color: #fff; }
-        .badge-nodes { background: #3b82f6; color: #fff; }
+        .badge-nodes { background: #10b981; color: #fff; }
         .badge-containers { background: #8b5cf6; color: #fff; }
         .badge-composable { background: #06b6d4; color: #fff; }
+        .badge-processes { background: #6b7280; color: #fff; }
+        .badge-noisy { background: #f59e0b; color: #fff; }
 
         .theme-toggle {
             padding: 6px 12px;
@@ -316,6 +394,11 @@
         }
 
         .node-card.status-running {
+            background: var(--running-bg);
+            border-left-color: var(--running-border);
+        }
+
+        .node-card.status-loaded {
             background: var(--running-bg);
             border-left-color: var(--running-border);
         }
@@ -618,6 +701,32 @@
                  hx-get="/api/health"
                  hx-trigger="load, every 5s">
                 <span class="badge">Loading...</span>
+            </div>
+            <div class="bulk-controls">
+                <button class="btn-bulk btn-start-all"
+                        hx-post="/api/nodes/all/start"
+                        hx-swap="none"
+                        hx-indicator="#start-all-spinner"
+                        hx-disabled-elt="this">
+                    <span class="htmx-indicator" id="start-all-spinner">Starting...</span>
+                    <span class="btn-text">Start All</span>
+                </button>
+                <button class="btn-bulk btn-stop-all"
+                        hx-post="/api/nodes/all/stop"
+                        hx-swap="none"
+                        hx-indicator="#stop-all-spinner"
+                        hx-disabled-elt="this">
+                    <span class="htmx-indicator" id="stop-all-spinner">Stopping...</span>
+                    <span class="btn-text">Stop All</span>
+                </button>
+                <button class="btn-bulk btn-restart-all"
+                        hx-post="/api/nodes/all/restart"
+                        hx-swap="none"
+                        hx-indicator="#restart-all-spinner"
+                        hx-disabled-elt="this">
+                    <span class="htmx-indicator" id="restart-all-spinner">Restarting...</span>
+                    <span class="btn-text">Restart All</span>
+                </button>
             </div>
             <button class="theme-toggle" onclick="toggleTheme()">
                 <span id="theme-icon">◐</span>

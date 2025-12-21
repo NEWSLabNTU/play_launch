@@ -29,12 +29,22 @@ pub struct WebState {
     /// Base log directory (used for log file access)
     #[allow(dead_code)]
     pub log_dir: PathBuf,
+    /// Component loader for loading composable nodes (optional)
+    pub component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
 }
 
 impl WebState {
     /// Create a new WebState
-    pub fn new(registry: SharedNodeRegistry, log_dir: PathBuf) -> Self {
-        Self { registry, log_dir }
+    pub fn new(
+        registry: SharedNodeRegistry,
+        log_dir: PathBuf,
+        component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
+    ) -> Self {
+        Self {
+            registry,
+            log_dir,
+            component_loader,
+        }
     }
 }
 
@@ -88,6 +98,9 @@ pub fn create_router(state: Arc<WebState>) -> Router {
         .route("/api/nodes/:name/start", post(handlers::start_node))
         .route("/api/nodes/:name/stop", post(handlers::stop_node))
         .route("/api/nodes/:name/restart", post(handlers::restart_node))
+        .route("/api/nodes/all/start", post(handlers::start_all))
+        .route("/api/nodes/all/stop", post(handlers::stop_all))
+        .route("/api/nodes/all/restart", post(handlers::restart_all))
         .route("/api/health", get(handlers::health_summary))
         // SSE endpoints for log streaming
         .route("/api/nodes/:name/logs/stdout", get(sse::stream_stdout))

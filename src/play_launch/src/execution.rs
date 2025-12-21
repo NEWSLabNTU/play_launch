@@ -806,7 +806,7 @@ async fn run_load_composable_node(
 async fn run_load_composable_node_via_service(
     context: &ComposableNodeContext,
     timeout: Duration,
-    round: usize,
+    _round: usize,
     component_loader: &Option<crate::component_loader::ComponentLoaderHandle>,
 ) -> eyre::Result<bool> {
     use std::io::Write;
@@ -863,8 +863,8 @@ async fn run_load_composable_node_via_service(
         .await
         .wrap_err_with(|| format!("{}: Failed to call LoadNode service", log_name))?;
 
-    // Log the response
-    let response_path = output_dir.join(format!("service_response.{round}"));
+    // Log the response (overwrite on retry)
+    let response_path = output_dir.join("service_response");
     let mut response_file = File::create(&response_path).wrap_err_with(|| {
         format!(
             "{}: Failed to create response file: {}",

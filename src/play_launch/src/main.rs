@@ -1011,9 +1011,26 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutdown_signal = shutdown_rx;
 
+    // Initialize component loader for service-based loading (before web server for component loader access)
+    debug!("Initializing component loader for service-based node loading");
+    let component_loader = match crate::component_loader::start_component_loader_thread() {
+        Ok(loader) => {
+            debug!("Component loader initialized successfully");
+            Some(loader)
+        }
+        Err(e) => {
+            warn!("Failed to start component loader: {}. Composable node reloading will not be available.", e);
+            None
+        }
+    };
+
     // Start web server if enabled
     if let Some(ref registry) = node_registry {
-        let web_state = std::sync::Arc::new(web::WebState::new(registry.clone(), log_dir.clone()));
+        let web_state = std::sync::Arc::new(web::WebState::new(
+            registry.clone(),
+            log_dir.clone(),
+            component_loader.clone(),
+        ));
         let addr = common.web_ui_addr.clone();
         let port = common.web_ui_port;
         let web_shutdown = shutdown_signal.clone();
@@ -1037,20 +1054,6 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
     )
     .into_iter()
     .map(|future| future.boxed());
-
-    // Initialize component loader for service-based loading
-    debug!("Initializing component loader for service-based node loading");
-    let component_loader = match crate::component_loader::start_component_loader_thread() {
-        Ok(loader) => {
-            debug!("Component loader initialized successfully");
-            Some(loader)
-        }
-        Err(e) => {
-            error!("Failed to initialize component loader: {}", e);
-            error!("Continuing without component loader");
-            None
-        }
-    };
 
     debug!("Proceeding with execution...");
 

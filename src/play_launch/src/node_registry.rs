@@ -19,7 +19,7 @@ use std::{
 };
 use tokio::{process::Child, sync::Mutex};
 
-/// Node status based on process state
+/// Node status for regular nodes and containers (process-based)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeStatus {
@@ -31,6 +31,28 @@ pub enum NodeStatus {
     Failed,
     /// Node is pending start
     Pending,
+}
+
+/// Status for composable nodes (loaded into containers)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComposableNodeStatus {
+    /// Successfully loaded into container
+    Loaded,
+    /// Load failed
+    Failed,
+    /// Not yet loaded
+    Pending,
+}
+
+/// Unified status for all node types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", content = "value")]
+pub enum UnifiedStatus {
+    /// Process-based status (regular nodes and containers)
+    Process(NodeStatus),
+    /// Composable node status
+    Composable(ComposableNodeStatus),
 }
 
 /// Type of node in the registry
@@ -193,22 +215,38 @@ impl NodeHandle {
     }
 
     /// Get node status by checking process state
-    pub fn get_status(&self) -> NodeStatus {
-        // Check if we have a running child process
-        if let Some(ref child) = self.child {
-            if child.id().is_some() {
-                return NodeStatus::Running;
+    pub fn get_status(&self) -> UnifiedStatus {
+        match self.node_type {
+            NodeType::Node | NodeType::Container => {
+                // Process-based status checking
+                let status = if let Some(ref child) = self.child {
+                    if child.id().is_some() {
+                        NodeStatus::Running
+                    } else {
+                        self.get_process_status()
+                    }
+                } else if let Some(pid) = self.get_pid() {
+                    if is_process_running(pid) {
+                        NodeStatus::Running
+                    } else {
+                        self.get_process_status()
+                    }
+                } else {
+                    self.get_process_status()
+                };
+
+                UnifiedStatus::Process(status)
+            }
+            NodeType::ComposableNode => {
+                // Composable node status checking (based on service_response.* files)
+                let status = self.check_composable_node_status();
+                UnifiedStatus::Composable(status)
             }
         }
+    }
 
-        // Check PID file and process state
-        if let Some(pid) = self.get_pid() {
-            if is_process_running(pid) {
-                return NodeStatus::Running;
-            }
-        }
-
-        // Check status file for exit code
+    /// Get process-based status from status file
+    fn get_process_status(&self) -> NodeStatus {
         if self.log_paths.status_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&self.log_paths.status_file) {
                 let code = content.trim();
@@ -224,6 +262,31 @@ impl NodeHandle {
 
         // No status file and no running process means pending
         NodeStatus::Pending
+    }
+
+    /// Check composable node status by reading service_response file and termination marker
+    fn check_composable_node_status(&self) -> ComposableNodeStatus {
+        let response_path = self.output_dir.join("service_response");
+        let terminated_path = self.output_dir.join("terminated");
+
+        // If terminated marker exists, the composable node is no longer loaded
+        if terminated_path.exists() {
+            return ComposableNodeStatus::Failed;
+        }
+
+        if let Ok(content) = std::fs::read_to_string(&response_path) {
+            // Check the first line for "success: true" or "success: false"
+            if let Some(first_line) = content.lines().next() {
+                if first_line.contains("success: true") {
+                    return ComposableNodeStatus::Loaded;
+                } else if first_line.contains("success: false") {
+                    return ComposableNodeStatus::Failed;
+                }
+            }
+        }
+
+        // No response file found or couldn't parse it
+        ComposableNodeStatus::Pending
     }
 
     /// Get the package name
@@ -297,7 +360,7 @@ fn is_process_running(pid: u32) -> bool {
 pub struct NodeSummary {
     pub name: String,
     pub node_type: NodeType,
-    pub status: NodeStatus,
+    pub status: UnifiedStatus,
     pub pid: Option<u32>,
     pub package: Option<String>,
     pub executable: String,
@@ -402,7 +465,7 @@ impl NodeRegistry {
     }
 
     /// Get the status for a node
-    pub fn get_status(&self, name: &str) -> Option<NodeStatus> {
+    pub fn get_status(&self, name: &str) -> Option<UnifiedStatus> {
         self.nodes.get(name).map(|h| h.get_status())
     }
 
@@ -410,18 +473,20 @@ impl NodeRegistry {
     pub fn list_nodes(&self) -> Vec<NodeSummary> {
         self.nodes
             .values()
-            .map(|handle| NodeSummary {
-                name: handle.name.clone(),
-                node_type: handle.node_type,
-                status: handle.get_status(),
-                pid: handle.get_pid(),
-                package: handle.get_package().map(String::from),
-                executable: handle.get_executable().to_string(),
-                namespace: handle.get_namespace().map(String::from),
-                target_container: handle.get_target_container().map(String::from),
-                is_container: handle.is_container,
-                exec_name: handle.get_exec_name().map(String::from),
-                node_name: handle.get_node_name().map(String::from),
+            .map(|handle| {
+                NodeSummary {
+                    name: handle.name.clone(),
+                    node_type: handle.node_type,
+                    status: handle.get_status(),
+                    pid: handle.get_pid(),
+                    package: handle.get_package().map(String::from),
+                    executable: handle.get_executable().to_string(),
+                    namespace: handle.get_namespace().map(String::from),
+                    target_container: handle.get_target_container().map(String::from),
+                    is_container: handle.is_container,
+                    exec_name: handle.get_exec_name().map(String::from),
+                    node_name: handle.get_node_name().map(String::from),
+                }
             })
             .collect()
     }
@@ -459,54 +524,94 @@ impl NodeRegistry {
 
     /// Get health summary counts
     pub fn get_health_summary(&self) -> HealthSummary {
-        let mut running = 0;
-        let mut stopped = 0;
-        let mut failed = 0;
-        let mut pending = 0;
-        let mut noisy = 0;
-        let mut nodes = 0;
-        let mut containers = 0;
-        let mut composable_nodes = 0;
+        let mut summary = HealthSummary {
+            processes_running: 0,
+            processes_stopped: 0,
+            nodes_running: 0,
+            nodes_stopped: 0,
+            nodes_failed: 0,
+            nodes_total: 0,
+            containers_running: 0,
+            containers_stopped: 0,
+            containers_failed: 0,
+            containers_total: 0,
+            composable_loaded: 0,
+            composable_failed: 0,
+            composable_pending: 0,
+            composable_total: 0,
+            noisy: 0,
+        };
 
         // Threshold for noisy nodes: 10KB of stderr output
         const NOISY_THRESHOLD_BYTES: u64 = 10 * 1024;
 
         for handle in self.nodes.values() {
-            match handle.get_status() {
-                NodeStatus::Running => running += 1,
-                NodeStatus::Stopped => stopped += 1,
-                NodeStatus::Failed => failed += 1,
-                NodeStatus::Pending => pending += 1,
-            }
+            let status = handle.get_status();
 
-            // Count node types
+            // Count by node type and status
             match handle.node_type {
-                NodeType::Node => nodes += 1,
-                NodeType::Container => containers += 1,
-                NodeType::ComposableNode => composable_nodes += 1,
+                NodeType::Node => {
+                    summary.nodes_total += 1;
+                    match status {
+                        UnifiedStatus::Process(NodeStatus::Running) => {
+                            summary.nodes_running += 1;
+                            summary.processes_running += 1;
+                        }
+                        UnifiedStatus::Process(NodeStatus::Stopped) => {
+                            summary.nodes_stopped += 1;
+                            summary.processes_stopped += 1;
+                        }
+                        UnifiedStatus::Process(NodeStatus::Failed) => {
+                            summary.nodes_failed += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                NodeType::Container => {
+                    summary.containers_total += 1;
+                    match status {
+                        UnifiedStatus::Process(NodeStatus::Running) => {
+                            summary.containers_running += 1;
+                            summary.processes_running += 1;
+                        }
+                        UnifiedStatus::Process(NodeStatus::Stopped) => {
+                            summary.containers_stopped += 1;
+                            summary.processes_stopped += 1;
+                        }
+                        UnifiedStatus::Process(NodeStatus::Failed) => {
+                            summary.containers_failed += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                NodeType::ComposableNode => {
+                    summary.composable_total += 1;
+                    match status {
+                        UnifiedStatus::Composable(ComposableNodeStatus::Loaded) => {
+                            summary.composable_loaded += 1;
+                        }
+                        UnifiedStatus::Composable(ComposableNodeStatus::Failed) => {
+                            summary.composable_failed += 1;
+                        }
+                        UnifiedStatus::Composable(ComposableNodeStatus::Pending) => {
+                            summary.composable_pending += 1;
+                        }
+                        _ => {}
+                    }
+                }
             }
 
             // Check if node is noisy (has significant stderr output)
             if handle.log_paths.stderr.exists() {
                 if let Ok(metadata) = std::fs::metadata(&handle.log_paths.stderr) {
                     if metadata.len() > NOISY_THRESHOLD_BYTES {
-                        noisy += 1;
+                        summary.noisy += 1;
                     }
                 }
             }
         }
 
-        HealthSummary {
-            total: self.nodes.len(),
-            running,
-            stopped,
-            failed,
-            pending,
-            noisy,
-            nodes,
-            containers,
-            composable_nodes,
-        }
+        summary
     }
 
     /// Get all node names
@@ -602,7 +707,7 @@ impl NodeRegistry {
             .ok_or_else(|| eyre!("Node '{}' not found", name))?;
 
         // Check if already running
-        if handle.get_status() == NodeStatus::Running {
+        if handle.get_status() == UnifiedStatus::Process(NodeStatus::Running) {
             return Err(eyre!("Node '{}' is already running", name));
         }
 
@@ -734,24 +839,77 @@ impl NodeRegistry {
         // Now start the node
         self.start_node(name).await
     }
+
+    /// Get all composable nodes belonging to a container
+    pub fn get_container_composable_nodes(&self, container_name: &str) -> Vec<String> {
+        let container_full_name = self.get_container_full_ros_name(container_name);
+
+        self.nodes
+            .values()
+            .filter(|handle| {
+                if handle.node_type != NodeType::ComposableNode {
+                    return false;
+                }
+
+                // Get target_container from composable node record
+                if let NodeInfo::Composable(info) = &handle.info {
+                    return &info.record.target_container_name == &container_full_name;
+                }
+
+                false
+            })
+            .map(|handle| handle.name.clone())
+            .collect()
+    }
+
+    /// Get container's full ROS name (namespace + name)
+    fn get_container_full_ros_name(&self, container_name: &str) -> String {
+        if let Some(handle) = self.nodes.get(container_name) {
+            if let NodeInfo::Regular(info) = &handle.info {
+                let ns = info.record.namespace.as_deref();
+                let name = &handle.name;
+
+                return match ns {
+                    Some("/") => format!("/{}", name),
+                    Some(ns) if ns.ends_with('/') => format!("{}{}", ns, name),
+                    Some(ns) => format!("{}/{}", ns, name),
+                    None => format!("/{}", name),
+                };
+            }
+        }
+
+        // Fallback
+        format!("/{}", container_name)
+    }
 }
 
 /// Health summary for all nodes
 #[derive(Debug, Clone, Serialize)]
 pub struct HealthSummary {
-    pub total: usize,
-    pub running: usize,
-    pub stopped: usize,
-    pub failed: usize,
-    pub pending: usize,
+    // Process-level counts
+    pub processes_running: usize,
+    pub processes_stopped: usize,
+
+    // Regular node counts
+    pub nodes_running: usize,
+    pub nodes_stopped: usize,
+    pub nodes_failed: usize,
+    pub nodes_total: usize,
+
+    // Container counts
+    pub containers_running: usize,
+    pub containers_stopped: usize,
+    pub containers_failed: usize,
+    pub containers_total: usize,
+
+    // Composable node counts
+    pub composable_loaded: usize,
+    pub composable_failed: usize,
+    pub composable_pending: usize,
+    pub composable_total: usize,
+
     /// Number of nodes with significant stderr output (>10KB)
     pub noisy: usize,
-    /// Number of regular nodes
-    pub nodes: usize,
-    /// Number of containers
-    pub containers: usize,
-    /// Number of composable nodes
-    pub composable_nodes: usize,
 }
 
 /// Thread-safe handle to the node registry
