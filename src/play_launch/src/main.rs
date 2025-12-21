@@ -1282,5 +1282,28 @@ pub fn create_log_dir(log_dir: &Path) -> eyre::Result<PathBuf> {
     fs::create_dir(&timestamped_dir)
         .wrap_err_with(|| format!("unable to create directory {}", timestamped_dir.display()))?;
 
+    // Create or update "latest" symlink
+    let latest_symlink = log_dir.join("latest");
+
+    // Remove old symlink if it exists
+    if latest_symlink.exists() || latest_symlink.symlink_metadata().is_ok() {
+        let _ = fs::remove_file(&latest_symlink); // Ignore errors if symlink doesn't exist
+    }
+
+    // Create new symlink pointing to the timestamped directory
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        if let Some(dir_name) = timestamped_dir.file_name() {
+            symlink(dir_name, &latest_symlink).wrap_err_with(|| {
+                format!(
+                    "Failed to create 'latest' symlink: {} -> {}",
+                    latest_symlink.display(),
+                    timestamped_dir.display()
+                )
+            })?;
+        }
+    }
+
     Ok(timestamped_dir)
 }

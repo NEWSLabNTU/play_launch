@@ -29,6 +29,15 @@ except ImportError:
 
 def find_latest_log_dir(base_log_dir: Path) -> Path:
     """Find the most recent timestamped log directory."""
+    # Check if "latest" symlink exists and is valid
+    latest_symlink = base_log_dir / "latest"
+    if latest_symlink.is_symlink() and latest_symlink.exists():
+        # Resolve the symlink to get the actual directory
+        resolved = latest_symlink.resolve()
+        if resolved.is_dir():
+            return resolved
+
+    # Fallback to searching for timestamped directories
     log_dirs = [d for d in base_log_dir.iterdir() if d.is_dir() and d.name[0].isdigit()]
     if not log_dirs:
         raise FileNotFoundError(
