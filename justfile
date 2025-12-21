@@ -219,6 +219,15 @@ format:
     (cd src/play_launch && cargo +nightly fmt)
     ruff format python/
 
+# Run format and lint checks
+quality:
+    #!/usr/bin/env bash
+    set -e
+    echo "Running format..."
+    just format
+    echo "Running lint..."
+    just lint
+
 # Check version consistency across all files
 version-check:
     python3 scripts/bump_version.py --check
