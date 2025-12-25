@@ -172,7 +172,7 @@ fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str
             )
         }
         crate::node_registry::NodeType::Container | crate::node_registry::NodeType::Node => {
-            // Full controls: Start/Stop, Restart, Details, Logs
+            // Full controls: Start/Stop, Restart, Details, Logs, Respawn checkbox
             let start_stop_button = match node.status {
                 crate::node_registry::UnifiedStatus::Process(
                     crate::node_registry::NodeStatus::Running,
@@ -196,6 +196,29 @@ fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str
                 }
             };
 
+            // Add respawn checkbox if respawn configuration is available
+            let respawn_checkbox = if let Some(respawn_enabled) = node.respawn_enabled {
+                let checked = if respawn_enabled { "checked" } else { "" };
+                let delay_text = if let Some(delay) = node.respawn_delay {
+                    if delay > 0.0 {
+                        format!(" ({}s)", delay)
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+                format!(
+                    r#"<label class="respawn-checkbox" title="Auto-restart when node exits">
+        <input type="checkbox" {} onchange="toggleRespawn('{}', this.checked)">
+        <span class="respawn-label">Auto-restart{}</span>
+    </label>"#,
+                    checked, node.name, delay_text
+                )
+            } else {
+                String::new()
+            };
+
             format!(
                 r#"{}
     <button hx-post="/api/nodes/{}/restart" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-restart">
@@ -203,8 +226,9 @@ fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str
         <span class="btn-loading">Restarting...</span>
     </button>
     <button onclick="showNodeDetails('{}')" class="btn-details">Details</button>
-    <button onclick="showNodeLogs('{}')" class="btn-logs">Logs</button>"#,
-                start_stop_button, node.name, node.name, node.name
+    <button onclick="showNodeLogs('{}')" class="btn-logs">Logs</button>
+    {}"#,
+                start_stop_button, node.name, node.name, node.name, respawn_checkbox
             )
         }
     };
@@ -912,4 +936,48 @@ pub async fn restart_all(State(state): State<Arc<WebState>>) -> Response {
     );
 
     (StatusCode::OK, message).into_response()
+}
+
+/// Toggle respawn for a node
+pub async fn toggle_respawn(
+    State(state): State<Arc<WebState>>,
+    Path((name, enabled)): Path<(String, String)>,
+) -> Response {
+    use tracing::info;
+
+    let enabled = match enabled.as_str() {
+        "true" => true,
+        "false" => false,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid enabled value: '{}' (must be 'true' or 'false')", enabled),
+            )
+                .into_response();
+        }
+    };
+
+    let mut registry = state.registry.lock().await;
+
+    match registry.set_respawn(&name, enabled) {
+        Ok(()) => {
+            info!(
+                "[Web UI] Set respawn for '{}' to {}",
+                name, enabled
+            );
+            (
+                StatusCode::OK,
+                format!("Respawn for '{}' set to {}", name, enabled),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            info!("[Web UI] Failed to set respawn for '{}': {}", name, e);
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to set respawn for '{}': {}", name, e),
+            )
+                .into_response()
+        }
+    }
 }

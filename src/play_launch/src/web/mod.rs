@@ -102,6 +102,7 @@ pub fn create_router(state: Arc<WebState>) -> Router {
         .route("/api/nodes/:name/start", post(handlers::start_node))
         .route("/api/nodes/:name/stop", post(handlers::stop_node))
         .route("/api/nodes/:name/restart", post(handlers::restart_node))
+        .route("/api/nodes/:name/respawn/:enabled", post(handlers::toggle_respawn))
         .route("/api/nodes/all/start", post(handlers::start_all))
         .route("/api/nodes/all/stop", post(handlers::stop_all))
         .route("/api/nodes/all/restart", post(handlers::restart_all))

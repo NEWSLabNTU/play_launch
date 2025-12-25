@@ -440,6 +440,12 @@ pub struct NodeSummary {
     /// Last few lines of stderr for quick preview
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stderr_preview: Option<Vec<String>>,
+    /// Whether respawn is enabled for this node
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub respawn_enabled: Option<bool>,
+    /// Respawn delay in seconds
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub respawn_delay: Option<f64>,
 }
 
 /// Detailed information about a node (for API responses)
@@ -562,10 +568,20 @@ impl NodeRegistry {
                         (None, 0, None)
                     };
 
+                // Get respawn info for regular nodes
+                let (respawn_enabled, respawn_delay) = match &handle.info {
+                    NodeInfo::Regular(info) => (
+                        info.record.respawn,
+                        info.record.respawn_delay,
+                    ),
+                    NodeInfo::Composable(_) => (None, None),
+                };
+
                 NodeSummary {
                     name: handle.name.clone(),
                     node_type: handle.node_type,
-                    status: handle.get_status(),
+                    // Use get_status_with_registry for composable nodes to check container health
+                    status: handle.get_status_with_registry(Some(self)),
                     pid: handle.get_pid(),
                     package: handle.get_package().map(String::from),
                     executable: handle.get_executable().to_string(),
@@ -577,6 +593,8 @@ impl NodeRegistry {
                     stderr_last_modified,
                     stderr_size,
                     stderr_preview,
+                    respawn_enabled,
+                    respawn_delay,
                 }
             })
             .collect()
@@ -612,6 +630,15 @@ impl NodeRegistry {
                     (None, 0, None)
                 };
 
+            // Get respawn info for regular nodes
+            let (respawn_enabled, respawn_delay) = match &handle.info {
+                NodeInfo::Regular(info) => (
+                    info.record.respawn,
+                    info.record.respawn_delay,
+                ),
+                NodeInfo::Composable(_) => (None, None),
+            };
+
             NodeDetails {
                 summary: NodeSummary {
                     name: handle.name.clone(),
@@ -628,6 +655,8 @@ impl NodeRegistry {
                     stderr_last_modified,
                     stderr_size,
                     stderr_preview,
+                    respawn_enabled,
+                    respawn_delay,
                 },
                 output_dir: handle.output_dir.clone(),
                 log_paths: handle.log_paths.clone(),
@@ -1028,6 +1057,26 @@ impl NodeRegistry {
 
         // Fallback
         format!("/{}", container_name)
+    }
+
+    /// Toggle respawn for a node (only works for regular nodes and containers)
+    pub fn set_respawn(&mut self, name: &str, enabled: bool) -> eyre::Result<()> {
+        use eyre::eyre;
+
+        let handle = self
+            .nodes
+            .get_mut(name)
+            .ok_or_else(|| eyre!("Node '{}' not found", name))?;
+
+        match &mut handle.info {
+            NodeInfo::Regular(info) => {
+                info.record.respawn = Some(enabled);
+                Ok(())
+            }
+            NodeInfo::Composable(_) => {
+                Err(eyre!("Cannot set respawn for composable node '{}'", name))
+            }
+        }
     }
 }
 
