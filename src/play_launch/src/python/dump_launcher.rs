@@ -1,6 +1,6 @@
 //! Wrapper for invoking dump_launch via embedded Python (PyO3)
 
-use crate::python_bridge;
+use super::python_bridge;
 use eyre::Result;
 use std::path::Path;
 

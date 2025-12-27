@@ -1,4 +1,4 @@
-//! Server-Sent Events (SSE) handlers for log streaming.
+//! Server-Sent Events (SSE) handlers for log streaming and state updates.
 
 use super::WebState;
 use axum::{
@@ -45,15 +45,16 @@ pub async fn stream_stderr(
 
 /// Stream a log file as SSE
 async fn stream_log_file(state: Arc<WebState>, node_name: &str, file_name: &str) -> Response {
-    // Get the log file path from the registry
+    // Get the log file path from the coordinator
     let log_path = {
-        let registry = state.registry.lock().await;
-        match registry.get(node_name) {
-            Some(handle) => {
+        let coordinator = state.coordinator.lock().await;
+        match coordinator.get_member_state(node_name) {
+            Some(member) => {
+                let base_path = member.output_dir;
                 if file_name == "out" {
-                    handle.log_paths.stdout.clone()
+                    base_path.join("out")
                 } else {
-                    handle.log_paths.stderr.clone()
+                    base_path.join("err")
                 }
             }
             None => {
@@ -182,4 +183,39 @@ fn read_last_n_lines(path: &PathBuf, n: usize) -> eyre::Result<Vec<String>> {
 
     let start = if lines.len() > n { lines.len() - n } else { 0 };
     Ok(lines[start..].to_vec())
+}
+
+/// Stream state updates for all nodes (SSE)
+///
+/// This endpoint provides real-time state updates for all nodes via Server-Sent Events.
+/// Each SSE message contains a JSON-serialized StateEvent.
+pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Response {
+    debug!("New SSE client connected for state updates");
+
+    // Subscribe to state events
+    let mut rx = state.state_broadcaster.subscribe().await;
+
+    // Create the event stream
+    let stream = async_stream::stream! {
+        while let Some(event) = rx.recv().await {
+            // Serialize StateEvent to JSON
+            match serde_json::to_string(&event) {
+                Ok(json) => {
+                    yield Ok::<_, Infallible>(Event::default().data(json));
+                }
+                Err(e) => {
+                    error!("Failed to serialize StateEvent: {}", e);
+                }
+            }
+        }
+        debug!("SSE state updates stream ended");
+    };
+
+    Sse::new(stream)
+        .keep_alive(
+            axum::response::sse::KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keep-alive"),
+        )
+        .into_response()
 }

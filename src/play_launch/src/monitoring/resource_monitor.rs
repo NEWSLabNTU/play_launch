@@ -9,10 +9,10 @@ use std::{
     fs::{self, File},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    thread::{self, JoinHandle},
     time::{Duration, SystemTime},
 };
 use sysinfo::{Networks, Pid, System};
+use tokio::sync::watch;
 use tracing::{debug, warn};
 
 /// GPU metrics tuple: (memory_bytes, gpu_util%, mem_util%, temp_celsius, power_mw, graphics_clock_mhz, memory_clock_mhz)
@@ -106,7 +106,6 @@ impl ProcessState {
 /// Configuration for resource monitoring
 #[derive(Debug, Clone)]
 pub struct MonitorConfig {
-    pub enabled: bool,
     pub sample_interval_ms: u64,
 }
 
@@ -179,9 +178,8 @@ pub struct ResourceMonitor {
     previous_system_sample: Option<PreviousSystemSample>, // Previous system sample for rate calculation
 
     // I/O helper daemon for reading /proc/[pid]/io with CAP_SYS_PTRACE
-    io_helper: Option<crate::io_helper_client::IoHelperClient>,
-    tokio_runtime: Option<tokio::runtime::Runtime>, // Runtime for async helper calls
-    io_helper_unavailable: bool,                    // Track if helper failed to spawn (warn once)
+    io_helper: Option<super::io_helper_client::IoHelperClient>,
+    io_helper_unavailable: bool, // Track if helper failed to spawn (warn once)
     io_stats_cache: std::collections::HashMap<u32, play_launch::ipc::ProcIoStats>, // Cache for batch I/O reads
 }
 
@@ -282,28 +280,7 @@ impl ResourceMonitor {
         let mut system = System::new();
         system.refresh_cpu_all(); // Initial CPU refresh to establish baseline
 
-        // Try to spawn I/O helper daemon (non-fatal if unavailable)
-        let (io_helper, tokio_runtime, io_helper_unavailable) = match tokio::runtime::Runtime::new()
-        {
-            Ok(rt) => match rt.block_on(crate::io_helper_client::IoHelperClient::spawn()) {
-                Ok(client) => {
-                    debug!("I/O helper spawned successfully");
-                    (Some(client), Some(rt), false)
-                }
-                Err(e) => {
-                    warn!(
-                        "I/O helper unavailable: {}. Privileged processes will have zero I/O stats.",
-                        e
-                    );
-                    (None, None, true)
-                }
-            },
-            Err(e) => {
-                warn!("Failed to create Tokio runtime for I/O helper: {}", e);
-                (None, None, true)
-            }
-        };
-
+        // I/O helper will be set externally by the async task (no nested runtime!)
         Ok(Self {
             system,
             networks: Networks::new_with_refreshed_list(),
@@ -313,9 +290,8 @@ impl ResourceMonitor {
             gpu_device_count,
             previous_samples: HashMap::new(),
             previous_system_sample: None,
-            io_helper,
-            tokio_runtime,
-            io_helper_unavailable,
+            io_helper: None,
+            io_helper_unavailable: true, // Will be set to false if helper spawns successfully
             io_stats_cache: HashMap::new(),
         })
     }
@@ -1128,167 +1104,184 @@ pub fn initialize_metrics_csv(output_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Spawn monitoring thread
-pub fn spawn_monitor_thread(
+/// Async monitoring task (tokio-based replacement for old thread-based monitoring)
+pub async fn run_monitoring_task(
     config: MonitorConfig,
     log_dir: PathBuf,
     process_registry: Arc<Mutex<HashMap<u32, PathBuf>>>,
     nvml: Option<Nvml>,
-) -> Result<JoinHandle<()>> {
-    if !config.enabled {
-        return Err(eyre::eyre!("Monitoring is not enabled"));
+    mut shutdown_rx: watch::Receiver<bool>,
+) -> Result<()> {
+    debug!("Starting async monitoring task...");
+
+    let mut monitor = ResourceMonitor::new(nvml)?;
+
+    // Try to spawn I/O helper (already in async context, no nested runtime!)
+    match super::io_helper_client::IoHelperClient::spawn().await {
+        Ok(client) => {
+            debug!("I/O helper spawned successfully");
+            monitor.io_helper = Some(client);
+            monitor.io_helper_unavailable = false;
+        }
+        Err(e) => {
+            warn!(
+                "I/O helper unavailable: {}. Privileged processes will have zero I/O stats.",
+                e
+            );
+            monitor.io_helper_unavailable = true;
+        }
     }
 
-    debug!("Spawning monitoring thread...");
-    let handle = thread::spawn(move || {
-        let mut monitor = match ResourceMonitor::new(nvml) {
-            Ok(m) => m,
-            Err(e) => {
-                warn!("Failed to create ResourceMonitor: {}", e);
-                return;
+    let mut interval = tokio::time::interval(Duration::from_millis(config.sample_interval_ms));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    debug!(
+        "Monitoring task started with interval: {}ms",
+        config.sample_interval_ms
+    );
+
+    loop {
+        tokio::select! {
+            biased;
+
+            // Check shutdown first (biased ensures this is checked before tick)
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    debug!("Monitoring task received shutdown signal");
+                    break;
+                }
             }
-        };
 
-        let interval = Duration::from_millis(config.sample_interval_ms);
-        debug!(
-            "Monitoring thread started with interval: {}ms",
-            config.sample_interval_ms
-        );
-        debug!("=== MONITOR THREAD: Starting main loop ===");
+            // Periodic monitoring tick
+            _ = interval.tick() => {
+                // Get snapshot of current processes to monitor
+                let processes = process_registry.lock().unwrap().clone();
 
-        loop {
-            // Get snapshot of current processes to monitor
-            let processes = process_registry.lock().unwrap().clone();
+                debug!(
+                    "Monitoring loop iteration, registry size: {}",
+                    processes.len()
+                );
 
-            debug!(
-                "=== MONITOR THREAD: Loop iteration, registry size: {} ===",
-                processes.len()
-            );
-            if processes.is_empty() {
-                debug!("WARNING: Registry is EMPTY!");
-            } else {
+                if processes.is_empty() {
+                    continue;
+                }
+
                 debug!(
                     "Monitoring PIDs: {:?}",
                     processes.keys().collect::<Vec<_>>()
                 );
-            }
 
-            // Refresh only the specific processes we're monitoring, not all system processes
-            // This is much more efficient than refreshing all processes
-            let pids_to_refresh: Vec<Pid> =
-                processes.keys().map(|&pid| Pid::from_u32(pid)).collect();
-            if !pids_to_refresh.is_empty() {
-                debug!("MONITOR THREAD: Refreshing {} PIDs", pids_to_refresh.len());
+                // Refresh only the specific processes we're monitoring
+                let pids_to_refresh: Vec<Pid> =
+                    processes.keys().map(|&pid| Pid::from_u32(pid)).collect();
 
-                // CRITICAL: Refresh global CPU times first!
-                // sysinfo needs this to calculate per-process CPU percentages
-                monitor.system.refresh_cpu_usage();
+                if !pids_to_refresh.is_empty() {
+                    debug!("Refreshing {} PIDs", pids_to_refresh.len());
 
-                // Use refresh_processes_specifics to explicitly request CPU, memory, and disk I/O metrics
-                monitor.system.refresh_processes_specifics(
-                    sysinfo::ProcessesToUpdate::Some(&pids_to_refresh),
-                    false, // don't remove dead processes (we track them separately)
-                    sysinfo::ProcessRefreshKind::new()
-                        .with_cpu()
-                        .with_disk_usage()
-                        .with_memory(),
-                );
-            }
+                    // CRITICAL: Refresh global CPU times first!
+                    monitor.system.refresh_cpu_usage();
 
-            // Batch read I/O stats for all PIDs (single IPC call to helper)
-            monitor.io_stats_cache.clear();
-            if let (Some(ref mut helper), Some(ref rt)) =
-                (&mut monitor.io_helper, &monitor.tokio_runtime)
-            {
-                // Collect all PIDs
-                let pids: Vec<u32> = processes.keys().copied().collect();
+                    // Refresh processes
+                    monitor.system.refresh_processes_specifics(
+                        sysinfo::ProcessesToUpdate::Some(&pids_to_refresh),
+                        false,
+                        sysinfo::ProcessRefreshKind::new()
+                            .with_cpu()
+                            .with_disk_usage()
+                            .with_memory(),
+                    );
+                }
 
-                if !pids.is_empty() {
-                    // Single batch request to helper
-                    match rt.block_on(helper.read_proc_io_batch(&pids)) {
-                        Ok(results) => {
-                            for result in results {
-                                match result.result {
-                                    Ok(stats) => {
-                                        monitor.io_stats_cache.insert(result.pid, stats);
-                                    }
-                                    Err(e) => {
-                                        debug!("I/O read failed for PID {}: {:?}", result.pid, e);
+                // Batch read I/O stats for all PIDs
+                monitor.io_stats_cache.clear();
+                if let Some(ref mut helper) = monitor.io_helper {
+                    let pids: Vec<u32> = processes.keys().copied().collect();
+
+                    if !pids.is_empty() {
+                        match helper.read_proc_io_batch(&pids).await {
+                            Ok(results) => {
+                                for result in results {
+                                    match result.result {
+                                        Ok(stats) => {
+                                            monitor.io_stats_cache.insert(result.pid, stats);
+                                        }
+                                        Err(e) => {
+                                            debug!("I/O read failed for PID {}: {:?}", result.pid, e);
+                                        }
                                     }
                                 }
-                            }
-                            debug!(
-                                "Batch I/O read: {}/{} PIDs successful",
-                                monitor.io_stats_cache.len(),
-                                pids.len()
-                            );
-                        }
-                        Err(e) => {
-                            if !monitor.io_helper_unavailable {
-                                warn!(
-                                    "I/O helper batch request failed: {}. I/O stats will be zero.",
-                                    e
+                                debug!(
+                                    "Batch I/O read: {}/{} PIDs successful",
+                                    monitor.io_stats_cache.len(),
+                                    pids.len()
                                 );
-                                monitor.io_helper_unavailable = true;
+                            }
+                            Err(e) => {
+                                if !monitor.io_helper_unavailable {
+                                    warn!(
+                                        "I/O helper batch request failed: {}. I/O stats will be zero.",
+                                        e
+                                    );
+                                    monitor.io_helper_unavailable = true;
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            for (pid, output_dir) in processes {
-                match monitor.collect_metrics(pid) {
-                    Ok(metrics) => {
-                        debug!("Successfully collected metrics for PID {}", pid);
-                        match monitor.write_csv(&output_dir, &metrics) {
+                // Collect and write per-process metrics
+                for (pid, output_dir) in processes {
+                    match monitor.collect_metrics(pid) {
+                        Ok(metrics) => {
+                            debug!("Successfully collected metrics for PID {}", pid);
+                            match monitor.write_csv(&output_dir, &metrics) {
+                                Ok(_) => {
+                                    debug!("Successfully wrote CSV row for PID {}", pid);
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to write metrics for PID {} ({}): {}",
+                                        pid,
+                                        output_dir.display(),
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            debug!(
+                                "Failed to collect metrics for PID {} ({}): {}",
+                                pid,
+                                output_dir.display(),
+                                e
+                            );
+                        }
+                    }
+                }
+
+                // Collect and write system-wide statistics
+                match monitor.collect_system_stats() {
+                    Ok(stats) => {
+                        debug!("Successfully collected system stats");
+                        match monitor.write_system_csv(&log_dir, &stats) {
                             Ok(_) => {
-                                debug!("Successfully wrote CSV row for PID {}", pid);
+                                debug!("Successfully wrote system stats CSV row");
                             }
                             Err(e) => {
-                                warn!(
-                                    "Failed to write metrics for PID {} ({}): {}",
-                                    pid,
-                                    output_dir.display(),
-                                    e
-                                );
+                                warn!("Failed to write system stats: {}", e);
                             }
                         }
                     }
                     Err(e) => {
-                        debug!(
-                            "Failed to collect metrics for PID {} ({}): {}",
-                            pid,
-                            output_dir.display(),
-                            e
-                        );
-                        // Process may have exited, we'll keep trying in case it comes back
+                        debug!("Failed to collect system stats: {}", e);
                     }
                 }
             }
-
-            // Collect and write system-wide statistics
-            match monitor.collect_system_stats() {
-                Ok(stats) => {
-                    debug!("Successfully collected system stats");
-                    match monitor.write_system_csv(&log_dir, &stats) {
-                        Ok(_) => {
-                            debug!("Successfully wrote system stats CSV row");
-                        }
-                        Err(e) => {
-                            warn!("Failed to write system stats: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    debug!("Failed to collect system stats: {}", e);
-                }
-            }
-
-            thread::sleep(interval);
         }
-    });
+    }
 
-    Ok(handle)
+    debug!("Monitoring task shutting down");
+    Ok(())
 }
 
 /// Format SystemTime as ISO 8601 string

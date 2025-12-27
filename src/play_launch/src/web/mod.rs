@@ -2,7 +2,7 @@
 //!
 //! Provides a web interface for monitoring and controlling ROS nodes.
 
-use crate::node_registry::SharedNodeRegistry;
+use crate::member_actor::MemberCoordinator;
 use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -15,8 +15,12 @@ use tokio::sync::Mutex as TokioMutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
+mod broadcaster;
 mod handlers;
 mod sse;
+pub mod web_types;
+
+pub use broadcaster::StateEventBroadcaster;
 
 /// Embedded static assets for the web UI
 #[derive(Embed)]
@@ -25,29 +29,29 @@ struct Assets;
 
 /// Shared state for the web server
 pub struct WebState {
-    /// Node registry for querying and controlling nodes
-    pub registry: SharedNodeRegistry,
+    /// Coordinator for actor control and state queries
+    pub coordinator: Arc<TokioMutex<MemberCoordinator>>,
     /// Base log directory (used for log file access)
     #[allow(dead_code)]
     pub log_dir: PathBuf,
-    /// Component loader for loading composable nodes (optional)
-    pub component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
     /// Track nodes currently being operated on (to prevent racing conditions)
     pub operations_in_progress: TokioMutex<HashSet<String>>,
+    /// Broadcaster for state events to SSE clients
+    pub state_broadcaster: Arc<StateEventBroadcaster>,
 }
 
 impl WebState {
     /// Create a new WebState
     pub fn new(
-        registry: SharedNodeRegistry,
+        coordinator: Arc<TokioMutex<MemberCoordinator>>,
         log_dir: PathBuf,
-        component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
+        state_broadcaster: Arc<StateEventBroadcaster>,
     ) -> Self {
         Self {
-            registry,
+            coordinator,
             log_dir,
-            component_loader,
             operations_in_progress: TokioMutex::new(HashSet::new()),
+            state_broadcaster,
         }
     }
 }
@@ -102,14 +106,20 @@ pub fn create_router(state: Arc<WebState>) -> Router {
         .route("/api/nodes/:name/start", post(handlers::start_node))
         .route("/api/nodes/:name/stop", post(handlers::stop_node))
         .route("/api/nodes/:name/restart", post(handlers::restart_node))
-        .route("/api/nodes/:name/respawn/:enabled", post(handlers::toggle_respawn))
-        .route("/api/nodes/all/start", post(handlers::start_all))
-        .route("/api/nodes/all/stop", post(handlers::stop_all))
-        .route("/api/nodes/all/restart", post(handlers::restart_all))
+        .route(
+            "/api/nodes/:name/respawn/:enabled",
+            post(handlers::toggle_respawn),
+        )
         .route("/api/health", get(handlers::health_summary))
+        // Bulk operations
+        .route("/api/nodes/start-all", post(handlers::start_all))
+        .route("/api/nodes/stop-all", post(handlers::stop_all))
+        .route("/api/nodes/restart-all", post(handlers::restart_all))
         // SSE endpoints for log streaming
         .route("/api/nodes/:name/logs/stdout", get(sse::stream_stdout))
         .route("/api/nodes/:name/logs/stderr", get(sse::stream_stderr))
+        // SSE endpoint for state updates
+        .route("/api/state/updates", get(sse::stream_state_updates))
         .layer(cors)
         .with_state(state)
 }
@@ -129,7 +139,6 @@ pub async fn run_server(
         .map_err(|e| eyre::eyre!("Invalid bind address '{}': {}", bind_addr, e))?;
     let addr = SocketAddr::new(ip, port);
 
-    info!("Web UI available at http://{}:{}", bind_addr, port);
     if bind_addr == "0.0.0.0" {
         warn!("Web UI is exposed to network (0.0.0.0) - ensure this is intentional!");
     }

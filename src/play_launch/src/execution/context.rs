@@ -1,7 +1,5 @@
-use crate::{
-    launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord},
-    node_cmdline::NodeCommandLine,
-};
+use super::node_cmdline::NodeCommandLine;
+use crate::ros::launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord};
 use eyre::bail;
 use rayon::prelude::*;
 use serde::Serialize;
@@ -86,6 +84,7 @@ pub struct ComposableNodeContextSet {
 /// The context contains all essential data to load a ROS composable
 /// node into a node container.
 pub struct ComposableNodeContext {
+    #[allow(dead_code)]
     pub log_name: String,
     pub output_dir: PathBuf,
     pub record: ComposableNodeRecord,

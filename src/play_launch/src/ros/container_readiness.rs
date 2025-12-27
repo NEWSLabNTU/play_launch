@@ -20,9 +20,13 @@
 //! - Consider using longer timeouts or unlimited wait for production systems
 //! - Process-based checking is faster but doesn't verify DDS readiness
 
-use std::time::Duration;
+use crate::util::logging::is_verbose;
+use std::{sync::OnceLock, time::Duration};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
+
+/// Global handle for ROS service discovery (optional, only initialized if service checking enabled)
+pub static SERVICE_DISCOVERY_HANDLE: OnceLock<ServiceDiscoveryHandle> = OnceLock::new();
 
 /// Configuration for waiting for container readiness
 #[derive(Clone, Debug)]
@@ -34,6 +38,7 @@ pub struct ContainerWaitConfig {
 
 impl ContainerWaitConfig {
     /// Create a new config. If timeout_secs is 0, wait time is unlimited.
+    #[allow(dead_code)]
     pub fn new(timeout_secs: u64, poll_interval_ms: u64) -> Self {
         Self {
             max_wait: if timeout_secs == 0 {
@@ -77,20 +82,148 @@ impl ServiceDiscoveryHandle {
     }
 }
 
-/// Start the ROS service discovery thread
-/// Returns a handle for querying service existence
-pub fn start_service_discovery_thread() -> eyre::Result<ServiceDiscoveryHandle> {
+/// Spawn the ROS service discovery as an async tokio task (Phase 2)
+/// Returns both the task handle and the service discovery handle
+pub fn spawn_service_discovery_task(
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> (
+    tokio::task::JoinHandle<eyre::Result<()>>,
+    ServiceDiscoveryHandle,
+) {
     let (request_tx, request_rx) = mpsc::unbounded_channel();
 
-    std::thread::Builder::new()
-        .name("ros_discovery".to_string())
-        .spawn(move || {
-            if let Err(e) = run_ros_discovery_loop(request_rx) {
-                error!("ROS discovery thread error: {}", e);
-            }
-        })?;
+    let task = tokio::spawn(run_service_discovery_task(request_rx, shutdown_rx));
 
-    Ok(ServiceDiscoveryHandle { request_tx })
+    let handle = ServiceDiscoveryHandle { request_tx };
+
+    (task, handle)
+}
+
+/// Run the ROS service discovery loop as an async tokio task (Phase 2)
+/// This replaces the thread-based approach with spawn_blocking for ROS operations
+async fn run_service_discovery_task(
+    mut request_rx: mpsc::UnboundedReceiver<ContainerCheckRequest>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> eyre::Result<()> {
+    use rclrs::CreateBasicExecutor;
+
+    debug!("Starting async ROS container discovery task");
+
+    // Initialize ROS context and node in spawn_blocking (rclrs is synchronous FFI)
+    let node = tokio::task::spawn_blocking(|| {
+        let context = rclrs::Context::new(
+            vec!["play_launch".to_string()],
+            rclrs::InitOptions::default(),
+        )?;
+        let executor = context.create_basic_executor();
+        let node = executor.create_node("play_launch_container_discovery")?;
+        Ok::<_, eyre::Error>(node)
+    })
+    .await??;
+
+    debug!("ROS container discovery node initialized (async)");
+
+    // Process requests with shutdown handling
+    loop {
+        tokio::select! {
+            biased;
+
+            // Check shutdown first
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    debug!("Service discovery task received shutdown signal");
+                    break;
+                }
+            }
+
+            // Process container check requests
+            Some(request) = request_rx.recv() => {
+                let ContainerCheckRequest {
+                    container_name,
+                    response_tx,
+                } = request;
+
+                // Parse container name into node name and namespace
+                let (node_name, namespace) = parse_container_name(&container_name);
+
+                debug!(
+                    "Checking container '{}' (node: '{}', ns: '{}')",
+                    container_name, node_name, namespace
+                );
+
+                // Clone node for spawn_blocking (Arc<Node> is Clone)
+                let node_clone = node.clone();
+                let container_name_clone = container_name.clone();
+                let node_name_str = node_name.to_string();
+                let namespace_str = namespace.to_string();
+
+                // Query services in spawn_blocking (rclrs is blocking FFI)
+                let is_ready = tokio::task::spawn_blocking(move || {
+                    match node_clone.get_service_names_and_types_by_node(&node_name_str, &namespace_str) {
+                        Ok(services) => {
+                            debug!(
+                                "Found {} services for container '{}' (node: '{}', ns: '{}')",
+                                services.len(),
+                                container_name_clone,
+                                node_name_str,
+                                namespace_str
+                            );
+
+                            // Log all service names for debugging
+                            for service_name in services.keys() {
+                                debug!("  Service: {}", service_name);
+                            }
+
+                            // Check if this node has the container services
+                            let has_list_nodes = services
+                                .keys()
+                                .any(|name| name.ends_with("/_container/list_nodes"));
+
+                            let has_load_node = services
+                                .keys()
+                                .any(|name| name.ends_with("/_container/load_node"));
+
+                            if has_list_nodes && has_load_node {
+                                if is_verbose() {
+                                    info!(
+                                        "Container '{}' is ready (has list_nodes and load_node services)",
+                                        container_name_clone
+                                    );
+                                }
+                                true
+                            } else {
+                                debug!(
+                                    "Container '{}' not ready yet (list_nodes: {}, load_node: {})",
+                                    container_name_clone, has_list_nodes, has_load_node
+                                );
+                                false
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to query services for container '{}' (node: '{}', ns: '{}'): {}",
+                                container_name_clone, node_name_str, namespace_str, e
+                            );
+                            false
+                        }
+                    }
+                })
+                .await?;
+
+                // Send response (ignore if receiver dropped)
+                let _ = response_tx.send(is_ready);
+            }
+
+            // Channel closed, no more requests
+            else => {
+                debug!("Service discovery request channel closed");
+                break;
+            }
+        }
+    }
+
+    debug!("ROS container discovery task shutting down");
+    Ok(())
 }
 
 /// Parse container full name into (node_name, namespace)
@@ -125,97 +258,6 @@ fn parse_container_name(full_name: &str) -> (&str, &str) {
     }
 }
 
-/// Run the ROS discovery loop in a dedicated thread
-fn run_ros_discovery_loop(
-    mut request_rx: mpsc::UnboundedReceiver<ContainerCheckRequest>,
-) -> eyre::Result<()> {
-    use rclrs::CreateBasicExecutor;
-
-    debug!("Starting ROS container discovery thread");
-
-    // Initialize ROS context and node (use empty args to avoid deprecation warnings)
-    let context = rclrs::Context::new(
-        vec!["play_launch".to_string()],
-        rclrs::InitOptions::default(),
-    )?;
-    let executor = context.create_basic_executor();
-    let node = executor.create_node("play_launch_container_discovery")?;
-
-    debug!("ROS container discovery node initialized");
-
-    // Process requests
-    while let Some(request) = request_rx.blocking_recv() {
-        let ContainerCheckRequest {
-            container_name,
-            response_tx,
-        } = request;
-
-        // Parse container name into node name and namespace
-        let (node_name, namespace) = parse_container_name(&container_name);
-
-        debug!(
-            "Checking container '{}' (node: '{}', ns: '{}')",
-            container_name, node_name, namespace
-        );
-
-        // Query services for this specific node using per-node API
-        let is_ready = match node.get_service_names_and_types_by_node(node_name, namespace) {
-            Ok(services) => {
-                debug!(
-                    "Found {} services for container '{}' (node: '{}', ns: '{}')",
-                    services.len(),
-                    container_name,
-                    node_name,
-                    namespace
-                );
-
-                // Log all service names for debugging
-                for service_name in services.keys() {
-                    debug!("  Service: {}", service_name);
-                }
-
-                // Check if this node has the container services
-                let has_list_nodes = services
-                    .keys()
-                    .any(|name| name.ends_with("/_container/list_nodes"));
-
-                let has_load_node = services
-                    .keys()
-                    .any(|name| name.ends_with("/_container/load_node"));
-
-                if has_list_nodes && has_load_node {
-                    if crate::is_verbose() {
-                        info!(
-                            "Container '{}' is ready (has list_nodes and load_node services)",
-                            container_name
-                        );
-                    }
-                    true
-                } else {
-                    debug!(
-                        "Container '{}' not ready yet (list_nodes: {}, load_node: {})",
-                        container_name, has_list_nodes, has_load_node
-                    );
-                    false
-                }
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to query services for container '{}' (node: '{}', ns: '{}'): {}",
-                    container_name, node_name, namespace, e
-                );
-                false
-            }
-        };
-
-        // Send response (ignore if receiver dropped)
-        let _ = response_tx.send(is_ready);
-    }
-
-    debug!("ROS container discovery thread shutting down");
-    Ok(())
-}
-
 /// Wait for all containers to be ready by checking for their _container/load_node services
 pub async fn wait_for_containers_ready(
     container_names: &[String],
@@ -226,7 +268,7 @@ pub async fn wait_for_containers_ready(
         return Ok(());
     }
 
-    info!(
+    debug!(
         "Waiting for {} container(s) to be ready...",
         container_names.len()
     );
@@ -263,7 +305,7 @@ pub async fn wait_for_containers_ready(
         }
     }
 
-    info!("All containers ready (or timed out)");
+    debug!("All containers ready (or timed out)");
     Ok(())
 }
 
@@ -294,7 +336,7 @@ async fn wait_for_single_container(
             .await
         {
             Ok(true) => {
-                if crate::is_verbose() {
+                if is_verbose() {
                     info!("Container '{}' is ready", container_name);
                 }
                 return Ok(());

@@ -109,14 +109,16 @@ impl ComposableNodeRecord {
 
         // Option A: Spawn standalone container directly using ament index
         // Find component_container executable directly
-        let container_exe =
-            match crate::ament_index::find_executable("rclcpp_components", "component_container") {
-                Ok(path) => path.to_string_lossy().into_owned(),
-                Err(_) => {
-                    // Fallback to full path if ament index fails
-                    "/opt/ros/humble/lib/rclcpp_components/component_container".to_string()
-                }
-            };
+        let container_exe = match crate::ros::ament_index::find_executable(
+            "rclcpp_components",
+            "component_container",
+        ) {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(_) => {
+                // Fallback to full path if ament index fails
+                "/opt/ros/humble/lib/rclcpp_components/component_container".to_string()
+            }
+        };
 
         // Generate unique container name for this standalone node
         let container_name = format!("standalone_container_{}", node_name);

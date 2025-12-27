@@ -313,12 +313,9 @@ fn check_helper_capabilities(path: &Path) -> Result<()> {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if !stdout.contains("cap_sys_ptrace") {
-                warn!(
-                    "Helper binary does not have CAP_SYS_PTRACE capability set.\n\
-                     I/O monitoring for privileged processes will not work.\n\
-                     Run: sudo setcap cap_sys_ptrace+ep {:?}",
-                    path
-                );
+                warn!("Helper binary does not have CAP_SYS_PTRACE capability set.");
+                warn!("I/O monitoring for privileged processes will not work.");
+                warn!("Run: sudo setcap cap_sys_ptrace+ep {:?}", path);
             } else {
                 debug!("Helper has CAP_SYS_PTRACE: {}", stdout.trim());
             }
@@ -326,9 +323,9 @@ fn check_helper_capabilities(path: &Path) -> Result<()> {
         }
         Ok(_) | Err(_) => {
             // getcap not available or failed - just warn
+            warn!("Could not verify capabilities on helper binary.");
             warn!(
-                "Could not verify capabilities on helper binary.\n\
-                 Make sure CAP_SYS_PTRACE is set: sudo setcap cap_sys_ptrace+ep {:?}",
+                "Make sure CAP_SYS_PTRACE is set: sudo setcap cap_sys_ptrace+ep {:?}",
                 path
             );
             Ok(())

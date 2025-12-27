@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error};
+use tracing::debug;
 
 /// Response from loading a composable node
 #[derive(Clone, Debug, PartialEq)]
@@ -98,33 +98,43 @@ impl ComponentLoaderHandle {
     }
 }
 
-/// Start the component loader background thread
-///
-/// This creates a ROS node and executor that processes load requests
-pub fn start_component_loader_thread() -> Result<ComponentLoaderHandle> {
+/// Spawn the component loader as an async tokio task (Phase 3)
+/// Returns both the task handle and the component loader handle
+pub fn spawn_component_loader_task(
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> (tokio::task::JoinHandle<Result<()>>, ComponentLoaderHandle) {
     let (request_tx, request_rx) = mpsc::unbounded_channel();
 
-    std::thread::Builder::new()
-        .name("component_loader".to_string())
-        .spawn(move || {
-            if let Err(e) = run_component_loader_loop(request_rx) {
-                error!("Component loader thread failed: {:#}", e);
-            }
-        })
-        .context("Failed to spawn component loader thread")?;
+    let task = tokio::spawn(run_component_loader_task(request_rx, shutdown_rx));
 
-    debug!("Started component loader background thread");
+    let handle = ComponentLoaderHandle { request_tx };
 
-    Ok(ComponentLoaderHandle { request_tx })
+    (task, handle)
 }
 
-/// Main loop for the component loader thread
-///
-/// This runs in a dedicated thread and handles all service calls
-fn run_component_loader_loop(mut request_rx: mpsc::UnboundedReceiver<LoadRequest>) -> Result<()> {
+/// Run the component loader as an async tokio task (Phase 3)
+/// This replaces the thread-based approach with proper shutdown handling
+async fn run_component_loader_task(
+    request_rx: mpsc::UnboundedReceiver<LoadRequest>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
+    debug!("Starting async component loader task");
+
+    // Run the entire ROS loop in a single spawn_blocking task
+    // This allows us to use executor.spin() with timeout-based shutdown checking
+    tokio::task::spawn_blocking(move || run_component_loader_blocking(request_rx, shutdown_rx))
+        .await?
+}
+
+/// Blocking component loader loop that runs in spawn_blocking
+/// This fixes the detached executor spin thread bug by integrating shutdown checks
+fn run_component_loader_blocking(
+    mut request_rx: mpsc::UnboundedReceiver<LoadRequest>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
     use rclrs::CreateBasicExecutor;
 
-    // Initialize ROS context and node (use empty args to avoid deprecation warnings)
+    // Initialize ROS context and node
     let context = rclrs::Context::new(
         vec!["play_launch".to_string()],
         rclrs::InitOptions::default(),
@@ -136,62 +146,83 @@ fn run_component_loader_loop(mut request_rx: mpsc::UnboundedReceiver<LoadRequest
         .create_node("play_launch_component_loader")
         .context("Failed to create component loader node")?;
 
-    debug!("Component loader node created");
+    debug!("Component loader node created (blocking)");
 
     // Cache service clients for each container
     let clients: Arc<Mutex<HashMap<String, rclrs::Client<composition_interfaces::srv::LoadNode>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
-    // Start a background thread to spin the executor
-    let clients_for_spin = Arc::clone(&clients);
-    std::thread::spawn(move || loop {
-        executor.spin(rclrs::SpinOptions::spin_once());
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    });
+    // Create spin options with timeout (allows shutdown checks every 100ms)
+    let spin_timeout = std::time::Duration::from_millis(100);
 
-    // Main request processing loop
-    while let Some(request) = request_rx.blocking_recv() {
-        debug!(
-            "Loading node {}/{} into container {}",
-            request.package_name, request.plugin_name, request.container_name
-        );
+    loop {
+        // Check shutdown signal first
+        if shutdown_rx.has_changed().is_ok() && *shutdown_rx.borrow() {
+            debug!("Component loader received shutdown signal");
+            break;
+        }
 
-        // Get or create service client for this container
-        let service_name = format!("{}/_container/load_node", request.container_name);
-        let client = {
-            let mut clients_lock = clients_for_spin.lock().unwrap();
-            clients_lock
-                .entry(service_name.clone())
-                .or_insert_with(|| {
-                    debug!("Creating service client for {}", service_name);
-                    node.create_client::<composition_interfaces::srv::LoadNode>(&service_name)
-                        .expect("Failed to create service client")
-                })
-                .clone()
-        };
+        // Spin executor with timeout (processes ROS messages for up to timeout duration)
+        // This is much better than spin_once() + sleep() because ROS can process messages
+        // during the entire timeout period
+        let mut spin_options = rclrs::SpinOptions::new();
+        spin_options.timeout = Some(spin_timeout);
+        executor.spin(spin_options);
 
-        // Process the request
-        let result = tokio::runtime::Runtime::new()
-            .context("Failed to create tokio runtime")?
-            .block_on(async {
-                call_component_load_service(
-                    client,
-                    &request.package_name,
-                    &request.plugin_name,
-                    &request.node_name,
-                    &request.node_namespace,
-                    &request.remap_rules,
-                    &request.parameters,
-                    &request.extra_args,
-                    request.timeout,
-                )
-                .await
-            });
+        // Try to receive a request (non-blocking)
+        match request_rx.try_recv() {
+            Ok(request) => {
+                debug!(
+                    "Loading node {}/{} into container {}",
+                    request.package_name, request.plugin_name, request.container_name
+                );
 
-        let _ = request.response_tx.send(result);
+                // Get or create service client for this container
+                let service_name = format!("{}/_container/load_node", request.container_name);
+                let client = {
+                    let mut clients_lock = clients.lock().unwrap();
+                    clients_lock
+                        .entry(service_name.clone())
+                        .or_insert_with(|| {
+                            debug!("Creating service client for {}", service_name);
+                            node.create_client::<composition_interfaces::srv::LoadNode>(
+                                &service_name,
+                            )
+                            .expect("Failed to create service client")
+                        })
+                        .clone()
+                };
+
+                // Create a minimal tokio runtime just for the service call
+                // (The service call is already async, so we need a runtime to block_on it)
+                let result = tokio::runtime::Runtime::new()
+                    .context("Failed to create tokio runtime")?
+                    .block_on(call_component_load_service(
+                        client,
+                        &request.package_name,
+                        &request.plugin_name,
+                        &request.node_name,
+                        &request.node_namespace,
+                        &request.remap_rules,
+                        &request.parameters,
+                        &request.extra_args,
+                        request.timeout,
+                    ));
+
+                let _ = request.response_tx.send(result);
+            }
+            Err(mpsc::error::TryRecvError::Empty) => {
+                // No request available, continue to next spin cycle
+            }
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                // Channel closed, shut down
+                debug!("Component loader request channel closed");
+                break;
+            }
+        }
     }
 
-    debug!("Component loader shutting down");
+    debug!("Component loader task shutting down");
     Ok(())
 }
 
