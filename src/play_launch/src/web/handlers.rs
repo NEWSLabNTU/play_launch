@@ -1,4 +1,4 @@
-//! HTTP handlers for the web API.
+//! HTTP handlers for the web API (event-driven architecture).
 
 use super::WebState;
 use axum::{
@@ -7,7 +7,9 @@ use axum::{
     response::{Html, IntoResponse, Response},
     Json,
 };
+use serde_json::json;
 use std::sync::Arc;
+use tracing::info;
 
 /// RAII guard for tracking operations in progress
 struct OperationGuard {
@@ -27,14 +29,13 @@ impl OperationGuard {
                 ));
             }
             ops.insert(node_name.clone());
-        } // Drop the lock here
+        }
         Ok(Self { node_name, state })
     }
 }
 
 impl Drop for OperationGuard {
     fn drop(&mut self) {
-        // Remove from operations_in_progress when guard is dropped
         let node_name = self.node_name.clone();
         let state = self.state.clone();
         tokio::spawn(async move {
@@ -44,15 +45,13 @@ impl Drop for OperationGuard {
     }
 }
 
-/// Helper to parse ROS name into clickable namespace segments
+/// Helper to render clickable ROS namespace segments
 fn render_clickable_ros_name(ros_name: &str) -> String {
     if ros_name.is_empty() {
         return String::new();
     }
 
-    // Split by '/' and filter out empty segments
     let segments: Vec<&str> = ros_name.split('/').filter(|s| !s.is_empty()).collect();
-
     if segments.is_empty() {
         return String::new();
     }
@@ -60,39 +59,31 @@ fn render_clickable_ros_name(ros_name: &str) -> String {
     let mut html = String::new();
     let mut current_path = String::new();
 
-    // Add root '/' if the name starts with it
     if ros_name.starts_with('/') {
-        html.push_str(r#"<span class="ns-segment" data-ns="/" onclick="filterByNamespace('/')">/</span>"#);
+        html.push_str(
+            r#"<span class="ns-segment" data-ns="/" onclick="filterByNamespace('/')">/</span>"#,
+        );
         current_path.push('/');
     }
 
     for (i, segment) in segments.iter().enumerate() {
-        // Build cumulative namespace path
         if i > 0 || !ros_name.starts_with('/') {
             current_path.push('/');
         }
         current_path.push_str(segment);
 
-        // Escape segment for HTML
         let escaped_segment = segment
             .replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;")
-            .replace('"', "&quot;")
-            .replace('\'', "&#39;");
+            .replace('"', "&quot;");
 
-        // Escape path for attribute
-        let escaped_path = current_path
-            .replace('&', "&amp;")
-            .replace('"', "&quot;")
-            .replace('\'', "&#39;");
+        let escaped_path = current_path.replace('&', "&amp;").replace('"', "&quot;");
 
-        // Add separator before segment (except first)
         if i > 0 {
             html.push_str(r#"<span class="ns-sep">/</span>"#);
         }
 
-        // Add segment - mark last one as leaf
         let class = if i == segments.len() - 1 {
             "ns-segment ns-leaf"
         } else {
@@ -108,144 +99,119 @@ fn render_clickable_ros_name(ros_name: &str) -> String {
     html
 }
 
-/// Helper to generate node card HTML
-fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str) -> String {
-    let status_class = match node.status {
-        crate::node_registry::UnifiedStatus::Process(status) => match status {
-            crate::node_registry::NodeStatus::Running => "status-running",
-            crate::node_registry::NodeStatus::Stopped => "status-stopped",
-            crate::node_registry::NodeStatus::Failed => "status-failed",
-            crate::node_registry::NodeStatus::Pending => "status-pending",
-        },
-        crate::node_registry::UnifiedStatus::Composable(status) => match status {
-            crate::node_registry::ComposableNodeStatus::Loaded => "status-loaded",
-            crate::node_registry::ComposableNodeStatus::Failed => "status-failed",
-            crate::node_registry::ComposableNodeStatus::Pending => "status-pending",
-        },
+/// Helper to render a node card
+fn render_node_card(node: &crate::web_types::NodeSummary, indent_class: &str) -> String {
+    use crate::web_types::{
+        ComposableBlockReason, ComposableNodeStatus, NodeStatus, UnifiedStatus,
     };
 
-    // Use exec_name as primary name if available, otherwise fall back to directory name
-    let display_name = node.exec_name.as_deref().unwrap_or(&node.name);
+    let (status_class, block_reason_tooltip) = match &node.status {
+        UnifiedStatus::Process(status) => {
+            let class = match status {
+                NodeStatus::Running => "status-running",
+                NodeStatus::Stopped => "status-stopped",
+                NodeStatus::Failed => "status-failed",
+                NodeStatus::Pending => "status-pending",
+            };
+            (class, None)
+        }
+        UnifiedStatus::Composable(status) => {
+            let (class, reason) = match status {
+                ComposableNodeStatus::Loaded => ("status-loaded", None),
+                ComposableNodeStatus::Loading => ("status-loading", None),
+                ComposableNodeStatus::Failed => ("status-failed", None),
+                ComposableNodeStatus::Pending => ("status-pending", None),
+                ComposableNodeStatus::Blocked(reason) => {
+                    let reason_text = match reason {
+                        ComposableBlockReason::ContainerStopped => "Container stopped",
+                        ComposableBlockReason::ContainerFailed => "Container failed",
+                        ComposableBlockReason::ContainerNotStarted => "Container not started",
+                    };
+                    ("status-blocked", Some(reason_text))
+                }
+            };
+            (class, reason)
+        }
+    };
 
-    // Construct full ROS node name (namespace + node_name)
-    let ros_full_name_plain = if let (Some(ns), Some(node_name)) = (&node.namespace, &node.node_name) {
-        if ns == "/" {
-            format!("/{}", node_name)
-        } else if ns.ends_with('/') {
-            format!("{}{}", ns, node_name)
+    let title_attr = if let Some(reason) = block_reason_tooltip {
+        format!(r#" title="Blocked: {}""#, reason)
+    } else {
+        String::new()
+    };
+
+    // Stderr activity indicator
+    let stderr_indicator = if let Some(stderr_mtime) = node.stderr_last_modified {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let age_secs = now.saturating_sub(stderr_mtime);
+
+        if age_secs < 10 && node.stderr_size > 0 {
+            // Active (0-10s): yellow, jumping animation
+            let preview = node
+                .stderr_preview
+                .as_ref()
+                .map(|lines| lines.join("\n"))
+                .unwrap_or_default();
+            format!(
+                r#"<span class="stderr-indicator active" title="Active stderr output (last 5 lines):&#10;{}">📋</span>"#,
+                preview.replace('"', "&quot;")
+            )
+        } else if age_secs < 60 && node.stderr_size > 0 {
+            // Recent (10-60s): orange, static
+            let preview = node
+                .stderr_preview
+                .as_ref()
+                .map(|lines| lines.join("\n"))
+                .unwrap_or_default();
+            format!(
+                r#"<span class="stderr-indicator recent" title="Recent stderr output (last 5 lines):&#10;{}">📋</span>"#,
+                preview.replace('"', "&quot;")
+            )
         } else {
-            format!("{}/{}", ns, node_name)
+            String::new()
         }
     } else {
         String::new()
     };
 
-    // Render ROS name with clickable segments
-    let ros_full_name = render_clickable_ros_name(&ros_full_name_plain);
+    let pid_display = node
+        .pid
+        .map(|p| format!("PID: {}{}", p, stderr_indicator))
+        .unwrap_or_else(|| "No PID".to_string());
 
-    // Node type with CSS class for coloring
-    let (node_type_label, node_type_class) = match node.node_type {
-        crate::node_registry::NodeType::Node => ("node", "type-node"),
-        crate::node_registry::NodeType::Container => ("container", "type-container"),
-        crate::node_registry::NodeType::ComposableNode => ("composable", "type-composable"),
-    };
+    let namespace_html = node
+        .namespace
+        .as_ref()
+        .map(|ns| render_clickable_ros_name(ns))
+        .unwrap_or_default();
 
-    // Only show PID for regular nodes and containers, not composable nodes
-    let pid_section = match node.node_type {
-        crate::node_registry::NodeType::ComposableNode => String::new(),
-        _ => {
-            let pid_text = node
-                .pid
-                .map(|p| format!("PID: {}", p))
-                .unwrap_or_else(|| "PID: -".to_string());
-            format!(r#"<span class="node-pid">{}</span>"#, pid_text)
-        }
-    };
-
-    // Control buttons based on node type
-    let controls = match node.node_type {
-        crate::node_registry::NodeType::ComposableNode => {
-            // Only Details button for composable nodes
+    let target_container_html = node
+        .target_container
+        .as_ref()
+        .map(|tc| {
             format!(
-                r#"<button onclick="showNodeDetails('{}')" class="btn-details">Details</button>"#,
-                node.name
+                r#"<div class="detail"><strong>Container:</strong> {}</div>"#,
+                tc
             )
-        }
-        crate::node_registry::NodeType::Container | crate::node_registry::NodeType::Node => {
-            // Full controls: Start/Stop, Restart, Details, Logs, Respawn checkbox
-            let start_stop_button = match node.status {
-                crate::node_registry::UnifiedStatus::Process(
-                    crate::node_registry::NodeStatus::Running,
-                ) => {
-                    format!(
-                        r#"<button hx-post="/api/nodes/{}/stop" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-stop">
-    <span class="btn-text">Stop</span>
-    <span class="btn-loading">Stopping...</span>
-</button>"#,
-                        node.name
-                    )
-                }
-                _ => {
-                    format!(
-                        r#"<button hx-post="/api/nodes/{}/start" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-start">
-    <span class="btn-text">Start</span>
-    <span class="btn-loading">Starting...</span>
-</button>"#,
-                        node.name
-                    )
-                }
-            };
+        })
+        .unwrap_or_default();
 
-            // Add respawn checkbox if respawn configuration is available
-            let respawn_checkbox = if let Some(respawn_enabled) = node.respawn_enabled {
-                let checked = if respawn_enabled { "checked" } else { "" };
-                let delay_text = if let Some(delay) = node.respawn_delay {
-                    if delay > 0.0 {
-                        format!(" ({}s)", delay)
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                };
-                format!(
-                    r#"<label class="respawn-checkbox" title="Auto-restart when node exits">
-        <input type="checkbox" {} onchange="toggleRespawn('{}', this.checked)">
-        <span class="respawn-label">Auto-restart{}</span>
-    </label>"#,
-                    checked, node.name, delay_text
-                )
-            } else {
-                String::new()
-            };
-
+    let respawn_html = if let Some(enabled) = node.respawn_enabled {
+        if enabled {
+            let delay_str = node
+                .respawn_delay
+                .map(|d| format!(" ({}s)", d))
+                .unwrap_or_default();
             format!(
-                r#"{}
-    <button hx-post="/api/nodes/{}/restart" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-restart">
-        <span class="btn-text">Restart</span>
-        <span class="btn-loading">Restarting...</span>
-    </button>
-    <button onclick="showNodeDetails('{}')" class="btn-details">Details</button>
-    <button onclick="showNodeLogs('{}')" class="btn-logs">Logs</button>
-    {}"#,
-                start_stop_button, node.name, node.name, node.name, respawn_checkbox
+                r#"<div class="detail"><strong>Respawn:</strong> Enabled{}</div>"#,
+                delay_str
             )
-        }
-    };
-
-    // Format stderr data attributes (including preview as JSON)
-    let stderr_attrs = if let Some(mtime) = node.stderr_last_modified {
-        let preview_json = if let Some(ref lines) = node.stderr_preview {
-            // Escape JSON string
-            serde_json::to_string(lines).unwrap_or_else(|_| "[]".to_string())
         } else {
-            "[]".to_string()
-        };
-
-        format!(
-            r#" data-stderr-mtime="{}" data-stderr-size="{}" data-stderr-preview='{}'"#,
-            mtime, node.stderr_size, preview_json
-        )
+            r#"<div class="detail"><strong>Respawn:</strong> Disabled</div>"#.to_string()
+        }
     } else {
         String::new()
     };
@@ -253,90 +219,84 @@ fn render_node_card(node: &crate::node_registry::NodeSummary, indent_class: &str
     format!(
         r##"<div class="node-card {} {}" data-node="{}"{}>
   <div class="node-info">
-    <div class="node-header">
-      <span class="node-type {}">{}</span>
-      <span class="node-name">{}</span>
+    <div class="node-name">{}</div>
+    <div class="node-details">
+      <div class="detail"><strong>Package:</strong> {}</div>
+      <div class="detail"><strong>Executable:</strong> {}</div>
+      <div class="detail"><strong>Namespace:</strong> {}</div>
       {}
-    </div>
-    <div class="node-meta">
-      <span class="node-ros-name">{}</span>
+      <div class="detail"><strong>Status:</strong> {}</div>
+      {}
     </div>
   </div>
   <div class="node-controls">
-    {}
+    <button class="btn btn-sm btn-success" hx-post="/api/nodes/{}/start" hx-swap="none">Start</button>
+    <button class="btn btn-sm btn-danger" hx-post="/api/nodes/{}/stop" hx-swap="none">Stop</button>
+    <button class="btn btn-sm btn-warning" hx-post="/api/nodes/{}/restart" hx-swap="none">Restart</button>
+    <button class="btn btn-sm btn-primary" onclick="showNodeDetails('{}')">Details</button>
+    <button class="btn btn-sm btn-secondary" onclick="showLogs('{}')">Logs</button>
   </div>
-</div>
-"##,
-        status_class,
+</div>"##,
         indent_class,
+        status_class,
         node.name,
-        stderr_attrs,
-        node_type_class,
-        node_type_label,
-        display_name,
-        pid_section,
-        ros_full_name,
-        controls,
+        title_attr,
+        node.name,
+        node.package.as_ref().unwrap_or(&"N/A".to_string()),
+        node.executable,
+        namespace_html,
+        target_container_html,
+        pid_display,
+        respawn_html,
+        node.name,
+        node.name,
+        node.name,
+        node.name,
+        node.name,
     )
 }
 
 /// List all nodes - returns HTML fragment for htmx
 pub async fn list_nodes(State(state): State<Arc<WebState>>) -> Response {
     let registry = state.registry.lock().await;
-    let nodes = registry.list_nodes();
+    let nodes = registry.list_nodes_summary();
 
-    // Generate HTML fragment for htmx swap
     let mut html = String::new();
 
-    if nodes.is_empty() {
-        html.push_str(r#"<div class="no-nodes">No nodes registered</div>"#);
-    } else {
-        // Separate containers, composable nodes, and regular nodes
-        let (containers, composables, regulars): (Vec<_>, Vec<_>, Vec<_>) =
-            nodes
-                .iter()
-                .fold((Vec::new(), Vec::new(), Vec::new()), |mut acc, node| {
-                    match node.node_type {
-                        crate::node_registry::NodeType::Container => acc.0.push(node),
-                        crate::node_registry::NodeType::ComposableNode => acc.1.push(node),
-                        crate::node_registry::NodeType::Node => acc.2.push(node),
-                    }
-                    acc
-                });
+    // Build parent-child relationships for rendering
+    let mut containers: Vec<_> = nodes.iter().filter(|n| n.is_container).collect();
+    containers.sort_by(|a, b| a.name.cmp(&b.name));
 
-        // Render regular nodes first
-        for node in &regulars {
-            html.push_str(&render_node_card(node, ""));
+    let mut regular_nodes: Vec<_> = nodes
+        .iter()
+        .filter(|n| !n.is_container && n.target_container.is_none())
+        .collect();
+    regular_nodes.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Render containers with their composable nodes
+    for container in containers {
+        html.push_str(&render_node_card(container, ""));
+
+        // Render composable nodes under this container
+        let mut composable_nodes: Vec<_> = nodes
+            .iter()
+            .filter(|n| {
+                n.target_container
+                    .as_ref()
+                    .map(|tc| tc == &container.name)
+                    .unwrap_or(false)
+            })
+            .collect();
+        composable_nodes.sort_by(|a, b| a.name.cmp(&b.name));
+
+        for comp in composable_nodes {
+            html.push_str(&render_node_card(comp, "composable-indent"));
         }
+    }
 
-        // Render containers with their composable nodes
-        for container in &containers {
-            html.push_str(&render_node_card(container, "container-node"));
-
-            // Construct the full ROS name for this container (namespace + name)
-            let container_full_name = if let Some(ns) = &container.namespace {
-                if ns == "/" {
-                    format!("/{}", container.name)
-                } else if ns.ends_with('/') {
-                    format!("{}{}", ns, container.name)
-                } else {
-                    format!("{}/{}", ns, container.name)
-                }
-            } else {
-                format!("/{}", container.name)
-            };
-
-            // Find composable nodes that belong to this container
-            let children: Vec<_> = composables
-                .iter()
-                .filter(|n| n.target_container.as_deref() == Some(container_full_name.as_str()))
-                .collect();
-
-            // Render children with indentation
-            for child in children {
-                html.push_str(&render_node_card(child, "child-node"));
-            }
-        }
+    // Render regular nodes
+    for node in regular_nodes {
+        html.push_str(&render_node_card(node, ""));
     }
 
     Html(html).into_response()
@@ -345,639 +305,199 @@ pub async fn list_nodes(State(state): State<Arc<WebState>>) -> Response {
 /// Get node details - returns JSON
 pub async fn get_node(State(state): State<Arc<WebState>>, Path(name): Path<String>) -> Response {
     let registry = state.registry.lock().await;
+    let nodes = registry.list_nodes_summary();
 
-    match registry.get_node_details(&name) {
-        Some(details) => Json(details).into_response(),
-        None => (StatusCode::NOT_FOUND, format!("Node '{}' not found", name)).into_response(),
+    if let Some(node) = nodes.iter().find(|n| n.name == name) {
+        Json(json!({
+            "name": node.name,
+            "package": node.package,
+            "executable": node.executable,
+            "namespace": node.namespace,
+            "target_container": node.target_container,
+            "status": node.status,
+            "pid": node.pid,
+            "is_container": node.is_container,
+            "respawn_enabled": node.respawn_enabled,
+            "respawn_delay": node.respawn_delay,
+        }))
+        .into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "Node not found").into_response()
     }
 }
 
-/// Start a node
+/// Start a node (event-driven)
 pub async fn start_node(State(state): State<Arc<WebState>>, Path(name): Path<String>) -> Response {
-    use crate::node_registry::NodeType;
-    use tracing::info;
-
-    // Acquire operation lock to prevent racing conditions
     let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
         Ok(guard) => guard,
-        Err(e) => {
-            return (StatusCode::CONFLICT, e).into_response();
-        }
+        Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
 
-    // Check if this is a container and remove termination markers for composable nodes
-    let is_container = {
-        let registry = state.registry.lock().await;
-        registry
-            .get(&name)
-            .map(|h| h.node_type == NodeType::Container)
-            .unwrap_or(false)
-    };
-
-    if is_container {
-        // Get composable nodes before starting container
-        let composable_nodes = {
-            let registry = state.registry.lock().await;
-            registry.get_container_composable_nodes(&name)
-        };
-
-        // Remove termination markers and write loading markers
-        for comp_name in &composable_nodes {
-            let registry = state.registry.lock().await;
-            if let Some(handle) = registry.get(comp_name) {
-                let terminated_path = handle.output_dir.join("terminated");
-                if terminated_path.exists() {
-                    let _ = std::fs::remove_file(&terminated_path);
-                    info!(
-                        "[Web UI] Removed termination marker for composable node '{}'",
-                        comp_name
-                    );
-                }
-
-                // Write loading marker to indicate loading is in progress
-                let loading_path = handle.output_dir.join("loading");
-                if let Err(e) = std::fs::write(&loading_path, "loading") {
-                    info!(
-                        "[Web UI] Failed to write loading marker for '{}': {}",
-                        comp_name, e
-                    );
-                } else {
-                    info!("[Web UI] Marked composable node '{}' as loading", comp_name);
-                }
-            }
-        }
-    }
-
-    let mut registry = state.registry.lock().await;
-
-    match registry.start_node(&name).await {
-        Ok(pid) => {
-            info!("[Web UI] Started node '{}' with PID {}", name, pid);
+    match state
+        .event_bus
+        .publish(crate::events::MemberEvent::StartRequested { name: name.clone() })
+    {
+        Ok(()) => {
+            info!("[Web UI] Published StartRequested event for '{}'", name);
             (
-                StatusCode::OK,
-                format!("Node '{}' started with PID {}", name, pid),
+                StatusCode::ACCEPTED,
+                format!("Start request for '{}' accepted", name),
             )
                 .into_response()
         }
         Err(e) => {
-            info!("[Web UI] Failed to start node '{}': {}", name, e);
+            info!(
+                "[Web UI] Failed to publish StartRequested event for '{}': {}",
+                name, e
+            );
             (
-                StatusCode::BAD_REQUEST,
-                format!("Failed to start node '{}': {}", name, e),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to publish start request: {}", e),
             )
                 .into_response()
         }
     }
 }
 
-/// Stop a node
+/// Stop a node (event-driven)
 pub async fn stop_node(State(state): State<Arc<WebState>>, Path(name): Path<String>) -> Response {
-    use crate::node_registry::NodeType;
-    use tracing::info;
-
-    // Acquire operation lock to prevent racing conditions
     let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
         Ok(guard) => guard,
-        Err(e) => {
-            return (StatusCode::CONFLICT, e).into_response();
-        }
+        Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
 
-    // Check if this is a container
-    let is_container = {
-        let registry = state.registry.lock().await;
-        registry
-            .get(&name)
-            .map(|h| h.node_type == NodeType::Container)
-            .unwrap_or(false)
-    };
-
-    let mut registry = state.registry.lock().await;
-
-    match registry.stop_node(&name) {
-        Ok(true) => {
-            info!("[Web UI] Stopped node '{}'", name);
-
-            // If it's a container, mark all composable nodes as terminated
-            if is_container {
-                let composable_nodes = registry.get_container_composable_nodes(&name);
-                for comp_name in &composable_nodes {
-                    if let Some(handle) = registry.get(comp_name) {
-                        let terminated_path = handle.output_dir.join("terminated");
-                        if let Err(e) = std::fs::write(&terminated_path, "container_stopped") {
-                            info!(
-                                "[Web UI] Failed to write termination marker for '{}': {}",
-                                comp_name, e
-                            );
-                        } else {
-                            info!(
-                                "[Web UI] Marked composable node '{}' as terminated",
-                                comp_name
-                            );
-                        }
-                    }
-                }
-            }
-
-            (StatusCode::OK, format!("Node '{}' stopped", name)).into_response()
-        }
-        Ok(false) => {
-            info!("[Web UI] Node '{}' was not running", name);
-            (StatusCode::OK, format!("Node '{}' was not running", name)).into_response()
-        }
-        Err(e) => {
-            info!("[Web UI] Failed to stop node '{}': {}", name, e);
-            // Log additional debug info
-            let registry = state.registry.lock().await;
-            if let Some(handle) = registry.get(&name) {
-                info!(
-                    "[Web UI] Node '{}' debug: type={:?}, pid={:?}, has_child={}",
-                    name,
-                    handle.node_type,
-                    handle.get_pid(),
-                    handle.child.is_some()
-                );
-            }
+    match state
+        .event_bus
+        .publish(crate::events::MemberEvent::StopRequested { name: name.clone() })
+    {
+        Ok(()) => {
+            info!("[Web UI] Published StopRequested event for '{}'", name);
             (
-                StatusCode::BAD_REQUEST,
-                format!("Failed to stop node '{}': {}", name, e),
+                StatusCode::ACCEPTED,
+                format!("Stop request for '{}' accepted", name),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            info!(
+                "[Web UI] Failed to publish StopRequested event for '{}': {}",
+                name, e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to publish stop request: {}", e),
             )
                 .into_response()
         }
     }
 }
 
-/// Restart a node
+/// Restart a node (event-driven)
 pub async fn restart_node(
     State(state): State<Arc<WebState>>,
     Path(name): Path<String>,
 ) -> Response {
-    use crate::node_registry::NodeType;
-    use tracing::info;
-
-    // Acquire operation lock to prevent racing conditions
     let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
         Ok(guard) => guard,
+        Err(e) => return (StatusCode::CONFLICT, e).into_response(),
+    };
+
+    match state
+        .event_bus
+        .publish(crate::events::MemberEvent::RestartRequested { name: name.clone() })
+    {
+        Ok(()) => {
+            info!("[Web UI] Published RestartRequested event for '{}'", name);
+            (
+                StatusCode::ACCEPTED,
+                format!("Restart request for '{}' accepted", name),
+            )
+                .into_response()
+        }
         Err(e) => {
-            return (StatusCode::CONFLICT, e).into_response();
-        }
-    };
-
-    // Check if this is a container
-    let is_container = {
-        let registry = state.registry.lock().await;
-        registry
-            .get(&name)
-            .map(|h| h.node_type == NodeType::Container)
-            .unwrap_or(false)
-    };
-
-    if is_container && state.component_loader.is_some() {
-        info!(
-            "[Web UI] Restarting container '{}' (will reload composable nodes)",
-            name
-        );
-        // Get composable nodes before restarting container
-        let composable_nodes = {
-            let registry = state.registry.lock().await;
-            registry.get_container_composable_nodes(&name)
-        };
-
-        // Write loading markers for all composable nodes
-        {
-            let registry = state.registry.lock().await;
-            for comp_name in &composable_nodes {
-                if let Some(handle) = registry.get(comp_name) {
-                    let loading_path = handle.output_dir.join("loading");
-                    if let Err(e) = std::fs::write(&loading_path, "loading") {
-                        info!(
-                            "[Web UI] Failed to write loading marker for '{}': {}",
-                            comp_name, e
-                        );
-                    } else {
-                        info!("[Web UI] Marked composable node '{}' as loading", comp_name);
-                    }
-                }
-            }
-        }
-
-        // Restart the container process
-        let restart_result = {
-            let mut registry = state.registry.lock().await;
-            registry.restart_node(&name).await
-        };
-
-        match restart_result {
-            Ok(pid) => {
-                info!(
-                    "[Web UI] Container '{}' restarted with PID {}, reloading {} composable nodes",
-                    name,
-                    pid,
-                    composable_nodes.len()
-                );
-
-                // Reload composable nodes
-                let mut reload_results = Vec::new();
-
-                for comp_name in &composable_nodes {
-                    match reload_composable_node(comp_name, &state).await {
-                        Ok(_) => {
-                            info!("[Web UI] Reloaded composable node '{}'", comp_name);
-                            reload_results.push(format!("✓ {}", comp_name));
-                        }
-                        Err(e) => {
-                            // Mark as failed but continue
-                            info!(
-                                "[Web UI] Failed to reload composable node '{}': {}",
-                                comp_name, e
-                            );
-                            reload_results.push(format!("✗ {}: {}", comp_name, e));
-                        }
-                    }
-                }
-
-                let message = if reload_results.is_empty() {
-                    format!("Container '{}' restarted with PID {}", name, pid)
-                } else {
-                    format!(
-                        "Container '{}' restarted with PID {}\nReloaded composable nodes:\n{}",
-                        name,
-                        pid,
-                        reload_results.join("\n")
-                    )
-                };
-
-                (StatusCode::OK, message).into_response()
-            }
-            Err(e) => {
-                info!("[Web UI] Failed to restart container '{}': {}", name, e);
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("Failed to restart container '{}': {}", name, e),
-                )
-                    .into_response()
-            }
-        }
-    } else {
-        // Regular node restart
-        info!("[Web UI] Restarting node '{}'", name);
-        let mut registry = state.registry.lock().await;
-        match registry.restart_node(&name).await {
-            Ok(pid) => {
-                info!("[Web UI] Restarted node '{}' with PID {}", name, pid);
-                (
-                    StatusCode::OK,
-                    format!("Node '{}' restarted with PID {}", name, pid),
-                )
-                    .into_response()
-            }
-            Err(e) => {
-                info!("[Web UI] Failed to restart node '{}': {}", name, e);
-                (
-                    StatusCode::BAD_REQUEST,
-                    format!("Failed to restart node '{}': {}", name, e),
-                )
-                    .into_response()
-            }
+            info!(
+                "[Web UI] Failed to publish RestartRequested event for '{}': {}",
+                name, e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to publish restart request: {}", e),
+            )
+                .into_response()
         }
     }
 }
 
-/// Reload a single composable node into its container
-async fn reload_composable_node(node_name: &str, state: &Arc<WebState>) -> eyre::Result<()> {
-    use crate::node_registry::{NodeInfo, NodeType};
-    use eyre::{eyre, WrapErr};
-    use std::time::Duration;
-
-    // Get node info
-    let record = {
-        let registry = state.registry.lock().await;
-        let handle = registry
-            .get(node_name)
-            .ok_or_else(|| eyre!("Node '{}' not found", node_name))?;
-
-        if handle.node_type != NodeType::ComposableNode {
-            return Err(eyre!("Node '{}' is not a composable node", node_name));
-        }
-
-        match &handle.info {
-            NodeInfo::Composable(info) => info.record.clone(),
-            _ => return Err(eyre!("Node '{}' has invalid info type", node_name)),
-        }
-    };
-
-    // Get component loader
-    let loader = state
-        .component_loader
-        .as_ref()
-        .ok_or_else(|| eyre!("Component loader not available"))?;
-
-    // Prepare remap rules
-    let remap_rules: Vec<String> = record
-        .remaps
-        .iter()
-        .map(|(from, to)| format!("{}:={}", from, to))
-        .collect();
-
-    // Prepare extra args
-    let extra_args: Vec<(String, String)> = record
-        .extra_args
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-
-    // Load timeout (30 seconds)
-    let timeout = Duration::from_secs(30);
-
-    // Call loader service
-    loader
-        .load_node(
-            &record.target_container_name,
-            &record.package,
-            &record.plugin,
-            &record.node_name,
-            &record.namespace,
-            remap_rules,
-            record.params.clone(),
-            extra_args,
-            timeout,
-        )
-        .await
-        .wrap_err_with(|| format!("Failed to reload composable node '{}'", node_name))?;
-
-    // Remove loading marker after successful load
-    let registry = state.registry.lock().await;
-    if let Some(handle) = registry.get(node_name) {
-        let loading_path = handle.output_dir.join("loading");
-        if loading_path.exists() {
-            let _ = std::fs::remove_file(&loading_path);
-        }
-    }
-
-    Ok(())
-}
-
-/// Health summary - returns HTML fragment with badges
-pub async fn health_summary(State(state): State<Arc<WebState>>) -> Response {
-    let registry = state.registry.lock().await;
-    let summary = registry.get_health_summary();
-
-    let html = format!(
-        r#"<div class="health-summary">
-  <span class="badge badge-nodes">Nodes: {} running / {} total</span>
-  <span class="badge badge-containers">Containers: {} running / {} total</span>
-  <span class="badge badge-composable">Composable: {} loaded / {} total</span>
-  <span class="badge badge-processes">Processes: {} running</span>
-</div>"#,
-        summary.nodes_running,
-        summary.nodes_total,
-        summary.containers_running,
-        summary.containers_total,
-        summary.composable_loaded,
-        summary.composable_total,
-        summary.processes_running,
-    );
-
-    Html(html).into_response()
-}
-
-/// Start all stopped nodes and containers
-pub async fn start_all(State(state): State<Arc<WebState>>) -> Response {
-    use crate::node_registry::{NodeStatus, NodeType, UnifiedStatus};
-    use tracing::info;
-
-    let mut registry = state.registry.lock().await;
-    let nodes = registry.list_nodes();
-
-    let mut results = Vec::new();
-    let mut success_count = 0;
-    let mut fail_count = 0;
-
-    info!("[Web UI] Starting all stopped nodes/containers");
-
-    for node in nodes {
-        // Only start process-based nodes (not composable)
-        if matches!(node.node_type, NodeType::Node | NodeType::Container) {
-            // Check if stopped
-            if matches!(
-                node.status,
-                UnifiedStatus::Process(NodeStatus::Stopped)
-                    | UnifiedStatus::Process(NodeStatus::Failed)
-            ) {
-                // If it's a container, remove termination markers and write loading markers
-                if node.node_type == NodeType::Container {
-                    let composable_nodes = registry.get_container_composable_nodes(&node.name);
-                    for comp_name in &composable_nodes {
-                        if let Some(handle) = registry.get(comp_name) {
-                            let terminated_path = handle.output_dir.join("terminated");
-                            if terminated_path.exists() {
-                                let _ = std::fs::remove_file(&terminated_path);
-                                info!(
-                                    "[Web UI] Removed termination marker for composable node '{}'",
-                                    comp_name
-                                );
-                            }
-
-                            // Write loading marker
-                            let loading_path = handle.output_dir.join("loading");
-                            if let Err(e) = std::fs::write(&loading_path, "loading") {
-                                info!(
-                                    "[Web UI] Failed to write loading marker for '{}': {}",
-                                    comp_name, e
-                                );
-                            } else {
-                                info!("[Web UI] Marked composable node '{}' as loading", comp_name);
-                            }
-                        }
-                    }
-                }
-
-                match registry.start_node(&node.name).await {
-                    Ok(pid) => {
-                        info!("[Web UI] Started '{}' with PID {}", node.name, pid);
-                        results.push(format!("✓ {}", node.name));
-                        success_count += 1;
-                    }
-                    Err(e) => {
-                        info!("[Web UI] Failed to start '{}': {}", node.name, e);
-                        results.push(format!("✗ {}: {}", node.name, e));
-                        fail_count += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    let message = format!(
-        "Started {} nodes ({} succeeded, {} failed)\n{}",
-        success_count + fail_count,
-        success_count,
-        fail_count,
-        results.join("\n")
-    );
-
-    (StatusCode::OK, message).into_response()
-}
-
-/// Stop all running nodes and containers
-pub async fn stop_all(State(state): State<Arc<WebState>>) -> Response {
-    use crate::node_registry::{NodeStatus, NodeType, UnifiedStatus};
-    use tracing::info;
-
-    let mut registry = state.registry.lock().await;
-    let nodes = registry.list_nodes();
-
-    let mut results = Vec::new();
-    let mut success_count = 0;
-    let mut fail_count = 0;
-
-    info!("[Web UI] Stopping all running nodes/containers");
-
-    for node in nodes {
-        // Only stop process-based nodes (not composable)
-        if matches!(node.node_type, NodeType::Node | NodeType::Container) {
-            // Check if running
-            if matches!(node.status, UnifiedStatus::Process(NodeStatus::Running)) {
-                match registry.stop_node(&node.name) {
-                    Ok(true) => {
-                        info!("[Web UI] Stopped '{}'", node.name);
-                        results.push(format!("✓ {}", node.name));
-                        success_count += 1;
-
-                        // If it's a container, mark all composable nodes as terminated
-                        if node.node_type == NodeType::Container {
-                            let composable_nodes =
-                                registry.get_container_composable_nodes(&node.name);
-                            for comp_name in &composable_nodes {
-                                if let Some(handle) = registry.get(comp_name) {
-                                    let terminated_path = handle.output_dir.join("terminated");
-                                    if let Err(e) =
-                                        std::fs::write(&terminated_path, "container_stopped")
-                                    {
-                                        info!(
-                                            "[Web UI] Failed to write termination marker for '{}': {}",
-                                            comp_name, e
-                                        );
-                                    } else {
-                                        info!(
-                                            "[Web UI] Marked composable node '{}' as terminated",
-                                            comp_name
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Ok(false) => {
-                        // Already stopped, skip
-                    }
-                    Err(e) => {
-                        info!("[Web UI] Failed to stop '{}': {}", node.name, e);
-                        results.push(format!("✗ {}: {}", node.name, e));
-                        fail_count += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    let message = format!(
-        "Stopped {} nodes ({} succeeded, {} failed)\n{}",
-        success_count + fail_count,
-        success_count,
-        fail_count,
-        results.join("\n")
-    );
-
-    (StatusCode::OK, message).into_response()
-}
-
-/// Restart all nodes and containers
-pub async fn restart_all(State(state): State<Arc<WebState>>) -> Response {
-    use crate::node_registry::NodeType;
-    use tracing::info;
-
-    let nodes = {
-        let registry = state.registry.lock().await;
-        registry.list_nodes()
-    };
-
-    let mut results = Vec::new();
-    let mut success_count = 0;
-    let mut fail_count = 0;
-
-    info!("[Web UI] Restarting all nodes/containers");
-
-    for node in nodes {
-        // Only restart process-based nodes (not composable)
-        if matches!(node.node_type, NodeType::Node | NodeType::Container) {
-            let mut registry = state.registry.lock().await;
-            match registry.restart_node(&node.name).await {
-                Ok(pid) => {
-                    info!("[Web UI] Restarted '{}' with PID {}", node.name, pid);
-                    results.push(format!("✓ {}", node.name));
-                    success_count += 1;
-                }
-                Err(e) => {
-                    info!("[Web UI] Failed to restart '{}': {}", node.name, e);
-                    results.push(format!("✗ {}: {}", node.name, e));
-                    fail_count += 1;
-                }
-            }
-        }
-    }
-
-    let message = format!(
-        "Restarted {} nodes ({} succeeded, {} failed)\n{}",
-        success_count + fail_count,
-        success_count,
-        fail_count,
-        results.join("\n")
-    );
-
-    (StatusCode::OK, message).into_response()
-}
-
-/// Toggle respawn for a node
+/// Toggle respawn for a node (event-driven)
 pub async fn toggle_respawn(
     State(state): State<Arc<WebState>>,
-    Path((name, enabled)): Path<(String, String)>,
+    Path((name, enabled_str)): Path<(String, String)>,
 ) -> Response {
-    use tracing::info;
-
-    let enabled = match enabled.as_str() {
-        "true" => true,
-        "false" => false,
+    let enabled = match enabled_str.as_str() {
+        "true" | "1" => true,
+        "false" | "0" => false,
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                format!("Invalid enabled value: '{}' (must be 'true' or 'false')", enabled),
+                format!(
+                    "Invalid enabled value: '{}'. Use 'true' or 'false'",
+                    enabled_str
+                ),
             )
                 .into_response();
         }
     };
 
-    let mut registry = state.registry.lock().await;
-
-    match registry.set_respawn(&name, enabled) {
+    match state
+        .event_bus
+        .publish(crate::events::MemberEvent::RespawnToggled {
+            name: name.clone(),
+            enabled,
+        }) {
         Ok(()) => {
             info!(
-                "[Web UI] Set respawn for '{}' to {}",
+                "[Web UI] Published RespawnToggled event for '{}' (enabled={})",
                 name, enabled
             );
             (
-                StatusCode::OK,
-                format!("Respawn for '{}' set to {}", name, enabled),
+                StatusCode::ACCEPTED,
+                format!(
+                    "Respawn {} request for '{}' accepted",
+                    if enabled { "enable" } else { "disable" },
+                    name
+                ),
             )
                 .into_response()
         }
         Err(e) => {
-            info!("[Web UI] Failed to set respawn for '{}': {}", name, e);
+            info!(
+                "[Web UI] Failed to publish RespawnToggled event for '{}': {}",
+                name, e
+            );
             (
-                StatusCode::BAD_REQUEST,
-                format!("Failed to set respawn for '{}': {}", name, e),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to publish respawn toggle request: {}", e),
             )
                 .into_response()
         }
     }
+}
+
+/// Health summary - returns HTML for htmx
+pub async fn health_summary(State(state): State<Arc<WebState>>) -> Response {
+    let registry = state.registry.lock().await;
+    let summary = registry.get_health_summary();
+
+    let html = format!(
+        r#"<span class="badge badge-success">{} running</span>
+           <span class="badge badge-secondary">{} total</span>
+           <span class="badge badge-info">{} containers</span>
+           <span class="badge badge-primary">{} composable</span>"#,
+        summary.processes_running,
+        summary.nodes_total + summary.containers_total,
+        summary.containers_running,
+        summary.composable_loaded,
+    );
+
+    Html(html).into_response()
 }

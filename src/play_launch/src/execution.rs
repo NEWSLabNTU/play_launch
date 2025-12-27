@@ -979,3 +979,124 @@ fn save_composable_node_service_status(
 
     Ok(())
 }
+
+// ============================================================================
+// Event-Driven Process Spawning (Phase 3)
+// ============================================================================
+
+/// Spawn a single node process using event-driven architecture.
+///
+/// This function:
+/// 1. Spawns the process
+/// 2. Registers with ProcessMonitor (which handles child.wait())
+/// 3. Publishes ProcessStarted event
+/// 4. Returns immediately
+///
+/// # Arguments
+/// * `context` - Node context with execution details
+/// * `process_monitor` - Process monitor for lifecycle management
+/// * `event_bus` - Event bus for publishing state changes
+/// * `process_registry` - Optional registry for monitoring
+/// * `pgid` - Process group ID
+///
+/// # Returns
+/// PID of spawned process on success
+pub async fn spawn_node_event_driven(
+    context: &NodeContext,
+    process_monitor: &crate::process_monitor::ProcessMonitor,
+    event_bus: &crate::events::EventBus,
+    process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
+    pgid: Option<i32>,
+) -> eyre::Result<u32> {
+    // Prepare execution context
+    let exec = context
+        .to_exec_context(pgid)
+        .wrap_err("Failed to prepare execution context")?;
+
+    let ExecutionContext {
+        log_name,
+        output_dir,
+        mut command,
+    } = exec;
+
+    info!("Spawning {}", log_name);
+
+    // Spawn the process
+    let child = command
+        .spawn()
+        .wrap_err_with(|| format!("Failed to spawn {}", log_name))?;
+
+    let pid = child
+        .id()
+        .ok_or_else(|| eyre::eyre!("Failed to get PID for {}", log_name))?;
+
+    // Register with process monitor (takes ownership of child)
+    let registered_pid = process_monitor
+        .register_process(log_name.clone(), child)
+        .await
+        .wrap_err_with(|| format!("Failed to register {} with process monitor", log_name))?;
+
+    debug_assert_eq!(pid, registered_pid, "PID mismatch during registration");
+
+    // Register PID for resource monitoring
+    if let Some(ref registry) = process_registry {
+        if let Ok(mut reg) = registry.lock() {
+            reg.insert(pid, output_dir.clone());
+            debug!(
+                "=== REGISTERED PID {} for node {} (total in registry: {}) ===",
+                pid,
+                log_name,
+                reg.len()
+            );
+        }
+        // Initialize CSV file with headers immediately
+        if let Err(e) = crate::resource_monitor::initialize_metrics_csv(&output_dir) {
+            warn!("Failed to initialize metrics CSV for {}: {}", log_name, e);
+        }
+    }
+
+    // Publish ProcessStarted event
+    event_bus
+        .publish(crate::events::MemberEvent::ProcessStarted {
+            name: log_name.clone(),
+            pid,
+        })
+        .wrap_err_with(|| format!("Failed to publish ProcessStarted event for {}", log_name))?;
+
+    info!("{} started with PID {}", log_name, pid);
+
+    Ok(pid)
+}
+
+/// Spawn multiple nodes using event-driven architecture.
+///
+/// Returns immediately after spawning all processes. ProcessMonitor handles waiting.
+pub async fn spawn_nodes_event_driven(
+    node_contexts: Vec<NodeContext>,
+    process_monitor: &crate::process_monitor::ProcessMonitor,
+    event_bus: &crate::events::EventBus,
+    process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
+    pgid: Option<i32>,
+) -> eyre::Result<Vec<u32>> {
+    let mut pids = Vec::new();
+
+    for context in node_contexts {
+        match spawn_node_event_driven(
+            &context,
+            process_monitor,
+            event_bus,
+            process_registry.clone(),
+            pgid,
+        )
+        .await
+        {
+            Ok(pid) => pids.push(pid),
+            Err(e) => {
+                error!("Failed to spawn node: {}", e);
+                // Continue with other nodes
+            }
+        }
+    }
+
+    Ok(pids)
+}

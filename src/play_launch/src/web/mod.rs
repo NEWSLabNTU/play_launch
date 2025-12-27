@@ -2,7 +2,7 @@
 //!
 //! Provides a web interface for monitoring and controlling ROS nodes.
 
-use crate::node_registry::SharedNodeRegistry;
+use crate::{events::EventBus, member_registry::MemberRegistry};
 use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -23,30 +23,30 @@ mod sse;
 #[folder = "src/web/assets/"]
 struct Assets;
 
-/// Shared state for the web server
+/// Shared state for the web server (event-driven architecture)
 pub struct WebState {
-    /// Node registry for querying and controlling nodes
-    pub registry: SharedNodeRegistry,
+    /// Member registry for querying node state
+    pub registry: Arc<TokioMutex<MemberRegistry>>,
+    /// Event bus for publishing control commands
+    pub event_bus: EventBus,
     /// Base log directory (used for log file access)
     #[allow(dead_code)]
     pub log_dir: PathBuf,
-    /// Component loader for loading composable nodes (optional)
-    pub component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
     /// Track nodes currently being operated on (to prevent racing conditions)
     pub operations_in_progress: TokioMutex<HashSet<String>>,
 }
 
 impl WebState {
-    /// Create a new WebState
+    /// Create a new WebState with event-driven architecture
     pub fn new(
-        registry: SharedNodeRegistry,
+        registry: Arc<TokioMutex<MemberRegistry>>,
+        event_bus: EventBus,
         log_dir: PathBuf,
-        component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
     ) -> Self {
         Self {
             registry,
+            event_bus,
             log_dir,
-            component_loader,
             operations_in_progress: TokioMutex::new(HashSet::new()),
         }
     }
@@ -102,10 +102,10 @@ pub fn create_router(state: Arc<WebState>) -> Router {
         .route("/api/nodes/:name/start", post(handlers::start_node))
         .route("/api/nodes/:name/stop", post(handlers::stop_node))
         .route("/api/nodes/:name/restart", post(handlers::restart_node))
-        .route("/api/nodes/:name/respawn/:enabled", post(handlers::toggle_respawn))
-        .route("/api/nodes/all/start", post(handlers::start_all))
-        .route("/api/nodes/all/stop", post(handlers::stop_all))
-        .route("/api/nodes/all/restart", post(handlers::restart_all))
+        .route(
+            "/api/nodes/:name/respawn/:enabled",
+            post(handlers::toggle_respawn),
+        )
         .route("/api/health", get(handlers::health_summary))
         // SSE endpoints for log streaming
         .route("/api/nodes/:name/logs/stdout", get(sse::stream_stdout))

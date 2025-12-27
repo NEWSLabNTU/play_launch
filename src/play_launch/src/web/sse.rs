@@ -45,15 +45,23 @@ pub async fn stream_stderr(
 
 /// Stream a log file as SSE
 async fn stream_log_file(state: Arc<WebState>, node_name: &str, file_name: &str) -> Response {
+    use crate::member::Member;
+
     // Get the log file path from the registry
     let log_path = {
         let registry = state.registry.lock().await;
         match registry.get(node_name) {
-            Some(handle) => {
+            Some(member) => {
+                let log_paths = match member {
+                    Member::Node(node) => &node.log_paths,
+                    Member::Container(container) => &container.log_paths,
+                    Member::ComposableNode(composable) => &composable.log_paths,
+                };
+
                 if file_name == "out" {
-                    handle.log_paths.stdout.clone()
+                    log_paths.stdout.clone()
                 } else {
-                    handle.log_paths.stderr.clone()
+                    log_paths.stderr.clone()
                 }
             }
             None => {

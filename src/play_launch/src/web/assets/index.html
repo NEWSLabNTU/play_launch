@@ -34,6 +34,14 @@
             --pending-border: #664d03;
             --pending-text: #664d03;
 
+            --loading-bg: #cfe2ff;
+            --loading-border: #0a58ca;
+            --loading-text: #084298;
+
+            --blocked-bg: #d3d3d4;
+            --blocked-border: #6c757d;
+            --blocked-text: #495057;
+
             --btn-primary: #0d6efd;
             --btn-success: #198754;
             --btn-danger: #dc3545;
@@ -65,6 +73,14 @@
             --pending-bg: #3d3319;
             --pending-border: #fbbf24;
             --pending-text: #fde047;
+
+            --loading-bg: #1e3a5f;
+            --loading-border: #60a5fa;
+            --loading-text: #93c5fd;
+
+            --blocked-bg: #3a3d45;
+            --blocked-border: #9ca3af;
+            --blocked-text: #d1d5db;
 
             --btn-primary: #3b82f6;
             --btn-success: #22c55e;
@@ -348,6 +364,16 @@
         .node-card.status-pending {
             background: var(--pending-bg);
             border-left-color: var(--pending-border);
+        }
+
+        .node-card.status-loading {
+            background: var(--loading-bg);
+            border-left-color: var(--loading-border);
+        }
+
+        .node-card.status-blocked {
+            background: var(--blocked-bg);
+            border-left-color: var(--blocked-border);
         }
 
         /* Stderr activity icon */

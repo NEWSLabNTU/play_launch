@@ -4,16 +4,21 @@ mod config;
 mod container_readiness;
 mod context;
 mod dump_launcher;
+mod event_processor;
+mod events;
 mod execution;
 mod io_helper_client;
 mod launch_dump;
+mod member;
+mod member_registry;
 mod node_cmdline;
-mod node_registry;
 mod options;
 mod plot_launcher;
+mod process_monitor;
 mod python_bridge;
 mod resource_monitor;
 mod web;
+mod web_types;
 
 use crate::{
     config::load_runtime_config,
@@ -22,13 +27,17 @@ use crate::{
         prepare_composable_node_contexts, prepare_node_contexts, ComposableNodeContextSet,
         NodeContextClasses,
     },
+    event_processor::EventProcessor,
+    events::EventBus,
     execution::{
-        spawn_nodes, spawn_or_load_composable_nodes, ComposableNodeExecutionConfig,
-        ComposableNodeTasks, SpawnComposableNodeConfig,
+        spawn_nodes, spawn_nodes_event_driven, spawn_or_load_composable_nodes,
+        ComposableNodeExecutionConfig, ComposableNodeTasks, SpawnComposableNodeConfig,
     },
     launch_dump::{load_launch_dump, NodeContainerRecord},
-    node_registry::{create_shared_registry, populate_registry_from_contexts, SharedNodeRegistry},
+    member::{ComposableNode, ComposableState, Container, NodeLogPaths, ProcessState, RegularNode},
+    member_registry::MemberRegistry,
     options::Options,
+    process_monitor::ProcessMonitor,
     resource_monitor::{spawn_monitor_thread, MonitorConfig},
 };
 use clap::Parser;
@@ -980,33 +989,6 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
         load_node_contexts.len()
     );
 
-    // Create node registry for web UI (if enabled)
-    let node_registry: Option<SharedNodeRegistry> = if common.web_ui {
-        debug!("Creating node registry for web UI...");
-        let registry = create_shared_registry(log_dir.clone());
-
-        // Populate registry from contexts
-        populate_registry_from_contexts(
-            &registry,
-            &container_contexts,
-            &pure_node_contexts,
-            &load_node_contexts,
-        );
-
-        // Set pgid for node control operations
-        if let Ok(mut reg) = registry.try_lock() {
-            reg.set_pgid(pgid);
-        }
-
-        info!(
-            "Node registry created with {} nodes",
-            registry.try_lock().map(|r| r.len()).unwrap_or(0)
-        );
-        Some(registry)
-    } else {
-        None
-    };
-
     // Create shutdown signal for graceful termination (shared with web server and respawn)
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutdown_signal = shutdown_rx;
@@ -1024,12 +1006,116 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
         }
     };
 
-    // Start web server if enabled
-    if let Some(ref registry) = node_registry {
-        let web_state = std::sync::Arc::new(web::WebState::new(
-            registry.clone(),
+    // Create event-driven infrastructure for web UI (if enabled)
+    let event_driven_state: Option<(
+        Arc<tokio::sync::Mutex<MemberRegistry>>,
+        EventBus,
+        Arc<ProcessMonitor>,
+    )> = if common.web_ui {
+        debug!("Setting up event-driven architecture for web UI...");
+
+        // Create EventBus (returns bus + receiver)
+        let (event_bus, event_rx) = EventBus::new();
+
+        // Create ProcessMonitor
+        let process_monitor = Arc::new(ProcessMonitor::new(
+            event_bus.clone(),
+            shutdown_signal.clone(),
+        ));
+
+        // Create MemberRegistry
+        let member_registry = Arc::new(tokio::sync::Mutex::new(MemberRegistry::new(
             log_dir.clone(),
-            component_loader.clone(),
+        )));
+
+        // Populate registry with members from contexts
+        {
+            let mut reg = member_registry.blocking_lock();
+
+            // Register containers
+            for context in &container_contexts {
+                let container = Container {
+                    name: context
+                        .node_context
+                        .record
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| context.node_container_name.clone()),
+                    record: context.node_context.record.clone(),
+                    cmdline: context.node_context.cmdline.clone(),
+                    output_dir: context.node_context.output_dir.clone(),
+                    log_paths: NodeLogPaths::from_output_dir(&context.node_context.output_dir),
+                    composable_nodes: Vec::new(), // Will be populated when composable nodes are loaded
+                    state: ProcessState::Pending,
+                    respawn_enabled: context.node_context.record.respawn.unwrap_or(false),
+                    respawn_delay: context.node_context.record.respawn_delay.unwrap_or(0.0),
+                };
+                reg.register_container(container);
+            }
+
+            // Register regular nodes
+            for context in &pure_node_contexts {
+                let node = RegularNode {
+                    name: context
+                        .record
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| "unnamed_node".to_string()),
+                    record: context.record.clone(),
+                    cmdline: context.cmdline.clone(),
+                    output_dir: context.output_dir.clone(),
+                    log_paths: NodeLogPaths::from_output_dir(&context.output_dir),
+                    state: ProcessState::Pending,
+                    respawn_enabled: context.record.respawn.unwrap_or(false),
+                    respawn_delay: context.record.respawn_delay.unwrap_or(0.0),
+                };
+                reg.register_node(node);
+            }
+
+            // Register composable nodes
+            for context in &load_node_contexts {
+                let composable = ComposableNode {
+                    name: context.record.node_name.clone(),
+                    record: context.record.clone(),
+                    output_dir: context.output_dir.clone(),
+                    log_paths: NodeLogPaths::from_output_dir(&context.output_dir),
+                    container_name: context.record.target_container_name.clone(),
+                    state: ComposableState::Unloaded,
+                };
+                reg.register_composable_node(composable);
+            }
+
+            info!("Member registry created with {} members", reg.len());
+        }
+
+        // Start EventProcessor in background
+        let event_processor = EventProcessor::new(
+            member_registry.clone(),
+            event_rx,
+            event_bus.clone(),
+            process_monitor.clone(),
+            shutdown_tx.clone(),
+            shutdown_signal.clone(),
+            Some(process_registry.clone()),
+            Some(pgid),
+        );
+
+        tokio::spawn(async move {
+            event_processor.run().await;
+            debug!("EventProcessor shut down");
+        });
+
+        Some((member_registry, event_bus, process_monitor))
+    } else {
+        None
+    };
+
+    // Start web server if event-driven state is available
+    if let Some((ref member_registry, ref event_bus, _)) = event_driven_state {
+        let web_state = std::sync::Arc::new(web::WebState::new(
+            member_registry.clone(),
+            event_bus.clone(),
+            log_dir.clone(),
         ));
         let addr = common.web_ui_addr.clone();
         let port = common.web_ui_port;
@@ -1042,6 +1128,63 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
             }
         });
     }
+
+    //  Branch: Event-driven vs traditional execution
+    if let Some((_member_registry, event_bus, process_monitor)) = event_driven_state {
+        // === EVENT-DRIVEN EXECUTION PATH ===
+        info!("Using event-driven architecture");
+
+        // Spawn non-container nodes using event-driven spawn
+        info!(
+            "Spawning {} non-container nodes...",
+            pure_node_contexts.len()
+        );
+        match spawn_nodes_event_driven(
+            pure_node_contexts,
+            &process_monitor,
+            &event_bus,
+            Some(process_registry.clone()),
+            Some(pgid),
+        )
+        .await
+        {
+            Ok(pids) => {
+                info!(
+                    "Spawned {} non-container nodes with PIDs: {:?}",
+                    pids.len(),
+                    pids
+                );
+            }
+            Err(e) => {
+                error!("Failed to spawn non-container nodes: {}", e);
+            }
+        }
+
+        // TODO: Spawn containers and composable nodes using event-driven spawn
+        warn!("Container and composable node spawning not yet implemented in event-driven mode");
+        warn!("Only non-container nodes will be started");
+
+        // In event-driven mode, ProcessMonitor handles waiting for processes
+        // We just need to wait for shutdown signal
+        info!("Event-driven execution active. Waiting for shutdown signal...");
+        let mut shutdown_watch = shutdown_signal.clone();
+        loop {
+            if *shutdown_watch.borrow() {
+                info!("Shutdown signal received");
+                break;
+            }
+            if shutdown_watch.changed().await.is_err() {
+                info!("Shutdown channel closed");
+                break;
+            }
+        }
+
+        info!("Event-driven execution complete");
+        return Ok(());
+    }
+
+    // === TRADITIONAL EXECUTION PATH ===
+    info!("Using traditional execution (no event-driven architecture)");
 
     // Spawn non-container nodes
     info!("Spawning non-container nodes...");
