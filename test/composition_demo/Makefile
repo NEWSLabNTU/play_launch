@@ -22,7 +22,7 @@ test-record:
 	@echo "📝 Recording composition demo..."
 	@. /opt/ros/humble/setup.bash && \
 	. ../../install/setup.bash && \
-	ros2 run dump_launch dump_launch composition composition_demo.launch.py
+	play_launch dump launch composition composition_demo.launch.py
 	@echo "✅ Recording complete: record.json created"
 	@echo ""
 
@@ -30,7 +30,7 @@ test-replay:
 	@echo "▶️  Replaying with service-based component loading..."
 	@. /opt/ros/humble/setup.bash && \
 	. ../../install/setup.bash && \
-	timeout 5 ros2 run play_launch play_launch || true
+	timeout 5 play_launch replay || true
 	@echo "✅ Replay complete (timed out after 5s as expected)"
 	@echo ""
 
@@ -40,9 +40,8 @@ test-replay-standalone:
 	@cp record.json record_standalone.json
 	@. /opt/ros/humble/setup.bash && \
 	. ../../install/setup.bash && \
-	timeout 5 ros2 run play_launch play_launch \
-		--input-file record_standalone.json \
-		--log-dir play_log_standalone \
+	timeout 5 play_launch replay \
+		--config record_standalone.json \
 		--standalone-composable-nodes || true
 	@echo "✅ Standalone replay complete"
 	@echo ""

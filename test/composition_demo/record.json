@@ -9,6 +9,7 @@
     "lifecycle_node": [],
     "load_node": [
         {
+            "env": null,
             "extra_args": {},
             "log_level": null,
             "namespace": "",
@@ -20,6 +21,7 @@
             "target_container_name": "/my_container"
         },
         {
+            "env": null,
             "extra_args": {},
             "log_level": null,
             "namespace": "",
@@ -42,14 +44,18 @@
                 "-r",
                 "__ns:=/"
             ],
+            "env": null,
             "exec_name": "component_container-1",
             "executable": "component_container",
+            "global_params": null,
             "name": "my_container",
             "namespace": "/",
             "package": "rclcpp_components",
             "params": [],
             "params_files": [],
             "remaps": [],
+            "respawn": false,
+            "respawn_delay": null,
             "ros_args": null
         }
     ]
