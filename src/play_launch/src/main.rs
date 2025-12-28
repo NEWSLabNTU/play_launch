@@ -470,19 +470,141 @@ async fn run_direct(
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutdown_signal = shutdown_rx;
 
-    info!("Spawning node...");
-    let node_tasks = spawn_nodes(
-        pure_node_contexts,
-        Some(process_registry.clone()),
-        shutdown_signal.clone(),
-        common.disable_respawn,
-        Some(pgid),
-    )
-    .into_iter()
-    .map(|future| future.boxed());
+    // Create event-driven infrastructure for web UI (if enabled)
+    let event_driven_state: Option<(
+        Arc<tokio::sync::Mutex<MemberRegistry>>,
+        EventBus,
+        Arc<ProcessMonitor>,
+    )> = if common.web_ui {
+        debug!("Setting up event-driven architecture for web UI...");
 
-    let mut wait_futures: Vec<_> = node_tasks.collect();
-    info!("Collected {} futures to wait on", wait_futures.len());
+        // Create EventBus (returns bus + receiver)
+        let (event_bus, event_rx) = EventBus::new();
+
+        // Create ProcessMonitor
+        let process_monitor = Arc::new(ProcessMonitor::new(
+            event_bus.clone(),
+            shutdown_signal.clone(),
+        ));
+
+        // Create MemberRegistry
+        let member_registry = Arc::new(tokio::sync::Mutex::new(MemberRegistry::new(
+            log_dir.clone(),
+        )));
+
+        // Populate registry with members from contexts
+        {
+            let mut reg = member_registry.lock().await;
+
+            // Register regular nodes
+            for context in &pure_node_contexts {
+                let node = RegularNode {
+                    name: context
+                        .record
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| "unnamed_node".to_string()),
+                    record: context.record.clone(),
+                    cmdline: context.cmdline.clone(),
+                    output_dir: context.output_dir.clone(),
+                    log_paths: NodeLogPaths::from_output_dir(&context.output_dir),
+                    state: ProcessState::Pending,
+                    respawn_enabled: context.record.respawn.unwrap_or(false),
+                    respawn_delay: context.record.respawn_delay.unwrap_or(0.0),
+                };
+                reg.register_node(node);
+            }
+
+            info!("Member registry created with {} members", reg.len());
+        }
+
+        // Start EventProcessor in background
+        let event_processor = EventProcessor::new(
+            member_registry.clone(),
+            event_rx,
+            event_bus.clone(),
+            process_monitor.clone(),
+            shutdown_tx.clone(),
+            shutdown_signal.clone(),
+            Some(process_registry.clone()),
+            Some(pgid),
+        );
+
+        tokio::spawn(async move {
+            event_processor.run().await;
+            debug!("EventProcessor shut down");
+        });
+
+        Some((member_registry, event_bus, process_monitor))
+    } else {
+        None
+    };
+
+    // Start web server if event-driven state is available
+    if let Some((ref member_registry, ref event_bus, _)) = event_driven_state {
+        let web_state = std::sync::Arc::new(web::WebState::new(
+            member_registry.clone(),
+            event_bus.clone(),
+            log_dir.clone(),
+        ));
+        let addr = common.web_ui_addr.clone();
+        let port = common.web_ui_port;
+        let web_shutdown = shutdown_signal.clone();
+
+        // Spawn web server as a background task
+        tokio::spawn(async move {
+            if let Err(e) = web::run_server(web_state, &addr, port, web_shutdown).await {
+                error!("Web server error: {}", e);
+            }
+        });
+    }
+
+    info!("Spawning node...");
+
+    // Choose execution path based on web UI mode
+    let node_tasks = if let Some((_member_registry, event_bus, process_monitor)) = event_driven_state {
+        // EVENT-DRIVEN EXECUTION (web UI enabled)
+        info!("Using event-driven architecture for web UI");
+        match spawn_nodes_event_driven(
+            pure_node_contexts,
+            &process_monitor,
+            &event_bus,
+            Some(process_registry.clone()),
+            Some(pgid),
+        )
+        .await
+        {
+            Ok(_pids) => {
+                // Event-driven path doesn't return futures; ProcessMonitor owns all processes
+                // We just need to wait forever (until signal)
+                vec![]
+            }
+            Err(e) => {
+                error!("Failed to spawn nodes in event-driven mode: {}", e);
+                return Err(e);
+            }
+        }
+    } else {
+        // TRADITIONAL EXECUTION (web UI disabled)
+        info!("Using traditional execution (no web UI)");
+        spawn_nodes(
+            pure_node_contexts,
+            Some(process_registry.clone()),
+            shutdown_signal.clone(),
+            common.disable_respawn,
+            Some(pgid),
+        )
+        .into_iter()
+        .map(|future| future.boxed())
+        .collect()
+    };
+
+    let mut wait_futures: Vec<_> = node_tasks;
+    if wait_futures.is_empty() {
+        info!("Event-driven mode: waiting for signals (no futures to await)");
+    } else {
+        info!("Collected {} futures to wait on", wait_futures.len());
+    }
 
     // Wait for node to complete or receive signal
     // Progressive shutdown: 1st Ctrl-C sends SIGTERM, 2nd sends SIGTERM again, 3rd sends SIGKILL
@@ -1027,7 +1149,7 @@ async fn play(
 
         // Populate registry with members from contexts
         {
-            let mut reg = member_registry.blocking_lock();
+            let mut reg = member_registry.lock().await;
 
             // Register containers
             for context in &container_contexts {
