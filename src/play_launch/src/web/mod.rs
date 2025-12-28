@@ -2,7 +2,7 @@
 //!
 //! Provides a web interface for monitoring and controlling ROS nodes.
 
-use crate::{events::EventBus, member_registry::MemberRegistry};
+use crate::event_driven::{events::EventBus, member_registry::MemberRegistry};
 use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -17,6 +17,7 @@ use tracing::{info, warn};
 
 mod handlers;
 mod sse;
+pub mod web_types;
 
 /// Embedded static assets for the web UI
 #[derive(Embed)]

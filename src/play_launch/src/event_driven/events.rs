@@ -8,7 +8,7 @@
 //! - Event bus uses unbounded channels (events must never be dropped)
 //! - Events enable reactive patterns and provide audit trail
 
-use crate::member::BlockReason;
+use super::member::BlockReason;
 use eyre::Result;
 use tokio::sync::mpsc;
 

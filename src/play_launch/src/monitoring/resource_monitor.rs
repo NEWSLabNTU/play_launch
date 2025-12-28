@@ -179,7 +179,7 @@ pub struct ResourceMonitor {
     previous_system_sample: Option<PreviousSystemSample>, // Previous system sample for rate calculation
 
     // I/O helper daemon for reading /proc/[pid]/io with CAP_SYS_PTRACE
-    io_helper: Option<crate::io_helper_client::IoHelperClient>,
+    io_helper: Option<super::io_helper_client::IoHelperClient>,
     tokio_runtime: Option<tokio::runtime::Runtime>, // Runtime for async helper calls
     io_helper_unavailable: bool,                    // Track if helper failed to spawn (warn once)
     io_stats_cache: std::collections::HashMap<u32, play_launch::ipc::ProcIoStats>, // Cache for batch I/O reads
@@ -285,7 +285,7 @@ impl ResourceMonitor {
         // Try to spawn I/O helper daemon (non-fatal if unavailable)
         let (io_helper, tokio_runtime, io_helper_unavailable) = match tokio::runtime::Runtime::new()
         {
-            Ok(rt) => match rt.block_on(crate::io_helper_client::IoHelperClient::spawn()) {
+            Ok(rt) => match rt.block_on(super::io_helper_client::IoHelperClient::spawn()) {
                 Ok(client) => {
                     debug!("I/O helper spawned successfully");
                     (Some(client), Some(rt), false)

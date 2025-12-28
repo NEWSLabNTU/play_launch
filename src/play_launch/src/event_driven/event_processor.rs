@@ -7,7 +7,7 @@
 //! # Status
 //! Phase 2 implementation - event handlers now perform actual state changes
 
-use crate::{
+use super::{
     events::{EventBus, MemberEvent},
     member::{BlockReason, Member},
     member_registry::MemberRegistry,
@@ -404,7 +404,7 @@ impl EventProcessor {
     async fn handle_blocked(
         &mut self,
         name: &str,
-        reason: crate::member::BlockReason,
+        reason: super::member::BlockReason,
     ) -> Result<()> {
         info!("Composable node {} blocked: {:?}", name, reason);
         // State already updated in handle_process_exited
@@ -581,14 +581,14 @@ impl EventProcessor {
         let respawn_config = {
             let registry = self.registry.lock().await;
             match registry.get(name) {
-                Some(crate::member::Member::Node(node)) => {
+                Some(super::member::Member::Node(node)) => {
                     if node.respawn_enabled {
                         Some((node.respawn_delay, node.name.clone()))
                     } else {
                         None
                     }
                 }
-                Some(crate::member::Member::Container(container)) => {
+                Some(super::member::Member::Container(container)) => {
                     if container.respawn_enabled {
                         Some((container.respawn_delay, container.name.clone()))
                     } else {
@@ -610,7 +610,7 @@ impl EventProcessor {
                 tokio::select! {
                     _ = tokio::time::sleep(std::time::Duration::from_secs_f64(delay_secs)) => {
                         // Delay complete, request start
-                        if let Err(e) = event_bus.publish(crate::events::MemberEvent::StartRequested {
+                        if let Err(e) = event_bus.publish(super::events::MemberEvent::StartRequested {
                             name: member_name.clone(),
                         }) {
                             error!("Failed to publish StartRequested for {}: {}", member_name, e);
@@ -636,17 +636,17 @@ impl EventProcessor {
         let context = {
             let registry = self.registry.lock().await;
             match registry.get(name) {
-                Some(crate::member::Member::Node(node)) => {
+                Some(super::member::Member::Node(node)) => {
                     // Construct NodeContext from stored data
-                    crate::context::NodeContext {
+                    crate::execution::context::NodeContext {
                         record: node.record.clone(),
                         cmdline: node.cmdline.clone(),
                         output_dir: node.output_dir.clone(),
                     }
                 }
-                Some(crate::member::Member::Container(container)) => {
+                Some(super::member::Member::Container(container)) => {
                     // Construct NodeContext for container
-                    crate::context::NodeContext {
+                    crate::execution::context::NodeContext {
                         record: container.record.clone(),
                         cmdline: container.cmdline.clone(),
                         output_dir: container.output_dir.clone(),
@@ -662,7 +662,7 @@ impl EventProcessor {
         };
 
         // Spawn using the event-driven spawn function
-        crate::execution::spawn_node_event_driven(
+        crate::execution::spawn::spawn_node_event_driven(
             &context,
             &self.process_monitor,
             &self.event_bus,
@@ -679,10 +679,12 @@ impl EventProcessor {
 mod tests {
     use super::*;
     use crate::{
-        launch_dump::NodeRecord,
-        member::{Container, ProcessState, RegularNode},
-        node_cmdline::NodeCommandLine,
-        web_types::NodeLogPaths,
+        event_driven::member::{
+            ComposableNode, ComposableState, Container, ProcessState, RegularNode,
+        },
+        execution::node_cmdline::NodeCommandLine,
+        ros::launch_dump::NodeRecord,
+        web::web_types::NodeLogPaths,
     };
     use std::{collections::HashMap, path::PathBuf};
     use tokio::sync::watch;
@@ -888,10 +890,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_container_exit_blocks_composable_nodes() {
-        use crate::{
-            launch_dump::ComposableNodeRecord,
-            member::{ComposableNode, ComposableState},
-        };
+        use crate::ros::launch_dump::ComposableNodeRecord;
 
         let (event_bus, event_rx) = EventBus::new();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);

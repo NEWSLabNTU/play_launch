@@ -1,4 +1,4 @@
-use crate::launch_dump::NodeRecord;
+use crate::ros::launch_dump::NodeRecord;
 use eyre::{bail, Context};
 use itertools::{chain, Itertools};
 use serde::{Deserialize, Serialize};
@@ -52,8 +52,8 @@ impl NodeCommandLine {
         };
 
         // Find the executable directly using ament index instead of ros2 run CLI
-        let exe_path =
-            crate::ament_index::find_executable(package, executable).wrap_err_with(|| {
+        let exe_path = crate::ros::ament_index::find_executable(package, executable)
+            .wrap_err_with(|| {
                 format!(
                     "Failed to find executable '{}' in package '{}'",
                     executable, package

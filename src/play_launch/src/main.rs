@@ -1,44 +1,37 @@
-mod ament_index;
-mod component_loader;
-mod config;
-mod container_readiness;
-mod context;
-mod dump_launcher;
-mod event_processor;
-mod events;
+mod cli;
+mod event_driven;
 mod execution;
-mod io_helper_client;
-mod launch_dump;
-mod member;
-mod member_registry;
-mod node_cmdline;
-mod options;
-mod plot_launcher;
-mod process_monitor;
-mod python_bridge;
-mod resource_monitor;
+mod monitoring;
+mod python;
+mod ros;
 mod web;
-mod web_types;
 
 use crate::{
-    config::load_runtime_config,
-    container_readiness::ServiceDiscoveryHandle,
-    context::{
-        prepare_composable_node_contexts, prepare_node_contexts, ComposableNodeContextSet,
-        NodeContextClasses,
+    cli::{config::load_runtime_config, options::Options},
+    event_driven::{
+        event_processor::EventProcessor,
+        events::EventBus,
+        member::{
+            ComposableNode, ComposableState, Container, NodeLogPaths, ProcessState, RegularNode,
+        },
+        member_registry::MemberRegistry,
+        process_monitor::ProcessMonitor,
     },
-    event_processor::EventProcessor,
-    events::EventBus,
     execution::{
-        spawn_nodes, spawn_nodes_event_driven, spawn_or_load_composable_nodes,
-        ComposableNodeExecutionConfig, ComposableNodeTasks, SpawnComposableNodeConfig,
+        context::{
+            prepare_composable_node_contexts, prepare_node_contexts, ComposableNodeContextSet,
+            NodeContextClasses,
+        },
+        spawn::{
+            spawn_nodes, spawn_nodes_event_driven, spawn_or_load_composable_nodes,
+            ComposableNodeExecutionConfig, ComposableNodeTasks, SpawnComposableNodeConfig,
+        },
     },
-    launch_dump::{load_launch_dump, NodeContainerRecord},
-    member::{ComposableNode, ComposableState, Container, NodeLogPaths, ProcessState, RegularNode},
-    member_registry::MemberRegistry,
-    options::Options,
-    process_monitor::ProcessMonitor,
-    resource_monitor::{spawn_monitor_thread, MonitorConfig},
+    monitoring::resource_monitor::{spawn_monitor_thread, MonitorConfig},
+    ros::{
+        container_readiness::ServiceDiscoveryHandle,
+        launch_dump::{load_launch_dump, NodeContainerRecord},
+    },
 };
 use clap::Parser;
 use eyre::Context;
@@ -196,13 +189,13 @@ fn kill_all_descendants() {
 /// Extract verbose flag from command options
 fn get_verbose_flag(opts: &Options) -> bool {
     match &opts.command {
-        options::Command::Launch(args) => args.common.verbose,
-        options::Command::Run(args) => args.common.verbose,
-        options::Command::Dump(_) => false, // Dump doesn't use CommonOptions
-        options::Command::Replay(args) => args.common.verbose,
-        options::Command::Plot(_) => false, // Plot doesn't use CommonOptions
-        options::Command::SetcapIoHelper => false,
-        options::Command::VerifyIoHelper => false,
+        cli::options::Command::Launch(args) => args.common.verbose,
+        cli::options::Command::Run(args) => args.common.verbose,
+        cli::options::Command::Dump(_) => false, // Dump doesn't use CommonOptions
+        cli::options::Command::Replay(args) => args.common.verbose,
+        cli::options::Command::Plot(_) => false, // Plot doesn't use CommonOptions
+        cli::options::Command::SetcapIoHelper => false,
+        cli::options::Command::VerifyIoHelper => false,
     }
 }
 
@@ -240,25 +233,25 @@ fn main() -> eyre::Result<()> {
 
     // Route to appropriate handler based on subcommand
     match &opts.command {
-        options::Command::Launch(args) => {
+        cli::options::Command::Launch(args) => {
             handle_launch(args)?;
         }
-        options::Command::Run(args) => {
+        cli::options::Command::Run(args) => {
             handle_run(args)?;
         }
-        options::Command::Dump(args) => {
+        cli::options::Command::Dump(args) => {
             handle_dump(args)?;
         }
-        options::Command::Replay(args) => {
+        cli::options::Command::Replay(args) => {
             handle_replay(args)?;
         }
-        options::Command::Plot(args) => {
+        cli::options::Command::Plot(args) => {
             handle_plot(args)?;
         }
-        options::Command::SetcapIoHelper => {
+        cli::options::Command::SetcapIoHelper => {
             handle_setcap_io_helper()?;
         }
-        options::Command::VerifyIoHelper => {
+        cli::options::Command::VerifyIoHelper => {
             handle_verify_io_helper()?;
         }
     }
@@ -267,8 +260,8 @@ fn main() -> eyre::Result<()> {
 }
 
 /// Handle the 'launch' subcommand (dump + replay)
-fn handle_launch(args: &options::LaunchArgs) -> eyre::Result<()> {
-    use crate::dump_launcher::DumpLauncher;
+fn handle_launch(args: &cli::options::LaunchArgs) -> eyre::Result<()> {
+    use crate::python::dump_launcher::DumpLauncher;
     use tokio::runtime::Runtime;
 
     info!("Step 1/2: Recording launch execution...");
@@ -299,7 +292,7 @@ fn handle_launch(args: &options::LaunchArgs) -> eyre::Result<()> {
     info!("Step 2/2: Replaying launch execution...");
 
     // Create replay args and call handle_replay
-    let replay_args = options::ReplayArgs {
+    let replay_args = cli::options::ReplayArgs {
         input_file: PathBuf::from("record.json"),
         common: args.common.clone(),
     };
@@ -310,8 +303,8 @@ fn handle_launch(args: &options::LaunchArgs) -> eyre::Result<()> {
 }
 
 /// Handle the 'run' subcommand (direct node execution)
-fn handle_run(args: &options::RunArgs) -> eyre::Result<()> {
-    use crate::launch_dump::{LaunchDump, NodeRecord};
+fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
+    use crate::ros::launch_dump::{LaunchDump, NodeRecord};
     use tokio::runtime::Runtime;
 
     info!("Running single node: {} {}", args.package, args.executable);
@@ -383,8 +376,8 @@ fn handle_run(args: &options::RunArgs) -> eyre::Result<()> {
 
 /// Run a launch dump directly without file I/O
 async fn run_direct(
-    launch_dump: &launch_dump::LaunchDump,
-    common: &options::CommonOptions,
+    launch_dump: &ros::launch_dump::LaunchDump,
+    common: &cli::options::CommonOptions,
     pgid: i32,
 ) -> eyre::Result<()> {
     info!("=== Starting direct node execution ===");
@@ -596,8 +589,8 @@ async fn run_direct(
 }
 
 /// Handle the 'dump' subcommand (dump only, no replay)
-fn handle_dump(args: &options::DumpArgs) -> eyre::Result<()> {
-    use crate::dump_launcher::DumpLauncher;
+fn handle_dump(args: &cli::options::DumpArgs) -> eyre::Result<()> {
+    use crate::python::dump_launcher::DumpLauncher;
     use tokio::runtime::Runtime;
 
     info!("Recording launch execution (dump only, no replay)...");
@@ -611,7 +604,7 @@ fn handle_dump(args: &options::DumpArgs) -> eyre::Result<()> {
             .wrap_err("Failed to initialize dump_launch. Ensure ROS workspace is sourced.")?;
 
         match &args.subcommand {
-            options::DumpSubcommand::Launch(launch_args) => {
+            cli::options::DumpSubcommand::Launch(launch_args) => {
                 launcher
                     .dump_launch(
                         &launch_args.package_or_path,
@@ -621,7 +614,7 @@ fn handle_dump(args: &options::DumpArgs) -> eyre::Result<()> {
                     )
                     .await?;
             }
-            options::DumpSubcommand::Run(run_args) => {
+            cli::options::DumpSubcommand::Run(run_args) => {
                 launcher
                     .dump_run(
                         &run_args.package,
@@ -646,8 +639,8 @@ fn handle_dump(args: &options::DumpArgs) -> eyre::Result<()> {
 }
 
 /// Handle the 'plot' subcommand
-fn handle_plot(args: &options::PlotArgs) -> eyre::Result<()> {
-    use crate::plot_launcher::PlotLauncher;
+fn handle_plot(args: &cli::options::PlotArgs) -> eyre::Result<()> {
+    use crate::python::plot_launcher::PlotLauncher;
     use tokio::runtime::Runtime;
 
     info!("Generating resource usage plots...");
@@ -771,11 +764,11 @@ fn handle_verify_io_helper() -> eyre::Result<()> {
 }
 
 /// Handle the 'replay' subcommand
-fn handle_replay(args: &options::ReplayArgs) -> eyre::Result<()> {
+fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     let input_file = &args.input_file;
 
     // Load runtime configuration to check service readiness settings
-    let runtime_config = config::load_runtime_config(
+    let runtime_config = cli::config::load_runtime_config(
         args.common.config.as_deref(),
         args.common.enable_monitoring,
         args.common.monitor_interval_ms,
@@ -799,7 +792,7 @@ fn handle_replay(args: &options::ReplayArgs) -> eyre::Result<()> {
             );
         }
 
-        match container_readiness::start_service_discovery_thread() {
+        match ros::container_readiness::start_service_discovery_thread() {
             Ok(handle) => {
                 SERVICE_DISCOVERY_HANDLE
                     .set(handle)
@@ -852,7 +845,11 @@ impl Drop for CleanupGuard {
 }
 
 /// Play the launch according to the launch record.
-async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> eyre::Result<()> {
+async fn play(
+    input_file: &Path,
+    common: &cli::options::CommonOptions,
+    pgid: i32,
+) -> eyre::Result<()> {
     debug!("=== Starting play() function ===");
 
     // Install cleanup guard to ensure children are killed even if we're interrupted
@@ -995,7 +992,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
 
     // Initialize component loader for service-based loading (before web server for component loader access)
     debug!("Initializing component loader for service-based node loading");
-    let component_loader = match crate::component_loader::start_component_loader_thread() {
+    let component_loader = match crate::ros::component_loader::start_component_loader_thread() {
         Ok(loader) => {
             debug!("Component loader initialized successfully");
             Some(loader)
@@ -1221,7 +1218,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
                 .delay_load_node_millis,
         ),
         service_wait_config: if runtime_config.container_readiness.wait_for_service_ready {
-            Some(crate::container_readiness::ContainerWaitConfig::new(
+            Some(crate::ros::container_readiness::ContainerWaitConfig::new(
                 runtime_config
                     .container_readiness
                     .service_ready_timeout_secs,

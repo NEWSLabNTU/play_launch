@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 // Re-export NodeLogPaths from member module
-pub use crate::member::NodeLogPaths;
+pub use crate::event_driven::member::NodeLogPaths;
 
 /// Node status for regular nodes and containers (process-based)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

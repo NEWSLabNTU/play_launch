@@ -1,6 +1,6 @@
 //! Wrapper for invoking play_launch_analyzer via embedded Python (PyO3)
 
-use crate::python_bridge;
+use super::python_bridge;
 use eyre::Result;
 use std::path::Path;
 

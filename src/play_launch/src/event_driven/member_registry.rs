@@ -10,10 +10,10 @@
 //! - State transitions with validation
 
 use crate::{
-    member::{
+    event_driven::member::{
         BlockReason, ComposableNode, ComposableState, Container, Member, ProcessState, RegularNode,
     },
-    web_types::{
+    web::web_types::{
         ComposableBlockReason, ComposableNodeStatus, HealthSummary, NodeStatus, NodeSummary,
         NodeType, UnifiedStatus,
     },
@@ -617,9 +617,9 @@ impl MemberRegistry {
 mod tests {
     use super::*;
     use crate::{
-        launch_dump::{ComposableNodeRecord, NodeRecord},
-        node_cmdline::NodeCommandLine,
-        web_types::NodeLogPaths,
+        execution::node_cmdline::NodeCommandLine,
+        ros::launch_dump::{ComposableNodeRecord, NodeRecord},
+        web::web_types::NodeLogPaths,
     };
 
     fn make_test_node(name: &str) -> RegularNode {

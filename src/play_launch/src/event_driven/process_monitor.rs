@@ -9,7 +9,7 @@
 //! - Tasks are independent and self-cleaning
 //! - Provides graceful shutdown (SIGTERM → wait → SIGKILL)
 
-use crate::events::{EventBus, MemberEvent};
+use super::events::{EventBus, MemberEvent};
 use eyre::{eyre, Result};
 use nix::{
     sys::signal::{self, Signal},

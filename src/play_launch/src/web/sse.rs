@@ -45,7 +45,7 @@ pub async fn stream_stderr(
 
 /// Stream a log file as SSE
 async fn stream_log_file(state: Arc<WebState>, node_name: &str, file_name: &str) -> Response {
-    use crate::member::Member;
+    use crate::event_driven::member::Member;
 
     // Get the log file path from the registry
     let log_path = {

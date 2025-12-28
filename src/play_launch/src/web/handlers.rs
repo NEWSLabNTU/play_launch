@@ -100,8 +100,8 @@ fn render_clickable_ros_name(ros_name: &str) -> String {
 }
 
 /// Helper to render a node card
-fn render_node_card(node: &crate::web_types::NodeSummary, indent_class: &str) -> String {
-    use crate::web_types::{
+fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) -> String {
+    use super::web_types::{
         ComposableBlockReason, ComposableNodeStatus, NodeStatus, UnifiedStatus,
     };
 
@@ -335,7 +335,7 @@ pub async fn start_node(State(state): State<Arc<WebState>>, Path(name): Path<Str
 
     match state
         .event_bus
-        .publish(crate::events::MemberEvent::StartRequested { name: name.clone() })
+        .publish(crate::event_driven::events::MemberEvent::StartRequested { name: name.clone() })
     {
         Ok(()) => {
             info!("[Web UI] Published StartRequested event for '{}'", name);
@@ -368,7 +368,7 @@ pub async fn stop_node(State(state): State<Arc<WebState>>, Path(name): Path<Stri
 
     match state
         .event_bus
-        .publish(crate::events::MemberEvent::StopRequested { name: name.clone() })
+        .publish(crate::event_driven::events::MemberEvent::StopRequested { name: name.clone() })
     {
         Ok(()) => {
             info!("[Web UI] Published StopRequested event for '{}'", name);
@@ -404,7 +404,7 @@ pub async fn restart_node(
 
     match state
         .event_bus
-        .publish(crate::events::MemberEvent::RestartRequested { name: name.clone() })
+        .publish(crate::event_driven::events::MemberEvent::RestartRequested { name: name.clone() })
     {
         Ok(()) => {
             info!("[Web UI] Published RestartRequested event for '{}'", name);
@@ -450,7 +450,7 @@ pub async fn toggle_respawn(
 
     match state
         .event_bus
-        .publish(crate::events::MemberEvent::RespawnToggled {
+        .publish(crate::event_driven::events::MemberEvent::RespawnToggled {
             name: name.clone(),
             enabled,
         }) {

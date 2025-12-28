@@ -1,7 +1,5 @@
-use crate::{
-    launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord},
-    node_cmdline::NodeCommandLine,
-};
+use super::node_cmdline::NodeCommandLine;
+use crate::ros::launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord};
 use eyre::bail;
 use rayon::prelude::*;
 use serde::Serialize;

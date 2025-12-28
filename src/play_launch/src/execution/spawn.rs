@@ -1,4 +1,4 @@
-use crate::context::{ComposableNodeContext, ExecutionContext, NodeContainerContext, NodeContext};
+use super::context::{ComposableNodeContext, ExecutionContext, NodeContainerContext, NodeContext};
 use eyre::WrapErr;
 use futures::{
     future::{BoxFuture, FutureExt},
@@ -48,10 +48,10 @@ pub struct ComposableNodeExecutionConfig {
     pub load_orphan_composable_nodes: bool,
     pub spawn_config: SpawnComposableNodeConfig,
     pub load_node_delay: Duration,
-    pub service_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
-    pub component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
+    pub service_wait_config: Option<crate::ros::container_readiness::ContainerWaitConfig>,
+    pub component_loader: Option<crate::ros::component_loader::ComponentLoaderHandle>,
     pub process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
-    pub process_configs: Vec<crate::config::ProcessConfig>,
+    pub process_configs: Vec<crate::cli::config::ProcessConfig>,
 }
 
 /// The set of node containers and composable nodes belong to the same
@@ -167,7 +167,7 @@ pub fn spawn_nodes(
                                 );
                             }
                             // Initialize CSV file with headers immediately
-                            if let Err(e) = crate::resource_monitor::initialize_metrics_csv(&output_dir) {
+                            if let Err(e) = crate::monitoring::resource_monitor::initialize_metrics_csv(&output_dir) {
                                 warn!("Failed to initialize metrics CSV for {}: {}", log_name, e);
                             }
                         }
@@ -378,7 +378,7 @@ fn build_container_groups(
 fn spawn_node_containers(
     container_groups: HashMap<String, NodeContainerGroup>,
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
-    process_configs: Vec<crate::config::ProcessConfig>,
+    process_configs: Vec<crate::cli::config::ProcessConfig>,
     pgid: Option<i32>,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
@@ -442,7 +442,7 @@ fn spawn_node_containers(
                             );
                         }
                         // Initialize CSV file with headers immediately
-                        if let Err(e) = crate::resource_monitor::initialize_metrics_csv(&output_dir) {
+                        if let Err(e) = crate::monitoring::resource_monitor::initialize_metrics_csv(&output_dir) {
                             warn!("Failed to initialize metrics CSV for container {}: {}", log_name, e);
                         }
                     }
@@ -516,7 +516,7 @@ fn spawn_node_containers(
 async fn run_load_composable_node_groups(
     load_node_groups: HashMap<String, ComposableNodeGroup>,
     config: SpawnComposableNodeConfig,
-    component_loader: &Option<crate::component_loader::ComponentLoaderHandle>,
+    component_loader: &Option<crate::ros::component_loader::ComponentLoaderHandle>,
 ) {
     let load_node_contexts: Vec<_> = load_node_groups
         .into_iter()
@@ -624,7 +624,7 @@ fn spawn_node_containers_and_load_composable_nodes(
         if let Some(service_config) = service_wait_config {
             if let Some(discovery_handle) = crate::SERVICE_DISCOVERY_HANDLE.get() {
                 info!("Waiting for container services to be ready...");
-                if let Err(e) = crate::container_readiness::wait_for_containers_ready(
+                if let Err(e) = crate::ros::container_readiness::wait_for_containers_ready(
                     &container_names_vec,
                     &service_config,
                     discovery_handle,
@@ -652,7 +652,7 @@ fn spawn_node_containers_and_load_composable_nodes(
 fn spawn_standalone_composable_nodes(
     load_node_contexts: Vec<ComposableNodeContext>,
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
-    process_configs: Vec<crate::config::ProcessConfig>,
+    process_configs: Vec<crate::cli::config::ProcessConfig>,
     pgid: Option<i32>,
 ) -> Vec<impl Future<Output = eyre::Result<()>>> {
     load_node_contexts
@@ -689,7 +689,7 @@ fn spawn_standalone_composable_nodes(
                         debug!("=== REGISTERED standalone composable node PID {} for {} (total in registry: {}) ===", pid, log_name, reg.len());
                     }
                     // Initialize CSV file with headers immediately
-                    if let Err(e) = crate::resource_monitor::initialize_metrics_csv(output_dir) {
+                    if let Err(e) = crate::monitoring::resource_monitor::initialize_metrics_csv(output_dir) {
                         warn!("Failed to initialize metrics CSV for standalone composable node {}: {}", log_name, e);
                     }
                 }
@@ -739,7 +739,7 @@ fn spawn_standalone_composable_nodes(
 async fn run_load_composable_nodes(
     load_node_contexts: Vec<ComposableNodeContext>,
     config: SpawnComposableNodeConfig,
-    component_loader: &Option<crate::component_loader::ComponentLoaderHandle>,
+    component_loader: &Option<crate::ros::component_loader::ComponentLoaderHandle>,
 ) {
     let SpawnComposableNodeConfig {
         max_concurrent_spawn,
@@ -771,7 +771,7 @@ async fn run_load_composable_node(
     context: &ComposableNodeContext,
     wait_timeout: Duration,
     max_attempts: usize,
-    component_loader: &Option<crate::component_loader::ComponentLoaderHandle>,
+    component_loader: &Option<crate::ros::component_loader::ComponentLoaderHandle>,
 ) {
     let ComposableNodeContext {
         log_name,
@@ -807,7 +807,7 @@ async fn run_load_composable_node_via_service(
     context: &ComposableNodeContext,
     timeout: Duration,
     _round: usize,
-    component_loader: &Option<crate::component_loader::ComponentLoaderHandle>,
+    component_loader: &Option<crate::ros::component_loader::ComponentLoaderHandle>,
 ) -> eyre::Result<bool> {
     use std::io::Write;
 
@@ -1003,8 +1003,8 @@ fn save_composable_node_service_status(
 /// PID of spawned process on success
 pub async fn spawn_node_event_driven(
     context: &NodeContext,
-    process_monitor: &crate::process_monitor::ProcessMonitor,
-    event_bus: &crate::events::EventBus,
+    process_monitor: &crate::event_driven::process_monitor::ProcessMonitor,
+    event_bus: &crate::event_driven::events::EventBus,
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     pgid: Option<i32>,
 ) -> eyre::Result<u32> {
@@ -1050,14 +1050,14 @@ pub async fn spawn_node_event_driven(
             );
         }
         // Initialize CSV file with headers immediately
-        if let Err(e) = crate::resource_monitor::initialize_metrics_csv(&output_dir) {
+        if let Err(e) = crate::monitoring::resource_monitor::initialize_metrics_csv(&output_dir) {
             warn!("Failed to initialize metrics CSV for {}: {}", log_name, e);
         }
     }
 
     // Publish ProcessStarted event
     event_bus
-        .publish(crate::events::MemberEvent::ProcessStarted {
+        .publish(crate::event_driven::events::MemberEvent::ProcessStarted {
             name: log_name.clone(),
             pid,
         })
@@ -1073,8 +1073,8 @@ pub async fn spawn_node_event_driven(
 /// Returns immediately after spawning all processes. ProcessMonitor handles waiting.
 pub async fn spawn_nodes_event_driven(
     node_contexts: Vec<NodeContext>,
-    process_monitor: &crate::process_monitor::ProcessMonitor,
-    event_bus: &crate::events::EventBus,
+    process_monitor: &crate::event_driven::process_monitor::ProcessMonitor,
+    event_bus: &crate::event_driven::events::EventBus,
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     pgid: Option<i32>,
 ) -> eyre::Result<Vec<u32>> {
