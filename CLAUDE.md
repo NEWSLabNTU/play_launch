@@ -72,27 +72,98 @@ play_launch plot --metrics cpu memory           # Plot specific metrics
 
 ### Execution Flow (play_launch)
 
-1. **Load** (launch_dump.rs): Deserialize `record.json`, copy parameter files
-2. **Context Preparation** (context.rs): Classify nodes (containers vs regular)
-3. **Component Loader** (component_loader.rs): Background thread with rclrs service clients for LoadNode
-4. **Execution** (execution.rs):
+1. **Load** (ros/launch_dump.rs): Deserialize `record.json`, copy parameter files
+2. **Context Preparation** (execution/context.rs): Classify nodes (containers vs regular)
+3. **Component Loader** (ros/component_loader.rs): Background thread with rclrs service clients for LoadNode
+4. **Execution** (execution/spawn.rs):
    - Regular nodes: Spawned directly
    - Composable nodes: Load via service calls to containers (or standalone with `--standalone-composable-nodes`)
-5. **Container Readiness** (container_readiness.rs): Wait for LoadNode services (default: enabled)
+5. **Container Readiness** (ros/container_readiness.rs): Wait for LoadNode services (default: enabled)
 6. **Logging**: All output saved to `play_log/<timestamp>/`
 
-### Key Modules
+### Module Structure
 
-- **main.rs**: Entry point, CleanupGuard for subprocess management
-- **execution.rs**: Process spawning, composable node loading
+The codebase is organized into functional modules:
+
+**Root:**
+- **main.rs**: Entry point, CleanupGuard for subprocess management, signal handlers
+- **lib.rs**: Shared library code (exports IPC for io_helper binary)
+
+**event_driven/** - Event-driven architecture infrastructure (5 files):
+- **events.rs**: Event types and EventBus for pub/sub communication
+- **member.rs**: Member type definitions (RegularNode, Container, ComposableNode)
+- **member_registry.rs**: Central in-memory state registry with O(1) lookups
+- **event_processor.rs**: Async event loop handling all state transitions
+- **process_monitor.rs**: Owns Child handles, publishes exit events
+
+**execution/** - Process spawning and orchestration (3 files):
+- **spawn.rs**: Process spawning, composable node loading (traditional + event-driven)
+- **context.rs**: Execution context preparation, node classification
+- **node_cmdline.rs**: ROS node command line construction
+
+**ros/** - ROS-specific integration (4 files):
 - **component_loader.rs**: Direct rclrs service calls to LoadNode
+- **container_readiness.rs**: Service discovery and readiness checking
+- **ament_index.rs**: Package resolution via AMENT_PREFIX_PATH
+- **launch_dump.rs**: Launch file data structures (deserialization)
+
+**monitoring/** - Resource monitoring (2 files):
 - **resource_monitor.rs**: Per-node and system-wide metrics collection
+- **io_helper_client.rs**: IPC client for privileged I/O stats
+
+**python/** - Python integration (3 files):
+- **python_bridge.rs**: PyO3 embedding for dump_launch and analyzer
+- **dump_launcher.rs**: Wrapper for dump_launch invocation
+- **plot_launcher.rs**: Wrapper for plotting invocation
+
+**cli/** - CLI and configuration (2 files):
+- **options.rs**: CLI argument parsing with clap
 - **config.rs**: YAML configuration with process control (CPU affinity, nice)
-- **options.rs**: CLI parsing
-- **node_registry.rs**: Node tracking and control for web UI
-- **web/mod.rs**: axum web server with embedded assets
-- **web/handlers.rs**: HTTP API handlers for node control
-- **web/sse.rs**: Server-Sent Events for log streaming
+
+**web/** - Web UI (4 files):
+- **mod.rs**: axum web server with embedded assets
+- **handlers.rs**: HTTP API handlers for node control (event-driven)
+- **sse.rs**: Server-Sent Events for log streaming
+- **web_types.rs**: Type definitions (NodeSummary, NodeStatus, UnifiedStatus, etc.)
+
+**ipc/** - IPC protocol (3 files):
+- **mod.rs**: Protocol encoding/decoding with bincode
+- **protocol.rs**: Request/Response types for I/O helper
+- **error.rs**: Error types for IPC
+
+**bin/** - Additional binaries (1 subdirectory):
+- **play_launch_io_helper/**: Privileged daemon for reading /proc/[pid]/io
+
+### Event-Driven Architecture (Phase 6: Complete)
+
+**Status:** Event-driven infrastructure fully operational for web UI mode.
+
+**When enabled (`--web-ui` flag):**
+- Creates EventBus, ProcessMonitor, EventProcessor, and MemberRegistry
+- Non-container nodes use event-driven spawn (`spawn_nodes_event_driven`)
+- ProcessMonitor owns Child handles and publishes exit events
+- EventProcessor handles state transitions asynchronously
+- Web UI uses MemberRegistry for queries and EventBus for control operations
+- All handlers publish events (202 Accepted responses)
+
+**When disabled (default):**
+- Uses traditional execution path
+- spawn_nodes() with synchronous waiting
+- No web UI available (requires event-driven mode)
+
+**Design:**
+- **EventBus**: Pub/sub for MemberEvent (ProcessStarted, ProcessExited, StartRequested, StopRequested, etc.)
+- **ProcessMonitor**: Owns Child handles, monitors exits, publishes events
+- **EventProcessor**: Async event loop, updates MemberRegistry, handles respawn, executes control commands
+- **MemberRegistry**: In-memory state for all members (no filesystem inference)
+- **WebState**: Holds MemberRegistry (query) + EventBus (control)
+- **Handlers**: Lightweight, event-driven (502 lines, down from 1318)
+
+**See:** `docs/event-driven-architecture-refactoring.md` for full design details
+
+**Remaining work (deferred):**
+- Container and composable node spawning in event-driven mode
+- Bulk operations (start_all, stop_all, restart_all)
 
 ## Configuration
 
@@ -377,7 +448,8 @@ play_launch replay --web-ui --web-ui-addr 192.168.1.100 --web-ui-port 3000
 - **Frontend**: htmx for reactive updates + vanilla JavaScript for interactions
 - **UI Pattern**: Two-panel IDE-style layout with collapsible sidebar
 - **Log Streaming**: Server-Sent Events (SSE) with file tailing
-- **Registry**: NodeRegistry tracks all nodes, determines status from filesystem
+- **Registry**: MemberRegistry stores all node state in-memory (event-driven architecture)
+- **Event System**: EventBus + EventProcessor for async state management
 - **Theme Management**: CSS variables + localStorage persistence + system theme detection
 - **Binding**: Configurable via `--web-ui-addr` (default: `127.0.0.1` localhost only)
 - **Port**: Configurable via `--web-ui-port` (default: 8080)
