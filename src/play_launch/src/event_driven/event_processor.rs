@@ -1,7 +1,7 @@
 //! Event processor - handles all events and coordinates state changes
 //!
 //! This module implements the EventProcessor which is the heart of the event-driven architecture.
-//! It receives events from the EventBus and coordinates state changes across MemberRegistry
+//! It receives events from the EventBus and coordinates state changes across Registry
 //! and ProcessMonitor.
 //!
 //! # Status
@@ -10,8 +10,8 @@
 use super::{
     events::{EventBus, MemberEvent},
     member::{BlockReason, Member},
-    member_registry::MemberRegistry,
     process_monitor::ProcessMonitor,
+    registry::Registry,
 };
 use eyre::{bail, Result};
 use std::sync::Arc;
@@ -22,12 +22,12 @@ use tracing::{debug, error, info, warn};
 ///
 /// # Design
 /// - Receives events from EventBus
-/// - Coordinates between MemberRegistry and ProcessMonitor
+/// - Coordinates between Registry and ProcessMonitor
 /// - Applies business logic for state transitions
 /// - Publishes new events as side effects
 pub struct EventProcessor {
     /// Member registry for state storage
-    registry: Arc<Mutex<MemberRegistry>>,
+    registry: Arc<Mutex<Registry>>,
     /// Event receiver (consumes events from EventBus)
     event_rx: mpsc::UnboundedReceiver<MemberEvent>,
     /// Event bus for publishing new events
@@ -43,8 +43,10 @@ pub struct EventProcessor {
         Option<Arc<std::sync::Mutex<std::collections::HashMap<u32, std::path::PathBuf>>>>,
     /// Process group ID for spawned processes
     pgid: Option<i32>,
-    // Component loader will be added in Phase 4
-    // component_loader: Option<ComponentLoaderHandle>,
+    /// Component loader for loading composable nodes
+    component_loader: Option<crate::ros::component_loader::ComponentLoaderHandle>,
+    /// Service discovery handle for checking container readiness
+    service_discovery: Option<crate::ros::container_readiness::ServiceDiscoveryHandle>,
 }
 
 impl EventProcessor {
@@ -59,9 +61,11 @@ impl EventProcessor {
     /// - `shutdown_rx`: Shutdown signal receiver
     /// - `process_registry`: Optional process registry for resource monitoring
     /// - `pgid`: Optional process group ID for spawned processes
+    /// - `component_loader`: Optional component loader for loading composable nodes
+    /// - `service_discovery`: Optional service discovery handle for container readiness checking
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        registry: Arc<Mutex<MemberRegistry>>,
+        registry: Arc<Mutex<Registry>>,
         event_rx: mpsc::UnboundedReceiver<MemberEvent>,
         event_bus: EventBus,
         process_monitor: Arc<ProcessMonitor>,
@@ -71,6 +75,8 @@ impl EventProcessor {
             Arc<std::sync::Mutex<std::collections::HashMap<u32, std::path::PathBuf>>>,
         >,
         pgid: Option<i32>,
+        component_loader: Option<crate::ros::component_loader::ComponentLoaderHandle>,
+        service_discovery: Option<crate::ros::container_readiness::ServiceDiscoveryHandle>,
     ) -> Self {
         Self {
             registry,
@@ -81,6 +87,8 @@ impl EventProcessor {
             shutdown_rx,
             process_registry,
             pgid,
+            component_loader,
+            service_discovery,
         }
     }
 
@@ -140,8 +148,13 @@ impl EventProcessor {
             MemberEvent::LoadStarted { name } => {
                 self.handle_load_started(&name).await?;
             }
-            MemberEvent::LoadSucceeded { name } => {
-                self.handle_load_succeeded(&name).await?;
+            MemberEvent::LoadSucceeded {
+                name,
+                full_node_name,
+                unique_id,
+            } => {
+                self.handle_load_succeeded(&name, &full_node_name, unique_id)
+                    .await?;
             }
             MemberEvent::LoadFailed { name, error } => {
                 self.handle_load_failed(&name, &error).await?;
@@ -199,7 +212,16 @@ impl EventProcessor {
         };
 
         if let Some(true) = member_type {
-            info!("Container {} started, unblocking composable nodes", name);
+            info!("Container {} started, waiting for service readiness", name);
+
+            // Get the container's ROS name for service discovery
+            let container_ros_name = {
+                let registry = self.registry.lock().await;
+                registry.get(name).and_then(|m| match m {
+                    Member::Container(c) => Some(c.record.name.clone().unwrap_or_default()),
+                    _ => None,
+                })
+            };
 
             // Get composable nodes for this container
             let composable_nodes = {
@@ -207,22 +229,88 @@ impl EventProcessor {
                 registry.get_composable_nodes_for_container(name)
             };
 
-            // Unblock each composable node
-            for node_name in &composable_nodes {
-                let mut registry = self.registry.lock().await;
-                registry.unblock_composable_node(node_name)?;
-                drop(registry);
+            // Clone necessary items for the async task
+            let event_bus = self.event_bus.clone();
+            let registry = self.registry.clone();
+            let service_discovery = self.service_discovery.clone();
+            let container_name = name.to_string();
 
-                // Publish Unblocked event
-                self.event_bus.publish(MemberEvent::Unblocked {
-                    name: node_name.clone(),
-                })?;
+            // Spawn a task to wait for container readiness and then load composable nodes
+            tokio::spawn(async move {
+                // Wait for container service to be ready (if service discovery is available)
+                if let (Some(discovery), Some(ros_name)) = (service_discovery, container_ros_name) {
+                    info!(
+                        "Waiting for container {} (ROS name: {}) LoadNode service to be ready",
+                        container_name, ros_name
+                    );
 
-                // Trigger loading for each composable node
-                self.event_bus.publish(MemberEvent::LoadRequested {
-                    name: node_name.clone(),
-                })?;
-            }
+                    // Wait for up to 120 seconds for the service to be ready
+                    let config =
+                        crate::ros::container_readiness::ContainerWaitConfig::new(120, 500);
+
+                    match crate::ros::container_readiness::wait_for_containers_ready(
+                        std::slice::from_ref(&ros_name),
+                        &config,
+                        &discovery,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            info!("Container {} service is ready", container_name);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Error waiting for container {} service: {}",
+                                container_name, e
+                            );
+                            // Continue anyway - the component loader will handle timeouts
+                        }
+                    }
+                } else {
+                    // No service discovery available, add a small delay to give container time to start
+                    warn!(
+                        "Service discovery not available for container {}, using fixed delay",
+                        container_name
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+
+                // Now unblock and load all composable nodes for this container
+                for node_name in &composable_nodes {
+                    // Unblock the composable node
+                    {
+                        let mut reg = registry.lock().await;
+                        if let Err(e) = reg.unblock_composable_node(node_name) {
+                            error!("Failed to unblock composable node {}: {}", node_name, e);
+                            continue;
+                        }
+                    }
+
+                    // Publish Unblocked event
+                    if let Err(e) = event_bus.publish(MemberEvent::Unblocked {
+                        name: node_name.clone(),
+                    }) {
+                        error!("Failed to publish Unblocked event for {}: {}", node_name, e);
+                        continue;
+                    }
+
+                    // Trigger loading for each composable node
+                    if let Err(e) = event_bus.publish(MemberEvent::LoadRequested {
+                        name: node_name.clone(),
+                    }) {
+                        error!(
+                            "Failed to publish LoadRequested event for {}: {}",
+                            node_name, e
+                        );
+                    }
+                }
+
+                info!(
+                    "Triggered loading for {} composable nodes in container {}",
+                    composable_nodes.len(),
+                    container_name
+                );
+            });
         }
 
         // Publish state changed event
@@ -338,6 +426,37 @@ impl EventProcessor {
     async fn handle_load_requested(&mut self, name: &str) -> Result<()> {
         info!("Load requested for composable node {}", name);
 
+        // Get component loader
+        let component_loader = match &self.component_loader {
+            Some(loader) => loader.clone(),
+            None => {
+                warn!(
+                    "Component loader not available, cannot load composable node {}",
+                    name
+                );
+                self.event_bus.publish(MemberEvent::LoadFailed {
+                    name: name.to_string(),
+                    error: "Component loader not available".to_string(),
+                })?;
+                return Ok(());
+            }
+        };
+
+        // Get composable node record from registry
+        let (record, _output_dir) = {
+            let registry = self.registry.lock().await;
+            let member = registry
+                .get(name)
+                .ok_or_else(|| eyre::eyre!("Member {} not found", name))?;
+
+            match member {
+                Member::ComposableNode(node) => (node.record.clone(), node.output_dir.clone()),
+                _ => {
+                    bail!("Member {} is not a composable node", name);
+                }
+            }
+        };
+
         // Update state to Loading
         {
             let mut registry = self.registry.lock().await;
@@ -354,9 +473,90 @@ impl EventProcessor {
             name: name.to_string(),
         })?;
 
-        // Actual LoadNode service call will be implemented in Phase 3
-        // For now, we'll let the component_loader handle this externally
-        info!("LoadNode service call will be handled by component loader (Phase 3)");
+        // Parameters are already strings (ParameterValue is a type alias for String)
+        let parameters: Vec<(String, String)> = record
+            .params
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        // Convert remaps to remap_rules
+        let remap_rules: Vec<String> = record
+            .remaps
+            .iter()
+            .map(|(from, to)| format!("{}:={}", from, to))
+            .collect();
+
+        // Convert extra_args
+        let extra_args: Vec<(String, String)> = record
+            .extra_args
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        // Spawn background task to load the node
+        let event_bus = self.event_bus.clone();
+        let name_clone = name.to_string();
+
+        tokio::spawn(async move {
+            info!("Calling LoadNode service for {}", name_clone);
+
+            let result = component_loader
+                .load_node(
+                    &record.target_container_name,
+                    &record.package,
+                    &record.plugin,
+                    &record.node_name,
+                    &record.namespace,
+                    remap_rules,
+                    parameters,
+                    extra_args,
+                    std::time::Duration::from_secs(30),
+                )
+                .await;
+
+            match result {
+                Ok(response) => {
+                    if response.success {
+                        info!(
+                            "LoadNode succeeded for {}: {}",
+                            name_clone, response.full_node_name
+                        );
+
+                        // Publish success with response data
+                        event_bus
+                            .publish(MemberEvent::LoadSucceeded {
+                                name: name_clone,
+                                full_node_name: response.full_node_name,
+                                unique_id: response.unique_id,
+                            })
+                            .ok();
+                    } else {
+                        warn!(
+                            "LoadNode failed for {}: {}",
+                            name_clone, response.error_message
+                        );
+
+                        // Publish failure with error message
+                        event_bus
+                            .publish(MemberEvent::LoadFailed {
+                                name: name_clone,
+                                error: response.error_message,
+                            })
+                            .ok();
+                    }
+                }
+                Err(e) => {
+                    error!("LoadNode service call failed for {}: {}", name_clone, e);
+                    event_bus
+                        .publish(MemberEvent::LoadFailed {
+                            name: name_clone,
+                            error: e.to_string(),
+                        })
+                        .ok();
+                }
+            }
+        });
 
         Ok(())
     }
@@ -367,8 +567,39 @@ impl EventProcessor {
         Ok(())
     }
 
-    async fn handle_load_succeeded(&mut self, name: &str) -> Result<()> {
-        info!("Composable node {} loaded successfully", name);
+    async fn handle_load_succeeded(
+        &mut self,
+        name: &str,
+        full_node_name: &str,
+        unique_id: u64,
+    ) -> Result<()> {
+        info!(
+            "Composable node {} loaded successfully: {}",
+            name, full_node_name
+        );
+
+        // Get output directory for writing service response
+        let output_dir = {
+            let registry = self.registry.lock().await;
+            let member = registry
+                .get(name)
+                .ok_or_else(|| eyre::eyre!("Member {} not found", name))?;
+
+            match member {
+                super::member::Member::ComposableNode(node) => node.output_dir.clone(),
+                _ => bail!("Member {} is not a composable node", name),
+            }
+        };
+
+        // Write service response file (synchronously in event loop)
+        // Format matches traditional execution mode for compatibility with verification scripts
+        let response_content = format!(
+            "success: true\nerror_message: \nfull_node_name: {}\nunique_id: {}\n",
+            full_node_name, unique_id
+        );
+        if let Err(e) = std::fs::write(output_dir.join("service_response"), response_content) {
+            error!("Failed to write service response file: {}", e);
+        }
 
         // Update state to Loaded
         {
@@ -386,6 +617,29 @@ impl EventProcessor {
 
     async fn handle_load_failed(&mut self, name: &str, error: &str) -> Result<()> {
         warn!("Failed to load composable node {}: {}", name, error);
+
+        // Get output directory for writing service response
+        let output_dir = {
+            let registry = self.registry.lock().await;
+            let member = registry
+                .get(name)
+                .ok_or_else(|| eyre::eyre!("Member {} not found", name))?;
+
+            match member {
+                super::member::Member::ComposableNode(node) => node.output_dir.clone(),
+                _ => bail!("Member {} is not a composable node", name),
+            }
+        };
+
+        // Write service response file (synchronously in event loop)
+        // Format matches traditional execution mode for compatibility with verification scripts
+        let response_content = format!(
+            "success: false\nerror_message: {}\nfull_node_name: \nunique_id: 0\n",
+            error
+        );
+        if let Err(e) = std::fs::write(output_dir.join("service_response"), response_content) {
+            error!("Failed to write service response file: {}", e);
+        }
 
         // Update state to Unloaded
         {
@@ -794,7 +1048,7 @@ mod tests {
     async fn test_event_processor_basic() {
         let (event_bus, event_rx) = EventBus::new();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let registry = Arc::new(Mutex::new(MemberRegistry::new(PathBuf::from("/tmp"))));
+        let registry = Arc::new(Mutex::new(Registry::new(PathBuf::from("/tmp"))));
         let process_monitor = Arc::new(ProcessMonitor::new(event_bus.clone(), shutdown_rx.clone()));
 
         let processor = EventProcessor::new(
@@ -806,6 +1060,8 @@ mod tests {
             shutdown_rx.clone(),
             None, // process_registry
             None, // pgid
+            None, // component_loader
+            None, // service_discovery
         );
 
         // Register a test node
@@ -840,7 +1096,7 @@ mod tests {
     async fn test_process_started_updates_state() {
         let (event_bus, event_rx) = EventBus::new();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let registry = Arc::new(Mutex::new(MemberRegistry::new(PathBuf::from("/tmp"))));
+        let registry = Arc::new(Mutex::new(Registry::new(PathBuf::from("/tmp"))));
         let process_monitor = Arc::new(ProcessMonitor::new(event_bus.clone(), shutdown_rx.clone()));
 
         let processor = EventProcessor::new(
@@ -852,6 +1108,8 @@ mod tests {
             shutdown_rx.clone(),
             None, // process_registry
             None, // pgid
+            None, // component_loader
+            None, // service_discovery
         );
 
         // Register a test node
@@ -894,7 +1152,7 @@ mod tests {
 
         let (event_bus, event_rx) = EventBus::new();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let registry = Arc::new(Mutex::new(MemberRegistry::new(PathBuf::from("/tmp"))));
+        let registry = Arc::new(Mutex::new(Registry::new(PathBuf::from("/tmp"))));
         let process_monitor = Arc::new(ProcessMonitor::new(event_bus.clone(), shutdown_rx.clone()));
 
         let processor = EventProcessor::new(
@@ -906,6 +1164,8 @@ mod tests {
             shutdown_rx.clone(),
             None, // process_registry
             None, // pgid
+            None, // component_loader
+            None, // service_discovery
         );
 
         // Register a container and composable node

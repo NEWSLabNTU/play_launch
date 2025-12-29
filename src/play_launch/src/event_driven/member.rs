@@ -148,7 +148,7 @@ pub struct ComposableNode {
     pub log_paths: NodeLogPaths,
 }
 
-/// Unified enum for storage in MemberRegistry
+/// Unified enum for storage in Registry
 #[derive(Debug, Clone)]
 pub enum Member {
     Node(RegularNode),

@@ -1,6 +1,6 @@
 //! Member registry - pure data storage for all members
 //!
-//! This module implements the MemberRegistry which stores all members (nodes, containers,
+//! This module implements the Registry which stores all members (nodes, containers,
 //! composable nodes) with efficient indexing for container-composable node relationships.
 //!
 //! # Design
@@ -28,7 +28,7 @@ use std::{collections::HashMap, path::PathBuf};
 /// - Maintains bidirectional indexes for container-composable relationships
 /// - Provides O(1) lookup for common operations
 /// - Validates state transitions
-pub struct MemberRegistry {
+pub struct Registry {
     /// Map of member name to Member
     members: HashMap<String, Member>,
 
@@ -43,7 +43,7 @@ pub struct MemberRegistry {
     log_dir: PathBuf,
 }
 
-impl MemberRegistry {
+impl Registry {
     /// Create a new empty registry
     pub fn new(log_dir: PathBuf) -> Self {
         Self {
@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_register_and_get_node() {
-        let mut registry = MemberRegistry::new(PathBuf::from("/tmp"));
+        let mut registry = Registry::new(PathBuf::from("/tmp"));
         let node = make_test_node("test_node");
 
         registry.register_node(node);
@@ -684,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_transition_to_running() {
-        let mut registry = MemberRegistry::new(PathBuf::from("/tmp"));
+        let mut registry = Registry::new(PathBuf::from("/tmp"));
         let node = make_test_node("test_node");
         registry.register_node(node);
 
@@ -697,7 +697,7 @@ mod tests {
 
     #[test]
     fn test_container_composable_indexing() {
-        let mut registry = MemberRegistry::new(PathBuf::from("/tmp"));
+        let mut registry = Registry::new(PathBuf::from("/tmp"));
 
         // Register container
         let container = Container {
@@ -790,7 +790,7 @@ mod tests {
 
     #[test]
     fn test_block_unblock_composable() {
-        let mut registry = MemberRegistry::new(PathBuf::from("/tmp"));
+        let mut registry = Registry::new(PathBuf::from("/tmp"));
 
         let composable = ComposableNode {
             name: "test_composable".to_string(),

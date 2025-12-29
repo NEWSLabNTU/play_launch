@@ -84,6 +84,7 @@ pub struct ComposableNodeContextSet {
 /// The context contains all essential data to load a ROS composable
 /// node into a node container.
 pub struct ComposableNodeContext {
+    #[allow(dead_code)]
     pub log_name: String,
     pub output_dir: PathBuf,
     pub record: ComposableNodeRecord,

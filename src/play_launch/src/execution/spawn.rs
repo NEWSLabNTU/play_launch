@@ -1,3 +1,7 @@
+// Most of this module contains traditional execution code kept for reference.
+// Event-driven execution uses spawn_nodes_event_driven and component loading in event_processor.
+#![allow(dead_code)]
+
 use super::context::{ComposableNodeContext, ExecutionContext, NodeContainerContext, NodeContext};
 use eyre::WrapErr;
 use futures::{
@@ -1094,6 +1098,42 @@ pub async fn spawn_nodes_event_driven(
             Err(e) => {
                 error!("Failed to spawn node: {}", e);
                 // Continue with other nodes
+            }
+        }
+    }
+
+    Ok(pids)
+}
+
+/// Spawn container processes in event-driven mode
+///
+/// Similar to spawn_nodes_event_driven but for containers (from NodeContainerContext).
+/// Containers are just regular processes - the fact that they host composable nodes
+/// is handled by the event system (ProcessStarted event triggers LoadRequested events).
+pub async fn spawn_containers_event_driven(
+    container_contexts: Vec<super::context::NodeContainerContext>,
+    process_monitor: &crate::event_driven::process_monitor::ProcessMonitor,
+    event_bus: &crate::event_driven::events::EventBus,
+    process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
+    pgid: Option<i32>,
+) -> eyre::Result<Vec<u32>> {
+    let mut pids = Vec::new();
+
+    for container_ctx in container_contexts {
+        // Containers use the same spawning logic as regular nodes
+        match spawn_node_event_driven(
+            &container_ctx.node_context,
+            process_monitor,
+            event_bus,
+            process_registry.clone(),
+            pgid,
+        )
+        .await
+        {
+            Ok(pid) => pids.push(pid),
+            Err(e) => {
+                error!("Failed to spawn container: {}", e);
+                // Continue with other containers
             }
         }
     }

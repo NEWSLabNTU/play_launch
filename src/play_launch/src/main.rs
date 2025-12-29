@@ -14,18 +14,15 @@ use crate::{
         member::{
             ComposableNode, ComposableState, Container, NodeLogPaths, ProcessState, RegularNode,
         },
-        member_registry::MemberRegistry,
         process_monitor::ProcessMonitor,
+        registry::Registry,
     },
     execution::{
         context::{
             prepare_composable_node_contexts, prepare_node_contexts, ComposableNodeContextSet,
             NodeContextClasses,
         },
-        spawn::{
-            spawn_nodes, spawn_nodes_event_driven, spawn_or_load_composable_nodes,
-            ComposableNodeExecutionConfig, ComposableNodeTasks, SpawnComposableNodeConfig,
-        },
+        spawn::spawn_nodes_event_driven,
     },
     monitoring::resource_monitor::{spawn_monitor_thread, MonitorConfig},
     ros::{
@@ -35,8 +32,6 @@ use crate::{
 };
 use clap::Parser;
 use eyre::Context;
-use futures::{future::JoinAll, FutureExt};
-use itertools::chain;
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
@@ -47,7 +42,6 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
     },
-    time::Duration,
 };
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, warn};
@@ -58,6 +52,9 @@ static SERVICE_DISCOVERY_HANDLE: OnceLock<ServiceDiscoveryHandle> = OnceLock::ne
 /// Global flag for verbose logging
 static VERBOSE_LOGGING: OnceLock<bool> = OnceLock::new();
 
+/// Global flag to indicate graceful shutdown was completed (avoids duplicate SIGKILL in CleanupGuard)
+static GRACEFUL_SHUTDOWN_DONE: AtomicBool = AtomicBool::new(false);
+
 /// Check if verbose logging is enabled
 pub fn is_verbose() -> bool {
     VERBOSE_LOGGING.get().copied().unwrap_or(false)
@@ -66,6 +63,12 @@ pub fn is_verbose() -> bool {
 /// Kill all descendant processes of the current process recursively
 #[cfg(unix)]
 fn kill_all_descendants() {
+    // Skip if graceful shutdown was already completed
+    if GRACEFUL_SHUTDOWN_DONE.load(Ordering::Relaxed) {
+        debug!("Graceful shutdown already completed, skipping CleanupGuard force kill");
+        return;
+    }
+
     let my_pid = process::id();
     debug!("Killing all descendant processes of PID {}", my_pid);
 
@@ -470,78 +473,78 @@ async fn run_direct(
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutdown_signal = shutdown_rx;
 
-    // Create event-driven infrastructure for web UI (if enabled)
-    let event_driven_state: Option<(
-        Arc<tokio::sync::Mutex<MemberRegistry>>,
-        EventBus,
-        Arc<ProcessMonitor>,
-    )> = if common.web_ui {
-        debug!("Setting up event-driven architecture for web UI...");
+    // Create event-driven infrastructure (always enabled)
+    debug!("Setting up event-driven architecture...");
 
-        // Create EventBus (returns bus + receiver)
-        let (event_bus, event_rx) = EventBus::new();
+    // Create EventBus (returns bus + receiver)
+    let (event_bus, event_rx) = EventBus::new();
 
-        // Create ProcessMonitor
-        let process_monitor = Arc::new(ProcessMonitor::new(
-            event_bus.clone(),
-            shutdown_signal.clone(),
-        ));
+    // Create ProcessMonitor
+    let process_monitor = Arc::new(ProcessMonitor::new(
+        event_bus.clone(),
+        shutdown_signal.clone(),
+    ));
 
-        // Create MemberRegistry
-        let member_registry = Arc::new(tokio::sync::Mutex::new(MemberRegistry::new(
-            log_dir.clone(),
-        )));
+    // Create MemberRegistry
+    let member_registry = Arc::new(tokio::sync::Mutex::new(Registry::new(log_dir.clone())));
 
-        // Populate registry with members from contexts
-        {
-            let mut reg = member_registry.lock().await;
+    // No component loader for run command (no containers/composable nodes)
+    let component_loader: Option<crate::ros::component_loader::ComponentLoaderHandle> = None;
 
-            // Register regular nodes
-            for context in &pure_node_contexts {
-                let node = RegularNode {
-                    name: context
-                        .record
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| "unnamed_node".to_string()),
-                    record: context.record.clone(),
-                    cmdline: context.cmdline.clone(),
-                    output_dir: context.output_dir.clone(),
-                    log_paths: NodeLogPaths::from_output_dir(&context.output_dir),
-                    state: ProcessState::Pending,
-                    respawn_enabled: context.record.respawn.unwrap_or(false),
-                    respawn_delay: context.record.respawn_delay.unwrap_or(0.0),
-                };
-                reg.register_node(node);
-            }
+    // Populate registry with members from contexts
+    {
+        let mut reg = member_registry.lock().await;
 
-            info!("Member registry created with {} members", reg.len());
+        // Register regular nodes
+        for context in &pure_node_contexts {
+            // Use the same log_name format as ExecutionContext
+            let dir_name = context
+                .output_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+            let log_name = format!("NODE '{}'", dir_name);
+
+            let node = RegularNode {
+                name: log_name,
+                record: context.record.clone(),
+                cmdline: context.cmdline.clone(),
+                output_dir: context.output_dir.clone(),
+                log_paths: NodeLogPaths::from_output_dir(&context.output_dir),
+                state: ProcessState::Pending,
+                respawn_enabled: context.record.respawn.unwrap_or(false),
+                respawn_delay: context.record.respawn_delay.unwrap_or(0.0),
+            };
+            reg.register_node(node);
         }
 
-        // Start EventProcessor in background
-        let event_processor = EventProcessor::new(
-            member_registry.clone(),
-            event_rx,
-            event_bus.clone(),
-            process_monitor.clone(),
-            shutdown_tx.clone(),
-            shutdown_signal.clone(),
-            Some(process_registry.clone()),
-            Some(pgid),
-        );
+        info!("Member registry created with {} members", reg.len());
+    }
 
-        tokio::spawn(async move {
-            event_processor.run().await;
-            debug!("EventProcessor shut down");
-        });
+    // Get service discovery handle if available
+    let service_discovery_handle = SERVICE_DISCOVERY_HANDLE.get().cloned();
 
-        Some((member_registry, event_bus, process_monitor))
-    } else {
-        None
-    };
+    // Start EventProcessor in background
+    let event_processor = EventProcessor::new(
+        member_registry.clone(),
+        event_rx,
+        event_bus.clone(),
+        process_monitor.clone(),
+        shutdown_tx.clone(),
+        shutdown_signal.clone(),
+        Some(process_registry.clone()),
+        Some(pgid),
+        component_loader.clone(),
+        service_discovery_handle,
+    );
 
-    // Start web server if event-driven state is available
-    if let Some((ref member_registry, ref event_bus, _)) = event_driven_state {
+    tokio::spawn(async move {
+        event_processor.run().await;
+        debug!("EventProcessor shut down");
+    });
+
+    // Start web server if --web-ui flag is enabled
+    if common.web_ui {
         let web_state = std::sync::Arc::new(web::WebState::new(
             member_registry.clone(),
             event_bus.clone(),
@@ -561,52 +564,27 @@ async fn run_direct(
 
     info!("Spawning node...");
 
-    // Choose execution path based on web UI mode
-    let node_tasks = if let Some((_member_registry, event_bus, process_monitor)) = event_driven_state {
-        // EVENT-DRIVEN EXECUTION (web UI enabled)
-        info!("Using event-driven architecture for web UI");
-        match spawn_nodes_event_driven(
-            pure_node_contexts,
-            &process_monitor,
-            &event_bus,
-            Some(process_registry.clone()),
-            Some(pgid),
-        )
-        .await
-        {
-            Ok(_pids) => {
-                // Event-driven path doesn't return futures; ProcessMonitor owns all processes
-                // We just need to wait forever (until signal)
-                vec![]
-            }
-            Err(e) => {
-                error!("Failed to spawn nodes in event-driven mode: {}", e);
-                return Err(e);
-            }
+    // Use event-driven execution (always)
+    info!("Using event-driven architecture");
+    match spawn_nodes_event_driven(
+        pure_node_contexts,
+        &process_monitor,
+        &event_bus,
+        Some(process_registry.clone()),
+        Some(pgid),
+    )
+    .await
+    {
+        Ok(_pids) => {
+            info!("All nodes spawned successfully");
         }
-    } else {
-        // TRADITIONAL EXECUTION (web UI disabled)
-        info!("Using traditional execution (no web UI)");
-        spawn_nodes(
-            pure_node_contexts,
-            Some(process_registry.clone()),
-            shutdown_signal.clone(),
-            common.disable_respawn,
-            Some(pgid),
-        )
-        .into_iter()
-        .map(|future| future.boxed())
-        .collect()
-    };
-
-    let mut wait_futures: Vec<_> = node_tasks;
-    if wait_futures.is_empty() {
-        info!("Event-driven mode: waiting for signals (no futures to await)");
-    } else {
-        info!("Collected {} futures to wait on", wait_futures.len());
+        Err(e) => {
+            error!("Failed to spawn nodes: {}", e);
+            return Err(e);
+        }
     }
 
-    // Wait for node to complete or receive signal
+    // Wait for shutdown signal
     // Progressive shutdown: 1st Ctrl-C sends SIGTERM, 2nd sends SIGTERM again, 3rd sends SIGKILL
     #[cfg(unix)]
     let result = {
@@ -642,7 +620,6 @@ async fn run_direct(
                         3 => {
                             info!("Immediate kill! Sending SIGKILL to process group");
                             kill_process_group(pgid, Signal::SIGKILL);
-                            drop(wait_futures);
                             info!("All child processes terminated");
                             break Ok(());
                         }
@@ -658,21 +635,59 @@ async fn run_direct(
                     kill_process_group(pgid, Signal::SIGTERM);
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     kill_process_group(pgid, Signal::SIGKILL);
-                    drop(wait_futures);
                     info!("All child processes terminated");
                     break Ok(());
                 }
                 _ = async {
-                    while !wait_futures.is_empty() {
-                        let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
-                        if let Err(err) = result {
-                            error!("{err}");
+                    // Wait for shutdown signal to be set to true
+                    let mut shutdown_watch = shutdown_signal.clone();
+                    loop {
+                        if *shutdown_watch.borrow() {
+                            break;
                         }
-                        let future_to_discard = wait_futures.remove(ix);
-                        drop(future_to_discard);
+                        if shutdown_watch.changed().await.is_err() {
+                            break;
+                        }
                     }
                 } => {
-                    info!("All tasks completed normally");
+                    info!("Shutdown signal received, waiting for processes to exit...");
+                    // SIGTERM was already sent by the SIGINT handler
+                    // Wait up to 5 seconds for graceful shutdown
+                    let start = std::time::Instant::now();
+                    let mut all_exited_gracefully = false;
+
+                    while start.elapsed() < std::time::Duration::from_secs(5) {
+                        // Check if any processes are still running
+                        let has_running = nix::sys::wait::waitpid(
+                            nix::unistd::Pid::from_raw(-pgid),
+                            Some(nix::sys::wait::WaitPidFlag::WNOHANG)
+                        );
+                        match has_running {
+                            Ok(nix::sys::wait::WaitStatus::Exited(_, _)) |
+                            Ok(nix::sys::wait::WaitStatus::Signaled(_, _, _)) => {
+                                // A child exited, keep waiting for others
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            }
+                            Err(nix::errno::Errno::ECHILD) => {
+                                // No more children
+                                info!("All processes exited gracefully");
+                                all_exited_gracefully = true;
+                                GRACEFUL_SHUTDOWN_DONE.store(true, Ordering::Relaxed);
+                                break;
+                            }
+                            _ => {
+                                // Still have children, wait a bit
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            }
+                        }
+                    }
+
+                    // If still running after grace period, force kill
+                    if !all_exited_gracefully && start.elapsed() >= std::time::Duration::from_secs(5) {
+                        info!("Grace period expired, sending SIGKILL to remaining processes");
+                        kill_process_group(pgid, Signal::SIGKILL);
+                    }
+                    info!("All child processes terminated");
                     break Ok(());
                 }
             }
@@ -681,27 +696,30 @@ async fn run_direct(
 
     #[cfg(not(unix))]
     let result = {
-        let shutdown_signal_clone = shutdown_signal.clone();
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
-                shutdown_signal_clone.notify_waiters();
+                let _ = shutdown_tx.send(true);
                 kill_all_descendants();
-                drop(wait_futures);
                 info!("All child processes terminated");
-                Ok(())
+                // Exit with 130 (128+2) to indicate termination by SIGINT
+                std::process::exit(130);
             }
             _ = async {
-                while !wait_futures.is_empty() {
-                    let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
-                    if let Err(err) = result {
-                        error!("{err}");
+                // Wait for shutdown signal to be set to true
+                let mut shutdown_watch = shutdown_signal.clone();
+                loop {
+                    if *shutdown_watch.borrow() {
+                        break;
                     }
-                    let future_to_discard = wait_futures.remove(ix);
-                    drop(future_to_discard);
+                    if shutdown_watch.changed().await.is_err() {
+                        break;
+                    }
                 }
             } => {
-                info!("All tasks completed normally");
+                info!("Shutdown signal received, waiting for processes to exit...");
+                kill_all_descendants();
+                info!("All child processes terminated");
                 Ok(())
             }
         }
@@ -1125,112 +1143,143 @@ async fn play(
         }
     };
 
-    // Create event-driven infrastructure for web UI (if enabled)
-    let event_driven_state: Option<(
-        Arc<tokio::sync::Mutex<MemberRegistry>>,
-        EventBus,
-        Arc<ProcessMonitor>,
-    )> = if common.web_ui {
-        debug!("Setting up event-driven architecture for web UI...");
+    // Create event-driven infrastructure (always enabled)
+    debug!("Setting up event-driven architecture...");
 
-        // Create EventBus (returns bus + receiver)
-        let (event_bus, event_rx) = EventBus::new();
+    // Create EventBus (returns bus + receiver)
+    let (event_bus, event_rx) = EventBus::new();
 
-        // Create ProcessMonitor
-        let process_monitor = Arc::new(ProcessMonitor::new(
-            event_bus.clone(),
-            shutdown_signal.clone(),
-        ));
+    // Create ProcessMonitor
+    let process_monitor = Arc::new(ProcessMonitor::new(
+        event_bus.clone(),
+        shutdown_signal.clone(),
+    ));
 
-        // Create MemberRegistry
-        let member_registry = Arc::new(tokio::sync::Mutex::new(MemberRegistry::new(
-            log_dir.clone(),
-        )));
+    // Create MemberRegistry
+    let member_registry = Arc::new(tokio::sync::Mutex::new(Registry::new(log_dir.clone())));
 
-        // Populate registry with members from contexts
-        {
-            let mut reg = member_registry.lock().await;
+    // Populate registry with members from contexts
+    {
+        let mut reg = member_registry.lock().await;
 
-            // Register containers
-            for context in &container_contexts {
-                let container = Container {
-                    name: context
+        // Register containers
+        for context in &container_contexts {
+            // Use the same log_name format as ExecutionContext
+            let dir_name = context
+                .node_context
+                .output_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+            let log_name = format!("NODE '{}'", dir_name);
+
+            let container = Container {
+                name: log_name,
+                record: context.node_context.record.clone(),
+                cmdline: context.node_context.cmdline.clone(),
+                output_dir: context.node_context.output_dir.clone(),
+                log_paths: NodeLogPaths::from_output_dir(&context.node_context.output_dir),
+                composable_nodes: Vec::new(), // Will be populated when composable nodes are loaded
+                state: ProcessState::Pending,
+                respawn_enabled: context.node_context.record.respawn.unwrap_or(false),
+                respawn_delay: context.node_context.record.respawn_delay.unwrap_or(0.0),
+            };
+            reg.register_container(container);
+        }
+
+        // Register regular nodes
+        for context in &pure_node_contexts {
+            // Use the same log_name format as ExecutionContext
+            let dir_name = context
+                .output_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+            let log_name = format!("NODE '{}'", dir_name);
+
+            let node = RegularNode {
+                name: log_name,
+                record: context.record.clone(),
+                cmdline: context.cmdline.clone(),
+                output_dir: context.output_dir.clone(),
+                log_paths: NodeLogPaths::from_output_dir(&context.output_dir),
+                state: ProcessState::Pending,
+                respawn_enabled: context.record.respawn.unwrap_or(false),
+                respawn_delay: context.record.respawn_delay.unwrap_or(0.0),
+            };
+            reg.register_node(node);
+        }
+
+        // Register composable nodes
+        for context in &load_node_contexts {
+            // Find the container log name for this composable node
+            // The target_container_name from the record needs to be converted to the log name format
+            let container_log_name = container_contexts
+                .iter()
+                .find(|c| {
+                    let container_name = c
                         .node_context
                         .record
                         .name
-                        .clone()
-                        .unwrap_or_else(|| context.node_container_name.clone()),
-                    record: context.node_context.record.clone(),
-                    cmdline: context.node_context.cmdline.clone(),
-                    output_dir: context.node_context.output_dir.clone(),
-                    log_paths: NodeLogPaths::from_output_dir(&context.node_context.output_dir),
-                    composable_nodes: Vec::new(), // Will be populated when composable nodes are loaded
-                    state: ProcessState::Pending,
-                    respawn_enabled: context.node_context.record.respawn.unwrap_or(false),
-                    respawn_delay: context.node_context.record.respawn_delay.unwrap_or(0.0),
-                };
-                reg.register_container(container);
-            }
+                        .as_ref()
+                        .unwrap_or(&c.node_container_name);
+                    container_name == &context.record.target_container_name
+                        || c.node_container_name == context.record.target_container_name
+                })
+                .and_then(|c| {
+                    c.node_context
+                        .output_dir
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|dir_name| format!("NODE '{}'", dir_name))
+                })
+                .unwrap_or_else(|| {
+                    // Fallback: if not found, use the original target_container_name
+                    warn!(
+                        "Container not found for composable node {}, using original name",
+                        context.record.node_name
+                    );
+                    context.record.target_container_name.clone()
+                });
 
-            // Register regular nodes
-            for context in &pure_node_contexts {
-                let node = RegularNode {
-                    name: context
-                        .record
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| "unnamed_node".to_string()),
-                    record: context.record.clone(),
-                    cmdline: context.cmdline.clone(),
-                    output_dir: context.output_dir.clone(),
-                    log_paths: NodeLogPaths::from_output_dir(&context.output_dir),
-                    state: ProcessState::Pending,
-                    respawn_enabled: context.record.respawn.unwrap_or(false),
-                    respawn_delay: context.record.respawn_delay.unwrap_or(0.0),
-                };
-                reg.register_node(node);
-            }
-
-            // Register composable nodes
-            for context in &load_node_contexts {
-                let composable = ComposableNode {
-                    name: context.record.node_name.clone(),
-                    record: context.record.clone(),
-                    output_dir: context.output_dir.clone(),
-                    log_paths: NodeLogPaths::from_output_dir(&context.output_dir),
-                    container_name: context.record.target_container_name.clone(),
-                    state: ComposableState::Unloaded,
-                };
-                reg.register_composable_node(composable);
-            }
-
-            info!("Member registry created with {} members", reg.len());
+            let composable = ComposableNode {
+                name: context.record.node_name.clone(),
+                record: context.record.clone(),
+                output_dir: context.output_dir.clone(),
+                log_paths: NodeLogPaths::from_output_dir(&context.output_dir),
+                container_name: container_log_name,
+                state: ComposableState::Unloaded,
+            };
+            reg.register_composable_node(composable);
         }
 
-        // Start EventProcessor in background
-        let event_processor = EventProcessor::new(
-            member_registry.clone(),
-            event_rx,
-            event_bus.clone(),
-            process_monitor.clone(),
-            shutdown_tx.clone(),
-            shutdown_signal.clone(),
-            Some(process_registry.clone()),
-            Some(pgid),
-        );
+        info!("Member registry created with {} members", reg.len());
+    }
 
-        tokio::spawn(async move {
-            event_processor.run().await;
-            debug!("EventProcessor shut down");
-        });
+    // Get service discovery handle if available
+    let service_discovery_handle = SERVICE_DISCOVERY_HANDLE.get().cloned();
 
-        Some((member_registry, event_bus, process_monitor))
-    } else {
-        None
-    };
+    // Start EventProcessor in background
+    let event_processor = EventProcessor::new(
+        member_registry.clone(),
+        event_rx,
+        event_bus.clone(),
+        process_monitor.clone(),
+        shutdown_tx.clone(),
+        shutdown_signal.clone(),
+        Some(process_registry.clone()),
+        Some(pgid),
+        component_loader.clone(),
+        service_discovery_handle,
+    );
 
-    // Start web server if event-driven state is available
-    if let Some((ref member_registry, ref event_bus, _)) = event_driven_state {
+    tokio::spawn(async move {
+        event_processor.run().await;
+        debug!("EventProcessor shut down");
+    });
+
+    // Start web server if --web-ui flag is enabled
+    if common.web_ui {
         let web_state = std::sync::Arc::new(web::WebState::new(
             member_registry.clone(),
             event_bus.clone(),
@@ -1248,162 +1297,63 @@ async fn play(
         });
     }
 
-    //  Branch: Event-driven vs traditional execution
-    if let Some((_member_registry, event_bus, process_monitor)) = event_driven_state {
-        // === EVENT-DRIVEN EXECUTION PATH ===
-        info!("Using event-driven architecture");
+    // === EVENT-DRIVEN EXECUTION PATH ===
+    info!("Using event-driven architecture");
 
-        // Spawn non-container nodes using event-driven spawn
-        info!(
-            "Spawning {} non-container nodes...",
-            pure_node_contexts.len()
-        );
-        match spawn_nodes_event_driven(
-            pure_node_contexts,
-            &process_monitor,
-            &event_bus,
-            Some(process_registry.clone()),
-            Some(pgid),
-        )
-        .await
-        {
-            Ok(pids) => {
-                info!(
-                    "Spawned {} non-container nodes with PIDs: {:?}",
-                    pids.len(),
-                    pids
-                );
-            }
-            Err(e) => {
-                error!("Failed to spawn non-container nodes: {}", e);
-            }
-        }
-
-        // TODO: Spawn containers and composable nodes using event-driven spawn
-        warn!("Container and composable node spawning not yet implemented in event-driven mode");
-        warn!("Only non-container nodes will be started");
-
-        // In event-driven mode, ProcessMonitor handles waiting for processes
-        // We just need to wait for shutdown signal
-        info!("Event-driven execution active. Waiting for shutdown signal...");
-        let mut shutdown_watch = shutdown_signal.clone();
-        loop {
-            if *shutdown_watch.borrow() {
-                info!("Shutdown signal received");
-                break;
-            }
-            if shutdown_watch.changed().await.is_err() {
-                info!("Shutdown channel closed");
-                break;
-            }
-        }
-
-        info!("Event-driven execution complete");
-        return Ok(());
-    }
-
-    // === TRADITIONAL EXECUTION PATH ===
-    info!("Using traditional execution (no event-driven architecture)");
-
-    // Spawn non-container nodes
-    info!("Spawning non-container nodes...");
-    let non_container_node_tasks = spawn_nodes(
+    // Spawn non-container nodes using event-driven spawn
+    info!(
+        "Spawning {} non-container nodes...",
+        pure_node_contexts.len()
+    );
+    match spawn_nodes_event_driven(
         pure_node_contexts,
+        &process_monitor,
+        &event_bus,
         Some(process_registry.clone()),
-        shutdown_signal.clone(),
-        common.disable_respawn,
         Some(pgid),
     )
-    .into_iter()
-    .map(|future| future.boxed());
-
-    debug!("Proceeding with execution...");
-
-    // Create composable node execution configuration using runtime config values
-    let composable_node_config = ComposableNodeExecutionConfig {
-        standalone_composable_nodes: common.standalone_composable_nodes,
-        load_orphan_composable_nodes: common.load_orphan_composable_nodes,
-        spawn_config: SpawnComposableNodeConfig {
-            max_concurrent_spawn: runtime_config
-                .composable_node_loading
-                .max_concurrent_load_node_spawn,
-            max_attempts: runtime_config.composable_node_loading.load_node_attempts,
-            wait_timeout: Duration::from_millis(
-                runtime_config
-                    .composable_node_loading
-                    .load_node_timeout_millis,
-            ),
-        },
-        load_node_delay: Duration::from_millis(
-            runtime_config
-                .composable_node_loading
-                .delay_load_node_millis,
-        ),
-        service_wait_config: if runtime_config.container_readiness.wait_for_service_ready {
-            Some(crate::ros::container_readiness::ContainerWaitConfig::new(
-                runtime_config
-                    .container_readiness
-                    .service_ready_timeout_secs,
-                runtime_config.container_readiness.service_poll_interval_ms,
-            ))
-        } else {
-            None
-        },
-        component_loader,
-        process_registry: Some(process_registry.clone()),
-        process_configs: runtime_config.monitoring.process_configs,
-    };
-
-    // Create the task set to load composable nodes according to user
-    // options.
-    let composable_node_tasks = spawn_or_load_composable_nodes(
-        container_contexts,
-        load_node_contexts,
-        &container_names,
-        composable_node_config,
-        Some(pgid),
-    );
-
-    // Unpack the task set to a Vec of tasks.
-    let wait_composable_node_tasks: Vec<_> = match composable_node_tasks {
-        ComposableNodeTasks::Standalone {
-            wait_composable_node_tasks,
-        } => wait_composable_node_tasks,
-        ComposableNodeTasks::Container {
-            wait_container_tasks,
-            load_nice_composable_nodes_task,
-            load_orphan_composable_nodes_task,
-        } => {
-            let load_task = async move {
-                info!("Loading composable nodes...");
-
-                let join: JoinAll<_> = chain!(
-                    [load_nice_composable_nodes_task.boxed()],
-                    load_orphan_composable_nodes_task.map(|task| task.boxed())
-                )
-                .collect();
-                join.await;
-
-                info!("Done loading all composable nodes");
-                eyre::Ok(())
-            };
-
-            chain!(wait_container_tasks, [load_task.boxed()]).collect()
+    .await
+    {
+        Ok(pids) => {
+            info!(
+                "Spawned {} non-container nodes with PIDs: {:?}",
+                pids.len(),
+                pids
+            );
         }
-    };
-
-    // Collect all waiting tasks built so far.
-    let mut wait_futures: Vec<_> =
-        chain!(non_container_node_tasks, wait_composable_node_tasks).collect();
-
-    debug!("Collected {} futures to wait on", wait_futures.len());
-    if wait_futures.is_empty() {
-        warn!("No futures to wait on - this will cause immediate exit!");
+        Err(e) => {
+            error!("Failed to spawn non-container nodes: {}", e);
+            return Err(e);
+        }
     }
 
-    // Poll on all waiting tasks and consume finished tasks
-    // one-by-one, while also listening for termination signals.
-    // Progressive shutdown: 1st Ctrl-C sends SIGTERM, 2nd sends SIGTERM again, 3rd sends SIGKILL
+    // Spawn containers using event-driven spawn
+    info!("Spawning {} containers...", container_contexts.len());
+    match crate::execution::spawn::spawn_containers_event_driven(
+        container_contexts,
+        &process_monitor,
+        &event_bus,
+        Some(process_registry.clone()),
+        Some(pgid),
+    )
+    .await
+    {
+        Ok(pids) => {
+            info!("Spawned {} containers with PIDs: {:?}", pids.len(), pids);
+        }
+        Err(e) => {
+            error!("Failed to spawn containers: {}", e);
+            return Err(e);
+        }
+    }
+
+    // Composable nodes will be loaded automatically when containers start
+    // via ProcessStarted event → LoadRequested events
+    info!("Composable nodes will be loaded automatically (via event-driven architecture)");
+
+    // In event-driven mode, ProcessMonitor handles waiting for processes
+    // We just need to wait for shutdown signal
+    info!("Event-driven execution active. Waiting for shutdown signal...");
 
     #[cfg(unix)]
     let result = {
@@ -1416,89 +1366,111 @@ async fn play(
 
         debug!("Signal handlers registered");
 
-        let shutdown_level = Arc::new(AtomicUsize::new(0));
+        tokio::select! {
+            _ = sigint.recv() => {
+                info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
+                let _ = shutdown_tx.send(true);
+                kill_process_group(pgid, Signal::SIGTERM);
 
-        loop {
-            tokio::select! {
-                _ = sigint.recv() => {
-                    let level = shutdown_level.fetch_add(1, Ordering::SeqCst) + 1;
-                    info!("Received SIGINT (shutdown level {})", level);
+                // Wait for graceful shutdown (5-second grace period)
+                let start = std::time::Instant::now();
+                let mut all_exited_gracefully = false;
 
-                    match level {
-                        1 => {
-                            info!("Shutting down gracefully (SIGTERM)...");
-                            let _ = shutdown_tx.send(true);
-                            kill_process_group(pgid, Signal::SIGTERM);
-                            info!("Press Ctrl-C again to force terminate");
+                while start.elapsed() < std::time::Duration::from_secs(5) {
+                    // Check if all processes have exited
+                    let has_running = nix::sys::wait::waitpid(
+                        Some(nix::unistd::Pid::from_raw(-pgid)),
+                        Some(nix::sys::wait::WaitPidFlag::WNOHANG),
+                    );
+
+                    match has_running {
+                        Err(nix::errno::Errno::ECHILD) => {
+                            // No more children
+                            info!("All processes exited gracefully");
+                            all_exited_gracefully = true;
+                            GRACEFUL_SHUTDOWN_DONE.store(true, Ordering::Relaxed);
+                            break;
                         }
-                        2 => {
-                            info!("Force terminating stubborn processes (SIGQUIT)...");
-                            kill_process_group(pgid, Signal::SIGQUIT);
-                            info!("Press Ctrl-C once more for immediate kill");
+                        Ok(nix::sys::wait::WaitStatus::Exited(_, _)) |
+                        Ok(nix::sys::wait::WaitStatus::Signaled(_, _, _)) => {
+                            // At least one child exited, continue checking for others
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         }
-                        3 => {
-                            info!("Immediate kill! Sending SIGKILL to process group");
-                            kill_process_group(pgid, Signal::SIGKILL);
-                            drop(wait_futures);
-                            info!("All child processes terminated");
-                            break Ok(());
+                        Ok(nix::sys::wait::WaitStatus::StillAlive) | Ok(_) => {
+                            // Children still running
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         }
-                        _ => {
-                            // Level 4+: Ignore additional Ctrl-C presses, cleanup is in progress
-                            info!("Cleanup in progress, please wait...");
+                        Err(e) => {
+                            warn!("Error checking process status: {}", e);
+                            break;
                         }
                     }
                 }
-                _ = sigterm.recv() => {
-                    info!("Received SIGTERM, performing immediate kill...");
-                    let _ = shutdown_tx.send(true);
-                    kill_process_group(pgid, Signal::SIGTERM);
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+                // Force kill any remaining processes only if grace period expired and processes didn't exit
+                if !all_exited_gracefully && start.elapsed() >= std::time::Duration::from_secs(5) {
+                    info!("Grace period expired, force killing remaining processes...");
                     kill_process_group(pgid, Signal::SIGKILL);
-                    drop(wait_futures);
-                    info!("All child processes terminated");
-                    break Ok(());
                 }
-                _ = async {
-                    while !wait_futures.is_empty() {
-                        let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
-                        if let Err(err) = result {
-                            error!("{err}");
-                        }
-                        let future_to_discard = wait_futures.remove(ix);
-                        drop(future_to_discard);
+
+                // Exit with 130 (128+2) to indicate termination by SIGINT
+                std::process::exit(130);
+            }
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, shutting down gracefully...");
+                let _ = shutdown_tx.send(true);
+                kill_process_group(pgid, Signal::SIGTERM);
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                kill_process_group(pgid, Signal::SIGKILL);
+                // Exit with 143 (128+15) to indicate termination by SIGTERM
+                std::process::exit(143);
+            }
+            _ = async {
+                // Wait for shutdown signal to be set to true
+                let mut shutdown_watch = shutdown_signal.clone();
+                loop {
+                    if *shutdown_watch.borrow() {
+                        info!("Shutdown signal received");
+                        break;
                     }
-                } => {
-                    info!("All tasks completed normally");
-                    break Ok(());
+                    if shutdown_watch.changed().await.is_err() {
+                        info!("Shutdown channel closed");
+                        break;
+                    }
                 }
+            } => {
+                info!("Event-driven execution complete");
+                Ok(())
             }
         }
     };
 
     #[cfg(not(unix))]
     let result = {
-        let shutdown_signal_clone = shutdown_signal.clone();
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
-                shutdown_signal_clone.notify_waiters();
+                let _ = shutdown_tx.send(true);
                 kill_all_descendants();
-                drop(wait_futures);
                 info!("All child processes terminated");
-                Ok(())
+                // Exit with 130 (128+2) to indicate termination by SIGINT
+                std::process::exit(130);
             }
             _ = async {
-                while !wait_futures.is_empty() {
-                    let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
-                    if let Err(err) = result {
-                        error!("{err}");
+                // Wait for shutdown signal to be set to true
+                let mut shutdown_watch = shutdown_signal.clone();
+                loop {
+                    if *shutdown_watch.borrow() {
+                        info!("Shutdown signal received");
+                        break;
                     }
-                    let future_to_discard = wait_futures.remove(ix);
-                    drop(future_to_discard);
+                    if shutdown_watch.changed().await.is_err() {
+                        info!("Shutdown channel closed");
+                        break;
+                    }
                 }
             } => {
-                info!("All tasks completed normally");
+                info!("Event-driven execution complete");
                 Ok(())
             }
         }

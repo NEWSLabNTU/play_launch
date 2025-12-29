@@ -66,18 +66,22 @@ fn default_true() -> bool {
 pub struct ComposableNodeLoadingSettings {
     /// Delay before loading composable nodes (milliseconds)
     #[serde(default = "default_delay_load_node_millis")]
+    #[allow(dead_code)]
     pub delay_load_node_millis: u64,
 
     /// Timeout for loading each composable node (milliseconds)
     #[serde(default = "default_load_node_timeout_millis")]
+    #[allow(dead_code)]
     pub load_node_timeout_millis: u64,
 
     /// Maximum retry attempts for loading composable nodes
     #[serde(default = "default_load_node_attempts")]
+    #[allow(dead_code)]
     pub load_node_attempts: usize,
 
     /// Maximum concurrent composable node loading operations
     #[serde(default = "default_max_concurrent_load_node_spawn")]
+    #[allow(dead_code)]
     pub max_concurrent_load_node_spawn: usize,
 }
 
@@ -120,6 +124,7 @@ pub struct ContainerReadinessSettings {
 
     /// Interval for polling container service availability (milliseconds)
     #[serde(default = "default_service_poll_interval_ms")]
+    #[allow(dead_code)]
     pub service_poll_interval_ms: u64,
 }
 
@@ -261,6 +266,7 @@ impl ProcessConfig {
 #[derive(Debug, Clone)]
 pub struct ResolvedRuntimeConfig {
     pub monitoring: ResolvedMonitoringConfig,
+    #[allow(dead_code)]
     pub composable_node_loading: ComposableNodeLoadingSettings,
     pub container_readiness: ContainerReadinessSettings,
 }

@@ -2,7 +2,7 @@
 //!
 //! Provides a web interface for monitoring and controlling ROS nodes.
 
-use crate::event_driven::{events::EventBus, member_registry::MemberRegistry};
+use crate::event_driven::{events::EventBus, registry::Registry};
 use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -27,7 +27,7 @@ struct Assets;
 /// Shared state for the web server (event-driven architecture)
 pub struct WebState {
     /// Member registry for querying node state
-    pub registry: Arc<TokioMutex<MemberRegistry>>,
+    pub registry: Arc<TokioMutex<Registry>>,
     /// Event bus for publishing control commands
     pub event_bus: EventBus,
     /// Base log directory (used for log file access)
@@ -39,11 +39,7 @@ pub struct WebState {
 
 impl WebState {
     /// Create a new WebState with event-driven architecture
-    pub fn new(
-        registry: Arc<TokioMutex<MemberRegistry>>,
-        event_bus: EventBus,
-        log_dir: PathBuf,
-    ) -> Self {
+    pub fn new(registry: Arc<TokioMutex<Registry>>, event_bus: EventBus, log_dir: PathBuf) -> Self {
         Self {
             registry,
             event_bus,

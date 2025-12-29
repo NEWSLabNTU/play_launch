@@ -47,7 +47,11 @@ pub enum MemberEvent {
 
     /// LoadNode service call succeeded
     #[allow(dead_code)]
-    LoadSucceeded { name: String },
+    LoadSucceeded {
+        name: String,
+        full_node_name: String,
+        unique_id: u64,
+    },
 
     /// LoadNode service call failed
     #[allow(dead_code)]
