@@ -501,3 +501,83 @@ pub async fn health_summary(State(state): State<Arc<WebState>>) -> Response {
 
     Html(html).into_response()
 }
+
+// ===== Bulk Operations =====
+
+/// Start all nodes
+pub async fn start_all(State(state): State<Arc<WebState>>) -> Response {
+    match state
+        .event_bus
+        .publish(crate::event_driven::events::MemberEvent::StartAllRequested)
+    {
+        Ok(()) => {
+            info!("[Web UI] Published StartAllRequested event");
+            (
+                StatusCode::ACCEPTED,
+                "Start all request accepted".to_string(),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            info!("[Web UI] Failed to publish StartAllRequested event: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to publish start all request: {}", e),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Stop all nodes
+pub async fn stop_all(State(state): State<Arc<WebState>>) -> Response {
+    match state
+        .event_bus
+        .publish(crate::event_driven::events::MemberEvent::StopAllRequested)
+    {
+        Ok(()) => {
+            info!("[Web UI] Published StopAllRequested event");
+            (
+                StatusCode::ACCEPTED,
+                "Stop all request accepted".to_string(),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            info!("[Web UI] Failed to publish StopAllRequested event: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to publish stop all request: {}", e),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Restart all nodes
+pub async fn restart_all(State(state): State<Arc<WebState>>) -> Response {
+    match state
+        .event_bus
+        .publish(crate::event_driven::events::MemberEvent::RestartAllRequested)
+    {
+        Ok(()) => {
+            info!("[Web UI] Published RestartAllRequested event");
+            (
+                StatusCode::ACCEPTED,
+                "Restart all request accepted".to_string(),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            info!(
+                "[Web UI] Failed to publish RestartAllRequested event: {}",
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to publish restart all request: {}", e),
+            )
+                .into_response()
+        }
+    }
+}

@@ -104,6 +104,10 @@ pub fn create_router(state: Arc<WebState>) -> Router {
             post(handlers::toggle_respawn),
         )
         .route("/api/health", get(handlers::health_summary))
+        // Bulk operations
+        .route("/api/nodes/start-all", post(handlers::start_all))
+        .route("/api/nodes/stop-all", post(handlers::stop_all))
+        .route("/api/nodes/restart-all", post(handlers::restart_all))
         // SSE endpoints for log streaming
         .route("/api/nodes/:name/logs/stdout", get(sse::stream_stdout))
         .route("/api/nodes/:name/logs/stderr", get(sse::stream_stderr))

@@ -195,6 +195,43 @@
             background: var(--border-color);
         }
 
+        .bulk-operations {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-bulk {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            color: #fff;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: opacity 0.2s;
+        }
+
+        .btn-bulk:hover {
+            opacity: 0.8;
+        }
+
+        .btn-bulk:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-bulk.btn-success {
+            background: var(--btn-success);
+        }
+
+        .btn-bulk.btn-danger {
+            background: var(--btn-danger);
+        }
+
+        .btn-bulk.btn-secondary {
+            background: var(--btn-secondary);
+        }
+
         .main-container {
             position: fixed;
             top: 70px;
@@ -788,6 +825,11 @@
                  hx-trigger="load, every 5s">
                 <span class="badge">Loading...</span>
             </div>
+            <div class="bulk-operations">
+                <button class="btn-bulk btn-success" onclick="startAll()">▶ Start All</button>
+                <button class="btn-bulk btn-danger" onclick="stopAll()">■ Stop All</button>
+                <button class="btn-bulk btn-secondary" onclick="restartAll()">↻ Restart All</button>
+            </div>
             <button class="theme-toggle" onclick="toggleTheme()">
                 <span id="theme-icon">◐</span>
             </button>
@@ -1366,6 +1408,58 @@
                 closeRightPanel();
             }
         });
+
+        // Bulk operations
+        function startAll() {
+            if (!confirm('Start all nodes?')) return;
+
+            fetch('/api/nodes/start-all', { method: 'POST' })
+                .then(response => response.text())
+                .then(message => {
+                    console.log('Start all:', message);
+                    // Refresh node list
+                    htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
+                    htmx.ajax('GET', '/api/health', {target: '#health-badges'});
+                })
+                .catch(error => {
+                    console.error('Error starting all:', error);
+                    alert('Failed to start all nodes: ' + error);
+                });
+        }
+
+        function stopAll() {
+            if (!confirm('Stop all nodes?')) return;
+
+            fetch('/api/nodes/stop-all', { method: 'POST' })
+                .then(response => response.text())
+                .then(message => {
+                    console.log('Stop all:', message);
+                    // Refresh node list
+                    htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
+                    htmx.ajax('GET', '/api/health', {target: '#health-badges'});
+                })
+                .catch(error => {
+                    console.error('Error stopping all:', error);
+                    alert('Failed to stop all nodes: ' + error);
+                });
+        }
+
+        function restartAll() {
+            if (!confirm('Restart all nodes?')) return;
+
+            fetch('/api/nodes/restart-all', { method: 'POST' })
+                .then(response => response.text())
+                .then(message => {
+                    console.log('Restart all:', message);
+                    // Refresh node list
+                    htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
+                    htmx.ajax('GET', '/api/health', {target: '#health-badges'});
+                })
+                .catch(error => {
+                    console.error('Error restarting all:', error);
+                    alert('Failed to restart all nodes: ' + error);
+                });
+        }
     </script>
 </body>
 </html>

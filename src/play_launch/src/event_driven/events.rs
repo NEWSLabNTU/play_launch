@@ -76,6 +76,16 @@ pub enum MemberEvent {
     /// Toggle respawn for a member
     RespawnToggled { name: String, enabled: bool },
 
+    // ===== Bulk Operations =====
+    /// Start all members
+    StartAllRequested,
+
+    /// Stop all members
+    StopAllRequested,
+
+    /// Restart all members
+    RestartAllRequested,
+
     // ===== System Events =====
     /// Shutdown has been requested
     #[allow(dead_code)]

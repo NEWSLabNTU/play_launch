@@ -183,6 +183,15 @@ impl EventProcessor {
             MemberEvent::StateChanged { name } => {
                 self.handle_state_changed(&name).await?;
             }
+            MemberEvent::StartAllRequested => {
+                self.handle_start_all_requested().await?;
+            }
+            MemberEvent::StopAllRequested => {
+                self.handle_stop_all_requested().await?;
+            }
+            MemberEvent::RestartAllRequested => {
+                self.handle_restart_all_requested().await?;
+            }
         }
 
         Ok(())
@@ -924,6 +933,62 @@ impl EventProcessor {
             self.pgid,
         )
         .await?;
+
+        Ok(())
+    }
+
+    // ===== Bulk Operations =====
+
+    async fn handle_start_all_requested(&mut self) -> Result<()> {
+        info!("Start all requested");
+
+        // Get all member names
+        let names = {
+            let registry = self.registry.lock().await;
+            registry.names()
+        };
+
+        // Publish StartRequested for each member
+        for name in names {
+            self.event_bus
+                .publish(MemberEvent::StartRequested { name: name.clone() })?;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_stop_all_requested(&mut self) -> Result<()> {
+        info!("Stop all requested");
+
+        // Get all member names
+        let names = {
+            let registry = self.registry.lock().await;
+            registry.names()
+        };
+
+        // Publish StopRequested for each member
+        for name in names {
+            self.event_bus
+                .publish(MemberEvent::StopRequested { name: name.clone() })?;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_restart_all_requested(&mut self) -> Result<()> {
+        info!("Restart all requested");
+
+        // Get all member names
+        let names = {
+            let registry = self.registry.lock().await;
+            registry.names()
+        };
+
+        // Publish RestartRequested for each member
+        for name in names {
+            self.event_bus
+                .publish(MemberEvent::RestartRequested { name: name.clone() })?;
+        }
 
         Ok(())
     }
