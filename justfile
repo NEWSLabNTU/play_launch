@@ -239,3 +239,100 @@ bump-version TYPE:
 # Set explicit version
 set-version VERSION:
     python3 scripts/bump_version.py --set {{VERSION}}
+
+# Test play_launch in test/* workspaces (excluding autoware_planning_simulation)
+test-workspaces:
+    #!/usr/bin/env bash
+    set -e
+
+    # Ensure play_launch is built
+    if [ ! -f install/setup.bash ]; then
+        echo "Error: install/setup.bash not found. Run 'just build' first."
+        exit 1
+    fi
+
+    # Source ROS2 and local install
+    source /opt/ros/{{ros_distro}}/setup.bash
+    source install/setup.bash
+
+    echo "=================================================="
+    echo "Testing play_launch in test/* workspaces"
+    echo "Using local install (not pip-installed version)"
+    echo "=================================================="
+    echo ""
+
+    # Test 1: composition_demo
+    echo "=========================================="
+    echo "Test 1/3: composition_demo"
+    echo "=========================================="
+    cd test/composition_demo
+    make clean
+    make test-all
+    cd ../..
+    echo ""
+
+    # Test 2: io_stress
+    echo "=========================================="
+    echo "Test 2/3: io_stress"
+    echo "=========================================="
+    cd test/io_stress
+
+    # Build io_stress package if needed
+    if [ ! -f ../../install/io_stress/lib/io_stress/io_stress_node ]; then
+        echo "Building io_stress package..."
+        cd ../..
+        colcon build --base-paths test/io_stress --symlink-install
+        source install/setup.bash
+        cd test/io_stress
+    fi
+
+    # Run a quick 5-second test
+    echo "Running io_stress for 5 seconds..."
+    timeout 5 play_launch launch io_stress io_stress.launch.xml --enable-monitoring || true
+
+    # Verify record.json was created
+    if [ -f record.json ]; then
+        echo "✅ io_stress test passed (record.json created)"
+    else
+        echo "❌ io_stress test failed (no record.json)"
+        exit 1
+    fi
+
+    make clean
+    cd ../..
+    echo ""
+
+    # Test 3: set_parameter_test
+    echo "=========================================="
+    echo "Test 3/3: set_parameter_test"
+    echo "=========================================="
+    cd test/set_parameter_test
+
+    # Test Python launch file
+    echo "Testing test_set_param.launch.py..."
+    play_launch dump launch test_set_param.launch.py
+    if [ -f record.json ]; then
+        echo "✅ Python launch file test passed"
+        rm -f record.json
+    else
+        echo "❌ Python launch file test failed"
+        exit 1
+    fi
+
+    # Test XML launch file
+    echo "Testing test_set_param.launch.xml..."
+    play_launch dump launch test_set_param.launch.xml
+    if [ -f record.json ]; then
+        echo "✅ XML launch file test passed"
+        rm -f record.json
+    else
+        echo "❌ XML launch file test failed"
+        exit 1
+    fi
+
+    cd ../..
+    echo ""
+
+    echo "=================================================="
+    echo "✅ All workspace tests passed!"
+    echo "=================================================="

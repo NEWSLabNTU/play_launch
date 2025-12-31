@@ -1,0 +1,24 @@
+# I/O Stress Test
+
+# Use bash for ROS setup scripts
+set shell := ["bash", "-c"]
+
+# Build io_stress package
+build:
+    @echo "Building io_stress package..."
+    @cd ../.. && colcon build --base-paths test/io_stress --symlink-install
+
+# Run I/O stress test with monitoring
+run:
+    @echo "Running I/O stress test with monitoring..."
+    @. ../../install/setup.sh && play_launch launch io_stress io_stress.launch.xml --enable-monitoring
+
+# Generate resource plots
+plot:
+    @echo "Generating resource plots..."
+    @play_launch plot
+
+# Clean artifacts
+clean:
+    @echo "Cleaning artifacts..."
+    @rm -rf play_log record.json
