@@ -130,7 +130,6 @@ pub async fn run_server(
         .map_err(|e| eyre::eyre!("Invalid bind address '{}': {}", bind_addr, e))?;
     let addr = SocketAddr::new(ip, port);
 
-    info!("Web UI available at http://{}:{}", bind_addr, port);
     if bind_addr == "0.0.0.0" {
         warn!("Web UI is exposed to network (0.0.0.0) - ensure this is intentional!");
     }

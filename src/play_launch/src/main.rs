@@ -518,7 +518,7 @@ async fn run_direct(
             reg.register_node(node);
         }
 
-        info!("Member registry created with {} members", reg.len());
+        debug!("Member registry created with {} members", reg.len());
     }
 
     // Get service discovery handle if available
@@ -562,10 +562,9 @@ async fn run_direct(
         });
     }
 
-    info!("Spawning node...");
+    info!("Spawning 1 node");
 
     // Use event-driven execution (always)
-    info!("Using event-driven architecture");
     match spawn_nodes_event_driven(
         pure_node_contexts,
         &process_monitor,
@@ -576,7 +575,7 @@ async fn run_direct(
     .await
     {
         Ok(_pids) => {
-            info!("All nodes spawned successfully");
+            debug!("Node spawned successfully");
         }
         Err(e) => {
             error!("Failed to spawn nodes: {}", e);
@@ -914,30 +913,55 @@ fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
         args.common.monitor_interval_ms,
     )?;
 
+    // Print configuration summary
+    info!("Configuration:");
+    info!(
+        "  Monitoring: {}",
+        if runtime_config.monitoring.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    if runtime_config.monitoring.enabled {
+        info!(
+            "  Monitoring interval: {}ms",
+            runtime_config.monitoring.sample_interval_ms
+        );
+    }
+    info!(
+        "  Container readiness: {}",
+        if runtime_config.container_readiness.wait_for_service_ready {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    if runtime_config.container_readiness.wait_for_service_ready {
+        let timeout = runtime_config
+            .container_readiness
+            .service_ready_timeout_secs;
+        if timeout == 0 {
+            info!("  Container timeout: unlimited");
+        } else {
+            info!("  Container timeout: {}s", timeout);
+        }
+    }
+    if args.common.web_ui {
+        info!(
+            "  Web UI: http://{}:{}",
+            args.common.web_ui_addr, args.common.web_ui_port
+        );
+    }
+
     // Start ROS service discovery thread if service checking is enabled (default: true)
     if runtime_config.container_readiness.wait_for_service_ready {
-        info!("Starting ROS service discovery thread for container readiness checking...");
-        if runtime_config
-            .container_readiness
-            .service_ready_timeout_secs
-            == 0
-        {
-            info!("Container service readiness will wait indefinitely");
-        } else {
-            info!(
-                "Container service readiness timeout: {}s",
-                runtime_config
-                    .container_readiness
-                    .service_ready_timeout_secs
-            );
-        }
-
         match ros::container_readiness::start_service_discovery_thread() {
             Ok(handle) => {
                 SERVICE_DISCOVERY_HANDLE
                     .set(handle)
                     .expect("SERVICE_DISCOVERY_HANDLE already set");
-                info!("ROS service discovery thread started successfully");
+                debug!("ROS service discovery thread started successfully");
             }
             Err(e) => {
                 error!("Failed to start ROS service discovery thread: {}", e);
@@ -1111,20 +1135,10 @@ async fn play(
         container_contexts,
         non_container_node_contexts: pure_node_contexts,
     } = prepare_node_contexts(&launch_dump, &node_log_dir, &container_names)?;
-    info!(
-        "Node contexts prepared: {} containers, {} pure nodes",
-        container_contexts.len(),
-        pure_node_contexts.len()
-    );
 
     // Prepare LoadNode request execution contexts
-    debug!("Preparing composable node contexts...");
     let ComposableNodeContextSet { load_node_contexts } =
         prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?;
-    info!(
-        "Composable node contexts prepared: {} load_node contexts",
-        load_node_contexts.len()
-    );
 
     // Create shutdown signal for graceful termination (shared with web server and respawn)
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -1253,7 +1267,7 @@ async fn play(
             reg.register_composable_node(composable);
         }
 
-        info!("Member registry created with {} members", reg.len());
+        debug!("Member registry created with {} members", reg.len());
     }
 
     // Get service discovery handle if available
@@ -1298,13 +1312,20 @@ async fn play(
     }
 
     // === EVENT-DRIVEN EXECUTION PATH ===
-    info!("Using event-driven architecture");
+
+    // Print summary of nodes to spawn
+    let num_pure_nodes = pure_node_contexts.len();
+    let num_containers = container_contexts.len();
+    let num_composable_nodes = load_node_contexts.len();
+    info!(
+        "Spawning {} nodes ({} pure nodes, {} containers, {} composable nodes)",
+        num_pure_nodes + num_containers + num_composable_nodes,
+        num_pure_nodes,
+        num_containers,
+        num_composable_nodes
+    );
 
     // Spawn non-container nodes using event-driven spawn
-    info!(
-        "Spawning {} non-container nodes...",
-        pure_node_contexts.len()
-    );
     match spawn_nodes_event_driven(
         pure_node_contexts,
         &process_monitor,
@@ -1314,21 +1335,17 @@ async fn play(
     )
     .await
     {
-        Ok(pids) => {
-            info!(
-                "Spawned {} non-container nodes with PIDs: {:?}",
-                pids.len(),
-                pids
-            );
+        Ok(_pids) => {
+            debug!("Spawned {} pure nodes", _pids.len());
         }
         Err(e) => {
-            error!("Failed to spawn non-container nodes: {}", e);
+            error!("Failed to spawn pure nodes: {}", e);
             return Err(e);
         }
     }
 
     // Spawn containers using event-driven spawn
-    info!("Spawning {} containers...", container_contexts.len());
+    debug!("Spawning {} containers...", container_contexts.len());
     match crate::execution::spawn::spawn_containers_event_driven(
         container_contexts,
         &process_monitor,
@@ -1339,7 +1356,7 @@ async fn play(
     .await
     {
         Ok(pids) => {
-            info!("Spawned {} containers with PIDs: {:?}", pids.len(), pids);
+            debug!("Spawned {} containers with PIDs: {:?}", pids.len(), pids);
         }
         Err(e) => {
             error!("Failed to spawn containers: {}", e);
@@ -1349,11 +1366,11 @@ async fn play(
 
     // Composable nodes will be loaded automatically when containers start
     // via ProcessStarted event → LoadRequested events
-    info!("Composable nodes will be loaded automatically (via event-driven architecture)");
+    info!("Composable nodes will be loaded automatically");
 
     // In event-driven mode, ProcessMonitor handles waiting for processes
     // We just need to wait for shutdown signal
-    info!("Event-driven execution active. Waiting for shutdown signal...");
+    info!("Waiting for shutdown signal...");
 
     #[cfg(unix)]
     let result = {
@@ -1439,7 +1456,7 @@ async fn play(
                     }
                 }
             } => {
-                info!("Event-driven execution complete");
+                info!("Execution complete");
                 Ok(())
             }
         }
@@ -1470,7 +1487,7 @@ async fn play(
                     }
                 }
             } => {
-                info!("Event-driven execution complete");
+                info!("Execution complete");
                 Ok(())
             }
         }

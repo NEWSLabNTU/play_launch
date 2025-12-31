@@ -96,7 +96,7 @@ impl EventProcessor {
     ///
     /// This is the main event loop that processes events until shutdown or the channel closes.
     pub async fn run(mut self) {
-        info!("Event processor starting");
+        debug!("Event processor starting");
 
         loop {
             tokio::select! {
@@ -124,7 +124,7 @@ impl EventProcessor {
     /// # Current Status
     /// Stub implementation - just logs the event
     async fn process_event(&mut self, event: MemberEvent) -> Result<()> {
-        info!("Processing event: {:?}", event);
+        debug!("Processing event: {:?}", event);
 
         match event {
             MemberEvent::ProcessStartRequested { name } => {
@@ -200,13 +200,13 @@ impl EventProcessor {
     // ===== Event Handlers (Phase 2) =====
 
     async fn handle_process_start_requested(&mut self, name: &str) -> Result<()> {
-        info!("Process start requested for {}", name);
+        debug!("Process start requested for {}", name);
         // This will be used in Phase 3 when integrating with execution.rs
         Ok(())
     }
 
     async fn handle_process_started(&mut self, name: &str, pid: u32) -> Result<()> {
-        info!("Process {} started with PID {}", name, pid);
+        debug!("Process {} started with PID {}", name, pid);
 
         // Update member state to Running
         {
@@ -221,7 +221,7 @@ impl EventProcessor {
         };
 
         if let Some(true) = member_type {
-            info!("Container {} started, waiting for service readiness", name);
+            debug!("Container {} started, waiting for service readiness", name);
 
             // Get the container's ROS name for service discovery
             let container_ros_name = {
@@ -248,7 +248,7 @@ impl EventProcessor {
             tokio::spawn(async move {
                 // Wait for container service to be ready (if service discovery is available)
                 if let (Some(discovery), Some(ros_name)) = (service_discovery, container_ros_name) {
-                    info!(
+                    debug!(
                         "Waiting for container {} (ROS name: {}) LoadNode service to be ready",
                         container_name, ros_name
                     );
@@ -265,7 +265,7 @@ impl EventProcessor {
                     .await
                     {
                         Ok(_) => {
-                            info!("Container {} service is ready", container_name);
+                            debug!("Container {} service is ready", container_name);
                         }
                         Err(e) => {
                             warn!(
@@ -314,7 +314,7 @@ impl EventProcessor {
                     }
                 }
 
-                info!(
+                debug!(
                     "Triggered loading for {} composable nodes in container {}",
                     composable_nodes.len(),
                     container_name
@@ -331,7 +331,7 @@ impl EventProcessor {
     }
 
     async fn handle_process_exited(&mut self, name: &str, exit_code: Option<i32>) -> Result<()> {
-        info!("Process {} exited with exit code {:?}", name, exit_code);
+        debug!("Process {} exited with exit code {:?}", name, exit_code);
 
         let is_failure = exit_code.unwrap_or(0) != 0;
 
@@ -380,7 +380,7 @@ impl EventProcessor {
                 BlockReason::Stopped
             };
 
-            info!(
+            debug!(
                 "Container {} exited, blocking composable nodes with reason {:?}",
                 name, reason
             );
@@ -420,7 +420,7 @@ impl EventProcessor {
     }
 
     async fn handle_process_stopped(&mut self, name: &str) -> Result<()> {
-        info!("Process {} stopped cleanly", name);
+        debug!("Process {} stopped cleanly", name);
         // State already updated in handle_process_exited
         Ok(())
     }
@@ -433,7 +433,7 @@ impl EventProcessor {
     }
 
     async fn handle_load_requested(&mut self, name: &str) -> Result<()> {
-        info!("Load requested for composable node {}", name);
+        debug!("Load requested for composable node {}", name);
 
         // Get component loader
         let component_loader = match &self.component_loader {
@@ -508,7 +508,7 @@ impl EventProcessor {
         let name_clone = name.to_string();
 
         tokio::spawn(async move {
-            info!("Calling LoadNode service for {}", name_clone);
+            debug!("Calling LoadNode service for {}", name_clone);
 
             let result = component_loader
                 .load_node(
@@ -527,7 +527,7 @@ impl EventProcessor {
             match result {
                 Ok(response) => {
                     if response.success {
-                        info!(
+                        debug!(
                             "LoadNode succeeded for {}: {}",
                             name_clone, response.full_node_name
                         );
@@ -571,7 +571,7 @@ impl EventProcessor {
     }
 
     async fn handle_load_started(&mut self, name: &str) -> Result<()> {
-        info!("LoadNode service call started for {}", name);
+        debug!("LoadNode service call started for {}", name);
         // State already updated to Loading in handle_load_requested
         Ok(())
     }
@@ -582,7 +582,7 @@ impl EventProcessor {
         full_node_name: &str,
         unique_id: u64,
     ) -> Result<()> {
-        info!(
+        debug!(
             "Composable node {} loaded successfully: {}",
             name, full_node_name
         );
@@ -669,19 +669,19 @@ impl EventProcessor {
         name: &str,
         reason: super::member::BlockReason,
     ) -> Result<()> {
-        info!("Composable node {} blocked: {:?}", name, reason);
+        debug!("Composable node {} blocked: {:?}", name, reason);
         // State already updated in handle_process_exited
         Ok(())
     }
 
     async fn handle_unblocked(&mut self, name: &str) -> Result<()> {
-        info!("Composable node {} unblocked", name);
+        debug!("Composable node {} unblocked", name);
         // State already updated in handle_process_started
         Ok(())
     }
 
     async fn handle_start_requested(&mut self, name: &str) -> Result<()> {
-        info!("Start requested for {}", name);
+        debug!("Start requested for {}", name);
 
         // Get member type to dispatch appropriately
         let member = {
@@ -692,7 +692,7 @@ impl EventProcessor {
         match member {
             Some(Member::Node(_)) | Some(Member::Container(_)) => {
                 // For processes, spawn using event-driven architecture
-                info!("Spawning process {}", name);
+                debug!("Spawning process {}", name);
 
                 // Spawn the process (Phase 3 integration)
                 if let Err(e) = self.spawn_node_from_registry(name).await {
@@ -722,7 +722,7 @@ impl EventProcessor {
     }
 
     async fn handle_stop_requested(&mut self, name: &str) -> Result<()> {
-        info!("Stop requested for {}", name);
+        debug!("Stop requested for {}", name);
 
         // Get PID from member state
         let pid = {
@@ -734,7 +734,7 @@ impl EventProcessor {
             Some(pid) => {
                 // Use ProcessMonitor to gracefully shutdown
                 self.process_monitor.shutdown_process(name, pid).await?;
-                info!("Sent shutdown signal to process {} (PID {})", name, pid);
+                debug!("Sent shutdown signal to process {} (PID {})", name, pid);
                 // ProcessMonitor will publish ProcessExited event when process exits
             }
             None => {
@@ -746,7 +746,7 @@ impl EventProcessor {
     }
 
     async fn handle_restart_requested(&mut self, name: &str) -> Result<()> {
-        info!("Restart requested for {}", name);
+        debug!("Restart requested for {}", name);
 
         // Check if running
         let pid = {
@@ -756,7 +756,7 @@ impl EventProcessor {
 
         // If running, stop first
         if let Some(pid) = pid {
-            info!("Stopping {} before restart", name);
+            debug!("Stopping {} before restart", name);
             self.process_monitor.shutdown_process(name, pid).await?;
             // Wait a bit for process to exit
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -771,7 +771,7 @@ impl EventProcessor {
     }
 
     async fn handle_respawn_toggled(&mut self, name: &str, enabled: bool) -> Result<()> {
-        info!("Respawn toggled for {} to {}", name, enabled);
+        debug!("Respawn toggled for {} to {}", name, enabled);
 
         // Update respawn configuration in member
         let mut registry = self.registry.lock().await;
@@ -809,7 +809,7 @@ impl EventProcessor {
 
         // Shutdown all running processes
         for (name, pid) in running_members {
-            info!("Shutting down {} (PID {})", name, pid);
+            debug!("Shutting down {} (PID {})", name, pid);
             if let Err(e) = self.process_monitor.shutdown_process(&name, pid).await {
                 error!("Failed to shutdown {}: {}", name, e);
             }
@@ -824,7 +824,7 @@ impl EventProcessor {
     async fn handle_state_changed(&mut self, name: &str) -> Result<()> {
         // This event is primarily for web UI notifications
         // No additional action needed here
-        info!("State changed for {}", name);
+        debug!("State changed for {}", name);
         Ok(())
     }
 
@@ -863,7 +863,7 @@ impl EventProcessor {
         };
 
         if let Some((delay_secs, member_name)) = respawn_config {
-            info!("{} will respawn in {:.1}s", member_name, delay_secs);
+            debug!("{} will respawn in {:.1}s", member_name, delay_secs);
 
             // Spawn a background task to handle delayed respawn
             let event_bus = self.event_bus.clone();
@@ -878,7 +878,7 @@ impl EventProcessor {
                         }) {
                             error!("Failed to publish StartRequested for {}: {}", member_name, e);
                         } else {
-                            info!("Respawn triggered for {}", member_name);
+                            debug!("Respawn triggered for {}", member_name);
                         }
                     }
                     _ = shutdown_rx.changed() => {
@@ -940,7 +940,7 @@ impl EventProcessor {
     // ===== Bulk Operations =====
 
     async fn handle_start_all_requested(&mut self) -> Result<()> {
-        info!("Start all requested");
+        debug!("Start all requested");
 
         // Get all member names
         let names = {
@@ -958,7 +958,7 @@ impl EventProcessor {
     }
 
     async fn handle_stop_all_requested(&mut self) -> Result<()> {
-        info!("Stop all requested");
+        debug!("Stop all requested");
 
         // Get all member names
         let names = {
@@ -976,7 +976,7 @@ impl EventProcessor {
     }
 
     async fn handle_restart_all_requested(&mut self) -> Result<()> {
-        info!("Restart all requested");
+        debug!("Restart all requested");
 
         // Get all member names
         let names = {

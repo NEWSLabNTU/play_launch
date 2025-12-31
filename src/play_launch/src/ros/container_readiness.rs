@@ -226,7 +226,7 @@ pub async fn wait_for_containers_ready(
         return Ok(());
     }
 
-    info!(
+    debug!(
         "Waiting for {} container(s) to be ready...",
         container_names.len()
     );
@@ -263,7 +263,7 @@ pub async fn wait_for_containers_ready(
         }
     }
 
-    info!("All containers ready (or timed out)");
+    debug!("All containers ready (or timed out)");
     Ok(())
 }
 

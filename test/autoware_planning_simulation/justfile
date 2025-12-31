@@ -47,9 +47,6 @@ launch-sim: check-autoware
     source autoware/install/setup.bash
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
-    echo "Starting Autoware planning simulator (Web UI: http://localhost:8080)"
-    echo "Press Ctrl-C to stop"
-
     play_launch launch \
         --web-ui \
         --web-ui-addr 0.0.0.0 \
@@ -83,10 +80,6 @@ launch-demo: check-autoware
     source "$AUTOWARE_PATH/install/setup.bash"
     source "$SCRIPT_DIR/../../install/setup.bash"
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
-
-    echo "Starting Autoware demo (simulator + autonomous test)"
-    echo "Web UI: http://localhost:8080"
-    echo "Press Ctrl-C to stop all processes"
 
     # Export variables for parallel jobs
     export MAP_PATH SCRIPT_DIR CYCLONEDDS_URI

@@ -1023,7 +1023,7 @@ pub async fn spawn_node_event_driven(
         mut command,
     } = exec;
 
-    info!("Spawning {}", log_name);
+    debug!("Spawning {}", log_name);
 
     // Spawn the process
     let child = command
@@ -1067,7 +1067,7 @@ pub async fn spawn_node_event_driven(
         })
         .wrap_err_with(|| format!("Failed to publish ProcessStarted event for {}", log_name))?;
 
-    info!("{} started with PID {}", log_name, pid);
+    debug!("{} started with PID {}", log_name, pid);
 
     Ok(pid)
 }

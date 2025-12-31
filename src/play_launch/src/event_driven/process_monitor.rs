@@ -21,7 +21,7 @@ use tokio::{
     sync::{watch, Mutex},
     task::JoinHandle,
 };
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Process monitor manages lifecycle of spawned processes
 ///
@@ -73,7 +73,7 @@ impl ProcessMonitor {
                 result = child.wait() => {
                     match result {
                         Ok(exit_status) => {
-                            info!("Process {} (PID {}) exited with status: {:?}", name_clone, pid, exit_status);
+                            debug!("Process {} (PID {}) exited with status: {:?}", name_clone, pid, exit_status);
                             if let Err(e) = event_bus.publish(MemberEvent::ProcessExited {
                                 name: name_clone,
                                 exit_code: exit_status.code(),
@@ -87,7 +87,7 @@ impl ProcessMonitor {
                     }
                 }
                 _ = shutdown_rx.changed() => {
-                    info!("Shutdown requested, stopping monitor for {} (PID {})", name_clone, pid);
+                    debug!("Shutdown requested, stopping monitor for {} (PID {})", name_clone, pid);
                 }
             }
         });
@@ -95,7 +95,7 @@ impl ProcessMonitor {
         // Track the task for graceful shutdown
         self.tasks.lock().await.insert(name.clone(), handle);
 
-        info!("Registered process {} with PID {}", name, pid);
+        debug!("Registered process {} with PID {}", name, pid);
         Ok(pid)
     }
 
