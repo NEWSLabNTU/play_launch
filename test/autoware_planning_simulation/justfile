@@ -8,8 +8,6 @@ default:
 script_dir := justfile_directory()
 autoware_link := script_dir / "autoware"
 map_path := env_var_or_default('MAP_PATH', env_var('HOME') / 'autoware_map/sample-map-planning')
-sim_service_name := "autoware-sim"
-demo_service_name := "autoware-demo"
 
 # Verify Autoware installation
 check-autoware:
@@ -30,57 +28,77 @@ check-autoware:
         exit 1
     fi
 
-# Start Autoware simulator service
-start-sim: check-autoware
-    @MAP_PATH={{map_path}} ./scripts/start-sim.sh 2>&1 | tail -1
-
-# Stop Autoware simulator service
-stop-sim:
-    @systemctl --user stop {{sim_service_name}} 2>&1 && echo "✓ Simulator service stopped" || echo "⚠ Service not running"
-
-# Restart Autoware simulator service
-restart-sim: check-autoware
+# Launch Autoware simulator (foreground, Ctrl-C to stop)
+launch-sim: check-autoware
     #!/usr/bin/env bash
-    if systemctl --user is-active {{sim_service_name}} >/dev/null 2>&1; then
-        systemctl --user restart {{sim_service_name}} 2>&1 >/dev/null && echo "✓ Simulator service restarted" || echo "✗ Failed to restart service"
-    else
-        MAP_PATH={{map_path}} ./scripts/start-sim.sh 2>&1 | tail -1
+    set -e
+    SCRIPT_DIR="{{script_dir}}"
+    cd "$SCRIPT_DIR"
+
+    MAP_PATH="{{map_path}}"
+
+    if [ ! -f "$SCRIPT_DIR/cyclonedds.xml" ]; then
+        echo "ERROR: CycloneDDS configuration file not found at $SCRIPT_DIR/cyclonedds.xml"
+        exit 1
     fi
 
-# Show status of simulator service
-status-sim:
-    @systemctl --user status {{sim_service_name}}
+    # Source ROS and Autoware setup
+    source ../../install/setup.bash
+    source autoware/install/setup.bash
+    export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
-# View logs from simulator service
-logs-sim:
-    @journalctl --user -u {{sim_service_name}} -n 100 -f
+    echo "Starting Autoware planning simulator (Web UI: http://localhost:8080)"
+    echo "Press Ctrl-C to stop"
 
-# Start Autoware demo service (simulator + autonomous test)
-start-demo: check-autoware
-    @MAP_PATH={{map_path}} ./scripts/start-demo.sh 2>&1 | tail -1
+    play_launch launch \
+        --web-ui \
+        --web-ui-addr 0.0.0.0 \
+        --web-ui-port 8080 \
+        --enable-monitoring \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="$MAP_PATH"
 
-# Stop Autoware demo service
-stop-demo:
-    @systemctl --user stop {{demo_service_name}} 2>&1 && echo "✓ Demo service stopped" || echo "⚠ Service not running"
-
-# Restart Autoware demo service
-restart-demo: check-autoware
+# Launch Autoware demo (simulator + autonomous test using GNU Parallel)
+launch-demo: check-autoware
     #!/usr/bin/env bash
-    if systemctl --user is-active {{demo_service_name}} >/dev/null 2>&1; then
-        systemctl --user restart {{demo_service_name}} 2>&1 >/dev/null && echo "✓ Demo service restarted" || echo "✗ Failed to restart service"
-    else
-        MAP_PATH={{map_path}} ./scripts/start-demo.sh 2>&1 | tail -1
+    set -e
+    SCRIPT_DIR="{{script_dir}}"
+    cd "$SCRIPT_DIR"
+
+    MAP_PATH="{{map_path}}"
+    AUTOWARE_PATH=$(readlink -f autoware)
+
+    if [ ! -f "$SCRIPT_DIR/cyclonedds.xml" ]; then
+        echo "ERROR: CycloneDDS configuration file not found at $SCRIPT_DIR/cyclonedds.xml"
+        exit 1
     fi
 
-# Show status of demo service
-status-demo:
-    @systemctl --user status {{demo_service_name}}
+    # Check for GNU Parallel
+    if ! command -v parallel &> /dev/null; then
+        echo "ERROR: GNU Parallel not found. Install with: sudo apt install parallel"
+        exit 1
+    fi
 
-# View logs from demo service
-logs-demo:
-    @journalctl --user -u {{demo_service_name}} -n 100 -f
+    # Source ROS and Autoware setup
+    source "$AUTOWARE_PATH/install/setup.bash"
+    source "$SCRIPT_DIR/../../install/setup.bash"
+    export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
-# Run autonomous driving test (requires simulator running)
+    echo "Starting Autoware demo (simulator + autonomous test)"
+    echo "Web UI: http://localhost:8080"
+    echo "Press Ctrl-C to stop all processes"
+
+    # Export variables for parallel jobs
+    export MAP_PATH SCRIPT_DIR CYCLONEDDS_URI
+
+    # Run simulator and test in parallel
+    # Job 1: Simulator
+    # Job 2: Wait 60s then run autonomous test
+    parallel --line-buffer --halt now,fail=1 ::: \
+        "play_launch launch --web-ui --web-ui-addr 0.0.0.0 --web-ui-port 8080 --enable-monitoring autoware_launch planning_simulator.launch.xml map_path:=$MAP_PATH" \
+        "sleep 60 && echo '[Demo] Running autonomous driving test...' && python3 $SCRIPT_DIR/scripts/test_autonomous_drive.py && echo '[Demo] Test completed. Simulator continues running. Press Ctrl-C to stop.'"
+
+# Run autonomous driving test (requires simulator running separately)
 drive: check-autoware
     #!/usr/bin/env bash
     set -e
