@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use super::context::{ComposableNodeContext, ExecutionContext, NodeContainerContext, NodeContext};
+use crate::{ros::container_readiness::SERVICE_DISCOVERY_HANDLE, util::logging::is_verbose};
 use eyre::WrapErr;
 use futures::{
     future::{BoxFuture, FutureExt},
@@ -198,7 +199,7 @@ pub fn spawn_nodes(
                     // Log respawn intent
                     if result.is_err() {
                         warn!("{log_name} exited with error, respawning in {:.1}s", respawn_delay_secs);
-                    } else if crate::is_verbose() {
+                    } else if is_verbose() {
                         info!("{log_name} exited, respawning in {:.1}s", respawn_delay_secs);
                     }
 
@@ -626,7 +627,7 @@ fn spawn_node_containers_and_load_composable_nodes(
 
         // Optionally, wait for container services to be ready
         if let Some(service_config) = service_wait_config {
-            if let Some(discovery_handle) = crate::SERVICE_DISCOVERY_HANDLE.get() {
+            if let Some(discovery_handle) = SERVICE_DISCOVERY_HANDLE.get() {
                 info!("Waiting for container services to be ready...");
                 if let Err(e) = crate::ros::container_readiness::wait_for_containers_ready(
                     &container_names_vec,
@@ -889,7 +890,7 @@ async fn run_load_composable_node_via_service(
         return Ok(false);
     }
 
-    if crate::is_verbose() {
+    if is_verbose() {
         info!(
             "{log_name}: Successfully loaded (unique_id: {})",
             response.unique_id
@@ -936,7 +937,7 @@ fn save_node_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> e
 
     // Print status to the terminal
     if status.success() {
-        if crate::is_verbose() {
+        if is_verbose() {
             info!("[{log_name}] finishes");
         }
     } else {
@@ -973,7 +974,7 @@ fn save_composable_node_service_status(
     writeln!(status_file, "{code}")?;
 
     if success {
-        if crate::is_verbose() {
+        if is_verbose() {
             info!("{log_name} loading finishes successfully via service");
         }
     } else {

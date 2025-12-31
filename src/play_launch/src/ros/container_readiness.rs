@@ -20,9 +20,13 @@
 //! - Consider using longer timeouts or unlimited wait for production systems
 //! - Process-based checking is faster but doesn't verify DDS readiness
 
-use std::time::Duration;
+use crate::util::logging::is_verbose;
+use std::{sync::OnceLock, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
+
+/// Global handle for ROS service discovery (optional, only initialized if service checking enabled)
+pub static SERVICE_DISCOVERY_HANDLE: OnceLock<ServiceDiscoveryHandle> = OnceLock::new();
 
 /// Configuration for waiting for container readiness
 #[derive(Clone, Debug)]
@@ -184,7 +188,7 @@ fn run_ros_discovery_loop(
                     .any(|name| name.ends_with("/_container/load_node"));
 
                 if has_list_nodes && has_load_node {
-                    if crate::is_verbose() {
+                    if is_verbose() {
                         info!(
                             "Container '{}' is ready (has list_nodes and load_node services)",
                             container_name
@@ -294,7 +298,7 @@ async fn wait_for_single_container(
             .await
         {
             Ok(true) => {
-                if crate::is_verbose() {
+                if is_verbose() {
                     info!("Container '{}' is ready", container_name);
                 }
                 return Ok(());
