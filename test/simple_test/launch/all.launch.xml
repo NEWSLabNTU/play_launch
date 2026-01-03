@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- All tests combined - pure nodes, composition, and set_parameter -->
+
+  <!-- Pure nodes test - talker and listener -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker" namespace="/pure_test" output="screen">
+    <param name="msg_prefix" value="pure"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener" namespace="/pure_test" output="screen"/>
+
+  <!-- Composition test - composable nodes in container -->
+  <node_container pkg="rclcpp_components" exec="component_container" name="composition_container" namespace="/comp_test">
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker" namespace="/comp_test">
+      <param name="msg_prefix" value="composition"/>
+    </composable_node>
+    <composable_node pkg="composition" plugin="composition::Listener" name="listener" namespace="/comp_test"/>
+  </node_container>
+
+  <!-- Set parameter test - global parameters -->
+  <arg name="use_sim_time" default="true"/>
+  <set_parameter name="use_sim_time" value="$(var use_sim_time)"/>
+  <set_parameter name="global_rate" value="50.0"/>
+  <set_parameter name="global_string" value="hello_world"/>
+
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker1" namespace="/test">
+    <param name="node_specific" value="talker1_value"/>
+  </node>
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener1" namespace="/test">
+    <param name="node_specific" value="listener1_value"/>
+  </node>
+
+  <group>
+    <set_parameter name="group_param" value="inside_group"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="talker2" namespace="/group_test">
+      <param name="node_specific" value="talker2_value"/>
+    </node>
+  </group>
+
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener2" namespace="/outside_group">
+    <param name="node_specific" value="listener2_value"/>
+  </node>
+</launch>

@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Composition test - talker and listener in a container -->
+  <node_container pkg="rclcpp_components" exec="component_container" name="composition_container" namespace="/comp_test">
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker" namespace="/comp_test">
+      <param name="msg_prefix" value="composition"/>
+    </composable_node>
+    <composable_node pkg="composition" plugin="composition::Listener" name="listener" namespace="/comp_test"/>
+  </node_container>
+</launch>

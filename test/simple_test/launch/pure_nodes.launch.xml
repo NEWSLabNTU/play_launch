@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Simple pure nodes test - talker and listener -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker" namespace="/pure_test" output="screen">
+    <param name="msg_prefix" value="pure"/>
+  </node>
+
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener" namespace="/pure_test" output="screen"/>
+</launch>

@@ -1,0 +1,56 @@
+# Simple Test Suite for play_launch
+
+# Variables
+ros_distro := env_var_or_default('ROS_DISTRO', 'humble')
+
+# Show help
+default:
+    @just --list
+
+# Run pure_nodes.launch.xml from local launch directory
+run-pure-nodes:
+    #!/usr/bin/env bash
+    set -e
+    echo "Running pure nodes..."
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../install/setup.bash
+    play_launch launch --enable-monitoring --web-ui launch/pure_nodes.launch.xml
+
+# Run composition.launch.xml from local launch directory
+run-composition:
+    #!/usr/bin/env bash
+    set -e
+    echo "Running composition..."
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../install/setup.bash
+    play_launch launch --enable-monitoring --web-ui launch/composition.launch.xml
+
+# Run set_parameter.launch.xml from local launch directory
+run-set-parameter:
+    #!/usr/bin/env bash
+    set -e
+    echo "Running set_parameter..."
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../install/setup.bash
+    play_launch launch --enable-monitoring --web-ui launch/set_parameter.launch.xml
+
+# Run all.launch.xml from local launch directory
+run-all:
+    #!/usr/bin/env bash
+    set -e
+    echo "Running all tests combined..."
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../install/setup.bash
+    play_launch launch --enable-monitoring --web-ui launch/all.launch.xml
+
+# Generate plots from latest run
+plot:
+    @play_launch plot
+
+# Clean generated files
+clean:
+    #!/usr/bin/env bash
+    set -e
+    echo "Cleaning up..."
+    rm -rf play_log record.json
+    echo "Cleanup complete"
