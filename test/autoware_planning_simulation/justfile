@@ -28,8 +28,8 @@ check-autoware:
         exit 1
     fi
 
-# Launch Autoware simulator (foreground, Ctrl-C to stop)
-launch-sim: check-autoware
+# Run Autoware simulator with play_launch (foreground, Ctrl-C to stop)
+run-sim: check-autoware
     #!/usr/bin/env bash
     set -e
     SCRIPT_DIR="{{script_dir}}"
@@ -47,16 +47,17 @@ launch-sim: check-autoware
     source autoware/install/setup.bash
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
-# View logs from simulator service
-logs-sim:
-    @journalctl --user -u {{sim_service_name}} -n 100 -f
+    # Run with play_launch
+    play_launch launch \
+        --web-ui \
+        --web-ui-addr 0.0.0.0 \
+        --web-ui-port 8080 \
+        --enable-monitoring \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="$MAP_PATH"
 
-# Start Autoware demo service (simulator + autonomous test)
-start-demo: check-autoware
-    @MAP_PATH={{map_path}} ./scripts/start-demo.sh 2>&1 | tail -1
-
-# Launch Autoware demo (simulator + autonomous test using GNU Parallel)
-launch-demo: check-autoware
+# Run Autoware demo (simulator + autonomous test) using GNU Parallel
+run-demo: check-autoware
     #!/usr/bin/env bash
     set -e
     SCRIPT_DIR="{{script_dir}}"
@@ -81,13 +82,16 @@ launch-demo: check-autoware
     source "$SCRIPT_DIR/../../install/setup.bash"
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
-# Run autonomous driving test (requires simulator running)
-drive: check-autoware
-    #!/usr/bin/env bash
-    set -e
-    AUTOWARE_PATH=$(readlink -f "{{autoware_link}}")
-    cd "$AUTOWARE_PATH/install" && source setup.bash 2>&1 >/dev/null && cd "{{script_dir}}" && \
-    python3 scripts/test_autonomous_drive.py
+    # Export variables for parallel to inherit
+    export MAP_PATH
+    export CYCLONEDDS_URI
+    export SCRIPT_DIR
+
+    # Run simulator and test in parallel
+    # Simulator runs continuously, test waits 60s then runs
+    parallel --line-buffer ::: \
+        "play_launch launch --web-ui --web-ui-addr 0.0.0.0 --web-ui-port 8080 --enable-monitoring autoware_launch planning_simulator.launch.xml map_path:=\"$MAP_PATH\"" \
+        "sleep 60 && python3 $SCRIPT_DIR/scripts/test_autonomous_drive.py && echo '[Demo] Test completed. Press Ctrl-C to stop simulator.'"
 
 # Generate resource usage plots from latest play_log
 plot:
