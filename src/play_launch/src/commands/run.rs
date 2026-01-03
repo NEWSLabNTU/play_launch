@@ -4,9 +4,9 @@ use crate::{
     cli,
     cli::config::load_runtime_config,
     execution::context::{prepare_node_contexts, NodeContextClasses},
-    member_actor::{ActorConfig, MemberCoordinator},
+    member_actor::{ActorConfig, MemberCoordinatorBuilder},
     monitoring::resource_monitor::MonitorConfig,
-    process::{kill_all_descendants, kill_process_group, GRACEFUL_SHUTDOWN_DONE},
+    process::{kill_all_descendants, kill_process_group},
     ros::launch_dump::LaunchDump,
     util::{log_dir::create_log_dir, logging::is_verbose},
     web,
@@ -17,19 +17,37 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
-    sync::{atomic::Ordering, Arc, Mutex},
+    sync::{Arc, Mutex},
 };
 use tracing::{debug, error, info, warn};
 
-/// CleanupGuard ensures all child processes are killed when dropped
-struct CleanupGuard;
+/// Guard that ensures child processes are cleaned up on drop
+struct CleanupGuard {
+    enabled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CleanupGuard {
+    fn new() -> Self {
+        Self {
+            enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        }
+    }
+
+    /// Disable the cleanup guard (call after graceful shutdown completes)
+    fn disable(&self) {
+        self.enabled
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        debug!("CleanupGuard disabled - graceful shutdown completed");
+    }
+}
 
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
-        debug!("CleanupGuard: Ensuring all child processes are terminated");
-        // Only kill if we didn't already gracefully shut down
-        if !GRACEFUL_SHUTDOWN_DONE.load(Ordering::Relaxed) {
+        if self.enabled.load(std::sync::atomic::Ordering::Relaxed) {
+            debug!("CleanupGuard: Ensuring all child processes are terminated");
             kill_all_descendants();
+        } else {
+            debug!("CleanupGuard: Skipped (disabled after graceful shutdown)");
         }
     }
 }
@@ -93,7 +111,7 @@ async fn run_direct(
     debug!("Starting direct node execution");
 
     // Install cleanup guard
-    let _cleanup_guard = CleanupGuard;
+    let cleanup_guard = CleanupGuard::new();
     debug!("CleanupGuard installed");
 
     // Spawn anchor task and get PGID (Phase 4: async anchor with shutdown support)
@@ -203,12 +221,12 @@ async fn run_direct(
         non_container_node_contexts: pure_node_contexts,
     } = prepare_node_contexts(launch_dump, &node_log_dir, &container_names)?;
 
-    // Create MemberCoordinator
-    let coordinator = std::sync::Arc::new(tokio::sync::Mutex::new(MemberCoordinator::new()));
+    // Create MemberCoordinatorBuilder
+    let mut builder = MemberCoordinatorBuilder::new();
 
-    debug!("Spawning {} node(s)", pure_node_contexts.len());
+    debug!("Adding {} node(s) to builder", pure_node_contexts.len());
 
-    // Spawn actors for each node
+    // Add actors to builder
     for context in pure_node_contexts {
         // Extract directory name for log/member name
         let dir_name = context
@@ -227,55 +245,61 @@ async fn run_direct(
             pgid: Some(pgid),
         };
 
-        // Spawn the actor
-        coordinator.lock().await.spawn_regular_node(
+        // Add to builder
+        builder.add_regular_node(
             member_name,
             context,
             actor_config,
             Some(process_registry.clone()),
-        )?;
+        );
     }
 
+    // Spawn all actors and get handle + runner
+    debug!("Spawning all {} actors...", builder.member_count());
+    let (member_handle, member_runner) = builder.spawn(None).await;
+    let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
     debug!("All actors spawned successfully");
 
     // Setup web UI if requested (direct StateEvent streaming)
-    let web_ui_task = if common.web_ui {
-        info!("Setting up web UI with direct StateEvent streaming...");
+    let (runner_task, web_ui_task) = if common.web_ui {
+        debug!("Setting up web UI with direct StateEvent streaming...");
 
         // Create state event broadcaster for SSE clients
         let state_broadcaster = std::sync::Arc::new(web::StateEventBroadcaster::new());
 
         // Start web server
         let web_state = Arc::new(web::WebState::new(
-            coordinator.clone(),
+            member_handle.clone(), // Clone the Arc, not MemberHandle
             log_dir.clone(),
             state_broadcaster.clone(),
         ));
         let addr = common.web_ui_addr.clone();
         let port = common.web_ui_port;
-        let shutdown_rx = {
-            let coord = coordinator.lock().await;
-            coord.shutdown_rx()
-        };
 
         // Log web UI URL before spawning (addr will be moved)
         info!("Web UI available at http://{}:{}", addr, port);
 
-        // Spawn a single task that runs both web server and state forwarder concurrently
-        let coordinator_clone = coordinator.clone();
-        Some(tokio::spawn(async move {
-            tokio::join!(
-                async {
-                    if let Err(e) = web::run_server(web_state, &addr, port, shutdown_rx).await {
-                        error!("Web server error: {}", e);
-                    }
-                },
-                forward_state_events(coordinator_clone, state_broadcaster)
-            );
+        let (_shutdown_tx, web_shutdown) = tokio::sync::watch::channel(false);
+
+        // Spawn web server task
+        let web_server_task = tokio::spawn(async move {
+            if let Err(e) = web::run_server(web_state, &addr, port, web_shutdown).await {
+                error!("Web server error: {}", e);
+            }
             Ok(())
-        }))
+        });
+
+        // Runner task forwards state events and waits for completion
+        let runner_task = tokio::spawn(async move {
+            forward_state_events_and_wait(member_runner, state_broadcaster).await
+        });
+
+        (Some(runner_task), Some(web_server_task))
     } else {
-        None
+        // Runner task just waits for completion (no forwarding)
+        let runner_task = tokio::spawn(async move { member_runner.wait_for_completion().await });
+
+        (Some(runner_task), None)
     };
 
     // Phase 6: Collect all background tasks into FuturesUnordered for unified lifecycle management
@@ -287,6 +311,11 @@ async fn run_direct(
 
     // Add optional monitoring task
     if let Some(task) = monitor_task {
+        background_tasks.push(task);
+    }
+
+    // Add runner task (always present)
+    if let Some(task) = runner_task {
         background_tasks.push(task);
     }
 
@@ -304,11 +333,8 @@ async fn run_direct(
     let mut kill_level = 0u8;
     debug!("Signal handlers installed, entering main event loop");
 
-    // Wait for either actors to complete OR any background task to finish/fail OR signals
-    debug!("Waiting for completion (actors, background tasks, or signals)...");
-    let coordinator_clone = coordinator.clone();
-    let mut coordinator_wait =
-        std::pin::pin!(async { coordinator_clone.lock().await.wait_for_completion().await });
+    // Wait for background tasks (including runner) to complete OR signals
+    debug!("Waiting for completion (background tasks or signals)...");
 
     #[cfg(unix)]
     {
@@ -376,16 +402,7 @@ async fn run_direct(
                     }
                 }
 
-                // Actor completion
-                result = &mut coordinator_wait => {
-                    info!("All actors completed");
-                    if let Err(e) = result {
-                        error!("Actor completion error: {:#}", e);
-                    }
-                    break;  // Normal completion, exit loop
-                }
-
-                // Background task completion/failure
+                // Background task completion/failure (including runner task)
                 Some(result) = background_tasks.next() => {
                     // A background task finished (usually means error or shutdown)
                     match result {
@@ -420,16 +437,7 @@ async fn run_direct(
                     std::process::exit(130);
                 }
 
-                // Actor completion
-                result = &mut coordinator_wait => {
-                    info!("All actors completed");
-                    if let Err(e) = result {
-                        error!("Actor completion error: {:#}", e);
-                    }
-                    break;  // Normal completion, exit loop
-                }
-
-                // Background task completion/failure
+                // Background task completion/failure (including runner task)
                 Some(result) = background_tasks.next() => {
                     // A background task finished (usually means error or shutdown)
                     match result {
@@ -472,60 +480,39 @@ async fn run_direct(
 
     // Handle graceful shutdown with process cleanup (same logic as before)
     #[cfg(unix)]
-    let result = handle_shutdown_simple(Some(pgid), coordinator).await;
+    let result = handle_shutdown_simple(Some(pgid), member_handle, &cleanup_guard).await;
     #[cfg(not(unix))]
-    let result = handle_shutdown_simple(None, coordinator).await;
+    let result = handle_shutdown_simple(None, member_handle, &cleanup_guard).await;
 
     result
 }
 
-/// Forward state events from coordinator to SSE broadcaster
+/// Forward state events from runner to SSE broadcaster, then wait for all actors to complete
 ///
-/// This task runs in the background and continuously forwards StateEvents
-/// from the coordinator to the web UI broadcaster for SSE clients.
-async fn forward_state_events(
-    coordinator: std::sync::Arc<tokio::sync::Mutex<crate::member_actor::MemberCoordinator>>,
-    broadcaster: std::sync::Arc<crate::web::StateEventBroadcaster>,
-) {
-    tracing::debug!("Starting state event forwarding task");
+/// This combines event forwarding with completion waiting in a single task.
+async fn forward_state_events_and_wait(
+    mut runner: crate::member_actor::MemberRunner,
+    broadcaster: Arc<crate::web::StateEventBroadcaster>,
+) -> eyre::Result<()> {
+    tracing::debug!("Starting state event forwarding and completion waiting");
 
-    loop {
-        // Get next state event from coordinator
-        let event = {
-            let mut coord = coordinator.lock().await;
-            coord.next_state_event().await
-        };
-
-        match event {
-            Some(event) => {
-                // Update coordinator's internal state cache
-                {
-                    let mut coord = coordinator.lock().await;
-                    coord.update_state(&event);
-                }
-
-                // Broadcast to all SSE subscribers
-                broadcaster.broadcast(event).await;
-            }
-            None => {
-                // Coordinator finished, no more events
-                tracing::debug!("State event forwarding task ending (coordinator finished)");
-                break;
-            }
-        }
+    // Forward events until done
+    while let Some(event) = runner.next_state_event().await {
+        broadcaster.broadcast(event).await;
     }
+
+    // Join all actor tasks
+    runner.wait_for_completion().await
 }
 
-/// Wait for actors to complete with graceful shutdown
+/// Handle graceful shutdown (runner task already waited for completion)
 async fn handle_shutdown_simple(
     pgid: Option<i32>,
-    coordinator: Arc<tokio::sync::Mutex<MemberCoordinator>>,
+    _member_handle: std::sync::Arc<crate::member_actor::MemberHandle>,
+    cleanup_guard: &CleanupGuard,
 ) -> eyre::Result<()> {
-    // Wait for actors to complete (killer task handles signals in background)
-    let result = {
-        let mut coord = coordinator.lock().await;
-        coord.wait_for_completion().await
-    };
+    // Runner task already waited for actors to complete
+    let result = Ok(());
 
     #[cfg(unix)]
     {
@@ -555,7 +542,7 @@ async fn handle_shutdown_simple(
                         // No more children
                         info!("All processes exited gracefully");
                         all_exited_gracefully = true;
-                        GRACEFUL_SHUTDOWN_DONE.store(true, Ordering::Relaxed);
+                        cleanup_guard.disable();
                         break;
                     }
                     _ => {

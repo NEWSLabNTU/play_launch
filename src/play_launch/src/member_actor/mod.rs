@@ -58,7 +58,7 @@ pub mod web_query;
 pub use actor_traits::MemberActor;
 pub use composable_node_actor::{run_composable_node, ComposableActorConfig, ComposableNodeActor};
 pub use container_actor::{run_container, ComposableActorHandle, ContainerActor};
-pub use coordinator::{ActorHandle, MemberCoordinator};
+pub use coordinator::{MemberCoordinatorBuilder, MemberHandle, MemberRunner};
 pub use events::{ControlEvent, StateEvent};
 pub use regular_node_actor::{run_regular_node, RegularNodeActor};
 pub use state::{ActorConfig, BlockReason, ComposableState, ContainerState, NodeState};

@@ -257,8 +257,8 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
 
 /// List all nodes - returns HTML fragment for htmx
 pub async fn list_nodes(State(state): State<Arc<WebState>>) -> Response {
-    let coordinator = state.coordinator.lock().await;
-    let nodes = coordinator.list_members();
+    let coordinator = &state.member_handle;
+    let nodes = coordinator.list_members().await;
 
     // Convert to the format expected by render_node_card
     let node_summaries: Vec<_> = nodes
@@ -309,9 +309,9 @@ pub async fn list_nodes(State(state): State<Arc<WebState>>) -> Response {
 
 /// Get node details - returns JSON
 pub async fn get_node(State(state): State<Arc<WebState>>, Path(name): Path<String>) -> Response {
-    let coordinator = state.coordinator.lock().await;
+    let coordinator = &state.member_handle;
 
-    if let Some(member) = coordinator.get_member_state(&name) {
+    if let Some(member) = coordinator.get_member_state(&name).await {
         let node = super::web_types::NodeSummary::from_member_summary(&member);
         Json(json!({
             "name": node.name,
@@ -338,7 +338,7 @@ pub async fn start_node(State(state): State<Arc<WebState>>, Path(name): Path<Str
         Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
 
-    let coordinator = state.coordinator.lock().await;
+    let coordinator = &state.member_handle;
     match coordinator.start_member(&name).await {
         Ok(()) => {
             tracing::info!("[Web UI] Sent Start control to '{}'", name);
@@ -366,7 +366,7 @@ pub async fn stop_node(State(state): State<Arc<WebState>>, Path(name): Path<Stri
         Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
 
-    let coordinator = state.coordinator.lock().await;
+    let coordinator = &state.member_handle;
     match coordinator.stop_member(&name).await {
         Ok(()) => {
             tracing::info!("[Web UI] Sent Stop control to '{}'", name);
@@ -397,7 +397,7 @@ pub async fn restart_node(
         Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
 
-    let coordinator = state.coordinator.lock().await;
+    let coordinator = &state.member_handle;
     match coordinator.restart_member(&name).await {
         Ok(()) => {
             tracing::info!("[Web UI] Sent Restart control to '{}'", name);
@@ -438,7 +438,7 @@ pub async fn toggle_respawn(
         }
     };
 
-    let coordinator = state.coordinator.lock().await;
+    let coordinator = &state.member_handle;
     match coordinator.toggle_respawn(&name, enabled).await {
         Ok(()) => {
             tracing::info!(
@@ -465,8 +465,8 @@ pub async fn toggle_respawn(
 
 /// Health summary - returns HTML for htmx
 pub async fn health_summary(State(state): State<Arc<WebState>>) -> Response {
-    let coordinator = state.coordinator.lock().await;
-    let summary = coordinator.get_health_summary();
+    let coordinator = &state.member_handle;
+    let summary = coordinator.get_health_summary().await;
 
     let html = format!(
         r#"<span class="badge badge-success">{} running</span>

@@ -1,22 +1,13 @@
 //! Process cleanup utilities
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use tracing::debug;
-
-/// Global flag to indicate graceful shutdown was completed (avoids duplicate SIGKILL in CleanupGuard)
-pub static GRACEFUL_SHUTDOWN_DONE: AtomicBool = AtomicBool::new(false);
 
 /// Kill all descendant processes of the current process recursively
 #[cfg(unix)]
 pub fn kill_all_descendants() {
     use super::tree::find_all_descendants;
     use std::{process, sync::Arc};
-
-    // Skip if graceful shutdown was already completed
-    if GRACEFUL_SHUTDOWN_DONE.load(Ordering::Relaxed) {
-        debug!("Graceful shutdown already completed, skipping CleanupGuard force kill");
-        return;
-    }
 
     let my_pid = process::id();
     debug!("Killing all descendant processes of PID {}", my_pid);
@@ -33,6 +24,40 @@ pub fn kill_all_descendants() {
             descendants.len(),
             descendants
         );
+
+        // Debug: Check which processes are actually alive
+        let mut alive_count = 0;
+        for &pid in descendants.iter().take(10) {
+            if let Ok(status) = std::fs::read_to_string(format!("/proc/{}/status", pid)) {
+                let state = status
+                    .lines()
+                    .find(|line| line.starts_with("State:"))
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("?");
+
+                if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{}/cmdline", pid)) {
+                    let cmdline = cmdline.replace('\0', " ");
+                    debug!("  PID {} state={} cmdline: {}", pid, state, cmdline.trim());
+                    if state != "Z" {
+                        // Not a zombie
+                        alive_count += 1;
+                    }
+                }
+            }
+        }
+        if descendants.len() > 10 {
+            debug!(
+                "  ... and {} more processes (showing first 10, {} alive)",
+                descendants.len() - 10,
+                alive_count
+            );
+        } else {
+            debug!(
+                "  {} of {} processes are alive (non-zombie)",
+                alive_count,
+                descendants.len()
+            );
+        }
 
         // Kill them in reverse order (children before parents) with SIGTERM
         for &pid in descendants.iter().rev() {

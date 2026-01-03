@@ -249,16 +249,27 @@ impl RegularNodeActor {
                 if *self.shutdown_rx.borrow() {
                     debug!("[{}] Shutdown signal received in Running state", self.name);
 
-                    // Kill the process gracefully
+                    // On Unix, kill_process_group() already sent SIGTERM to all processes
+                    // We just need to wait for this child to exit
                     #[cfg(unix)]
                     {
-                        if let Err(e) = child.kill().await {
-                            warn!("[{}] Failed to kill process: {}", self.name, e);
+                        debug!("[{}] Waiting for child to exit (killed by PGID)", self.name);
+                        match child.wait().await {
+                            Ok(status) => {
+                                debug!("[{}] Process exited with status: {:?}", self.name, status);
+                            }
+                            Err(e) => {
+                                warn!("[{}] Failed to wait for process: {}", self.name, e);
+                            }
                         }
                     }
                     #[cfg(not(unix))]
                     {
+                        // On non-Unix, we need to kill the child explicitly
                         child.kill().await.ok();
+                        if let Ok(status) = child.wait().await {
+                            debug!("[{}] Process exited with status: {:?}", self.name, status);
+                        }
                     }
 
                     // Unregister PID

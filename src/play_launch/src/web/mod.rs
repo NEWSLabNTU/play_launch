@@ -2,7 +2,7 @@
 //!
 //! Provides a web interface for monitoring and controlling ROS nodes.
 
-use crate::member_actor::MemberCoordinator;
+use crate::member_actor::MemberHandle;
 use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -29,8 +29,8 @@ struct Assets;
 
 /// Shared state for the web server
 pub struct WebState {
-    /// Coordinator for actor control and state queries
-    pub coordinator: Arc<TokioMutex<MemberCoordinator>>,
+    /// Handle for actor control and state queries (Arc for sharing)
+    pub member_handle: Arc<MemberHandle>,
     /// Base log directory (used for log file access)
     #[allow(dead_code)]
     pub log_dir: PathBuf,
@@ -43,12 +43,12 @@ pub struct WebState {
 impl WebState {
     /// Create a new WebState
     pub fn new(
-        coordinator: Arc<TokioMutex<MemberCoordinator>>,
+        member_handle: Arc<MemberHandle>,
         log_dir: PathBuf,
         state_broadcaster: Arc<StateEventBroadcaster>,
     ) -> Self {
         Self {
-            coordinator,
+            member_handle,
             log_dir,
             operations_in_progress: TokioMutex::new(HashSet::new()),
             state_broadcaster,

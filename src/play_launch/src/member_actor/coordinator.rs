@@ -1,29 +1,19 @@
 //! Coordinator for managing member actors
 //!
-//! The MemberCoordinator is a lightweight coordinator that:
-//! - Spawns and tracks actor tasks
-//! - Aggregates state events from all actors
-//! - Broadcasts shutdown signals
-//! - Provides control handles for individual actors
+//! Split into two parts:
+//! - MemberCoordinatorBuilder: Collects member definitions
+//! - After spawning: MemberHandle (external control) + MemberRunner (completion waiting)
 
 use super::{
     events::{ControlEvent, StateEvent},
     web_query::{HealthSummary, MemberState, MemberSummary, MemberType},
 };
 use eyre::{Context, Result};
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{mpsc, watch, Mutex},
     task::JoinHandle,
 };
-
-/// Handle to a running actor
-pub struct ActorHandle {
-    /// Task handle for the actor
-    task: JoinHandle<Result<()>>,
-    /// Channel to send control events to the actor
-    control_tx: mpsc::Sender<ControlEvent>,
-}
 
 /// Metadata about a member for web UI queries
 #[derive(Clone)]
@@ -41,202 +31,60 @@ pub struct MemberMetadata {
     pub node_name: Option<String>,
 }
 
-/// Actor entry combining handle and metadata
-struct ActorEntry {
-    handle: ActorHandle,
+/// Definition of a regular node to be spawned
+struct RegularNodeDefinition {
+    name: String,
+    context: crate::execution::context::NodeContext,
+    config: super::state::ActorConfig,
+    process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
     metadata: MemberMetadata,
-    /// Current state (updated via StateEvents)
-    state: MemberState,
 }
 
-impl ActorHandle {
-    /// Create a new actor handle
-    pub fn new(task: JoinHandle<Result<()>>, control_tx: mpsc::Sender<ControlEvent>) -> Self {
-        Self { task, control_tx }
-    }
-
-    /// Send a control event to the actor
-    pub async fn send_control(&self, event: ControlEvent) -> Result<()> {
-        self.control_tx
-            .send(event)
-            .await
-            .context("Failed to send control event to actor")
-    }
-
-    /// Check if the actor task has finished
-    pub fn is_finished(&self) -> bool {
-        self.task.is_finished()
-    }
-
-    /// Abort the actor task
-    pub fn abort(&self) {
-        self.task.abort();
-    }
+/// Definition of a container to be spawned
+struct ContainerDefinition {
+    name: String,
+    context: crate::execution::context::NodeContext,
+    config: super::state::ActorConfig,
+    process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
+    metadata: MemberMetadata,
+    /// Channel to send container state receiver back to caller
+    state_tx: Option<tokio::sync::oneshot::Sender<watch::Receiver<super::state::ContainerState>>>,
 }
 
-/// Coordinator for managing member actors
-///
-/// The coordinator is responsible for:
-/// - Spawning actor tasks
-/// - Tracking actor handles
-/// - Aggregating state events
-/// - Broadcasting shutdown signals
-/// - Providing web UI query interface
-pub struct MemberCoordinator {
-    /// Map of member name to actor entry (handle + metadata + state)
-    actors: HashMap<String, ActorEntry>,
-    /// Receiver for state events from all actors
-    state_rx: mpsc::Receiver<StateEvent>,
-    /// Sender for state events (cloned and given to actors)
-    state_tx: mpsc::Sender<StateEvent>,
-    /// Sender for shutdown signal (cloned and given to actors)
-    shutdown_tx: watch::Sender<bool>,
-    /// Receiver for shutdown signal (for internal use)
-    shutdown_rx: watch::Receiver<bool>,
+/// Definition of a composable node to be spawned
+struct ComposableNodeDefinition {
+    name: String,
+    context: crate::execution::context::ComposableNodeContext,
+    config: super::composable_node_actor::ComposableActorConfig,
+    target_container_name: String, // Will be matched with container during spawn()
+    metadata: MemberMetadata,
 }
 
-impl MemberCoordinator {
-    /// Create a new coordinator
+/// Builder for collecting member definitions before spawning
+pub struct MemberCoordinatorBuilder {
+    regular_nodes: Vec<RegularNodeDefinition>,
+    containers: Vec<ContainerDefinition>,
+    composable_nodes: Vec<ComposableNodeDefinition>,
+}
+
+impl MemberCoordinatorBuilder {
+    /// Create a new builder
     pub fn new() -> Self {
-        let (state_tx, state_rx) = mpsc::channel(100);
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
         Self {
-            actors: HashMap::new(),
-            state_rx,
-            state_tx,
-            shutdown_tx,
-            shutdown_rx,
+            regular_nodes: Vec::new(),
+            containers: Vec::new(),
+            composable_nodes: Vec::new(),
         }
     }
 
-    /// Get a state event sender for actors
-    pub fn state_tx(&self) -> mpsc::Sender<StateEvent> {
-        self.state_tx.clone()
-    }
-
-    /// Get a shutdown receiver for actors
-    pub fn shutdown_rx(&self) -> watch::Receiver<bool> {
-        self.shutdown_rx.clone()
-    }
-
-    /// Register an actor with the coordinator
-    ///
-    /// This stores the actor handle, metadata, and initial state for later use.
-    pub fn register_actor(
-        &mut self,
-        name: String,
-        handle: ActorHandle,
-        metadata: MemberMetadata,
-        initial_state: MemberState,
-    ) {
-        let entry = ActorEntry {
-            handle,
-            metadata,
-            state: initial_state,
-        };
-        self.actors.insert(name, entry);
-    }
-
-    /// Update member state based on a StateEvent
-    ///
-    /// This is called internally when processing state events to keep
-    /// the coordinator's view of actor state up to date.
-    pub fn update_state(&mut self, event: &StateEvent) {
-        match event {
-            StateEvent::Started { name, pid } => {
-                if let Some(entry) = self.actors.get_mut(name) {
-                    entry.state = MemberState::Running { pid: *pid };
-                }
-            }
-            StateEvent::Exited { name, exit_code } => {
-                if let Some(entry) = self.actors.get_mut(name) {
-                    if exit_code.is_some() {
-                        entry.state = MemberState::Failed {
-                            error: format!("Exited with code {:?}", exit_code),
-                        };
-                    } else {
-                        entry.state = MemberState::Stopped;
-                    }
-                }
-            }
-            StateEvent::Respawning { name, attempt, .. } => {
-                if let Some(entry) = self.actors.get_mut(name) {
-                    entry.state = MemberState::Respawning { attempt: *attempt };
-                }
-            }
-            StateEvent::Terminated { name } => {
-                if let Some(entry) = self.actors.get_mut(name) {
-                    entry.state = MemberState::Stopped;
-                }
-            }
-            StateEvent::Failed { name, error } => {
-                if let Some(entry) = self.actors.get_mut(name) {
-                    entry.state = MemberState::Failed {
-                        error: error.clone(),
-                    };
-                }
-            }
-            StateEvent::LoadStarted { name } => {
-                if let Some(entry) = self.actors.get_mut(name) {
-                    entry.state = MemberState::Loading;
-                }
-            }
-            StateEvent::LoadSucceeded {
-                name, unique_id, ..
-            } => {
-                if let Some(entry) = self.actors.get_mut(name) {
-                    entry.state = MemberState::Loaded {
-                        unique_id: *unique_id,
-                    };
-                }
-            }
-            StateEvent::LoadFailed { name, error } => {
-                if let Some(entry) = self.actors.get_mut(name) {
-                    entry.state = MemberState::Failed {
-                        error: error.clone(),
-                    };
-                }
-            }
-            StateEvent::Blocked { name, reason } => {
-                if let Some(entry) = self.actors.get_mut(name) {
-                    use super::{
-                        state::BlockReason as ActorBlockReason,
-                        web_query::BlockReason as WebBlockReason,
-                    };
-
-                    let web_reason = match reason {
-                        ActorBlockReason::Stopped => WebBlockReason::ContainerStopped,
-                        ActorBlockReason::Failed => WebBlockReason::ContainerFailed,
-                        ActorBlockReason::NotStarted => WebBlockReason::ContainerNotStarted,
-                    };
-
-                    entry.state = MemberState::Blocked { reason: web_reason };
-                }
-            }
-        }
-    }
-
-    /// Spawn a regular node actor
-    ///
-    /// This creates and spawns a RegularNodeActor for the given node context.
-    pub fn spawn_regular_node(
+    /// Add a regular node to be spawned later
+    pub fn add_regular_node(
         &mut self,
         name: String,
         context: crate::execution::context::NodeContext,
         config: super::state::ActorConfig,
-        process_registry: Option<
-            std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u32, std::path::PathBuf>>>,
-        >,
-    ) -> Result<()> {
-        use super::regular_node_actor::RegularNodeActor;
-
-        // Create channels for the actor
-        let (control_tx, control_rx) = mpsc::channel(10);
-        let state_tx = self.state_tx();
-        let shutdown_rx = self.shutdown_rx();
-
-        // Create metadata from context
+        process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
+    ) {
         let metadata = MemberMetadata {
             name: name.clone(),
             member_type: MemberType::Node,
@@ -251,52 +99,26 @@ impl MemberCoordinator {
             node_name: context.record.name.clone(),
         };
 
-        // Create the actor
-        let actor = RegularNodeActor::new(
-            name.clone(),
+        self.regular_nodes.push(RegularNodeDefinition {
+            name,
             context,
             config,
-            control_rx,
-            state_tx,
-            shutdown_rx,
             process_registry,
-        );
-
-        // Spawn the actor task
-        let task = tokio::spawn(async move {
-            use super::actor_traits::MemberActor;
-            actor.run().await
+            metadata,
         });
-
-        // Register the actor handle
-        let handle = ActorHandle::new(task, control_tx);
-        self.register_actor(name, handle, metadata, MemberState::Pending);
-
-        Ok(())
     }
 
-    /// Spawn a container actor
-    ///
-    /// This creates and spawns a ContainerActor for the given node context.
-    /// Returns the container's state receiver for composable nodes to watch.
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_container(
+    /// Add a container to be spawned later
+    /// Returns a oneshot receiver that will provide the container state watch receiver
+    pub fn add_container(
         &mut self,
         name: String,
         context: crate::execution::context::NodeContext,
         config: super::state::ActorConfig,
-        process_registry: Option<
-            std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u32, std::path::PathBuf>>>,
-        >,
-    ) -> Result<watch::Receiver<super::state::ContainerState>> {
-        use super::container_actor::ContainerActor;
+        process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
+    ) -> tokio::sync::oneshot::Receiver<watch::Receiver<super::state::ContainerState>> {
+        let (state_tx, state_rx) = tokio::sync::oneshot::channel();
 
-        // Create channels for the actor
-        let (control_tx, control_rx) = mpsc::channel(10);
-        let state_tx = self.state_tx();
-        let shutdown_rx = self.shutdown_rx();
-
-        // Create metadata from context
         let metadata = MemberMetadata {
             name: name.clone(),
             member_type: MemberType::Container,
@@ -311,160 +133,240 @@ impl MemberCoordinator {
             node_name: context.record.name.clone(),
         };
 
-        // Create the actor
-        let actor = ContainerActor::new(
-            name.clone(),
+        self.containers.push(ContainerDefinition {
+            name,
             context,
             config,
-            control_rx,
-            state_tx,
-            shutdown_rx,
             process_registry,
-        );
-
-        // Get container state receiver before spawning
-        let container_state_rx = actor.container_state_rx();
-
-        // Spawn the actor task
-        let task = tokio::spawn(async move {
-            use super::actor_traits::MemberActor;
-            actor.run().await
+            metadata,
+            state_tx: Some(state_tx),
         });
 
-        // Register the actor handle
-        let handle = ActorHandle::new(task, control_tx);
-        self.register_actor(name, handle, metadata, MemberState::Pending);
-
-        Ok(container_state_rx)
+        state_rx
     }
 
-    /// Spawn a composable node actor
-    ///
-    /// This creates and spawns a ComposableNodeActor for the given composable node context.
-    #[allow(clippy::too_many_arguments)]
-    pub fn spawn_composable_node(
+    /// Add a composable node to be spawned later
+    /// The container must be added before calling spawn() so it can be matched
+    pub fn add_composable_node(
         &mut self,
         name: String,
         context: crate::execution::context::ComposableNodeContext,
         config: super::composable_node_actor::ComposableActorConfig,
-        container_state_rx: watch::Receiver<super::state::ContainerState>,
-        component_loader: crate::ros::component_loader::ComponentLoaderHandle,
-    ) -> Result<()> {
-        use super::composable_node_actor::ComposableNodeActor;
+    ) {
+        let target_container_name = context.record.target_container_name.clone();
 
-        // Create channels for the actor
-        let (control_tx, control_rx) = mpsc::channel(10);
-        let state_tx = self.state_tx();
-        let shutdown_rx = self.shutdown_rx();
-
-        // Create metadata from context
         let metadata = MemberMetadata {
             name: name.clone(),
             member_type: MemberType::ComposableNode,
             package: Some(context.record.package.clone()),
-            executable: context.record.plugin.clone(),
+            executable: String::new(),
             namespace: Some(context.record.namespace.clone()),
-            target_container: Some(context.record.target_container_name.clone()),
+            target_container: Some(target_container_name.clone()),
             output_dir: context.output_dir.clone(),
-            respawn_enabled: None, // Composable nodes don't have respawn
+            respawn_enabled: None,
             respawn_delay: None,
             exec_name: None,
             node_name: Some(context.record.node_name.clone()),
         };
 
-        // Create the actor
-        let actor = ComposableNodeActor::new(
-            name.clone(),
+        self.composable_nodes.push(ComposableNodeDefinition {
+            name,
             context,
             config,
-            control_rx,
-            state_tx,
-            container_state_rx,
-            shutdown_rx,
-            component_loader,
-        );
-
-        // Spawn the actor task
-        let task = tokio::spawn(async move {
-            use super::actor_traits::MemberActor;
-            actor.run().await
+            target_container_name,
+            metadata,
         });
-
-        // Register the actor handle
-        let handle = ActorHandle::new(task, control_tx);
-        self.register_actor(name, handle, metadata, MemberState::Pending);
-
-        Ok(())
     }
 
-    // ===== Web UI Query Methods =====
+    /// Spawn all members and return handle + runner
+    pub async fn spawn(
+        self,
+        component_loader: Option<crate::ros::component_loader::ComponentLoaderHandle>,
+    ) -> (MemberHandle, MemberRunner) {
+        let (state_tx, state_rx) = mpsc::channel(100);
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    /// Get list of all members with current state
-    pub fn list_members(&self) -> Vec<MemberSummary> {
-        self.actors
-            .values()
-            .map(|entry| {
-                let pid = match &entry.state {
-                    MemberState::Running { pid } => Some(*pid),
-                    _ => None,
-                };
+        let mut tasks = HashMap::new();
+        let mut control_channels = HashMap::new();
+        let mut metadata_map = HashMap::new();
 
-                // Read stderr info from log files
-                let stderr_path = entry.metadata.output_dir.join("err");
-                let (stderr_last_modified, stderr_size, stderr_preview) =
-                    if let Ok(metadata) = std::fs::metadata(&stderr_path) {
-                        let size = metadata.len();
-                        let modified = metadata.modified().ok().and_then(|t| {
-                            t.duration_since(std::time::UNIX_EPOCH)
-                                .ok()
-                                .map(|d| d.as_secs())
-                        });
+        // Spawn regular nodes
+        for def in self.regular_nodes {
+            let (control_tx, control_rx) = mpsc::channel(10);
 
-                        // Read last 5 lines for preview
-                        let preview = if size > 0 {
-                            read_last_n_lines(&stderr_path, 5).ok()
-                        } else {
-                            None
-                        };
+            let actor = super::regular_node_actor::RegularNodeActor::new(
+                def.name.clone(),
+                def.context,
+                def.config,
+                control_rx,
+                state_tx.clone(),
+                shutdown_rx.clone(),
+                def.process_registry,
+            );
 
-                        (modified, size, preview)
-                    } else {
-                        (None, 0, None)
-                    };
+            let task = tokio::spawn(async move {
+                use super::actor_traits::MemberActor;
+                actor.run().await
+            });
 
-                MemberSummary {
-                    name: entry.metadata.name.clone(),
-                    member_type: entry.metadata.member_type,
-                    state: entry.state.clone(),
-                    pid,
-                    package: entry.metadata.package.clone(),
-                    executable: entry.metadata.executable.clone(),
-                    namespace: entry.metadata.namespace.clone(),
-                    target_container: entry.metadata.target_container.clone(),
-                    is_container: entry.metadata.member_type == MemberType::Container,
-                    exec_name: entry.metadata.exec_name.clone(),
-                    node_name: entry.metadata.node_name.clone(),
-                    stderr_last_modified,
-                    stderr_size,
-                    stderr_preview,
-                    respawn_enabled: entry.metadata.respawn_enabled,
-                    respawn_delay: entry.metadata.respawn_delay,
-                    output_dir: entry.metadata.output_dir.clone(),
+            tasks.insert(def.name.clone(), task);
+            control_channels.insert(def.name.clone(), control_tx);
+            metadata_map.insert(def.name.clone(), def.metadata);
+        }
+
+        // Spawn containers and collect their state receivers
+        let mut container_state_map = HashMap::new();
+        for def in self.containers {
+            let (control_tx, control_rx) = mpsc::channel(10);
+
+            let actor = super::container_actor::ContainerActor::new(
+                def.name.clone(),
+                def.context,
+                def.config,
+                control_rx,
+                state_tx.clone(),
+                shutdown_rx.clone(),
+                def.process_registry,
+            );
+
+            // Get container state receiver before spawning
+            let container_state_rx = actor.container_state_rx();
+
+            // Send container state receiver back to caller if requested
+            if let Some(tx) = def.state_tx {
+                let _ = tx.send(container_state_rx.clone());
+            }
+
+            // Store for composable nodes to use
+            // Extract the actual container name from the member name "NODE 'container_name'"
+            let container_name = def
+                .name
+                .strip_prefix("NODE '")
+                .and_then(|s| s.strip_suffix('\''))
+                .unwrap_or(&def.name);
+            container_state_map.insert(container_name.to_string(), container_state_rx);
+
+            let task = tokio::spawn(async move {
+                use super::actor_traits::MemberActor;
+                actor.run().await
+            });
+
+            tasks.insert(def.name.clone(), task);
+            control_channels.insert(def.name.clone(), control_tx);
+            metadata_map.insert(def.name.clone(), def.metadata);
+        }
+
+        // Spawn composable nodes, matching with container state receivers
+        if let Some(component_loader) = component_loader {
+            for def in self.composable_nodes {
+                // Find the container state receiver for this composable node
+                if let Some(container_state_rx) =
+                    container_state_map.get(&def.target_container_name)
+                {
+                    let (control_tx, control_rx) = mpsc::channel(10);
+
+                    let actor = super::composable_node_actor::ComposableNodeActor::new(
+                        def.name.clone(),
+                        def.context,
+                        def.config,
+                        control_rx,
+                        state_tx.clone(),
+                        container_state_rx.clone(),
+                        shutdown_rx.clone(),
+                        component_loader.clone(),
+                    );
+
+                    let task = tokio::spawn(async move {
+                        use super::actor_traits::MemberActor;
+                        actor.run().await
+                    });
+
+                    tasks.insert(def.name.clone(), task);
+                    control_channels.insert(def.name.clone(), control_tx);
+                    metadata_map.insert(def.name.clone(), def.metadata);
+                } else {
+                    tracing::warn!(
+                        "Container '{}' not found for composable node '{}', skipping",
+                        def.target_container_name,
+                        def.name
+                    );
                 }
-            })
-            .collect()
+            }
+        }
+
+        // state_tx and shutdown_rx are dropped here (actors have their clones)
+
+        // Pre-populate state cache with all member names (using RwLock per MemberState)
+        let mut state_entries = HashMap::new();
+        for name in metadata_map.keys() {
+            state_entries.insert(
+                name.clone(),
+                Arc::new(tokio::sync::RwLock::new(MemberState::Pending)),
+            );
+        }
+        let state_cache = Arc::new(state_entries);
+
+        let handle = MemberHandle {
+            control_channels,
+            metadata: metadata_map,
+            state_cache: state_cache.clone(),
+            shutdown_tx,
+        };
+
+        let runner = MemberRunner {
+            tasks,
+            state_rx,
+            state_cache,
+        };
+
+        (handle, runner)
     }
 
-    /// Get detailed state for a specific member
-    pub fn get_member_state(&self, name: &str) -> Option<MemberSummary> {
-        self.actors.get(name).map(|entry| {
-            let pid = match &entry.state {
+    /// Get count of members to be spawned
+    pub fn member_count(&self) -> usize {
+        self.regular_nodes.len() + self.containers.len() + self.composable_nodes.len()
+    }
+}
+
+impl Default for MemberCoordinatorBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// External handle for controlling and querying members
+/// Wrap in Arc<MemberHandle> for sharing (not Clone-able itself)
+pub struct MemberHandle {
+    /// Control channels for sending commands to actors
+    control_channels: HashMap<String, mpsc::Sender<ControlEvent>>,
+    /// Member metadata (immutable after spawning)
+    metadata: HashMap<String, MemberMetadata>,
+    /// Cached state updated by runner (Arc for sharing with runner, RwLock per MemberState)
+    state_cache: Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>>,
+    /// Shutdown signal broadcaster
+    shutdown_tx: watch::Sender<bool>,
+}
+
+impl MemberHandle {
+    /// Get list of all members with current state
+    pub async fn list_members(&self) -> Vec<MemberSummary> {
+        let mut summaries = Vec::new();
+
+        for (name, meta) in self.metadata.iter() {
+            // Read state from RwLock
+            let state = if let Some(state_lock) = self.state_cache.get(name) {
+                state_lock.read().await.clone()
+            } else {
+                MemberState::Pending
+            };
+
+            let pid = match &state {
                 MemberState::Running { pid } => Some(*pid),
                 _ => None,
             };
 
             // Read stderr info from log files
-            let stderr_path = entry.metadata.output_dir.join("err");
+            let stderr_path = meta.output_dir.join("err");
             let (stderr_last_modified, stderr_size, stderr_preview) =
                 if let Ok(metadata) = std::fs::metadata(&stderr_path) {
                     let size = metadata.len();
@@ -486,38 +388,107 @@ impl MemberCoordinator {
                     (None, 0, None)
                 };
 
-            MemberSummary {
-                name: entry.metadata.name.clone(),
-                member_type: entry.metadata.member_type,
-                state: entry.state.clone(),
+            summaries.push(MemberSummary {
+                name: meta.name.clone(),
+                member_type: meta.member_type,
+                state,
                 pid,
-                package: entry.metadata.package.clone(),
-                executable: entry.metadata.executable.clone(),
-                namespace: entry.metadata.namespace.clone(),
-                target_container: entry.metadata.target_container.clone(),
-                is_container: entry.metadata.member_type == MemberType::Container,
-                exec_name: entry.metadata.exec_name.clone(),
-                node_name: entry.metadata.node_name.clone(),
+                package: meta.package.clone(),
+                executable: meta.executable.clone(),
+                namespace: meta.namespace.clone(),
+                target_container: meta.target_container.clone(),
+                is_container: meta.member_type == MemberType::Container,
+                exec_name: meta.exec_name.clone(),
+                node_name: meta.node_name.clone(),
                 stderr_last_modified,
                 stderr_size,
                 stderr_preview,
-                respawn_enabled: entry.metadata.respawn_enabled,
-                respawn_delay: entry.metadata.respawn_delay,
-                output_dir: entry.metadata.output_dir.clone(),
-            }
+                respawn_enabled: meta.respawn_enabled,
+                respawn_delay: meta.respawn_delay,
+                output_dir: meta.output_dir.clone(),
+            });
+        }
+
+        summaries
+    }
+
+    /// Get detailed state for a specific member
+    pub async fn get_member_state(&self, name: &str) -> Option<MemberSummary> {
+        let meta = self.metadata.get(name)?;
+
+        // Read state from RwLock
+        let state = if let Some(state_lock) = self.state_cache.get(name) {
+            state_lock.read().await.clone()
+        } else {
+            MemberState::Pending
+        };
+
+        let pid = match &state {
+            MemberState::Running { pid } => Some(*pid),
+            _ => None,
+        };
+
+        // Read stderr info from log files
+        let stderr_path = meta.output_dir.join("err");
+        let (stderr_last_modified, stderr_size, stderr_preview) =
+            if let Ok(metadata) = std::fs::metadata(&stderr_path) {
+                let size = metadata.len();
+                let modified = metadata.modified().ok().and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs())
+                });
+
+                // Read last 5 lines for preview
+                let preview = if size > 0 {
+                    read_last_n_lines(&stderr_path, 5).ok()
+                } else {
+                    None
+                };
+
+                (modified, size, preview)
+            } else {
+                (None, 0, None)
+            };
+
+        Some(MemberSummary {
+            name: meta.name.clone(),
+            member_type: meta.member_type,
+            state,
+            pid,
+            package: meta.package.clone(),
+            executable: meta.executable.clone(),
+            namespace: meta.namespace.clone(),
+            target_container: meta.target_container.clone(),
+            is_container: meta.member_type == MemberType::Container,
+            exec_name: meta.exec_name.clone(),
+            node_name: meta.node_name.clone(),
+            stderr_last_modified,
+            stderr_size,
+            stderr_preview,
+            respawn_enabled: meta.respawn_enabled,
+            respawn_delay: meta.respawn_delay,
+            output_dir: meta.output_dir.clone(),
         })
     }
 
     /// Get health summary statistics
-    pub fn get_health_summary(&self) -> HealthSummary {
+    pub async fn get_health_summary(&self) -> HealthSummary {
         let mut summary = HealthSummary::default();
 
-        for entry in self.actors.values() {
+        for (name, meta) in self.metadata.iter() {
+            // Read state from RwLock
+            let state = if let Some(state_lock) = self.state_cache.get(name) {
+                state_lock.read().await.clone()
+            } else {
+                MemberState::Pending
+            };
+
             // Count by member type
-            match entry.metadata.member_type {
+            match meta.member_type {
                 MemberType::Node => {
                     summary.nodes_total += 1;
-                    match &entry.state {
+                    match &state {
                         MemberState::Running { .. } | MemberState::Respawning { .. } => {
                             summary.nodes_running += 1;
                             summary.processes_running += 1;
@@ -538,7 +509,7 @@ impl MemberCoordinator {
                 }
                 MemberType::Container => {
                     summary.containers_total += 1;
-                    match &entry.state {
+                    match &state {
                         MemberState::Running { .. } | MemberState::Respawning { .. } => {
                             summary.containers_running += 1;
                             summary.processes_running += 1;
@@ -559,7 +530,7 @@ impl MemberCoordinator {
                 }
                 MemberType::ComposableNode => {
                     summary.composable_total += 1;
-                    match &entry.state {
+                    match &state {
                         MemberState::Loaded { .. } => {
                             summary.composable_loaded += 1;
                         }
@@ -575,7 +546,7 @@ impl MemberCoordinator {
             }
 
             // Count noisy nodes (stderr > 10KB)
-            let stderr_path = entry.metadata.output_dir.join("err");
+            let stderr_path = meta.output_dir.join("err");
             if let Ok(metadata) = std::fs::metadata(&stderr_path) {
                 if metadata.len() > 10 * 1024 {
                     summary.noisy += 1;
@@ -586,16 +557,17 @@ impl MemberCoordinator {
         summary
     }
 
-    // ===== Control Methods =====
-
     /// Send a control event to a specific actor
     pub async fn send_control(&self, name: &str, event: ControlEvent) -> Result<()> {
-        let entry = self
-            .actors
+        let control_tx = self
+            .control_channels
             .get(name)
             .ok_or_else(|| eyre::eyre!("Actor not found: {}", name))?;
 
-        entry.handle.send_control(event).await
+        control_tx
+            .send(event)
+            .await
+            .context("Failed to send control event to actor")
     }
 
     /// Start a member (send Start control event)
@@ -626,74 +598,166 @@ impl MemberCoordinator {
             .context("Failed to send shutdown signal")
     }
 
-    /// Wait for the next state event from any actor
+    /// Get the number of registered members
+    pub fn member_count(&self) -> usize {
+        self.metadata.len()
+    }
+
+    /// Check if a specific member is registered
+    pub fn has_member(&self, name: &str) -> bool {
+        self.metadata.contains_key(name)
+    }
+}
+
+/// Runner that waits for all actors to complete
+/// Takes mut self - no Arc<Mutex> needed!
+pub struct MemberRunner {
+    /// Task handles for all actors
+    tasks: HashMap<String, JoinHandle<Result<()>>>,
+    /// Receiver for state events from actors
+    state_rx: mpsc::Receiver<StateEvent>,
+    /// Shared state cache (updated for web UI queries, RwLock per MemberState)
+    state_cache: Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>>,
+}
+
+impl MemberRunner {
+    /// Static helper to update state (for use in wait_for_completion)
+    async fn update_state_static(
+        event: &StateEvent,
+        state_cache: &Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>>,
+    ) {
+        let name = match event {
+            StateEvent::Started { name, .. } => name,
+            StateEvent::Exited { name, .. } => name,
+            StateEvent::Respawning { name, .. } => name,
+            StateEvent::Terminated { name } => name,
+            StateEvent::Failed { name, .. } => name,
+            StateEvent::LoadStarted { name } => name,
+            StateEvent::LoadSucceeded { name, .. } => name,
+            StateEvent::LoadFailed { name, .. } => name,
+            StateEvent::Blocked { name, .. } => name,
+        };
+
+        // Get the RwLock for this specific member
+        if let Some(state_lock) = state_cache.get(name) {
+            let mut state = state_lock.write().await;
+
+            *state = match event {
+                StateEvent::Started { pid, .. } => MemberState::Running { pid: *pid },
+                StateEvent::Exited { exit_code, .. } => {
+                    if exit_code.is_some() {
+                        MemberState::Failed {
+                            error: format!("Exited with code {:?}", exit_code),
+                        }
+                    } else {
+                        MemberState::Stopped
+                    }
+                }
+                StateEvent::Respawning { attempt, .. } => {
+                    MemberState::Respawning { attempt: *attempt }
+                }
+                StateEvent::Terminated { .. } => MemberState::Stopped,
+                StateEvent::Failed { error, .. } => MemberState::Failed {
+                    error: error.clone(),
+                },
+                StateEvent::LoadStarted { .. } => MemberState::Loading,
+                StateEvent::LoadSucceeded { unique_id, .. } => MemberState::Loaded {
+                    unique_id: *unique_id,
+                },
+                StateEvent::LoadFailed { error, .. } => MemberState::Failed {
+                    error: error.clone(),
+                },
+                StateEvent::Blocked { reason, .. } => {
+                    use super::{
+                        state::BlockReason as ActorBlockReason,
+                        web_query::BlockReason as WebBlockReason,
+                    };
+
+                    let web_reason = match reason {
+                        ActorBlockReason::Stopped => WebBlockReason::ContainerStopped,
+                        ActorBlockReason::Failed => WebBlockReason::ContainerFailed,
+                        ActorBlockReason::NotStarted => WebBlockReason::ContainerNotStarted,
+                    };
+
+                    MemberState::Blocked { reason: web_reason }
+                }
+            };
+        }
+    }
+
+    /// Update state cache based on a StateEvent
+    async fn update_state(&self, event: &StateEvent) {
+        Self::update_state_static(event, &self.state_cache).await;
+    }
+
+    /// Get the next state event (for web UI forwarding)
     pub async fn next_state_event(&mut self) -> Option<StateEvent> {
         self.state_rx.recv().await
     }
 
-    /// Process state events until all actors terminate
-    ///
-    /// This method listens for state events and returns when all actors
-    /// have finished or a shutdown is requested.
-    pub async fn wait_for_completion(&mut self) -> Result<()> {
+    /// Wait for all actors to complete (takes mut self!)
+    pub async fn wait_for_completion(self) -> Result<()> {
+        use futures::stream::{FuturesUnordered, StreamExt};
+
+        // Extract fields from self
+        let Self {
+            tasks,
+            mut state_rx,
+            state_cache,
+        } = self;
+
+        // Track task count before moving into FuturesUnordered
+        let task_count = tasks.len();
+        tracing::debug!("wait_for_completion: starting with {} tasks", task_count);
+
+        // Move tasks into FuturesUnordered for concurrent completion handling
+        let mut task_futures = FuturesUnordered::from_iter(
+            tasks
+                .into_iter()
+                .map(|(name, task)| async move { (name, task.await) }),
+        );
+
+        let mut errors = Vec::new();
+        let mut remaining_tasks = task_count;
+        tracing::debug!("wait_for_completion: remaining_tasks = {}", remaining_tasks);
+
+        // Process state events and task completions concurrently
         loop {
             tokio::select! {
-                event = self.state_rx.recv() => {
-                    match event {
-                        Some(event) => {
-                            tracing::debug!("State event: {:?}", event);
+                // Process state events
+                Some(event) = state_rx.recv() => {
+                    tracing::debug!("State event: {:?}", event);
+                    Self::update_state_static(&event, &state_cache).await;
+                }
 
-                            // Check if all actors are finished
-                            if self.all_actors_finished() {
-                                break;
-                            }
+                // Process task completions
+                Some((name, result)) = task_futures.next() => {
+                    match result {
+                        Ok(Ok(())) => {
+                            tracing::debug!("Actor {} completed successfully", name);
                         }
-                        None => {
-                            // All state senders dropped, actors must be done
-                            break;
+                        Ok(Err(e)) => {
+                            tracing::error!("Actor {} failed: {:#}", name, e);
+                            errors.push(e);
+                        }
+                        Err(e) if e.is_cancelled() => {
+                            tracing::debug!("Actor {} was cancelled", name);
+                        }
+                        Err(e) => {
+                            tracing::error!("Actor {} panicked: {:#}", name, e);
+                            errors.push(eyre::eyre!("Actor panicked: {}", e));
                         }
                     }
-                }
-                _ = self.shutdown_rx.changed() => {
-                    if *self.shutdown_rx.borrow() {
-                        tracing::debug!("Shutdown signal received, waiting for actors to finish");
+
+                    remaining_tasks -= 1;
+                    if remaining_tasks == 0 {
                         break;
                     }
                 }
-            }
-        }
 
-        // Wait for all actor tasks to complete
-        self.join_all_actors().await
-    }
-
-    /// Check if all actors have finished
-    fn all_actors_finished(&self) -> bool {
-        self.actors.values().all(|entry| entry.handle.is_finished())
-    }
-
-    /// Join all actor tasks and collect results
-    async fn join_all_actors(&mut self) -> Result<()> {
-        let mut errors = Vec::new();
-
-        // Take all actor entries (consume the hashmap)
-        let actors = std::mem::take(&mut self.actors);
-
-        for (name, entry) in actors {
-            match entry.handle.task.await {
-                Ok(Ok(())) => {
-                    tracing::debug!("Actor {} completed successfully", name);
-                }
-                Ok(Err(e)) => {
-                    tracing::error!("Actor {} failed: {:#}", name, e);
-                    errors.push(e);
-                }
-                Err(e) if e.is_cancelled() => {
-                    tracing::debug!("Actor {} was cancelled", name);
-                }
-                Err(e) => {
-                    tracing::error!("Actor {} panicked: {:#}", name, e);
-                    errors.push(eyre::eyre!("Actor panicked: {}", e));
+                // All channels closed
+                else => {
+                    break;
                 }
             }
         }
@@ -711,23 +775,6 @@ impl MemberCoordinator {
             ))
         }
     }
-
-    /// Get the number of registered actors
-    pub fn actor_count(&self) -> usize {
-        self.actors.len()
-    }
-
-    /// Check if a specific actor is registered
-    pub fn has_actor(&self, name: &str) -> bool {
-        self.actors.contains_key(name)
-    }
-
-    /// Abort all actors immediately
-    pub fn abort_all(&self) {
-        for entry in self.actors.values() {
-            entry.handle.abort();
-        }
-    }
 }
 
 /// Helper function to read last N lines from a file
@@ -741,81 +788,4 @@ fn read_last_n_lines(path: &std::path::Path, n: usize) -> Result<Vec<String>> {
     let start = if lines.len() > n { lines.len() - n } else { 0 };
 
     Ok(lines[start..].to_vec())
-}
-
-impl Default for MemberCoordinator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_coordinator_creation() {
-        let coordinator = MemberCoordinator::new();
-        assert_eq!(coordinator.actor_count(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_actor_registration() {
-        let mut coordinator = MemberCoordinator::new();
-        let (control_tx, _control_rx) = mpsc::channel(10);
-        let task = tokio::spawn(async { Ok(()) });
-        let handle = ActorHandle::new(task, control_tx);
-
-        let metadata = MemberMetadata {
-            name: "test_actor".to_string(),
-            member_type: MemberType::Node,
-            package: Some("test_pkg".to_string()),
-            executable: "test_exec".to_string(),
-            namespace: Some("/".to_string()),
-            target_container: None,
-            output_dir: PathBuf::from("/tmp/test"),
-            respawn_enabled: Some(false),
-            respawn_delay: None,
-            exec_name: None,
-            node_name: None,
-        };
-
-        coordinator.register_actor(
-            "test_actor".to_string(),
-            handle,
-            metadata,
-            MemberState::Pending,
-        );
-        assert_eq!(coordinator.actor_count(), 1);
-        assert!(coordinator.has_actor("test_actor"));
-    }
-
-    #[tokio::test]
-    async fn test_shutdown_signal() {
-        let coordinator = MemberCoordinator::new();
-        let mut shutdown_rx = coordinator.shutdown_rx();
-
-        assert!(!*shutdown_rx.borrow());
-
-        coordinator.shutdown().unwrap();
-        shutdown_rx.changed().await.unwrap();
-
-        assert!(*shutdown_rx.borrow());
-    }
-
-    #[tokio::test]
-    async fn test_state_event_channel() {
-        let mut coordinator = MemberCoordinator::new();
-        let state_tx = coordinator.state_tx();
-
-        let event = StateEvent::Started {
-            name: "test_node".to_string(),
-            pid: 123,
-        };
-
-        state_tx.send(event.clone()).await.unwrap();
-
-        let received = coordinator.next_state_event().await.unwrap();
-        assert_eq!(received.member_name(), "test_node");
-    }
 }

@@ -45,10 +45,10 @@ pub async fn stream_stderr(
 
 /// Stream a log file as SSE
 async fn stream_log_file(state: Arc<WebState>, node_name: &str, file_name: &str) -> Response {
-    // Get the log file path from the coordinator
+    // Get the log file path from the member handle
     let log_path = {
-        let coordinator = state.coordinator.lock().await;
-        match coordinator.get_member_state(node_name) {
+        let member_handle = &state.member_handle;
+        match member_handle.get_member_state(node_name).await {
             Some(member) => {
                 let base_path = member.output_dir;
                 if file_name == "out" {

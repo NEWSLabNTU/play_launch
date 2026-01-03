@@ -304,11 +304,21 @@ impl ContainerActor {
                 // Check for shutdown signal
                 _ = self.shutdown_rx.changed() => {
                     if *self.shutdown_rx.borrow() {
-                        debug!("{}: Shutdown signal received, killing container", self.name);
-                        child.kill().await.ok();
+                        debug!("{}: Shutdown signal received, waiting for container to exit", self.name);
 
-                        // Wait for process to exit
-                        let _ = child.wait().await;
+                        // On Unix, kill_process_group() already sent SIGTERM to all processes
+                        // We just need to wait for this child to exit
+                        #[cfg(unix)]
+                        {
+                            debug!("{}: Waiting for child to exit (killed by PGID)", self.name);
+                            let _ = child.wait().await;
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            // On non-Unix, we need to kill the child explicitly
+                            child.kill().await.ok();
+                            let _ = child.wait().await;
+                        }
 
                         // Unregister from process registry
                         if let Some(ref registry) = self.process_registry {

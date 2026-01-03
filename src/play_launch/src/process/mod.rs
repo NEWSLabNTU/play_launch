@@ -7,7 +7,7 @@ pub mod tree;
 pub mod pgid;
 
 // Re-export commonly used items
-pub use cleanup::{kill_all_descendants, GRACEFUL_SHUTDOWN_DONE};
+pub use cleanup::kill_all_descendants;
 
 #[cfg(unix)]
 pub use pgid::kill_process_group;
