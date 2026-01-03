@@ -15,7 +15,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Current Status
 
-**Overall Progress**: ~90% complete (8 of 9 phases complete, 1 in progress)
+**Overall Progress**: ~95% complete (9 of 10 phases complete)
 
 **Timeline**: Started October 2025, ongoing development
 
@@ -48,6 +48,13 @@ This directory contains the implementation roadmap for play_launch, organized by
 | **Phase 8**: Web UI | ✅ Complete | 2025-12-18 | [phase-8.md](./phase-8.md) |
 | **Phase 9**: Web UI Status Refactoring | 🔄 In Progress | - | [phase-9.md](./phase-9.md) |
 
+### Architecture Improvements
+
+| Phase | Status | Completion | Documentation |
+|-------|--------|------------|---------------|
+| **Phase 10**: Async Actor Pattern Transformation | ✅ Complete | 2026-01-01 | [phase-10.md](./phase-10.md) |
+| **Phase 11**: Web UI Actor Integration | ⏳ Planned | - | [phase-11.md](./phase-11.md) |
+
 ---
 
 ## Progress Summary
@@ -75,9 +82,27 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ### Planned ⏳
 
+- ⏳ Web UI Actor Integration (Phase 11) - Remove bridging layer, implement direct actor control
 - ⏳ Complete documentation (Phase 3)
 - ⏳ Comprehensive testing (Phase 4)
 - ⏳ Optional enhancements (Phase 5)
+
+### Recently Completed 🎉
+
+- ✅ Async Actor Pattern Transformation (Phase 10 - Complete 2026-01-01)
+  - ✅ Actor infrastructure module created (Phase 10.1)
+  - ✅ State machines defined (NodeState, ComposableState, ContainerState)
+  - ✅ Event types defined (ControlEvent, StateEvent)
+  - ✅ MemberCoordinator implemented
+  - ✅ RegularNodeActor implemented (Phase 10.2)
+  - ✅ Spawn logic extracted with respawn as direct loop
+  - ✅ Integration tests for actor lifecycle and control
+  - ✅ Migrated `run` command to actor pattern (Phase 10.3)
+  - ✅ Event bridging for web UI compatibility
+  - ✅ ContainerActor with supervision pattern (Phase 10.4)
+  - ✅ ComposableNodeActor with LoadNode service integration (Phase 10.4)
+  - ✅ Migrated `replay` command to actor pattern (Phase 10.5)
+  - ✅ Cleanup and optimization - removed EventProcessor and ProcessMonitor (Phase 10.6)
 
 ---
 

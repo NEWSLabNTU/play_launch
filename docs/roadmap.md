@@ -10,6 +10,7 @@
 
 - **[Roadmap Overview](./roadmap/README.md)** - Current status and phase links
 - **[Phase 9: Web UI Status Refactoring](./roadmap/phase-9.md)** (In Progress) - Latest work
+- **[Phase 10: Async Actor Pattern](./roadmap/phase-10.md)** (Planning) - Architecture transformation
 - **[Future Considerations](./roadmap/future-considerations.md)** - Planned enhancements
 
 ---
