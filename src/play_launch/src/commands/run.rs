@@ -6,13 +6,12 @@ use crate::{
     execution::context::{prepare_node_contexts, NodeContextClasses},
     member_actor::{ActorConfig, MemberCoordinator},
     monitoring::resource_monitor::MonitorConfig,
-    process::{
-        kill_all_descendants, kill_process_group, spawn_anchor_process, GRACEFUL_SHUTDOWN_DONE,
-    },
+    process::{kill_all_descendants, kill_process_group, GRACEFUL_SHUTDOWN_DONE},
     ros::launch_dump::LaunchDump,
     util::{log_dir::create_log_dir, logging::is_verbose},
     web,
 };
+use eyre::WrapErr;
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::{
     collections::{HashMap, HashSet},
@@ -77,12 +76,6 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         file_data: HashMap::new(),
     };
 
-    // Spawn anchor zombie process to allocate PGID
-    #[cfg(unix)]
-    let (mut anchor, pgid) = spawn_anchor_process()?;
-    #[cfg(unix)]
-    debug!("Anchor process allocated PGID: {}", pgid);
-
     // Build the async runtime and run directly
     let runtime = Runtime::new()?;
     debug!(
@@ -90,26 +83,12 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         num_cpus::get()
     );
 
-    #[cfg(unix)]
-    let result = runtime.block_on(run_direct(&launch_dump, &args.common, Some(pgid)));
-
-    #[cfg(not(unix))]
-    let result = runtime.block_on(run_direct(&launch_dump, &args.common, None));
-
-    // Kill anchor process
-    #[cfg(unix)]
-    {
-        let _ = anchor.kill();
-        debug!("Anchor process killed");
-    }
-
-    result
+    runtime.block_on(run_direct(&launch_dump, &args.common))
 }
 
 async fn run_direct(
     launch_dump: &LaunchDump,
     common: &cli::options::CommonOptions,
-    pgid: Option<i32>,
 ) -> eyre::Result<()> {
     debug!("Starting direct node execution");
 
@@ -117,16 +96,35 @@ async fn run_direct(
     let _cleanup_guard = CleanupGuard;
     debug!("CleanupGuard installed");
 
-    // Create shutdown signal for graceful termination
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    // Spawn anchor task and get PGID (Phase 4: async anchor with shutdown support)
+    #[cfg(unix)]
+    let (pgid_tx, pgid_rx) = tokio::sync::oneshot::channel();
+    #[cfg(unix)]
+    let (pgid, shutdown_tx, shutdown_rx, anchor_task) = {
+        use crate::process::pgid::run_anchor_task;
 
-    // Spawn killer task IMMEDIATELY (before any spawning) for responsive signal handling
-    let shutdown_tx_clone = shutdown_tx.clone();
-    let killer_task = tokio::spawn(async move {
-        shutdown_killer_task(pgid, shutdown_tx_clone).await;
-        Ok::<(), eyre::Report>(())
-    });
-    debug!("Shutdown killer task spawned, signal handlers active");
+        // Create shutdown channel for anchor (will be cloned for other tasks)
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        // Spawn anchor task
+        let anchor_task = tokio::spawn(run_anchor_task(pgid_tx, shutdown_rx.clone()));
+
+        // Wait for PGID
+        let pgid = pgid_rx
+            .await
+            .wrap_err("Failed to receive PGID from anchor task")?;
+        debug!("Anchor process task started with PGID: {}", pgid);
+
+        (pgid, shutdown_tx, shutdown_rx, anchor_task)
+    };
+
+    #[cfg(not(unix))]
+    let (pgid, shutdown_tx, shutdown_rx, anchor_task) = {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        // Dummy anchor task for non-Unix platforms
+        let anchor_task = tokio::spawn(async { Ok(()) });
+        (0i32, shutdown_tx, shutdown_rx, anchor_task)
+    };
 
     // Load runtime configuration
     info!("Loading runtime configuration...");
@@ -226,7 +224,7 @@ async fn run_direct(
             respawn_delay: context.record.respawn_delay.unwrap_or(0.0),
             max_respawn_attempts: None,
             output_dir: context.output_dir.clone(),
-            pgid,
+            pgid: Some(pgid),
         };
 
         // Spawn the actor
@@ -241,7 +239,7 @@ async fn run_direct(
     debug!("All actors spawned successfully");
 
     // Setup web UI if requested (direct StateEvent streaming)
-    let _web_ui_enabled = if common.web_ui {
+    let web_ui_task = if common.web_ui {
         info!("Setting up web UI with direct StateEvent streaming...");
 
         // Create state event broadcaster for SSE clients
@@ -263,32 +261,37 @@ async fn run_direct(
         // Log web UI URL before spawning (addr will be moved)
         info!("Web UI available at http://{}:{}", addr, port);
 
-        // Spawn web server
-        tokio::spawn(async move {
-            if let Err(e) = web::run_server(web_state, &addr, port, shutdown_rx).await {
-                error!("Web server error: {}", e);
-            }
-        });
-
-        // Spawn task to forward state events from coordinator to broadcaster
+        // Spawn a single task that runs both web server and state forwarder concurrently
         let coordinator_clone = coordinator.clone();
-        tokio::spawn(async move {
-            forward_state_events(coordinator_clone, state_broadcaster).await;
-        });
-        true
+        Some(tokio::spawn(async move {
+            tokio::join!(
+                async {
+                    if let Err(e) = web::run_server(web_state, &addr, port, shutdown_rx).await {
+                        error!("Web server error: {}", e);
+                    }
+                },
+                forward_state_events(coordinator_clone, state_broadcaster)
+            );
+            Ok(())
+        }))
     } else {
-        false
+        None
     };
 
     // Phase 6: Collect all background tasks into FuturesUnordered for unified lifecycle management
     debug!("Setting up FuturesUnordered for background tasks...");
     let mut background_tasks = FuturesUnordered::new();
 
-    // Add killer task (always present)
-    background_tasks.push(killer_task);
+    // Add anchor task (always present on Unix)
+    background_tasks.push(anchor_task);
 
     // Add optional monitoring task
     if let Some(task) = monitor_task {
+        background_tasks.push(task);
+    }
+
+    // Add optional web UI task
+    if let Some(task) = web_ui_task {
         background_tasks.push(task);
     }
 
@@ -297,28 +300,150 @@ async fn run_direct(
         background_tasks.len()
     );
 
-    // Wait for either actors to complete OR any background task to finish/fail
-    debug!("Waiting for completion (actors or background tasks)...");
-    let coordinator_wait = async { coordinator.lock().await.wait_for_completion().await };
+    // Install signal handlers for graceful shutdown with escalation
+    let mut kill_level = 0u8;
+    debug!("Signal handlers installed, entering main event loop");
 
-    tokio::select! {
-        result = coordinator_wait => {
-            info!("All actors completed");
-            if let Err(e) = result {
-                error!("Actor completion error: {:#}", e);
+    // Wait for either actors to complete OR any background task to finish/fail OR signals
+    debug!("Waiting for completion (actors, background tasks, or signals)...");
+    let coordinator_clone = coordinator.clone();
+    let mut coordinator_wait =
+        std::pin::pin!(async { coordinator_clone.lock().await.wait_for_completion().await });
+
+    #[cfg(unix)]
+    {
+        use futures::stream::StreamExt;
+
+        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+            .expect("Failed to register SIGINT handler");
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to register SIGTERM handler");
+
+        // Fuse SIGINT and SIGTERM streams into a unified termination signal stream
+        let sigint_stream = async_stream::stream! {
+            while let Some(()) = sigint.recv().await {
+                yield ();
+            }
+        };
+        let sigterm_stream = async_stream::stream! {
+            while let Some(()) = sigterm.recv().await {
+                yield ();
+            }
+        };
+        let termination_signals = futures::stream::select(sigint_stream, sigterm_stream);
+        tokio::pin!(termination_signals);
+
+        let mut self_initiated_shutdown = false;
+
+        // Keep looping to handle multiple signals until actors/tasks complete
+        loop {
+            tokio::select! {
+                biased;  // Process signals first for responsive shutdown
+
+                // Unified signal handling for both SIGINT and SIGTERM with 3-stage escalation
+                _ = termination_signals.next() => {
+                    // Ignore feedback from our own kill_process_group
+                    if !self_initiated_shutdown {
+                        kill_level += 1;
+
+                        match kill_level {
+                            1 => {
+                                info!("Shutting down gracefully (SIGTERM)...");
+                                info!("Press Ctrl-C again to force terminate");
+                                self_initiated_shutdown = true;
+                                if pgid != 0 {
+                                    kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+                                }
+                                let _ = shutdown_tx.send(true);
+                                // Continue looping to handle more signals
+                            }
+                            2 => {
+                                warn!("Force terminating stubborn processes...");
+                                warn!("Press Ctrl-C once more for immediate kill");
+                                if pgid != 0 {
+                                    kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+                                }
+                                // Continue looping to handle more signals
+                            }
+                            _ => {
+                                warn!("Immediate kill! Sending SIGKILL");
+                                if pgid != 0 {
+                                    kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
+                                }
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+
+                // Actor completion
+                result = &mut coordinator_wait => {
+                    info!("All actors completed");
+                    if let Err(e) = result {
+                        error!("Actor completion error: {:#}", e);
+                    }
+                    break;  // Normal completion, exit loop
+                }
+
+                // Background task completion/failure
+                Some(result) = background_tasks.next() => {
+                    // A background task finished (usually means error or shutdown)
+                    match result {
+                        Ok(Ok(())) => {
+                            warn!("Background task finished early (clean exit)");
+                        }
+                        Ok(Err(e)) => {
+                            error!("Background task failed: {:#}", e);
+                        }
+                        Err(e) => {
+                            error!("Background task panicked: {:#}", e);
+                        }
+                    }
+                    break;  // Task failure, exit loop
+                }
             }
         }
-        Some(result) = background_tasks.next() => {
-            // A background task finished (usually means error or shutdown)
-            match result {
-                Ok(Ok(())) => {
-                    warn!("Background task finished early (clean exit)");
+    }
+
+    #[cfg(not(unix))]
+    {
+        // Keep looping to handle multiple Ctrl-C until actors/tasks complete
+        loop {
+            tokio::select! {
+                biased;
+
+                // Ctrl-C handling
+                _ = tokio::signal::ctrl_c() => {
+                    info!("Received Ctrl-C, shutting down...");
+                    let _ = shutdown_tx.send(true);
+                    kill_all_descendants();
+                    std::process::exit(130);
                 }
-                Ok(Err(e)) => {
-                    error!("Background task failed: {:#}", e);
+
+                // Actor completion
+                result = &mut coordinator_wait => {
+                    info!("All actors completed");
+                    if let Err(e) = result {
+                        error!("Actor completion error: {:#}", e);
+                    }
+                    break;  // Normal completion, exit loop
                 }
-                Err(e) => {
-                    error!("Background task panicked: {:#}", e);
+
+                // Background task completion/failure
+                Some(result) = background_tasks.next() => {
+                    // A background task finished (usually means error or shutdown)
+                    match result {
+                        Ok(Ok(())) => {
+                            warn!("Background task finished early (clean exit)");
+                        }
+                        Ok(Err(e)) => {
+                            error!("Background task failed: {:#}", e);
+                        }
+                        Err(e) => {
+                            error!("Background task panicked: {:#}", e);
+                        }
+                    }
+                    break;  // Task failure, exit loop
                 }
             }
         }
@@ -328,8 +453,8 @@ async fn run_direct(
     debug!("Triggering shutdown for remaining tasks...");
     let _ = shutdown_tx.send(true);
 
-    // Wait for all remaining background tasks to finish
-    debug!("Waiting for remaining background tasks to finish...");
+    // Drain remaining background tasks (exits immediately if already empty)
+    debug!("Draining remaining background tasks...");
     while let Some(result) = background_tasks.next().await {
         match result {
             Ok(Ok(())) => {
@@ -343,11 +468,15 @@ async fn run_direct(
             }
         }
     }
-
     debug!("All background tasks completed");
 
     // Handle graceful shutdown with process cleanup (same logic as before)
-    handle_shutdown_simple(pgid, coordinator).await
+    #[cfg(unix)]
+    let result = handle_shutdown_simple(Some(pgid), coordinator).await;
+    #[cfg(not(unix))]
+    let result = handle_shutdown_simple(None, coordinator).await;
+
+    result
 }
 
 /// Forward state events from coordinator to SSE broadcaster
@@ -383,85 +512,6 @@ async fn forward_state_events(
                 tracing::debug!("State event forwarding task ending (coordinator finished)");
                 break;
             }
-        }
-    }
-}
-
-/// Background task that handles shutdown signals (3-stage shutdown)
-///
-/// This task responds immediately to Ctrl-C and SIGTERM signals without blocking.
-/// It maintains shutdown state and escalates kill signals on repeated Ctrl-C presses.
-async fn shutdown_killer_task(pgid: Option<i32>, shutdown_tx: tokio::sync::watch::Sender<bool>) {
-    #[cfg(unix)]
-    {
-        use nix::sys::signal::Signal;
-
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("Failed to register SIGTERM handler");
-        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-            .expect("Failed to register SIGINT handler");
-
-        let mut shutdown_level = 0u8;
-
-        loop {
-            tokio::select! {
-                biased;
-
-                _ = sigint.recv() => {
-                    shutdown_level += 1;
-
-                    // Broadcast shutdown on first Ctrl-C
-                    if shutdown_level == 1 {
-                        let _ = shutdown_tx.send(true);
-                    }
-
-                    match shutdown_level {
-                        1 => {
-                            eprintln!("Shutting down gracefully (SIGTERM)...");
-                            eprintln!("Press Ctrl-C again to force terminate");
-                            if let Some(pgid) = pgid {
-                                kill_process_group(pgid, Signal::SIGTERM);
-                            }
-                        }
-                        2 => {
-                            eprintln!("Force terminating stubborn processes...");
-                            eprintln!("Press Ctrl-C once more for immediate kill");
-                            if let Some(pgid) = pgid {
-                                kill_process_group(pgid, Signal::SIGTERM);
-                            }
-                        }
-                        3 => {
-                            eprintln!("Immediate kill! Sending SIGKILL");
-                            if let Some(pgid) = pgid {
-                                kill_process_group(pgid, Signal::SIGKILL);
-                            }
-                            break;
-                        }
-                        _ => {
-                            eprintln!("Cleanup in progress, please wait...");
-                        }
-                    }
-                }
-                _ = sigterm.recv() => {
-                    eprintln!("Received SIGTERM, performing immediate kill...");
-                    let _ = shutdown_tx.send(true);
-                    if let Some(pgid) = pgid {
-                        kill_process_group(pgid, Signal::SIGTERM);
-                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                        kill_process_group(pgid, Signal::SIGKILL);
-                    }
-                    break;
-                }
-            }
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        // Windows: simple Ctrl-C handling
-        if tokio::signal::ctrl_c().await.is_ok() {
-            eprintln!("Received Ctrl-C, shutting down...");
-            kill_all_descendants();
         }
     }
 }
