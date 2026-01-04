@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Sequential loading test - multiple nodes in one container -->
+  <!-- Expected: talker1, talker2, listener1, listener2, talker3 load sequentially (FIFO) -->
+  <!-- Check load_timing.csv: increasing queue_wait_ms for later nodes -->
+
+  <node_container pkg="rclcpp_components" exec="component_container" name="sequential_container" namespace="">
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker1" namespace="">
+      <param name="msg_prefix" value="seq1"/>
+    </composable_node>
+
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker2" namespace="">
+      <param name="msg_prefix" value="seq2"/>
+    </composable_node>
+
+    <composable_node pkg="composition" plugin="composition::Listener" name="listener1" namespace=""/>
+
+    <composable_node pkg="composition" plugin="composition::Listener" name="listener2" namespace=""/>
+
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker3" namespace="">
+      <param name="msg_prefix" value="seq3"/>
+    </composable_node>
+  </node_container>
+</launch>

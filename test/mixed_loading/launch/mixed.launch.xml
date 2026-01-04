@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Mixed loading test - combination of sequential and concurrent -->
+  <!-- Expected: -->
+  <!--   - container_a loads talker1, talker2, listener1 sequentially -->
+  <!--   - container_b loads talker3, listener2 sequentially -->
+  <!--   - Both containers load concurrently -->
+
+  <node_container pkg="rclcpp_components" exec="component_container" name="container_a" namespace="">
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker1" namespace="">
+      <param name="msg_prefix" value="container_a_1"/>
+    </composable_node>
+
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker2" namespace="">
+      <param name="msg_prefix" value="container_a_2"/>
+    </composable_node>
+
+    <composable_node pkg="composition" plugin="composition::Listener" name="listener1" namespace=""/>
+  </node_container>
+
+  <node_container pkg="rclcpp_components" exec="component_container" name="container_b" namespace="">
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker3" namespace="">
+      <param name="msg_prefix" value="container_b_1"/>
+    </composable_node>
+
+    <composable_node pkg="composition" plugin="composition::Listener" name="listener2" namespace=""/>
+  </node_container>
+</launch>

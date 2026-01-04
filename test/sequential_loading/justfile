@@ -1,0 +1,47 @@
+# Sequential Loading Test Suite
+
+# Variables
+ros_distro := env_var_or_default('ROS_DISTRO', 'humble')
+
+# Show help
+default:
+    @just --list
+
+# Run sequential loading test
+run:
+    #!/usr/bin/env bash
+    set -e
+    echo "Running sequential loading test (5 nodes → 1 container)..."
+    echo "Expected: Nodes load one-by-one in FIFO order"
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../install/setup.bash
+    timeout 20 play_launch launch --enable-monitoring launch/sequential.launch.xml
+
+# Check timing metrics
+check-timing:
+    #!/usr/bin/env bash
+    set -e
+    echo "=== Load Timing Metrics ==="
+    for node in talker1 talker2 listener1 listener2 talker3; do
+        timing_file="play_log/latest/load_node/$node/load_timing.csv"
+        if [ -f "$timing_file" ]; then
+            echo ""
+            echo "Node: $node"
+            cat "$timing_file"
+        else
+            echo "Node: $node - NO TIMING DATA (load may have failed)"
+        fi
+    done
+
+    echo ""
+    echo "=== Expected Pattern ==="
+    echo "Queue wait should increase for later nodes (talker1 ≈ 0ms, talker3 > 0ms)"
+    echo "Service call time should be similar for all nodes (~100-500ms)"
+
+# Clean generated files
+clean:
+    #!/usr/bin/env bash
+    set -e
+    echo "Cleaning up..."
+    rm -rf play_log record.json
+    echo "Cleanup complete"

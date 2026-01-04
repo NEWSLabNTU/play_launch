@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Concurrent loading test - one node per container -->
+  <!-- Expected: All nodes load in parallel (different containers) -->
+  <!-- Check debug logs: LoadNode service calls should overlap in time -->
+
+  <node_container pkg="rclcpp_components" exec="component_container" name="container1" namespace="">
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker_c1" namespace="">
+      <param name="msg_prefix" value="container1"/>
+    </composable_node>
+  </node_container>
+
+  <node_container pkg="rclcpp_components" exec="component_container" name="container2" namespace="">
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker_c2" namespace="">
+      <param name="msg_prefix" value="container2"/>
+    </composable_node>
+  </node_container>
+
+  <node_container pkg="rclcpp_components" exec="component_container" name="container3" namespace="">
+    <composable_node pkg="composition" plugin="composition::Listener" name="listener_c3" namespace=""/>
+  </node_container>
+
+  <node_container pkg="rclcpp_components" exec="component_container" name="container4" namespace="">
+    <composable_node pkg="composition" plugin="composition::Talker" name="talker_c4" namespace="">
+      <param name="msg_prefix" value="container4"/>
+    </composable_node>
+  </node_container>
+</launch>

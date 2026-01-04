@@ -1,0 +1,57 @@
+# Concurrent Loading Test Suite
+
+# Variables
+ros_distro := env_var_or_default('ROS_DISTRO', 'humble')
+
+# Show help
+default:
+    @just --list
+
+# Run concurrent loading test
+run:
+    #!/usr/bin/env bash
+    set -e
+    echo "Running concurrent loading test (4 nodes → 4 containers)..."
+    echo "Expected: All nodes load in parallel"
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../install/setup.bash
+    timeout 20 play_launch launch --enable-monitoring launch/concurrent.launch.xml
+
+# Run with debug logs to see concurrency
+run-debug:
+    #!/usr/bin/env bash
+    set -e
+    echo "Running with debug logs (check timestamps for concurrent loading)..."
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../install/setup.bash
+    RUST_LOG=debug timeout 20 play_launch launch --enable-monitoring launch/concurrent.launch.xml 2>&1 | grep -E "LoadNode|Starting load"
+
+# Check timing metrics
+check-timing:
+    #!/usr/bin/env bash
+    set -e
+    echo "=== Load Timing Metrics ==="
+    for node in talker_c1 talker_c2 listener_c3 talker_c4; do
+        timing_file="play_log/latest/load_node/$node/load_timing.csv"
+        if [ -f "$timing_file" ]; then
+            echo ""
+            echo "Node: $node"
+            cat "$timing_file"
+        else
+            echo "Node: $node - NO TIMING DATA (load may have failed)"
+        fi
+    done
+
+    echo ""
+    echo "=== Expected Pattern ==="
+    echo "Queue wait should be ~0ms for all nodes (no queueing)"
+    echo "Service call times should be similar (concurrent execution)"
+    echo "Total duration should be ~equal (started at same time)"
+
+# Clean generated files
+clean:
+    #!/usr/bin/env bash
+    set -e
+    echo "Cleaning up..."
+    rm -rf play_log record.json
+    echo "Cleanup complete"
