@@ -70,161 +70,30 @@ play_launch plot --metrics cpu memory           # Plot specific metrics
 
 ## Architecture
 
-### Execution Flow (play_launch)
+### Execution Flow
 
-1. **Load** (ros/launch_dump.rs): Deserialize `record.json`, copy parameter files
-2. **Context Preparation** (execution/context.rs): Classify nodes (containers vs regular)
-3. **Background Tasks** (async tokio tasks):
-   - **Component Loader** (ros/component_loader.rs): Async task with rclrs service clients for LoadNode
-   - **Service Discovery** (ros/container_readiness.rs): Async task for container readiness checking
-   - **Monitoring** (monitoring/resource_monitor.rs): Async task for resource metrics collection
-   - **Anchor Process** (process/pgid.rs): Async task managing PGID allocation
-4. **Execution** (member_actor module):
-   - **Regular nodes**: Actor-based lifecycle management with respawn support
-   - **Containers**: Actor with supervision of composable nodes
-   - **Composable nodes**: Actor with LoadNode service integration
-5. **Task Management** (FuturesUnordered pattern):
-   - All background tasks collected in FuturesUnordered
-   - Unified shutdown and error handling
-   - Immediate detection of task failures
-6. **Logging**: All output saved to `play_log/<timestamp>/`
+1. **Load**: Deserialize `record.json`, copy parameter files
+2. **Context Preparation**: Classify nodes (containers vs regular)
+3. **Background Tasks**: Async tokio tasks for component loading, service discovery, monitoring, and process management
+4. **Execution**: Actor-based lifecycle management for regular nodes, containers, and composable nodes
+5. **Logging**: All output saved to `play_log/<timestamp>/`
 
 ### Module Structure
 
-The codebase is organized into functional modules:
+- **member_actor/**: Actor-based lifecycle management for nodes, containers, and composable nodes
+- **execution/**: Process spawning and orchestration
+- **ros/**: ROS integration (component loading, service discovery, package resolution)
+- **monitoring/**: Resource monitoring and I/O helper client
+- **web/**: Web UI server and API handlers
+- **cli/**: Command-line interface and configuration
+- **python/**: Python integration (dump_launch, analyzer)
+- **event_driven/**: Web UI compatibility layer
 
-**Root:**
-- **main.rs**: Entry point, CleanupGuard for subprocess management, signal handlers
-- **lib.rs**: Shared library code (exports IPC for io_helper binary)
+### Runtime Architecture
 
-**event_driven/** - Web UI compatibility layer (3 files):
-- **events.rs**: Event types (MemberEvent) for web UI communication
-- **member.rs**: Member type definitions (RegularNode, Container, ComposableNode) for web UI state
-- **registry.rs**: Read-only cache for web UI queries (StateEvents bridged to MemberEvents)
-
-**member_actor/** - Actor pattern execution (7 files):
-- **mod.rs**: Module definition, ActorConfig, and standalone function exports
-- **coordinator.rs**: MemberCoordinator for spawning and managing actors
-- **events.rs**: Actor events (ControlEvent, StateEvent)
-- **state.rs**: Actor state machines (NodeState, ContainerState, ComposableState)
-- **regular_node_actor.rs**: Actor + standalone function for regular nodes with respawn loop
-- **container_actor.rs**: Actor + standalone function for containers with supervision pattern
-- **composable_node_actor.rs**: Actor + standalone function for composable nodes with LoadNode service integration
-- **actor_traits.rs**: MemberActor trait (used internally by wrapper functions)
-- **web_query.rs**: Web UI query types (MemberSummary, MemberDetails)
-
-**execution/** - Process spawning and orchestration (3 files):
-- **spawn.rs**: Process spawning utilities (used by actors and run command)
-- **context.rs**: Execution context preparation, node classification
-- **node_cmdline.rs**: ROS node command line construction
-
-**ros/** - ROS-specific integration (4 files):
-- **component_loader.rs**: Async task with rclrs service calls to LoadNode (uses spawn_blocking for FFI)
-- **container_readiness.rs**: Async task for service discovery and readiness checking (uses spawn_blocking for FFI)
-- **ament_index.rs**: Package resolution via AMENT_PREFIX_PATH
-- **launch_dump.rs**: Launch file data structures (deserialization)
-
-**monitoring/** - Resource monitoring (2 files):
-- **resource_monitor.rs**: Async task for per-node and system-wide metrics collection
-- **io_helper_client.rs**: IPC client for privileged I/O stats
-
-**python/** - Python integration (3 files):
-- **python_bridge.rs**: PyO3 embedding for dump_launch and analyzer
-- **dump_launcher.rs**: Wrapper for dump_launch invocation
-- **plot_launcher.rs**: Wrapper for plotting invocation
-
-**cli/** - CLI and configuration (2 files):
-- **options.rs**: CLI argument parsing with clap
-- **config.rs**: YAML configuration with process control (CPU affinity, nice)
-
-**web/** - Web UI (4 files):
-- **mod.rs**: axum web server with embedded assets
-- **handlers.rs**: HTTP API handlers for node control (event-driven)
-- **sse.rs**: Server-Sent Events for log streaming
-- **web_types.rs**: Type definitions (NodeSummary, NodeStatus, UnifiedStatus, etc.)
-
-**ipc/** - IPC protocol (3 files):
-- **mod.rs**: Protocol encoding/decoding with bincode
-- **protocol.rs**: Request/Response types for I/O helper
-- **error.rs**: Error types for IPC
-
-**process/** - Process management (2 files):
-- **mod.rs**: Process cleanup utilities (kill_all_descendants, kill_process_group)
-- **pgid.rs**: Async anchor process task for PGID allocation
-
-**util/** - Utility modules:
-- **log_dir.rs**: Log directory creation and management
-- **logging.rs**: Logging configuration and verbosity control
-
-**bin/** - Additional binaries (1 subdirectory):
-- **play_launch_io_helper/**: Privileged daemon for reading /proc/[pid]/io
-
-### Async/Tokio Architecture (Completed January 2026)
-
-**Status:** All background services converted to async tokio tasks with FuturesUnordered lifecycle management.
-
-**Architecture Pattern:**
-```rust
-// Phase 1-4: Convert threads to async tasks
-let monitor_task = tokio::spawn(run_monitoring_task(..., shutdown_rx.clone()));
-let discovery_task = tokio::spawn(spawn_service_discovery_task(shutdown_rx.clone()));
-let loader_task = tokio::spawn(spawn_component_loader_task(shutdown_rx.clone()));
-let anchor_task = tokio::spawn(run_anchor_task(pgid_tx, shutdown_rx.clone()));
-let killer_task = tokio::spawn(async move { shutdown_killer_task(...).await; Ok(()) });
-
-// Phase 5: Standalone actor functions (wrapper pattern)
-pub async fn run_regular_node(...) -> Result<()> { /* Actor implementation */ }
-pub async fn run_container(...) -> Result<()> { /* Actor implementation */ }
-pub async fn run_composable_node(...) -> Result<()> { /* Actor implementation */ }
-
-// Phase 6: FuturesUnordered for unified lifecycle
-let mut background_tasks = FuturesUnordered::new();
-background_tasks.push(anchor_task);
-background_tasks.push(killer_task);
-background_tasks.push(monitor_task);
-// ... add all background tasks
-
-tokio::select! {
-    result = coordinator.lock().await.wait_for_completion() => { /* actors done */ }
-    Some(result) = background_tasks.next() => { /* task failed/finished */ }
-}
-```
-
-**Key Benefits:**
-- **No Threads**: All background services are async tasks (monitoring, service discovery, component loader, anchor)
-- **spawn_blocking**: ROS FFI operations (rclrs) wrapped in `tokio::task::spawn_blocking`
-- **Unified Shutdown**: Single `watch<bool>` channel broadcast to all tasks
-- **Error Detection**: Immediate detection of background task failures via FuturesUnordered
-- **Responsive**: Shutdown response <100ms (vs ~1s with threads)
-- **Graceful Cleanup**: All tasks properly await shutdown signal before terminating
-
-**Implementation Details:**
-- **Phase 1**: Monitoring thread → async task (resource_monitor.rs)
-- **Phase 2**: Service discovery thread → async task (container_readiness.rs)
-- **Phase 3**: Component loader thread → async task + fixed executor spin bug (component_loader.rs)
-- **Phase 4**: Anchor process → async task (process/pgid.rs)
-- **Phase 5**: Actors → standalone functions with wrapper pattern (member_actor/*.rs)
-- **Phase 6**: FuturesUnordered integration (commands/replay.rs, commands/run.rs)
-
-### Event-Driven Architecture (Web UI Mode)
-
-**Status:** Event-driven infrastructure for web UI (legacy, predates async refactoring).
-
-**When enabled (`--web-ui` flag):**
-- Creates EventBus, ProcessMonitor, EventProcessor, and MemberRegistry
-- Non-container nodes use event-driven spawn (`spawn_nodes_event_driven`)
-- ProcessMonitor owns Child handles and publishes exit events
-- EventProcessor handles state transitions asynchronously
-- Web UI uses MemberRegistry for queries and EventBus for control operations
-
-**Design:**
-- **EventBus**: Pub/sub for MemberEvent (ProcessStarted, ProcessExited, etc.)
-- **ProcessMonitor**: Owns Child handles, monitors exits, publishes events
-- **EventProcessor**: Async event loop, updates MemberRegistry
-- **MemberRegistry**: In-memory state for all members
-- **WebState**: Holds MemberRegistry (query) + EventBus (control)
-
-**Note:** Event-driven mode and async refactoring are complementary - event-driven handles web UI state management while async refactoring handles background task lifecycle.
+- **Async/Tokio**: All background services run as async tasks with unified shutdown handling
+- **Actor Pattern**: Self-contained lifecycle management for nodes with respawn support
+- **Web UI Mode**: Event-driven architecture bridges actor state to web interface
 
 ## Configuration
 
@@ -295,129 +164,57 @@ play_log/
 
 ## Resource Monitoring
 
-### Status
-- ✅ **Phase 1 Complete**: Per-node and system-wide monitoring (CPU, memory, I/O, network, threads, FDs)
-- ✅ **Phase 2 Complete**: GPU monitoring (NVIDIA), I/O rates, network connections, CAP_SYS_NICE
-- ✅ **Phase 3.1 Complete**: Interactive Plotly dashboard with zoom/pan/hover tooltips
+Enable with `--enable-monitoring` flag. Collects per-node and system-wide metrics (CPU, memory, I/O, network, GPU).
 
 ### Visualization
-The `play_launch plot` command generates individual interactive HTML charts using Plotly:
 
-**Timeline Charts** (~4-5 MB each, shows metrics over time):
-- `cpu_timeline.html` - CPU usage with container-aware hover panel
-- `memory_timeline.html` - Memory usage with container-aware hover panel
-- `io_timeline.html` - I/O read/write rates (when available)
-- `network_timeline.html` - TCP/UDP connections (when available)
-- `gpu_timeline.html` - GPU memory usage (when available)
-- `gpu_temp_power.html` - GPU temperature and power (when available)
-- `gpu_clocks.html` - GPU clock frequencies (when available)
+`play_launch plot` generates interactive Plotly charts:
+- Timeline charts: CPU, memory, I/O, network, GPU over time
+- Distribution charts: Box plots for CPU and memory
+- Container-aware hover panels showing composable nodes
+- Statistics report with top 10 rankings
 
-**Distribution Charts** (box plots sorted low to high by average):
-- `cpu_distribution.html` - CPU distribution with statistics panel
-- `memory_distribution.html` - Memory distribution with statistics panel
+### Metrics Collected
 
-**Interactive Features**:
-- Full-screen viewing (separate files for maximum chart size)
-- Container-aware floating panels:
-  - Timeline charts: Hover over container curve → shows list of contained composable nodes
-  - Distribution charts: Hover over container → shows box plot statistics + contained nodes
-- Abbreviated labels in distributions, full names on hover
-- No legend clutter (names in hover tooltips only)
-- Zoom and pan (drag to zoom, double-click to reset)
-- Download as PNG via toolbar
-
-**Statistics Report**: `statistics.txt` with top 10 rankings for all metrics
-
-**Implementation**: JavaScript injection pattern (inject_statistics_panel, inject_container_panel) embeds container_map as JSON, adds plotly_hover/plotly_unhover event listeners for dynamic panels
-
-### Per-Process Metrics (metrics.csv)
-CPU, memory (RSS/VMS), disk I/O, total I/O with rates, process state, threads, file descriptors, GPU (NVIDIA), TCP/UDP connections
-
-### System-Wide Metrics (system_stats.csv)
-Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop - pending)
+- **Per-Process**: CPU, memory (RSS/VMS), disk I/O, threads, file descriptors, GPU (NVIDIA), TCP/UDP connections
+- **System-Wide**: Overall CPU%, memory, network rates, disk I/O rates
 
 ### GPU Support
-- **NVIDIA GPUs**: Per-process metrics via NVML (nvml-wrapper 0.11)
-- **Jetson/Tegra**: ⚠️ Per-process GPU metrics NOT available (hardware limitation). Use system-wide monitoring.
 
-### Platform Notes
-- **CPU metrics**: Accurate per-process measurement via `/proc/[pid]/stat` (utime + stime). Correctly shows individual process CPU usage independent of system loading.
-- **I/O metrics**: See dedicated I/O Monitoring section below
-- **Negative nice values**: Requires `sudo setcap cap_sys_nice+ep install/play_launch/lib/play_launch/play_launch` (reapply after rebuild)
+- **NVIDIA GPUs**: Per-process metrics via NVML
+- **Jetson/Tegra**: System-wide only (hardware limitation)
 
 ### I/O Monitoring
 
-**Standard processes**: Direct `/proc/[pid]/io` reads work without special permissions
+Privileged processes (containers) require I/O helper with CAP_SYS_PTRACE capability:
+- Run `just setcap-io-helper` after building (requires sudo)
+- Verify with `just verify-io-helper`
+- Reapply after rebuilds
 
-**Privileged processes** (containers, capabilities-enabled binaries): Require helper daemon
-- Helper binary: `play_launch_io_helper` (built with main package)
-- Capability required: `CAP_SYS_PTRACE` (set via `just setcap-io-helper`)
-- Architecture: Anonymous pipes for IPC, PR_SET_PDEATHSIG for cleanup
-- Batch processing: Single IPC call per monitoring interval (efficient)
-
-**Without helper/capabilities**:
-- Warning logged once: "I/O helper unavailable. Privileged processes will have zero I/O stats."
-- I/O fields show zeros for affected processes
-- Monitoring continues normally for other metrics
-
-**Extended I/O metrics** (7 fields from `/proc/[pid]/io`):
-- `rchar` / `wchar` - Total bytes read/written (includes cache)
-- `read_bytes` / `write_bytes` - Actual storage I/O (excludes cache)
-- `syscr` / `syscw` - Read/write syscall counts
-- `cancelled_write_bytes` - Writes later truncated
-
-**Reapply after rebuild**: File capabilities are cleared when binaries change
-
-**Jetson/Tegra note**: `/proc/[pid]/io` not available (hardware limitation). System-wide I/O monitoring still works.
-
-### I/O Monitoring Troubleshooting
-
-**"I/O helper unavailable" warning**:
-1. Check binary exists: `ls install/play_launch/lib/play_launch/play_launch_io_helper`
-2. If missing: `just build`
-3. Set capability: `just setcap-io-helper`
-4. Verify: `just verify-io-helper`
-
-**Zero I/O stats for containers**:
-- Likely missing CAP_SYS_PTRACE on helper
-- Run: `just setcap-io-helper`
-
-**"Permission denied" in helper logs**:
-- Check helper capability: `getcap install/play_launch/lib/play_launch/play_launch_io_helper`
-- Should show: `cap_sys_ptrace+ep`
+**Note**: Jetson/Tegra platforms don't support `/proc/[pid]/io` (hardware limitation)
 
 ## Important Implementation Details
 
 ### Environment
-- **User responsibility**: Source ROS setup files before running play_launch
-- play_launch does NOT source setup files internally
-- AMENT_PREFIX_PATH explicitly preserved for containers (node_cmdline.rs)
-- Environment variables from launch files (`<env>` tags) replayed to child processes
+- User must source ROS setup files before running play_launch
+- Environment variables from launch files (`<env>` tags) are replayed to child processes
 
-### Process Cleanup
-- **CleanupGuard**: RAII pattern kills all children on exit
-- **Signal Handlers**: SIGTERM/SIGINT call `kill_all_descendants()`
-- **Process Group Isolation**: `.process_group(0)` prevents children from receiving terminal signals
-- Only play_launch receives Ctrl-C, then explicitly kills all descendants
-- **Graceful Shutdown**: SIGTERM triggers 5-second grace period before SIGKILL (allows large systems like Autoware to shut down cleanly)
-- **Progressive SIGINT**: Multiple Ctrl-C presses escalate from SIGTERM → SIGQUIT → SIGKILL for manual control
+### Process Management
+- Graceful shutdown with 5-second SIGTERM grace period before SIGKILL
+- Multiple Ctrl-C presses escalate: SIGTERM → SIGQUIT → SIGKILL
 
 ### Composable Node Loading
-- Service-based only (direct rclrs service calls to LoadNode)
-- Service clients cached per container
-- Concurrent loading (default: 10 parallel)
-- Parameters auto-converted to ROS types
+- Service-based loading via rclrs LoadNode calls
+- Container-managed FIFO queues (sequential per container, parallel across containers)
 - Retry logic: 3 attempts, 30s timeout per node
-- Namespace resolution: Relative names (e.g., `pointcloud_container`) resolved to absolute (e.g., `/pointcloud_container`)
+- Each node logs timing metrics (queue wait, service call, total duration)
 
 ### Respawn Support
-- **Automatic Restart**: Nodes with `respawn=True` in launch files automatically restart when they exit
-- **Respawn Delay**: `respawn_delay` parameter controls delay (in seconds) before restarting
-- **Graceful Shutdown**: Ctrl-C immediately stops respawning nodes (fixed via tokio::sync::watch channel for persistent shutdown state)
-- **Regular Nodes Only**: Currently supports respawn for regular nodes and containers (composable nodes loaded into containers do NOT auto-reload on container restart)
-- **CLI Override**: Use `--disable-respawn` flag to disable all respawn behavior for testing
-- **on_exit Handlers**: Not supported - warning logged if detected in launch files
-- **Infinite Restarts**: Matches ROS2 launch behavior (no retry limit by default)
+- Nodes with `respawn=True` automatically restart on exit
+- Respawn delay configurable via `respawn_delay` parameter
+- Supported for regular nodes and containers only (not composable nodes)
+- Disable with `--disable-respawn` flag
+- **Note**: `on_exit` handlers not supported
 
 ## Web UI
 
@@ -503,31 +300,11 @@ play_launch replay --web-ui --web-ui-addr 192.168.1.100 --web-ui-port 3000
 - Automatic refresh after control actions
 - Prevents concurrent operations on same node
 
-### Architecture
+### Technical Details
 
-- **Framework**: axum web server with embedded static assets
-- **Frontend**: htmx for reactive updates + vanilla JavaScript for interactions
-- **UI Pattern**: Two-panel IDE-style layout with collapsible sidebar
-- **Log Streaming**: Server-Sent Events (SSE) with file tailing
-- **Registry**: MemberRegistry stores all node state in-memory (event-driven architecture)
-- **Event System**: EventBus + EventProcessor for async state management
-- **Theme Management**: CSS variables + localStorage persistence + system theme detection
-- **Binding**: Configurable via `--web-ui-addr` (default: `127.0.0.1` localhost only)
-- **Port**: Configurable via `--web-ui-port` (default: 8080)
-
-### API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Serve embedded index.html |
-| `/api/nodes` | GET | HTML fragment with node cards |
-| `/api/nodes/{name}` | GET | JSON node details |
-| `/api/nodes/{name}/start` | POST | Start node |
-| `/api/nodes/{name}/stop` | POST | Stop node |
-| `/api/nodes/{name}/restart` | POST | Restart node |
-| `/api/nodes/{name}/logs/stdout` | GET | SSE stream of stdout |
-| `/api/nodes/{name}/logs/stderr` | GET | SSE stream of stderr |
-| `/api/health` | GET | HTML health summary badges |
+- Built with axum web server and htmx
+- Server-Sent Events (SSE) for real-time log streaming
+- Binds to `127.0.0.1` by default (localhost only) for security
 
 ## Dependencies
 
@@ -537,11 +314,21 @@ play_launch replay --web-ui --web-ui-addr 192.168.1.100 --web-ui-port 3000
 
 ## Testing
 
-Autoware planning simulator integration test in `test/autoware_planning_simulation/`:
+**Autoware integration test** (`test/autoware_planning_simulation/`):
 - `just start-sim`: Start simulator with play_launch
 - `just drive`: Run autonomous driving test
 - `just plot`: Generate resource plots
 - Tested with 52 composable nodes, 15 containers
+
+**Container loading test workspaces**:
+- `test/simple_test/`: Basic container with 2 composable nodes (talker, listener)
+- `test/sequential_loading/`: 5 nodes in 1 container - tests FIFO queue processing
+- `test/concurrent_loading/`: 4 nodes in 4 containers - tests parallel loading
+- `test/mixed_loading/`: 5 nodes in 2 containers - tests both patterns
+- Each workspace includes launch files, justfiles (`just run`, `just run-debug`, `just check-timing`), and README
+
+**I/O stress test** (`test/io_stress/`):
+- High-frequency I/O operations for testing monitoring overhead
 
 ## Distribution & Packaging
 
@@ -603,45 +390,16 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 - Automatic: Triggered by version tags via GitHub Actions (trusted publishing)
 - Manual: `just publish-pypi` (requires PYPI_TOKEN env var)
 
-## Key Recent Fixes
+## Key Recent Changes
 
-- **2026-01-03**: Async/Tokio Architecture Refactoring Complete (6 phases) - Converted all background threads to async tokio tasks with FuturesUnordered lifecycle management. **Phase 1**: Converted monitoring thread to async task (resource_monitor.rs). **Phase 2**: Converted service discovery thread to async task with spawn_blocking for rclrs FFI (container_readiness.rs). **Phase 3**: Converted component loader thread to async task and fixed critical executor spin bug - executor now uses timeout-based spinning (100ms) with proper shutdown checks instead of detached thread (component_loader.rs). **Phase 4**: Converted anchor process to async task with oneshot channel for PGID communication (process/pgid.rs). **Phase 5**: Added standalone async functions for all actors using wrapper pattern - run_regular_node(), run_container(), run_composable_node() internally create actor structs and call .run() to avoid duplicating ~1500 lines of state machine logic. **Phase 6**: Integrated FuturesUnordered pattern in replay.rs and run.rs for unified task lifecycle - tokio::select! waits for either actor completion OR background task failure, with proper shutdown sequencing and cleanup. Benefits: No threads, shutdown response <100ms (vs ~1s), immediate error detection, graceful cleanup with watch<bool> channel broadcast to all tasks.
-- **2026-01-01**: Phase 10.6 Complete - Removed legacy event-driven architecture code. Deleted event_driven/event_processor.rs (46,676 bytes) and event_driven/process_monitor.rs (9,798 bytes) - both replaced by actor pattern. Cleaned up execution/spawn.rs by removing 156 lines of event-driven spawn functions (spawn_node_event_driven, spawn_nodes_event_driven, spawn_containers_event_driven). Updated event_driven module exports to remove deleted files. Added `#![allow(dead_code)]` module attributes to events.rs, member.rs, and registry.rs since they're now only used for web UI compatibility (StateEvents bridged to MemberEvents). Actor pattern is now the only execution model. Tested with demo_nodes_cpp talker_listener (2 regular nodes) and composition_demo (1 container + 2 composable nodes) - all working correctly.
-- **2026-01-01**: Phase 10.5 Complete - Migrated `replay` command to use actor pattern for containers and composable nodes. Replaced EventProcessor and ProcessMonitor with MemberCoordinator in commands/replay.rs. Implemented actor-based spawning for all member types: regular nodes via spawn_regular_node(), containers via spawn_container() collecting state receivers, and composable nodes via spawn_composable_node() using container state receivers. Created bridge_state_event_to_web_ui() function to translate StateEvents to MemberEvents for web UI compatibility. Split shutdown handling into handle_shutdown_simple() (direct coordination) and handle_shutdown_with_web_ui() (event bridging loop). Restructured event loop using tokio::select! with biased priority for state events and signals. Tested with demo_nodes_cpp (2 regular nodes) and composition_demo (1 container, 2 composable nodes) - all actors spawn and load successfully.
-- **2026-01-01**: Phase 10.4 Complete - Implemented ContainerActor with supervision pattern and ComposableNodeActor with state machine. ContainerActor broadcasts state via watch channel to composable nodes (Pending/Running/Stopped/Failed). ComposableNodeActor watches container state and transitions through Unloaded → Loading → Loaded → Blocked states. LoadNode service calls integrated with retry logic (3 attempts, 2s delay, 30s timeout). Added spawn_container() and spawn_composable_node() methods to MemberCoordinator. Container waits for all composable node actors to finish on shutdown. Integration tests created for container lifecycle and state broadcast. All code compiles and passes quality checks (just quality).
-- **2026-01-01**: Phase 10.3 Complete - Migrated `run` command to use actor pattern instead of event-driven architecture. Replaced EventProcessor with MemberCoordinator in commands/run.rs. Changed from spawn_nodes_event_driven() to coordinator.spawn_regular_node(). Implemented event bridging layer for web UI compatibility (StateEvent → Registry + EventBus). Web UI continues working via bridging pattern with manual polling to avoid concurrent mutable borrows. Tested with talker node, launch command (talker_listener), and web UI mode. All tests pass with no compiler warnings.
-- **2026-01-01**: Phase 10.2 Complete - Implemented RegularNodeActor with self-contained lifecycle management. Created actor pattern infrastructure with direct respawn loop (0-1 async calls vs 3-5 event roundtrips). Added spawn_regular_node to MemberCoordinator. Implemented comprehensive integration tests for actor spawning, respawn, control commands (Stop/Restart), and shutdown handling. Actor state machine visible in code with explicit Pending → Running → Respawning transitions. All quality checks pass.
-- **2025-12-22**: Web UI enhancements - Added clickable namespace segments for instant filtering (click any segment in ROS name like `/planning` to filter nodes by namespace). Implemented stderr activity indicator (📋 icon) next to PID with hover tooltip showing last 5 stderr lines (yellow/jumping for active output 0-10s, orange/static for recent 10-60s). Changed log files to append mode with timestamped start/stop markers. Removed buggy bulk control buttons (Start/Stop/Restart All). Enhanced search to match both node names and ROS namespaces.
-- **2025-12-21**: Autoware justfile cleanup - Simplified recipe output to show only one line for start/stop/restart operations with clear status indicators (✓/⚠/✗). Ensured all {stop,restart,logs,status}-{sim,demo} recipes are available. Updated start scripts to output single-line success messages with Web UI URLs. Removed verbose multi-line output for cleaner CLI experience.
-- **2025-12-21**: Complete Web UI redesign - Implemented two-panel IDE-style layout with collapsible right sidebar for details/logs. Added light/dark theme support with system default detection and toggle button. Created Firefox-style expandable JSON viewer for node details. Moved log viewer from modal overlay to right panel with stdout/stderr tabs. Made node list more compact with status reflected in background colors (running=green, stopped=gray, failed=red, pending=yellow). Right panel hidden by default with close button (×).
-- **2025-12-21**: Autoware test scripts reorganization - Simplified script structure by moving systemd-run logic into wrapper scripts. Created start-{sim,demo}.sh (wrappers with systemd-run) and start-{sim,demo}-inner.sh (execution logic). Removed duplicated start-sim-and-drive.sh. Fixed "Access denied" error by resolving absolute paths and conditionally setting DISPLAY environment variable only when non-empty.
-- **2025-12-21**: Improved shutdown speed for large systems - Increased SIGTERM grace period from 200ms to 5 seconds in play_launch to allow large systems (like Autoware) to shut down cleanly. Added timeout-based cleanup (10s) in start-demo-systemd.sh script with automatic SIGKILL fallback. Fixes slow `just stop-demo` issue where systemd would wait for 90s timeout.
-- **2025-12-21**: Web UI route fix - Fixed Axum routing panic with catch-all parameter. Changed `/static/{*path}` to `/static/*path` for compatibility with newer Axum versions. Web UI now works correctly with `play_launch launch --web-ui` command.
-- **2025-12-21**: Web UI security and configurability - Changed default bind address from `0.0.0.0` (network-exposed) to `127.0.0.1` (localhost-only) for security. Added `--web-ui-addr` flag to allow users to explicitly configure bind address when network access is needed. Logs warning when binding to `0.0.0.0`.
-- **2025-12-21**: Log directory symlink - Added `play_log/latest` symlink that automatically points to the most recent timestamped log directory. Updated after each run. `play_launch plot` uses this symlink by default, eliminating the need to specify log directories manually.
-- **2025-12-21**: ROS Jazzy compatibility - Fixed import compatibility for both ROS Humble and Jazzy. Humble uses `launch.some_actions_type.SomeActionsType` while Jazzy uses `launch.some_entities_type.SomeEntitiesType`. Added try/except fallback to support both.
-- **2025-12-18**: SetParameter (global params) support - Global parameters from `<set_parameter>` XML tag or `SetParameter` Python action are now captured in a separate `NodeRecord.global_params` field (not merged into `params`). dump_launch extracts from `context.launch_configurations['global_params']` (the same source ROS2 launch uses internally). play_launch (Rust) reads this field and passes them as `-p` flags, with node-specific params able to override. Clean separation between global and node-specific params for better debugging.
-- **2025-11-30**: Simplified packaging - Removed Debian packaging (PyPI-only distribution). Merged `build` and `build-wheel` recipes. Added `setcap-io-helper` and `verify-io-helper` CLI commands to Rust binary. Removed unused pandas/numpy dependencies from plot script (pure plotly). Auto-detect ROS2 distro (humble for Ubuntu 22.04, jazzy for 24.04) in justfile.
-- **2025-11-26**: pip installation support - Added unified Python package in `python/play_launch/` that embeds dump_launch and play_launch_analyzer. Build workflow: `just build` then `just build-wheel`. Python CLI wrapper finds bundled Rust binary in package `bin/` directory. Wheel includes both Rust binaries (~3.3MB total). GitHub Actions workflow builds wheels for amd64 and arm64.
-- **2025-11-23**: GitHub Actions CI/CD - Created automated workflows for continuous integration (build/test/lint on every push) and release automation (multi-architecture Debian package building on version tags). Release workflow uses QEMU cross-compilation for ARM64 packages (~20-30min), works on GitHub free tier without special runners.
-- **2025-11-23**: Build system refactoring - Migrated to colcon-cargo-ros2 (single-stage build). Removed boilerplate packages from src/ros2_rust and src/interface. Simplified debian/rules to use single-stage colcon build (removed wheel-building complexity, fixed symlink issues). Enhanced justfile with install-deps recipe (interactive conflict resolution), run recipe, and verify-io-helper. All recipes now properly source /opt/ros/humble/setup.bash.
-- **2025-11-04**: Build system migration - Replaced Makefile with justfile for cleaner syntax. Created Debian packaging with proper Ubuntu 22.04 paths.
-- **2025-11-03**: Binary optimization - 94% size reduction (137MB → 8.7MB) via Cargo release profile with strip+LTO.
-- **2025-11-03**: Fixed Python dependency - Replaced ruamel.yaml with standard PyYAML (system package).
-- **2025-11-03**: Binary optimization - Added Cargo.toml release profile (strip=true, lto="thin") and Makefile --cargo-args --release flag. Reduced play_launch from 109MB to 6.5MB, play_launch_io_helper from 28MB to 2.2MB (94% total reduction).
-- **2025-11-03**: Fixed ROS deprecation warnings - replaced ruamel.yaml with standard PyYAML in dump_launch (utils.py). Changed LaunchInspector argv to empty list since launch arguments are passed separately via launch_arguments parameter (__init__.py).
-- **2025-11-03**: Fixed "Found remap rule" warnings during replay - changed ROS context initialization in component_loader.rs and container_readiness.rs to use minimal args vector instead of std::env::args(). Launch arguments (e.g., start_rviz:=true) are not ROS node arguments and should not be passed to rclrs::Context::new().
-- **2025-10-30**: Fixed respawn race condition - replaced `tokio::sync::Notify` with `tokio::sync::watch` channel for persistent shutdown state. Respawning nodes (like RViz) now stop immediately on Ctrl-C without spurious restarts. Watch channel provides both immediate `.borrow()` checks and awaitable `.changed()` notifications.
-- **2025-10-30**: Respawn support added - nodes with respawn=True automatically restart on exit, honoring respawn_delay. Ctrl-C during respawn delay stops restart gracefully. Only regular nodes supported (composable nodes limitation documented).
-- **2025-10-29**: CPU metrics completely rewritten - now parses `/proc/[pid]/stat` directly for accurate utime/stime measurement. Previous implementation incorrectly used `run_time()` (wall-clock time) instead of actual CPU time, causing all processes to show similar CPU% affected by system loading.
-- **2025-10-29**: I/O warning for Jetson (`/proc/[pid]/io` unavailable)
-- **2025-10-29**: Logging verbosity control (`--verbose` for per-node details)
-- **2025-10-28**: NVML library loading (nvml-wrapper 0.11)
-- **2025-10-27**: Namespace resolution for composable nodes
-- **2025-10-26**: Flat log directory structure with metadata.json
-- **2025-10-25**: AMENT_PREFIX_PATH explicit preservation
-- **2025-10-22**: Service-based component loading (rclrs, no subprocess overhead)
-- **2025-10-22**: Process group isolation for proper cleanup
+- **2026-01-05**: Single shared ROS node architecture - Consolidated to one shared node (`/play_launch`) with dedicated executor thread. Reduced resource usage and eliminated race conditions.
+- **2026-01-05**: Load timing metrics - Each composable node logs `load_timing.csv` with queue wait, service call, and total duration metrics.
+- **2026-01-03**: Async/Tokio refactoring complete - Converted all background threads to async tasks with unified shutdown handling. Shutdown response improved from ~1s to <100ms.
+- **2026-01-01**: Actor pattern migration - Replaced event-driven architecture with actor pattern for all node types. Cleaner state management and better testability.
+- **2025-12-22**: Web UI enhancements - Added clickable namespace segments, stderr activity indicator, and append-mode logs with timestamped markers.
+- **2025-12-21**: Web UI redesign - Two-panel IDE-style layout with light/dark theme support and Firefox-style JSON viewer.
+- **2025-12-21**: Improved shutdown - 5-second SIGTERM grace period for large systems like Autoware.
+- **2025-11-30**: PyPI-only distribution - Removed Debian packaging, simplified build system.
 
 ## Development Practices
 
@@ -658,14 +416,9 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 - Use `$project/tmp/` for all test runs, temporary log directories, and scratch work
 - Example: `cd /home/aeon/repos/play_launch/tmp && play_launch ...`
 
-### External Dependencies (Study/Reference)
-- `external/` directory contains cloned ROS repositories for study and reference
+### External Dependencies
+- `external/` directory is for placing 3rd party projects for study and reference
 - **Gitignored** - not part of the project build
-- Currently contains:
-  - `external/launch/` - ROS 2 launch (humble branch)
-  - `external/launch_ros/` - ROS 2 launch_ros (humble branch)
-- Used for understanding ROS launch architecture for potential Rust rewrite
-- See `docs/launch-rust-rewrite-analysis.md` for analysis
 
 ## Performance Optimization Roadmap
 
