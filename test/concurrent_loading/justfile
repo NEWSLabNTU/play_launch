@@ -15,7 +15,7 @@ run:
     echo "Expected: All nodes load in parallel"
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../install/setup.bash
-    timeout 20 play_launch launch --enable-monitoring launch/concurrent.launch.xml
+    play_launch launch --enable-monitoring launch/concurrent.launch.xml
 
 # Run with debug logs to see concurrency
 run-debug:
@@ -24,7 +24,7 @@ run-debug:
     echo "Running with debug logs (check timestamps for concurrent loading)..."
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../install/setup.bash
-    RUST_LOG=debug timeout 20 play_launch launch --enable-monitoring launch/concurrent.launch.xml 2>&1 | grep -E "LoadNode|Starting load"
+    RUST_LOG=debug play_launch launch --enable-monitoring launch/concurrent.launch.xml 2>&1 | grep -E "LoadNode|Starting load"
 
 # Check timing metrics
 check-timing:
