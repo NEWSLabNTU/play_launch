@@ -180,7 +180,10 @@ impl MemberCoordinatorBuilder {
     }
 
     /// Spawn all members and return handle + runner
-    pub async fn spawn(self) -> (MemberHandle, MemberRunner) {
+    pub async fn spawn(
+        self,
+        shared_ros_node: Option<Arc<rclrs::Node>>,
+    ) -> (MemberHandle, MemberRunner) {
         let (state_tx, state_rx) = mpsc::channel(100);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -212,91 +215,8 @@ impl MemberCoordinatorBuilder {
             metadata_map.insert(def.name.clone(), def.metadata);
         }
 
-        // Phase 2: Create ONE shared ROS node and executor for all containers
-        // The executor spins in a dedicated thread to process LoadNode service callbacks
-        let shared_ros_node = if !self.containers.is_empty() {
-            use std::sync::mpsc as std_mpsc;
-            let (node_tx, node_rx) = std_mpsc::channel();
-            let shutdown_rx_executor = shutdown_rx.clone();
-
-            // Spawn a dedicated thread for the ROS executor
-            // This thread will spin the executor continuously
-            let executor_thread = std::thread::spawn(move || {
-                use rclrs::CreateBasicExecutor;
-                use tracing::{debug, error};
-
-                debug!("Starting ROS executor thread for container LoadNode service calls");
-
-                // Create ROS context, executor, and node
-                let context = match rclrs::Context::new(
-                    vec!["play_launch".to_string()],
-                    rclrs::InitOptions::default(),
-                ) {
-                    Ok(ctx) => ctx,
-                    Err(e) => {
-                        error!("Failed to create ROS context: {:#}", e);
-                        return;
-                    }
-                };
-
-                let mut executor = context.create_basic_executor();
-                let node = match executor.create_node("play_launch_containers") {
-                    Ok(n) => Arc::new(n),
-                    Err(e) => {
-                        error!("Failed to create ROS node: {:#}", e);
-                        return;
-                    }
-                };
-
-                // Send node back to main thread
-                if node_tx.send(node).is_err() {
-                    error!("Failed to send node to main thread");
-                    return;
-                }
-
-                debug!("ROS executor thread: node created, starting spin loop");
-
-                // Spin the executor until shutdown
-                loop {
-                    // Check for shutdown signal (non-blocking)
-                    if shutdown_rx_executor.has_changed().is_ok() && *shutdown_rx_executor.borrow()
-                    {
-                        debug!("ROS executor thread received shutdown signal");
-                        break;
-                    }
-
-                    // Spin once
-                    executor.spin(rclrs::SpinOptions::spin_once());
-
-                    // Small sleep to prevent busy-waiting
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-
-                debug!("ROS executor thread shutting down");
-            });
-
-            // The executor thread will run until shutdown signal is received
-            // We don't need to explicitly join it - it will clean up automatically
-            // when the shutdown signal is sent
-            std::mem::forget(executor_thread); // Don't block on join
-
-            // Wait for the node to be created
-            match node_rx.recv() {
-                Ok(node) => {
-                    debug!("Shared ROS node created for all containers");
-                    Some(node)
-                }
-                Err(e) => {
-                    tracing::error!("Failed to receive node from executor thread: {:#}", e);
-                    tracing::warn!("Containers will not be able to load composable nodes");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
         // Spawn containers and collect their state receivers and load control channels
+        // Use the shared ROS node passed from play() function
         let mut container_state_map = HashMap::new();
         let mut container_load_control_map = HashMap::new();
         for def in self.containers {

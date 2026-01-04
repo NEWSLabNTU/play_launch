@@ -21,9 +21,12 @@
 //! - Process-based checking is faster but doesn't verify DDS readiness
 
 use crate::util::logging::is_verbose;
-use std::{sync::OnceLock, time::Duration};
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Global handle for ROS service discovery (optional, only initialized if service checking enabled)
 pub static SERVICE_DISCOVERY_HANDLE: OnceLock<ServiceDiscoveryHandle> = OnceLock::new();
@@ -85,6 +88,7 @@ impl ServiceDiscoveryHandle {
 /// Spawn the ROS service discovery as an async tokio task (Phase 2)
 /// Returns both the task handle and the service discovery handle
 pub fn spawn_service_discovery_task(
+    shared_ros_node: Option<Arc<rclrs::Node>>,
     shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> (
     tokio::task::JoinHandle<eyre::Result<()>>,
@@ -92,7 +96,11 @@ pub fn spawn_service_discovery_task(
 ) {
     let (request_tx, request_rx) = mpsc::unbounded_channel();
 
-    let task = tokio::spawn(run_service_discovery_task(request_rx, shutdown_rx));
+    let task = tokio::spawn(run_service_discovery_task(
+        shared_ros_node,
+        request_rx,
+        shutdown_rx,
+    ));
 
     let handle = ServiceDiscoveryHandle { request_tx };
 
@@ -100,28 +108,24 @@ pub fn spawn_service_discovery_task(
 }
 
 /// Run the ROS service discovery loop as an async tokio task (Phase 2)
-/// This replaces the thread-based approach with spawn_blocking for ROS operations
+/// Uses the shared ROS node passed from play() function
 async fn run_service_discovery_task(
+    shared_ros_node: Option<Arc<rclrs::Node>>,
     mut request_rx: mpsc::UnboundedReceiver<ContainerCheckRequest>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> eyre::Result<()> {
-    use rclrs::CreateBasicExecutor;
-
     debug!("Starting async ROS container discovery task");
 
-    // Initialize ROS context and node in spawn_blocking (rclrs is synchronous FFI)
-    let node = tokio::task::spawn_blocking(|| {
-        let context = rclrs::Context::new(
-            vec!["play_launch".to_string()],
-            rclrs::InitOptions::default(),
-        )?;
-        let executor = context.create_basic_executor();
-        let node = executor.create_node("play_launch_container_discovery")?;
-        Ok::<_, eyre::Error>(node)
-    })
-    .await??;
+    // Use the shared ROS node instead of creating a new one
+    let node = match shared_ros_node {
+        Some(node) => node,
+        None => {
+            error!("No shared ROS node available for service discovery");
+            return Err(eyre::eyre!("Shared ROS node not available"));
+        }
+    };
 
-    debug!("ROS container discovery node initialized (async)");
+    debug!("Using shared ROS node for container discovery");
 
     // Process requests with shutdown handling
     loop {

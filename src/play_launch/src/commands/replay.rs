@@ -218,6 +218,85 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 
     // Shutdown signal already created with anchor process (Phase 4)
 
+    // Create ONE shared ROS node for all ROS operations (service discovery, LoadNode calls, etc.)
+    debug!("Creating shared ROS node and executor...");
+    let shared_ros_node = {
+        use std::sync::mpsc as std_mpsc;
+        let (node_tx, node_rx) = std_mpsc::channel();
+        let shutdown_rx_executor = shutdown_signal.clone();
+
+        // Spawn a dedicated thread for the ROS executor
+        // This thread will spin the executor continuously
+        let executor_thread = std::thread::spawn(move || {
+            use rclrs::CreateBasicExecutor;
+            use tracing::{debug, error};
+
+            debug!("Starting ROS executor thread for all ROS operations");
+
+            // Create ROS context, executor, and node
+            let context = match rclrs::Context::new(
+                vec!["play_launch".to_string()],
+                rclrs::InitOptions::default(),
+            ) {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    error!("Failed to create ROS context: {:#}", e);
+                    return;
+                }
+            };
+
+            let mut executor = context.create_basic_executor();
+            let node = match executor.create_node("play_launch") {
+                Ok(n) => Arc::new(n),
+                Err(e) => {
+                    error!("Failed to create ROS node: {:#}", e);
+                    return;
+                }
+            };
+
+            // Send node back to main thread
+            if node_tx.send(node).is_err() {
+                error!("Failed to send node to main thread");
+                return;
+            }
+
+            debug!("ROS executor thread: node created, starting spin loop");
+
+            // Spin the executor until shutdown
+            loop {
+                // Check for shutdown signal (non-blocking)
+                if shutdown_rx_executor.has_changed().is_ok() && *shutdown_rx_executor.borrow() {
+                    debug!("ROS executor thread received shutdown signal");
+                    break;
+                }
+
+                // Spin once
+                executor.spin(rclrs::SpinOptions::spin_once());
+
+                // Small sleep to prevent busy-waiting
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+
+            debug!("ROS executor thread shutting down");
+        });
+
+        // The executor thread will run until shutdown signal is received
+        std::mem::forget(executor_thread); // Don't block on join
+
+        // Wait for the node to be created
+        match node_rx.recv() {
+            Ok(node) => {
+                debug!("Shared ROS node created: /play_launch");
+                Some(node)
+            }
+            Err(e) => {
+                error!("Failed to receive node from executor thread: {:#}", e);
+                error!("ROS operations (service discovery, LoadNode) will not be available");
+                None
+            }
+        }
+    };
+
     // Initialize monitoring if enabled (now using async tokio task!)
     debug!("Initializing monitoring and process registry...");
     let process_registry = Arc::new(Mutex::new(HashMap::<u32, PathBuf>::new()));
@@ -259,8 +338,11 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         debug!("Starting ROS service discovery task...");
 
         // Spawn async service discovery task (tokio task, not thread!)
-        let (task, handle) =
-            crate::ros::container_readiness::spawn_service_discovery_task(shutdown_signal.clone());
+        // Pass the shared ROS node for service discovery
+        let (task, handle) = crate::ros::container_readiness::spawn_service_discovery_task(
+            shared_ros_node.clone(),
+            shutdown_signal.clone(),
+        );
 
         // Store handle in global
         SERVICE_DISCOVERY_HANDLE
@@ -388,8 +470,9 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     }
 
     // Now spawn all actors at once and get handle + runner
+    // Pass the shared ROS node for container actors to use
     debug!("Spawning all {} actors...", builder.member_count());
-    let (member_handle, member_runner) = builder.spawn().await;
+    let (member_handle, member_runner) = builder.spawn(shared_ros_node).await;
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
     debug!("All actors spawned successfully");
 
