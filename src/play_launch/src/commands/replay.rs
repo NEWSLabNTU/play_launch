@@ -620,7 +620,7 @@ async fn wait_for_completion_unix(
     tokio::pin!(termination_signals);
 
     let mut kill_level = 0u8;
-    let mut self_initiated_shutdown = false; // Track if we sent SIGTERM to avoid feedback loop
+    let mut last_signal_sent = std::time::Instant::now() - std::time::Duration::from_secs(10); // Initialize to past time
 
     // Keep looping to handle multiple signals until runner task completes
     let runner_future = async {
@@ -639,31 +639,38 @@ async fn wait_for_completion_unix(
 
             // Unified signal handling for both SIGINT and SIGTERM with 3-stage escalation
             _ = termination_signals.next() => {
-                // Ignore feedback from our own kill_process_group
-                if !self_initiated_shutdown {
-                    kill_level += 1;
+                // Ignore feedback signals within 200ms of our own kill_process_group
+                // This prevents feedback loops while still allowing future user Ctrl-C presses
+                let now = std::time::Instant::now();
+                let time_since_last = now.duration_since(last_signal_sent);
+                if time_since_last < std::time::Duration::from_millis(200) {
+                    debug!("Ignoring signal feedback ({}ms since last signal sent)", time_since_last.as_millis());
+                    continue;
+                }
 
-                    match kill_level {
-                        1 => {
-                            info!("Shutting down gracefully (SIGTERM)...");
-                            info!("Press Ctrl-C again to force terminate");
-                            self_initiated_shutdown = true;  // Mark that we're sending SIGTERM ourselves
-                            kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
-                            let _ = shutdown_tx.send(true);
-                            let _ = member_handle.shutdown();
-                            // Continue looping to handle more signals
-                        }
-                        2 => {
-                            warn!("Force terminating stubborn processes...");
-                            warn!("Press Ctrl-C once more for immediate kill");
-                            kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
-                            // Continue looping to handle more signals
-                        }
-                        _ => {
-                            warn!("Immediate kill! Sending SIGKILL");
-                            kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
-                            std::process::exit(1);
-                        }
+                kill_level += 1;
+
+                match kill_level {
+                    1 => {
+                        info!("Shutting down gracefully (SIGTERM)...");
+                        info!("Press Ctrl-C again to force terminate");
+                        last_signal_sent = std::time::Instant::now();
+                        kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+                        let _ = shutdown_tx.send(true);
+                        let _ = member_handle.shutdown();
+                        // Continue looping to handle more signals
+                    }
+                    2 => {
+                        warn!("Force terminating stubborn processes...");
+                        warn!("Press Ctrl-C once more for immediate kill");
+                        last_signal_sent = std::time::Instant::now();
+                        kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+                        // Continue looping to handle more signals
+                    }
+                    _ => {
+                        warn!("Immediate kill! Sending SIGKILL");
+                        kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
+                        std::process::exit(1);
                     }
                 }
             }
