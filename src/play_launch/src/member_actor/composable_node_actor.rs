@@ -521,7 +521,7 @@ impl ComposableNodeActor {
                 // Check for shutdown signal
                 _ = self.shutdown_rx.changed() => {
                     if *self.shutdown_rx.borrow() {
-                        info!("{}: Shutdown signal received", self.name);
+                        debug!("{}: Shutdown signal received", self.name);
                         return Ok(false); // Stop actor
                     }
                 }
