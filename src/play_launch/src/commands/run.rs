@@ -256,7 +256,7 @@ async fn run_direct(
 
     // Spawn all actors and get handle + runner
     debug!("Spawning all {} actors...", builder.member_count());
-    let (member_handle, member_runner) = builder.spawn(None).await;
+    let (member_handle, member_runner) = builder.spawn().await;
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
     debug!("All actors spawned successfully");
 
@@ -462,6 +462,7 @@ async fn run_direct(
     let _ = shutdown_tx.send(true);
 
     // Drain remaining background tasks (exits immediately if already empty)
+    // With async component loader, all tasks should complete quickly on shutdown
     debug!("Draining remaining background tasks...");
     while let Some(result) = background_tasks.next().await {
         match result {

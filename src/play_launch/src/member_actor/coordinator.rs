@@ -14,6 +14,7 @@ use tokio::{
     sync::{mpsc, watch, Mutex},
     task::JoinHandle,
 };
+use tracing::debug;
 
 /// Metadata about a member for web UI queries
 #[derive(Clone)]
@@ -179,10 +180,7 @@ impl MemberCoordinatorBuilder {
     }
 
     /// Spawn all members and return handle + runner
-    pub async fn spawn(
-        self,
-        component_loader: Option<crate::ros::component_loader::ComponentLoaderHandle>,
-    ) -> (MemberHandle, MemberRunner) {
+    pub async fn spawn(self) -> (MemberHandle, MemberRunner) {
         let (state_tx, state_rx) = mpsc::channel(100);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -214,11 +212,124 @@ impl MemberCoordinatorBuilder {
             metadata_map.insert(def.name.clone(), def.metadata);
         }
 
-        // Spawn containers and collect their state receivers
+        // Phase 2: Create ONE shared ROS node and executor for all containers
+        // The executor spins in a dedicated thread to process LoadNode service callbacks
+        let shared_ros_node = if !self.containers.is_empty() {
+            use std::sync::mpsc as std_mpsc;
+            let (node_tx, node_rx) = std_mpsc::channel();
+            let shutdown_rx_executor = shutdown_rx.clone();
+
+            // Spawn a dedicated thread for the ROS executor
+            // This thread will spin the executor continuously
+            let executor_thread = std::thread::spawn(move || {
+                use rclrs::CreateBasicExecutor;
+                use tracing::{debug, error};
+
+                debug!("Starting ROS executor thread for container LoadNode service calls");
+
+                // Create ROS context, executor, and node
+                let context = match rclrs::Context::new(
+                    vec!["play_launch".to_string()],
+                    rclrs::InitOptions::default(),
+                ) {
+                    Ok(ctx) => ctx,
+                    Err(e) => {
+                        error!("Failed to create ROS context: {:#}", e);
+                        return;
+                    }
+                };
+
+                let mut executor = context.create_basic_executor();
+                let node = match executor.create_node("play_launch_containers") {
+                    Ok(n) => Arc::new(n),
+                    Err(e) => {
+                        error!("Failed to create ROS node: {:#}", e);
+                        return;
+                    }
+                };
+
+                // Send node back to main thread
+                if node_tx.send(node).is_err() {
+                    error!("Failed to send node to main thread");
+                    return;
+                }
+
+                debug!("ROS executor thread: node created, starting spin loop");
+
+                // Spin the executor until shutdown
+                loop {
+                    // Check for shutdown signal (non-blocking)
+                    if shutdown_rx_executor.has_changed().is_ok() && *shutdown_rx_executor.borrow()
+                    {
+                        debug!("ROS executor thread received shutdown signal");
+                        break;
+                    }
+
+                    // Spin once
+                    executor.spin(rclrs::SpinOptions::spin_once());
+
+                    // Small sleep to prevent busy-waiting
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+
+                debug!("ROS executor thread shutting down");
+            });
+
+            // The executor thread will run until shutdown signal is received
+            // We don't need to explicitly join it - it will clean up automatically
+            // when the shutdown signal is sent
+            std::mem::forget(executor_thread); // Don't block on join
+
+            // Wait for the node to be created
+            match node_rx.recv() {
+                Ok(node) => {
+                    debug!("Shared ROS node created for all containers");
+                    Some(node)
+                }
+                Err(e) => {
+                    tracing::error!("Failed to receive node from executor thread: {:#}", e);
+                    tracing::warn!("Containers will not be able to load composable nodes");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Spawn containers and collect their state receivers and load control channels
         let mut container_state_map = HashMap::new();
+        let mut container_load_control_map = HashMap::new();
         for def in self.containers {
+            // Build the full node name BEFORE moving def.context
+            // This matches what composable nodes use in target_container_name
+            let container_name = {
+                let namespace = def.context.record.namespace.as_deref().unwrap_or("/");
+                let name = def
+                    .context
+                    .record
+                    .name
+                    .as_deref()
+                    .expect("Container must have name");
+
+                // Build full node name: namespace/name
+                // If namespace is "/", result is "/name"
+                // If namespace is "/foo", result is "/foo/name"
+                if namespace == "/" {
+                    format!("/{}", name)
+                } else if namespace.ends_with('/') {
+                    format!("{}{}", namespace, name)
+                } else {
+                    format!("{}/{}", namespace, name)
+                }
+            };
+
             let (control_tx, control_rx) = mpsc::channel(10);
 
+            // Phase 2: Create load control channel for composable nodes
+            let (load_control_tx, load_control_rx) =
+                mpsc::channel::<super::container_control::ContainerControlEvent>(10);
+
+            // Phase 2: Use the shared ROS node for this container
             let actor = super::container_actor::ContainerActor::new(
                 def.name.clone(),
                 def.context,
@@ -227,6 +338,8 @@ impl MemberCoordinatorBuilder {
                 state_tx.clone(),
                 shutdown_rx.clone(),
                 def.process_registry,
+                load_control_rx,
+                shared_ros_node.clone(),
             );
 
             // Get container state receiver before spawning
@@ -238,13 +351,8 @@ impl MemberCoordinatorBuilder {
             }
 
             // Store for composable nodes to use
-            // Extract the actual container name from the member name "NODE 'container_name'"
-            let container_name = def
-                .name
-                .strip_prefix("NODE '")
-                .and_then(|s| s.strip_suffix('\''))
-                .unwrap_or(&def.name);
-            container_state_map.insert(container_name.to_string(), container_state_rx);
+            container_state_map.insert(container_name.clone(), container_state_rx);
+            container_load_control_map.insert(container_name, load_control_tx);
 
             let task = tokio::spawn(async move {
                 use super::actor_traits::MemberActor;
@@ -256,41 +364,42 @@ impl MemberCoordinatorBuilder {
             metadata_map.insert(def.name.clone(), def.metadata);
         }
 
-        // Spawn composable nodes, matching with container state receivers
-        if let Some(component_loader) = component_loader {
-            for def in self.composable_nodes {
-                // Find the container state receiver for this composable node
-                if let Some(container_state_rx) =
-                    container_state_map.get(&def.target_container_name)
-                {
-                    let (control_tx, control_rx) = mpsc::channel(10);
+        // Spawn composable nodes, matching with container state receivers and load control channels
+        for def in self.composable_nodes {
+            // Find the container state receiver and load control channel for this composable node
+            let container_state_rx = container_state_map.get(&def.target_container_name);
+            let load_control_tx = container_load_control_map.get(&def.target_container_name);
 
-                    let actor = super::composable_node_actor::ComposableNodeActor::new(
-                        def.name.clone(),
-                        def.context,
-                        def.config,
-                        control_rx,
-                        state_tx.clone(),
-                        container_state_rx.clone(),
-                        shutdown_rx.clone(),
-                        component_loader.clone(),
-                    );
+            if let (Some(container_state_rx), Some(load_control_tx)) =
+                (container_state_rx, load_control_tx)
+            {
+                let (control_tx, control_rx) = mpsc::channel(10);
 
-                    let task = tokio::spawn(async move {
-                        use super::actor_traits::MemberActor;
-                        actor.run().await
-                    });
+                let actor = super::composable_node_actor::ComposableNodeActor::new(
+                    def.name.clone(),
+                    def.context,
+                    def.config,
+                    control_rx,
+                    state_tx.clone(),
+                    container_state_rx.clone(),
+                    shutdown_rx.clone(),
+                    load_control_tx.clone(),
+                );
 
-                    tasks.insert(def.name.clone(), task);
-                    control_channels.insert(def.name.clone(), control_tx);
-                    metadata_map.insert(def.name.clone(), def.metadata);
-                } else {
-                    tracing::warn!(
-                        "Container '{}' not found for composable node '{}', skipping",
-                        def.target_container_name,
-                        def.name
-                    );
-                }
+                let task = tokio::spawn(async move {
+                    use super::actor_traits::MemberActor;
+                    actor.run().await
+                });
+
+                tasks.insert(def.name.clone(), task);
+                control_channels.insert(def.name.clone(), control_tx);
+                metadata_map.insert(def.name.clone(), def.metadata);
+            } else {
+                tracing::warn!(
+                    "Container '{}' not found for composable node '{}', skipping",
+                    def.target_container_name,
+                    def.name
+                );
             }
         }
 
@@ -674,9 +783,10 @@ impl MemberRunner {
                     };
 
                     let web_reason = match reason {
+                        ActorBlockReason::NotStarted => WebBlockReason::ContainerNotStarted,
                         ActorBlockReason::Stopped => WebBlockReason::ContainerStopped,
                         ActorBlockReason::Failed => WebBlockReason::ContainerFailed,
-                        ActorBlockReason::NotStarted => WebBlockReason::ContainerNotStarted,
+                        ActorBlockReason::Shutdown => WebBlockReason::Shutdown,
                     };
 
                     MemberState::Blocked { reason: web_reason }

@@ -305,14 +305,6 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     let ComposableNodeContextSet { load_node_contexts } =
         prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?;
 
-    // Initialize component loader for service-based loading (Phase 3: async task with shutdown)
-    debug!("Starting component loader task...");
-    let (component_loader_task, component_loader) =
-        crate::ros::component_loader::spawn_component_loader_task(shutdown_signal.clone());
-    let component_loader = Some(component_loader);
-    let component_loader_task = Some(component_loader_task);
-    debug!("Component loader task started successfully");
-
     // Create MemberCoordinatorBuilder for collecting member definitions
     debug!("Creating MemberCoordinatorBuilder...");
     let mut builder = crate::member_actor::MemberCoordinatorBuilder::new();
@@ -385,23 +377,19 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     }
 
     // Add composable nodes (builder will match them with containers during spawn())
-    if component_loader.is_some() {
-        debug!("Adding {} composable nodes", num_composable_nodes);
+    debug!("Adding {} composable nodes", num_composable_nodes);
 
-        let composable_config = crate::member_actor::ComposableActorConfig::default();
+    let composable_config = crate::member_actor::ComposableActorConfig::default();
 
-        for context in load_node_contexts {
-            let member_name = format!("LOAD_NODE '{}'", context.record.node_name);
+    for context in load_node_contexts {
+        let member_name = format!("LOAD_NODE '{}'", context.record.node_name);
 
-            builder.add_composable_node(member_name, context, composable_config.clone());
-        }
-    } else {
-        warn!("Component loader not available, composable nodes will not be spawned");
+        builder.add_composable_node(member_name, context, composable_config.clone());
     }
 
     // Now spawn all actors at once and get handle + runner
     debug!("Spawning all {} actors...", builder.member_count());
-    let (member_handle, member_runner) = builder.spawn(component_loader).await;
+    let (member_handle, member_runner) = builder.spawn().await;
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
     debug!("All actors spawned successfully");
 
@@ -464,9 +452,6 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         background_tasks.push(task);
     }
     if let Some(task) = service_discovery_task {
-        background_tasks.push(task);
-    }
-    if let Some(task) = component_loader_task {
         background_tasks.push(task);
     }
     if let Some(task) = web_ui_task {
@@ -629,6 +614,7 @@ async fn wait_for_completion_unix(
     let _ = member_handle.shutdown();
 
     // Drain remaining background tasks (exits immediately if already empty)
+    // With async component loader, all tasks should complete quickly on shutdown
     debug!("Draining remaining background tasks...");
     while let Some(result) = background_tasks.next().await {
         match result {
@@ -727,6 +713,7 @@ async fn wait_for_completion_windows(
     let _ = member_handle.shutdown();
 
     // Drain remaining background tasks (exits immediately if already empty)
+    // With async component loader, all tasks should complete quickly on shutdown
     debug!("Draining remaining background tasks...");
     while let Some(result) = background_tasks.next().await {
         match result {

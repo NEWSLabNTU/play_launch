@@ -4,20 +4,28 @@
 //! into a container. It watches the parent container's state and automatically
 //! loads/unloads based on container availability.
 //!
+//! ## Loading Strategy
+//!
+//! - **Single attempt**: No retry logic - if loading fails, the actor transitions to Blocked state
+//! - **Container readiness**: Waits for container to reach Running state before loading
+//! - **Concurrent loading**: Multiple actors can call load_node() concurrently, but all requests
+//!   are serialized in the component loader's single blocking thread. This prevents resource
+//!   depletion and ensures the container isn't overwhelmed.
+//! - **One-by-one loading**: ROS2's LoadNode service only supports loading one node at a time.
+//!   There's no bulk API - each node requires a separate service call.
+//!
 //! Phase 5: Provides both standalone function (run_composable_node) and trait-based actor (ComposableNodeActor).
 
 use super::{
     actor_traits::MemberActor,
+    container_control::{ContainerControlEvent, LoadNodeResponse},
     events::{ControlEvent, StateEvent},
     state::{BlockReason, ComposableState, ContainerState},
 };
-use crate::{
-    execution::context::ComposableNodeContext,
-    ros::component_loader::{ComponentLoaderHandle, LoadNodeResponse},
-};
+use crate::execution::context::ComposableNodeContext;
 use eyre::{Context as _, Result};
-use std::time::Duration;
-use tokio::sync::{mpsc, watch};
+use std::time::{Duration, Instant};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, error, info, warn};
 
 /// Standalone async function for running a composable node (Phase 5)
@@ -33,7 +41,7 @@ pub async fn run_composable_node(
     state_tx: mpsc::Sender<StateEvent>,
     container_rx: watch::Receiver<ContainerState>,
     shutdown_rx: watch::Receiver<bool>,
-    component_loader: ComponentLoaderHandle,
+    load_control_tx: mpsc::Sender<ContainerControlEvent>,
 ) -> Result<()> {
     // Create the actor and run it (wrapper approach for Phase 5)
     let actor = ComposableNodeActor::new(
@@ -44,7 +52,7 @@ pub async fn run_composable_node(
         state_tx,
         container_rx,
         shutdown_rx,
-        component_loader,
+        load_control_tx,
     );
     actor.run().await
 }
@@ -52,20 +60,15 @@ pub async fn run_composable_node(
 /// Configuration for composable node actor
 #[derive(Debug, Clone)]
 pub struct ComposableActorConfig {
-    /// Timeout for LoadNode service call
-    pub load_timeout: Duration,
-    /// Maximum retry attempts for loading
-    pub max_load_attempts: u32,
-    /// Delay between retry attempts
-    pub retry_delay: Duration,
+    /// Timeout for LoadNode service call (None = wait indefinitely)
+    /// Some nodes (e.g., loading TensorRT models) may take 10+ minutes on Orin
+    pub load_timeout: Option<Duration>,
 }
 
 impl Default for ComposableActorConfig {
     fn default() -> Self {
         Self {
-            load_timeout: Duration::from_secs(30),
-            max_load_attempts: 3,
-            retry_delay: Duration::from_secs(2),
+            load_timeout: Some(Duration::from_secs(30)),
         }
     }
 }
@@ -88,8 +91,8 @@ pub struct ComposableNodeActor {
     container_rx: watch::Receiver<ContainerState>,
     /// Shutdown signal receiver
     shutdown_rx: watch::Receiver<bool>,
-    /// Component loader handle
-    component_loader: ComponentLoaderHandle,
+    /// Channel to send LoadNode requests to container actor
+    load_control_tx: mpsc::Sender<ContainerControlEvent>,
 }
 
 impl ComposableNodeActor {
@@ -103,7 +106,7 @@ impl ComposableNodeActor {
         state_tx: mpsc::Sender<StateEvent>,
         container_rx: watch::Receiver<ContainerState>,
         shutdown_rx: watch::Receiver<bool>,
-        component_loader: ComponentLoaderHandle,
+        load_control_tx: mpsc::Sender<ContainerControlEvent>,
     ) -> Self {
         Self {
             name,
@@ -114,18 +117,18 @@ impl ComposableNodeActor {
             state_tx,
             container_rx,
             shutdown_rx,
-            component_loader,
+            load_control_tx,
         }
     }
 
-    /// Attempt to load the composable node via LoadNode service
-    /// Returns Ok(None) if shutdown occurred during the call
+    /// Attempt to load the composable node via container actor
+    /// Returns Ok(None) if shutdown occurred or timeout
     async fn load_node(&mut self) -> Result<Option<LoadNodeResponse>> {
         let record = &self.context.record;
 
         debug!(
-            "{}: Loading composable node {}/{} into container {}",
-            self.name, record.package, record.plugin, record.target_container_name
+            "{}: Sending LoadNode request to container {}",
+            self.name, record.target_container_name
         );
 
         // Convert parameters to (name, value) tuples
@@ -142,24 +145,72 @@ impl ComposableNodeActor {
             .map(|(from, to)| format!("{}:={}", from, to))
             .collect();
 
-        // Prepare service call future
-        let service_call = self.component_loader.load_node(
-            &record.target_container_name,
-            &record.package,
-            &record.plugin,
-            &record.node_name,
-            &record.namespace,
+        // Create response channel
+        let (response_tx, response_rx) = oneshot::channel();
+
+        // Send LoadNode request to container actor
+        let load_event = ContainerControlEvent::LoadNode {
+            composable_name: self.name.clone(),
+            package: record.package.clone(),
+            plugin: record.plugin.clone(),
+            node_name: record.node_name.clone(),
+            node_namespace: record.namespace.clone(),
             remap_rules,
             parameters,
-            vec![], // extra_args
-            self.config.load_timeout,
-        );
+            extra_args: vec![],
+            response_tx,
+        };
 
-        // Race service call against shutdown signal
-        tokio::select! {
-            result = service_call => {
-                let response = result.context("LoadNode service call failed")?;
+        self.load_control_tx
+            .send(load_event)
+            .await
+            .context("Failed to send LoadNode request to container")?;
 
+        // Wait for response with optional timeout
+        let response_future = async {
+            response_rx
+                .await
+                .context("Container actor dropped response channel")?
+        };
+
+        let result = if let Some(timeout_duration) = self.config.load_timeout {
+            // Wait with timeout
+            tokio::select! {
+                result = response_future => result,
+                _ = tokio::time::sleep(timeout_duration) => {
+                    warn!(
+                        "{}: LoadNode request timed out after {:?} (container may still be processing)",
+                        self.name, timeout_duration
+                    );
+                    return Ok(None);
+                }
+                _ = self.shutdown_rx.changed() => {
+                    if *self.shutdown_rx.borrow() {
+                        debug!("{}: Shutdown during LoadNode wait", self.name);
+                        return Ok(None);
+                    }
+                    // Spurious wake, return to main loop
+                    return Ok(None);
+                }
+            }
+        } else {
+            // Wait indefinitely
+            tokio::select! {
+                result = response_future => result,
+                _ = self.shutdown_rx.changed() => {
+                    if *self.shutdown_rx.borrow() {
+                        debug!("{}: Shutdown during LoadNode wait", self.name);
+                        return Ok(None);
+                    }
+                    // Spurious wake, return to main loop
+                    return Ok(None)
+                }
+            }
+        };
+
+        // Process the response
+        match result {
+            Ok(response) => {
                 if response.success {
                     debug!(
                         "{}: Successfully loaded with unique_id {}",
@@ -167,40 +218,54 @@ impl ComposableNodeActor {
                     );
                 } else {
                     warn!(
-                        "{}: LoadNode service returned error: {}",
+                        "{}: LoadNode returned error: {}",
                         self.name, response.error_message
                     );
                 }
-
                 Ok(Some(response))
             }
-            _ = self.shutdown_rx.changed() => {
-                if *self.shutdown_rx.borrow() {
-                    debug!("{}: Shutdown during LoadNode call", self.name);
-                    Ok(None) // Signal shutdown occurred
-                } else {
-                    // Spurious wake, continue with original call
-                    // This shouldn't happen often, but handle it gracefully
-                    let response = self
-                        .component_loader
-                        .load_node(
-                            &record.target_container_name,
-                            &record.package,
-                            &record.plugin,
-                            &record.node_name,
-                            &record.namespace,
-                            record.remaps.iter().map(|(from, to)| format!("{}:={}", from, to)).collect(),
-                            record.params.iter().map(|(name, value)| (name.clone(), value.clone())).collect(),
-                            vec![],
-                            self.config.load_timeout,
-                        )
-                        .await
-                        .context("LoadNode service call failed")?;
-
-                    Ok(Some(response))
-                }
+            Err(e) => {
+                warn!("{}: LoadNode request failed: {:#}", self.name, e);
+                Err(e)
             }
         }
+    }
+
+    /// Write load timing metrics to CSV file
+    fn write_load_timing_metrics(
+        &self,
+        timing: &super::container_control::LoadTimingMetrics,
+    ) -> Result<()> {
+        use std::{fs::OpenOptions, io::Write};
+
+        let output_dir = &self.context.output_dir;
+        let timing_file = output_dir.join("load_timing.csv");
+
+        // Check if file exists to determine if we need to write headers
+        let write_headers = !timing_file.exists();
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&timing_file)?;
+
+        if write_headers {
+            writeln!(file, "queue_wait_ms,service_call_ms,total_duration_ms")?;
+        }
+
+        writeln!(
+            file,
+            "{},{},{}",
+            timing.queue_wait_ms, timing.service_call_ms, timing.total_duration_ms
+        )?;
+
+        debug!(
+            "{}: Wrote load timing metrics to {}",
+            self.name,
+            timing_file.display()
+        );
+
+        Ok(())
     }
 
     /// Handle the Unloaded state
@@ -223,7 +288,9 @@ impl ComposableNodeActor {
                         "{}: Container is running, transitioning to Loading",
                         self.name
                     );
-                    self.state = ComposableState::Loading;
+                    self.state = ComposableState::Loading {
+                        started_at: std::time::Instant::now(),
+                    };
                     return Ok(true); // Continue to loading
                 }
                 ContainerState::Stopped => {
@@ -273,12 +340,26 @@ impl ComposableNodeActor {
     }
 
     /// Handle the Loading state
+    /// Waits for container to be ready, then attempts to load once (no retries)
     async fn handle_loading(&mut self) -> Result<bool> {
         debug!("{}: In Loading state", self.name);
 
         // Check shutdown before starting
         if *self.shutdown_rx.borrow() {
             debug!("{}: Shutdown before loading started", self.name);
+            return Ok(false); // Stop actor
+        }
+
+        // Check container state before attempting to load
+        let container_state = *self.container_rx.borrow();
+        if !container_state.is_ready() {
+            warn!(
+                "{}: Container not ready during loading (state: {:?})",
+                self.name, container_state
+            );
+            self.state = ComposableState::Blocked {
+                reason: BlockReason::Stopped,
+            };
             return Ok(false); // Stop actor
         }
 
@@ -289,123 +370,79 @@ impl ComposableNodeActor {
             })
             .await;
 
-        // Retry loop
-        for attempt in 0..self.config.max_load_attempts {
-            // Check shutdown at start of each retry
-            if *self.shutdown_rx.borrow() {
-                debug!("{}: Shutdown during retry loop", self.name);
-                return Ok(false); // Stop actor
-            }
+        // Single load attempt (no retries)
+        // NOTE: Concurrent loading is safe - multiple composable node actors can call
+        // load_node() concurrently, but all requests are serialized in the component
+        // loader's single blocking thread. This prevents overwhelming the container.
+        let load_result = self.load_node().await;
 
-            // Check container state before attempting to load
-            let container_state = *self.container_rx.borrow();
-            if !container_state.is_ready() {
-                warn!(
-                    "{}: Container not ready during loading (state: {:?})",
-                    self.name, container_state
-                );
-                self.state = ComposableState::Blocked {
-                    reason: BlockReason::Stopped,
+        match load_result {
+            Ok(None) => {
+                // Shutdown occurred during load
+                Ok(false) // Stop actor
+            }
+            Ok(Some(response)) if response.success => {
+                debug!("{}: LoadNode succeeded", self.name);
+                self.state = ComposableState::Loaded {
+                    unique_id: response.unique_id,
                 };
-                return Ok(false); // Stop actor
-            }
 
-            // Attempt to load (cancellable on shutdown)
-            let load_result = self.load_node().await;
-
-            match load_result {
-                Ok(None) => {
-                    // Shutdown occurred during load
-                    return Ok(false); // Stop actor
-                }
-                Ok(Some(response)) if response.success => {
-                    debug!("{}: LoadNode succeeded", self.name);
-                    self.state = ComposableState::Loaded {
-                        unique_id: response.unique_id,
-                    };
-
-                    let _ = self
-                        .state_tx
-                        .send(StateEvent::LoadSucceeded {
-                            name: self.name.clone(),
-                            full_node_name: response.full_node_name.clone(),
-                            unique_id: response.unique_id,
-                        })
-                        .await;
-
-                    return Ok(true); // Continue to loaded state
-                }
-                Ok(Some(response)) => {
+                // Write load timing metrics to file
+                if let Err(e) = self.write_load_timing_metrics(&response.timing) {
                     warn!(
-                        "{}: LoadNode failed (attempt {}/{}): {}",
-                        self.name,
-                        attempt + 1,
-                        self.config.max_load_attempts,
-                        response.error_message
+                        "{}: Failed to write load timing metrics: {:#}",
+                        self.name, e
                     );
-
-                    if attempt + 1 < self.config.max_load_attempts {
-                        // Wait before retry (with shutdown check)
-                        let delay = self.config.retry_delay;
-                        tokio::select! {
-                            _ = tokio::time::sleep(delay) => {},
-                            _ = self.shutdown_rx.changed() => {
-                                if *self.shutdown_rx.borrow() {
-                                    debug!("{}: Shutdown during retry delay", self.name);
-                                    return Ok(false); // Stop actor
-                                }
-                            }
-                        }
-                    }
                 }
-                Err(e) => {
-                    error!(
-                        "{}: LoadNode error (attempt {}/{}): {:#}",
-                        self.name,
-                        attempt + 1,
-                        self.config.max_load_attempts,
-                        e
-                    );
 
-                    if attempt + 1 < self.config.max_load_attempts {
-                        // Wait before retry (with shutdown check)
-                        let delay = self.config.retry_delay;
-                        tokio::select! {
-                            _ = tokio::time::sleep(delay) => {},
-                            _ = self.shutdown_rx.changed() => {
-                                if *self.shutdown_rx.borrow() {
-                                    debug!("{}: Shutdown during retry delay", self.name);
-                                    return Ok(false); // Stop actor
-                                }
-                            }
-                        }
-                    }
-                }
+                let _ = self
+                    .state_tx
+                    .send(StateEvent::LoadSucceeded {
+                        name: self.name.clone(),
+                        full_node_name: response.full_node_name.clone(),
+                        unique_id: response.unique_id,
+                    })
+                    .await;
+
+                Ok(true) // Continue to loaded state
+            }
+            Ok(Some(response)) => {
+                // Load failed - transition to blocked immediately (no retries)
+                error!("{}: LoadNode failed: {}", self.name, response.error_message);
+
+                self.state = ComposableState::Blocked {
+                    reason: BlockReason::Failed,
+                };
+
+                let _ = self
+                    .state_tx
+                    .send(StateEvent::LoadFailed {
+                        name: self.name.clone(),
+                        error: response.error_message.clone(),
+                    })
+                    .await;
+
+                Ok(false) // Stop actor
+            }
+            Err(e) => {
+                // Load error - transition to blocked immediately (no retries)
+                error!("{}: LoadNode error: {:#}", self.name, e);
+
+                self.state = ComposableState::Blocked {
+                    reason: BlockReason::Failed,
+                };
+
+                let _ = self
+                    .state_tx
+                    .send(StateEvent::LoadFailed {
+                        name: self.name.clone(),
+                        error: format!("{:#}", e),
+                    })
+                    .await;
+
+                Ok(false) // Stop actor
             }
         }
-
-        // All attempts failed
-        error!(
-            "{}: Failed to load after {} attempts",
-            self.name, self.config.max_load_attempts
-        );
-
-        self.state = ComposableState::Blocked {
-            reason: BlockReason::Failed,
-        };
-
-        let _ = self
-            .state_tx
-            .send(StateEvent::LoadFailed {
-                name: self.name.clone(),
-                error: format!(
-                    "Failed to load after {} attempts",
-                    self.config.max_load_attempts
-                ),
-            })
-            .await;
-
-        Ok(false) // Stop actor
     }
 
     /// Handle the Loaded state
@@ -504,8 +541,36 @@ impl MemberActor for ComposableNodeActor {
         loop {
             let should_continue = match self.state {
                 ComposableState::Unloaded => self.handle_unloaded().await?,
-                ComposableState::Loading => self.handle_loading().await?,
+                ComposableState::Loading { .. } => self.handle_loading().await?,
                 ComposableState::Loaded { unique_id } => self.handle_loaded(unique_id).await?,
+                ComposableState::Failed { ref error } => {
+                    debug!(
+                        "{}: Failed (error: {}), waiting for container event or shutdown",
+                        self.name, error
+                    );
+                    // Wait for container restart or shutdown
+                    // In Failed state, we don't auto-retry - stay blocked until manual intervention
+                    tokio::select! {
+                        _ = self.container_rx.changed() => {
+                            let state = *self.container_rx.borrow();
+                            if state.is_running() {
+                                // Container restarted - transition to Unloaded for fresh start
+                                debug!("{}: Container restarted after failure, transitioning to Unloaded", self.name);
+                                self.state = ComposableState::Unloaded;
+                                true // Continue
+                            } else {
+                                true // Keep waiting
+                            }
+                        }
+                        _ = self.shutdown_rx.changed() => {
+                            if *self.shutdown_rx.borrow() {
+                                debug!("{}: Shutdown signal in Failed state", self.name);
+                                break;
+                            }
+                            true
+                        }
+                    }
+                }
                 ComposableState::Blocked { reason } => {
                     debug!("{}: Blocked (reason: {:?})", self.name, reason);
                     break;

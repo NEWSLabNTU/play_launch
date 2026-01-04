@@ -56,6 +56,8 @@ pub enum BlockReason {
     ContainerFailed,
     /// Container hasn't started yet
     ContainerNotStarted,
+    /// Shutdown signal received
+    Shutdown,
 }
 
 /// Summary information about a member (for web UI listings)

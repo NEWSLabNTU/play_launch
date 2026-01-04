@@ -53,33 +53,51 @@ pub enum NodeState {
 }
 
 /// State machine for composable nodes
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+///
+/// State transitions:
+/// - Blocked (container not running) → Unloaded (container starts)
+/// - Unloaded (never loaded) → Loading (auto-trigger load)
+/// - Loading (in-flight) → Loaded (success) | Failed (error) | Blocked (container crash)
+/// - Loaded (success) → Blocked (container crash)
+/// - Failed (error) → stays Failed (no auto-retry, wait for manual trigger or container restart)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ComposableState {
-    /// Not loaded (initial state)
+    /// Container NOT running (Pending/Stopped/Failed)
+    Blocked {
+        /// Reason for blocking
+        reason: BlockReason,
+    },
+    /// Container running, load never attempted
     Unloaded,
-    /// LoadNode service call in progress
-    Loading,
-    /// Successfully loaded via LoadNode service
+    /// Container running, load request in-flight
+    Loading {
+        /// When the load started (for metrics)
+        #[serde(skip)]
+        started_at: std::time::Instant,
+    },
+    /// Container running, last load succeeded
     Loaded {
         /// Unique ID from LoadNode response
         unique_id: u64,
     },
-    /// Cannot be loaded because container is unavailable
-    Blocked {
-        /// Reason for blocking
-        reason: BlockReason,
+    /// Container running, last load failed (no auto-retry)
+    Failed {
+        /// Error message from load failure
+        error: String,
     },
 }
 
 /// Reason why a composable node is blocked
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum BlockReason {
+    /// Container hasn't started yet (Pending)
+    NotStarted,
     /// Container was stopped by user
     Stopped,
-    /// Container crashed
+    /// Container crashed or failed
     Failed,
-    /// Container hasn't started yet
-    NotStarted,
+    /// Shutdown signal received
+    Shutdown,
 }
 
 /// Container state (for supervision)
@@ -114,25 +132,40 @@ impl NodeState {
 }
 
 impl ComposableState {
-    /// Check if the state is terminal
+    /// Check if the state is terminal (actor should stop)
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
             ComposableState::Blocked {
-                reason: BlockReason::Stopped | BlockReason::Failed
+                reason: BlockReason::Shutdown
             }
         )
     }
 
-    /// Check if loaded
+    /// Check if loaded successfully
     pub fn is_loaded(&self) -> bool {
         matches!(self, ComposableState::Loaded { .. })
+    }
+
+    /// Check if failed
+    pub fn is_failed(&self) -> bool {
+        matches!(self, ComposableState::Failed { .. })
+    }
+
+    /// Check if blocked
+    pub fn is_blocked(&self) -> bool {
+        matches!(self, ComposableState::Blocked { .. })
     }
 }
 
 impl ContainerState {
     /// Check if container is ready for composable nodes
     pub fn is_ready(&self) -> bool {
+        matches!(self, ContainerState::Running { .. })
+    }
+
+    /// Check if container is running (same as is_ready, but more explicit)
+    pub fn is_running(&self) -> bool {
         matches!(self, ContainerState::Running { .. })
     }
 
@@ -168,7 +201,10 @@ mod tests {
     fn test_composable_state_loaded() {
         assert!(ComposableState::Loaded { unique_id: 123 }.is_loaded());
         assert!(!ComposableState::Unloaded.is_loaded());
-        assert!(!ComposableState::Loading.is_loaded());
+        assert!(!ComposableState::Loading {
+            started_at: std::time::Instant::now()
+        }
+        .is_loaded());
     }
 
     #[test]

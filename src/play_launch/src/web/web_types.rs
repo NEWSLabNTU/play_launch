@@ -31,6 +31,8 @@ pub enum ComposableBlockReason {
     ContainerFailed,
     /// Container hasn't started yet
     ContainerNotStarted,
+    /// Shutdown signal received
+    Shutdown,
 }
 
 /// Status for composable nodes (loaded into containers)
@@ -162,6 +164,7 @@ impl NodeSummary {
                     ActorBlockReason::ContainerNotStarted => {
                         ComposableBlockReason::ContainerNotStarted
                     }
+                    ActorBlockReason::Shutdown => ComposableBlockReason::Shutdown,
                 };
                 UnifiedStatus::Composable(ComposableNodeStatus::Blocked(web_reason))
             }

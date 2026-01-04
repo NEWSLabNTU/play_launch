@@ -125,6 +125,7 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
                         ComposableBlockReason::ContainerStopped => "Container stopped",
                         ComposableBlockReason::ContainerFailed => "Container failed",
                         ComposableBlockReason::ContainerNotStarted => "Container not started",
+                        ComposableBlockReason::Shutdown => "Shutdown",
                     };
                     ("status-blocked", Some(reason_text))
                 }
