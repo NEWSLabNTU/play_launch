@@ -476,6 +476,16 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
     debug!("All actors spawned successfully");
 
+    // Setup periodic statistics output task (runs every 10 seconds)
+    let stats_task = {
+        let stats_handle = member_handle.clone();
+        let stats_shutdown = shutdown_signal.clone();
+        tokio::spawn(async move {
+            print_periodic_statistics(stats_handle, stats_shutdown).await;
+            Ok(())
+        })
+    };
+
     // Setup web UI if requested (direct StateEvent streaming)
     let (runner_task, web_ui_task) = if common.web_ui {
         debug!("Setting up web UI with direct StateEvent streaming...");
@@ -505,8 +515,9 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         });
 
         // Runner task forwards state events and waits for completion
+        let runner_handle_for_updates = member_handle.clone();
         let runner_task = tokio::spawn(async move {
-            forward_state_events_and_wait(member_runner, state_broadcaster).await
+            forward_state_events_and_wait(member_runner, state_broadcaster, runner_handle_for_updates).await
         });
 
         (Some(runner_task), Some(web_server_task))
@@ -529,6 +540,9 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 
     // Add anchor task (always present)
     background_tasks.push(anchor_task);
+
+    // Add stats task (always present)
+    background_tasks.push(stats_task);
 
     // Add optional service tasks (these can complete without triggering shutdown)
     if let Some(task) = monitor_task {
@@ -824,14 +838,22 @@ async fn wait_for_completion_windows(
 async fn forward_state_events_and_wait(
     mut runner: crate::member_actor::MemberRunner,
     broadcaster: std::sync::Arc<crate::web::StateEventBroadcaster>,
+    member_handle: std::sync::Arc<crate::member_actor::MemberHandle>,
 ) -> eyre::Result<()> {
     tracing::debug!("Starting state event forwarding and completion waiting");
 
     // Forward events and wait for completion
-    // The runner's wait loop already updates the state cache internally
+    // IMPORTANT: We must update the state cache for each event so that periodic stats work!
     loop {
         match runner.next_state_event().await {
             Some(event) => {
+                // Update state cache manually (since we're consuming events here instead of in wait_for_completion)
+                crate::member_actor::MemberRunner::update_state_static(
+                    &event,
+                    member_handle.state_cache(),
+                )
+                .await;
+
                 // Broadcast to all SSE subscribers
                 broadcaster.broadcast(event).await;
             }
@@ -846,4 +868,52 @@ async fn forward_state_events_and_wait(
     // Now wait for all actor tasks to complete (join them)
     // This is quick because next_state_event() already waited for them to finish
     runner.wait_for_completion().await
+}
+
+/// Print periodic statistics every 10 seconds
+async fn print_periodic_statistics(
+    member_handle: std::sync::Arc<crate::member_actor::MemberHandle>,
+    mut shutdown_signal: tokio::sync::watch::Receiver<bool>,
+) {
+    // Print every 10 seconds (first tick happens immediately by default, so consume it)
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+    interval.tick().await; // Consume the immediate first tick
+
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let health = member_handle.get_health_summary().await;
+
+                info!("=== Status Update ===");
+                info!(
+                    "Nodes: {}/{} running, {} failed, {} stopped",
+                    health.nodes_running,
+                    health.nodes_total,
+                    health.nodes_failed,
+                    health.nodes_stopped
+                );
+                info!(
+                    "Containers: {}/{} running, {} failed, {} stopped",
+                    health.containers_running,
+                    health.containers_total,
+                    health.containers_failed,
+                    health.containers_stopped
+                );
+                info!(
+                    "Composable nodes: {}/{} loaded, {} failed, {} pending",
+                    health.composable_loaded,
+                    health.composable_total,
+                    health.composable_failed,
+                    health.composable_pending
+                );
+                info!("Total processes: {} running, {} stopped", health.processes_running, health.processes_stopped);
+            }
+            _ = shutdown_signal.changed() => {
+                if *shutdown_signal.borrow() {
+                    debug!("Periodic statistics task shutting down");
+                    break;
+                }
+            }
+        }
+    }
 }

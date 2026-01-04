@@ -531,7 +531,7 @@ impl MemberHandle {
                             summary.processes_stopped += 1;
                         }
                         MemberState::Pending => {
-                            summary.processes_stopped += 1;
+                            // Pending means not started yet, don't count as stopped
                         }
                         _ => {}
                     }
@@ -552,7 +552,7 @@ impl MemberHandle {
                             summary.processes_stopped += 1;
                         }
                         MemberState::Pending => {
-                            summary.processes_stopped += 1;
+                            // Pending means not started yet, don't count as stopped
                         }
                         _ => {}
                     }
@@ -636,6 +636,13 @@ impl MemberHandle {
     pub fn has_member(&self, name: &str) -> bool {
         self.metadata.contains_key(name)
     }
+
+    /// Get reference to the state cache for manual state updates
+    pub fn state_cache(
+        &self,
+    ) -> &Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>> {
+        &self.state_cache
+    }
 }
 
 /// Runner that waits for all actors to complete
@@ -650,8 +657,8 @@ pub struct MemberRunner {
 }
 
 impl MemberRunner {
-    /// Static helper to update state (for use in wait_for_completion)
-    async fn update_state_static(
+    /// Static helper to update state (for use in wait_for_completion and external event processing)
+    pub async fn update_state_static(
         event: &StateEvent,
         state_cache: &Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>>,
     ) {
