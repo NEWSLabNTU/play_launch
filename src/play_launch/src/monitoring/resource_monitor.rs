@@ -1157,26 +1157,15 @@ pub async fn run_monitoring_task(
                 // Get snapshot of current processes to monitor
                 let processes = process_registry.lock().unwrap().clone();
 
-                debug!(
-                    "Monitoring loop iteration, registry size: {}",
-                    processes.len()
-                );
-
                 if processes.is_empty() {
                     continue;
                 }
-
-                debug!(
-                    "Monitoring PIDs: {:?}",
-                    processes.keys().collect::<Vec<_>>()
-                );
 
                 // Refresh only the specific processes we're monitoring
                 let pids_to_refresh: Vec<Pid> =
                     processes.keys().map(|&pid| Pid::from_u32(pid)).collect();
 
                 if !pids_to_refresh.is_empty() {
-                    debug!("Refreshing {} PIDs", pids_to_refresh.len());
 
                     // CRITICAL: Refresh global CPU times first!
                     monitor.system.refresh_cpu_usage();
@@ -1210,11 +1199,6 @@ pub async fn run_monitoring_task(
                                         }
                                     }
                                 }
-                                debug!(
-                                    "Batch I/O read: {}/{} PIDs successful",
-                                    monitor.io_stats_cache.len(),
-                                    pids.len()
-                                );
                             }
                             Err(e) => {
                                 if !monitor.io_helper_unavailable {
@@ -1233,10 +1217,9 @@ pub async fn run_monitoring_task(
                 for (pid, output_dir) in processes {
                     match monitor.collect_metrics(pid) {
                         Ok(metrics) => {
-                            debug!("Successfully collected metrics for PID {}", pid);
                             match monitor.write_csv(&output_dir, &metrics) {
                                 Ok(_) => {
-                                    debug!("Successfully wrote CSV row for PID {}", pid);
+                                    // Success - no logging to avoid noise
                                 }
                                 Err(e) => {
                                     warn!(
@@ -1262,10 +1245,9 @@ pub async fn run_monitoring_task(
                 // Collect and write system-wide statistics
                 match monitor.collect_system_stats() {
                     Ok(stats) => {
-                        debug!("Successfully collected system stats");
                         match monitor.write_system_csv(&log_dir, &stats) {
                             Ok(_) => {
-                                debug!("Successfully wrote system stats CSV row");
+                                // Success - no logging to avoid noise
                             }
                             Err(e) => {
                                 warn!("Failed to write system stats: {}", e);
