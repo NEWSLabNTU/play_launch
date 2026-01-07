@@ -178,11 +178,12 @@ impl ComposableNodeActor {
             tokio::select! {
                 result = response_future => result,
                 _ = tokio::time::sleep(timeout_duration) => {
-                    warn!(
-                        "{}: LoadNode request timed out after {:?} (container may still be processing)",
-                        self.name, timeout_duration
+                    let error_msg = format!(
+                        "LoadNode request timed out after {:?}",
+                        timeout_duration
                     );
-                    return Ok(None);
+                    warn!("{}: {}", self.name, error_msg);
+                    return Err(eyre::eyre!(error_msg));
                 }
                 _ = self.shutdown_rx.changed() => {
                     if *self.shutdown_rx.borrow() {
