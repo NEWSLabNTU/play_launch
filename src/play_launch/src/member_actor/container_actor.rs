@@ -810,12 +810,13 @@ impl MemberActor for ContainerActor {
         loop {
             let should_continue = match self.state {
                 NodeState::Pending => self.handle_pending().await?,
-                NodeState::Running { ref mut child, pid } => {
-                    // Take ownership of child to avoid borrow issues
-                    let child = std::mem::replace(
-                        child,
-                        tokio::process::Command::new("true").spawn().unwrap(),
-                    );
+                NodeState::Running { .. } => {
+                    // Extract child and pid by replacing state temporarily with Pending
+                    // This avoids spawning a dummy "true" process
+                    let (child, pid) = match std::mem::replace(&mut self.state, NodeState::Pending) {
+                        NodeState::Running { child, pid } => (child, pid),
+                        _ => unreachable!("State was Running before replace"),
+                    };
                     self.handle_running(child, pid).await?
                 }
                 NodeState::Respawning { attempt, .. } => self.handle_respawning(attempt).await?,
