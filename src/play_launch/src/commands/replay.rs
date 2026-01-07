@@ -877,7 +877,7 @@ async fn forward_state_events_and_wait(
     runner.wait_for_completion().await
 }
 
-/// Print periodic statistics every 10 seconds
+/// Print periodic startup progress (single line, every 10 seconds, stops when ready)
 async fn print_periodic_statistics(
     member_handle: std::sync::Arc<crate::member_actor::MemberHandle>,
     mut shutdown_signal: tokio::sync::watch::Receiver<bool>,
@@ -891,29 +891,53 @@ async fn print_periodic_statistics(
             _ = interval.tick() => {
                 let health = member_handle.get_health_summary().await;
 
-                info!("=== Status Update ===");
-                info!(
-                    "Nodes: {}/{} running, {} failed, {} stopped",
-                    health.nodes_running,
-                    health.nodes_total,
-                    health.nodes_failed,
-                    health.nodes_stopped
-                );
-                info!(
-                    "Containers: {}/{} running, {} failed, {} stopped",
-                    health.containers_running,
-                    health.containers_total,
-                    health.containers_failed,
-                    health.containers_stopped
-                );
-                info!(
-                    "Composable nodes: {}/{} loaded, {} failed, {} pending",
-                    health.composable_loaded,
-                    health.composable_total,
-                    health.composable_failed,
-                    health.composable_pending
-                );
-                info!("Total processes: {} running, {} stopped", health.processes_running, health.processes_stopped);
+                // Check if startup is complete (all nodes ready or failed)
+                let startup_complete = health.composable_pending == 0;
+
+                if !startup_complete {
+                    // Print single-line progress
+                    info!(
+                        "Startup: nodes {}/{} running, containers {}/{} running, composable {}/{} loaded ({} pending)",
+                        health.nodes_running,
+                        health.nodes_total,
+                        health.containers_running,
+                        health.containers_total,
+                        health.composable_loaded,
+                        health.composable_total,
+                        health.composable_pending
+                    );
+                } else {
+                    // Print completion message
+                    let total_failures = health.nodes_failed + health.containers_failed + health.composable_failed;
+
+                    if total_failures == 0 {
+                        info!(
+                            "Startup complete: all nodes ready (nodes {}/{}, containers {}/{}, composable {}/{})",
+                            health.nodes_running,
+                            health.nodes_total,
+                            health.containers_running,
+                            health.containers_total,
+                            health.composable_loaded,
+                            health.composable_total
+                        );
+                    } else {
+                        warn!(
+                            "Startup complete with failures: {} nodes failed, {} containers failed, {} composable failed (nodes {}/{} running, containers {}/{} running, composable {}/{} loaded)",
+                            health.nodes_failed,
+                            health.containers_failed,
+                            health.composable_failed,
+                            health.nodes_running,
+                            health.nodes_total,
+                            health.containers_running,
+                            health.containers_total,
+                            health.composable_loaded,
+                            health.composable_total
+                        );
+                    }
+
+                    debug!("Startup complete, stopping periodic progress updates");
+                    break;
+                }
             }
             _ = shutdown_signal.changed() => {
                 if *shutdown_signal.borrow() {
