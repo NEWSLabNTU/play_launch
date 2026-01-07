@@ -278,6 +278,15 @@ impl NodeCommandLine {
             } else {
                 command.process_group(0);
             }
+
+            // Set parent death signal to prevent orphan processes
+            // When play_launch dies (even with SIGKILL), kernel sends SIGKILL to all children
+            unsafe {
+                command.pre_exec(|| {
+                    nix::sys::prctl::set_pdeathsig(nix::sys::signal::Signal::SIGKILL)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                });
+            }
         }
 
         command
