@@ -536,50 +536,91 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // Phase 6: Collect background tasks (NOT including runner task) into FuturesUnordered
     // The runner task is special - only its completion should trigger shutdown
     debug!("Setting up FuturesUnordered for background service tasks...");
-    let background_tasks = FuturesUnordered::new();
+
+    // Use a custom struct to track task names
+    struct NamedTask {
+        name: &'static str,
+        task: tokio::task::JoinHandle<eyre::Result<()>>,
+    }
+
+    let mut named_tasks = Vec::new();
 
     // Add anchor task (always present)
-    background_tasks.push(anchor_task);
+    named_tasks.push(NamedTask {
+        name: "anchor",
+        task: anchor_task,
+    });
 
-    // Add stats task (always present)
-    background_tasks.push(stats_task);
+    // Add stats task (always present - exits on its own when startup completes)
+    named_tasks.push(NamedTask {
+        name: "stats",
+        task: stats_task,
+    });
 
     // Add optional service tasks (these can complete without triggering shutdown)
     if let Some(task) = monitor_task {
-        background_tasks.push(task);
+        named_tasks.push(NamedTask {
+            name: "monitor",
+            task,
+        });
     }
     if let Some(task) = service_discovery_task {
-        background_tasks.push(task);
+        named_tasks.push(NamedTask {
+            name: "service_discovery",
+            task,
+        });
     }
     if let Some(task) = web_ui_task {
-        background_tasks.push(task);
+        named_tasks.push(NamedTask {
+            name: "web_ui",
+            task,
+        });
     }
+
+    let total_tasks = named_tasks.len();
+    let task_names: Vec<&'static str> = named_tasks.iter().map(|t| t.name).collect();
 
     debug!(
         "Background service tasks collection created ({} tasks)",
-        background_tasks.len()
+        total_tasks
     );
+
+    // Convert to FuturesUnordered with task names embedded in results
+    let background_tasks = FuturesUnordered::new();
+    for named in named_tasks {
+        let name = named.name;
+        let task = named.task;
+        background_tasks.push(async move {
+            let result = task.await;
+            (name, result)
+        });
+    }
 
     // Wait for either actors to complete (runner task) OR signals
     debug!("Waiting for completion (runner task or signals)...");
 
+    let ctx = CompletionContext {
+        shutdown_tx: shutdown_tx.clone(),
+        member_handle,
+        runner_task,
+        total_tasks,
+    };
+
     #[cfg(unix)]
     wait_for_completion_unix(
         pgid,
-        shutdown_tx.clone(),
-        member_handle,
-        runner_task,
+        ctx,
         background_tasks,
+        task_names.clone(),
         &cleanup_guard,
     )
     .await;
 
     #[cfg(not(unix))]
     wait_for_completion_windows(
-        shutdown_tx.clone(),
-        member_handle,
-        runner_task,
+        ctx,
         background_tasks,
+        task_names,
         &cleanup_guard,
     )
     .await;
@@ -588,16 +629,30 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     Ok(())
 }
 
-/// Wait for completion with Unix signal handling (SIGINT/SIGTERM)
-#[cfg(unix)]
-async fn wait_for_completion_unix(
-    pgid: i32,
+/// Context for completion waiting
+struct CompletionContext {
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     member_handle: std::sync::Arc<crate::member_actor::MemberHandle>,
     runner_task: Option<tokio::task::JoinHandle<eyre::Result<()>>>,
-    mut background_tasks: FuturesUnordered<tokio::task::JoinHandle<eyre::Result<()>>>,
+    total_tasks: usize,
+}
+
+/// Wait for completion with Unix signal handling (SIGINT/SIGTERM)
+#[cfg(unix)]
+async fn wait_for_completion_unix<F>(
+    pgid: i32,
+    ctx: CompletionContext,
+    mut background_tasks: FuturesUnordered<F>,
+    _task_names: Vec<&'static str>,
     cleanup_guard: &CleanupGuard,
-) {
+) where
+    F: std::future::Future<
+        Output = (
+            &'static str,
+            Result<eyre::Result<()>, tokio::task::JoinError>,
+        ),
+    >,
+{
     use futures::stream::StreamExt;
 
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
@@ -622,9 +677,13 @@ async fn wait_for_completion_unix(
     let mut kill_level = 0u8;
     let mut last_signal_sent = std::time::Instant::now() - std::time::Duration::from_secs(10); // Initialize to past time
 
+    // Track background task completion during main loop
+    let mut background_tasks_completed = 0;
+    let mut all_background_tasks_done_logged = false;
+
     // Keep looping to handle multiple signals until runner task completes
     let runner_future = async {
-        if let Some(task) = runner_task {
+        if let Some(task) = ctx.runner_task {
             task.await
         } else {
             // No runner task, wait forever
@@ -656,8 +715,10 @@ async fn wait_for_completion_unix(
                         info!("Press Ctrl-C again to force terminate");
                         last_signal_sent = std::time::Instant::now();
                         kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
-                        let _ = shutdown_tx.send(true);
-                        let _ = member_handle.shutdown();
+                        debug!("Sending shutdown signal to background tasks...");
+                        let _ = ctx.shutdown_tx.send(true);
+                        debug!("Shutdown signal sent");
+                        let _ = ctx.member_handle.shutdown();
                         // Continue looping to handle more signals
                     }
                     2 => {
@@ -694,18 +755,25 @@ async fn wait_for_completion_unix(
             }
 
             // Background service task completion/failure - logged but doesn't trigger shutdown
-            Some(result) = background_tasks.next() => {
-                debug!("A background service task has completed");
+            Some((task_name, result)) = background_tasks.next() => {
+                background_tasks_completed += 1;
+                debug!("Background service task '{}' completed during main loop ({}/{})", task_name, background_tasks_completed, ctx.total_tasks);
                 match result {
                     Ok(Ok(())) => {
-                        debug!("Background service task completed successfully");
+                        debug!("Background service task '{}' completed successfully", task_name);
                     }
                     Ok(Err(e)) => {
-                        error!("Background service task failed: {:#}", e);
+                        error!("Background service task '{}' failed: {:#}", task_name, e);
                     }
                     Err(e) => {
-                        error!("Background service task panicked: {:#}", e);
+                        error!("Background service task '{}' panicked: {:#}", task_name, e);
                     }
+                }
+
+                // Log when all background tasks have completed
+                if background_tasks_completed == ctx.total_tasks && !all_background_tasks_done_logged {
+                    debug!("All background tasks completed, waiting for actors to finish...");
+                    all_background_tasks_done_logged = true;
                 }
                 // Continue loop - background task completion doesn't trigger shutdown
             }
@@ -714,26 +782,94 @@ async fn wait_for_completion_unix(
 
     // Trigger shutdown for any remaining tasks
     debug!("Triggering shutdown for remaining tasks...");
-    let _ = shutdown_tx.send(true);
-    let _ = member_handle.shutdown();
+    debug!("Sending shutdown signal (again, in case missed during main loop)...");
+    let _ = ctx.shutdown_tx.send(true);
+    debug!("Shutdown signal sent");
+    let _ = ctx.member_handle.shutdown();
 
     // Drain remaining background tasks (exits immediately if already empty)
-    // With async component loader, all tasks should complete quickly on shutdown
-    debug!("Draining remaining background tasks...");
-    while let Some(result) = background_tasks.next().await {
-        match result {
-            Ok(Ok(())) => {
-                debug!("Background task completed successfully");
+    // Note: Some tasks may have already completed during the main loop (especially stats task)
+    // IMPORTANT: Keep signal handling active during cleanup so Ctrl-C works
+    debug!(
+        "Draining remaining background tasks (originally {} total)...",
+        ctx.total_tasks
+    );
+
+    // Set a shorter timeout for background task cleanup (2 seconds)
+    // After that, we'll just exit - the tasks will be aborted
+    let cleanup_timeout = tokio::time::sleep(tokio::time::Duration::from_secs(2));
+    tokio::pin!(cleanup_timeout);
+
+    // Track which tasks complete during cleanup
+    let mut tasks_completed_in_cleanup: Vec<&str> = Vec::new();
+
+    loop {
+        tokio::select! {
+            biased;
+
+            // Timeout: give up on waiting for background tasks and force exit
+            _ = &mut cleanup_timeout => {
+                let completed_in_cleanup = tasks_completed_in_cleanup.len();
+                if completed_in_cleanup > 0 {
+                    debug!("Cleanup timeout: {} tasks completed, exiting", completed_in_cleanup);
+                } else {
+                    debug!("Cleanup timeout: no tasks completed in cleanup phase, exiting");
+                    debug!("Note: Tasks may have already completed during main loop");
+                }
+                break;
             }
-            Ok(Err(e)) => {
-                warn!("Background task error during shutdown: {:#}", e);
+
+            // Continue handling signals during cleanup (Unix version)
+            _ = termination_signals.next() => {
+                // Ignore feedback signals within 200ms
+                let now = std::time::Instant::now();
+                let time_since_last = now.duration_since(last_signal_sent);
+                if time_since_last < std::time::Duration::from_millis(200) {
+                    debug!("Ignoring signal feedback during cleanup ({}ms since last)", time_since_last.as_millis());
+                    continue;
+                }
+
+                kill_level += 1;
+
+                match kill_level {
+                    2 => {
+                        warn!("Force terminating during cleanup...");
+                        warn!("Press Ctrl-C once more for immediate kill");
+                        last_signal_sent = std::time::Instant::now();
+                        kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+                    }
+                    _ => {
+                        warn!("Immediate kill during cleanup! Sending SIGKILL");
+                        kill_process_group(pgid, nix::sys::signal::Signal::SIGKILL);
+                        std::process::exit(1);
+                    }
+                }
             }
-            Err(e) => {
-                warn!("Background task panic during shutdown: {:#}", e);
+
+            // Drain background tasks
+            Some((task_name, result)) = background_tasks.next() => {
+                tasks_completed_in_cleanup.push(task_name);
+
+                match result {
+                    Ok(Ok(())) => {
+                        debug!("Background task '{}' completed in cleanup phase", task_name);
+                    }
+                    Ok(Err(e)) => {
+                        warn!("Background task '{}' error in cleanup phase: {:#}", task_name, e);
+                    }
+                    Err(e) => {
+                        warn!("Background task '{}' panicked in cleanup phase: {:#}", task_name, e);
+                    }
+                }
+            }
+
+            // All tasks drained
+            else => {
+                debug!("All background tasks completed");
+                break;
             }
         }
     }
-    debug!("All background tasks completed");
 
     // Disable CleanupGuard after graceful shutdown completes
     cleanup_guard.disable();
@@ -741,18 +877,28 @@ async fn wait_for_completion_unix(
 
 /// Wait for completion with Windows signal handling (Ctrl-C)
 #[cfg(not(unix))]
-async fn wait_for_completion_windows(
-    shutdown_tx: tokio::sync::watch::Sender<bool>,
-    member_handle: std::sync::Arc<crate::member_actor::MemberHandle>,
-    runner_task: Option<tokio::task::JoinHandle<eyre::Result<()>>>,
-    mut background_tasks: FuturesUnordered<tokio::task::JoinHandle<eyre::Result<()>>>,
+async fn wait_for_completion_windows<F>(
+    ctx: CompletionContext,
+    mut background_tasks: FuturesUnordered<F>,
+    _task_names: Vec<&'static str>,
     cleanup_guard: &CleanupGuard,
-) {
+) where
+    F: std::future::Future<
+        Output = (
+            &'static str,
+            Result<eyre::Result<()>, tokio::task::JoinError>,
+        ),
+    >,
+{
     use futures::stream::StreamExt;
+
+    // Track background task completion during main loop
+    let mut background_tasks_completed = 0;
+    let mut all_background_tasks_done_logged = false;
 
     // Keep looping to handle multiple Ctrl-C until runner task completes
     let runner_future = async {
-        if let Some(task) = runner_task {
+        if let Some(task) = ctx.runner_task {
             task.await
         } else {
             // No runner task, wait forever
@@ -768,8 +914,8 @@ async fn wait_for_completion_windows(
             // Ctrl-C handling
             _ = tokio::signal::ctrl_c() => {
                 info!("Received Ctrl-C, shutting down...");
-                let _ = shutdown_tx.send(true);
-                let _ = member_handle.shutdown();
+                let _ = ctx.shutdown_tx.send(true);
+                let _ = ctx.member_handle.shutdown();
                 kill_all_descendants();
                 std::process::exit(130);
             }
@@ -793,18 +939,25 @@ async fn wait_for_completion_windows(
             }
 
             // Background service task completion/failure - logged but doesn't trigger shutdown
-            Some(result) = background_tasks.next() => {
-                debug!("A background service task has completed");
+            Some((task_name, result)) = background_tasks.next() => {
+                background_tasks_completed += 1;
+                debug!("Background service task '{}' completed during main loop ({}/{})", task_name, background_tasks_completed, ctx.total_tasks);
                 match result {
                     Ok(Ok(())) => {
-                        debug!("Background service task completed successfully");
+                        debug!("Background service task '{}' completed successfully", task_name);
                     }
                     Ok(Err(e)) => {
-                        error!("Background service task failed: {:#}", e);
+                        error!("Background service task '{}' failed: {:#}", task_name, e);
                     }
                     Err(e) => {
-                        error!("Background service task panicked: {:#}", e);
+                        error!("Background service task '{}' panicked: {:#}", task_name, e);
                     }
+                }
+
+                // Log when all background tasks have completed
+                if background_tasks_completed == ctx.total_tasks && !all_background_tasks_done_logged {
+                    debug!("All background tasks completed, waiting for actors to finish...");
+                    all_background_tasks_done_logged = true;
                 }
                 // Continue loop - background task completion doesn't trigger shutdown
             }
@@ -813,26 +966,77 @@ async fn wait_for_completion_windows(
 
     // Trigger shutdown for any remaining tasks
     debug!("Triggering shutdown for remaining tasks...");
-    let _ = shutdown_tx.send(true);
-    let _ = member_handle.shutdown();
+    debug!("Sending shutdown signal (again, in case missed during main loop)...");
+    let _ = ctx.shutdown_tx.send(true);
+    debug!("Shutdown signal sent");
+    let _ = ctx.member_handle.shutdown();
 
     // Drain remaining background tasks (exits immediately if already empty)
-    // With async component loader, all tasks should complete quickly on shutdown
-    debug!("Draining remaining background tasks...");
-    while let Some(result) = background_tasks.next().await {
-        match result {
-            Ok(Ok(())) => {
-                debug!("Background task completed successfully");
+    // Note: Some tasks may have already completed during the main loop (especially stats task)
+    // IMPORTANT: Keep signal handling active during cleanup so Ctrl-C works
+    debug!(
+        "Draining remaining background tasks (originally {} total)...",
+        ctx.total_tasks
+    );
+
+    // Set a shorter timeout for background task cleanup (2 seconds)
+    // After that, we'll just exit - the tasks will be aborted
+    let cleanup_timeout = tokio::time::sleep(tokio::time::Duration::from_secs(2));
+    tokio::pin!(cleanup_timeout);
+
+    // Track which tasks complete during cleanup
+    let mut tasks_completed_in_cleanup: Vec<&str> = Vec::new();
+
+    loop {
+        tokio::select! {
+            biased;
+
+            // Timeout: give up on waiting for background tasks and force exit
+            _ = &mut cleanup_timeout => {
+                let completed_in_cleanup = tasks_completed_in_cleanup.len();
+                if completed_in_cleanup > 0 {
+                    debug!("Cleanup timeout: {} tasks completed, exiting", completed_in_cleanup);
+                } else {
+                    debug!("Cleanup timeout: no tasks completed in cleanup phase, exiting");
+                    debug!("Note: Tasks may have already completed during main loop");
+                }
+                break;
             }
-            Ok(Err(e)) => {
-                warn!("Background task error during shutdown: {:#}", e);
+
+            // Continue handling Ctrl-C during cleanup (Windows version)
+            _ = tokio::signal::ctrl_c() => {
+                let remaining = ctx.total_tasks - tasks_completed.len();
+                warn!("Ctrl-C during cleanup - force killing all processes ({}/{} tasks still pending)", remaining, ctx.total_tasks);
+                warn!("Stubborn tasks: {:?}", tasks_pending);
+                kill_all_descendants();
+                std::process::exit(130);
             }
-            Err(e) => {
-                warn!("Background task panic during shutdown: {:#}", e);
+
+            // Drain background tasks
+            Some((task_name, result)) = background_tasks.next() => {
+                tasks_completed.push(task_name);
+                tasks_pending.retain(|&name| name != task_name);
+
+                match result {
+                    Ok(Ok(())) => {
+                        debug!("Background task '{}' completed in cleanup phase", task_name);
+                    }
+                    Ok(Err(e)) => {
+                        warn!("Background task '{}' error in cleanup phase: {:#}", task_name, e);
+                    }
+                    Err(e) => {
+                        warn!("Background task '{}' panicked in cleanup phase: {:#}", task_name, e);
+                    }
+                }
+            }
+
+            // All tasks drained
+            else => {
+                debug!("All background tasks completed");
+                break;
             }
         }
     }
-    debug!("All background tasks completed");
 
     // Disable CleanupGuard after graceful shutdown completes
     cleanup_guard.disable();
