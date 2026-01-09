@@ -859,8 +859,8 @@
                 </div>
                 <div id="content-logs" class="content-logs" style="display:none;">
                     <div class="log-type-selector">
-                        <button class="log-type-btn active" onclick="switchLogType('stdout')">stdout</button>
-                        <button class="log-type-btn" onclick="switchLogType('stderr')">stderr</button>
+                        <button class="log-type-btn" onclick="switchLogType('stdout')">stdout</button>
+                        <button class="log-type-btn active" onclick="switchLogType('stderr')">stderr</button>
                     </div>
                     <div class="log-viewer" id="log-content"></div>
                     <div class="log-controls">
@@ -956,7 +956,7 @@
 
         // Right panel management
         let currentNode = null;
-        let currentLogType = 'stdout';
+        let currentLogType = 'stderr';
         let eventSource = null;
         let autoScroll = true;
 
@@ -1037,10 +1037,10 @@
                         throw new Error(text);
                     });
                 }
-                // Refresh node list after toggling respawn
+                // Refresh node list after toggling respawn (wait for state propagation)
                 setTimeout(() => {
                     htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
-                }, 300);
+                }, 1000);
             })
             .catch(err => {
                 alert(`Failed to toggle respawn: ${err.message}`);
@@ -1132,6 +1132,13 @@
         function showNodeLogs(nodeName) {
             openRightPanel(nodeName);
             showLogsContent();
+
+            // Always default to stderr when opening logs
+            currentLogType = 'stderr';
+            document.querySelectorAll('.log-type-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.textContent === 'stderr');
+            });
+
             connectToLogs();
         }
 
