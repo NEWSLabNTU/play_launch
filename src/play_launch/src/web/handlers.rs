@@ -98,120 +98,167 @@ fn render_clickable_ros_name(ros_name: &str) -> String {
     html
 }
 
+/// Helper to clean node name by removing prefixes like "NODE 'name'" or "LOAD_NODE 'name'"
+fn clean_node_name(name: &str) -> &str {
+    // Check if name matches pattern: PREFIX 'actual_name'
+    if let Some(quote_start) = name.find('\'') {
+        if let Some(quote_end) = name.rfind('\'') {
+            if quote_start < quote_end {
+                return &name[quote_start + 1..quote_end];
+            }
+        }
+    }
+    name
+}
+
 /// Helper to render a node card
 fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) -> String {
-    use super::web_types::{
-        ComposableBlockReason, ComposableNodeStatus, NodeStatus, UnifiedStatus,
+    use super::web_types::{ComposableNodeStatus, NodeStatus, NodeType, UnifiedStatus};
+
+    // Determine status class and block reason tooltip
+    let status_class = match &node.status {
+        UnifiedStatus::Process(status) => match status {
+            NodeStatus::Running => "status-running",
+            NodeStatus::Stopped => "status-stopped",
+            NodeStatus::Failed => "status-failed",
+            NodeStatus::Pending => "status-pending",
+        },
+        UnifiedStatus::Composable(status) => match status {
+            ComposableNodeStatus::Loaded => "status-loaded",
+            ComposableNodeStatus::Loading => "status-loading",
+            ComposableNodeStatus::Failed => "status-failed",
+            ComposableNodeStatus::Pending => "status-pending",
+            ComposableNodeStatus::Blocked(_) => "status-blocked",
+        },
     };
 
-    let (status_class, block_reason_tooltip) = match &node.status {
-        UnifiedStatus::Process(status) => {
-            let class = match status {
-                NodeStatus::Running => "status-running",
-                NodeStatus::Stopped => "status-stopped",
-                NodeStatus::Failed => "status-failed",
-                NodeStatus::Pending => "status-pending",
-            };
-            (class, None)
-        }
-        UnifiedStatus::Composable(status) => {
-            let (class, reason) = match status {
-                ComposableNodeStatus::Loaded => ("status-loaded", None),
-                ComposableNodeStatus::Loading => ("status-loading", None),
-                ComposableNodeStatus::Failed => ("status-failed", None),
-                ComposableNodeStatus::Pending => ("status-pending", None),
-                ComposableNodeStatus::Blocked(reason) => {
-                    let reason_text = match reason {
-                        ComposableBlockReason::ContainerStopped => "Container stopped",
-                        ComposableBlockReason::ContainerFailed => "Container failed",
-                        ComposableBlockReason::ContainerNotStarted => "Container not started",
-                        ComposableBlockReason::Shutdown => "Shutdown",
-                    };
-                    ("status-blocked", Some(reason_text))
-                }
-            };
-            (class, reason)
-        }
-    };
+    // Use exec_name as primary name if available, otherwise clean the directory name
+    let display_name = node
+        .exec_name
+        .as_deref()
+        .unwrap_or_else(|| clean_node_name(&node.name));
 
-    let title_attr = if let Some(reason) = block_reason_tooltip {
-        format!(r#" title="Blocked: {}""#, reason)
-    } else {
-        String::new()
-    };
-
-    // Stderr activity indicator
-    let stderr_indicator = if let Some(stderr_mtime) = node.stderr_last_modified {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let age_secs = now.saturating_sub(stderr_mtime);
-
-        if age_secs < 10 && node.stderr_size > 0 {
-            // Active (0-10s): yellow, jumping animation
-            let preview = node
-                .stderr_preview
-                .as_ref()
-                .map(|lines| lines.join("\n"))
-                .unwrap_or_default();
-            format!(
-                r#"<span class="stderr-indicator active" title="Active stderr output (last 5 lines):&#10;{}">📋</span>"#,
-                preview.replace('"', "&quot;")
-            )
-        } else if age_secs < 60 && node.stderr_size > 0 {
-            // Recent (10-60s): orange, static
-            let preview = node
-                .stderr_preview
-                .as_ref()
-                .map(|lines| lines.join("\n"))
-                .unwrap_or_default();
-            format!(
-                r#"<span class="stderr-indicator recent" title="Recent stderr output (last 5 lines):&#10;{}">📋</span>"#,
-                preview.replace('"', "&quot;")
-            )
+    // Construct full ROS node name (namespace + node_name)
+    let ros_full_name_plain =
+        if let (Some(ns), Some(node_name)) = (&node.namespace, &node.node_name) {
+            if ns == "/" {
+                format!("/{}", node_name)
+            } else if ns.ends_with('/') {
+                format!("{}{}", ns, node_name)
+            } else {
+                format!("{}/{}", ns, node_name)
+            }
         } else {
             String::new()
-        }
-    } else {
-        String::new()
+        };
+
+    // Render ROS name with clickable segments
+    let ros_full_name = render_clickable_ros_name(&ros_full_name_plain);
+
+    // Node type with CSS class for coloring
+    let (node_type_label, node_type_class) = match node.node_type {
+        NodeType::Node => ("node", "type-node"),
+        NodeType::Container => ("container", "type-container"),
+        NodeType::ComposableNode => ("composable", "type-composable"),
     };
 
-    let pid_display = node
-        .pid
-        .map(|p| format!("PID: {}{}", p, stderr_indicator))
-        .unwrap_or_else(|| "No PID".to_string());
-
-    let namespace_html = node
-        .namespace
-        .as_ref()
-        .map(|ns| render_clickable_ros_name(ns))
-        .unwrap_or_default();
-
-    let target_container_html = node
-        .target_container
-        .as_ref()
-        .map(|tc| {
-            format!(
-                r#"<div class="detail"><strong>Container:</strong> {}</div>"#,
-                tc
-            )
-        })
-        .unwrap_or_default();
-
-    let respawn_html = if let Some(enabled) = node.respawn_enabled {
-        if enabled {
-            let delay_str = node
-                .respawn_delay
-                .map(|d| format!(" ({}s)", d))
-                .unwrap_or_default();
-            format!(
-                r#"<div class="detail"><strong>Respawn:</strong> Enabled{}</div>"#,
-                delay_str
-            )
-        } else {
-            r#"<div class="detail"><strong>Respawn:</strong> Disabled</div>"#.to_string()
+    // Only show PID for regular nodes and containers, not composable nodes
+    let pid_section = match node.node_type {
+        NodeType::ComposableNode => String::new(),
+        _ => {
+            let pid_text = node
+                .pid
+                .map(|p| format!("PID: {}", p))
+                .unwrap_or_else(|| "PID: -".to_string());
+            format!(r#"<span class="node-pid">{}</span>"#, pid_text)
         }
+    };
+
+    // Escape node name for JavaScript (escape single quotes and backslashes)
+    let js_escaped_name = node.name.replace('\\', r"\\").replace('\'', r"\'");
+
+    // Control buttons based on node type
+    let controls = match node.node_type {
+        NodeType::ComposableNode => {
+            // Only Details button for composable nodes
+            format!(
+                r#"<button onclick="showNodeDetails('{}')" class="btn-details">Details</button>"#,
+                js_escaped_name
+            )
+        }
+        NodeType::Container | NodeType::Node => {
+            // Full controls: Start/Stop, Restart, Details, Logs, Respawn checkbox
+            let start_stop_button = match node.status {
+                UnifiedStatus::Process(NodeStatus::Running) => {
+                    format!(
+                        r#"<button hx-post="/api/nodes/{}/stop" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-stop">
+    <span class="btn-text">Stop</span>
+    <span class="btn-loading">Stopping...</span>
+</button>"#,
+                        node.name
+                    )
+                }
+                _ => {
+                    format!(
+                        r#"<button hx-post="/api/nodes/{}/start" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-start">
+    <span class="btn-text">Start</span>
+    <span class="btn-loading">Starting...</span>
+</button>"#,
+                        node.name
+                    )
+                }
+            };
+
+            // Add respawn checkbox if respawn configuration is available
+            let respawn_checkbox = if let Some(respawn_enabled) = node.respawn_enabled {
+                let checked = if respawn_enabled { "checked" } else { "" };
+                let delay_text = if let Some(delay) = node.respawn_delay {
+                    if delay > 0.0 {
+                        format!(" ({}s)", delay)
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+                format!(
+                    r#"<label class="respawn-checkbox" title="Auto-restart when node exits">
+        <input type="checkbox" {} onchange="toggleRespawn('{}', this.checked)">
+        <span class="respawn-label">Auto-restart{}</span>
+    </label>"#,
+                    checked, js_escaped_name, delay_text
+                )
+            } else {
+                String::new()
+            };
+
+            format!(
+                r#"{}
+    {}
+    <button hx-post="/api/nodes/{}/restart" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-restart">
+        <span class="btn-text">Restart</span>
+        <span class="btn-loading">Restarting...</span>
+    </button>
+    <button onclick="showNodeDetails('{}')" class="btn-details">Details</button>
+    <button onclick="showNodeLogs('{}')" class="btn-logs">Logs</button>"#,
+                respawn_checkbox, start_stop_button, node.name, js_escaped_name, js_escaped_name
+            )
+        }
+    };
+
+    // Format stderr data attributes (including preview as JSON)
+    let stderr_attrs = if let Some(mtime) = node.stderr_last_modified {
+        let preview_json = if let Some(ref lines) = node.stderr_preview {
+            // Escape JSON string
+            serde_json::to_string(lines).unwrap_or_else(|_| "[]".to_string())
+        } else {
+            "[]".to_string()
+        };
+
+        format!(
+            r#" data-stderr-mtime="{}" data-stderr-size="{}" data-stderr-preview='{}'"#,
+            mtime, node.stderr_size, preview_json
+        )
     } else {
         String::new()
     };
@@ -219,40 +266,30 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
     format!(
         r##"<div class="node-card {} {}" data-node="{}"{}>
   <div class="node-info">
-    <div class="node-name">{}</div>
-    <div class="node-details">
-      <div class="detail"><strong>Package:</strong> {}</div>
-      <div class="detail"><strong>Executable:</strong> {}</div>
-      <div class="detail"><strong>Namespace:</strong> {}</div>
+    <div class="node-header">
+      <span class="node-type {}">{}</span>
+      <span class="node-name">{}</span>
       {}
-      <div class="detail"><strong>Status:</strong> {}</div>
-      {}
+    </div>
+    <div class="node-meta">
+      <span class="node-ros-name">{}</span>
     </div>
   </div>
   <div class="node-controls">
-    <button class="btn btn-sm btn-success" hx-post="/api/nodes/{}/start" hx-swap="none">Start</button>
-    <button class="btn btn-sm btn-danger" hx-post="/api/nodes/{}/stop" hx-swap="none">Stop</button>
-    <button class="btn btn-sm btn-warning" hx-post="/api/nodes/{}/restart" hx-swap="none">Restart</button>
-    <button class="btn btn-sm btn-primary" onclick="showNodeDetails('{}')">Details</button>
-    <button class="btn btn-sm btn-secondary" onclick="showLogs('{}')">Logs</button>
+    {}
   </div>
-</div>"##,
-        indent_class,
+</div>
+"##,
         status_class,
+        indent_class,
         node.name,
-        title_attr,
-        node.name,
-        node.package.as_ref().unwrap_or(&"N/A".to_string()),
-        node.executable,
-        namespace_html,
-        target_container_html,
-        pid_display,
-        respawn_html,
-        node.name,
-        node.name,
-        node.name,
-        node.name,
-        node.name,
+        stderr_attrs,
+        node_type_class,
+        node_type_label,
+        display_name,
+        pid_section,
+        ros_full_name,
+        controls,
     )
 }
 
@@ -269,40 +306,52 @@ pub async fn list_nodes(State(state): State<Arc<WebState>>) -> Response {
 
     let mut html = String::new();
 
-    // Build parent-child relationships for rendering
-    let mut containers: Vec<_> = node_summaries.iter().filter(|n| n.is_container).collect();
-    containers.sort_by(|a, b| a.name.cmp(&b.name));
-
-    let mut regular_nodes: Vec<_> = node_summaries
-        .iter()
-        .filter(|n| !n.is_container && n.target_container.is_none())
-        .collect();
-    regular_nodes.sort_by(|a, b| a.name.cmp(&b.name));
-
-    // Render containers with their composable nodes
-    for container in containers {
-        html.push_str(&render_node_card(container, ""));
-
-        // Render composable nodes under this container
-        let mut composable_nodes: Vec<_> = node_summaries
+    // Separate containers, composable nodes, and regular nodes by type
+    let (containers, composables, regulars): (Vec<_>, Vec<_>, Vec<_>) =
+        node_summaries
             .iter()
-            .filter(|n| {
-                n.target_container
-                    .as_ref()
-                    .map(|tc| tc == &container.name)
-                    .unwrap_or(false)
-            })
-            .collect();
-        composable_nodes.sort_by(|a, b| a.name.cmp(&b.name));
+            .fold((Vec::new(), Vec::new(), Vec::new()), |mut acc, node| {
+                match node.node_type {
+                    super::web_types::NodeType::Container => acc.0.push(node),
+                    super::web_types::NodeType::ComposableNode => acc.1.push(node),
+                    super::web_types::NodeType::Node => acc.2.push(node),
+                }
+                acc
+            });
 
-        for comp in composable_nodes {
-            html.push_str(&render_node_card(comp, "composable-indent"));
-        }
+    // Render regular nodes first
+    for node in &regulars {
+        html.push_str(&render_node_card(node, ""));
     }
 
-    // Render regular nodes
-    for node in regular_nodes {
-        html.push_str(&render_node_card(node, ""));
+    // Render containers with their composable nodes
+    for container in &containers {
+        html.push_str(&render_node_card(container, ""));
+
+        // Construct the full ROS name for this container (namespace + node_name)
+        let container_full_name =
+            if let (Some(ns), Some(node_name)) = (&container.namespace, &container.node_name) {
+                if ns == "/" {
+                    format!("/{}", node_name)
+                } else if ns.ends_with('/') {
+                    format!("{}{}", ns, node_name)
+                } else {
+                    format!("{}/{}", ns, node_name)
+                }
+            } else {
+                format!("/{}", container.name)
+            };
+
+        // Find composable nodes that belong to this container
+        let mut children: Vec<_> = composables
+            .iter()
+            .filter(|n| n.target_container.as_deref() == Some(container_full_name.as_str()))
+            .collect();
+        children.sort_by(|a, b| a.name.cmp(&b.name));
+
+        for child in children {
+            html.push_str(&render_node_card(child, "child-node"));
+        }
     }
 
     Html(html).into_response()
@@ -470,14 +519,17 @@ pub async fn health_summary(State(state): State<Arc<WebState>>) -> Response {
     let summary = coordinator.get_health_summary().await;
 
     let html = format!(
-        r#"<span class="badge badge-success">{} running</span>
-           <span class="badge badge-secondary">{} total</span>
-           <span class="badge badge-info">{} containers</span>
-           <span class="badge badge-primary">{} composable</span>"#,
-        summary.processes_running,
-        summary.nodes_total + summary.containers_total,
+        r#"<span class="badge badge-nodes">{}/{} nodes</span>
+           <span class="badge badge-containers">{}/{} containers</span>
+           <span class="badge badge-composable">{}/{} composable</span>
+           <span class="badge badge-processes">{} running</span>"#,
+        summary.nodes_running,
+        summary.nodes_total,
         summary.containers_running,
+        summary.containers_total,
         summary.composable_loaded,
+        summary.composable_total,
+        summary.processes_running,
     );
 
     Html(html).into_response()

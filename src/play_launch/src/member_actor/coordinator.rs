@@ -286,9 +286,17 @@ impl MemberCoordinatorBuilder {
 
         // Spawn composable nodes, matching with container state receivers and load control channels
         for def in self.composable_nodes {
+            // Normalize target_container_name to ensure it starts with "/"
+            // Some nodes have "pointcloud_container" while containers use "/pointcloud_container"
+            let normalized_target = if def.target_container_name.starts_with('/') {
+                def.target_container_name.clone()
+            } else {
+                format!("/{}", def.target_container_name)
+            };
+
             // Find the container state receiver and load control channel for this composable node
-            let container_state_rx = container_state_map.get(&def.target_container_name);
-            let load_control_tx = container_load_control_map.get(&def.target_container_name);
+            let container_state_rx = container_state_map.get(&normalized_target);
+            let load_control_tx = container_load_control_map.get(&normalized_target);
 
             if let (Some(container_state_rx), Some(load_control_tx)) =
                 (container_state_rx, load_control_tx)
@@ -320,6 +328,10 @@ impl MemberCoordinatorBuilder {
                     def.target_container_name,
                     def.name
                 );
+                tracing::debug!(
+                    "Available containers: {:?}",
+                    container_state_map.keys().collect::<Vec<_>>()
+                );
             }
         }
 
@@ -337,7 +349,7 @@ impl MemberCoordinatorBuilder {
 
         let handle = MemberHandle {
             control_channels,
-            metadata: metadata_map,
+            metadata: Arc::new(tokio::sync::RwLock::new(metadata_map)),
             state_cache: state_cache.clone(),
             shutdown_tx,
         };
@@ -368,8 +380,8 @@ impl Default for MemberCoordinatorBuilder {
 pub struct MemberHandle {
     /// Control channels for sending commands to actors
     control_channels: HashMap<String, mpsc::Sender<ControlEvent>>,
-    /// Member metadata (immutable after spawning)
-    metadata: HashMap<String, MemberMetadata>,
+    /// Member metadata (mutable for dynamic config updates like respawn_enabled)
+    metadata: Arc<tokio::sync::RwLock<HashMap<String, MemberMetadata>>>,
     /// Cached state updated by runner (Arc for sharing with runner, RwLock per MemberState)
     state_cache: Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>>,
     /// Shutdown signal broadcaster
@@ -381,7 +393,8 @@ impl MemberHandle {
     pub async fn list_members(&self) -> Vec<MemberSummary> {
         let mut summaries = Vec::new();
 
-        for (name, meta) in self.metadata.iter() {
+        let metadata_guard = self.metadata.read().await;
+        for (name, meta) in metadata_guard.iter() {
             // Read state from RwLock
             let state = if let Some(state_lock) = self.state_cache.get(name) {
                 state_lock.read().await.clone()
@@ -443,7 +456,8 @@ impl MemberHandle {
 
     /// Get detailed state for a specific member
     pub async fn get_member_state(&self, name: &str) -> Option<MemberSummary> {
-        let meta = self.metadata.get(name)?;
+        let metadata_guard = self.metadata.read().await;
+        let meta = metadata_guard.get(name)?;
 
         // Read state from RwLock
         let state = if let Some(state_lock) = self.state_cache.get(name) {
@@ -505,7 +519,8 @@ impl MemberHandle {
     pub async fn get_health_summary(&self) -> HealthSummary {
         let mut summary = HealthSummary::default();
 
-        for (name, meta) in self.metadata.iter() {
+        let metadata_guard = self.metadata.read().await;
+        for (name, meta) in metadata_guard.iter() {
             // Read state from RwLock
             let state = if let Some(state_lock) = self.state_cache.get(name) {
                 state_lock.read().await.clone()
@@ -616,8 +631,17 @@ impl MemberHandle {
 
     /// Toggle respawn for a member
     pub async fn toggle_respawn(&self, name: &str, enabled: bool) -> Result<()> {
+        // Send control event to actor
         self.send_control(name, ControlEvent::ToggleRespawn(enabled))
-            .await
+            .await?;
+
+        // Update metadata so web UI reflects the new state
+        let mut metadata_guard = self.metadata.write().await;
+        if let Some(meta) = metadata_guard.get_mut(name) {
+            meta.respawn_enabled = Some(enabled);
+        }
+
+        Ok(())
     }
 
     /// Broadcast shutdown signal to all actors
@@ -628,19 +652,17 @@ impl MemberHandle {
     }
 
     /// Get the number of registered members
-    pub fn member_count(&self) -> usize {
-        self.metadata.len()
+    pub async fn member_count(&self) -> usize {
+        self.metadata.read().await.len()
     }
 
     /// Check if a specific member is registered
-    pub fn has_member(&self, name: &str) -> bool {
-        self.metadata.contains_key(name)
+    pub async fn has_member(&self, name: &str) -> bool {
+        self.metadata.read().await.contains_key(name)
     }
 
     /// Get reference to the state cache for manual state updates
-    pub fn state_cache(
-        &self,
-    ) -> &Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>> {
+    pub fn state_cache(&self) -> &Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>> {
         &self.state_cache
     }
 }
