@@ -162,7 +162,8 @@ async fn run_service_discovery_task(
                 let namespace_str = namespace.to_string();
 
                 // Query services in spawn_blocking (rclrs is blocking FFI)
-                let is_ready = tokio::task::spawn_blocking(move || {
+                // Use timeout to ensure this doesn't hang during shutdown
+                let query_task = tokio::task::spawn_blocking(move || {
                     match node_clone.get_service_names_and_types_by_node(&node_name_str, &namespace_str) {
                         Ok(services) => {
                             debug!(
@@ -211,8 +212,24 @@ async fn run_service_discovery_task(
                             false
                         }
                     }
-                })
-                .await?;
+                });
+
+                // Wait for query with timeout (1 second should be plenty for service discovery)
+                // This ensures we don't hang during shutdown if ROS is in a bad state
+                let is_ready = match tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    query_task
+                ).await {
+                    Ok(Ok(result)) => result,
+                    Ok(Err(e)) => {
+                        warn!("Service discovery task panicked: {}", e);
+                        false
+                    }
+                    Err(_) => {
+                        warn!("Service discovery query timed out for container '{}'", container_name);
+                        false
+                    }
+                };
 
                 // Send response (ignore if receiver dropped)
                 let _ = response_tx.send(is_ready);
