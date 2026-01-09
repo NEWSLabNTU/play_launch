@@ -202,6 +202,8 @@ Privileged processes (containers) require I/O helper with CAP_SYS_PTRACE capabil
 ### Process Management
 - Graceful shutdown with 5-second SIGTERM grace period before SIGKILL
 - Multiple Ctrl-C presses escalate: SIGTERM → SIGQUIT → SIGKILL
+- **Orphan process prevention**: PR_SET_PDEATHSIG ensures kernel sends SIGKILL to all child processes if play_launch crashes (even with SIGKILL -9)
+- Process groups (PGID) provide redundant cleanup for graceful shutdown
 
 ### Composable Node Loading
 - Service-based loading via rclrs LoadNode calls
@@ -260,10 +262,12 @@ play_launch replay --web-ui --web-ui-addr 192.168.1.100 --web-ui-port 3000
 **Node List:**
 - Compact cards with status reflected in background color (running=green, stopped=gray, failed=red, pending=yellow)
 - Container hierarchy: composable nodes indented under their containers
+- Clean node names without internal prefixes (e.g., "control_validator" instead of "LOAD_NODE 'control_validator'")
 - Live status updates every 5 seconds
-- Per-node control buttons (Start, Stop, Restart, Details, Logs)
+- Per-node control buttons: Auto-restart checkbox (leftmost), Start/Stop (conditional), Restart, Details, Logs
+- Auto-restart checkbox with visual state persistence and 1-second refresh delay
 - Search/filter by node name or ROS namespace
-- Health summary badges showing running/total counts
+- Health summary badges showing running/total counts (e.g., "42/46 nodes", "15/15 containers", "52/52 composable")
 - Clickable ROS namespace segments for instant filtering
 
 **Stderr Activity Indicator:**
@@ -288,6 +292,7 @@ play_launch replay --web-ui --web-ui-addr 192.168.1.100 --web-ui-port 3000
 
 **Log Viewer:**
 - Integrated into right panel (no modal overlay)
+- Defaults to stderr when opened (most relevant for debugging)
 - Switch between stdout/stderr tabs
 - Real-time streaming via Server-Sent Events (SSE)
 - Auto-scroll with manual override
@@ -297,8 +302,10 @@ play_launch replay --web-ui --web-ui-addr 192.168.1.100 --web-ui-port 3000
 
 **Node Control:**
 - Individual node controls: Start, Stop, Restart buttons per card
+- Actors remain alive after Stop, allowing Start/Restart commands to work
 - Automatic refresh after control actions
 - Prevents concurrent operations on same node
+- JavaScript escaping handles node names with special characters (quotes, etc.)
 
 ### Technical Details
 
@@ -392,6 +399,13 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 
 ## Key Recent Changes
 
+- **2026-01-09**: Web UI Auto-restart checkbox fix - Fixed checkbox reverting after toggling. Issue: metadata was immutable after spawning, so Web UI always read the initial state. Solution: made metadata mutable (wrapped in `Arc<RwLock>`) and update it when ToggleRespawn control is sent (coordinator.rs:384, 633-645).
+- **2026-01-09**: Container matching fix - Fixed composable nodes not finding their target containers. Issue: containers were stored with leading slash (e.g., "/pointcloud_container") but composable nodes looked them up without it (e.g., "pointcloud_container"). Solution: normalize target container names by prepending "/" if missing before lookup (coordinator.rs:289-295).
+- **2026-01-09**: Code quality improvements - Refactored completion functions to use `CompletionContext` struct, reducing function parameters from 8 to 5 (Unix) / 4 (Windows) and fixing clippy warnings (replay.rs:636-642).
+- **2026-01-09**: Shutdown responsiveness fix - Fixed Ctrl-C not working during cleanup phase. Added 2-second timeout to background task cleanup - stubborn tasks are forcefully aborted after timeout. Background tasks now tracked by name (anchor, stats, monitor, service_discovery, web_ui) with debug output showing which tasks are stubborn. Maintains signal handling throughout shutdown with proper 3-stage escalation (SIGTERM → SIGTERM → SIGKILL). Added 1-second timeout to service discovery ROS FFI calls.
+- **2026-01-09**: Orphan process prevention - Implemented PR_SET_PDEATHSIG to prevent orphan processes when play_launch crashes. Kernel automatically sends SIGKILL to all children if parent dies.
+- **2026-01-09**: Web UI improvements - Fixed Start/Restart controls (actors now stay alive after Stop), composable nodes display under containers, logs default to stderr, health badges show running/total counts (e.g., "42/46 nodes"), clean node names without prefixes, Auto-restart checkbox moved to leftmost position.
+- **2026-01-09**: Actor lifecycle fix - Stop control now keeps actors alive (`Ok(true)`) instead of terminating them, allowing Start/Restart commands to work after stopping nodes.
 - **2026-01-05**: Single shared ROS node architecture - Consolidated to one shared node (`/play_launch`) with dedicated executor thread. Reduced resource usage and eliminated race conditions.
 - **2026-01-05**: Load timing metrics - Each composable node logs `load_timing.csv` with queue wait, service call, and total duration metrics.
 - **2026-01-03**: Async/Tokio refactoring complete - Converted all background threads to async tasks with unified shutdown handling. Shutdown response improved from ~1s to <100ms.
@@ -419,6 +433,17 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 ### External Dependencies
 - `external/` directory is for placing 3rd party projects for study and reference
 - **Gitignored** - not part of the project build
+
+### Language Server Protocol (LSP) Tools
+- **pyright-lsp**: Available for Python type checking and code intelligence
+- **rust-analyzer-lsp**: Available for Rust code intelligence and refactoring
+- These LSP tools can be used for advanced code analysis, navigation, and refactoring tasks
+- Use these tools when performing complex code transformations or when you need deep code understanding
+
+### Building the Project
+- **ALWAYS** use `just build` to rebuild the project (NEVER use `colcon build` directly)
+- `just build` handles the correct build sequence and ensures proper integration
+- After code changes, always run `just build` before testing
 
 ## Performance Optimization Roadmap
 
