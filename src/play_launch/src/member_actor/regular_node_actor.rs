@@ -407,7 +407,7 @@ impl RegularNodeActor {
                 }
 
                 self.transition_to_stopped(None).await?;
-                Ok(false) // Terminate
+                Ok(true) // Keep actor alive to receive Start commands
             }
 
             ControlEvent::Restart => {

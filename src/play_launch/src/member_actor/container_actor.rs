@@ -560,7 +560,7 @@ impl ContainerActor {
                             let _ = self.state_tx.send(StateEvent::Terminated {
                                 name: self.name.clone(),
                             }).await;
-                            return Ok(false); // Stop actor
+                            return Ok(true); // Keep actor alive to receive Start commands
                         }
                         ControlEvent::Restart => {
                             info!("{}: Received Restart command, killing and respawning container", self.name);
@@ -740,7 +740,7 @@ impl ContainerActor {
                         let _ = self.state_tx.send(StateEvent::Terminated {
                             name: self.name.clone(),
                         }).await;
-                        Ok(false) // Stop actor
+                        Ok(true) // Keep actor alive to receive Start commands
                     }
                     _ => Ok(true) // Ignore other events during respawn
                 }
