@@ -813,7 +813,8 @@ impl MemberActor for ContainerActor {
                 NodeState::Running { .. } => {
                     // Extract child and pid by replacing state temporarily with Pending
                     // This avoids spawning a dummy "true" process
-                    let (child, pid) = match std::mem::replace(&mut self.state, NodeState::Pending) {
+                    let (child, pid) = match std::mem::replace(&mut self.state, NodeState::Pending)
+                    {
                         NodeState::Running { child, pid } => (child, pid),
                         _ => unreachable!("State was Running before replace"),
                     };

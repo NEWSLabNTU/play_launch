@@ -169,7 +169,7 @@ impl ComposableNodeContext {
             unsafe {
                 command.pre_exec(|| {
                     nix::sys::prctl::set_pdeathsig(nix::sys::signal::Signal::SIGKILL)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                        .map_err(std::io::Error::other)
                 });
             }
         }

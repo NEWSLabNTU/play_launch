@@ -517,7 +517,12 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         // Runner task forwards state events and waits for completion
         let runner_handle_for_updates = member_handle.clone();
         let runner_task = tokio::spawn(async move {
-            forward_state_events_and_wait(member_runner, state_broadcaster, runner_handle_for_updates).await
+            forward_state_events_and_wait(
+                member_runner,
+                state_broadcaster,
+                runner_handle_for_updates,
+            )
+            .await
         });
 
         (Some(runner_task), Some(web_server_task))
