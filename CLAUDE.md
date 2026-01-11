@@ -93,6 +93,7 @@ play_launch plot --metrics cpu memory           # Plot specific metrics
 
 - **Async/Tokio**: All background services run as async tasks with unified shutdown handling
 - **Actor Pattern**: Self-contained lifecycle management for nodes with respawn support
+- **ListNodes Verification**: On-demand query manager verifies composable node loading states when LoadNode calls hang or timeout
 - **Web UI Mode**: Event-driven architecture bridges actor state to web interface
 
 ## Configuration
@@ -119,6 +120,12 @@ composable_node_loading:
 container_readiness:
   wait_for_service_ready: true        # Enabled by default
   service_ready_timeout_secs: 120
+
+list_nodes:
+  rate_limit_secs: 5                  # Min time between queries per container
+  loading_timeout_secs: 30            # Trigger verification after this timeout
+  unloading_timeout_secs: 10          # Reserved for future unload verification
+  call_timeout_ms: 5000               # ListNodes service call timeout
 
 monitoring:
   enabled: false
@@ -208,8 +215,10 @@ Privileged processes (containers) require I/O helper with CAP_SYS_PTRACE capabil
 ### Composable Node Loading
 - Service-based loading via rclrs LoadNode calls
 - Container-managed FIFO queues (sequential per container, parallel across containers)
-- Retry logic: 3 attempts, 30s timeout per node
+- Single load attempt (no retries) with automatic verification fallback
+- **ListNodes Verification**: If loading takes >30s (configurable), automatically queries container to verify if node is already loaded
 - Each node logs timing metrics (queue wait, service call, total duration)
+- Rate-limited verification queries prevent ROS service overload (max 1 query per container per 5 seconds)
 
 ### Respawn Support
 - Nodes with `respawn=True` automatically restart on exit
@@ -399,13 +408,14 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 
 ## Key Recent Changes
 
+- **2026-01-10**: ListNodes verification system (ALL PHASES COMPLETE) - Fully implemented on-demand verification of composable node loading states to resolve issues where nodes get stuck in "Loading" state. Phase 1: Added configuration (ListNodesSettings), event types (NodeDiscovered, ListNodesRequested, DiscoveredLoaded), and ListNodesManager module with rate-limiting and timeout handling. Phase 2: Integrated manager into coordinator spawn flow with automatic event forwarding from MemberRunner. Manager spawns as background task, receives ListNodesRequested events via dedicated channel, and broadcasts NodeDiscovered events back to state stream. Phase 3: Refactored composable_node_actor to detect loading timeouts and handle discovery. Added list_nodes_loading_timeout_secs to ComposableActorConfig (default 30s). Refactored handle_loading() to send LoadNode request non-blocking and enter select loop that monitors: LoadNode response, timeout for verification (emits ListNodesRequested), DiscoveredLoaded control event (transitions to Loaded), container state changes, and shutdown. Phase 4: Implemented node discovery matching in coordinator (coordinator.rs:835-916). Added handle_node_discovered() method that matches discovered nodes to composable actors by container name and full node name, then sends DiscoveredLoaded control event. Integrated into event loop (replay.rs:1066-1077) to process NodeDiscovered events before state cache update. SYSTEM NOW FULLY OPERATIONAL: composable nodes that are already loaded or take too long will be detected and verified through ListNodes queries.
+- **2026-01-09**: Web UI Start/Restart after exit fix - Fixed Start button not working after process exits. Issue: actor terminated when process exited with respawn disabled, making control channel unavailable. Solution: keep actor alive in Stopped state to handle Start/Restart commands (regular_node_actor.rs:236).
 - **2026-01-09**: Web UI Auto-restart checkbox fix - Fixed checkbox reverting after toggling. Issue: metadata was immutable after spawning, so Web UI always read the initial state. Solution: made metadata mutable (wrapped in `Arc<RwLock>`) and update it when ToggleRespawn control is sent (coordinator.rs:384, 633-645).
 - **2026-01-09**: Container matching fix - Fixed composable nodes not finding their target containers. Issue: containers were stored with leading slash (e.g., "/pointcloud_container") but composable nodes looked them up without it (e.g., "pointcloud_container"). Solution: normalize target container names by prepending "/" if missing before lookup (coordinator.rs:289-295).
 - **2026-01-09**: Code quality improvements - Refactored completion functions to use `CompletionContext` struct, reducing function parameters from 8 to 5 (Unix) / 4 (Windows) and fixing clippy warnings (replay.rs:636-642).
 - **2026-01-09**: Shutdown responsiveness fix - Fixed Ctrl-C not working during cleanup phase. Added 2-second timeout to background task cleanup - stubborn tasks are forcefully aborted after timeout. Background tasks now tracked by name (anchor, stats, monitor, service_discovery, web_ui) with debug output showing which tasks are stubborn. Maintains signal handling throughout shutdown with proper 3-stage escalation (SIGTERM → SIGTERM → SIGKILL). Added 1-second timeout to service discovery ROS FFI calls.
 - **2026-01-09**: Orphan process prevention - Implemented PR_SET_PDEATHSIG to prevent orphan processes when play_launch crashes. Kernel automatically sends SIGKILL to all children if parent dies.
-- **2026-01-09**: Web UI improvements - Fixed Start/Restart controls (actors now stay alive after Stop), composable nodes display under containers, logs default to stderr, health badges show running/total counts (e.g., "42/46 nodes"), clean node names without prefixes, Auto-restart checkbox moved to leftmost position.
-- **2026-01-09**: Actor lifecycle fix - Stop control now keeps actors alive (`Ok(true)`) instead of terminating them, allowing Start/Restart commands to work after stopping nodes.
+- **2026-01-09**: Web UI improvements - Composable nodes display under containers, logs default to stderr, health badges show running/total counts (e.g., "42/46 nodes"), clean node names without prefixes, Auto-restart checkbox moved to leftmost position.
 - **2026-01-05**: Single shared ROS node architecture - Consolidated to one shared node (`/play_launch`) with dedicated executor thread. Reduced resource usage and eliminated race conditions.
 - **2026-01-05**: Load timing metrics - Each composable node logs `load_timing.csv` with queue wait, service call, and total duration metrics.
 - **2026-01-03**: Async/Tokio refactoring complete - Converted all background threads to async tasks with unified shutdown handling. Shutdown response improved from ~1s to <100ms.
