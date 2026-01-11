@@ -257,7 +257,7 @@ async fn run_direct(
     // Spawn all actors and get handle + runner
     // No shared ROS node needed for run command (single node, no containers)
     debug!("Spawning all {} actors...", builder.member_count());
-    let (member_handle, member_runner) = builder.spawn(None).await;
+    let (member_handle, member_runner) = builder.spawn(None, None).await;
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
     debug!("All actors spawned successfully");
 

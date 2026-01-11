@@ -233,7 +233,7 @@ impl RegularNodeActor {
                     Ok(true) // Continue running
                 } else {
                     self.transition_to_stopped(exit_code).await?;
-                    Ok(false) // Terminate
+                    Ok(true) // Keep actor alive to allow Start/Restart from Web UI
                 }
             }
 
@@ -360,6 +360,27 @@ impl RegularNodeActor {
         }
     }
 
+    /// Handle stopped/failed state - wait for control events
+    ///
+    /// Returns false if the actor should terminate (shutdown), true to continue
+    async fn handle_stopped(&mut self) -> Result<bool> {
+        // Wait for control event or shutdown signal
+        tokio::select! {
+            Some(event) = self.control_rx.recv() => {
+                self.handle_control_event(event).await
+            }
+
+            _ = self.shutdown_rx.changed() => {
+                if *self.shutdown_rx.borrow() {
+                    debug!("[{}] Shutdown signal received in Stopped/Failed state", self.name);
+                    Ok(false) // Terminate
+                } else {
+                    Ok(true) // Continue
+                }
+            }
+        }
+    }
+
     /// Handle control events
     ///
     /// Returns false if the actor should terminate
@@ -456,6 +477,28 @@ impl RegularNodeActor {
             ControlEvent::LoadComposable { .. } => {
                 warn!(
                     "[{}] LoadComposable not supported for regular nodes",
+                    self.name
+                );
+                Ok(true) // Ignore
+            }
+            ControlEvent::Load => {
+                warn!("[{}] Load not supported for regular nodes", self.name);
+                Ok(true) // Ignore
+            }
+            ControlEvent::Unload => {
+                warn!("[{}] Unload not supported for regular nodes", self.name);
+                Ok(true) // Ignore
+            }
+            ControlEvent::ToggleAutoLoad(_) => {
+                warn!(
+                    "[{}] ToggleAutoLoad not supported for regular nodes",
+                    self.name
+                );
+                Ok(true) // Ignore
+            }
+            ControlEvent::DiscoveredLoaded { .. } => {
+                warn!(
+                    "[{}] DiscoveredLoaded not supported for regular nodes",
                     self.name
                 );
                 Ok(true) // Ignore
@@ -563,8 +606,10 @@ impl MemberActor for RegularNodeActor {
                     }
                 }
                 NodeState::Stopped { .. } | NodeState::Failed { .. } => {
-                    // Terminal state reached
-                    break;
+                    // Keep actor alive to receive Start/Restart commands from Web UI
+                    if !self.handle_stopped().await? {
+                        break; // Terminate on shutdown
+                    }
                 }
             }
         }

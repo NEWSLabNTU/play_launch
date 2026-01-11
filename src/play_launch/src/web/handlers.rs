@@ -128,6 +128,7 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
             ComposableNodeStatus::Loading => "status-loading",
             ComposableNodeStatus::Failed => "status-failed",
             ComposableNodeStatus::Pending => "status-pending",
+            ComposableNodeStatus::Unloaded => "status-unloaded",
             ComposableNodeStatus::Blocked(_) => "status-blocked",
         },
     };
@@ -180,10 +181,53 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
     // Control buttons based on node type
     let controls = match node.node_type {
         NodeType::ComposableNode => {
-            // Only Details button for composable nodes
+            // Auto-load checkbox for composable nodes
+            let auto_load_checkbox = if let Some(auto_load) = node.auto_load {
+                let checked = if auto_load { "checked" } else { "" };
+                format!(
+                    r#"<label class="auto-load-checkbox" title="Auto-load when container starts">
+        <input type="checkbox" {} onchange="toggleAutoLoad('{}', this.checked)">
+        <span class="auto-load-label">Auto-load</span>
+    </label>"#,
+                    checked, js_escaped_name
+                )
+            } else {
+                String::new()
+            };
+
+            // Load/Unload button for composable nodes
+            let load_unload_button = match &node.status {
+                UnifiedStatus::Composable(ComposableNodeStatus::Unloaded)
+                | UnifiedStatus::Composable(ComposableNodeStatus::Failed) => {
+                    // Show Load button when unloaded or failed
+                    format!(
+                        r#"<button hx-post="/api/nodes/{}/load" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-load">
+    <span class="btn-text">Load</span>
+    <span class="btn-loading">Loading...</span>
+</button>
+    "#,
+                        node.name
+                    )
+                }
+                UnifiedStatus::Composable(ComposableNodeStatus::Loaded) => {
+                    // Show Unload button when loaded
+                    format!(
+                        r#"<button hx-post="/api/nodes/{}/unload" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-unload">
+    <span class="btn-text">Unload</span>
+    <span class="btn-loading">Unloading...</span>
+</button>
+    "#,
+                        node.name
+                    )
+                }
+                _ => String::new(), // No buttons when loading or blocked
+            };
+
             format!(
-                r#"<button onclick="showNodeDetails('{}')" class="btn-details">Details</button>"#,
-                js_escaped_name
+                r#"{}
+    {}
+    <button onclick="showNodeDetails('{}')" class="btn-details">Details</button>"#,
+                auto_load_checkbox, load_unload_button, js_escaped_name
             )
         }
         NodeType::Container | NodeType::Node => {
@@ -207,6 +251,29 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
                         node.name
                     )
                 }
+            };
+
+            // Add "Load All" and "Unload All" buttons for containers when running
+            let container_bulk_buttons = if node.node_type == NodeType::Container {
+                match node.status {
+                    UnifiedStatus::Process(NodeStatus::Running) => {
+                        format!(
+                            r#"
+    <button hx-post="/api/nodes/{}/load-all" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-load-all">
+        <span class="btn-text">Load All</span>
+        <span class="btn-loading">Loading...</span>
+    </button>
+    <button hx-post="/api/nodes/{}/unload-all" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-unload-all">
+        <span class="btn-text">Unload All</span>
+        <span class="btn-loading">Unloading...</span>
+    </button>"#,
+                            node.name, node.name
+                        )
+                    }
+                    _ => String::new(),
+                }
+            } else {
+                String::new()
             };
 
             // Add respawn checkbox if respawn configuration is available
@@ -234,14 +301,14 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
 
             format!(
                 r#"{}
-    {}
-    <button hx-post="/api/nodes/{}/restart" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-restart">
-        <span class="btn-text">Restart</span>
-        <span class="btn-loading">Restarting...</span>
-    </button>
+    {}{}
     <button onclick="showNodeDetails('{}')" class="btn-details">Details</button>
     <button onclick="showNodeLogs('{}')" class="btn-logs">Logs</button>"#,
-                respawn_checkbox, start_stop_button, node.name, js_escaped_name, js_escaped_name
+                respawn_checkbox,
+                start_stop_button,
+                container_bulk_buttons,
+                js_escaped_name,
+                js_escaped_name
             )
         }
     };
@@ -468,6 +535,132 @@ pub async fn restart_node(
     }
 }
 
+/// Load a composable node (retry loading)
+pub async fn load_node(State(state): State<Arc<WebState>>, Path(name): Path<String>) -> Response {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+        Ok(guard) => guard,
+        Err(e) => return (StatusCode::CONFLICT, e).into_response(),
+    };
+
+    let coordinator = &state.member_handle;
+    match coordinator.load_member(&name).await {
+        Ok(()) => {
+            tracing::info!("[Web UI] Sent Load control to '{}'", name);
+            (
+                StatusCode::ACCEPTED,
+                format!("Load request for '{}' sent", name),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::warn!("[Web UI] Failed to load '{}': {}", name, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load: {}", e),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Unload a composable node
+pub async fn unload_node(State(state): State<Arc<WebState>>, Path(name): Path<String>) -> Response {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+        Ok(guard) => guard,
+        Err(e) => return (StatusCode::CONFLICT, e).into_response(),
+    };
+
+    let coordinator = &state.member_handle;
+    match coordinator.unload_member(&name).await {
+        Ok(()) => {
+            tracing::info!("[Web UI] Sent Unload control to '{}'", name);
+            (
+                StatusCode::ACCEPTED,
+                format!("Unload request for '{}' sent", name),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::warn!("[Web UI] Failed to unload '{}': {}", name, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to unload: {}", e),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Load all unloaded/failed composable nodes in a container
+pub async fn load_all_nodes(
+    State(state): State<Arc<WebState>>,
+    Path(name): Path<String>,
+) -> Response {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+        Ok(guard) => guard,
+        Err(e) => return (StatusCode::CONFLICT, e).into_response(),
+    };
+
+    let coordinator = &state.member_handle;
+    match coordinator.load_all_container_children(&name).await {
+        Ok(count) => {
+            tracing::info!(
+                "[Web UI] Sent Load control to {} composable nodes in '{}'",
+                count,
+                name
+            );
+            (
+                StatusCode::ACCEPTED,
+                format!("Load request sent to {} nodes in '{}'", count, name),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::warn!("[Web UI] Failed to load nodes in '{}': {}", name, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load nodes: {}", e),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Unload all loaded composable nodes in a container
+pub async fn unload_all_nodes(
+    State(state): State<Arc<WebState>>,
+    Path(name): Path<String>,
+) -> Response {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+        Ok(guard) => guard,
+        Err(e) => return (StatusCode::CONFLICT, e).into_response(),
+    };
+
+    let coordinator = &state.member_handle;
+    match coordinator.unload_all_container_children(&name).await {
+        Ok(count) => {
+            tracing::info!(
+                "[Web UI] Sent Unload control to {} composable nodes in '{}'",
+                count,
+                name
+            );
+            (
+                StatusCode::ACCEPTED,
+                format!("Unload request sent to {} nodes in '{}'", count, name),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::warn!("[Web UI] Failed to unload nodes in '{}': {}", name, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to unload nodes: {}", e),
+            )
+                .into_response()
+        }
+    }
+}
+
 /// Toggle respawn for a node
 pub async fn toggle_respawn(
     State(state): State<Arc<WebState>>,
@@ -507,6 +700,47 @@ pub async fn toggle_respawn(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to toggle respawn: {}", e),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Toggle auto-load for a composable node
+pub async fn toggle_auto_load(
+    State(state): State<Arc<WebState>>,
+    Path((name, enabled_str)): Path<(String, String)>,
+) -> Response {
+    let enabled = match enabled_str.as_str() {
+        "true" | "1" => true,
+        "false" | "0" => false,
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid enabled value: '{}'. Use 'true' or 'false'",
+                    enabled_str
+                ),
+            )
+                .into_response();
+        }
+    };
+
+    let coordinator = &state.member_handle;
+    match coordinator.toggle_auto_load(&name, enabled).await {
+        Ok(()) => {
+            tracing::info!("[Web UI] Toggled auto-load to {} for '{}'", enabled, name);
+            (
+                StatusCode::ACCEPTED,
+                format!("Auto-load toggle request for '{}' sent", name),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::warn!("[Web UI] Failed to toggle auto-load for '{}': {}", name, e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to toggle auto-load: {}", e),
             )
                 .into_response()
         }

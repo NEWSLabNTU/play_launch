@@ -49,6 +49,8 @@ pub enum ComposableNodeStatus {
     /// Not yet loaded (initial state)
     #[allow(dead_code)]
     Pending,
+    /// Waiting for container to be ready (not yet attempted to load)
+    Unloaded,
     /// Cannot be loaded because container is unavailable
     #[serde(rename = "blocked")]
     Blocked(ComposableBlockReason),
@@ -107,6 +109,9 @@ pub struct NodeSummary {
     /// Respawn delay in seconds
     #[serde(skip_serializing_if = "Option::is_none")]
     pub respawn_delay: Option<f64>,
+    /// Auto-load when container starts (for composable nodes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_load: Option<bool>,
 }
 
 impl NodeSummary {
@@ -141,6 +146,7 @@ impl NodeSummary {
             stderr_preview: member.stderr_preview.clone(),
             respawn_enabled: member.respawn_enabled,
             respawn_delay: member.respawn_delay,
+            auto_load: member.auto_load,
         }
     }
 
@@ -153,6 +159,7 @@ impl NodeSummary {
             ActorMemberState::Respawning { .. } => UnifiedStatus::Process(NodeStatus::Running),
             ActorMemberState::Stopped => UnifiedStatus::Process(NodeStatus::Stopped),
             ActorMemberState::Failed { .. } => UnifiedStatus::Process(NodeStatus::Failed),
+            ActorMemberState::Unloaded => UnifiedStatus::Composable(ComposableNodeStatus::Unloaded),
             ActorMemberState::Loading => UnifiedStatus::Composable(ComposableNodeStatus::Loading),
             ActorMemberState::Loaded { .. } => {
                 UnifiedStatus::Composable(ComposableNodeStatus::Loaded)

@@ -106,9 +106,20 @@ pub fn create_router(state: Arc<WebState>) -> Router {
         .route("/api/nodes/:name/start", post(handlers::start_node))
         .route("/api/nodes/:name/stop", post(handlers::stop_node))
         .route("/api/nodes/:name/restart", post(handlers::restart_node))
+        .route("/api/nodes/:name/load", post(handlers::load_node))
+        .route("/api/nodes/:name/unload", post(handlers::unload_node))
+        .route("/api/nodes/:name/load-all", post(handlers::load_all_nodes))
+        .route(
+            "/api/nodes/:name/unload-all",
+            post(handlers::unload_all_nodes),
+        )
         .route(
             "/api/nodes/:name/respawn/:enabled",
             post(handlers::toggle_respawn),
+        )
+        .route(
+            "/api/nodes/:name/autoload/:enabled",
+            post(handlers::toggle_auto_load),
         )
         .route("/api/health", get(handlers::health_summary))
         // Bulk operations

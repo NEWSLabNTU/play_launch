@@ -14,7 +14,7 @@ use tokio::{
     sync::{mpsc, watch, Mutex},
     task::JoinHandle,
 };
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Metadata about a member for web UI queries
 #[derive(Clone)]
@@ -30,6 +30,7 @@ pub struct MemberMetadata {
     pub respawn_delay: Option<f64>,
     pub exec_name: Option<String>,
     pub node_name: Option<String>,
+    pub auto_load: Option<bool>, // For composable nodes: auto-load when container starts
 }
 
 /// Definition of a regular node to be spawned
@@ -98,6 +99,7 @@ impl MemberCoordinatorBuilder {
             respawn_delay: context.record.respawn_delay,
             exec_name: context.record.exec_name.clone(),
             node_name: context.record.name.clone(),
+            auto_load: None, // Not applicable for regular nodes
         };
 
         self.regular_nodes.push(RegularNodeDefinition {
@@ -132,6 +134,7 @@ impl MemberCoordinatorBuilder {
             respawn_delay: context.record.respawn_delay,
             exec_name: context.record.exec_name.clone(),
             node_name: context.record.name.clone(),
+            auto_load: None, // Not applicable for containers
         };
 
         self.containers.push(ContainerDefinition {
@@ -168,6 +171,7 @@ impl MemberCoordinatorBuilder {
             respawn_delay: None,
             exec_name: None,
             node_name: Some(context.record.node_name.clone()),
+            auto_load: Some(true), // Auto-load enabled by default for composable nodes
         };
 
         self.composable_nodes.push(ComposableNodeDefinition {
@@ -183,6 +187,7 @@ impl MemberCoordinatorBuilder {
     pub async fn spawn(
         self,
         shared_ros_node: Option<Arc<rclrs::Node>>,
+        list_nodes_config: Option<crate::cli::config::ListNodesSettings>,
     ) -> (MemberHandle, MemberRunner) {
         let (state_tx, state_rx) = mpsc::channel(100);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -335,14 +340,47 @@ impl MemberCoordinatorBuilder {
             }
         }
 
+        // Spawn ListNodesManager task (if config provided and ROS node available)
+        let list_nodes_event_tx =
+            if let (Some(config), Some(ros_node)) = (list_nodes_config, shared_ros_node.as_ref()) {
+                let (manager_event_tx, manager_event_rx) = mpsc::channel(10);
+
+                let manager = super::list_nodes_manager::ListNodesManager::new(
+                    config,
+                    Arc::clone(ros_node),
+                    manager_event_rx,
+                    state_tx.clone(),
+                    shutdown_rx.clone(),
+                );
+
+                let manager_task = tokio::spawn(async move {
+                    manager.run().await;
+                    Ok(())
+                });
+
+                // Store manager task (use reserved name)
+                tasks.insert("__list_nodes_manager__".to_string(), manager_task);
+
+                debug!("ListNodesManager task spawned");
+                Some(manager_event_tx)
+            } else {
+                None
+            };
+
         // state_tx and shutdown_rx are dropped here (actors have their clones)
 
         // Pre-populate state cache with all member names (using RwLock per MemberState)
         let mut state_entries = HashMap::new();
-        for name in metadata_map.keys() {
+        for (name, meta) in metadata_map.iter() {
+            // Composable nodes start in Unloaded state, others start in Pending
+            let initial_state = if meta.member_type == MemberType::ComposableNode {
+                MemberState::Unloaded
+            } else {
+                MemberState::Pending
+            };
             state_entries.insert(
                 name.clone(),
-                Arc::new(tokio::sync::RwLock::new(MemberState::Pending)),
+                Arc::new(tokio::sync::RwLock::new(initial_state)),
             );
         }
         let state_cache = Arc::new(state_entries);
@@ -358,6 +396,7 @@ impl MemberCoordinatorBuilder {
             tasks,
             state_rx,
             state_cache,
+            list_nodes_event_tx,
         };
 
         (handle, runner)
@@ -447,6 +486,7 @@ impl MemberHandle {
                 stderr_preview,
                 respawn_enabled: meta.respawn_enabled,
                 respawn_delay: meta.respawn_delay,
+                auto_load: meta.auto_load,
                 output_dir: meta.output_dir.clone(),
             });
         }
@@ -511,6 +551,7 @@ impl MemberHandle {
             stderr_preview,
             respawn_enabled: meta.respawn_enabled,
             respawn_delay: meta.respawn_delay,
+            auto_load: meta.auto_load,
             output_dir: meta.output_dir.clone(),
         })
     }
@@ -644,6 +685,127 @@ impl MemberHandle {
         Ok(())
     }
 
+    /// Toggle auto-load for a composable node
+    pub async fn toggle_auto_load(&self, name: &str, enabled: bool) -> Result<()> {
+        // Send control event to actor
+        self.send_control(name, ControlEvent::ToggleAutoLoad(enabled))
+            .await?;
+
+        // Update metadata so web UI reflects the new state
+        let mut metadata_guard = self.metadata.write().await;
+        if let Some(meta) = metadata_guard.get_mut(name) {
+            if meta.member_type != MemberType::ComposableNode {
+                return Err(eyre::eyre!("Auto-load only applies to composable nodes"));
+            }
+            meta.auto_load = Some(enabled);
+        } else {
+            return Err(eyre::eyre!("Member '{}' not found", name));
+        }
+
+        Ok(())
+    }
+
+    /// Request a composable node to load (retry loading)
+    pub async fn load_member(&self, name: &str) -> Result<()> {
+        self.send_control(name, ControlEvent::Load).await
+    }
+
+    /// Request a composable node to unload
+    pub async fn unload_member(&self, name: &str) -> Result<()> {
+        self.send_control(name, ControlEvent::Unload).await
+    }
+
+    /// Load all unloaded or failed composable nodes in a container
+    pub async fn load_all_container_children(&self, container_name: &str) -> Result<usize> {
+        // First verify the container exists and is a container
+        let metadata_guard = self.metadata.read().await;
+        if let Some(container_meta) = metadata_guard.get(container_name) {
+            if container_meta.member_type != MemberType::Container {
+                return Err(eyre::eyre!("'{}' is not a container", container_name));
+            }
+        } else {
+            return Err(eyre::eyre!("Container '{}' not found", container_name));
+        }
+
+        // Collect names of composable nodes that need loading
+        let mut nodes_to_load = Vec::new();
+        for (name, meta) in metadata_guard.iter() {
+            if meta.member_type == MemberType::ComposableNode {
+                if let Some(target) = &meta.target_container {
+                    if target == container_name {
+                        // Check if this node is in Unloaded or Failed state
+                        if let Some(state_lock) = self.state_cache.get(name) {
+                            let state = state_lock.read().await;
+                            match &*state {
+                                MemberState::Unloaded | MemberState::Failed { .. } => {
+                                    nodes_to_load.push(name.clone());
+                                }
+                                _ => {} // Skip nodes in other states
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        drop(metadata_guard); // Release lock before sending controls
+
+        // Send Load control to all nodes that need it
+        let mut loaded_count = 0;
+        for name in nodes_to_load {
+            if let Err(e) = self.send_control(&name, ControlEvent::Load).await {
+                tracing::warn!("Failed to load {}: {}", name, e);
+            } else {
+                loaded_count += 1;
+            }
+        }
+
+        Ok(loaded_count)
+    }
+
+    /// Unload all loaded composable nodes in a container
+    pub async fn unload_all_container_children(&self, container_name: &str) -> Result<usize> {
+        // First verify the container exists and is a container
+        let metadata_guard = self.metadata.read().await;
+        if let Some(container_meta) = metadata_guard.get(container_name) {
+            if container_meta.member_type != MemberType::Container {
+                return Err(eyre::eyre!("'{}' is not a container", container_name));
+            }
+        } else {
+            return Err(eyre::eyre!("Container '{}' not found", container_name));
+        }
+
+        // Collect names of composable nodes that are loaded
+        let mut nodes_to_unload = Vec::new();
+        for (name, meta) in metadata_guard.iter() {
+            if meta.member_type == MemberType::ComposableNode {
+                if let Some(target) = &meta.target_container {
+                    if target == container_name {
+                        // Check if this node is in Loaded state
+                        if let Some(state_lock) = self.state_cache.get(name) {
+                            let state = state_lock.read().await;
+                            if let MemberState::Loaded { .. } = &*state {
+                                nodes_to_unload.push(name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        drop(metadata_guard); // Release lock before sending controls
+
+        // Send Unload control to all loaded nodes
+        let mut unloaded_count = 0;
+        for name in nodes_to_unload {
+            if let Err(e) = self.send_control(&name, ControlEvent::Unload).await {
+                tracing::warn!("Failed to unload {}: {}", name, e);
+            } else {
+                unloaded_count += 1;
+            }
+        }
+
+        Ok(unloaded_count)
+    }
+
     /// Broadcast shutdown signal to all actors
     pub fn shutdown(&self) -> Result<()> {
         self.shutdown_tx
@@ -665,6 +827,85 @@ impl MemberHandle {
     pub fn state_cache(&self) -> &Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>> {
         &self.state_cache
     }
+
+    /// Handle node discovery from ListNodes query
+    /// Matches discovered nodes to composable actors and sends DiscoveredLoaded control event
+    pub async fn handle_node_discovered(
+        &self,
+        container_name: &str,
+        full_node_name: &str,
+        unique_id: u64,
+    ) {
+        debug!(
+            "Handling node discovery: container='{}', node='{}', unique_id={}",
+            container_name, full_node_name, unique_id
+        );
+
+        // Find all composable nodes that match this container and full node name
+        let metadata_guard = self.metadata.read().await;
+        let mut matched_actors = Vec::new();
+
+        for (actor_name, meta) in metadata_guard.iter() {
+            // Only check composable nodes
+            if meta.member_type != MemberType::ComposableNode {
+                continue;
+            }
+
+            // Check if this node belongs to the discovered container
+            if let Some(ref target_container) = meta.target_container {
+                // Normalize target container name (may or may not have leading slash)
+                let normalized_target = if target_container.starts_with('/') {
+                    target_container.clone()
+                } else {
+                    format!("/{}", target_container)
+                };
+
+                if normalized_target != container_name {
+                    continue; // Wrong container
+                }
+            } else {
+                continue; // No target container
+            }
+
+            // Construct the expected full node name for this actor
+            if let (Some(ref namespace), Some(ref node_name)) = (&meta.namespace, &meta.node_name) {
+                let expected_full_name = if namespace == "/" {
+                    format!("/{}", node_name)
+                } else if namespace.ends_with('/') {
+                    format!("{}{}", namespace, node_name)
+                } else {
+                    format!("{}/{}", namespace, node_name)
+                };
+
+                if expected_full_name == full_node_name {
+                    debug!(
+                        "Matched discovered node '{}' to actor '{}'",
+                        full_node_name, actor_name
+                    );
+                    matched_actors.push(actor_name.clone());
+                }
+            }
+        }
+        drop(metadata_guard);
+
+        // Send DiscoveredLoaded control event to all matched actors
+        for actor_name in matched_actors {
+            match self
+                .send_control(&actor_name, ControlEvent::DiscoveredLoaded { unique_id })
+                .await
+            {
+                Ok(_) => {
+                    debug!(
+                        "Sent DiscoveredLoaded to '{}' (unique_id: {})",
+                        actor_name, unique_id
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to send DiscoveredLoaded to '{}': {}", actor_name, e);
+                }
+            }
+        }
+    }
 }
 
 /// Runner that waits for all actors to complete
@@ -676,6 +917,8 @@ pub struct MemberRunner {
     state_rx: mpsc::Receiver<StateEvent>,
     /// Shared state cache (updated for web UI queries, RwLock per MemberState)
     state_cache: Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>>,
+    /// Channel to forward ListNodesRequested events to the manager
+    list_nodes_event_tx: Option<mpsc::Sender<StateEvent>>,
 }
 
 impl MemberRunner {
@@ -694,6 +937,8 @@ impl MemberRunner {
             StateEvent::LoadSucceeded { name, .. } => name,
             StateEvent::LoadFailed { name, .. } => name,
             StateEvent::Blocked { name, .. } => name,
+            StateEvent::NodeDiscovered { container_name, .. } => container_name,
+            StateEvent::ListNodesRequested { requester, .. } => requester,
         };
 
         // Get the RwLock for this specific member
@@ -740,6 +985,10 @@ impl MemberRunner {
 
                     MemberState::Blocked { reason: web_reason }
                 }
+                // These events don't directly update member state
+                StateEvent::NodeDiscovered { .. } | StateEvent::ListNodesRequested { .. } => {
+                    return; // No state update needed
+                }
             };
         }
     }
@@ -751,7 +1000,19 @@ impl MemberRunner {
 
     /// Get the next state event (for web UI forwarding)
     pub async fn next_state_event(&mut self) -> Option<StateEvent> {
-        self.state_rx.recv().await
+        let event = self.state_rx.recv().await;
+
+        // Forward ListNodesRequested events to the manager
+        if let Some(ref evt) = event {
+            if let StateEvent::ListNodesRequested { .. } = evt {
+                if let Some(ref tx) = self.list_nodes_event_tx {
+                    // Send to manager (non-blocking, ignore errors if manager is gone)
+                    let _ = tx.try_send(evt.clone());
+                }
+            }
+        }
+
+        event
     }
 
     /// Wait for all actors to complete (takes mut self!)
@@ -763,6 +1024,7 @@ impl MemberRunner {
             tasks,
             mut state_rx,
             state_cache,
+            list_nodes_event_tx: _list_nodes_event_tx,
         } = self;
 
         // Track task count before moving into FuturesUnordered

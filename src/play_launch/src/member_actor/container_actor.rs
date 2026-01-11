@@ -99,6 +99,8 @@ pub struct ContainerActor {
     ros_node: Option<Arc<rclrs::Node>>,
     /// ROS service client for LoadNode
     load_client: Option<rclrs::Client<composition_interfaces::srv::LoadNode>>,
+    /// ROS service client for UnloadNode
+    unload_client: Option<rclrs::Client<composition_interfaces::srv::UnloadNode>>,
     /// Queue of pending load requests
     pending_loads: VecDeque<LoadRequest>,
     /// Currently processing load
@@ -135,6 +137,7 @@ impl ContainerActor {
             load_control_rx,
             ros_node,
             load_client: None,
+            unload_client: None,
             pending_loads: VecDeque::new(),
             current_load: None,
         }
@@ -282,10 +285,20 @@ impl ContainerActor {
 
         // Call the service (NO timeout - wait indefinitely)
         // Composable node actor handles timeout on its side
+        debug!(
+            "{}: Initiating LoadNode service call for {}",
+            container_name, params.composable_name
+        );
+
         let response_future: rclrs::Promise<composition_interfaces::srv::LoadNode_Response> =
             client
                 .call(&ros_request)
                 .context("Failed to initiate LoadNode service call")?;
+
+        debug!(
+            "{}: Waiting for LoadNode response for {}",
+            container_name, params.composable_name
+        );
 
         match response_future.await {
             Ok(response) => {
@@ -295,16 +308,27 @@ impl ContainerActor {
                     start_time.duration_since(params.request_time).as_millis() as u64;
                 let total_duration_ms = params.request_time.elapsed().as_millis() as u64;
 
-                debug!(
-                    "{}: LoadNode response for {}: success={}, unique_id={}, queue={}ms, service={}ms, total={}ms",
-                    container_name,
-                    params.composable_name,
-                    response.success,
-                    response.unique_id,
-                    queue_wait_ms,
-                    service_call_ms,
-                    total_duration_ms
-                );
+                if response.success {
+                    debug!(
+                        "{}: LoadNode SUCCESS for {}: unique_id={}, queue={}ms, service={}ms, total={}ms",
+                        container_name,
+                        params.composable_name,
+                        response.unique_id,
+                        queue_wait_ms,
+                        service_call_ms,
+                        total_duration_ms
+                    );
+                } else {
+                    warn!(
+                        "{}: LoadNode FAILED for {}: error='{}', queue={}ms, service={}ms, total={}ms",
+                        container_name,
+                        params.composable_name,
+                        response.error_message,
+                        queue_wait_ms,
+                        service_call_ms,
+                        total_duration_ms
+                    );
+                }
 
                 Ok(LoadNodeResponse {
                     success: response.success,
@@ -320,12 +344,88 @@ impl ContainerActor {
             }
             Err(e) => {
                 warn!(
-                    "{}: LoadNode service call error for {}: {:?}",
+                    "{}: LoadNode service call ERROR for {}: {:?}",
                     container_name, params.composable_name, e
                 );
                 Err(eyre::eyre!("Service call failed: {:?}", e))
             }
         }
+    }
+
+    /// Call UnloadNode ROS service
+    async fn call_unload_node_service(
+        container_name: String,
+        unload_client: Option<rclrs::Client<composition_interfaces::srv::UnloadNode>>,
+        unique_id: u64,
+    ) -> Result<super::container_control::UnloadNodeResponse> {
+        use eyre::Context;
+
+        // Check if client exists
+        let client = unload_client.ok_or_else(|| {
+            eyre::eyre!(
+                "No UnloadNode service client available for container {}",
+                container_name
+            )
+        })?;
+
+        // Build UnloadNode request
+        let ros_request = composition_interfaces::srv::UnloadNode_Request { unique_id };
+
+        debug!(
+            "{}: Calling UnloadNode service (unique_id: {})",
+            container_name, unique_id
+        );
+
+        // Call the service
+        let response_future: rclrs::Promise<composition_interfaces::srv::UnloadNode_Response> =
+            client
+                .call(&ros_request)
+                .context("Failed to initiate UnloadNode service call")?;
+
+        match response_future.await {
+            Ok(response) => {
+                debug!(
+                    "{}: UnloadNode response: success={}, error_message={}",
+                    container_name, response.success, response.error_message
+                );
+
+                Ok(super::container_control::UnloadNodeResponse {
+                    success: response.success,
+                    error_message: response.error_message.clone(),
+                })
+            }
+            Err(e) => {
+                warn!("{}: UnloadNode service call error: {:?}", container_name, e);
+                Err(eyre::eyre!("Service call failed: {:?}", e))
+            }
+        }
+    }
+
+    /// Handle an UnloadNode request
+    async fn handle_unload_request(
+        &self,
+        composable_name: String,
+        unique_id: u64,
+        response_tx: tokio::sync::oneshot::Sender<
+            Result<super::container_control::UnloadNodeResponse>,
+        >,
+    ) {
+        let container_name = self.name.clone();
+        let unload_client = self.unload_client.clone();
+
+        // Spawn service call as a task (so it doesn't block the actor)
+        tokio::spawn(async move {
+            let result =
+                Self::call_unload_node_service(container_name, unload_client, unique_id).await;
+
+            // Send response back
+            if let Err(result) = response_tx.send(result) {
+                warn!(
+                    "Failed to send UnloadNode response for {}: {:?}",
+                    composable_name, result
+                );
+            }
+        });
     }
 
     /// Drain the load queue and respond with an error
@@ -454,6 +554,33 @@ impl ContainerActor {
                                 // Don't fail the container - composable nodes will get errors when trying to load
                             }
                         }
+
+                        // Also create UnloadNode service client
+                        let unload_service_name =
+                            format!("{}/_container/unload_node", self.full_node_name());
+                        debug!(
+                            "{}: Creating UnloadNode service client for {}",
+                            self.name, unload_service_name
+                        );
+
+                        match ros_node.create_client::<composition_interfaces::srv::UnloadNode>(
+                            &unload_service_name,
+                        ) {
+                            Ok(client) => {
+                                self.unload_client = Some(client);
+                                debug!(
+                                    "{}: UnloadNode service client created successfully",
+                                    self.name
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "{}: Failed to create UnloadNode service client: {:#}",
+                                    self.name, e
+                                );
+                                // Don't fail the container - composable nodes will get errors when trying to unload
+                            }
+                        }
                     } else {
                         warn!(
                             "{}: No ROS node available for LoadNode service calls",
@@ -508,6 +635,10 @@ impl ContainerActor {
                     // Drain load queue (container crashed)
                     self.drain_queue("Container crashed");
 
+                    // Clear service client so it's recreated on restart
+                    self.load_client = None;
+                    self.unload_client = None;
+
                     // Broadcast stopped state to composable nodes
                     let _ = self.container_state_tx.send(ContainerState::Stopped);
 
@@ -529,7 +660,7 @@ impl ContainerActor {
                         let _ = self.state_tx.send(StateEvent::Terminated {
                             name: self.name.clone(),
                         }).await;
-                        return Ok(false); // Stop actor
+                        return Ok(true); // Keep actor alive to receive Start commands
                     }
                 }
 
@@ -552,6 +683,10 @@ impl ContainerActor {
 
                             // Drain load queue
                             self.drain_queue("Container stopped");
+
+                            // Clear service client so it's recreated on restart
+                            self.load_client = None;
+                    self.unload_client = None;
 
                             // Broadcast stopped state
                             let _ = self.container_state_tx.send(ContainerState::Stopped);
@@ -579,6 +714,10 @@ impl ContainerActor {
                             // Drain load queue
                             self.drain_queue("Container restarting");
 
+                            // Clear service client so it's recreated on restart
+                            self.load_client = None;
+                    self.unload_client = None;
+
                             // Transition to Pending to respawn
                             self.state = NodeState::Pending;
                             return Ok(true); // Continue to respawn
@@ -589,18 +728,50 @@ impl ContainerActor {
                     }
                 }
 
-                // Handle LoadNode requests (Phase 1)
+                // Handle LoadNode and UnloadNode requests (Phase 1)
                 Some(event) = self.load_control_rx.recv() => {
-                    if let Some(request) = Option::<LoadRequest>::from(event) {
-                        debug!("{}: Received load request for {}", self.name, request.composable_name);
+                    match event {
+                        ContainerControlEvent::LoadNode {
+                            composable_name,
+                            package,
+                            plugin,
+                            node_name,
+                            node_namespace,
+                            remap_rules,
+                            parameters,
+                            extra_args,
+                            response_tx,
+                        } => {
+                            debug!("{}: Received load request for {}", self.name, composable_name);
 
-                        // Queue the request
-                        self.pending_loads.push_back(request);
+                            // Create load request
+                            let request = LoadRequest {
+                                composable_name,
+                                package,
+                                plugin,
+                                node_name,
+                                node_namespace,
+                                remap_rules,
+                                parameters,
+                                extra_args,
+                                response_tx,
+                                request_time: std::time::Instant::now(),
+                            };
 
-                        // Start processing next load ONLY if not currently processing
-                        // This spawns an async task so it doesn't block the select! loop
-                        if self.current_load.is_none() {
-                            self.start_next_load();
+                            // Queue the request
+                            self.pending_loads.push_back(request);
+
+                            // Start processing next load ONLY if not currently processing
+                            // This spawns an async task so it doesn't block the select! loop
+                            if self.current_load.is_none() {
+                                self.start_next_load();
+                            }
+                        }
+                        ContainerControlEvent::UnloadNode { composable_name, unique_id, response_tx } => {
+                            debug!("{}: Received unload request for {} (unique_id: {})",
+                                self.name, composable_name, unique_id);
+                            // Handle unload request immediately (no queuing needed)
+                            self.handle_unload_request(composable_name, unique_id, response_tx).await;
                         }
                     }
                 }
@@ -732,6 +903,11 @@ impl ContainerActor {
                 match event {
                     ControlEvent::Stop => {
                         info!("{}: Stop requested during respawn delay", self.name);
+
+                        // Clear service client (should already be None, but be explicit)
+                        self.load_client = None;
+                    self.unload_client = None;
+
                         self.state = NodeState::Stopped { exit_code: None };
 
                         // Broadcast stopped state
@@ -759,6 +935,61 @@ impl ContainerActor {
                     Ok(false) // Stop actor
                 } else {
                     Ok(true)
+                }
+            }
+        }
+    }
+
+    /// Handle stopped/failed state - wait for control events
+    ///
+    /// Returns false if the actor should terminate (shutdown), true to continue
+    async fn handle_stopped(&mut self) -> Result<bool> {
+        // Wait for control event or shutdown signal
+        tokio::select! {
+            Some(event) = self.control_rx.recv() => {
+                match event {
+                    ControlEvent::Start => {
+                        info!("{}: Start requested", self.name);
+
+                        // Transition to Pending to spawn container
+                        match &self.state {
+                            NodeState::Stopped { .. } | NodeState::Failed { .. } => {
+                                self.state = NodeState::Pending;
+                                info!("{}: Transitioning to Pending for spawn", self.name);
+                                Ok(true) // Continue to spawn
+                            }
+                            _ => {
+                                // Should not happen, but handle gracefully
+                                warn!("{}: Start requested in unexpected state", self.name);
+                                Ok(true)
+                            }
+                        }
+                    }
+                    ControlEvent::Restart => {
+                        info!("{}: Restart requested", self.name);
+
+                        // Transition to Pending to spawn container
+                        self.state = NodeState::Pending;
+                        Ok(true) // Continue to spawn
+                    }
+                    ControlEvent::Stop => {
+                        // Already stopped, ignore
+                        info!("{}: Stop requested while already stopped", self.name);
+                        Ok(true)
+                    }
+                    _ => {
+                        warn!("{}: Unhandled control event in Stopped state: {:?}", self.name, event);
+                        Ok(true)
+                    }
+                }
+            }
+
+            _ = self.shutdown_rx.changed() => {
+                if *self.shutdown_rx.borrow() {
+                    debug!("{}: Shutdown signal received in Stopped/Failed state", self.name);
+                    Ok(false) // Terminate
+                } else {
+                    Ok(true) // Continue
                 }
             }
         }
@@ -821,13 +1052,9 @@ impl MemberActor for ContainerActor {
                     self.handle_running(child, pid).await?
                 }
                 NodeState::Respawning { attempt, .. } => self.handle_respawning(attempt).await?,
-                NodeState::Stopped { .. } => {
-                    debug!("{}: Container stopped", self.name);
-                    break;
-                }
-                NodeState::Failed { ref error } => {
-                    error!("{}: Container failed: {}", self.name, error);
-                    break;
+                NodeState::Stopped { .. } | NodeState::Failed { .. } => {
+                    // Keep actor alive to receive Start/Restart commands from Web UI
+                    self.handle_stopped().await?
                 }
             };
 

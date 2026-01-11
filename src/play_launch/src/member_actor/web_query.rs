@@ -36,6 +36,7 @@ pub enum MemberState {
     },
 
     /// Composable node states
+    Unloaded,
     Loading,
     Loaded {
         unique_id: u64,
@@ -91,6 +92,9 @@ pub struct MemberSummary {
     /// Respawn delay in seconds
     #[serde(skip_serializing_if = "Option::is_none")]
     pub respawn_delay: Option<f64>,
+    /// Auto-load when container starts (for composable nodes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_load: Option<bool>,
     /// Output directory for logs
     pub output_dir: PathBuf,
 }

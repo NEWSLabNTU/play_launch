@@ -18,6 +18,10 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub container_readiness: ContainerReadinessSettings,
 
+    /// ListNodes verification settings
+    #[serde(default)]
+    pub list_nodes: ListNodesSettings,
+
     /// Per-process configurations
     #[serde(default)]
     pub processes: Vec<ProcessConfig>,
@@ -126,6 +130,51 @@ pub struct ContainerReadinessSettings {
     #[serde(default = "default_service_poll_interval_ms")]
     #[allow(dead_code)]
     pub service_poll_interval_ms: u64,
+}
+
+/// ListNodes verification settings
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListNodesSettings {
+    /// Minimum time between ListNodes queries for each container (seconds)
+    #[serde(default = "default_list_nodes_rate_limit_secs")]
+    pub rate_limit_secs: u64,
+
+    /// Timeout for loading before triggering verification (seconds)
+    #[serde(default = "default_list_nodes_loading_timeout_secs")]
+    pub loading_timeout_secs: u64,
+
+    /// Timeout for unloading before triggering verification (seconds)
+    #[serde(default = "default_list_nodes_unloading_timeout_secs")]
+    #[allow(dead_code)] // Reserved for future unload verification feature
+    pub unloading_timeout_secs: u64,
+
+    /// Timeout for ListNodes service call (milliseconds)
+    #[serde(default = "default_list_nodes_call_timeout_ms")]
+    pub call_timeout_ms: u64,
+}
+
+impl Default for ListNodesSettings {
+    fn default() -> Self {
+        Self {
+            rate_limit_secs: default_list_nodes_rate_limit_secs(),
+            loading_timeout_secs: default_list_nodes_loading_timeout_secs(),
+            unloading_timeout_secs: default_list_nodes_unloading_timeout_secs(),
+            call_timeout_ms: default_list_nodes_call_timeout_ms(),
+        }
+    }
+}
+
+fn default_list_nodes_rate_limit_secs() -> u64 {
+    5
+}
+fn default_list_nodes_loading_timeout_secs() -> u64 {
+    30
+}
+fn default_list_nodes_unloading_timeout_secs() -> u64 {
+    10
+}
+fn default_list_nodes_call_timeout_ms() -> u64 {
+    5000
 }
 
 impl Default for ContainerReadinessSettings {
@@ -269,6 +318,7 @@ pub struct ResolvedRuntimeConfig {
     #[allow(dead_code)]
     pub composable_node_loading: ComposableNodeLoadingSettings,
     pub container_readiness: ContainerReadinessSettings,
+    pub list_nodes: ListNodesSettings,
 }
 
 /// Resolved monitoring configuration
@@ -385,6 +435,7 @@ pub fn load_runtime_config(
         },
         composable_node_loading: config.composable_node_loading,
         container_readiness: config.container_readiness,
+        list_nodes: config.list_nodes,
     })
 }
 
@@ -418,6 +469,12 @@ mod tests {
         assert!(config.container_readiness.wait_for_service_ready); // Now defaults to true
         assert_eq!(config.container_readiness.service_ready_timeout_secs, 120);
         assert_eq!(config.container_readiness.service_poll_interval_ms, 500);
+
+        // Test ListNodes verification defaults
+        assert_eq!(config.list_nodes.rate_limit_secs, 5);
+        assert_eq!(config.list_nodes.loading_timeout_secs, 30);
+        assert_eq!(config.list_nodes.unloading_timeout_secs, 10);
+        assert_eq!(config.list_nodes.call_timeout_ms, 5000);
     }
 
     #[test]

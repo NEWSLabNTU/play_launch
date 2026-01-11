@@ -19,6 +19,13 @@ pub struct LoadNodeResponse {
     pub timing: LoadTimingMetrics,
 }
 
+/// Response from unloading a composable node
+#[derive(Clone, Debug, PartialEq)]
+pub struct UnloadNodeResponse {
+    pub success: bool,
+    pub error_message: String,
+}
+
 /// Timing metrics for LoadNode operation
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoadTimingMetrics {
@@ -53,6 +60,15 @@ pub enum ContainerControlEvent {
         extra_args: Vec<(String, String)>,
         /// Channel to send the response
         response_tx: oneshot::Sender<Result<LoadNodeResponse>>,
+    },
+    /// Request to unload a composable node from this container
+    UnloadNode {
+        /// Name of the composable node (for logging)
+        composable_name: String,
+        /// Unique ID from LoadNode response
+        unique_id: u64,
+        /// Channel to send the response
+        response_tx: oneshot::Sender<Result<UnloadNodeResponse>>,
     },
 }
 
@@ -130,6 +146,7 @@ impl From<ContainerControlEvent> for Option<LoadRequest> {
                 response_tx,
                 request_time: Instant::now(),
             }),
+            ContainerControlEvent::UnloadNode { .. } => None,
         }
     }
 }

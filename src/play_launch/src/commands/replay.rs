@@ -461,7 +461,11 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // Add composable nodes (builder will match them with containers during spawn())
     debug!("Adding {} composable nodes", num_composable_nodes);
 
-    let composable_config = crate::member_actor::ComposableActorConfig::default();
+    let composable_config = crate::member_actor::ComposableActorConfig {
+        load_timeout: Some(std::time::Duration::from_secs(30)),
+        auto_load: true,
+        list_nodes_loading_timeout_secs: runtime_config.list_nodes.loading_timeout_secs,
+    };
 
     for context in load_node_contexts {
         let member_name = format!("LOAD_NODE '{}'", context.record.node_name);
@@ -472,7 +476,9 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // Now spawn all actors at once and get handle + runner
     // Pass the shared ROS node for container actors to use
     debug!("Spawning all {} actors...", builder.member_count());
-    let (member_handle, member_runner) = builder.spawn(shared_ros_node).await;
+    let (member_handle, member_runner) = builder
+        .spawn(shared_ros_node, Some(runtime_config.list_nodes.clone()))
+        .await;
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
     debug!("All actors spawned successfully");
 
@@ -622,13 +628,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     .await;
 
     #[cfg(not(unix))]
-    wait_for_completion_windows(
-        ctx,
-        background_tasks,
-        task_names,
-        &cleanup_guard,
-    )
-    .await;
+    wait_for_completion_windows(ctx, background_tasks, task_names, &cleanup_guard).await;
 
     debug!("play() function completed, returning");
     Ok(())
@@ -1063,6 +1063,19 @@ async fn forward_state_events_and_wait(
     loop {
         match runner.next_state_event().await {
             Some(event) => {
+                // Handle NodeDiscovered events before updating state cache
+                if let crate::member_actor::StateEvent::NodeDiscovered {
+                    ref container_name,
+                    ref full_node_name,
+                    unique_id,
+                } = event
+                {
+                    // Match discovered node to composable actors and send DiscoveredLoaded
+                    member_handle
+                        .handle_node_discovered(container_name, full_node_name, unique_id)
+                        .await;
+                }
+
                 // Update state cache manually (since we're consuming events here instead of in wait_for_completion)
                 crate::member_actor::MemberRunner::update_state_static(
                     &event,
