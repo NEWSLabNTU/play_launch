@@ -75,12 +75,12 @@ play_launch plot --metrics cpu memory           # Plot specific metrics
 1. **Load**: Deserialize `record.json`, copy parameter files
 2. **Context Preparation**: Classify nodes (containers vs regular)
 3. **Background Tasks**: Async tokio tasks for component loading, service discovery, monitoring, and process management
-4. **Execution**: Actor-based lifecycle management for regular nodes, containers, and composable nodes
+4. **Execution**: Actor-based lifecycle management for regular nodes and containers; composable nodes are virtual members managed by their parent containers
 5. **Logging**: All output saved to `play_log/<timestamp>/`
 
 ### Module Structure
 
-- **member_actor/**: Actor-based lifecycle management for nodes, containers, and composable nodes
+- **member_actor/**: Actor-based lifecycle management for nodes and containers; composable nodes as virtual members
 - **execution/**: Process spawning and orchestration
 - **ros/**: ROS integration (component loading, service discovery, package resolution)
 - **monitoring/**: Resource monitoring and I/O helper client
@@ -93,6 +93,7 @@ play_launch plot --metrics cpu memory           # Plot specific metrics
 
 - **Async/Tokio**: All background services run as async tasks with unified shutdown handling
 - **Actor Pattern**: Self-contained lifecycle management for nodes with respawn support
+- **Virtual Members (Phase 12)**: Composable nodes are managed as internal state by container actors, not separate actors. Container actors handle LoadNode service calls, state transitions, and timeout detection. Control events (Start/Stop/Restart) for composable nodes are routed to parent containers and translated to Load/Unload operations.
 - **ListNodes Verification**: On-demand query manager verifies composable node loading states when LoadNode calls hang or timeout
 - **Web UI Mode**: Event-driven architecture bridges actor state to web interface
 
@@ -150,16 +151,11 @@ play_log/
 └── 2025-12-21_09-44-52/
     ├── params_files/              # Cached parameter files
     ├── system_stats.csv           # System-wide metrics
-    ├── node/<node_name>/          # Regular nodes (flat structure)
-    │   ├── metadata.json          # Package, namespace, container info
-    │   ├── metrics.csv            # Resource metrics (when enabled)
-    │   ├── out/err/pid/status     # Process logs
-    │   └── cmdline                # Executed command
-    └── load_node/<node_name>/     # Composable nodes (flat structure)
-        ├── metadata.json
-        ├── metrics.csv
-        ├── service_response.*     # LoadNode responses
-        └── status
+    └── node/<node_name>/          # Regular nodes and containers (flat structure)
+        ├── metadata.json          # Package, namespace, composable_nodes array for containers
+        ├── metrics.csv            # Resource metrics (when enabled) - per-process only
+        ├── out/err/pid/status     # Process logs
+        └── cmdline                # Executed command
 ```
 
 **Features**:
@@ -167,6 +163,7 @@ play_log/
 - Flat 1-level structure for easy scripting
 - Short directory names (e.g., `control_evaluator`) with deduplication (`_2`, `_3`)
 - Each node directory is self-contained with all data
+- **Phase 12**: Composable nodes no longer have separate log directories. Their metadata is included in the parent container's `metadata.json` under the `composable_nodes` array. Metrics are per-process (container only).
 - `play_launch plot` uses `latest` symlink by default (no need to specify log directory)
 
 ## Resource Monitoring
@@ -408,6 +405,11 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 
 ## Key Recent Changes
 
+- **2026-01-13**: Member name simplification - Removed "NODE ''" and "LOAD_NODE ''" prefixes from all member names. Names now come directly from record.json: regular nodes use `record.name`, containers use `record.name`, composable nodes use `record.node_name`. This results in cleaner log directory names (e.g., "talker-1" instead of "NODE 'talker-1'", "listener" instead of "LOAD_NODE 'listener'") and cleaner Web UI display (replay.rs:413-420, 441-449, 476; run.rs:231-237).
+- **2026-01-13**: Phase 12 cleanup - Removed all deprecated composable node actor code. Deleted `composable_node_actor.rs` (41KB), removed `ComposableActorConfig` struct, simplified coordinator API to pass `auto_load` directly instead of config object. All references to deprecated code removed from mod.rs, coordinator.rs, and replay.rs. Codebase is now cleaner with Phase 12 fully complete.
+- **2026-01-13**: Logging improvements and restart debugging - Adjusted log levels for composable node loading to reduce noise: changed all loading-related messages to DEBUG level ("Successfully loaded composable node", "Transitioning N blocked composable nodes", "Queueing N composable nodes for loading", "No composable nodes to load"). Startup output is now much cleaner - INFO level only shows essential progress. Added detailed state tracking in handle_load_all_composables() to help diagnose container restart issues - logs state summary (Blocked/Unloaded/Loading/Loaded/Failed counts) and which specific nodes are being queued (visible with RUST_LOG=play_launch=debug). Tested with Autoware simulation - all 49 composable nodes loaded successfully (container_actor.rs:792, 797, 1074, 1334, 757-809).
+- **2026-01-13**: Phase 12: Parameter passing and type preservation fix - Fixed LoadNode service calls not passing parameters to composable nodes. Added helper functions `ros_params_to_strings()` and `parameter_value_to_string()` to convert ROS rcl_interfaces::msg::Parameter objects to string tuples. Fixed double parameter type preservation by ensuring all double values include a decimal point (e.g., "1.0" not "1") to prevent misinterpretation as integers. Updated `handle_load_composable()` to convert metadata.parameters and metadata.extra_args before creating LoadRequest. Fixes "Statically typed parameter 'X' must be initialized" and "parameter 'X' has invalid type: Wrong parameter type, parameter {X} is of type {double}, setting it to {integer} is not allowed" errors (container_actor.rs:153-189, 665-679).
+- **2026-01-12**: Phase 12: Container-managed composable nodes - Merged composable node actors into container actors. Composable nodes are now virtual members managed as internal state by their parent containers. Control events (Start/Stop/Restart) are routed to containers and translated to Load/Unload operations. Log directories consolidated - composable node metadata appears in container's metadata.json, no separate load_node directories. Deprecated ComposableNodeActor module (container_actor.rs, coordinator.rs, context.rs, replay.rs).
 - **2026-01-10**: ListNodes verification system (ALL PHASES COMPLETE) - Fully implemented on-demand verification of composable node loading states to resolve issues where nodes get stuck in "Loading" state. Phase 1: Added configuration (ListNodesSettings), event types (NodeDiscovered, ListNodesRequested, DiscoveredLoaded), and ListNodesManager module with rate-limiting and timeout handling. Phase 2: Integrated manager into coordinator spawn flow with automatic event forwarding from MemberRunner. Manager spawns as background task, receives ListNodesRequested events via dedicated channel, and broadcasts NodeDiscovered events back to state stream. Phase 3: Refactored composable_node_actor to detect loading timeouts and handle discovery. Added list_nodes_loading_timeout_secs to ComposableActorConfig (default 30s). Refactored handle_loading() to send LoadNode request non-blocking and enter select loop that monitors: LoadNode response, timeout for verification (emits ListNodesRequested), DiscoveredLoaded control event (transitions to Loaded), container state changes, and shutdown. Phase 4: Implemented node discovery matching in coordinator (coordinator.rs:835-916). Added handle_node_discovered() method that matches discovered nodes to composable actors by container name and full node name, then sends DiscoveredLoaded control event. Integrated into event loop (replay.rs:1066-1077) to process NodeDiscovered events before state cache update. SYSTEM NOW FULLY OPERATIONAL: composable nodes that are already loaded or take too long will be detected and verified through ListNodes queries.
 - **2026-01-09**: Web UI Start/Restart after exit fix - Fixed Start button not working after process exits. Issue: actor terminated when process exited with respawn disabled, making control channel unavailable. Solution: keep actor alive in Stopped state to handle Start/Restart commands (regular_node_actor.rs:236).
 - **2026-01-09**: Web UI Auto-restart checkbox fix - Fixed checkbox reverting after toggling. Issue: metadata was immutable after spawning, so Web UI always read the initial state. Solution: made metadata mutable (wrapped in `Arc<RwLock>`) and update it when ToggleRespawn control is sent (coordinator.rs:384, 633-645).
