@@ -46,7 +46,6 @@
 #![allow(unused_imports)]
 
 pub mod actor_traits;
-pub mod composable_node_actor;
 pub mod container_actor;
 pub mod container_control;
 pub mod coordinator;
@@ -58,7 +57,6 @@ pub mod web_query;
 
 // Re-export commonly used types
 pub use actor_traits::MemberActor;
-pub use composable_node_actor::{run_composable_node, ComposableActorConfig, ComposableNodeActor};
 pub use container_actor::{run_container, ComposableActorHandle, ContainerActor};
 pub use container_control::{ContainerControlEvent, LoadNodeResponse};
 pub use coordinator::{MemberCoordinatorBuilder, MemberHandle, MemberRunner};

@@ -243,6 +243,7 @@ async fn run_direct(
             max_respawn_attempts: None,
             output_dir: context.output_dir.clone(),
             pgid: Some(pgid),
+            list_nodes_loading_timeout_secs: 30, // Not applicable for regular nodes
         };
 
         // Add to builder

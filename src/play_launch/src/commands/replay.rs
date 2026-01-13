@@ -177,7 +177,12 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 
     debug!("Loading launch dump from: {}", input_file.display());
     let launch_dump = load_launch_dump(input_file)?;
-    debug!("Launch dump loaded successfully");
+    debug!(
+        "Launch dump loaded: {} nodes, {} containers, {} composable nodes",
+        launch_dump.node.len(),
+        launch_dump.container.len(),
+        launch_dump.load_node.len()
+    );
 
     // Prepare directories
     debug!("Creating log directories...");
@@ -193,10 +198,10 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         .wrap_err_with(|| format!("unable to create directory {}", node_log_dir.display()))?;
     debug!("Created node log directory");
 
+    // Phase 12: Composable nodes are now virtual members, no separate log directories needed
     let load_node_log_dir = log_dir.join("load_node");
-    fs::create_dir(&load_node_log_dir)
-        .wrap_err_with(|| format!("unable to create directory {}", load_node_log_dir.display()))?;
-    debug!("Created load_node log directory");
+    // Note: Directory not created since composable nodes don't have separate process logs
+    debug!("Skipped load_node log directory (Phase 12: virtual members)");
 
     // Initialize NVML for GPU monitoring
     debug!("Initializing NVML...");
@@ -419,6 +424,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             max_respawn_attempts: None,
             output_dir: context.output_dir.clone(),
             pgid: Some(pgid),
+            list_nodes_loading_timeout_secs: runtime_config.list_nodes.loading_timeout_secs,
         };
 
         builder.add_regular_node(
@@ -447,6 +453,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             max_respawn_attempts: None,
             output_dir: context.node_context.output_dir.clone(),
             pgid: Some(pgid),
+            list_nodes_loading_timeout_secs: runtime_config.list_nodes.loading_timeout_secs,
         };
 
         // Add container (oneshot receiver is ignored since composable nodes will be matched internally)
@@ -459,18 +466,13 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     }
 
     // Add composable nodes (builder will match them with containers during spawn())
+    // Phase 12: Composable nodes are managed by containers as virtual members
     debug!("Adding {} composable nodes", num_composable_nodes);
-
-    let composable_config = crate::member_actor::ComposableActorConfig {
-        load_timeout: Some(std::time::Duration::from_secs(30)),
-        auto_load: true,
-        list_nodes_loading_timeout_secs: runtime_config.list_nodes.loading_timeout_secs,
-    };
 
     for context in load_node_contexts {
         let member_name = format!("LOAD_NODE '{}'", context.record.node_name);
-
-        builder.add_composable_node(member_name, context, composable_config.clone());
+        // Auto-load enabled by default for all composable nodes
+        builder.add_composable_node(member_name, context, true);
     }
 
     // Now spawn all actors at once and get handle + runner

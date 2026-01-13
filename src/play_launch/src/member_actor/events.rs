@@ -27,6 +27,15 @@ pub enum ControlEvent {
         /// Name of the composable node
         name: String,
     },
+    /// Unload a composable node by name (container actors only - Phase 12)
+    UnloadComposable {
+        /// Name of the composable node
+        name: String,
+    },
+    /// Load all composable nodes with auto_load=true (container actors only - Phase 12)
+    LoadAllComposables,
+    /// Unload all loaded composable nodes (container actors only - Phase 12)
+    UnloadAllComposables,
     /// Retry loading a composable node (composable node actors only)
     /// Transitions the node back to Unloaded state to trigger re-loading
     Load,

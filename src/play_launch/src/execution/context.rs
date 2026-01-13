@@ -33,6 +33,8 @@ struct NodeMetadata {
 }
 
 /// Metadata for a composable node
+/// Phase 12: No longer used - composable node metadata is now in container metadata
+#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 struct ComposableNodeMetadata {
     #[serde(rename = "type")]
@@ -453,57 +455,15 @@ pub fn prepare_composable_node_contexts(
         record_dirs.push((record, dir_name));
     }
 
-    // Now process in parallel with pre-computed directory names
+    // Phase 12: Composable nodes are now virtual members managed by containers.
+    // We no longer create separate log directories or metadata files for them.
+    // The metadata is written by the container actor when it updates its own metadata.
     let load_node_contexts: Result<Vec<_>, _> = record_dirs
         .par_iter()
         .map(|(record, dir_name)| {
-            let ComposableNodeRecord {
-                package,
-                plugin,
-                target_container_name,
-                node_name,
-                namespace,
-                ..
-            } = record;
-
-            // Create flat directory structure
+            // We still need output_dir for compatibility, but we won't create it
+            // since composable nodes don't have their own process logs
             let output_dir = load_node_log_dir.join(dir_name);
-            fs::create_dir_all(&output_dir)?;
-
-            // Extract container node name from target_container_name
-            // e.g., "/control/control_container" -> "control_container"
-            let target_container_node_name = target_container_name
-                .rsplit('/')
-                .next()
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
-
-            // Create metadata
-            let duplicate_index = if dir_name.contains('_') && dir_name != node_name {
-                // Extract index from name like "glog_component_2"
-                dir_name
-                    .rsplit('_')
-                    .next()
-                    .and_then(|s| s.parse::<usize>().ok())
-            } else {
-                None
-            };
-
-            let metadata = ComposableNodeMetadata {
-                node_type: "composable_node".to_string(),
-                package: package.clone(),
-                plugin: plugin.clone(),
-                node_name: node_name.clone(),
-                namespace: namespace.clone(),
-                target_container_name: target_container_name.clone(),
-                target_container_node_name,
-                duplicate_index,
-            };
-
-            // Write metadata.json
-            let metadata_path = output_dir.join("metadata.json");
-            let metadata_json = serde_json::to_string_pretty(&metadata)?;
-            fs::write(metadata_path, metadata_json)?;
 
             let log_name = format!("COMPOSABLE_NODE '{}'", dir_name);
             eyre::Ok(ComposableNodeContext {

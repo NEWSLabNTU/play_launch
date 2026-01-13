@@ -15,7 +15,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Current Status
 
-**Overall Progress**: ~95% complete (9 of 10 phases complete)
+**Overall Progress**: ~96% complete (10 of 11 phases complete)
 
 **Timeline**: Started October 2025, ongoing development
 
@@ -54,6 +54,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 |-------|--------|------------|---------------|
 | **Phase 10**: Async Actor Pattern Transformation | ✅ Complete | 2026-01-01 | [phase-10.md](./phase-10.md) |
 | **Phase 11**: Web UI Actor Integration | ⏳ Planned | - | [phase-11.md](./phase-11.md) |
+| **Phase 12**: Container-Managed Composable Nodes | ✅ Complete | 2026-01-13 | [phase-12.md](./phase-12.md) |
 
 ---
 
@@ -82,6 +83,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ### Planned ⏳
 
+- ⏳ Container-Managed Composable Nodes (Phase 12) - Merge composable node actors into container actors for simpler architecture
 - ⏳ Web UI Actor Integration (Phase 11) - Remove bridging layer, implement direct actor control
 - ⏳ Complete documentation (Phase 3)
 - ⏳ Comprehensive testing (Phase 4)

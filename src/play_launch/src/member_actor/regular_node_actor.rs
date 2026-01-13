@@ -481,6 +481,27 @@ impl RegularNodeActor {
                 );
                 Ok(true) // Ignore
             }
+            ControlEvent::UnloadComposable { .. } => {
+                warn!(
+                    "[{}] UnloadComposable not supported for regular nodes",
+                    self.name
+                );
+                Ok(true) // Ignore
+            }
+            ControlEvent::LoadAllComposables => {
+                warn!(
+                    "[{}] LoadAllComposables not supported for regular nodes",
+                    self.name
+                );
+                Ok(true) // Ignore
+            }
+            ControlEvent::UnloadAllComposables => {
+                warn!(
+                    "[{}] UnloadAllComposables not supported for regular nodes",
+                    self.name
+                );
+                Ok(true) // Ignore
+            }
             ControlEvent::Load => {
                 warn!("[{}] Load not supported for regular nodes", self.name);
                 Ok(true) // Ignore

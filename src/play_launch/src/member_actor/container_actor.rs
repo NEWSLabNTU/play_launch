@@ -13,7 +13,7 @@ use super::{
     actor_traits::MemberActor,
     container_control::{ContainerControlEvent, CurrentLoad, LoadNodeResponse, LoadRequest},
     events::{ControlEvent, StateEvent},
-    state::{ActorConfig, ContainerState, NodeState},
+    state::{ActorConfig, BlockReason, ComposableState, ContainerState, NodeState},
 };
 use crate::execution::context::NodeContext;
 use eyre::{Context as _, Result};
@@ -21,6 +21,7 @@ use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 use tokio::{
     process::Command,
@@ -28,6 +29,42 @@ use tokio::{
     time::{sleep, Duration},
 };
 use tracing::{debug, error, info, warn};
+
+/// Metadata for a composable node (Phase 12)
+#[derive(Debug, Clone)]
+pub struct ComposableNodeMetadata {
+    /// Package containing the component
+    pub package: String,
+    /// Plugin name (fully qualified class name)
+    pub plugin: String,
+    /// ROS node name
+    pub node_name: String,
+    /// ROS namespace
+    pub namespace: String,
+    /// Remap rules
+    pub remap_rules: Vec<String>,
+    /// Parameters (key-value pairs)
+    pub parameters: Vec<rcl_interfaces::msg::Parameter>,
+    /// Extra arguments
+    pub extra_args: Vec<rcl_interfaces::msg::Parameter>,
+    /// Auto-load on container startup
+    pub auto_load: bool,
+}
+
+/// Entry for a composable node managed by this container (Phase 12)
+#[derive(Debug)]
+struct ComposableNodeEntry {
+    /// Metadata for this composable node
+    metadata: ComposableNodeMetadata,
+    /// Current state
+    state: ComposableState,
+    /// Unique ID from LoadNode response (if loaded)
+    unique_id: Option<u64>,
+    /// When the load started (for timeout detection)
+    load_started_at: Option<Instant>,
+    /// Whether a ListNodes verification has been requested
+    list_nodes_requested: bool,
+}
 
 /// Standalone async function for running a container (Phase 5)
 ///
@@ -87,10 +124,15 @@ pub struct ContainerActor {
     shutdown_rx: watch::Receiver<bool>,
     /// Process registry for I/O monitoring
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
-    /// Container state broadcast to composable nodes
+    /// Container state broadcast to composable nodes (Phase 10)
     container_state_tx: watch::Sender<ContainerState>,
-    /// Composable node actor handles
+    /// Composable node actor handles (Phase 10, will be removed in Phase 12)
+    #[allow(dead_code)]
     composable_actors: Vec<ComposableActorHandle>,
+
+    // Phase 12: Container-managed composable nodes
+    /// Composable nodes managed by this container (name -> entry)
+    composable_nodes: HashMap<String, ComposableNodeEntry>,
 
     // LoadNode management (Phase 1: Container-managed loading)
     /// Channel to receive LoadNode requests from composable nodes
@@ -108,6 +150,44 @@ pub struct ContainerActor {
 }
 
 impl ContainerActor {
+    /// Convert ROS parameters to string tuples
+    fn ros_params_to_strings(params: &[rcl_interfaces::msg::Parameter]) -> Vec<(String, String)> {
+        params
+            .iter()
+            .map(|param| {
+                let value_str = Self::parameter_value_to_string(&param.value);
+                (param.name.clone(), value_str)
+            })
+            .collect()
+    }
+
+    /// Convert a ParameterValue to string representation
+    fn parameter_value_to_string(value: &rcl_interfaces::msg::ParameterValue) -> String {
+        use rcl_interfaces::msg::ParameterType;
+
+        match value.type_ {
+            ParameterType::PARAMETER_BOOL => value.bool_value.to_string(),
+            ParameterType::PARAMETER_INTEGER => value.integer_value.to_string(),
+            ParameterType::PARAMETER_DOUBLE => {
+                // Format double to ensure it always has a decimal point
+                // This prevents "1.0" from becoming "1" which would be interpreted as integer
+                let s = value.double_value.to_string();
+                if s.contains('.') || s.contains('e') || s.contains('E') {
+                    s
+                } else {
+                    format!("{}.0", s)
+                }
+            }
+            ParameterType::PARAMETER_STRING => value.string_value.clone(),
+            ParameterType::PARAMETER_BYTE_ARRAY => format!("{:?}", value.byte_array_value),
+            ParameterType::PARAMETER_BOOL_ARRAY => format!("{:?}", value.bool_array_value),
+            ParameterType::PARAMETER_INTEGER_ARRAY => format!("{:?}", value.integer_array_value),
+            ParameterType::PARAMETER_DOUBLE_ARRAY => format!("{:?}", value.double_array_value),
+            ParameterType::PARAMETER_STRING_ARRAY => format!("{:?}", value.string_array_value),
+            _ => String::new(),
+        }
+    }
+
     /// Create a new container actor
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -134,6 +214,7 @@ impl ContainerActor {
             process_registry,
             container_state_tx,
             composable_actors: Vec::new(),
+            composable_nodes: HashMap::new(),
             load_control_rx,
             ros_node,
             load_client: None,
@@ -148,9 +229,74 @@ impl ContainerActor {
         self.container_state_tx.subscribe()
     }
 
-    /// Add a composable node actor handle
+    /// Add a composable node actor handle (Phase 10, deprecated in Phase 12)
+    #[allow(dead_code)]
     pub fn add_composable_actor(&mut self, handle: ComposableActorHandle) {
         self.composable_actors.push(handle);
+    }
+
+    /// Add a composable node to be managed by this container (Phase 12)
+    pub fn add_composable_node(&mut self, name: String, metadata: ComposableNodeMetadata) {
+        let entry = ComposableNodeEntry {
+            metadata,
+            state: ComposableState::Blocked {
+                reason: BlockReason::NotStarted,
+            },
+            unique_id: None,
+            load_started_at: None,
+            list_nodes_requested: false,
+        };
+
+        self.composable_nodes.insert(name, entry);
+    }
+
+    /// Update metadata.json to include composable node information (Phase 12)
+    pub fn update_metadata_with_composables(&self) -> Result<()> {
+        use std::fs;
+
+        let metadata_path = self.config.output_dir.join("metadata.json");
+
+        // Read existing metadata
+        let mut metadata = if metadata_path.exists() {
+            let metadata_str =
+                fs::read_to_string(&metadata_path).context("Failed to read metadata.json")?;
+            serde_json::from_str::<serde_json::Value>(&metadata_str)
+                .context("Failed to parse metadata.json")?
+        } else {
+            serde_json::json!({})
+        };
+
+        // Add composable node information
+        let composable_nodes_info: Vec<serde_json::Value> = self
+            .composable_nodes
+            .iter()
+            .map(|(name, entry)| {
+                serde_json::json!({
+                    "name": name,
+                    "package": entry.metadata.package,
+                    "plugin": entry.metadata.plugin,
+                    "node_name": entry.metadata.node_name,
+                    "namespace": entry.metadata.namespace,
+                    "auto_load": entry.metadata.auto_load,
+                })
+            })
+            .collect();
+
+        metadata["composable_nodes"] = serde_json::json!(composable_nodes_info);
+        metadata["composable_node_count"] = serde_json::json!(self.composable_nodes.len());
+
+        // Write back
+        let updated_json =
+            serde_json::to_string_pretty(&metadata).context("Failed to serialize metadata")?;
+        fs::write(&metadata_path, updated_json).context("Failed to write metadata.json")?;
+
+        debug!(
+            "{}: Updated metadata.json with {} composable nodes",
+            self.name,
+            self.composable_nodes.len()
+        );
+
+        Ok(())
     }
 
     // LoadNode queue management methods (Phase 1)
@@ -488,12 +634,350 @@ impl ContainerActor {
         Ok(child)
     }
 
+    // Phase 12: Composable node control event handlers
+
+    /// Handle LoadComposable control event
+    async fn handle_load_composable(&mut self, name: &str) {
+        debug!("{}: Handling LoadComposable for '{}'", self.name, name);
+
+        // Check if composable node exists
+        let entry = match self.composable_nodes.get_mut(name) {
+            Some(e) => e,
+            None => {
+                warn!("{}: Composable node '{}' not found", self.name, name);
+                return;
+            }
+        };
+
+        // Check current state
+        match &entry.state {
+            ComposableState::Unloaded | ComposableState::Failed { .. } => {
+                // Transition to Loading and start the load operation
+                let started_at = Instant::now();
+                entry.state = ComposableState::Loading { started_at };
+                entry.load_started_at = Some(started_at);
+                entry.list_nodes_requested = false;
+
+                debug!("{}: Transitioning '{}' to Loading state", self.name, name);
+
+                // Emit LoadStarted event
+                let _ = self
+                    .state_tx
+                    .send(StateEvent::LoadStarted {
+                        name: name.to_string(),
+                    })
+                    .await;
+
+                // Phase 12: Queue LoadNode request
+                if let Some(entry) = self.composable_nodes.get(name) {
+                    // Convert ROS parameters to string format
+                    let parameters = Self::ros_params_to_strings(&entry.metadata.parameters);
+                    let extra_args = Self::ros_params_to_strings(&entry.metadata.extra_args);
+
+                    // Create LoadRequest and add to queue
+                    let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
+                    let request = super::container_control::LoadRequest {
+                        composable_name: name.to_string(),
+                        package: entry.metadata.package.clone(),
+                        plugin: entry.metadata.plugin.clone(),
+                        node_name: entry.metadata.node_name.clone(),
+                        node_namespace: entry.metadata.namespace.clone(),
+                        remap_rules: entry.metadata.remap_rules.clone(),
+                        parameters,
+                        extra_args,
+                        response_tx,
+                        request_time: started_at,
+                    };
+
+                    self.pending_loads.push_back(request);
+                    debug!(
+                        "{}: Queued LoadNode request for '{}' (queue depth: {})",
+                        self.name,
+                        name,
+                        self.pending_loads.len()
+                    );
+
+                    // Start processing if no load is currently in progress
+                    if self.current_load.is_none() {
+                        self.start_next_load();
+                    }
+                }
+            }
+            ComposableState::Loading { .. } => {
+                debug!("{}: '{}' already loading, ignoring", self.name, name);
+            }
+            ComposableState::Loaded { .. } => {
+                debug!("{}: '{}' already loaded, ignoring", self.name, name);
+            }
+            ComposableState::Blocked { .. } => {
+                warn!("{}: Cannot load '{}' - container blocked", self.name, name);
+            }
+        }
+    }
+
+    /// Handle UnloadComposable control event
+    async fn handle_unload_composable(&mut self, name: &str) {
+        debug!("{}: Handling UnloadComposable for '{}'", self.name, name);
+
+        // Check if composable node exists
+        let entry = match self.composable_nodes.get_mut(name) {
+            Some(e) => e,
+            None => {
+                warn!("{}: Composable node '{}' not found", self.name, name);
+                return;
+            }
+        };
+
+        // Check current state - only unload if loaded
+        match &entry.state {
+            ComposableState::Loaded { unique_id } => {
+                let unique_id = *unique_id;
+                debug!(
+                    "{}: Unloading '{}' (unique_id: {})",
+                    self.name, name, unique_id
+                );
+
+                // TODO: Call UnloadNode service
+                warn!(
+                    "{}: UnloadNode service call not yet implemented for Phase 12",
+                    self.name
+                );
+
+                // For now, just transition to Unloaded
+                entry.state = ComposableState::Unloaded;
+                entry.unique_id = None;
+                entry.load_started_at = None;
+            }
+            _ => {
+                warn!(
+                    "{}: Cannot unload '{}' - not in Loaded state (current: {:?})",
+                    self.name, name, entry.state
+                );
+            }
+        }
+    }
+
+    /// Handle LoadAllComposables control event
+    async fn handle_load_all_composables(&mut self) {
+        debug!("{}: Handling LoadAllComposables", self.name);
+
+        // Log state of all composable nodes for debugging
+        let total_nodes = self.composable_nodes.len();
+        let state_summary: std::collections::HashMap<String, usize> = self
+            .composable_nodes
+            .values()
+            .fold(std::collections::HashMap::new(), |mut acc, entry| {
+                let state_name = match &entry.state {
+                    ComposableState::Blocked { .. } => "Blocked",
+                    ComposableState::Unloaded => "Unloaded",
+                    ComposableState::Loading { .. } => "Loading",
+                    ComposableState::Loaded { .. } => "Loaded",
+                    ComposableState::Failed { .. } => "Failed",
+                };
+                *acc.entry(state_name.to_string()).or_insert(0) += 1;
+                acc
+            });
+
+        debug!(
+            "{}: Composable node states: {} total ({:?})",
+            self.name, total_nodes, state_summary
+        );
+
+        // Collect names of nodes to load (to avoid borrowing issues)
+        let nodes_to_load: Vec<String> = self
+            .composable_nodes
+            .iter()
+            .filter(|(_, entry)| {
+                entry.metadata.auto_load
+                    && matches!(
+                        entry.state,
+                        ComposableState::Unloaded | ComposableState::Failed { .. }
+                    )
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        if nodes_to_load.is_empty() {
+            debug!(
+                "{}: No composable nodes to load (all {} nodes already loaded or not marked for auto_load)",
+                self.name, total_nodes
+            );
+        } else {
+            debug!(
+                "{}: Queueing {} composable nodes for loading: {:?}",
+                self.name,
+                nodes_to_load.len(),
+                nodes_to_load
+            );
+        }
+
+        // Load each node
+        for name in nodes_to_load {
+            self.handle_load_composable(&name).await;
+        }
+    }
+
+    /// Handle UnloadAllComposables control event
+    async fn handle_unload_all_composables(&mut self) {
+        debug!("{}: Handling UnloadAllComposables", self.name);
+
+        // Collect names of loaded nodes
+        let nodes_to_unload: Vec<String> = self
+            .composable_nodes
+            .iter()
+            .filter(|(_, entry)| matches!(entry.state, ComposableState::Loaded { .. }))
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        debug!(
+            "{}: Unloading {} loaded composable nodes",
+            self.name,
+            nodes_to_unload.len()
+        );
+
+        // Unload each node
+        for name in nodes_to_unload {
+            self.handle_unload_composable(&name).await;
+        }
+    }
+
+    /// Handle DiscoveredLoaded control event (from ListNodes verification)
+    async fn handle_discovered_loaded(&mut self, unique_id: u64) {
+        debug!(
+            "{}: Handling DiscoveredLoaded (unique_id: {})",
+            self.name, unique_id
+        );
+
+        // Find the composable node with this unique_id
+        // Note: We need to match by unique_id since ListNodes returns actual loaded state
+        let mut found = false;
+        for (name, entry) in self.composable_nodes.iter_mut() {
+            // Check if this node is in Loading state and matches the unique_id
+            if let ComposableState::Loading { started_at } = &entry.state {
+                // Transition to Loaded
+                debug!(
+                    "{}: Discovered '{}' as loaded (unique_id: {})",
+                    self.name, name, unique_id
+                );
+
+                let load_duration = started_at.elapsed();
+                entry.state = ComposableState::Loaded { unique_id };
+                entry.unique_id = Some(unique_id);
+                entry.load_started_at = None;
+
+                // Emit LoadSucceeded event
+                let full_node_name =
+                    format!("{}/{}", entry.metadata.namespace, entry.metadata.node_name);
+                let _ = self
+                    .state_tx
+                    .send(StateEvent::LoadSucceeded {
+                        name: name.clone(),
+                        full_node_name,
+                        unique_id,
+                    })
+                    .await;
+
+                debug!(
+                    "{}: '{}' loaded successfully in {:.2}s",
+                    self.name,
+                    name,
+                    load_duration.as_secs_f64()
+                );
+
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            debug!(
+                "{}: No composable node in Loading state matches unique_id {}",
+                self.name, unique_id
+            );
+        }
+    }
+
+    /// Check for composable nodes stuck in Loading state and trigger ListNodes verification
+    ///
+    /// Called periodically from the main loop to detect nodes that have exceeded
+    /// the loading timeout and request verification via ListNodes query.
+    async fn check_loading_timeouts(&mut self) {
+        let timeout = Duration::from_secs(self.config.list_nodes_loading_timeout_secs);
+        let now = Instant::now();
+
+        for (name, entry) in self.composable_nodes.iter_mut() {
+            // Check if node is in Loading state
+            if let ComposableState::Loading { started_at } = &entry.state {
+                let elapsed = now.duration_since(*started_at);
+
+                // Check if timeout exceeded and ListNodes not yet requested
+                if elapsed >= timeout && !entry.list_nodes_requested {
+                    warn!(
+                        "{}: Composable node '{}' stuck in Loading state for {:.1}s (timeout: {}s), requesting ListNodes verification",
+                        self.name,
+                        name,
+                        elapsed.as_secs_f64(),
+                        self.config.list_nodes_loading_timeout_secs
+                    );
+
+                    // Mark as requested to avoid spamming
+                    entry.list_nodes_requested = true;
+
+                    // Request ListNodes verification
+                    let _ = self
+                        .state_tx
+                        .send(StateEvent::ListNodesRequested {
+                            container_name: self.name.clone(),
+                            requester: name.clone(),
+                        })
+                        .await;
+                }
+            }
+        }
+    }
+
+    /// Transition all composable nodes to Blocked state
+    ///
+    /// Called when the container stops, fails, or shuts down to mark all
+    /// composable nodes as unavailable.
+    async fn transition_all_composables_to_blocked(&mut self, reason: BlockReason) {
+        debug!(
+            "{}: Transitioning all {} composable nodes to Blocked state (reason: {:?})",
+            self.name,
+            self.composable_nodes.len(),
+            reason
+        );
+
+        for (name, entry) in self.composable_nodes.iter_mut() {
+            // Only transition if not already blocked with this reason
+            if entry.state != (ComposableState::Blocked { reason }) {
+                entry.state = ComposableState::Blocked { reason };
+                entry.unique_id = None;
+                entry.load_started_at = None;
+                entry.list_nodes_requested = false;
+
+                // Emit Blocked event
+                let _ = self
+                    .state_tx
+                    .send(StateEvent::Blocked {
+                        name: name.clone(),
+                        reason,
+                    })
+                    .await;
+            }
+        }
+    }
+
     /// Handle the Pending state
     async fn handle_pending(&mut self) -> Result<bool> {
         debug!("{}: Spawning container process", self.name);
 
         // Drain any pending loads (container not running)
         self.drain_queue("Container not running");
+
+        // Phase 12: Transition composable nodes to Blocked while container is starting
+        self.transition_all_composables_to_blocked(BlockReason::NotStarted)
+            .await;
 
         // Broadcast pending state to composable nodes
         let _ = self.container_state_tx.send(ContainerState::Pending);
@@ -589,11 +1073,42 @@ impl ContainerActor {
                     }
                 }
 
+                // Phase 12: Transition blocked composable nodes to Unloaded state now that container is running
+                let blocked_count = self
+                    .composable_nodes
+                    .values()
+                    .filter(|e| matches!(e.state, ComposableState::Blocked { .. }))
+                    .count();
+
+                if blocked_count > 0 {
+                    debug!(
+                        "{}: Transitioning {} blocked composable nodes to Unloaded state",
+                        self.name, blocked_count
+                    );
+                }
+
+                for (name, entry) in self.composable_nodes.iter_mut() {
+                    if matches!(entry.state, ComposableState::Blocked { .. }) {
+                        entry.state = ComposableState::Unloaded;
+                        debug!(
+                            "{}: Transitioned '{}' from Blocked to Unloaded",
+                            self.name, name
+                        );
+                    }
+                }
+
+                // Phase 12: Auto-load composable nodes marked with auto_load=true
+                self.handle_load_all_composables().await;
+
                 self.state = NodeState::Running { child, pid };
                 Ok(true) // Continue running
             }
             Err(e) => {
                 error!("{}: Failed to spawn container: {:#}", self.name, e);
+
+                // Phase 12: Transition composable nodes to Blocked
+                self.transition_all_composables_to_blocked(BlockReason::Failed)
+                    .await;
 
                 // Broadcast failed state to composable nodes
                 let _ = self.container_state_tx.send(ContainerState::Failed);
@@ -618,6 +1133,10 @@ impl ContainerActor {
     async fn handle_running(&mut self, mut child: tokio::process::Child, pid: u32) -> Result<bool> {
         debug!("{}: Container running with PID {}", self.name, pid);
 
+        // Create timer for periodic timeout checks (every 5 seconds)
+        let mut timeout_check_interval = tokio::time::interval(Duration::from_secs(5));
+        timeout_check_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
                 // Wait for child to exit
@@ -638,6 +1157,9 @@ impl ContainerActor {
                     // Clear service client so it's recreated on restart
                     self.load_client = None;
                     self.unload_client = None;
+
+                    // Phase 12: Transition composable nodes to Blocked
+                    self.transition_all_composables_to_blocked(BlockReason::Failed).await;
 
                     // Broadcast stopped state to composable nodes
                     let _ = self.container_state_tx.send(ContainerState::Stopped);
@@ -688,6 +1210,9 @@ impl ContainerActor {
                             self.load_client = None;
                     self.unload_client = None;
 
+                            // Phase 12: Transition composable nodes to Blocked
+                            self.transition_all_composables_to_blocked(BlockReason::Stopped).await;
+
                             // Broadcast stopped state
                             let _ = self.container_state_tx.send(ContainerState::Stopped);
 
@@ -718,9 +1243,28 @@ impl ContainerActor {
                             self.load_client = None;
                     self.unload_client = None;
 
+                            // Phase 12: Transition composable nodes to Blocked (will be reloaded on restart)
+                            self.transition_all_composables_to_blocked(BlockReason::Stopped).await;
+
                             // Transition to Pending to respawn
                             self.state = NodeState::Pending;
                             return Ok(true); // Continue to respawn
+                        }
+                        // Phase 12: Composable node control events
+                        ControlEvent::LoadComposable { name } => {
+                            self.handle_load_composable(&name).await;
+                        }
+                        ControlEvent::UnloadComposable { name } => {
+                            self.handle_unload_composable(&name).await;
+                        }
+                        ControlEvent::LoadAllComposables => {
+                            self.handle_load_all_composables().await;
+                        }
+                        ControlEvent::UnloadAllComposables => {
+                            self.handle_unload_all_composables().await;
+                        }
+                        ControlEvent::DiscoveredLoaded { unique_id } => {
+                            self.handle_discovered_loaded(unique_id).await;
                         }
                         _ => {
                             warn!("{}: Unhandled control event: {:?}", self.name, event);
@@ -785,25 +1329,101 @@ impl ContainerActor {
                 }, if self.current_load.is_some() => {
                     // Take the current load
                     let load = self.current_load.take().unwrap();
+                    let composable_name = load.request.composable_name.clone();
 
                     // Handle the task result
                     match result {
                         Ok(service_result) => {
-                            // Send the service call result to the composable node
+                            // Phase 12: Update composable node state directly
+                            if let Some(entry) = self.composable_nodes.get_mut(&composable_name) {
+                                match &service_result {
+                                    Ok(response) if response.success => {
+                                        entry.state = ComposableState::Loaded {
+                                            unique_id: response.unique_id,
+                                        };
+                                        entry.unique_id = Some(response.unique_id);
+                                        debug!(
+                                            "{}: Successfully loaded composable node '{}' (unique_id: {})",
+                                            self.name, composable_name, response.unique_id
+                                        );
+
+                                        // Emit LoadSucceeded event
+                                        let _ = self.state_tx.send(StateEvent::LoadSucceeded {
+                                            name: composable_name.clone(),
+                                            full_node_name: response.full_node_name.clone(),
+                                            unique_id: response.unique_id,
+                                        }).await;
+                                    }
+                                    Ok(response) => {
+                                        // LoadNode service returned failure
+                                        entry.state = ComposableState::Failed {
+                                            error: response.error_message.clone(),
+                                        };
+                                        warn!(
+                                            "{}: Failed to load composable node '{}': {}",
+                                            self.name, composable_name, response.error_message
+                                        );
+
+                                        // Emit Failed event
+                                        let _ = self.state_tx.send(StateEvent::Failed {
+                                            name: composable_name.clone(),
+                                            error: response.error_message.clone(),
+                                        }).await;
+                                    }
+                                    Err(e) => {
+                                        // Service call error
+                                        entry.state = ComposableState::Failed {
+                                            error: format!("{:#}", e),
+                                        };
+                                        warn!(
+                                            "{}: LoadNode service call failed for '{}': {:#}",
+                                            self.name, composable_name, e
+                                        );
+
+                                        // Emit Failed event
+                                        let _ = self.state_tx.send(StateEvent::Failed {
+                                            name: composable_name.clone(),
+                                            error: format!("{:#}", e),
+                                        }).await;
+                                    }
+                                }
+                            }
+
+                            // Legacy: Send response via channel (for old composable node actors, will be ignored in Phase 12)
                             let _ = load.request.response_tx.send(service_result);
                         }
                         Err(e) => {
                             // Task panicked
                             warn!(
                                 "{}: LoadNode task panicked for {}: {:#}",
-                                self.name, load.request.composable_name, e
+                                self.name, composable_name, e
                             );
+
+                            // Phase 12: Update state to Failed
+                            if let Some(entry) = self.composable_nodes.get_mut(&composable_name) {
+                                entry.state = ComposableState::Failed {
+                                    error: format!("Task panicked: {:#}", e),
+                                };
+
+                                // Emit Failed event
+                                let _ = self.state_tx.send(StateEvent::Failed {
+                                    name: composable_name.clone(),
+                                    error: format!("Task panicked: {:#}", e),
+                                }).await;
+                            }
+
+                            // Legacy: Send error via channel
                             let _ = load.request.response_tx.send(Err(eyre::eyre!("Task panicked: {:#}", e)));
                         }
                     }
 
                     // Start processing next load in queue
                     self.start_next_load();
+                }
+
+                // Periodic timeout check for composable nodes stuck in Loading state
+                _ = timeout_check_interval.tick() => {
+                    self.check_loading_timeouts().await;
                 }
 
                 // Check for shutdown signal
@@ -813,6 +1433,9 @@ impl ContainerActor {
 
                         // Drain load queue before shutting down
                         self.drain_queue("Shutdown");
+
+                        // Phase 12: Transition composable nodes to Blocked
+                        self.transition_all_composables_to_blocked(BlockReason::Shutdown).await;
 
                         // On Unix, kill_process_group() already sent SIGTERM to all processes
                         // We just need to wait for this child to exit

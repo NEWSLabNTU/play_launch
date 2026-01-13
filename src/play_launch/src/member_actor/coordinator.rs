@@ -53,11 +53,11 @@ struct ContainerDefinition {
     state_tx: Option<tokio::sync::oneshot::Sender<watch::Receiver<super::state::ContainerState>>>,
 }
 
-/// Definition of a composable node to be spawned
+/// Definition of a composable node to be spawned (Phase 12: managed by containers)
 struct ComposableNodeDefinition {
     name: String,
     context: crate::execution::context::ComposableNodeContext,
-    config: super::composable_node_actor::ComposableActorConfig,
+    auto_load: bool,
     target_container_name: String, // Will be matched with container during spawn()
     metadata: MemberMetadata,
 }
@@ -155,7 +155,7 @@ impl MemberCoordinatorBuilder {
         &mut self,
         name: String,
         context: crate::execution::context::ComposableNodeContext,
-        config: super::composable_node_actor::ComposableActorConfig,
+        auto_load: bool,
     ) {
         let target_container_name = context.record.target_container_name.clone();
 
@@ -171,13 +171,13 @@ impl MemberCoordinatorBuilder {
             respawn_delay: None,
             exec_name: None,
             node_name: Some(context.record.node_name.clone()),
-            auto_load: Some(true), // Auto-load enabled by default for composable nodes
+            auto_load: Some(auto_load),
         };
 
         self.composable_nodes.push(ComposableNodeDefinition {
             name,
             context,
-            config,
+            auto_load,
             target_container_name,
             metadata,
         });
@@ -222,8 +222,14 @@ impl MemberCoordinatorBuilder {
 
         // Spawn containers and collect their state receivers and load control channels
         // Use the shared ROS node passed from play() function
+        // Phase 12: Keep containers in a HashMap so we can add composable nodes before spawning
+        let mut container_actors: HashMap<String, super::container_actor::ContainerActor> =
+            HashMap::new();
+        let mut container_full_names = HashMap::new(); // member_name -> full_node_name
         let mut container_state_map = HashMap::new();
         let mut container_load_control_map = HashMap::new();
+        let mut container_controls = HashMap::new(); // member_name -> control_tx
+
         for def in self.containers {
             // Build the full node name BEFORE moving def.context
             // This matches what composable nodes use in target_container_name
@@ -277,19 +283,19 @@ impl MemberCoordinatorBuilder {
 
             // Store for composable nodes to use
             container_state_map.insert(container_name.clone(), container_state_rx);
-            container_load_control_map.insert(container_name, load_control_tx);
+            container_load_control_map.insert(container_name.clone(), load_control_tx);
 
-            let task = tokio::spawn(async move {
-                use super::actor_traits::MemberActor;
-                actor.run().await
-            });
-
-            tasks.insert(def.name.clone(), task);
-            control_channels.insert(def.name.clone(), control_tx);
+            // Phase 12: Store actor for adding composable nodes
+            container_full_names.insert(def.name.clone(), container_name);
+            container_actors.insert(def.name.clone(), actor);
+            container_controls.insert(def.name.clone(), control_tx);
             metadata_map.insert(def.name.clone(), def.metadata);
         }
 
-        // Spawn composable nodes, matching with container state receivers and load control channels
+        // Phase 12: Add composable nodes as virtual members managed by containers
+        // Declare virtual_member_routing HashMap here
+        let mut virtual_member_routing = HashMap::new();
+
         for def in self.composable_nodes {
             // Normalize target_container_name to ensure it starts with "/"
             // Some nodes have "pointcloud_container" while containers use "/pointcloud_container"
@@ -299,45 +305,116 @@ impl MemberCoordinatorBuilder {
                 format!("/{}", def.target_container_name)
             };
 
-            // Find the container state receiver and load control channel for this composable node
-            let container_state_rx = container_state_map.get(&normalized_target);
-            let load_control_tx = container_load_control_map.get(&normalized_target);
+            // Find the container member name for this full node name
+            let container_member_name = container_full_names
+                .iter()
+                .find(|(_, full_name)| *full_name == &normalized_target)
+                .map(|(member_name, _)| member_name.clone());
 
-            if let (Some(container_state_rx), Some(load_control_tx)) =
-                (container_state_rx, load_control_tx)
-            {
-                let (control_tx, control_rx) = mpsc::channel(10);
+            if let Some(container_member_name) = container_member_name {
+                // Get mutable reference to container actor
+                if let Some(container_actor) = container_actors.get_mut(&container_member_name) {
+                    // Convert parameters and extra_args
+                    let parameters = match crate::ros::component_loader::convert_parameters_to_ros(
+                        &def.context.record.params,
+                    ) {
+                        Ok(params) => params,
+                        Err(e) => {
+                            warn!(
+                                "Failed to convert parameters for composable node '{}': {:#}",
+                                def.name, e
+                            );
+                            Vec::new()
+                        }
+                    };
 
-                let actor = super::composable_node_actor::ComposableNodeActor::new(
-                    def.name.clone(),
-                    def.context,
-                    def.config,
-                    control_rx,
-                    state_tx.clone(),
-                    container_state_rx.clone(),
-                    shutdown_rx.clone(),
-                    load_control_tx.clone(),
-                );
+                    let extra_args = match crate::ros::component_loader::convert_parameters_to_ros(
+                        &def.context
+                            .record
+                            .extra_args
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect::<Vec<_>>(),
+                    ) {
+                        Ok(args) => args,
+                        Err(e) => {
+                            warn!(
+                                "Failed to convert extra_args for composable node '{}': {:#}",
+                                def.name, e
+                            );
+                            Vec::new()
+                        }
+                    };
 
-                let task = tokio::spawn(async move {
-                    use super::actor_traits::MemberActor;
-                    actor.run().await
-                });
+                    // Convert ComposableNodeContext to ComposableNodeMetadata
+                    let metadata = super::container_actor::ComposableNodeMetadata {
+                        package: def.context.record.package.clone(),
+                        plugin: def.context.record.plugin.clone(),
+                        node_name: def.context.record.node_name.clone(),
+                        namespace: def.context.record.namespace.clone(),
+                        remap_rules: def
+                            .context
+                            .record
+                            .remaps
+                            .iter()
+                            .map(|(src, tgt)| format!("{}:={}", src, tgt))
+                            .collect(),
+                        parameters,
+                        extra_args,
+                        auto_load: def.auto_load,
+                    };
 
-                tasks.insert(def.name.clone(), task);
-                control_channels.insert(def.name.clone(), control_tx);
-                metadata_map.insert(def.name.clone(), def.metadata);
+                    // Add composable node to container
+                    container_actor.add_composable_node(def.name.clone(), metadata);
+
+                    // Add metadata for this virtual member
+                    metadata_map.insert(def.name.clone(), def.metadata.clone());
+
+                    // Populate virtual member routing
+                    virtual_member_routing.insert(def.name.clone(), container_member_name.clone());
+
+                    debug!(
+                        "Added composable node '{}' as virtual member of container '{}'",
+                        def.name, container_member_name
+                    );
+                } else {
+                    warn!(
+                        "Container actor '{}' not found for composable node '{}', skipping",
+                        container_member_name, def.name
+                    );
+                }
             } else {
-                tracing::warn!(
+                warn!(
                     "Container '{}' not found for composable node '{}', skipping",
-                    def.target_container_name,
-                    def.name
+                    def.target_container_name, def.name
                 );
-                tracing::debug!(
+                debug!(
                     "Available containers: {:?}",
-                    container_state_map.keys().collect::<Vec<_>>()
+                    container_full_names.values().collect::<Vec<_>>()
                 );
             }
+        }
+
+        // Phase 12: Now spawn all container actors
+        for (member_name, actor) in container_actors {
+            let control_tx = container_controls.remove(&member_name).unwrap();
+
+            // Update metadata.json with composable node information
+            if let Err(e) = actor.update_metadata_with_composables() {
+                tracing::warn!(
+                    "Failed to update metadata for container '{}': {:#}",
+                    member_name,
+                    e
+                );
+            }
+
+            let task = tokio::spawn(async move {
+                use super::actor_traits::MemberActor;
+                actor.run().await
+            });
+
+            tasks.insert(member_name.clone(), task);
+            control_channels.insert(member_name, control_tx);
         }
 
         // Spawn ListNodesManager task (if config provided and ROS node available)
@@ -385,11 +462,17 @@ impl MemberCoordinatorBuilder {
         }
         let state_cache = Arc::new(state_entries);
 
+        // Phase 12: Build virtual member routing map for composable nodes
+        // Maps composable node name -> parent container name
+        // Populated during composable node registration above
+        let virtual_member_routing = virtual_member_routing;
+
         let handle = MemberHandle {
             control_channels,
             metadata: Arc::new(tokio::sync::RwLock::new(metadata_map)),
             state_cache: state_cache.clone(),
             shutdown_tx,
+            virtual_member_routing,
         };
 
         let runner = MemberRunner {
@@ -425,6 +508,8 @@ pub struct MemberHandle {
     state_cache: Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>>,
     /// Shutdown signal broadcaster
     shutdown_tx: watch::Sender<bool>,
+    /// Virtual member routing: maps composable node names to parent container names (Phase 12)
+    virtual_member_routing: HashMap<String, String>,
 }
 
 impl MemberHandle {
@@ -643,16 +728,81 @@ impl MemberHandle {
     }
 
     /// Send a control event to a specific actor
+    ///
+    /// Phase 12: For virtual members (composable nodes managed by containers),
+    /// this translates and routes control events to the parent container.
     pub async fn send_control(&self, name: &str, event: ControlEvent) -> Result<()> {
-        let control_tx = self
-            .control_channels
-            .get(name)
-            .ok_or_else(|| eyre::eyre!("Actor not found: {}", name))?;
+        // Check if this is a virtual member (composable node)
+        if let Some(parent_container) = self.virtual_member_routing.get(name) {
+            // Translate control event for virtual member
+            let translated_event = match event {
+                ControlEvent::Start => ControlEvent::LoadComposable {
+                    name: name.to_string(),
+                },
+                ControlEvent::Stop => ControlEvent::UnloadComposable {
+                    name: name.to_string(),
+                },
+                ControlEvent::Restart => {
+                    // For restart, send Unload followed by Load
+                    // First unload
+                    let control_tx =
+                        self.control_channels.get(parent_container).ok_or_else(|| {
+                            eyre::eyre!("Parent container not found: {}", parent_container)
+                        })?;
 
-        control_tx
-            .send(event)
-            .await
-            .context("Failed to send control event to actor")
+                    control_tx
+                        .send(ControlEvent::UnloadComposable {
+                            name: name.to_string(),
+                        })
+                        .await
+                        .context("Failed to send Unload to parent container")?;
+
+                    // Then load
+                    ControlEvent::LoadComposable {
+                        name: name.to_string(),
+                    }
+                }
+                ControlEvent::ToggleRespawn(_) => {
+                    // Not supported for virtual members
+                    warn!("ToggleRespawn not supported for virtual member: {}", name);
+                    return Ok(());
+                }
+                ControlEvent::ToggleAutoLoad(enabled) => {
+                    // Update metadata only (container will use it on next start)
+                    let mut metadata_guard = self.metadata.write().await;
+                    if let Some(meta) = metadata_guard.get_mut(name) {
+                        meta.auto_load = Some(enabled);
+                    }
+                    return Ok(());
+                }
+                other => {
+                    // Forward other events as-is (like DiscoveredLoaded)
+                    other
+                }
+            };
+
+            // Send to parent container
+            let control_tx = self
+                .control_channels
+                .get(parent_container)
+                .ok_or_else(|| eyre::eyre!("Parent container not found: {}", parent_container))?;
+
+            control_tx
+                .send(translated_event)
+                .await
+                .context("Failed to send translated control event to parent container")
+        } else {
+            // Regular member - send directly
+            let control_tx = self
+                .control_channels
+                .get(name)
+                .ok_or_else(|| eyre::eyre!("Actor not found: {}", name))?;
+
+            control_tx
+                .send(event)
+                .await
+                .context("Failed to send control event to actor")
+        }
     }
 
     /// Start a member (send Start control event)
