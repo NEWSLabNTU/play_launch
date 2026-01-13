@@ -228,13 +228,13 @@ async fn run_direct(
 
     // Add actors to builder
     for context in pure_node_contexts {
-        // Extract directory name for log/member name
-        let dir_name = context
-            .output_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-        let member_name = format!("NODE '{}'", dir_name);
+        // Use the node name from record.json directly
+        let member_name = context
+            .record
+            .name
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
 
         // Create actor config
         let actor_config = ActorConfig {

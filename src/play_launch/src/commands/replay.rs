@@ -411,12 +411,13 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // Add regular nodes to builder
     debug!("Adding {} regular nodes", num_pure_nodes);
     for context in pure_node_contexts {
-        let dir_name = context
-            .output_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-        let member_name = format!("NODE '{}'", dir_name);
+        // Use the node name from record.json directly
+        let member_name = context
+            .record
+            .name
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
 
         let actor_config = crate::member_actor::ActorConfig {
             respawn_enabled: !common.disable_respawn && context.record.respawn.unwrap_or(false),
@@ -438,13 +439,14 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // Add containers
     debug!("Adding {} containers", num_containers);
     for context in container_contexts {
-        let dir_name = context
+        // Use the container name from record.json directly
+        let member_name = context
             .node_context
-            .output_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-        let member_name = format!("NODE '{}'", dir_name);
+            .record
+            .name
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
 
         let actor_config = crate::member_actor::ActorConfig {
             respawn_enabled: !common.disable_respawn
@@ -470,7 +472,8 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     debug!("Adding {} composable nodes", num_composable_nodes);
 
     for context in load_node_contexts {
-        let member_name = format!("LOAD_NODE '{}'", context.record.node_name);
+        // Use the composable node name from record.json directly
+        let member_name = context.record.node_name.clone();
         // Auto-load enabled by default for all composable nodes
         builder.add_composable_node(member_name, context, true);
     }
