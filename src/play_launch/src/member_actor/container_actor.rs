@@ -393,12 +393,22 @@ impl ContainerActor {
 
         let service_wait_start = std::time::Instant::now();
         let service_timeout = std::time::Duration::from_secs(30);
+        let mut last_log_time = service_wait_start;
 
         loop {
             match client.service_is_ready() {
                 Ok(true) => break,
                 Ok(false) => {
-                    // Service not ready yet, continue waiting
+                    // Service not ready yet, log periodically
+                    if last_log_time.elapsed() > std::time::Duration::from_secs(2) {
+                        debug!(
+                            "{}: Still waiting for LoadNode service for {} ({}s elapsed)",
+                            container_name,
+                            params.composable_name,
+                            service_wait_start.elapsed().as_secs()
+                        );
+                        last_log_time = std::time::Instant::now();
+                    }
                 }
                 Err(e) => {
                     warn!(
@@ -1094,7 +1104,7 @@ impl ContainerActor {
 
                 if blocked_count > 0 {
                     debug!(
-                        "{}: Transitioning {} blocked composable nodes to Unloaded state",
+                        "{}: Transitioning {} blocked composable nodes to Unloaded state (container now running)",
                         self.name, blocked_count
                     );
                 }
@@ -1202,11 +1212,12 @@ impl ContainerActor {
                 Some(event) = self.control_rx.recv() => {
                     match event {
                         ControlEvent::Stop => {
-                            info!("{}: Received Stop command, killing container", self.name);
+                            info!("{}: Received Stop command, killing container (PID: {})", self.name, pid);
                             child.kill().await.ok();
 
                             // Wait for process to exit
                             let _ = child.wait().await;
+                            info!("{}: Container process terminated", self.name);
 
                             // Unregister from process registry
                             if let Some(ref registry) = self.process_registry {
@@ -1223,6 +1234,8 @@ impl ContainerActor {
                     self.unload_client = None;
 
                             // Phase 12: Transition composable nodes to Blocked
+                            info!("{}: Transitioning {} composable nodes to Blocked state (reason: Stopped)",
+                                  self.name, self.composable_nodes.len());
                             self.transition_all_composables_to_blocked(BlockReason::Stopped).await;
 
                             // Broadcast stopped state
