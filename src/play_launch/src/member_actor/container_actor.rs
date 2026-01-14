@@ -429,6 +429,18 @@ impl ContainerActor {
             params.node_namespace
         );
 
+        // CRITICAL FIX: Add warmup delay after service becomes ready
+        // Race condition: service_is_ready() returns true when service is registered in ROS graph,
+        // but container executor may not be spinning/processing requests yet.
+        // Without this delay, the service call can hang forever.
+        // This is especially common after container restart when service registration happens
+        // faster than executor startup.
+        debug!(
+            "{}: Waiting 200ms for container executor to start processing requests",
+            container_name
+        );
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
         // Call the service (NO timeout - wait indefinitely)
         // Composable node actor handles timeout on its side
         debug!(
