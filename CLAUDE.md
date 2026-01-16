@@ -312,6 +312,10 @@ play_launch replay --web-ui --web-ui-addr 192.168.1.100 --web-ui-port 3000
 - Automatic refresh after control actions
 - Prevents concurrent operations on same node
 - JavaScript escaping handles node names with special characters (quotes, etc.)
+- Bulk operations: Start All, Stop All, Restart All buttons in header
+- Bulk operations target regular nodes and containers only (composable nodes managed by containers)
+- Per-container bulk operations: Load All / Unload All for composable nodes within each container
+- Operations return count of affected members for user feedback
 
 ### Technical Details
 
@@ -405,6 +409,9 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 
 ## Key Recent Changes
 
+- **2026-01-16**: Web UI bulk operations and state synchronization fixes - Implemented all bulk control operations: Start All, Stop All, Restart All buttons in Web UI header operate on all regular nodes and containers; Load All / Unload All buttons within each container card operate on composable nodes. Fixed 8+ missing shared_state updates where state transitions (Stopped, Failed, Blocked→Unloaded, Loading→Loaded/Failed) updated actor internal state but not DashMap, causing Web UI to show stale states. Fixed bulk child operations to use virtual_member_routing HashMap for correct container-to-composable matching. All operations log affected member count and work correctly across multiple restart cycles (container_actor.rs:1267-1269, 1407-1414, 1532-1586, 1726-1806; coordinator.rs:907-1018; handlers.rs:790-835).
+- **2026-01-14**: Container restart race condition fix - Fixed composable nodes getting stuck in "Loading" state after container restart. **Root cause**: Race condition between ROS service registration and container executor startup. `service_is_ready()` returns true when service is registered in ROS graph, but container executor may not be spinning/processing requests yet. When service becomes ready too quickly (0ms), service calls hang forever. **Solution**: Added 200ms warmup delay after `service_is_ready()` returns true to ensure container executor is actually processing requests before calling LoadNode service (container_actor.rs:442-452). Tested with 3 consecutive restart cycles - all composable nodes loaded successfully without timeouts.
+- **2026-01-14**: Logging level improvements - Changed many `info!` logs to `debug!` to reduce noise for end-users. Technical details like service client creation, state transitions (Blocked→Unloaded), service readiness checks, and internal timing are now DEBUG-level. INFO level now shows only essential user-facing events: user actions (Start/Stop commands), major lifecycle events (container started/terminated, startup complete), and errors/warnings. Use `RUST_LOG=play_launch=info` (default) for clean output or `RUST_LOG=play_launch=debug` for detailed troubleshooting. Documented logging practices in CLAUDE.md (container_actor.rs:389-440, 1039-1109).
 - **2026-01-13**: Member name simplification - Removed "NODE ''" and "LOAD_NODE ''" prefixes from all member names. Names now come directly from record.json: regular nodes use `record.name`, containers use `record.name`, composable nodes use `record.node_name`. This results in cleaner log directory names (e.g., "talker-1" instead of "NODE 'talker-1'", "listener" instead of "LOAD_NODE 'listener'") and cleaner Web UI display (replay.rs:413-420, 441-449, 476; run.rs:231-237).
 - **2026-01-13**: Phase 12 cleanup - Removed all deprecated composable node actor code. Deleted `composable_node_actor.rs` (41KB), removed `ComposableActorConfig` struct, simplified coordinator API to pass `auto_load` directly instead of config object. All references to deprecated code removed from mod.rs, coordinator.rs, and replay.rs. Codebase is now cleaner with Phase 12 fully complete.
 - **2026-01-13**: Logging improvements and restart debugging - Adjusted log levels for composable node loading to reduce noise: changed all loading-related messages to DEBUG level ("Successfully loaded composable node", "Transitioning N blocked composable nodes", "Queueing N composable nodes for loading", "No composable nodes to load"). Startup output is now much cleaner - INFO level only shows essential progress. Added detailed state tracking in handle_load_all_composables() to help diagnose container restart issues - logs state summary (Blocked/Unloaded/Loading/Loaded/Failed counts) and which specific nodes are being queued (visible with RUST_LOG=play_launch=debug). Tested with Autoware simulation - all 49 composable nodes loaded successfully (container_actor.rs:792, 797, 1074, 1334, 757-809).
@@ -457,6 +464,52 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 - `just build` handles the correct build sequence and ensures proper integration
 - After code changes, always run `just build` before testing
 
+### Logging Practices
+
+**Log Levels:**
+- `error!`: Unrecoverable errors that prevent normal operation
+- `warn!`: Recoverable errors or unexpected conditions that users should know about
+- `info!`: High-level user-facing events (startup complete, shutdown initiated, user actions like Start/Stop/Restart)
+- `debug!`: Detailed internal state changes and technical details for troubleshooting
+- `trace!`: Very verbose execution details (rarely used)
+
+**Guidelines:**
+- Default `RUST_LOG=play_launch=info` should show only essential user-facing information
+- Use `debug!` for technical details like:
+  - Service client creation
+  - State transitions (Blocked→Unloaded, Loading→Loaded)
+  - Service readiness checks
+  - Internal timing measurements
+  - Queue depths and processing details
+- Use `info!` only for:
+  - User-initiated actions (received Stop/Start commands)
+  - Major lifecycle events (container started/terminated, startup complete)
+  - Critical state changes users need to monitor
+  - Errors and warnings
+- Examples:
+  ```rust
+  // GOOD: User-facing action
+  info!("{}: Received Stop command, killing container (PID: {})", name, pid);
+  info!("{}: Container process terminated", name);
+
+  // GOOD: Technical details at debug level
+  debug!("{}: Creating LoadNode service client for {}", name, service);
+  debug!("{}: Transitioning {} blocked nodes to Unloaded", name, count);
+  debug!("{}: LoadNode service available after {}ms", name, elapsed);
+  ```
+
+**Enabling Debug Logs:**
+```sh
+# Show all debug logs
+RUST_LOG=play_launch=debug play_launch replay
+
+# Show debug logs for specific modules
+RUST_LOG=play_launch::member_actor=debug play_launch replay
+
+# Show debug logs with web server verbose output
+RUST_LOG=play_launch=debug,play_launch::web=trace play_launch replay
+```
+
 ## Performance Optimization Roadmap
 
 ### dump_launch Performance
@@ -470,5 +523,23 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 - **Target**: 10x speedup for Autoware-sized launch files
 
 ## Known Issues / TODO
+
+### Current Status (2026-01-14)
+
+**Recent Work Completed:**
+- ✅ Container restart race condition fixed (200ms warmup delay)
+- ✅ Logging levels improved (info→debug for technical details)
+- ✅ Logging practices documented in CLAUDE.md
+- ✅ All changes tested and verified working
+- ✅ Build successful: `dist/play_launch-0.4.0-py3-none-any.whl`
+
+**Key Files Modified:**
+- `src/play_launch/src/member_actor/container_actor.rs`: Lines 389-452, 1039-1109
+- `CLAUDE.md`: Added logging practices section and updated key recent changes
+
+**Testing:**
+- Container restart bug: 3 consecutive restart cycles, all successful
+- INFO logging: Clean, user-facing output only
+- DEBUG logging: Full technical details for troubleshooting
 
 (No known issues at this time)
