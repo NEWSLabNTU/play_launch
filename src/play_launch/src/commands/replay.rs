@@ -1081,12 +1081,7 @@ async fn forward_state_events_and_wait(
                         .await;
                 }
 
-                // Update state cache manually (since we're consuming events here instead of in wait_for_completion)
-                crate::member_actor::MemberRunner::update_state_static(
-                    &event,
-                    member_handle.state_cache(),
-                )
-                .await;
+                // Actors write directly to shared_state, no need to update from events
 
                 // Broadcast to all SSE subscribers
                 broadcaster.broadcast(event).await;

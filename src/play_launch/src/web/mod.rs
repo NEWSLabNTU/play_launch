@@ -118,7 +118,7 @@ pub fn create_router(state: Arc<WebState>) -> Router {
             post(handlers::toggle_respawn),
         )
         .route(
-            "/api/nodes/:name/autoload/:enabled",
+            "/api/nodes/:name/auto-load/:enabled",
             post(handlers::toggle_auto_load),
         )
         .route("/api/health", get(handlers::health_summary))

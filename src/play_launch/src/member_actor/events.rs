@@ -36,6 +36,13 @@ pub enum ControlEvent {
     LoadAllComposables,
     /// Unload all loaded composable nodes (container actors only - Phase 12)
     UnloadAllComposables,
+    /// Toggle auto-load for a specific composable node (container actors only - Phase 12)
+    ToggleComposableAutoLoad {
+        /// Name of the composable node
+        name: String,
+        /// New auto-load value
+        enabled: bool,
+    },
     /// Retry loading a composable node (composable node actors only)
     /// Transitions the node back to Unloaded state to trigger re-loading
     Load,
@@ -113,6 +120,11 @@ pub enum StateEvent {
         /// Error message
         error: String,
     },
+    /// Composable node unloaded successfully
+    Unloaded {
+        /// Composable node name
+        name: String,
+    },
     /// Composable node blocked (container unavailable)
     Blocked {
         /// Composable node name
@@ -150,6 +162,7 @@ impl StateEvent {
             | StateEvent::LoadStarted { name }
             | StateEvent::LoadSucceeded { name, .. }
             | StateEvent::LoadFailed { name, .. }
+            | StateEvent::Unloaded { name }
             | StateEvent::Blocked { name, .. } => name,
             StateEvent::NodeDiscovered { container_name, .. } => container_name,
             StateEvent::ListNodesRequested { requester, .. } => requester,

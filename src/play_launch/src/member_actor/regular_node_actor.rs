@@ -40,6 +40,7 @@ pub async fn run_regular_node(
     state_tx: mpsc::Sender<StateEvent>,
     shutdown_rx: watch::Receiver<bool>,
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
+    shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
 ) -> Result<()> {
     // Create the actor and run it (wrapper approach for Phase 5)
     let actor = RegularNodeActor::new(
@@ -50,6 +51,7 @@ pub async fn run_regular_node(
         state_tx,
         shutdown_rx,
         process_registry,
+        shared_state,
     );
     actor.run().await
 }
@@ -80,6 +82,8 @@ pub struct RegularNodeActor {
     process_registry: Option<
         std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u32, std::path::PathBuf>>>,
     >,
+    /// Shared state map for direct state updates
+    shared_state: std::sync::Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
 }
 
 impl RegularNodeActor {
@@ -95,6 +99,7 @@ impl RegularNodeActor {
         process_registry: Option<
             std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u32, std::path::PathBuf>>>,
         >,
+        shared_state: std::sync::Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
     ) -> Self {
         Self {
             name,
@@ -105,6 +110,7 @@ impl RegularNodeActor {
             state_tx,
             shutdown_rx,
             process_registry,
+            shared_state,
         }
     }
 
@@ -182,6 +188,12 @@ impl RegularNodeActor {
             })
             .await
             .ok();
+
+        // Update shared state directly
+        self.shared_state.insert(
+            self.name.clone(),
+            super::web_query::MemberState::Running { pid },
+        );
 
         if is_verbose() {
             info!("[{}] Started with PID {}", self.name, pid);
@@ -326,6 +338,14 @@ impl RegularNodeActor {
             })
             .await
             .ok();
+
+        // Update shared state directly
+        self.shared_state.insert(
+            self.name.clone(),
+            super::web_query::MemberState::Respawning {
+                attempt: attempt + 1,
+            },
+        );
 
         if is_verbose() {
             info!(
@@ -502,6 +522,13 @@ impl RegularNodeActor {
                 );
                 Ok(true) // Ignore
             }
+            ControlEvent::ToggleComposableAutoLoad { .. } => {
+                warn!(
+                    "[{}] ToggleComposableAutoLoad not supported for regular nodes",
+                    self.name
+                );
+                Ok(true) // Ignore
+            }
             ControlEvent::Load => {
                 warn!("[{}] Load not supported for regular nodes", self.name);
                 Ok(true) // Ignore
@@ -549,6 +576,10 @@ impl RegularNodeActor {
             .await
             .ok();
 
+        // Update shared state directly
+        self.shared_state
+            .insert(self.name.clone(), super::web_query::MemberState::Stopped);
+
         if is_verbose() {
             info!("[{}] Stopped", self.name);
         }
@@ -566,10 +597,16 @@ impl RegularNodeActor {
         self.state_tx
             .send(StateEvent::Failed {
                 name: self.name.clone(),
-                error,
+                error: error.clone(),
             })
             .await
             .ok();
+
+        // Update shared state directly
+        self.shared_state.insert(
+            self.name.clone(),
+            super::web_query::MemberState::Failed { error },
+        );
 
         error!("[{}] Failed", self.name);
 

@@ -82,6 +82,7 @@ pub async fn run_container(
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     load_control_rx: mpsc::Receiver<ContainerControlEvent>,
     ros_node: Option<Arc<rclrs::Node>>,
+    shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
 ) -> Result<()> {
     // Create the actor and run it (wrapper approach for Phase 5)
     let actor = ContainerActor::new(
@@ -94,6 +95,7 @@ pub async fn run_container(
         process_registry,
         load_control_rx,
         ros_node,
+        shared_state,
     );
     actor.run().await
 }
@@ -147,6 +149,8 @@ pub struct ContainerActor {
     pending_loads: VecDeque<LoadRequest>,
     /// Currently processing load
     current_load: Option<CurrentLoad>,
+    /// Shared state map for direct state updates
+    shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
 }
 
 impl ContainerActor {
@@ -200,6 +204,7 @@ impl ContainerActor {
         process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
         load_control_rx: mpsc::Receiver<ContainerControlEvent>,
         ros_node: Option<Arc<rclrs::Node>>,
+        shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
     ) -> Self {
         let (container_state_tx, _container_state_rx) = watch::channel(ContainerState::Pending);
 
@@ -221,6 +226,7 @@ impl ContainerActor {
             unload_client: None,
             pending_loads: VecDeque::new(),
             current_load: None,
+            shared_state,
         }
     }
 
@@ -690,6 +696,10 @@ impl ContainerActor {
                     })
                     .await;
 
+                // Update shared state directly for composable node
+                self.shared_state
+                    .insert(name.to_string(), super::web_query::MemberState::Loading);
+
                 // Phase 12: Queue LoadNode request
                 if let Some(entry) = self.composable_nodes.get(name) {
                     // Convert ROS parameters to string format
@@ -741,11 +751,25 @@ impl ContainerActor {
     async fn handle_unload_composable(&mut self, name: &str) {
         debug!("{}: Handling UnloadComposable for '{}'", self.name, name);
 
+        // Debug: Log all composable node states
+        debug!("{}: Current composable node states:", self.name);
+        for (node_name, node_entry) in self.composable_nodes.iter() {
+            debug!("  - {}: {:?}", node_name, node_entry.state);
+        }
+
         // Check if composable node exists
         let entry = match self.composable_nodes.get_mut(name) {
             Some(e) => e,
             None => {
-                warn!("{}: Composable node '{}' not found", self.name, name);
+                warn!(
+                    "{}: Composable node '{}' not found in composable_nodes HashMap",
+                    self.name, name
+                );
+                warn!(
+                    "{}: Available composable nodes: {:?}",
+                    self.name,
+                    self.composable_nodes.keys().collect::<Vec<_>>()
+                );
                 return;
             }
         };
@@ -759,16 +783,74 @@ impl ContainerActor {
                     self.name, name, unique_id
                 );
 
-                // TODO: Call UnloadNode service
-                warn!(
-                    "{}: UnloadNode service call not yet implemented for Phase 12",
-                    self.name
-                );
+                // Call UnloadNode service
+                let container_name = self.name.clone();
+                let unload_client = self.unload_client.clone();
+                let composable_name = name.to_string();
 
-                // For now, just transition to Unloaded
+                // Spawn the service call as a task (non-blocking)
+                let state_tx = self.state_tx.clone();
+                tokio::spawn(async move {
+                    let result = Self::call_unload_node_service(
+                        container_name.clone(),
+                        unload_client,
+                        unique_id,
+                    )
+                    .await;
+
+                    match result {
+                        Ok(response) if response.success => {
+                            info!(
+                                "{}: Successfully unloaded composable node '{}' (unique_id: {})",
+                                container_name, composable_name, unique_id
+                            );
+                            // Note: State transition happens below after spawning this task
+                        }
+                        Ok(response) => {
+                            warn!(
+                                "{}: Failed to unload composable node '{}': {}",
+                                container_name, composable_name, response.error_message
+                            );
+                            // Emit failed event
+                            let _ = state_tx
+                                .send(StateEvent::LoadFailed {
+                                    name: composable_name,
+                                    error: format!("Unload failed: {}", response.error_message),
+                                })
+                                .await;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "{}: UnloadNode service call error for '{}': {:#}",
+                                container_name, composable_name, e
+                            );
+                            // Emit failed event
+                            let _ = state_tx
+                                .send(StateEvent::LoadFailed {
+                                    name: composable_name,
+                                    error: format!("Unload service error: {:#}", e),
+                                })
+                                .await;
+                        }
+                    }
+                });
+
+                // Transition to Unloaded state immediately (optimistic)
                 entry.state = ComposableState::Unloaded;
                 entry.unique_id = None;
                 entry.load_started_at = None;
+
+                // Emit state event to update coordinator's cache
+                let _ = self
+                    .state_tx
+                    .send(StateEvent::Unloaded {
+                        name: name.to_string(),
+                    })
+                    .await;
+
+                // Update shared state directly for composable node
+                self.shared_state
+                    .insert(name.to_string(), super::web_query::MemberState::Unloaded);
             }
             _ => {
                 warn!(
@@ -840,6 +922,27 @@ impl ContainerActor {
     }
 
     /// Handle UnloadAllComposables control event
+    async fn handle_toggle_composable_auto_load(&mut self, name: &str, enabled: bool) {
+        debug!(
+            "{}: Handling ToggleComposableAutoLoad for '{}' (enabled: {})",
+            self.name, name, enabled
+        );
+
+        // Find and update the composable node's auto_load setting
+        if let Some(entry) = self.composable_nodes.get_mut(name) {
+            entry.metadata.auto_load = enabled;
+            info!(
+                "{}: Updated auto_load for '{}' to {}",
+                self.name, name, enabled
+            );
+        } else {
+            warn!(
+                "{}: Cannot toggle auto_load for '{}': composable node not found",
+                self.name, name
+            );
+        }
+    }
+
     async fn handle_unload_all_composables(&mut self) {
         debug!("{}: Handling UnloadAllComposables", self.name);
 
@@ -898,6 +1001,12 @@ impl ContainerActor {
                         unique_id,
                     })
                     .await;
+
+                // Update shared state directly for composable node
+                self.shared_state.insert(
+                    name.clone(),
+                    super::web_query::MemberState::Loaded { unique_id },
+                );
 
                 debug!(
                     "{}: '{}' loaded successfully in {:.2}s",
@@ -986,6 +1095,19 @@ impl ContainerActor {
                         reason,
                     })
                     .await;
+
+                // Update shared state directly for composable node
+                use super::web_query::BlockReason as WebBlockReason;
+                let web_reason = match reason {
+                    BlockReason::NotStarted => WebBlockReason::ContainerNotStarted,
+                    BlockReason::Stopped => WebBlockReason::ContainerStopped,
+                    BlockReason::Failed => WebBlockReason::ContainerFailed,
+                    BlockReason::Shutdown => WebBlockReason::Shutdown,
+                };
+                self.shared_state.insert(
+                    name.clone(),
+                    super::web_query::MemberState::Blocked { reason: web_reason },
+                );
             }
         }
     }
@@ -1032,6 +1154,12 @@ impl ContainerActor {
                         pid,
                     })
                     .await;
+
+                // Update shared state directly
+                self.shared_state.insert(
+                    self.name.clone(),
+                    super::web_query::MemberState::Running { pid },
+                );
 
                 // Create LoadNode service client now that container is running
                 if self.load_client.is_none() {
@@ -1109,14 +1237,41 @@ impl ContainerActor {
                     );
                 }
 
-                for (name, entry) in self.composable_nodes.iter_mut() {
-                    if matches!(entry.state, ComposableState::Blocked { .. }) {
-                        entry.state = ComposableState::Unloaded;
-                        debug!(
-                            "{}: Transitioned '{}' from Blocked to Unloaded",
-                            self.name, name
-                        );
-                    }
+                // Collect names of nodes transitioning from Blocked to Unloaded
+                let unloaded_nodes: Vec<String> = self
+                    .composable_nodes
+                    .iter_mut()
+                    .filter_map(|(name, entry)| {
+                        if matches!(entry.state, ComposableState::Blocked { .. }) {
+                            entry.state = ComposableState::Unloaded;
+                            debug!(
+                                "{}: Transitioned '{}' from Blocked to Unloaded",
+                                self.name, name
+                            );
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // Emit StateEvent::Unloaded and update shared state for each node
+                for node_name in &unloaded_nodes {
+                    let _ = self
+                        .state_tx
+                        .send(StateEvent::Unloaded {
+                            name: node_name.clone(),
+                        })
+                        .await;
+
+                    // Update shared state directly
+                    self.shared_state
+                        .insert(node_name.clone(), super::web_query::MemberState::Unloaded);
+
+                    debug!(
+                        "{}: Transitioned '{}' to Unloaded in shared state",
+                        self.name, node_name
+                    );
                 }
 
                 // Phase 12: Auto-load composable nodes marked with auto_load=true
@@ -1142,6 +1297,14 @@ impl ContainerActor {
                         error: e.to_string(),
                     })
                     .await;
+
+                // Update shared state directly
+                self.shared_state.insert(
+                    self.name.clone(),
+                    super::web_query::MemberState::Failed {
+                        error: e.to_string(),
+                    },
+                );
 
                 self.state = NodeState::Failed {
                     error: e.to_string(),
@@ -1204,6 +1367,11 @@ impl ContainerActor {
                         let _ = self.state_tx.send(StateEvent::Terminated {
                             name: self.name.clone(),
                         }).await;
+
+                        // Update shared state directly
+                        self.shared_state
+                            .insert(self.name.clone(), super::web_query::MemberState::Stopped);
+
                         return Ok(true); // Keep actor alive to receive Start commands
                     }
                 }
@@ -1245,6 +1413,11 @@ impl ContainerActor {
                             let _ = self.state_tx.send(StateEvent::Terminated {
                                 name: self.name.clone(),
                             }).await;
+
+                            // Update shared state directly
+                            self.shared_state
+                                .insert(self.name.clone(), super::web_query::MemberState::Stopped);
+
                             return Ok(true); // Keep actor alive to receive Start commands
                         }
                         ControlEvent::Restart => {
@@ -1290,6 +1463,9 @@ impl ContainerActor {
                         }
                         ControlEvent::DiscoveredLoaded { unique_id } => {
                             self.handle_discovered_loaded(unique_id).await;
+                        }
+                        ControlEvent::ToggleComposableAutoLoad { name, enabled } => {
+                            self.handle_toggle_composable_auto_load(&name, enabled).await;
                         }
                         _ => {
                             warn!("{}: Unhandled control event: {:?}", self.name, event);
@@ -1372,6 +1548,12 @@ impl ContainerActor {
                                             self.name, composable_name, response.unique_id
                                         );
 
+                                        // Update shared state directly for composable node
+                                        self.shared_state.insert(
+                                            composable_name.clone(),
+                                            super::web_query::MemberState::Loaded { unique_id: response.unique_id },
+                                        );
+
                                         // Emit LoadSucceeded event
                                         let _ = self.state_tx.send(StateEvent::LoadSucceeded {
                                             name: composable_name.clone(),
@@ -1389,6 +1571,14 @@ impl ContainerActor {
                                             self.name, composable_name, response.error_message
                                         );
 
+                                        // Update shared state directly for composable node
+                                        self.shared_state.insert(
+                                            composable_name.clone(),
+                                            super::web_query::MemberState::Failed {
+                                                error: response.error_message.clone(),
+                                            },
+                                        );
+
                                         // Emit Failed event
                                         let _ = self.state_tx.send(StateEvent::Failed {
                                             name: composable_name.clone(),
@@ -1397,18 +1587,27 @@ impl ContainerActor {
                                     }
                                     Err(e) => {
                                         // Service call error
+                                        let error_msg = format!("{:#}", e);
                                         entry.state = ComposableState::Failed {
-                                            error: format!("{:#}", e),
+                                            error: error_msg.clone(),
                                         };
                                         warn!(
                                             "{}: LoadNode service call failed for '{}': {:#}",
                                             self.name, composable_name, e
                                         );
 
+                                        // Update shared state directly for composable node
+                                        self.shared_state.insert(
+                                            composable_name.clone(),
+                                            super::web_query::MemberState::Failed {
+                                                error: error_msg.clone(),
+                                            },
+                                        );
+
                                         // Emit Failed event
                                         let _ = self.state_tx.send(StateEvent::Failed {
                                             name: composable_name.clone(),
-                                            error: format!("{:#}", e),
+                                            error: error_msg,
                                         }).await;
                                     }
                                 }
@@ -1490,6 +1689,11 @@ impl ContainerActor {
                         let _ = self.state_tx.send(StateEvent::Terminated {
                             name: self.name.clone(),
                         }).await;
+
+                        // Update shared state directly
+                        self.shared_state
+                            .insert(self.name.clone(), super::web_query::MemberState::Stopped);
+
                         return Ok(false); // Stop actor
                     }
                 }
@@ -1515,6 +1719,12 @@ impl ContainerActor {
             })
             .await;
 
+        // Update shared state directly
+        self.shared_state.insert(
+            self.name.clone(),
+            super::web_query::MemberState::Respawning { attempt },
+        );
+
         // Check if max attempts reached
         if let Some(max_attempts) = self.config.max_respawn_attempts {
             if attempt >= max_attempts {
@@ -1522,8 +1732,9 @@ impl ContainerActor {
                     "{}: Max respawn attempts ({}) reached",
                     self.name, max_attempts
                 );
+                let error_msg = format!("Max respawn attempts ({}) reached", max_attempts);
                 self.state = NodeState::Failed {
-                    error: format!("Max respawn attempts ({}) reached", max_attempts),
+                    error: error_msg.clone(),
                 };
 
                 // Broadcast failed state
@@ -1533,9 +1744,18 @@ impl ContainerActor {
                     .state_tx
                     .send(StateEvent::Failed {
                         name: self.name.clone(),
-                        error: format!("Max respawn attempts ({}) reached", max_attempts),
+                        error: error_msg.clone(),
                     })
                     .await;
+
+                // Update shared state directly
+                self.shared_state.insert(
+                    self.name.clone(),
+                    super::web_query::MemberState::Failed {
+                        error: error_msg,
+                    },
+                );
+
                 return Ok(false); // Stop actor
             }
         }
@@ -1564,6 +1784,11 @@ impl ContainerActor {
                         let _ = self.state_tx.send(StateEvent::Terminated {
                             name: self.name.clone(),
                         }).await;
+
+                        // Update shared state directly
+                        self.shared_state
+                            .insert(self.name.clone(), super::web_query::MemberState::Stopped);
+
                         Ok(true) // Keep actor alive to receive Start commands
                     }
                     _ => Ok(true) // Ignore other events during respawn
@@ -1580,6 +1805,11 @@ impl ContainerActor {
                     let _ = self.state_tx.send(StateEvent::Terminated {
                         name: self.name.clone(),
                     }).await;
+
+                    // Update shared state directly
+                    self.shared_state
+                        .insert(self.name.clone(), super::web_query::MemberState::Stopped);
+
                     Ok(false) // Stop actor
                 } else {
                     Ok(true)

@@ -196,6 +196,12 @@ impl MemberCoordinatorBuilder {
         let mut control_channels = HashMap::new();
         let mut metadata_map = HashMap::new();
 
+        // Initialize shared state map (will be populated before spawning actors)
+        let shared_state = Arc::new(dashmap::DashMap::new());
+
+        // Collect all metadata first before spawning actors
+        // (We'll populate shared_state before spawning to avoid race conditions)
+
         // Spawn regular nodes
         for def in self.regular_nodes {
             let (control_tx, control_rx) = mpsc::channel(10);
@@ -208,6 +214,7 @@ impl MemberCoordinatorBuilder {
                 state_tx.clone(),
                 shutdown_rx.clone(),
                 def.process_registry,
+                shared_state.clone(),
             );
 
             let task = tokio::spawn(async move {
@@ -271,6 +278,7 @@ impl MemberCoordinatorBuilder {
                 def.process_registry,
                 load_control_rx,
                 shared_ros_node.clone(),
+                shared_state.clone(),
             );
 
             // Get container state receiver before spawning
@@ -446,8 +454,8 @@ impl MemberCoordinatorBuilder {
 
         // state_tx and shutdown_rx are dropped here (actors have their clones)
 
-        // Pre-populate state cache with all member names (using RwLock per MemberState)
-        let mut state_entries = HashMap::new();
+        // Populate shared state map with initial states for all members
+        // Only insert if not already present (actors may have already written their states)
         for (name, meta) in metadata_map.iter() {
             // Composable nodes start in Unloaded state, others start in Pending
             let initial_state = if meta.member_type == MemberType::ComposableNode {
@@ -455,12 +463,9 @@ impl MemberCoordinatorBuilder {
             } else {
                 MemberState::Pending
             };
-            state_entries.insert(
-                name.clone(),
-                Arc::new(tokio::sync::RwLock::new(initial_state)),
-            );
+            // Use entry API to avoid overwriting actor state updates
+            shared_state.entry(name.clone()).or_insert(initial_state);
         }
-        let state_cache = Arc::new(state_entries);
 
         // Phase 12: Build virtual member routing map for composable nodes
         // Maps composable node name -> parent container name
@@ -470,7 +475,7 @@ impl MemberCoordinatorBuilder {
         let handle = MemberHandle {
             control_channels,
             metadata: Arc::new(tokio::sync::RwLock::new(metadata_map)),
-            state_cache: state_cache.clone(),
+            shared_state: shared_state.clone(),
             shutdown_tx,
             virtual_member_routing,
         };
@@ -478,7 +483,7 @@ impl MemberCoordinatorBuilder {
         let runner = MemberRunner {
             tasks,
             state_rx,
-            state_cache,
+            shared_state,
             list_nodes_event_tx,
         };
 
@@ -504,8 +509,8 @@ pub struct MemberHandle {
     control_channels: HashMap<String, mpsc::Sender<ControlEvent>>,
     /// Member metadata (mutable for dynamic config updates like respawn_enabled)
     metadata: Arc<tokio::sync::RwLock<HashMap<String, MemberMetadata>>>,
-    /// Cached state updated by runner (Arc for sharing with runner, RwLock per MemberState)
-    state_cache: Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>>,
+    /// Shared state map (actors write directly, Web UI reads)
+    shared_state: Arc<dashmap::DashMap<String, MemberState>>,
     /// Shutdown signal broadcaster
     shutdown_tx: watch::Sender<bool>,
     /// Virtual member routing: maps composable node names to parent container names (Phase 12)
@@ -519,12 +524,12 @@ impl MemberHandle {
 
         let metadata_guard = self.metadata.read().await;
         for (name, meta) in metadata_guard.iter() {
-            // Read state from RwLock
-            let state = if let Some(state_lock) = self.state_cache.get(name) {
-                state_lock.read().await.clone()
-            } else {
-                MemberState::Pending
-            };
+            // Read state from DashMap
+            let state = self
+                .shared_state
+                .get(name)
+                .map(|entry| entry.value().clone())
+                .unwrap_or(MemberState::Pending);
 
             let pid = match &state {
                 MemberState::Running { pid } => Some(*pid),
@@ -584,12 +589,12 @@ impl MemberHandle {
         let metadata_guard = self.metadata.read().await;
         let meta = metadata_guard.get(name)?;
 
-        // Read state from RwLock
-        let state = if let Some(state_lock) = self.state_cache.get(name) {
-            state_lock.read().await.clone()
-        } else {
-            MemberState::Pending
-        };
+        // Read state from DashMap
+        let state = self
+            .shared_state
+            .get(name)
+            .map(|entry| entry.value().clone())
+            .unwrap_or(MemberState::Pending);
 
         let pid = match &state {
             MemberState::Running { pid } => Some(*pid),
@@ -647,12 +652,12 @@ impl MemberHandle {
 
         let metadata_guard = self.metadata.read().await;
         for (name, meta) in metadata_guard.iter() {
-            // Read state from RwLock
-            let state = if let Some(state_lock) = self.state_cache.get(name) {
-                state_lock.read().await.clone()
-            } else {
-                MemberState::Pending
-            };
+            // Read state from DashMap
+            let state = self
+                .shared_state
+                .get(name)
+                .map(|entry| entry.value().clone())
+                .unwrap_or(MemberState::Pending);
 
             // Count by member type
             match meta.member_type {
@@ -767,13 +772,25 @@ impl MemberHandle {
                     warn!("ToggleRespawn not supported for virtual member: {}", name);
                     return Ok(());
                 }
+                ControlEvent::Load => ControlEvent::LoadComposable {
+                    name: name.to_string(),
+                },
+                ControlEvent::Unload => ControlEvent::UnloadComposable {
+                    name: name.to_string(),
+                },
                 ControlEvent::ToggleAutoLoad(enabled) => {
-                    // Update metadata only (container will use it on next start)
+                    // Update metadata and forward to container so it can update internal state
                     let mut metadata_guard = self.metadata.write().await;
                     if let Some(meta) = metadata_guard.get_mut(name) {
                         meta.auto_load = Some(enabled);
                     }
-                    return Ok(());
+                    drop(metadata_guard);
+
+                    // Forward to container with composable node name included
+                    ControlEvent::ToggleComposableAutoLoad {
+                        name: name.to_string(),
+                        enabled,
+                    }
                 }
                 other => {
                     // Forward other events as-is (like DiscoveredLoaded)
@@ -877,18 +894,17 @@ impl MemberHandle {
             return Err(eyre::eyre!("Container '{}' not found", container_name));
         }
 
-        // Collect names of composable nodes that need loading
-        let mut nodes_to_load = Vec::new();
+        // Count composable nodes that need loading (for return value)
+        let mut nodes_to_load_count = 0;
         for (name, meta) in metadata_guard.iter() {
             if meta.member_type == MemberType::ComposableNode {
                 if let Some(target) = &meta.target_container {
                     if target == container_name {
                         // Check if this node is in Unloaded or Failed state
-                        if let Some(state_lock) = self.state_cache.get(name) {
-                            let state = state_lock.read().await;
-                            match &*state {
+                        if let Some(entry) = self.shared_state.get(name) {
+                            match entry.value() {
                                 MemberState::Unloaded | MemberState::Failed { .. } => {
-                                    nodes_to_load.push(name.clone());
+                                    nodes_to_load_count += 1;
                                 }
                                 _ => {} // Skip nodes in other states
                             }
@@ -897,19 +913,13 @@ impl MemberHandle {
                 }
             }
         }
-        drop(metadata_guard); // Release lock before sending controls
+        drop(metadata_guard); // Release lock before sending control
 
-        // Send Load control to all nodes that need it
-        let mut loaded_count = 0;
-        for name in nodes_to_load {
-            if let Err(e) = self.send_control(&name, ControlEvent::Load).await {
-                tracing::warn!("Failed to load {}: {}", name, e);
-            } else {
-                loaded_count += 1;
-            }
-        }
+        // Send LoadAllComposables to container (Phase 12)
+        self.send_control(container_name, ControlEvent::LoadAllComposables)
+            .await?;
 
-        Ok(loaded_count)
+        Ok(nodes_to_load_count)
     }
 
     /// Unload all loaded composable nodes in a container
@@ -924,36 +934,29 @@ impl MemberHandle {
             return Err(eyre::eyre!("Container '{}' not found", container_name));
         }
 
-        // Collect names of composable nodes that are loaded
-        let mut nodes_to_unload = Vec::new();
+        // Count composable nodes that are loaded (for return value)
+        let mut nodes_to_unload_count = 0;
         for (name, meta) in metadata_guard.iter() {
             if meta.member_type == MemberType::ComposableNode {
                 if let Some(target) = &meta.target_container {
                     if target == container_name {
                         // Check if this node is in Loaded state
-                        if let Some(state_lock) = self.state_cache.get(name) {
-                            let state = state_lock.read().await;
-                            if let MemberState::Loaded { .. } = &*state {
-                                nodes_to_unload.push(name.clone());
+                        if let Some(entry) = self.shared_state.get(name) {
+                            if let MemberState::Loaded { .. } = entry.value() {
+                                nodes_to_unload_count += 1;
                             }
                         }
                     }
                 }
             }
         }
-        drop(metadata_guard); // Release lock before sending controls
+        drop(metadata_guard); // Release lock before sending control
 
-        // Send Unload control to all loaded nodes
-        let mut unloaded_count = 0;
-        for name in nodes_to_unload {
-            if let Err(e) = self.send_control(&name, ControlEvent::Unload).await {
-                tracing::warn!("Failed to unload {}: {}", name, e);
-            } else {
-                unloaded_count += 1;
-            }
-        }
+        // Send UnloadAllComposables to container (Phase 12)
+        self.send_control(container_name, ControlEvent::UnloadAllComposables)
+            .await?;
 
-        Ok(unloaded_count)
+        Ok(nodes_to_unload_count)
     }
 
     /// Broadcast shutdown signal to all actors
@@ -973,9 +976,9 @@ impl MemberHandle {
         self.metadata.read().await.contains_key(name)
     }
 
-    /// Get reference to the state cache for manual state updates
-    pub fn state_cache(&self) -> &Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>> {
-        &self.state_cache
+    /// Get reference to the shared state map
+    pub fn shared_state(&self) -> &Arc<dashmap::DashMap<String, MemberState>> {
+        &self.shared_state
     }
 
     /// Handle node discovery from ListNodes query
@@ -1065,89 +1068,13 @@ pub struct MemberRunner {
     tasks: HashMap<String, JoinHandle<Result<()>>>,
     /// Receiver for state events from actors
     state_rx: mpsc::Receiver<StateEvent>,
-    /// Shared state cache (updated for web UI queries, RwLock per MemberState)
-    state_cache: Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>>,
+    /// Shared state map (actors write directly, runner only reads for logging)
+    shared_state: Arc<dashmap::DashMap<String, MemberState>>,
     /// Channel to forward ListNodesRequested events to the manager
     list_nodes_event_tx: Option<mpsc::Sender<StateEvent>>,
 }
 
 impl MemberRunner {
-    /// Static helper to update state (for use in wait_for_completion and external event processing)
-    pub async fn update_state_static(
-        event: &StateEvent,
-        state_cache: &Arc<HashMap<String, Arc<tokio::sync::RwLock<MemberState>>>>,
-    ) {
-        let name = match event {
-            StateEvent::Started { name, .. } => name,
-            StateEvent::Exited { name, .. } => name,
-            StateEvent::Respawning { name, .. } => name,
-            StateEvent::Terminated { name } => name,
-            StateEvent::Failed { name, .. } => name,
-            StateEvent::LoadStarted { name } => name,
-            StateEvent::LoadSucceeded { name, .. } => name,
-            StateEvent::LoadFailed { name, .. } => name,
-            StateEvent::Blocked { name, .. } => name,
-            StateEvent::NodeDiscovered { container_name, .. } => container_name,
-            StateEvent::ListNodesRequested { requester, .. } => requester,
-        };
-
-        // Get the RwLock for this specific member
-        if let Some(state_lock) = state_cache.get(name) {
-            let mut state = state_lock.write().await;
-
-            *state = match event {
-                StateEvent::Started { pid, .. } => MemberState::Running { pid: *pid },
-                StateEvent::Exited { exit_code, .. } => {
-                    if exit_code.is_some() {
-                        MemberState::Failed {
-                            error: format!("Exited with code {:?}", exit_code),
-                        }
-                    } else {
-                        MemberState::Stopped
-                    }
-                }
-                StateEvent::Respawning { attempt, .. } => {
-                    MemberState::Respawning { attempt: *attempt }
-                }
-                StateEvent::Terminated { .. } => MemberState::Stopped,
-                StateEvent::Failed { error, .. } => MemberState::Failed {
-                    error: error.clone(),
-                },
-                StateEvent::LoadStarted { .. } => MemberState::Loading,
-                StateEvent::LoadSucceeded { unique_id, .. } => MemberState::Loaded {
-                    unique_id: *unique_id,
-                },
-                StateEvent::LoadFailed { error, .. } => MemberState::Failed {
-                    error: error.clone(),
-                },
-                StateEvent::Blocked { reason, .. } => {
-                    use super::{
-                        state::BlockReason as ActorBlockReason,
-                        web_query::BlockReason as WebBlockReason,
-                    };
-
-                    let web_reason = match reason {
-                        ActorBlockReason::NotStarted => WebBlockReason::ContainerNotStarted,
-                        ActorBlockReason::Stopped => WebBlockReason::ContainerStopped,
-                        ActorBlockReason::Failed => WebBlockReason::ContainerFailed,
-                        ActorBlockReason::Shutdown => WebBlockReason::Shutdown,
-                    };
-
-                    MemberState::Blocked { reason: web_reason }
-                }
-                // These events don't directly update member state
-                StateEvent::NodeDiscovered { .. } | StateEvent::ListNodesRequested { .. } => {
-                    return; // No state update needed
-                }
-            };
-        }
-    }
-
-    /// Update state cache based on a StateEvent
-    async fn update_state(&self, event: &StateEvent) {
-        Self::update_state_static(event, &self.state_cache).await;
-    }
-
     /// Get the next state event (for web UI forwarding)
     pub async fn next_state_event(&mut self) -> Option<StateEvent> {
         let event = self.state_rx.recv().await;
@@ -1173,7 +1100,7 @@ impl MemberRunner {
         let Self {
             tasks,
             mut state_rx,
-            state_cache,
+            shared_state: _shared_state,
             list_nodes_event_tx: _list_nodes_event_tx,
         } = self;
 
@@ -1195,10 +1122,10 @@ impl MemberRunner {
         // Process state events and task completions concurrently
         loop {
             tokio::select! {
-                // Process state events
+                // Drain state events (actors write directly to shared_state)
                 Some(event) = state_rx.recv() => {
                     tracing::debug!("State event: {:?}", event);
-                    Self::update_state_static(&event, &state_cache).await;
+                    // Actors update shared_state directly, no need to update from events
                 }
 
                 // Process task completions

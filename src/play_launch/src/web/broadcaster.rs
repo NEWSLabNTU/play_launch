@@ -88,6 +88,7 @@ impl EventType for StateEvent {
             StateEvent::LoadStarted { .. } => "LoadStarted",
             StateEvent::LoadSucceeded { .. } => "LoadSucceeded",
             StateEvent::LoadFailed { .. } => "LoadFailed",
+            StateEvent::Unloaded { .. } => "Unloaded",
             StateEvent::Blocked { .. } => "Blocked",
             StateEvent::NodeDiscovered { .. } => "NodeDiscovered",
             StateEvent::ListNodesRequested { .. } => "ListNodesRequested",
