@@ -376,6 +376,11 @@ impl MemberCoordinatorBuilder {
                     container_actor.add_composable_node(def.name.clone(), metadata);
 
                     // Add metadata for this virtual member
+                    tracing::debug!(
+                        "Inserting composable node '{}' into metadata_map (member_type: {:?})",
+                        def.name,
+                        def.metadata.member_type
+                    );
                     metadata_map.insert(def.name.clone(), def.metadata.clone());
 
                     // Populate virtual member routing
@@ -393,11 +398,12 @@ impl MemberCoordinatorBuilder {
                 }
             } else {
                 warn!(
-                    "Container '{}' not found for composable node '{}', skipping",
-                    def.target_container_name, def.name
+                    "Container '{}' not found for composable node '{}', skipping (normalized: '{}')",
+                    def.target_container_name, def.name, normalized_target
                 );
                 debug!(
-                    "Available containers: {:?}",
+                    "Available containers ({}): {:?}",
+                    container_full_names.len(),
                     container_full_names.values().collect::<Vec<_>>()
                 );
             }
@@ -523,6 +529,10 @@ impl MemberHandle {
         let mut summaries = Vec::new();
 
         let metadata_guard = self.metadata.read().await;
+        tracing::debug!(
+            "list_members: metadata_guard has {} entries",
+            metadata_guard.len()
+        );
         for (name, meta) in metadata_guard.iter() {
             // Read state from DashMap
             let state = self
@@ -894,21 +904,18 @@ impl MemberHandle {
             return Err(eyre::eyre!("Container '{}' not found", container_name));
         }
 
+        // Use virtual_member_routing to find composable nodes that belong to this container
         // Count composable nodes that need loading (for return value)
         let mut nodes_to_load_count = 0;
-        for (name, meta) in metadata_guard.iter() {
-            if meta.member_type == MemberType::ComposableNode {
-                if let Some(target) = &meta.target_container {
-                    if target == container_name {
-                        // Check if this node is in Unloaded or Failed state
-                        if let Some(entry) = self.shared_state.get(name) {
-                            match entry.value() {
-                                MemberState::Unloaded | MemberState::Failed { .. } => {
-                                    nodes_to_load_count += 1;
-                                }
-                                _ => {} // Skip nodes in other states
-                            }
+        for (composable_name, parent_container) in self.virtual_member_routing.iter() {
+            if parent_container == container_name {
+                // Check if this node is in Unloaded or Failed state
+                if let Some(entry) = self.shared_state.get(composable_name.as_str()) {
+                    match entry.value() {
+                        MemberState::Unloaded | MemberState::Failed { .. } => {
+                            nodes_to_load_count += 1;
                         }
+                        _ => {} // Skip nodes in other states
                     }
                 }
             }
@@ -934,18 +941,15 @@ impl MemberHandle {
             return Err(eyre::eyre!("Container '{}' not found", container_name));
         }
 
+        // Use virtual_member_routing to find composable nodes that belong to this container
         // Count composable nodes that are loaded (for return value)
         let mut nodes_to_unload_count = 0;
-        for (name, meta) in metadata_guard.iter() {
-            if meta.member_type == MemberType::ComposableNode {
-                if let Some(target) = &meta.target_container {
-                    if target == container_name {
-                        // Check if this node is in Loaded state
-                        if let Some(entry) = self.shared_state.get(name) {
-                            if let MemberState::Loaded { .. } = entry.value() {
-                                nodes_to_unload_count += 1;
-                            }
-                        }
+        for (composable_name, parent_container) in self.virtual_member_routing.iter() {
+            if parent_container == container_name {
+                // Check if this node is in Loaded state
+                if let Some(entry) = self.shared_state.get(composable_name.as_str()) {
+                    if let MemberState::Loaded { .. } = entry.value() {
+                        nodes_to_unload_count += 1;
                     }
                 }
             }
@@ -957,6 +961,60 @@ impl MemberHandle {
             .await?;
 
         Ok(nodes_to_unload_count)
+    }
+
+    /// Start all nodes and containers (not composable nodes - they're managed by containers)
+    pub async fn start_all(&self) -> Result<usize> {
+        let metadata_guard = self.metadata.read().await;
+        let mut count = 0;
+
+        for (name, meta) in metadata_guard.iter() {
+            // Only send to regular nodes and containers
+            if meta.member_type == MemberType::Node || meta.member_type == MemberType::Container {
+                if let Some(tx) = self.control_channels.get(name) {
+                    let _ = tx.send(ControlEvent::Start).await;
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Stop all nodes and containers (not composable nodes - they're managed by containers)
+    pub async fn stop_all(&self) -> Result<usize> {
+        let metadata_guard = self.metadata.read().await;
+        let mut count = 0;
+
+        for (name, meta) in metadata_guard.iter() {
+            // Only send to regular nodes and containers
+            if meta.member_type == MemberType::Node || meta.member_type == MemberType::Container {
+                if let Some(tx) = self.control_channels.get(name) {
+                    let _ = tx.send(ControlEvent::Stop).await;
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Restart all nodes and containers (not composable nodes - they're managed by containers)
+    pub async fn restart_all(&self) -> Result<usize> {
+        let metadata_guard = self.metadata.read().await;
+        let mut count = 0;
+
+        for (name, meta) in metadata_guard.iter() {
+            // Only send to regular nodes and containers
+            if meta.member_type == MemberType::Node || meta.member_type == MemberType::Container {
+                if let Some(tx) = self.control_channels.get(name) {
+                    let _ = tx.send(ControlEvent::Restart).await;
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
     }
 
     /// Broadcast shutdown signal to all actors

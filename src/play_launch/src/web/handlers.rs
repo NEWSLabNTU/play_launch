@@ -409,10 +409,28 @@ pub async fn list_nodes(State(state): State<Arc<WebState>>) -> Response {
                 format!("/{}", container.name)
             };
 
+        tracing::debug!(
+            "Container '{}': full_name='{}', namespace={:?}, node_name={:?}",
+            container.name,
+            container_full_name,
+            container.namespace,
+            container.node_name
+        );
+
         // Find composable nodes that belong to this container
         let mut children: Vec<_> = composables
             .iter()
-            .filter(|n| n.target_container.as_deref() == Some(container_full_name.as_str()))
+            .filter(|n| {
+                let matches = n.target_container.as_deref() == Some(container_full_name.as_str());
+                tracing::debug!(
+                    "Composable '{}': target={:?}, matches '{}'? {}",
+                    n.name,
+                    n.target_container,
+                    container_full_name,
+                    matches
+                );
+                matches
+            })
             .collect();
         children.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -770,34 +788,48 @@ pub async fn health_summary(State(state): State<Arc<WebState>>) -> Response {
 }
 
 // ===== Bulk Operations =====
-// TODO(Phase 11.5): Implement bulk operations via coordinator
 
-/// Start all nodes
-/// TODO(Phase 11.5): Implement via coordinator.start_all()
-pub async fn start_all(State(_state): State<Arc<WebState>>) -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        "Bulk operations not yet implemented",
-    )
-        .into_response()
+/// Start all nodes and containers
+pub async fn start_all(State(state): State<Arc<WebState>>) -> Response {
+    let coordinator = &state.member_handle;
+    match coordinator.start_all().await {
+        Ok(count) => {
+            tracing::info!("[Web UI] Sent Start control to {} nodes/containers", count);
+            (StatusCode::OK, format!("Started {} nodes/containers", count)).into_response()
+        }
+        Err(e) => {
+            tracing::error!("[Web UI] Failed to start all: {:#}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Error: {:#}", e)).into_response()
+        }
+    }
 }
 
-/// Stop all nodes
-/// TODO(Phase 11.5): Implement via coordinator.stop_all()
-pub async fn stop_all(State(_state): State<Arc<WebState>>) -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        "Bulk operations not yet implemented",
-    )
-        .into_response()
+/// Stop all nodes and containers
+pub async fn stop_all(State(state): State<Arc<WebState>>) -> Response {
+    let coordinator = &state.member_handle;
+    match coordinator.stop_all().await {
+        Ok(count) => {
+            tracing::info!("[Web UI] Sent Stop control to {} nodes/containers", count);
+            (StatusCode::OK, format!("Stopped {} nodes/containers", count)).into_response()
+        }
+        Err(e) => {
+            tracing::error!("[Web UI] Failed to stop all: {:#}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Error: {:#}", e)).into_response()
+        }
+    }
 }
 
-/// Restart all nodes
-/// TODO(Phase 11.5): Implement via coordinator.restart_all()
-pub async fn restart_all(State(_state): State<Arc<WebState>>) -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        "Bulk operations not yet implemented",
-    )
-        .into_response()
+/// Restart all nodes and containers
+pub async fn restart_all(State(state): State<Arc<WebState>>) -> Response {
+    let coordinator = &state.member_handle;
+    match coordinator.restart_all().await {
+        Ok(count) => {
+            tracing::info!("[Web UI] Sent Restart control to {} nodes/containers", count);
+            (StatusCode::OK, format!("Restarted {} nodes/containers", count)).into_response()
+        }
+        Err(e) => {
+            tracing::error!("[Web UI] Failed to restart all: {:#}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Error: {:#}", e)).into_response()
+        }
+    }
 }
