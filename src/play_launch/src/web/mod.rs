@@ -104,6 +104,7 @@ pub fn create_router(state: Arc<WebState>) -> Router {
         // Static files
         .route("/", get(index_handler))
         .route("/static/*path", get(static_handler))
+        .route("/assets/*path", get(static_handler))
         // API endpoints
         .route("/api/nodes", get(handlers::list_nodes))
         .route("/api/nodes/:name", get(handlers::get_node))
