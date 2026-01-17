@@ -409,6 +409,8 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 
 ## Key Recent Changes
 
+- **2026-01-17**: Unloading state implementation with proper completion handling and immediate visual feedback - Fixed Unloading state never transitioning to Unloaded by implementing a complete response mechanism similar to Loading. **Root cause**: The spawned unload task sent StateEvent to coordinator but never updated the container actor's internal composable_nodes state from Unloading to Unloaded. **Solution**: (1) Added CurrentUnload struct to track in-flight unload operations (container_control.rs:124-132). (2) Modified handle_unload_composable to spawn tracked task stored in current_unload field (container_actor.rs:806-820). (3) Added select! arm to poll current_unload.task and transition to Unloaded on success (container_actor.rs:1616-1684). (4) Updated drain_queue to cancel current_unload when container crashes (container_actor.rs:619-625). (5) Removed "X running" processes badge from Web UI (handlers.rs:776-786). (6) Improved button rendering: Loaded→Unload button, Loading→disabled "Loading...", Unloaded→Load button, Unloading→disabled "Unloading...", Blocked→disabled Load, Failed→Load for retry (handlers.rs:200-263). (7) Added Unloading CSS colors: light (peach/orange #ffe5b4), dark (amber #3d2e1a) (index.html:41-43, 85-87, 419-422). (8) Fixed immediate visual feedback: Modified load_node/unload_node handlers to return updated HTML instead of text, changed hx-swap from "none" to "outerHTML" with hx-target="closest .node-card" to immediately swap the card when button clicked (handlers.rs:597-661). Result: Load/Unload buttons now show immediate state change (Loading/Unloading), followed by final state (Loaded/Unloaded) after service response. Tested with Autoware simulation - all state transitions work correctly (container_control.rs:124-132; container_actor.rs:152-153, 231, 806-820, 1616-1684; handlers.rs:200-263, 597-661; index.html:41-43, 85-87, 419-422).
+- **2026-01-16**: Composable node to container matching fix (Python + Rust) - **Root cause**: Python dump_launch only stored container node_name (e.g., "container") in target_container_name, but Rust coordinator built full ROS names with namespace (e.g., "/adapi/container"). Additionally, multiple containers with same name but different namespaces caused HashMap collisions. **Solution**: (1) Python fix - Changed load_composable_nodes.py to use `expanded_node_namespace()` + `node_name` to build full target_container_name matching ROS node name format. (2) Rust fix - Added deduplication for containers with duplicate names (container, container_2, container_3, etc.) using name_counts HashMap. (3) Metadata fix - Updated metadata.name to match unique member name for correct Web UI control routing. (4) Loading/Unloading state fix - Added immediate shared_state updates: Loading state when Load button clicked, Unloading state when Unload button clicked, providing instant Web UI feedback. Added Unloading to MemberState enum (web_query.rs), ComposableNodeStatus enum (web_types.rs), status conversion, and CSS class mapping (handlers.rs). Result: All 54 composable nodes successfully matched and visible in Web UI with immediate state feedback (python/play_launch/dump/visitor/load_composable_nodes.py:31-41; coordinator.rs:240-324, 909-924; web_query.rs:44; web_types.rs:47,166; handlers.rs:129).
 - **2026-01-16**: Web UI bulk operations and state synchronization fixes - Implemented all bulk control operations: Start All, Stop All, Restart All buttons in Web UI header operate on all regular nodes and containers; Load All / Unload All buttons within each container card operate on composable nodes. Fixed 8+ missing shared_state updates where state transitions (Stopped, Failed, Blocked→Unloaded, Loading→Loaded/Failed) updated actor internal state but not DashMap, causing Web UI to show stale states. Fixed bulk child operations to use virtual_member_routing HashMap for correct container-to-composable matching. All operations log affected member count and work correctly across multiple restart cycles (container_actor.rs:1267-1269, 1407-1414, 1532-1586, 1726-1806; coordinator.rs:907-1018; handlers.rs:790-835).
 - **2026-01-14**: Container restart race condition fix - Fixed composable nodes getting stuck in "Loading" state after container restart. **Root cause**: Race condition between ROS service registration and container executor startup. `service_is_ready()` returns true when service is registered in ROS graph, but container executor may not be spinning/processing requests yet. When service becomes ready too quickly (0ms), service calls hang forever. **Solution**: Added 200ms warmup delay after `service_is_ready()` returns true to ensure container executor is actually processing requests before calling LoadNode service (container_actor.rs:442-452). Tested with 3 consecutive restart cycles - all composable nodes loaded successfully without timeouts.
 - **2026-01-14**: Logging level improvements - Changed many `info!` logs to `debug!` to reduce noise for end-users. Technical details like service client creation, state transitions (Blocked→Unloaded), service readiness checks, and internal timing are now DEBUG-level. INFO level now shows only essential user-facing events: user actions (Start/Stop commands), major lifecycle events (container started/terminated, startup complete), and errors/warnings. Use `RUST_LOG=play_launch=info` (default) for clean output or `RUST_LOG=play_launch=debug` for detailed troubleshooting. Documented logging practices in CLAUDE.md (container_actor.rs:389-440, 1039-1109).
@@ -442,16 +444,63 @@ Wheels are built for both x86_64 and aarch64 (Ubuntu 22.04+).
 - **BAD**: `Bash(command="timeout 15 play_launch replay")` - blocks the entire command
 - Reason: Long-running commands like `play_launch` can block, and the Bash tool's timeout provides better control
 
+### Avoiding Orphan Processes
+When killing play_launch or testing with ros2 launch:
+- **NEVER** use `kill -9` or `pkill -9` on individual processes - this leaves orphans
+- **ALWAYS** kill the entire process group (PGID) to ensure all children are terminated
+- Proper cleanup sequence:
+  1. Send SIGTERM to PGID first: `kill -TERM -$PGID`
+  2. Wait 2 seconds for graceful shutdown
+  3. Send SIGKILL to PGID for stubborn processes: `kill -9 -$PGID`
+- Example cleanup script:
+  ```bash
+  LAUNCH_PID=12345
+  PGID=$(ps -o pgid= -p $LAUNCH_PID | tr -d ' ')
+  kill -TERM -$PGID  # Kill entire process group
+  sleep 2
+  kill -9 -$PGID     # Force kill remaining
+  ```
+- **Why**: play_launch and ros2 launch spawn many child processes (containers, nodes). Killing only the parent or individual processes leaves orphans that consume resources
+- Use `just kill-orphans` in test directories to clean up stray ROS processes
+
 ### Temporary Files
 - **ALWAYS** store all temporary files in `tmp/` directory at the project root (`/home/aeon/repos/play_launch/tmp/`)
 - This directory is gitignored and used for testing, debugging, and experimentation
 - **NEVER** use system `/tmp` for project-related temporary files
-- Use `$project/tmp/` for all test runs, temporary log directories, and scratch work
+- Use `$project/tmp/` for all test runs, temporary log directories, debugging logs, and scratch work
 - Example: `cd /home/aeon/repos/play_launch/tmp && play_launch ...`
+- Example: Redirect logs to `/home/aeon/repos/play_launch/tmp/debug.log`, not `/tmp/debug.log`
 
 ### External Dependencies
 - `external/` directory is for placing 3rd party projects for study and reference
 - **Gitignored** - not part of the project build
+
+### Using ros2 launch for Testing
+When running `ros2 launch` manually for debugging or comparison:
+- **CRITICAL**: Always kill both the launch process AND its children to prevent orphan processes
+- Method 1: Store PID and kill process group:
+  ```bash
+  ros2 launch <package> <launch_file> &
+  LAUNCH_PID=$!
+  # ... do work ...
+  pkill -TERM -P $LAUNCH_PID  # Kill children with SIGTERM
+  sleep 2
+  pkill -9 -P $LAUNCH_PID     # Force kill stubborn children
+  kill -9 $LAUNCH_PID         # Kill parent
+  ```
+- Method 2: Use PID file:
+  ```bash
+  ros2 launch <package> <launch_file> > /tmp/ros2_launch.log 2>&1 &
+  echo $! > /tmp/launch_pid.txt
+  # ... do work ...
+  LAUNCH_PID=$(cat /tmp/launch_pid.txt)
+  pkill -TERM -P $LAUNCH_PID
+  sleep 2
+  pkill -9 -P $LAUNCH_PID
+  kill -9 $LAUNCH_PID
+  ```
+- **Why**: `ros2 launch` spawns many child processes (nodes, containers). Killing only the parent leaves orphans running
+- This is especially important for containers and composable nodes which may not auto-terminate
 
 ### Language Server Protocol (LSP) Tools
 - **pyright-lsp**: Available for Python type checking and code intelligence
