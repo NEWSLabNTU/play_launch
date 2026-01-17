@@ -908,7 +908,7 @@ impl ContainerActor {
         // Find and update the composable node's auto_load setting
         if let Some(entry) = self.composable_nodes.get_mut(name) {
             entry.metadata.auto_load = enabled;
-            info!(
+            debug!(
                 "{}: Updated auto_load for '{}' to {}",
                 self.name, name, enabled
             );
@@ -1379,7 +1379,7 @@ impl ContainerActor {
                     self.unload_client = None;
 
                             // Phase 12: Transition composable nodes to Blocked
-                            info!("{}: Transitioning {} composable nodes to Blocked state (reason: Stopped)",
+                            debug!("{}: Transitioning {} composable nodes to Blocked state (reason: Stopped)",
                                   self.name, self.composable_nodes.len());
                             self.transition_all_composables_to_blocked(BlockReason::Stopped).await;
 
@@ -1878,7 +1878,7 @@ impl ContainerActor {
                         match &self.state {
                             NodeState::Stopped { .. } | NodeState::Failed { .. } => {
                                 self.state = NodeState::Pending;
-                                info!("{}: Transitioning to Pending for spawn", self.name);
+                                debug!("{}: Transitioning to Pending for spawn", self.name);
                                 Ok(true) // Continue to spawn
                             }
                             _ => {

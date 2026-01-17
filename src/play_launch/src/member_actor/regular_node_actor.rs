@@ -413,7 +413,7 @@ impl RegularNodeActor {
                 match &self.state {
                     NodeState::Stopped { .. } | NodeState::Failed { .. } => {
                         self.state = NodeState::Pending;
-                        info!("[{}] Transitioning to Pending for spawn", self.name);
+                        debug!("[{}] Transitioning to Pending for spawn", self.name);
                         Ok(true) // Continue to spawn
                     }
                     NodeState::Running { .. } => {
