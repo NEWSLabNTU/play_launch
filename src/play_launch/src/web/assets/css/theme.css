@@ -1,0 +1,88 @@
+/* Theme variables */
+:root[data-theme="light"] {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8f9fa;
+    --bg-tertiary: #e9ecef;
+    --text-primary: #212529;
+    --text-secondary: #6c757d;
+    --text-muted: #adb5bd;
+    --border-color: #dee2e6;
+    --shadow: rgba(0,0,0,0.1);
+
+    --running-bg: #d1e7dd;
+    --running-border: #0f5132;
+    --running-text: #0f5132;
+
+    --stopped-bg: #e2e3e5;
+    --stopped-border: #41464b;
+    --stopped-text: #41464b;
+
+    --failed-bg: #f8d7da;
+    --failed-border: #842029;
+    --failed-text: #842029;
+
+    --pending-bg: #fff3cd;
+    --pending-border: #664d03;
+    --pending-text: #664d03;
+
+    --loading-bg: #cfe2ff;
+    --loading-border: #0a58ca;
+    --loading-text: #084298;
+
+    --unloading-bg: #ffe5b4;
+    --unloading-border: #cc7a00;
+    --unloading-text: #996600;
+
+    --blocked-bg: #d3d3d4;
+    --blocked-border: #6c757d;
+    --blocked-text: #495057;
+
+    --btn-primary: #0d6efd;
+    --btn-success: #198754;
+    --btn-danger: #dc3545;
+    --btn-secondary: #6c757d;
+}
+
+:root[data-theme="dark"] {
+    --bg-primary: #1a1d23;
+    --bg-secondary: #22252b;
+    --bg-tertiary: #2a2d35;
+    --text-primary: #e4e6eb;
+    --text-secondary: #b0b3b8;
+    --text-muted: #8a8d91;
+    --border-color: #3a3d45;
+    --shadow: rgba(0,0,0,0.3);
+
+    --running-bg: #0a3622;
+    --running-border: #4ade80;
+    --running-text: #86efac;
+
+    --stopped-bg: #2d2f35;
+    --stopped-border: #94a3b8;
+    --stopped-text: #cbd5e1;
+
+    --failed-bg: #3d1419;
+    --failed-border: #f87171;
+    --failed-text: #fca5a5;
+
+    --pending-bg: #3d3319;
+    --pending-border: #fbbf24;
+    --pending-text: #fde047;
+
+    --loading-bg: #1e3a5f;
+    --loading-border: #60a5fa;
+    --loading-text: #93c5fd;
+
+    --unloading-bg: #3d2e1a;
+    --unloading-border: #fb923c;
+    --unloading-text: #fdba74;
+
+    --blocked-bg: #3a3d45;
+    --blocked-border: #9ca3af;
+    --blocked-text: #d1d5db;
+
+    --btn-primary: #3b82f6;
+    --btn-success: #22c55e;
+    --btn-danger: #ef4444;
+    --btn-secondary: #6b7280;
+}

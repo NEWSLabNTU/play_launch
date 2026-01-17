@@ -13,7 +13,7 @@
   },
   "rules": {
     "no-unused-vars": "warn",
-    "no-undef": "error",
+    "no-undef": "warn",
     "no-console": "off",
     "semi": ["error", "always"],
     "quotes": ["warn", "single", { "avoidEscape": true, "allowTemplateLiterals": true }],

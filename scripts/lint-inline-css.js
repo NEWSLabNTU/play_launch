@@ -2,14 +2,25 @@
 
 const stylelint = require('stylelint');
 const path = require('path');
+const fs = require('fs');
 
-const CSS_FILE = path.join(__dirname, '../src/play_launch/src/web/assets/styles.css');
+const CSS_DIR = path.join(__dirname, '../src/play_launch/src/web/assets/css');
 
 async function main() {
     try {
-        // Run stylelint on styles.css
+        // Get all .css files in the css directory
+        const cssFiles = fs.readdirSync(CSS_DIR)
+            .filter(file => file.endsWith('.css'))
+            .map(file => path.join(CSS_DIR, file));
+
+        if (cssFiles.length === 0) {
+            console.log('No CSS files found.');
+            return;
+        }
+
+        // Run stylelint on all CSS files
         const result = await stylelint.lint({
-            files: [CSS_FILE],
+            files: cssFiles,
             formatter: 'string'
         });
 

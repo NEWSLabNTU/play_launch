@@ -6,7 +6,14 @@
     <title>play_launch - Web UI</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10/dist/ext/sse.js"></script>
-    <link rel="stylesheet" href="/assets/styles.css">
+    <!-- CSS Modules -->
+    <link rel="stylesheet" href="/assets/css/theme.css">
+    <link rel="stylesheet" href="/assets/css/base.css">
+    <link rel="stylesheet" href="/assets/css/navigation.css">
+    <link rel="stylesheet" href="/assets/css/diagnostics.css">
+    <link rel="stylesheet" href="/assets/css/panels.css">
+    <link rel="stylesheet" href="/assets/css/nodes.css">
+    <link rel="stylesheet" href="/assets/css/logs.css">
 </head>
 <body>
     <header>
@@ -136,6 +143,14 @@
         </div>
     </div>
 
-    <script src="/assets/script.js"></script>
+    <!-- JavaScript Modules (order matters for dependencies) -->
+    <script src="/assets/js/theme.js"></script>
+    <script src="/assets/js/utils.js"></script>
+    <script src="/assets/js/panels.js"></script>
+    <script src="/assets/js/nodes.js"></script>
+    <script src="/assets/js/logs.js"></script>
+    <script src="/assets/js/stderr-monitoring.js"></script>
+    <script src="/assets/js/diagnostics.js"></script>
+    <script src="/assets/js/htmx-handlers.js"></script>
 </body>
 </html>
