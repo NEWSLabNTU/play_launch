@@ -283,11 +283,9 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
                     break;
                 }
 
-                // Spin once
-                executor.spin(rclrs::SpinOptions::spin_once());
-
-                // Small sleep to prevent busy-waiting
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                // Spin with timeout (waits up to 50ms for work, processes it, then returns)
+                // This allows ROS to process messages during the wait, unlike sleep()
+                executor.spin(rclrs::SpinOptions::new().timeout(std::time::Duration::from_millis(50)));
             }
 
             debug!("ROS executor thread shutting down");
