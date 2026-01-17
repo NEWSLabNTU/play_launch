@@ -1,5 +1,16 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+
+/// Features that can be selectively enabled
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Feature {
+    /// Resource monitoring (CPU, memory, I/O)
+    Monitoring,
+    /// Diagnostic monitoring (/diagnostics topic)
+    Diagnostics,
+    /// Web UI for node management
+    WebUi,
+}
 
 /// Record and replay ROS 2 launches with inspection capabilities
 #[derive(Parser)]
@@ -37,7 +48,10 @@ pub enum Command {
     /// Replay from existing record.json
     #[command(after_help = "Examples:\n  \
         play_launch replay\n  \
-        play_launch replay --input-file autoware.json --enable-monitoring")]
+        play_launch replay --input-file autoware.json\n  \
+        play_launch replay --disable-all\n  \
+        play_launch replay --enable monitoring --enable web-ui\n  \
+        play_launch replay --web-addr 0.0.0.0:8080")]
     Replay(ReplayArgs),
 
     /// Plot resource usage from execution logs
@@ -125,7 +139,7 @@ pub struct ReplayArgs {
 }
 
 /// Common options shared across all commands
-#[derive(Args, Default, Clone)]
+#[derive(Args, Clone)]
 pub struct CommonOptions {
     /// Log directory for execution outputs
     #[arg(long, default_value = "play_log")]
@@ -137,19 +151,31 @@ pub struct CommonOptions {
     #[arg(long, short = 'c', value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// Enable resource monitoring for all nodes.
-    /// This overrides the 'monitoring.enabled' setting in the config file.
-    #[arg(long)]
-    pub enable_monitoring: bool,
+    /// Enable only specific features. Can be specified multiple times.
+    /// When used, only the specified features are enabled (others are disabled).
+    /// Available features: monitoring, diagnostics, web-ui
+    #[arg(long, value_enum, value_name = "FEATURE")]
+    pub enable: Vec<Feature>,
+
+    /// Disable resource monitoring (enabled by default).
+    #[arg(long, conflicts_with = "enable")]
+    pub disable_monitoring: bool,
+
+    /// Disable diagnostic monitoring (enabled by default).
+    #[arg(long, conflicts_with = "enable")]
+    pub disable_diagnostics: bool,
+
+    /// Disable web UI (enabled by default).
+    #[arg(long, conflicts_with = "enable")]
+    pub disable_web_ui: bool,
+
+    /// Disable all features (monitoring, diagnostics, and web UI).
+    #[arg(long, conflicts_with = "enable")]
+    pub disable_all: bool,
 
     /// Resource sampling interval in milliseconds (overrides config file).
     #[arg(long, value_name = "MS")]
     pub monitor_interval_ms: Option<u64>,
-
-    /// Enable diagnostic monitoring for all nodes.
-    /// This overrides the 'diagnostics.enabled' setting in the config file.
-    #[arg(long)]
-    pub enable_diagnostics: bool,
 
     /// Enable verbose output (INFO level logging).
     /// Without this flag, only warnings and errors are shown.
@@ -169,19 +195,86 @@ pub struct CommonOptions {
     #[arg(long)]
     pub disable_respawn: bool,
 
-    /// Enable web UI for node management and log viewing
-    #[arg(long)]
-    pub web_ui: bool,
+    /// Web UI address in IP:PORT format (default: 127.0.0.1:8080).
+    /// Use 0.0.0.0:8080 to expose to network (insecure, use with caution).
+    #[arg(long, value_name = "IP:PORT", default_value = "127.0.0.1:8080")]
+    pub web_addr: String,
+}
 
-    /// Web UI bind address (only used when --web-ui is enabled)
-    /// Default: 127.0.0.1 (localhost only, secure)
-    /// Use 0.0.0.0 to expose to network (insecure, use with caution)
-    #[arg(long, default_value = "127.0.0.1")]
-    pub web_ui_addr: String,
+impl Default for CommonOptions {
+    fn default() -> Self {
+        Self {
+            log_dir: PathBuf::from("play_log"),
+            config: None,
+            enable: Vec::new(),
+            disable_monitoring: false,
+            disable_diagnostics: false,
+            disable_web_ui: false,
+            disable_all: false,
+            monitor_interval_ms: None,
+            verbose: false,
+            standalone_composable_nodes: false,
+            load_orphan_composable_nodes: false,
+            disable_respawn: false,
+            web_addr: "127.0.0.1:8080".to_string(),
+        }
+    }
+}
 
-    /// Web UI port (only used when --web-ui is enabled)
-    #[arg(long, default_value = "8080")]
-    pub web_ui_port: u16,
+impl CommonOptions {
+    /// Check if resource monitoring is enabled
+    pub fn is_monitoring_enabled(&self) -> bool {
+        // If --enable is used, check if monitoring is in the list
+        if !self.enable.is_empty() {
+            return self.enable.contains(&Feature::Monitoring);
+        }
+        // Otherwise, enabled by default unless explicitly disabled
+        !self.disable_monitoring && !self.disable_all
+    }
+
+    /// Check if diagnostic monitoring is enabled
+    pub fn is_diagnostics_enabled(&self) -> bool {
+        // If --enable is used, check if diagnostics is in the list
+        if !self.enable.is_empty() {
+            return self.enable.contains(&Feature::Diagnostics);
+        }
+        // Otherwise, enabled by default unless explicitly disabled
+        !self.disable_diagnostics && !self.disable_all
+    }
+
+    /// Check if web UI is enabled
+    pub fn is_web_ui_enabled(&self) -> bool {
+        // If --enable is used, check if web-ui is in the list
+        if !self.enable.is_empty() {
+            return self.enable.contains(&Feature::WebUi);
+        }
+        // Otherwise, enabled by default unless explicitly disabled
+        !self.disable_web_ui && !self.disable_all
+    }
+
+    /// Parse web address into (IP, port) tuple
+    pub fn parse_web_addr(&self) -> eyre::Result<(String, u16)> {
+        let parts: Vec<&str> = self.web_addr.rsplitn(2, ':').collect();
+        if parts.len() != 2 {
+            return Err(eyre::eyre!(
+                "Invalid web address format '{}'. Expected IP:PORT (e.g., 127.0.0.1:8080)",
+                self.web_addr
+            ));
+        }
+
+        let port_str = parts[0];
+        let ip = parts[1].to_string();
+
+        let port: u16 = port_str.parse().map_err(|_| {
+            eyre::eyre!(
+                "Invalid port number '{}' in web address '{}'",
+                port_str,
+                self.web_addr
+            )
+        })?;
+
+        Ok((ip, port))
+    }
 }
 
 /// Arguments for plot command

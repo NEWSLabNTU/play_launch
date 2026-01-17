@@ -65,9 +65,9 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     // Load runtime configuration to check service readiness settings
     let runtime_config = cli::config::load_runtime_config(
         args.common.config.as_deref(),
-        args.common.enable_monitoring,
+        args.common.is_monitoring_enabled(),
         args.common.monitor_interval_ms,
-        args.common.enable_diagnostics,
+        args.common.is_diagnostics_enabled(),
     )?;
 
     // Print configuration summary
@@ -104,11 +104,9 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
             info!("  Container timeout: {}s", timeout);
         }
     }
-    if args.common.web_ui {
-        info!(
-            "  Web UI: http://{}:{}",
-            args.common.web_ui_addr, args.common.web_ui_port
-        );
+    if args.common.is_web_ui_enabled() {
+        let (addr, port) = args.common.parse_web_addr()?;
+        info!("  Web UI: http://{}:{}", addr, port);
     }
 
     // Note: ROS service discovery and anchor process now started in play() async function (Phase 2, 4)
@@ -171,9 +169,9 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     debug!("Loading runtime configuration...");
     let runtime_config = load_runtime_config(
         common.config.as_deref(),
-        common.enable_monitoring,
+        common.is_monitoring_enabled(),
         common.monitor_interval_ms,
-        common.enable_diagnostics,
+        common.is_diagnostics_enabled(),
     )?;
     debug!("Runtime configuration loaded successfully");
 
@@ -536,8 +534,11 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     };
 
     // Setup web UI if requested (direct StateEvent streaming)
-    let (runner_task, web_ui_task) = if common.web_ui {
+    let (runner_task, web_ui_task) = if common.is_web_ui_enabled() {
         debug!("Setting up web UI with direct StateEvent streaming...");
+
+        // Parse web address
+        let (addr, port) = common.parse_web_addr()?;
 
         // Create state event broadcaster for SSE clients
         let state_broadcaster = std::sync::Arc::new(web::StateEventBroadcaster::new());
@@ -549,8 +550,6 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             state_broadcaster.clone(),
             diagnostic_registry.clone(),
         ));
-        let addr = common.web_ui_addr.clone();
-        let port = common.web_ui_port;
         let web_shutdown = shutdown_signal.clone();
 
         // Log web UI URL before spawning (addr will be moved)

@@ -431,9 +431,9 @@ impl ResolvedMonitoringConfig {
 /// Load and resolve runtime configuration
 pub fn load_runtime_config(
     config_path: Option<&Path>,
-    enable_monitoring_flag: bool,
+    monitoring_enabled: bool,
     monitor_interval_override: Option<u64>,
-    enable_diagnostics_flag: bool,
+    diagnostics_enabled: bool,
 ) -> Result<ResolvedRuntimeConfig> {
     // Load config file or use defaults
     let mut config = if let Some(path) = config_path {
@@ -445,19 +445,21 @@ pub fn load_runtime_config(
         RuntimeConfig::default()
     };
 
-    // CLI flag overrides config file
-    if enable_monitoring_flag {
-        config.monitoring.enabled = true;
+    // Enable monitoring by default (enabled unless explicitly disabled via CLI)
+    // If config file doesn't specify, use CLI decision
+    if config_path.is_none() || !config.monitoring.enabled {
+        config.monitoring.enabled = monitoring_enabled;
+    }
+
+    // Enable diagnostics by default (enabled unless explicitly disabled via CLI)
+    // If config file doesn't specify, use CLI decision
+    if config_path.is_none() || !config.diagnostics.enabled {
+        config.diagnostics.enabled = diagnostics_enabled;
     }
 
     // CLI interval overrides config file
     if let Some(interval) = monitor_interval_override {
         config.monitoring.sample_interval_ms = interval;
-    }
-
-    // CLI diagnostics flag overrides config file
-    if enable_diagnostics_flag {
-        config.diagnostics.enabled = true;
     }
 
     // Validate process configs

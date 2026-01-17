@@ -148,9 +148,9 @@ async fn run_direct(
     info!("Loading runtime configuration...");
     let runtime_config = load_runtime_config(
         common.config.as_deref(),
-        common.enable_monitoring,
+        common.is_monitoring_enabled(),
         common.monitor_interval_ms,
-        common.enable_diagnostics,
+        common.is_diagnostics_enabled(),
     )?;
     info!("Runtime configuration loaded successfully");
 
@@ -267,7 +267,7 @@ async fn run_direct(
     debug!("All actors spawned successfully");
 
     // Setup web UI if requested (direct StateEvent streaming)
-    let (runner_task, web_ui_task) = if common.web_ui {
+    let (runner_task, web_ui_task) = if common.is_web_ui_enabled() {
         debug!("Setting up web UI with direct StateEvent streaming...");
 
         // Create state event broadcaster for SSE clients
@@ -280,8 +280,9 @@ async fn run_direct(
             state_broadcaster.clone(),
             diagnostic_registry.clone(),
         ));
-        let addr = common.web_ui_addr.clone();
-        let port = common.web_ui_port;
+
+        // Parse web address
+        let (addr, port) = common.parse_web_addr()?;
 
         // Log web UI URL before spawning (addr will be moved)
         info!("Web UI available at http://{}:{}", addr, port);
