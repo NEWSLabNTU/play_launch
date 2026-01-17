@@ -7,12 +7,18 @@ use tracing::info;
 /// Handle the 'plot' subcommand
 pub fn handle_plot(args: &PlotArgs) -> eyre::Result<()> {
     use crate::python::plot_launcher::PlotLauncher;
-    use tokio::runtime::Runtime;
 
     info!("Generating resource usage plots...");
 
-    // Create tokio runtime for async operations
-    let runtime = Runtime::new()?;
+    // Create tokio runtime with adaptive thread pool configuration
+    let worker_threads = std::cmp::min(num_cpus::get(), 8);
+    let max_blocking = worker_threads * 2;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .max_blocking_threads(max_blocking)
+        .thread_name("play_launch-worker")
+        .enable_all()
+        .build()?;
 
     // Run plot phase
     runtime.block_on(async {
