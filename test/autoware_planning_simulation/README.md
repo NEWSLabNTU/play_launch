@@ -85,7 +85,7 @@ Both launch methods run as systemd user services for reliable process management
 
 **`just start-sim`** - Simulator service (autoware-sim):
 - Web UI enabled on port 8080 (accessible at http://0.0.0.0:8080)
-- Resource monitoring enabled (--enable-monitoring)
+- Resource monitoring and diagnostics enabled by default
 - Automatic cleanup on service stop
 - Log management via `just logs-sim`
 - Service control via `just {stop,restart,status}-sim`

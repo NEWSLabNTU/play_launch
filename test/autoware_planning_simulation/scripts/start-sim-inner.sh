@@ -11,9 +11,6 @@ source autoware/install/setup.bash
 export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
 play_launch launch \
-    --web-ui \
-    --web-ui-addr 0.0.0.0 \
-    --web-ui-port 8080 \
-    --enable-monitoring \
+    --web-addr 0.0.0.0:8080 \
     autoware_launch planning_simulator.launch.xml \
     map_path:="$MAP_PATH"

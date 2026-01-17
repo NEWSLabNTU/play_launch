@@ -49,11 +49,7 @@ run-sim: check-autoware
 
     # Run with play_launch
     play_launch launch \
-        --web-ui \
-        --web-ui-addr 0.0.0.0 \
-        --web-ui-port 8080 \
-        --enable-monitoring \
-        --enable-diagnostics \
+        --web-addr 0.0.0.0:8080 \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
 
@@ -91,7 +87,7 @@ run-demo: check-autoware
     # Run simulator and test in parallel
     # Simulator runs continuously, test waits 60s then runs
     parallel --line-buffer ::: \
-        "play_launch launch --web-ui --web-ui-addr 0.0.0.0 --web-ui-port 8080 --enable-monitoring autoware_launch planning_simulator.launch.xml map_path:=\"$MAP_PATH\"" \
+        "play_launch launch --web-addr 0.0.0.0:8080 autoware_launch planning_simulator.launch.xml map_path:=\"$MAP_PATH\"" \
         "sleep 60 && python3 $SCRIPT_DIR/scripts/test_autonomous_drive.py && echo '[Demo] Test completed. Press Ctrl-C to stop simulator.'"
 
 # Generate resource usage plots from latest play_log

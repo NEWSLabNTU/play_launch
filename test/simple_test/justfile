@@ -14,7 +14,7 @@ run-pure-nodes:
     echo "Running pure nodes..."
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../install/setup.bash
-    play_launch launch --enable-monitoring --web-ui launch/pure_nodes.launch.xml
+    play_launch launch  launch/pure_nodes.launch.xml
 
 # Run composition.launch.xml from local launch directory
 run-composition:
@@ -23,7 +23,7 @@ run-composition:
     echo "Running composition..."
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../install/setup.bash
-    play_launch launch --enable-monitoring --web-ui launch/composition.launch.xml
+    play_launch launch  launch/composition.launch.xml
 
 # Run set_parameter.launch.xml from local launch directory
 run-set-parameter:
@@ -32,7 +32,7 @@ run-set-parameter:
     echo "Running set_parameter..."
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../install/setup.bash
-    play_launch launch --enable-monitoring --web-ui launch/set_parameter.launch.xml
+    play_launch launch  launch/set_parameter.launch.xml
 
 # Run all.launch.xml from local launch directory
 run-all:
@@ -41,7 +41,7 @@ run-all:
     echo "Running all tests combined..."
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../install/setup.bash
-    play_launch launch --enable-monitoring --web-ui launch/all.launch.xml
+    play_launch launch  launch/all.launch.xml
 
 # Generate plots from latest run
 plot:

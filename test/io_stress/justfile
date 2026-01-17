@@ -11,7 +11,7 @@ build:
 # Run I/O stress test with monitoring
 run:
     @echo "Running I/O stress test with monitoring..."
-    @. ../../install/setup.sh && play_launch launch io_stress io_stress.launch.xml --enable-monitoring
+    @. ../../install/setup.sh && play_launch launch io_stress io_stress.launch.xml
 
 # Generate resource plots
 plot:
