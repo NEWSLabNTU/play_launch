@@ -416,6 +416,51 @@
             font-size: 0.75rem;
             color: var(--text-secondary);
             font-family: monospace;
+            max-width: 400px;
+        }
+
+        .value-inline {
+            display: inline-block;
+        }
+
+        .value-inline strong {
+            color: var(--text-primary);
+            margin-right: 4px;
+        }
+
+        .value-structured {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .value-entry {
+            display: flex;
+            gap: 6px;
+            align-items: flex-start;
+        }
+
+        .value-key {
+            color: var(--text-primary);
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .value-content {
+            color: var(--text-secondary);
+            word-break: break-word;
+        }
+
+        .diagnostic-json-value {
+            margin: 0;
+            padding: 4px 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            font-size: 0.7rem;
+            color: var(--text-primary);
+            overflow-x: auto;
+            max-height: 200px;
+            overflow-y: auto;
         }
 
         .no-diagnostics {
@@ -2062,7 +2107,7 @@
             const path = evt.detail.pathInfo?.requestPath || '';
 
             // Extract node name from path (e.g., /api/nodes/my_node/start -> my_node)
-            const nodeMatch = path.match(/\/api\/nodes\/([^\/]+)\/(start|stop|restart|load|unload)/);
+            const nodeMatch = path.match(/\/api\/nodes\/([^/]+)\/(start|stop|restart|load|unload)/);
 
             if (path.includes('/start') || path.includes('/stop') || path.includes('/restart')) {
                 setTimeout(() => {
@@ -2311,6 +2356,41 @@
                 });
         }
 
+        function formatDiagnosticValue(value) {
+            // Try to parse as JSON
+            try {
+                const parsed = JSON.parse(value);
+                return `<pre class="diagnostic-json-value">${JSON.stringify(parsed, null, 2)}</pre>`;
+            } catch (e) {
+                // Not JSON, return as plain text
+                return escapeHtml(value);
+            }
+        }
+
+        function formatDiagnosticValues(values) {
+            if (!values || Object.keys(values).length === 0) {
+                return '-';
+            }
+
+            const entries = Object.entries(values);
+
+            // If only one entry, show it inline
+            if (entries.length === 1) {
+                const [key, value] = entries[0];
+                return `<div class="value-inline"><strong>${escapeHtml(key)}:</strong> ${formatDiagnosticValue(value)}</div>`;
+            }
+
+            // Multiple entries - show as structured list
+            return `<div class="value-structured">${
+                entries.map(([key, value]) =>
+                    `<div class="value-entry">
+                        <span class="value-key">${escapeHtml(key)}:</span>
+                        <span class="value-content">${formatDiagnosticValue(value)}</span>
+                    </div>`
+                ).join('')
+            }</div>`;
+        }
+
         function renderDiagnostics(diagnostics) {
             const tbody = document.getElementById('diagnostics-tbody');
 
@@ -2330,10 +2410,8 @@
                 const ageSeconds = Math.floor((now - diagDate) / 1000);
                 const freshClass = ageSeconds < 10 ? 'fresh' : '';
 
-                // Format key-value pairs
-                const values = Object.entries(diag.values || {})
-                    .map(([k, v]) => `${k}=${v}`)
-                    .join(', ');
+                // Format key-value pairs with structure
+                const valuesHtml = formatDiagnosticValues(diag.values);
 
                 return `
                     <tr class="${freshClass}">
@@ -2341,7 +2419,7 @@
                         <td>${escapeHtml(diag.name)}</td>
                         <td><span class="diag-level ${levelClass}">${diag.level}</span></td>
                         <td>${escapeHtml(diag.message || '')}</td>
-                        <td class="diag-values">${escapeHtml(values || '-')}</td>
+                        <td class="diag-values">${valuesHtml}</td>
                         <td class="diag-timestamp">${relativeTime}</td>
                     </tr>
                 `;
@@ -2360,12 +2438,6 @@
             });
 
             renderDiagnostics(filtered);
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
         }
 
         // Fetch and update diagnostic counts
