@@ -319,7 +319,8 @@
 
         .diagnostics-table {
             width: 100%;
-            border-collapse: collapse;
+            border-collapse: separate;
+            border-spacing: 0;
             font-size: 0.85rem;
         }
 
@@ -356,23 +357,38 @@
             color: var(--text-primary);
         }
 
+        .diagnostics-table tbody tr {
+            background: var(--bg-primary);
+            border-bottom: 1px solid var(--border-color);
+            transition: background-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .diagnostics-table tbody tr:nth-child(even) {
+            background: var(--bg-secondary);
+        }
+
         .diagnostics-table td {
-            padding: 8px 10px;
+            padding: 10px;
             border-bottom: 1px solid var(--border-color);
         }
 
-        .diagnostics-table tr:hover {
-            background: var(--bg-tertiary);
+        .diagnostics-table tbody tr:hover {
+            background: var(--bg-tertiary) !important;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            position: relative;
+            z-index: 1;
         }
 
         .diagnostics-table tr.fresh {
-            background: var(--running-bg);
+            background: var(--running-bg) !important;
             font-weight: 500;
+            border-left: 3px solid var(--running-border);
         }
 
         .diagnostics-table tr.fresh:hover {
-            background: var(--running-bg);
-            opacity: 0.9;
+            background: var(--running-bg) !important;
+            opacity: 0.95;
+            box-shadow: 0 2px 8px rgba(15, 81, 50, 0.2);
         }
 
         .diag-level {
