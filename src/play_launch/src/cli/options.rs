@@ -146,6 +146,11 @@ pub struct CommonOptions {
     #[arg(long, value_name = "MS")]
     pub monitor_interval_ms: Option<u64>,
 
+    /// Enable diagnostic monitoring for all nodes.
+    /// This overrides the 'diagnostics.enabled' setting in the config file.
+    #[arg(long)]
+    pub enable_diagnostics: bool,
+
     /// Enable verbose output (INFO level logging).
     /// Without this flag, only warnings and errors are shown.
     /// Use RUST_LOG env var for debug-level logging.

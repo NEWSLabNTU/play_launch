@@ -22,6 +22,10 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub list_nodes: ListNodesSettings,
 
+    /// Diagnostics monitoring settings
+    #[serde(default)]
+    pub diagnostics: DiagnosticsSettings,
+
     /// Per-process configurations
     #[serde(default)]
     pub processes: Vec<ProcessConfig>,
@@ -63,6 +67,56 @@ fn default_sample_interval() -> u64 {
 }
 fn default_true() -> bool {
     true
+}
+
+/// Diagnostics monitoring settings
+#[derive(Debug, Clone, Deserialize)]
+pub struct DiagnosticsSettings {
+    /// Enable diagnostics monitoring (default: false, overridden by --enable-diagnostics flag)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Topics to subscribe to for diagnostics
+    #[serde(default = "default_diagnostics_topics")]
+    pub topics: Vec<String>,
+
+    /// Filter diagnostics by hardware_id (empty = all)
+    #[serde(default)]
+    pub filter_hardware_ids: Vec<String>,
+
+    /// Debounce period in milliseconds (minimum time between logging same diagnostic)
+    #[serde(default = "default_debounce_ms")]
+    pub debounce_ms: u64,
+
+    /// Store diagnostics per-node (future feature)
+    #[serde(default = "default_true")]
+    #[allow(dead_code)]
+    pub store_per_node: bool,
+
+    /// Store system-wide diagnostics
+    #[serde(default = "default_true")]
+    pub store_system_wide: bool,
+}
+
+impl Default for DiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            topics: default_diagnostics_topics(),
+            filter_hardware_ids: Vec::new(),
+            debounce_ms: default_debounce_ms(),
+            store_per_node: default_true(),
+            store_system_wide: default_true(),
+        }
+    }
+}
+
+fn default_diagnostics_topics() -> Vec<String> {
+    vec!["/diagnostics".to_string(), "/diagnostics_agg".to_string()]
+}
+
+fn default_debounce_ms() -> u64 {
+    100
 }
 
 /// Composable node loading settings
@@ -319,6 +373,7 @@ pub struct ResolvedRuntimeConfig {
     pub composable_node_loading: ComposableNodeLoadingSettings,
     pub container_readiness: ContainerReadinessSettings,
     pub list_nodes: ListNodesSettings,
+    pub diagnostics: DiagnosticsSettings,
 }
 
 /// Resolved monitoring configuration
@@ -377,6 +432,7 @@ pub fn load_runtime_config(
     config_path: Option<&Path>,
     enable_monitoring_flag: bool,
     monitor_interval_override: Option<u64>,
+    enable_diagnostics_flag: bool,
 ) -> Result<ResolvedRuntimeConfig> {
     // Load config file or use defaults
     let mut config = if let Some(path) = config_path {
@@ -396,6 +452,11 @@ pub fn load_runtime_config(
     // CLI interval overrides config file
     if let Some(interval) = monitor_interval_override {
         config.monitoring.sample_interval_ms = interval;
+    }
+
+    // CLI diagnostics flag overrides config file
+    if enable_diagnostics_flag {
+        config.diagnostics.enabled = true;
     }
 
     // Validate process configs
@@ -436,6 +497,7 @@ pub fn load_runtime_config(
         composable_node_loading: config.composable_node_loading,
         container_readiness: config.container_readiness,
         list_nodes: config.list_nodes,
+        diagnostics: config.diagnostics,
     })
 }
 
@@ -548,7 +610,7 @@ mod tests {
     #[test]
     fn test_nice_value_validation() {
         // Test that default config loads successfully
-        let result = load_runtime_config(None, false, None);
+        let result = load_runtime_config(None, false, None, false);
         assert!(result.is_ok());
 
         // Test that config validates nice value ranges
