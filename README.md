@@ -1,222 +1,122 @@
-# ROS2 Launch Inspection Tool
+# play_launch
 
-A comprehensive toolkit for recording, replaying, and analyzing ROS 2 launch executions. Record any launch file once, then replay it multiple times for testing, performance analysis, and debugging.
+Record, replay, and analyze ROS 2 launch executions with resource monitoring and interactive management.
 
 [![Watch the demo](assets/demo.png)](assets/demo.mp4)
 
-## Features
-
-- **Record & Replay**: Capture launch file execution and replay it deterministically
-- **Single Command Usage**: Launch and replay in one step with `play_launch launch` or `play_launch run`
-- **Resource Monitoring**: Track CPU, memory, I/O, GPU usage per node
-- **Visualization**: Generate comprehensive resource usage plots and statistics
-- **Process Control**: Set CPU affinity and priorities for fine-grained control
-- **Container Support**: Full support for ROS 2 composable nodes and containers
-
-
 ## Installation
 
-### Install from Debian Package (Recommended)
-
-The easiest way to install play_launch is using the pre-built Debian package.
-
-**Prerequisites:**
-- Ubuntu 22.04 (Jammy) with ROS 2 Humble
-
-**Installation Steps:**
-
-1. Download the latest `.deb` package from the [Releases page](https://github.com/NEWSLabNTU/play_launch/releases):
+Install from PyPI:
 
 ```bash
-wget https://github.com/NEWSLabNTU/play_launch/releases/download/v0.2.0/play-launch_0.2.0_amd64.deb
+pip install play_launch
 ```
 
-2. Install the package:
+Optional: Enable I/O monitoring (requires sudo):
 
 ```bash
-sudo apt install ./play-launch_0.2.0_amd64.deb
+play_launch setcap-io-helper
 ```
 
-3. Verify the installation:
+## Quick Start
+
+Launch any ROS 2 package with monitoring and Web UI enabled by default:
 
 ```bash
-# Source ROS 2 environment
-source /opt/ros/humble/setup.bash
-
-# Check if play_launch is available
-play_launch --help
-```
-
-**Note:** For other architectures or ROS distributions, please [build from source](#install-from-source).
-
-### Install from Source
-
-**Prerequisites:**
-
-- **ROS 2** (Humble or later)
-- **Rust toolchain**: Install from [rustup.rs](https://rustup.rs/), or running
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-```
-- **Python 3** with pip
-- **Plot, Pandas** running 
-```bash
-pip3 install pandas plotly
-```
-
-**Installation Steps:**
-
-1. Clone the repository:
-```bash
-git clone https://github.com/NEWSLabNTU/play_launch.git
-cd play_launch
-```
-
-2. Install all dependencies:
-```bash
-just install-deps
-```
-
-This will:
-- Download git submodules
-- Install colcon-cargo and colcon-ros-cargo extensions
-- Install cargo-ament-build for Rust ROS packages
-- Install ROS dependencies via rosdep
-
-3. Build the project:
-```bash
-just build
-```
-
-4. Source the workspace:
-```bash
-source install/setup.bash
-```
-
-5. Verify installation:
-```bash
-play_launch --help
-```
-
-
-## Getting Started
-
-### Quick Start: Launch and Replay in One Command
-
-The easiest way to use the tool is with the `play_launch launch` or `play_launch run` commands. These automatically record and replay in a single step:
-
-```bash
-# Launch a launch file
-play_launch launch <package_name> <launch_file> [arguments...]
-
-# Example: Launch a demo
 play_launch launch demo_nodes_cpp talker_listener.launch.py
-
-# Example: Run a single node
-play_launch run demo_nodes_cpp talker
 ```
 
-This is functionally equivalent to `ros2 launch` or `ros2 run`, but records the execution and replays it immediately.
+Access Web UI at `http://127.0.0.1:8080` for real-time node management and log streaming.
 
-### Advanced: Two-Step Workflow (Dump + Replay)
+## Usage
 
-For more control, you can separate the recording and replay steps:
+### Launch Files
 
-#### Step 1: Record (Dump) a Launch Execution
-
-Record any ROS 2 launch file by replacing `ros2 launch` with `play_launch dump launch`:
+Replace `ros2 launch` with `play_launch launch`:
 
 ```bash
-# Original command:
-# ros2 launch autoware_launch planning_simulator.launch.xml \
-#     map_path:=$HOME/autoware_map/sample-map-planning \
-#     vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit
-
-# Recording command:
-play_launch dump launch \
-    autoware_launch planning_simulator.launch.xml \
-    map_path:=$HOME/autoware_map/sample-map-planning \
-    vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit
+play_launch launch <package> <launch_file> [arguments...]
 ```
 
-This creates a `record.json` file capturing the entire launch execution plan.
+### Single Nodes
 
-#### Step 2: Replay the Launch
-
-Replay the recorded launch multiple times:
+Replace `ros2 run` with `play_launch run`:
 
 ```bash
+play_launch run <package> <executable> [arguments...]
+```
+
+### Two-Step Workflow
+
+Record first, replay multiple times:
+
+```bash
+# Record
+play_launch dump launch <package> <launch_file> [arguments...]
+
+# Replay
 play_launch replay
 ```
 
-The replay reads `record.json` and executes the launch plan, spawning all nodes and containers exactly as recorded.
+## Features
 
+All features enabled by default:
+- **Resource monitoring**: CPU, memory, I/O, GPU (2s interval)
+- **Diagnostic monitoring**: `/diagnostics` and `/diagnostics_agg` topics
+- **Web UI**: Interactive management at `http://127.0.0.1:8080`
 
-## Resource Monitoring
+### Disable Features
 
-Enable comprehensive per-node resource monitoring to track CPU, memory, I/O, and GPU usage.
-
-### Enable Monitoring
-
-Monitor all nodes with default settings (1 second interval):
-
-```bash
-play_launch launch demo_nodes_cpp talker_listener.launch.py --enable-monitoring
-```
-
-Or when replaying:
+Disable specific features:
 
 ```bash
-play_launch replay --enable-monitoring
+play_launch launch <package> <launch_file> --disable-monitoring
+play_launch launch <package> <launch_file> --disable-diagnostics
+play_launch launch <package> <launch_file> --disable-web-ui
+play_launch launch <package> <launch_file> --disable-all
 ```
 
-### Configure Monitoring
+### Adjust Monitoring
 
-For fine-grained control, use a YAML configuration file:
+Change sampling interval (default: 2000ms):
+
+```bash
+play_launch launch <package> <launch_file> --monitor-interval-ms 500
+```
+
+### Configure Web UI
+
+Change address or port (default: `127.0.0.1:8080`):
+
+```bash
+play_launch launch <package> <launch_file> --web-addr 0.0.0.0:8080
+```
+
+### Configuration File
+
+Use YAML for advanced control:
 
 ```yaml
 # config.yaml
 monitoring:
   enabled: true
-  sample_interval_ms: 1000  # Sample every 1 second
+  sample_interval_ms: 2000
 
 processes:
-  # Monitor all containers with CPU affinity
   - node_pattern: "NODE 'rclcpp_components/component_container*"
-    monitor: true
     cpu_affinity: [0, 1]
     nice: 5
-
-  # Specific node with higher priority
-  - node_pattern: "NODE 'rviz2/rviz2*"
-    monitor: true
-    nice: -5  # Requires CAP_SYS_NICE capability
 ```
 
-Apply the configuration:
+Apply configuration:
 
 ```bash
 play_launch replay --config config.yaml
 ```
 
-### Monitoring Output
+## Visualization
 
-Metrics are saved to `play_log/<timestamp>/node/<node_name>/metrics.csv` and `play_log/<timestamp>/load_node/<node_name>/metrics.csv` with the following data:
-
-- **CPU**: Usage percentage, user/system time
-- **Memory**: RSS, VMS
-- **I/O**: Read/write bytes, rates
-- **Network**: TCP/UDP connection counts
-- **GPU** (if available): Memory, utilization, temperature, power
-- **Process**: State, thread count, file descriptor count
-
-> **Note on GPU Monitoring**: Per-process GPU metrics are NOT available on Jetson/Tegra platforms (AGX Orin, Xavier, Nano) due to hardware architecture limitations. GPU columns will be empty on these systems. CPU, memory, and I/O metrics continue to work normally. See [CLAUDE.md](CLAUDE.md) for details and Jetson-specific GPU monitoring alternatives.
-
-
-## Visualization and Analysis
-
-Generate comprehensive interactive plots and statistics from monitoring data:
+Generate interactive plots from monitoring data:
 
 ```bash
 # Plot latest execution
@@ -225,107 +125,95 @@ play_launch plot
 # Plot specific log directory
 play_launch plot --log-dir play_log/2025-10-28_16-17-56
 
-# Plot only CPU and memory
+# Plot specific metrics
 play_launch plot --metrics cpu memory
 
 # List available metrics
 play_launch plot --list-metrics
 ```
 
-### Generated Output
-
-Interactive charts are saved to `play_log/<timestamp>/plot/` as separate HTML files (~4-5 MB each):
-
-**Timeline Charts** (show metrics over time):
+Output saved to `play_log/<timestamp>/plot/`:
 - `cpu_timeline.html` - CPU usage over time
 - `memory_timeline.html` - Memory usage over time
-- `io_timeline.html` - I/O read/write rates (when available)
-- `network_timeline.html` - TCP/UDP connections (when available)
-- `gpu_timeline.html` - GPU memory usage (when available)
-- `gpu_temp_power.html` - GPU temperature and power (when available)
-- `gpu_clocks.html` - GPU clock frequencies (when available)
+- `io_timeline.html` - I/O read/write rates
+- `cpu_distribution.html` - CPU distribution box plot
+- `memory_distribution.html` - Memory distribution box plot
+- `statistics.txt` - Top 10 rankings for all metrics
 
-**Distribution Charts** (statistical distributions):
-- `cpu_distribution.html` - CPU distribution box plot sorted by average
-- `memory_distribution.html` - Memory distribution box plot sorted by average
+## Web UI Features
 
-**Statistics Report**:
-- `statistics.txt` - Top 10 rankings for all metrics (max/avg)
+- **Node management**: Start/Stop/Restart individual or all nodes
+- **Container controls**: Load/Unload composable nodes
+- **Real-time logs**: Stream stdout/stderr with auto-reconnect
+- **Status monitoring**: Color-coded node states
+- **Auto-restart**: Per-node automatic restart configuration
+- **Search & filter**: Find nodes in large deployments
 
-### Interactive Features
+## Output Structure
 
-- **Full-screen viewing**: Each chart in its own file for maximum size
-- **Container awareness**:
-  - Timeline charts: Hover over a container curve to see list of contained nodes in a floating panel
-  - Distribution charts: Hover over a container to see statistics + contained nodes in floating panel
-- **Abbreviated labels**: Distribution plots use short labels to save space, full names shown on hover
-- **No legend clutter**: Process names appear in hover tooltips instead of a legend
-- **Zoom and pan**: Drag to zoom into specific time ranges, double-click to reset
-- **Hover tooltips**: Detailed values with full process names at each data point
-- **Download**: Use toolbar to export charts as PNG images
-
-### Statistics Report
-
-Example statistics in `statistics.txt`:
-- Top 10 nodes by CPU/memory usage (max and average)
-- Top 10 nodes by I/O rates
-- Top 10 nodes by GPU utilization (when available)
-- Top 10 nodes by network connections
-
+```
+play_log/<timestamp>/
+├── node/<node_name>/
+│   ├── metadata.json
+│   ├── metrics.csv       # Resource metrics (when enabled)
+│   ├── stdout/stderr     # Process logs
+│   └── pid/status/cmdline
+├── system_stats.csv      # System-wide metrics
+└── plot/                 # Generated visualizations
+```
 
 ## Command Reference
 
 ```bash
-# All-in-one launch and replay
+# Launch (all features enabled by default)
 play_launch launch <package> <launch_file> [args...]
 play_launch run <package> <executable> [args...]
 
-# Separate dump and replay
+# Dump and replay
 play_launch dump launch <package> <launch_file> [args...]
 play_launch replay [--input-file record.json]
 
-# With monitoring
-play_launch launch <package> <launch_file> --enable-monitoring
-play_launch replay --enable-monitoring --monitor-interval-ms 500
+# Disable features
+play_launch launch <pkg> <file> --disable-monitoring
+play_launch launch <pkg> <file> --disable-diagnostics
+play_launch launch <pkg> <file> --disable-web-ui
+play_launch launch <pkg> <file> --disable-all
 
-# With configuration
-play_launch replay --config config.yaml
+# Enable only specific features
+play_launch launch <pkg> <file> --enable monitoring
+play_launch launch <pkg> <file> --enable web-ui --enable diagnostics
 
-# Verbose output
-play_launch replay --verbose
+# Adjust settings
+play_launch launch <pkg> <file> --monitor-interval-ms 500
+play_launch launch <pkg> <file> --web-addr 0.0.0.0:8080
+play_launch launch <pkg> <file> --config config.yaml
 
-# Plot results
-play_launch plot [--log-dir <dir>] [--metrics cpu memory io gpu]
+# Logging
+play_launch launch <pkg> <file> --verbose              # INFO level
+RUST_LOG=play_launch=debug play_launch launch <pkg> <file>  # DEBUG level
+
+# Visualization
+play_launch plot
+play_launch plot --log-dir <dir>
+play_launch plot --metrics cpu memory io gpu
+play_launch plot --list-metrics
 ```
-
 
 ## Development
 
-### Linting
+See [CLAUDE.md](CLAUDE.md) for development guidelines and architecture details.
 
-Lint both Python and Rust code:
-
-```sh
+```bash
+# Lint code
 just lint
-```
 
-### Formatting
-
-Format both Python and Rust code:
-
-```sh
+# Format code
 just format
-```
 
-### Testing
-
-Run the full test suite (both Python and Rust):
-
-```sh
+# Run tests
 just test
 ```
 
-
 ## License
 
-This software is distributed under MIT license. You can read the [license file](LICENSE.txt).
+MIT License. See [LICENSE.txt](LICENSE.txt).
