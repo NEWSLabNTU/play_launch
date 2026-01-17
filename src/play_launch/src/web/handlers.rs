@@ -269,7 +269,7 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
             format!(
                 r#"{}
     {}
-    <button onclick="showNodeDetails('{}')" class="btn-details">Details</button>"#,
+    <button onclick="showNodePanel('{}')" class="btn-view">View</button>"#,
                 auto_load_checkbox, load_unload_button, js_escaped_name
             )
         }
@@ -345,13 +345,8 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
             format!(
                 r#"{}
     {}{}
-    <button onclick="showNodeDetails('{}')" class="btn-details">Details</button>
-    <button onclick="showNodeLogs('{}')" class="btn-logs">Logs</button>"#,
-                respawn_checkbox,
-                start_stop_button,
-                container_bulk_buttons,
-                js_escaped_name,
-                js_escaped_name
+    <button onclick="showNodePanel('{}')" class="btn-view">View</button>"#,
+                respawn_checkbox, start_stop_button, container_bulk_buttons, js_escaped_name
             )
         }
     };
@@ -493,15 +488,52 @@ pub async fn get_node(State(state): State<Arc<WebState>>, Path(name): Path<Strin
 
     if let Some(member) = coordinator.get_member_state(&name).await {
         let node = super::web_types::NodeSummary::from_member_summary(&member);
+
+        // Convert node_type to string for JSON
+        let node_type_str = match node.node_type {
+            super::web_types::NodeType::Node => "Node",
+            super::web_types::NodeType::Container => "Container",
+            super::web_types::NodeType::ComposableNode => "ComposableNode",
+        };
+
+        // For composable nodes, find the container's member name (not the full ROS name)
+        let container_member_name = if node.node_type == super::web_types::NodeType::ComposableNode
+        {
+            if let Some(ref target_container_ros_name) = node.target_container {
+                // Look up all members to find the container with matching ROS name
+                let all_members = coordinator.list_members().await;
+                all_members
+                    .iter()
+                    .find(|m| {
+                        m.is_container
+                            && m.namespace
+                                .as_ref()
+                                .map(|ns| {
+                                    format!("{}/{}", ns, m.node_name.as_ref().unwrap_or(&m.name))
+                                })
+                                .or_else(|| m.node_name.as_ref().map(|n| format!("/{}", n)))
+                                .as_ref()
+                                == Some(target_container_ros_name)
+                    })
+                    .map(|container| container.name.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Json(json!({
             "name": node.name,
             "package": node.package,
             "executable": node.executable,
             "namespace": node.namespace,
             "target_container": node.target_container,
+            "container_name": container_member_name,
             "status": node.status,
             "pid": node.pid,
             "is_container": node.is_container,
+            "node_type": node_type_str,
             "respawn_enabled": node.respawn_enabled,
             "respawn_delay": node.respawn_delay,
         }))

@@ -314,7 +314,28 @@
         .right-panel-title {
             font-weight: 600;
             font-size: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
+
+        .state-badge {
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .state-badge.running { background: var(--running-bg); color: var(--running-text); }
+        .state-badge.stopped { background: var(--stopped-bg); color: var(--stopped-text); }
+        .state-badge.failed { background: var(--failed-bg); color: var(--failed-text); }
+        .state-badge.loading { background: var(--loading-bg); color: var(--loading-text); }
+        .state-badge.unloading { background: var(--unloading-bg); color: var(--unloading-text); }
+        .state-badge.loaded { background: var(--running-bg); color: var(--running-text); }
+        .state-badge.unloaded { background: var(--stopped-bg); color: var(--stopped-text); }
+        .state-badge.blocked { background: var(--blocked-bg); color: var(--blocked-text); }
+        .state-badge.pending { background: var(--pending-bg); color: var(--pending-text); }
 
         .close-btn {
             background: none;
@@ -333,6 +354,42 @@
 
         .close-btn:hover {
             color: var(--text-primary);
+        }
+
+        .right-panel-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 10px 16px;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.9rem;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .tab-btn:hover {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .tab-btn.active {
+            color: var(--running-border);
+            border-bottom-color: var(--running-border);
+            font-weight: 600;
+        }
+
+        .tab-content {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
         }
 
         .right-panel-content {
@@ -384,6 +441,11 @@
 
         .node-card.hidden {
             display: none;
+        }
+
+        .node-card.selected {
+            box-shadow: 0 0 0 2px var(--btn-primary);
+            border-left-width: 4px;
         }
 
         .node-card.status-running {
@@ -637,8 +699,7 @@
         .btn-start { background: var(--btn-success); }
         .btn-stop { background: var(--btn-danger); }
         .btn-restart { background: var(--btn-primary); }
-        .btn-details { background: var(--btn-secondary); }
-        .btn-logs { background: #7c3aed; }
+        .btn-view { background: #7c3aed; }
         .btn-load { background: var(--btn-success); }
         .btn-unload { background: var(--btn-danger); }
         .btn-load-all { background: #059669; }
@@ -815,6 +876,39 @@
             border-color: var(--btn-primary);
         }
 
+        .log-reminder {
+            padding: 8px 12px;
+            margin: 8px 12px;
+            background: var(--bg-tertiary);
+            border-left: 3px solid var(--btn-primary);
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            border-radius: 4px;
+        }
+
+        .sort-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            padding: 0 16px;
+            margin-bottom: 8px;
+        }
+
+        .sort-controls label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .sort-controls select {
+            padding: 4px 8px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+
         @media (max-width: 768px) {
             .left-panel.with-sidebar {
                 width: 100%;
@@ -855,6 +949,16 @@
 
     <div class="main-container">
         <div class="left-panel" id="left-panel">
+            <div class="sort-controls">
+                <label for="sort-by">Sort by:</label>
+                <select id="sort-by" onchange="sortNodes(this.value)">
+                    <option value="name">Name (A-Z)</option>
+                    <option value="name-desc">Name (Z-A)</option>
+                    <option value="type">Type</option>
+                    <option value="status">Status</option>
+                    <option value="default">Default (unsorted)</option>
+                </select>
+            </div>
             <div id="node-list"
                  class="node-list"
                  hx-get="/api/nodes"
@@ -867,24 +971,40 @@
 
         <div class="right-panel" id="right-panel">
             <div class="right-panel-header">
-                <span class="right-panel-title" id="right-panel-title">Details</span>
+                <span class="right-panel-title">
+                    <span id="right-panel-title">Node Details</span>
+                    <span class="state-badge" id="right-panel-state" style="display:none;"></span>
+                </span>
                 <button class="close-btn" onclick="closeRightPanel()">&times;</button>
             </div>
+            <div class="right-panel-tabs">
+                <button class="tab-btn" onclick="switchTab('info')">Member Info</button>
+                <button class="tab-btn" onclick="switchTab('stdout')">stdout</button>
+                <button class="tab-btn active" onclick="switchTab('stderr')">stderr</button>
+            </div>
             <div class="right-panel-content" id="right-panel-content">
-                <div id="content-details" class="content-details">
-                    <div class="no-nodes">Click "Details" or "Logs" on a node to view information</div>
-                </div>
-                <div id="content-logs" class="content-logs" style="display:none;">
-                    <div class="log-type-selector">
-                        <button class="log-type-btn" onclick="switchLogType('stdout')">stdout</button>
-                        <button class="log-type-btn active" onclick="switchLogType('stderr')">stderr</button>
+                <div id="tab-info" class="tab-content" style="display:none;">
+                    <div id="content-details" class="content-details">
+                        <div class="no-nodes">Click "View" on a node to see information</div>
                     </div>
-                    <div class="log-viewer" id="log-content"></div>
+                </div>
+                <div id="tab-stdout" class="tab-content" style="display:none;">
+                    <div class="log-viewer" id="log-stdout"></div>
                     <div class="log-controls">
-                        <span class="log-status" id="log-status">Not connected</span>
+                        <span class="log-status" id="log-status-stdout">Not connected</span>
                         <div>
-                            <button onclick="clearLogs()">Clear</button>
-                            <button onclick="scrollToBottom()">↓ Bottom</button>
+                            <button onclick="clearLog('stdout')">Clear</button>
+                            <button onclick="scrollToBottom('stdout')">↓ Bottom</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="tab-stderr" class="tab-content">
+                    <div class="log-viewer" id="log-stderr"></div>
+                    <div class="log-controls">
+                        <span class="log-status" id="log-status-stderr">Not connected</span>
+                        <div>
+                            <button onclick="clearLog('stderr')">Clear</button>
+                            <button onclick="scrollToBottom('stderr')">↓ Bottom</button>
                         </div>
                     </div>
                 </div>
@@ -973,17 +1093,65 @@
 
         // Right panel management
         let currentNode = null;
-        let currentLogType = 'stderr';
-        let eventSource = null;
-        let autoScroll = true;
+        let currentTab = 'stderr';
+        let eventSources = { stdout: null, stderr: null };
+        let autoScroll = { stdout: true, stderr: true };
+        let currentNodePid = null; // Track PID to detect restarts
 
-        function openRightPanel(nodeName) {
+        function updateSelectedCard(nodeName) {
+            // Remove selected class from all cards
+            document.querySelectorAll('.node-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+
+            // Add selected class to current card
+            if (nodeName) {
+                const card = document.querySelector(`.node-card[data-node="${CSS.escape(nodeName)}"]`);
+                if (card) {
+                    card.classList.add('selected');
+                }
+            }
+        }
+
+        function openRightPanel(nodeName, nodeData) {
             currentNode = nodeName;
 
             document.getElementById('left-panel').classList.add('with-sidebar');
             document.getElementById('right-panel').classList.add('open');
             document.getElementById('panel-resizer').classList.add('visible');
+
+            // Set title
             document.getElementById('right-panel-title').textContent = nodeName;
+
+            // Update state badge if nodeData provided
+            const stateBadge = document.getElementById('right-panel-state');
+            if (nodeData && nodeData.status) {
+                let stateClass = '';
+                let stateText = '';
+
+                if (nodeData.status.Process) {
+                    stateClass = nodeData.status.Process.toLowerCase();
+                    stateText = nodeData.status.Process;
+                } else if (nodeData.status.Composable) {
+                    const compState = nodeData.status.Composable;
+                    if (typeof compState === 'object') {
+                        stateClass = Object.keys(compState)[0].toLowerCase();
+                        stateText = Object.keys(compState)[0];
+                    } else {
+                        stateClass = compState.toLowerCase();
+                        stateText = compState;
+                    }
+                }
+
+                stateBadge.className = 'state-badge ' + stateClass;
+                stateBadge.textContent = stateText;
+                stateBadge.style.display = '';
+            } else {
+                stateBadge.style.display = 'none';
+            }
+
+            // Update selected card highlight
+            updateSelectedCard(nodeName);
         }
 
         function closeRightPanel() {
@@ -991,30 +1159,129 @@
             document.getElementById('right-panel').classList.remove('open');
             document.getElementById('panel-resizer').classList.remove('visible');
 
-            if (eventSource) {
-                eventSource.close();
-                eventSource = null;
+            // Close all event sources
+            if (eventSources.stdout) {
+                eventSources.stdout.close();
+                eventSources.stdout = null;
+            }
+            if (eventSources.stderr) {
+                eventSources.stderr.close();
+                eventSources.stderr = null;
             }
             currentNode = null;
+            currentNodePid = null;
 
-            // Hide both content areas
-            document.getElementById('content-details').style.display = 'none';
-            document.getElementById('content-logs').style.display = 'none';
+            // Remove selected highlighting
+            updateSelectedCard(null);
         }
 
-        function showDetailsContent() {
-            document.getElementById('content-details').style.display = 'block';
-            document.getElementById('content-logs').style.display = 'none';
+        function switchTab(tabName) {
+            currentTab = tabName;
 
-            if (eventSource) {
-                eventSource.close();
-                eventSource = null;
+            // Update tab buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Update tab content visibility
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.style.display = 'none';
+            });
+
+            if (tabName === 'info') {
+                document.getElementById('tab-info').style.display = 'flex';
+            } else if (tabName === 'stdout') {
+                document.getElementById('tab-stdout').style.display = 'flex';
+                connectToLog('stdout');
+            } else if (tabName === 'stderr') {
+                document.getElementById('tab-stderr').style.display = 'flex';
+                connectToLog('stderr');
             }
         }
 
-        function showLogsContent() {
-            document.getElementById('content-details').style.display = 'none';
-            document.getElementById('content-logs').style.display = 'flex';
+        function showNodePanel(nodeName, preserveTab) {
+            // Fetch node details first
+            fetch(`/api/nodes/${encodeURIComponent(nodeName)}`)
+                .then(res => res.json())
+                .then(data => {
+                    // Check if right panel is already open (to preserve tab)
+                    const panelAlreadyOpen = document.getElementById('right-panel').classList.contains('open');
+
+                    // Open panel with state badge
+                    openRightPanel(nodeName, data);
+
+                    // Update details tab
+                    document.getElementById('content-details').innerHTML = renderJSON(data);
+
+                    // Track PID to detect restarts
+                    if (data.pid) {
+                        currentNodePid = data.pid;
+                    }
+
+                    // Determine which tab to show
+                    // If preserveTab is explicitly passed, use currentTab
+                    // If panel was already open, preserve the current tab
+                    // Otherwise, default to stderr
+                    let targetTab = (preserveTab || panelAlreadyOpen) ? currentTab : 'stderr';
+
+                    // Check if this is a composable node
+                    const isComposableNode = data.node_type === 'ComposableNode';
+                    const containerName = isComposableNode ? data.container_name : null;
+
+                    // Update tab visibility
+                    document.querySelectorAll('.tab-btn').forEach(btn => {
+                        btn.classList.toggle('active', btn.textContent === targetTab);
+                    });
+                    document.querySelectorAll('.tab-content').forEach(content => {
+                        content.style.display = 'none';
+                    });
+
+                    if (targetTab === 'info') {
+                        document.getElementById('tab-info').style.display = 'flex';
+                    } else if (targetTab === 'stdout') {
+                        document.getElementById('tab-stdout').style.display = 'flex';
+                        setupLogTab('stdout', isComposableNode, containerName);
+                    } else if (targetTab === 'stderr') {
+                        document.getElementById('tab-stderr').style.display = 'flex';
+                        setupLogTab('stderr', isComposableNode, containerName);
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('content-details').innerHTML =
+                        `<div style="color: var(--failed-text);">Error loading details: ${err.message}</div>`;
+                });
+        }
+
+        function setupLogTab(logType, isComposableNode, containerName) {
+            const logContainer = document.getElementById(`tab-${logType}`);
+
+            // Remove any existing reminders
+            const existingReminder = logContainer.querySelector('.log-reminder');
+            if (existingReminder) {
+                existingReminder.remove();
+            }
+
+            if (isComposableNode && containerName) {
+                // Add reminder for composable nodes
+                const reminder = document.createElement('div');
+                reminder.className = 'log-reminder';
+                reminder.textContent = `Note: Showing ${logType} from container "${containerName}" (composable nodes share container logs)`;
+
+                const logViewer = logContainer.querySelector('.log-viewer');
+                if (logViewer) {
+                    logContainer.insertBefore(reminder, logViewer);
+                } else {
+                    // If no log viewer found, append to container
+                    logContainer.appendChild(reminder);
+                }
+
+                // Connect to container's log instead
+                connectToLog(logType, containerName);
+            } else {
+                // Connect to node's own log
+                connectToLog(logType);
+            }
         }
 
         // Node filter - searches both node name and ROS name
@@ -1041,6 +1308,84 @@
             searchBox.value = namespace;
             searchBox.focus();
             filterNodes(namespace);
+        }
+
+        // Sorting functions
+        function sortNodes(sortBy) {
+            const nodeList = document.getElementById('node-list');
+
+            if (sortBy === 'default') {
+                // Restore original order (do nothing, let htmx refresh handle it)
+                return;
+            }
+
+            // Separate parent-level cards (nodes/containers) from child-level cards (composable nodes)
+            const allCards = Array.from(nodeList.querySelectorAll('.node-card'));
+            const parentCards = allCards.filter(card => !card.classList.contains('child-node'));
+            const childCards = allCards.filter(card => card.classList.contains('child-node'));
+
+            // Build a map of container -> its children
+            const containerChildren = new Map();
+            childCards.forEach(child => {
+                // Find the previous parent card (scan backwards until we find a non-child card)
+                let parent = child.previousElementSibling;
+                while (parent && parent.classList.contains('child-node')) {
+                    parent = parent.previousElementSibling;
+                }
+                if (parent) {
+                    const parentName = parent.getAttribute('data-node');
+                    if (!containerChildren.has(parentName)) {
+                        containerChildren.set(parentName, []);
+                    }
+                    containerChildren.get(parentName).push(child);
+                }
+            });
+
+            // Sort function for cards
+            const sortCards = (cardA, cardB) => {
+                const nameA = cardA.getAttribute('data-node') || '';
+                const nameB = cardB.getAttribute('data-node') || '';
+
+                if (sortBy === 'name') {
+                    return nameA.localeCompare(nameB);
+                } else if (sortBy === 'name-desc') {
+                    return nameB.localeCompare(nameA);
+                } else if (sortBy === 'type') {
+                    const typeA = cardA.querySelector('.node-type')?.textContent || '';
+                    const typeB = cardB.querySelector('.node-type')?.textContent || '';
+                    return typeA.localeCompare(typeB) || nameA.localeCompare(nameB);
+                } else if (sortBy === 'status') {
+                    const getStatusPriority = (card) => {
+                        if (card.classList.contains('status-running') || card.classList.contains('status-loaded')) return 0;
+                        if (card.classList.contains('status-loading') || card.classList.contains('status-unloading')) return 1;
+                        if (card.classList.contains('status-failed')) return 2;
+                        if (card.classList.contains('status-stopped') || card.classList.contains('status-unloaded')) return 3;
+                        return 4;
+                    };
+                    const statusA = getStatusPriority(cardA);
+                    const statusB = getStatusPriority(cardB);
+                    return statusA - statusB || nameA.localeCompare(nameB);
+                }
+                return 0;
+            };
+
+            // Sort parent cards
+            parentCards.sort(sortCards);
+
+            // Sort children for each container
+            containerChildren.forEach((children) => {
+                children.sort(sortCards);
+            });
+
+            // Rebuild the list: parent followed by its sorted children
+            parentCards.forEach(parent => {
+                nodeList.appendChild(parent);
+                const parentName = parent.getAttribute('data-node');
+                const children = containerChildren.get(parentName);
+                if (children) {
+                    children.forEach(child => nodeList.appendChild(child));
+                }
+            });
         }
 
         // Toggle respawn for a node
@@ -1090,22 +1435,6 @@
                     htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
                 }, 100);
             });
-        }
-
-        // Details view
-        function showNodeDetails(nodeName) {
-            openRightPanel(nodeName);
-            showDetailsContent();
-
-            fetch(`/api/nodes/${encodeURIComponent(nodeName)}`)
-                .then(res => res.json())
-                .then(data => {
-                    document.getElementById('content-details').innerHTML = renderJSON(data);
-                })
-                .catch(err => {
-                    document.getElementById('content-details').innerHTML =
-                        `<div style="color: var(--failed-text);">Error loading details: ${err.message}</div>`;
-                });
         }
 
         // Firefox-style JSON renderer
@@ -1208,45 +1537,23 @@
             return div.innerHTML;
         }
 
-        // Log viewer
-        function showNodeLogs(nodeName) {
-            openRightPanel(nodeName);
-            showLogsContent();
-
-            // Always default to stderr when opening logs
-            currentLogType = 'stderr';
-            document.querySelectorAll('.log-type-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.textContent === 'stderr');
-            });
-
-            connectToLogs();
-        }
-
-        function switchLogType(type) {
-            currentLogType = type;
-
-            document.querySelectorAll('.log-type-btn').forEach(btn => {
-                btn.classList.toggle('active', btn.textContent === type);
-            });
-
-            document.getElementById('log-content').innerHTML = '';
-            connectToLogs();
-        }
-
-        function connectToLogs() {
-            // Close old connection
-            if (eventSource) {
-                eventSource.close();
-                eventSource = null;
+        // Log viewer - updated for tab-based interface
+        function connectToLog(logType, nodeName) {
+            // Close old connection for this log type
+            if (eventSources[logType]) {
+                eventSources[logType].close();
+                eventSources[logType] = null;
             }
 
-            if (!currentNode) return;
+            // Use provided nodeName or currentNode
+            const targetNode = nodeName || currentNode;
+            if (!targetNode) return;
 
             // Clear log content to prevent duplication
-            document.getElementById('log-content').innerHTML = '';
+            document.getElementById(`log-${logType}`).innerHTML = '';
 
-            const url = `/api/nodes/${encodeURIComponent(currentNode)}/logs/${currentLogType}`;
-            const statusEl = document.getElementById('log-status');
+            const url = `/api/nodes/${encodeURIComponent(targetNode)}/logs/${logType}`;
+            const statusEl = document.getElementById(`log-status-${logType}`);
 
             statusEl.textContent = 'Connecting...';
             statusEl.classList.remove('connected');
@@ -1255,7 +1562,7 @@
 
             newEventSource.onopen = function() {
                 // Only update if this is still the current event source
-                if (newEventSource === eventSource) {
+                if (newEventSource === eventSources[logType]) {
                     statusEl.textContent = 'Connected - streaming';
                     statusEl.classList.add('connected');
                 }
@@ -1263,24 +1570,24 @@
 
             newEventSource.onmessage = function(event) {
                 // Only append if this is still the current event source
-                if (newEventSource === eventSource) {
-                    appendLogLine(event.data);
+                if (newEventSource === eventSources[logType]) {
+                    appendLogLine(logType, event.data);
                 }
             };
 
             newEventSource.onerror = function() {
                 // Only update if this is still the current event source
-                if (newEventSource === eventSource) {
+                if (newEventSource === eventSources[logType]) {
                     statusEl.textContent = 'Connection lost - retrying...';
                     statusEl.classList.remove('connected');
                 }
             };
 
-            eventSource = newEventSource;
+            eventSources[logType] = newEventSource;
         }
 
-        function appendLogLine(text) {
-            const container = document.getElementById('log-content');
+        function appendLogLine(logType, text) {
+            const container = document.getElementById(`log-${logType}`);
             const line = document.createElement('div');
             line.className = 'log-line';
             line.textContent = text;
@@ -1291,25 +1598,65 @@
                 container.removeChild(container.firstChild);
             }
 
-            if (autoScroll) {
-                scrollToBottom();
+            if (autoScroll[logType]) {
+                scrollToBottom(logType);
             }
         }
 
-        function clearLogs() {
-            document.getElementById('log-content').innerHTML = '';
+        function clearLog(logType) {
+            document.getElementById(`log-${logType}`).innerHTML = '';
         }
 
-        function scrollToBottom() {
-            const container = document.getElementById('log-content');
-            container.scrollTop = container.scrollHeight;
+        function scrollToBottom(logType) {
+            const container = document.getElementById(`log-${logType}`);
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
         }
 
-        // Track scroll position
-        document.getElementById('log-content')?.addEventListener('scroll', function() {
-            const el = this;
-            autoScroll = Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 50;
-        });
+        // Track scroll position for both log viewers
+        function setupScrollTracking(logType) {
+            const container = document.getElementById(`log-${logType}`);
+            if (container) {
+                container.addEventListener('scroll', function() {
+                    autoScroll[logType] = Math.abs(this.scrollHeight - this.scrollTop - this.clientHeight) < 50;
+                });
+            }
+        }
+
+        // Setup scroll tracking when page loads
+        setTimeout(() => {
+            setupScrollTracking('stdout');
+            setupScrollTracking('stderr');
+        }, 100);
+
+        // Periodically check for PID changes and reconnect if needed
+        setInterval(() => {
+            if (!currentNode || !currentNodePid) return;
+
+            fetch(`/api/nodes/${encodeURIComponent(currentNode)}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.pid && data.pid !== currentNodePid) {
+                        // PID changed, node was restarted - reconnect logs
+                        currentNodePid = data.pid;
+
+                        // Reconnect active log viewers
+                        if (eventSources.stdout) {
+                            connectToLog('stdout');
+                        }
+                        if (eventSources.stderr) {
+                            connectToLog('stderr');
+                        }
+
+                        // Update info tab if it's displaying
+                        document.getElementById('content-details').innerHTML = renderJSON(data);
+                    }
+                })
+                .catch(err => {
+                    // Ignore errors (node might be stopped)
+                });
+        }, 2000); // Check every 2 seconds
 
         // Stderr tooltip management
         let currentTooltip = null;
@@ -1448,9 +1795,16 @@
                 // Update icon based on time since last modification
                 icon.classList.remove('hot', 'warm', 'jumping');
 
-                if (elapsed < 10) {
-                    // 0-10 seconds: bright yellow, jumping
+                // Check if node is running (only show jumping icon for running nodes)
+                const isRunning = card.classList.contains('status-running') ||
+                                  card.classList.contains('status-loaded');
+
+                if (elapsed < 10 && isRunning) {
+                    // 0-10 seconds AND node is running: bright yellow, jumping
                     icon.classList.add('hot', 'jumping');
+                } else if (elapsed < 10) {
+                    // 0-10 seconds BUT node is stopped: bright yellow, static
+                    icon.classList.add('hot');
                 } else {
                     // 10-60 seconds: mild orange, static
                     icon.classList.add('warm');
@@ -1470,11 +1824,31 @@
         // HTMX event handlers
         document.body.addEventListener('htmx:afterRequest', function(evt) {
             const path = evt.detail.pathInfo?.requestPath || '';
+
+            // Extract node name from path (e.g., /api/nodes/my_node/start -> my_node)
+            const nodeMatch = path.match(/\/api\/nodes\/([^\/]+)\/(start|stop|restart|load|unload)/);
+
             if (path.includes('/start') || path.includes('/stop') || path.includes('/restart')) {
                 setTimeout(() => {
                     htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
                     htmx.ajax('GET', '/api/health', {target: '#health-badges'});
                 }, 500);
+
+                // Open right panel for the node that was controlled
+                if (nodeMatch && nodeMatch[1]) {
+                    const nodeName = decodeURIComponent(nodeMatch[1]);
+                    setTimeout(() => {
+                        showNodePanel(nodeName, true); // preserveTab = true
+                    }, 600);
+                }
+            } else if (path.includes('/load') || path.includes('/unload')) {
+                // For load/unload, the card swaps immediately, so open panel right away
+                if (nodeMatch && nodeMatch[1]) {
+                    const nodeName = decodeURIComponent(nodeMatch[1]);
+                    setTimeout(() => {
+                        showNodePanel(nodeName, true); // preserveTab = true
+                    }, 100);
+                }
             }
         });
 
@@ -1486,6 +1860,17 @@
                 }
                 // Update stderr icons immediately after node list refresh
                 updateStderrIcons();
+
+                // Restore selected card highlighting if right panel is open
+                if (currentNode) {
+                    updateSelectedCard(currentNode);
+                }
+
+                // Re-apply current sort
+                const sortSelect = document.getElementById('sort-by');
+                if (sortSelect && sortSelect.value !== 'default') {
+                    sortNodes(sortSelect.value);
+                }
             }
         });
 
@@ -1502,8 +1887,7 @@
 
             fetch('/api/nodes/start-all', { method: 'POST' })
                 .then(response => response.text())
-                .then(message => {
-                    console.log('Start all:', message);
+                .then(() => {
                     // Refresh node list
                     htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
                     htmx.ajax('GET', '/api/health', {target: '#health-badges'});
@@ -1519,8 +1903,7 @@
 
             fetch('/api/nodes/stop-all', { method: 'POST' })
                 .then(response => response.text())
-                .then(message => {
-                    console.log('Stop all:', message);
+                .then(() => {
                     // Refresh node list
                     htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
                     htmx.ajax('GET', '/api/health', {target: '#health-badges'});
@@ -1536,8 +1919,7 @@
 
             fetch('/api/nodes/restart-all', { method: 'POST' })
                 .then(response => response.text())
-                .then(message => {
-                    console.log('Restart all:', message);
+                .then(() => {
                     // Refresh node list
                     htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
                     htmx.ajax('GET', '/api/health', {target: '#health-badges'});

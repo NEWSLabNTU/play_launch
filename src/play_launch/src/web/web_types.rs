@@ -92,6 +92,8 @@ pub struct NodeSummary {
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_container: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_name: Option<String>,
     pub is_container: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exec_name: Option<String>,
@@ -140,6 +142,8 @@ impl NodeSummary {
             executable: member.executable.clone(),
             namespace: member.namespace.clone(),
             target_container: member.target_container.clone(),
+            // Container name will be set dynamically in the handler for composable nodes
+            container_name: None,
             is_container: member.is_container,
             exec_name: member.exec_name.clone(),
             node_name: member.node_name.clone(),
