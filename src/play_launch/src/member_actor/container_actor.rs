@@ -1357,7 +1357,7 @@ impl ContainerActor {
                 Some(event) = self.control_rx.recv() => {
                     match event {
                         ControlEvent::Stop => {
-                            info!("{}: Received Stop command, killing container (PID: {})", self.name, pid);
+                            debug!("{}: Received Stop command, killing container (PID: {})", self.name, pid);
                             child.kill().await.ok();
 
                             // Wait for process to exit
@@ -1398,7 +1398,7 @@ impl ContainerActor {
                             return Ok(true); // Keep actor alive to receive Start commands
                         }
                         ControlEvent::Restart => {
-                            info!("{}: Received Restart command, killing and respawning container", self.name);
+                            debug!("{}: Received Restart command, killing and respawning container", self.name);
                             child.kill().await.ok();
 
                             // Wait for process to exit
@@ -1815,7 +1815,7 @@ impl ContainerActor {
             Some(event) = self.control_rx.recv() => {
                 match event {
                     ControlEvent::Stop => {
-                        info!("{}: Stop requested during respawn delay", self.name);
+                        debug!("{}: Stop requested during respawn delay", self.name);
 
                         // Clear service client (should already be None, but be explicit)
                         self.load_client = None;
@@ -1872,7 +1872,7 @@ impl ContainerActor {
             Some(event) = self.control_rx.recv() => {
                 match event {
                     ControlEvent::Start => {
-                        info!("{}: Start requested", self.name);
+                        debug!("{}: Start requested", self.name);
 
                         // Transition to Pending to spawn container
                         match &self.state {
@@ -1889,7 +1889,7 @@ impl ContainerActor {
                         }
                     }
                     ControlEvent::Restart => {
-                        info!("{}: Restart requested", self.name);
+                        debug!("{}: Restart requested", self.name);
 
                         // Transition to Pending to spawn container
                         self.state = NodeState::Pending;
@@ -1897,7 +1897,7 @@ impl ContainerActor {
                     }
                     ControlEvent::Stop => {
                         // Already stopped, ignore
-                        info!("{}: Stop requested while already stopped", self.name);
+                        debug!("{}: Stop requested while already stopped", self.name);
                         Ok(true)
                     }
                     _ => {

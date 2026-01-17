@@ -407,7 +407,7 @@ impl RegularNodeActor {
     async fn handle_control_event(&mut self, event: ControlEvent) -> Result<bool> {
         match event {
             ControlEvent::Start => {
-                info!("[{}] Start requested", self.name);
+                debug!("[{}] Start requested", self.name);
 
                 // If not running, transition to Pending to spawn
                 match &self.state {
@@ -417,11 +417,11 @@ impl RegularNodeActor {
                         Ok(true) // Continue to spawn
                     }
                     NodeState::Running { .. } => {
-                        info!("[{}] Already running, ignoring start request", self.name);
+                        debug!("[{}] Already running, ignoring start request", self.name);
                         Ok(true) // Already running, ignore
                     }
                     _ => {
-                        info!(
+                        debug!(
                             "[{}] In transition state, ignoring start request",
                             self.name
                         );
@@ -431,7 +431,7 @@ impl RegularNodeActor {
             }
 
             ControlEvent::Stop => {
-                info!("[{}] Stop requested", self.name);
+                debug!("[{}] Stop requested", self.name);
 
                 // Kill process if running
                 if let NodeState::Running { mut child, pid } =
@@ -452,7 +452,7 @@ impl RegularNodeActor {
             }
 
             ControlEvent::Restart => {
-                info!("[{}] Restart requested", self.name);
+                debug!("[{}] Restart requested", self.name);
 
                 // Kill process if running
                 if let NodeState::Running { mut child, pid } =
