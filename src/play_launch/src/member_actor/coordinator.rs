@@ -312,10 +312,15 @@ impl MemberCoordinatorBuilder {
                 "Registering container: member_name='{}', full_name='{}'",
                 unique_member_name, container_name
             );
+
+            // Update metadata name to match unique member name (for Web UI)
+            let mut metadata = def.metadata;
+            metadata.name = unique_member_name.clone();
+
             container_full_names.insert(unique_member_name.clone(), container_name.clone());
             container_actors.insert(unique_member_name.clone(), actor);
             container_controls.insert(unique_member_name.clone(), control_tx);
-            metadata_map.insert(unique_member_name, def.metadata);
+            metadata_map.insert(unique_member_name, metadata);
         }
 
         // Phase 12: Add composable nodes as virtual members managed by containers
@@ -902,11 +907,19 @@ impl MemberHandle {
 
     /// Request a composable node to load (retry loading)
     pub async fn load_member(&self, name: &str) -> Result<()> {
+        // Immediately update shared_state to Loading for instant Web UI feedback
+        self.shared_state
+            .insert(name.to_string(), super::web_query::MemberState::Loading);
+
         self.send_control(name, ControlEvent::Load).await
     }
 
     /// Request a composable node to unload
     pub async fn unload_member(&self, name: &str) -> Result<()> {
+        // Immediately update shared_state to Unloading for instant Web UI feedback
+        self.shared_state
+            .insert(name.to_string(), super::web_query::MemberState::Unloading);
+
         self.send_control(name, ControlEvent::Unload).await
     }
 

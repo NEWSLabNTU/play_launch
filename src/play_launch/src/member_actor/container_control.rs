@@ -121,6 +121,16 @@ pub(super) struct CurrentLoad {
     pub task: tokio::task::JoinHandle<eyre::Result<LoadNodeResponse>>,
 }
 
+/// Current unload being processed
+pub(super) struct CurrentUnload {
+    /// Name of the composable node being unloaded
+    pub composable_name: String,
+    /// When the unload started
+    pub start_time: Instant,
+    /// Task handle for the UnloadNode service call
+    pub task: tokio::task::JoinHandle<eyre::Result<UnloadNodeResponse>>,
+}
+
 impl From<ContainerControlEvent> for Option<LoadRequest> {
     fn from(event: ContainerControlEvent) -> Self {
         match event {

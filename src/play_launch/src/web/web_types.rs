@@ -43,6 +43,8 @@ pub enum ComposableNodeStatus {
     Loaded,
     /// Currently being loaded into container
     Loading,
+    /// Currently being unloaded from container
+    Unloading,
     /// Load failed
     #[allow(dead_code)]
     Failed,
@@ -161,6 +163,9 @@ impl NodeSummary {
             ActorMemberState::Failed { .. } => UnifiedStatus::Process(NodeStatus::Failed),
             ActorMemberState::Unloaded => UnifiedStatus::Composable(ComposableNodeStatus::Unloaded),
             ActorMemberState::Loading => UnifiedStatus::Composable(ComposableNodeStatus::Loading),
+            ActorMemberState::Unloading => {
+                UnifiedStatus::Composable(ComposableNodeStatus::Unloading)
+            }
             ActorMemberState::Loaded { .. } => {
                 UnifiedStatus::Composable(ComposableNodeStatus::Loaded)
             }

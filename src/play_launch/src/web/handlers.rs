@@ -126,6 +126,7 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
         UnifiedStatus::Composable(status) => match status {
             ComposableNodeStatus::Loaded => "status-loaded",
             ComposableNodeStatus::Loading => "status-loading",
+            ComposableNodeStatus::Unloading => "status-unloading",
             ComposableNodeStatus::Failed => "status-failed",
             ComposableNodeStatus::Pending => "status-pending",
             ComposableNodeStatus::Unloaded => "status-unloaded",
@@ -197,11 +198,21 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
 
             // Load/Unload button for composable nodes
             let load_unload_button = match &node.status {
-                UnifiedStatus::Composable(ComposableNodeStatus::Unloaded)
-                | UnifiedStatus::Composable(ComposableNodeStatus::Failed) => {
-                    // Show Load button when unloaded or failed
+                UnifiedStatus::Composable(ComposableNodeStatus::Unloaded) => {
+                    // Show Load button when unloaded
                     format!(
-                        r#"<button hx-post="/api/nodes/{}/load" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-load">
+                        r#"<button hx-post="/api/nodes/{}/load" hx-swap="outerHTML" hx-target="closest .node-card" hx-disabled-elt="closest .node-controls" class="btn-load">
+    <span class="btn-text">Load</span>
+    <span class="btn-loading">Loading...</span>
+</button>
+    "#,
+                        node.name
+                    )
+                }
+                UnifiedStatus::Composable(ComposableNodeStatus::Failed) => {
+                    // Show Load button when failed (can retry)
+                    format!(
+                        r#"<button hx-post="/api/nodes/{}/load" hx-swap="outerHTML" hx-target="closest .node-card" hx-disabled-elt="closest .node-controls" class="btn-load">
     <span class="btn-text">Load</span>
     <span class="btn-loading">Loading...</span>
 </button>
@@ -212,7 +223,7 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
                 UnifiedStatus::Composable(ComposableNodeStatus::Loaded) => {
                     // Show Unload button when loaded
                     format!(
-                        r#"<button hx-post="/api/nodes/{}/unload" hx-swap="none" hx-disabled-elt="closest .node-controls" class="btn-unload">
+                        r#"<button hx-post="/api/nodes/{}/unload" hx-swap="outerHTML" hx-target="closest .node-card" hx-disabled-elt="closest .node-controls" class="btn-unload">
     <span class="btn-text">Unload</span>
     <span class="btn-loading">Unloading...</span>
 </button>
@@ -220,7 +231,39 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
                         node.name
                     )
                 }
-                _ => String::new(), // No buttons when loading or blocked
+                UnifiedStatus::Composable(ComposableNodeStatus::Loading) => {
+                    // Show disabled Loading button
+                    r#"<button disabled class="btn-load">
+    <span class="btn-text">Loading...</span>
+</button>
+    "#
+                    .to_string()
+                }
+                UnifiedStatus::Composable(ComposableNodeStatus::Unloading) => {
+                    // Show disabled Unloading button
+                    r#"<button disabled class="btn-unload">
+    <span class="btn-text">Unloading...</span>
+</button>
+    "#
+                    .to_string()
+                }
+                UnifiedStatus::Composable(ComposableNodeStatus::Blocked(_)) => {
+                    // Show disabled Load button when blocked (container stopped)
+                    r#"<button disabled class="btn-load">
+    <span class="btn-text">Load</span>
+</button>
+    "#
+                    .to_string()
+                }
+                UnifiedStatus::Composable(ComposableNodeStatus::Pending) => {
+                    // Show disabled Load button when pending
+                    r#"<button disabled class="btn-load">
+    <span class="btn-text">Load</span>
+</button>
+    "#
+                    .to_string()
+                }
+                _ => String::new(), // Should not reach here for composable nodes
             };
 
             format!(
@@ -566,11 +609,20 @@ pub async fn load_node(State(state): State<Arc<WebState>>, Path(name): Path<Stri
     match coordinator.load_member(&name).await {
         Ok(()) => {
             tracing::info!("[Web UI] Sent Load control to '{}'", name);
-            (
-                StatusCode::ACCEPTED,
-                format!("Load request for '{}' sent", name),
-            )
-                .into_response()
+
+            // Get the updated node state and render the card
+            let nodes = coordinator.list_members().await;
+            if let Some(node) = nodes.iter().find(|n| n.name == name) {
+                let node_summary = super::web_types::NodeSummary::from_member_summary(node);
+                let card_html = render_node_card(&node_summary, "child-node");
+                Html(card_html).into_response()
+            } else {
+                (
+                    StatusCode::ACCEPTED,
+                    format!("Load request for '{}' sent", name),
+                )
+                    .into_response()
+            }
         }
         Err(e) => {
             tracing::warn!("[Web UI] Failed to load '{}': {}", name, e);
@@ -594,11 +646,20 @@ pub async fn unload_node(State(state): State<Arc<WebState>>, Path(name): Path<St
     match coordinator.unload_member(&name).await {
         Ok(()) => {
             tracing::info!("[Web UI] Sent Unload control to '{}'", name);
-            (
-                StatusCode::ACCEPTED,
-                format!("Unload request for '{}' sent", name),
-            )
-                .into_response()
+
+            // Get the updated node state and render the card
+            let nodes = coordinator.list_members().await;
+            if let Some(node) = nodes.iter().find(|n| n.name == name) {
+                let node_summary = super::web_types::NodeSummary::from_member_summary(node);
+                let card_html = render_node_card(&node_summary, "child-node");
+                Html(card_html).into_response()
+            } else {
+                (
+                    StatusCode::ACCEPTED,
+                    format!("Unload request for '{}' sent", name),
+                )
+                    .into_response()
+            }
         }
         Err(e) => {
             tracing::warn!("[Web UI] Failed to unload '{}': {}", name, e);
@@ -775,15 +836,13 @@ pub async fn health_summary(State(state): State<Arc<WebState>>) -> Response {
     let html = format!(
         r#"<span class="badge badge-nodes">{}/{} nodes</span>
            <span class="badge badge-containers">{}/{} containers</span>
-           <span class="badge badge-composable">{}/{} composable</span>
-           <span class="badge badge-processes">{} running</span>"#,
+           <span class="badge badge-composable">{}/{} composable</span>"#,
         summary.nodes_running,
         summary.nodes_total,
         summary.containers_running,
         summary.containers_total,
         summary.composable_loaded,
         summary.composable_total,
-        summary.processes_running,
     );
 
     Html(html).into_response()
@@ -797,7 +856,11 @@ pub async fn start_all(State(state): State<Arc<WebState>>) -> Response {
     match coordinator.start_all().await {
         Ok(count) => {
             tracing::info!("[Web UI] Sent Start control to {} nodes/containers", count);
-            (StatusCode::OK, format!("Started {} nodes/containers", count)).into_response()
+            (
+                StatusCode::OK,
+                format!("Started {} nodes/containers", count),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("[Web UI] Failed to start all: {:#}", e);
@@ -812,7 +875,11 @@ pub async fn stop_all(State(state): State<Arc<WebState>>) -> Response {
     match coordinator.stop_all().await {
         Ok(count) => {
             tracing::info!("[Web UI] Sent Stop control to {} nodes/containers", count);
-            (StatusCode::OK, format!("Stopped {} nodes/containers", count)).into_response()
+            (
+                StatusCode::OK,
+                format!("Stopped {} nodes/containers", count),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("[Web UI] Failed to stop all: {:#}", e);
@@ -826,8 +893,15 @@ pub async fn restart_all(State(state): State<Arc<WebState>>) -> Response {
     let coordinator = &state.member_handle;
     match coordinator.restart_all().await {
         Ok(count) => {
-            tracing::info!("[Web UI] Sent Restart control to {} nodes/containers", count);
-            (StatusCode::OK, format!("Restarted {} nodes/containers", count)).into_response()
+            tracing::info!(
+                "[Web UI] Sent Restart control to {} nodes/containers",
+                count
+            );
+            (
+                StatusCode::OK,
+                format!("Restarted {} nodes/containers", count),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("[Web UI] Failed to restart all: {:#}", e);

@@ -41,6 +41,7 @@ pub enum MemberState {
     Loaded {
         unique_id: u64,
     },
+    Unloading,
     Blocked {
         reason: BlockReason,
     },

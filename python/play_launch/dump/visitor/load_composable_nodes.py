@@ -35,7 +35,7 @@ def visit_load_composable_nodes(
         node_name = target_container.node_name
         if namespace == "/":
             load._LoadComposableNodes__final_target_container_name = f"/{node_name}"
-        elif namespace.endswith('/'):
+        elif namespace.endswith("/"):
             load._LoadComposableNodes__final_target_container_name = f"{namespace}{node_name}"
         else:
             load._LoadComposableNodes__final_target_container_name = f"{namespace}/{node_name}"

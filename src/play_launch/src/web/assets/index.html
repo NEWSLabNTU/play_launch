@@ -38,6 +38,10 @@
             --loading-border: #0a58ca;
             --loading-text: #084298;
 
+            --unloading-bg: #ffe5b4;
+            --unloading-border: #cc7a00;
+            --unloading-text: #996600;
+
             --blocked-bg: #d3d3d4;
             --blocked-border: #6c757d;
             --blocked-text: #495057;
@@ -77,6 +81,10 @@
             --loading-bg: #1e3a5f;
             --loading-border: #60a5fa;
             --loading-text: #93c5fd;
+
+            --unloading-bg: #3d2e1a;
+            --unloading-border: #fb923c;
+            --unloading-text: #fdba74;
 
             --blocked-bg: #3a3d45;
             --blocked-border: #9ca3af;
@@ -406,6 +414,11 @@
         .node-card.status-loading {
             background: var(--loading-bg);
             border-left-color: var(--loading-border);
+        }
+
+        .node-card.status-unloading {
+            background: var(--unloading-bg);
+            border-left-color: var(--unloading-border);
         }
 
         .node-card.status-blocked {

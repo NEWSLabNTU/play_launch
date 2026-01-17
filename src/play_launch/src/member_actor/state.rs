@@ -78,6 +78,12 @@ pub enum ComposableState {
         #[serde(skip)]
         started_at: std::time::Instant,
     },
+    /// Container running, unload request in-flight
+    Unloading {
+        /// When the unload started (for metrics)
+        #[serde(skip)]
+        started_at: std::time::Instant,
+    },
     /// Container running, last load succeeded
     Loaded {
         /// Unique ID from LoadNode response
