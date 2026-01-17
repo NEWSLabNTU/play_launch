@@ -2,7 +2,7 @@ use super::diagnostic_data::DiagnosticStatus;
 use chrono::{DateTime, Utc};
 use csv::Writer;
 use eyre::{Result, WrapErr};
-use std::{fs::File, path::PathBuf};
+use std::{fs::File, path::Path};
 use tokio::sync::Mutex;
 
 /// CSV writer for diagnostic data
@@ -12,7 +12,7 @@ pub struct DiagnosticCsvWriter {
 
 impl DiagnosticCsvWriter {
     /// Create a new CSV writer for diagnostics
-    pub fn new(log_dir: &PathBuf) -> Result<Self> {
+    pub fn new(log_dir: &Path) -> Result<Self> {
         let csv_path = log_dir.join("diagnostics.csv");
 
         let file = File::create(&csv_path)
@@ -22,7 +22,7 @@ impl DiagnosticCsvWriter {
 
         // Write header
         writer
-            .write_record(&[
+            .write_record([
                 "timestamp",
                 "hardware_id",
                 "diagnostic_name",
@@ -52,7 +52,7 @@ impl DiagnosticCsvWriter {
         if status.values.is_empty() {
             // Write single row with no key-value data
             writer
-                .write_record(&[
+                .write_record([
                     &timestamp_str,
                     &status.hardware_id,
                     &status.name,
@@ -67,7 +67,7 @@ impl DiagnosticCsvWriter {
             // Write one row per key-value pair
             for (key, value) in &status.values {
                 writer
-                    .write_record(&[
+                    .write_record([
                         &timestamp_str,
                         &status.hardware_id,
                         &status.name,

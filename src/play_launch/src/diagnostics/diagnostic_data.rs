@@ -7,29 +7,29 @@ use tokio::sync::Mutex;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum DiagnosticLevel {
-    OK = 0,
-    WARNING = 1,
-    ERROR = 2,
-    STALE = 3,
+    Ok = 0,
+    Warning = 1,
+    Error = 2,
+    Stale = 3,
 }
 
 impl DiagnosticLevel {
     pub fn from_u8(value: u8) -> Self {
         match value {
-            0 => DiagnosticLevel::OK,
-            1 => DiagnosticLevel::WARNING,
-            2 => DiagnosticLevel::ERROR,
-            3 => DiagnosticLevel::STALE,
-            _ => DiagnosticLevel::STALE, // Default to STALE for unknown values
+            0 => DiagnosticLevel::Ok,
+            1 => DiagnosticLevel::Warning,
+            2 => DiagnosticLevel::Error,
+            3 => DiagnosticLevel::Stale,
+            _ => DiagnosticLevel::Stale, // Default to STALE for unknown values
         }
     }
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            DiagnosticLevel::OK => "OK",
-            DiagnosticLevel::WARNING => "WARNING",
-            DiagnosticLevel::ERROR => "ERROR",
-            DiagnosticLevel::STALE => "STALE",
+            DiagnosticLevel::Ok => "OK",
+            DiagnosticLevel::Warning => "WARNING",
+            DiagnosticLevel::Error => "ERROR",
+            DiagnosticLevel::Stale => "STALE",
         }
     }
 }
@@ -106,10 +106,10 @@ impl DiagnosticRegistry {
         for entry in self.diagnostics.iter() {
             counts.total += 1;
             match entry.value().level {
-                DiagnosticLevel::OK => counts.ok += 1,
-                DiagnosticLevel::WARNING => counts.warning += 1,
-                DiagnosticLevel::ERROR => counts.error += 1,
-                DiagnosticLevel::STALE => counts.stale += 1,
+                DiagnosticLevel::Ok => counts.ok += 1,
+                DiagnosticLevel::Warning => counts.warning += 1,
+                DiagnosticLevel::Error => counts.error += 1,
+                DiagnosticLevel::Stale => counts.stale += 1,
             }
         }
 
@@ -117,6 +117,7 @@ impl DiagnosticRegistry {
     }
 
     /// Get full history (for CSV export)
+    #[allow(dead_code)]
     pub async fn get_history(&self) -> Vec<DiagnosticStatus> {
         let history = self.history.lock().await;
         history.clone()

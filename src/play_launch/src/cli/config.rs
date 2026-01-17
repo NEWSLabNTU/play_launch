@@ -95,6 +95,7 @@ pub struct DiagnosticsSettings {
 
     /// Store system-wide diagnostics
     #[serde(default = "default_true")]
+    #[allow(dead_code)]
     pub store_system_wide: bool,
 }
 
