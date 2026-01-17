@@ -29,7 +29,16 @@ def visit_load_composable_nodes(
     target_container = load._LoadComposableNodes__target_container
 
     if is_a_subclass(target_container, ComposableNodeContainer):
-        load._LoadComposableNodes__final_target_container_name = target_container.node_name
+        # Build full node name: namespace + node_name
+        # This must match the full ROS node name that will be used at runtime
+        namespace = target_container.expanded_node_namespace(context)
+        node_name = target_container.node_name
+        if namespace == "/":
+            load._LoadComposableNodes__final_target_container_name = f"/{node_name}"
+        elif namespace.endswith('/'):
+            load._LoadComposableNodes__final_target_container_name = f"{namespace}{node_name}"
+        else:
+            load._LoadComposableNodes__final_target_container_name = f"{namespace}/{node_name}"
     elif isinstance(target_container, SomeSubstitutionsType_types_tuple):
         subs = normalize_to_list_of_substitutions(target_container)
         load._LoadComposableNodes__final_target_container_name = perform_substitutions(

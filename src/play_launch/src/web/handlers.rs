@@ -395,19 +395,21 @@ pub async fn list_nodes(State(state): State<Arc<WebState>>) -> Response {
     for container in &containers {
         html.push_str(&render_node_card(container, ""));
 
-        // Construct the full ROS name for this container (namespace + node_name)
-        let container_full_name =
-            if let (Some(ns), Some(node_name)) = (&container.namespace, &container.node_name) {
-                if ns == "/" {
-                    format!("/{}", node_name)
-                } else if ns.ends_with('/') {
-                    format!("{}{}", ns, node_name)
-                } else {
-                    format!("{}/{}", ns, node_name)
-                }
+        // Construct the full ROS name for this container (namespace + node_name or name)
+        // Containers typically have node_name=None, so we use the member name as the node name
+        let container_full_name = if let Some(ns) = &container.namespace {
+            let node_name = container.node_name.as_ref().unwrap_or(&container.name);
+            if ns == "/" {
+                format!("/{}", node_name)
+            } else if ns.ends_with('/') {
+                format!("{}{}", ns, node_name)
             } else {
-                format!("/{}", container.name)
-            };
+                format!("{}/{}", ns, node_name)
+            }
+        } else {
+            // No namespace: use just "/" + name
+            format!("/{}", container.name)
+        };
 
         tracing::debug!(
             "Container '{}': full_name='{}', namespace={:?}, node_name={:?}",

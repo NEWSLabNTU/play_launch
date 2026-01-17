@@ -237,7 +237,20 @@ impl MemberCoordinatorBuilder {
         let mut container_load_control_map = HashMap::new();
         let mut container_controls = HashMap::new(); // member_name -> control_tx
 
+        // Track base names for deduplication (e.g., "container" -> 1, 2, 3...)
+        let mut name_counts = HashMap::<String, usize>::new();
+
         for def in self.containers {
+            // Generate unique member name FIRST (before creating actor)
+            let base_name = def.name.clone();
+            let count = name_counts.entry(base_name.clone()).or_insert(0);
+            *count += 1;
+            let unique_member_name = if *count == 1 {
+                base_name
+            } else {
+                format!("{}_{}", base_name, count)
+            };
+
             // Build the full node name BEFORE moving def.context
             // This matches what composable nodes use in target_container_name
             let container_name = {
@@ -268,8 +281,9 @@ impl MemberCoordinatorBuilder {
                 mpsc::channel::<super::container_control::ContainerControlEvent>(10);
 
             // Phase 2: Use the shared ROS node for this container
+            // IMPORTANT: Pass unique_member_name so actor reports state with it
             let actor = super::container_actor::ContainerActor::new(
-                def.name.clone(),
+                unique_member_name.clone(),
                 def.context,
                 def.config,
                 control_rx,
@@ -294,10 +308,14 @@ impl MemberCoordinatorBuilder {
             container_load_control_map.insert(container_name.clone(), load_control_tx);
 
             // Phase 12: Store actor for adding composable nodes
-            container_full_names.insert(def.name.clone(), container_name);
-            container_actors.insert(def.name.clone(), actor);
-            container_controls.insert(def.name.clone(), control_tx);
-            metadata_map.insert(def.name.clone(), def.metadata);
+            debug!(
+                "Registering container: member_name='{}', full_name='{}'",
+                unique_member_name, container_name
+            );
+            container_full_names.insert(unique_member_name.clone(), container_name.clone());
+            container_actors.insert(unique_member_name.clone(), actor);
+            container_controls.insert(unique_member_name.clone(), control_tx);
+            metadata_map.insert(unique_member_name, def.metadata);
         }
 
         // Phase 12: Add composable nodes as virtual members managed by containers
