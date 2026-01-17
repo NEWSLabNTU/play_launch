@@ -213,6 +213,20 @@ lint:
 
     python3 -m ruff check python/
 
+# Lint Web UI (HTML, CSS, JavaScript)
+lint-web-ui:
+    #!/usr/bin/env bash
+    set -e
+
+    # Check if node_modules exists
+    if [ ! -d "node_modules" ]; then
+        echo "Installing Node.js dependencies..."
+        npm install
+    fi
+
+    echo "Linting Web UI..."
+    npm run lint
+
 # Format code (Rust + Python)
 format:
     #!/usr/bin/env bash

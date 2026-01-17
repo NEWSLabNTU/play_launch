@@ -39,3 +39,11 @@ tmp/
 
 # External repositories for study/reference
 external/
+
+# Node.js dependencies for Web UI linting
+node_modules/
+package-lock.json
+
+# Temporary lint extraction files
+.tmp-extracted.js
+.tmp-extracted.css
