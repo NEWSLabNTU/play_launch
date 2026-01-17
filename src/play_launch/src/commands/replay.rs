@@ -67,6 +67,7 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
         args.common.config.as_deref(),
         args.common.enable_monitoring,
         args.common.monitor_interval_ms,
+        args.common.enable_diagnostics,
     )?;
 
     // Print configuration summary
@@ -172,6 +173,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         common.config.as_deref(),
         common.enable_monitoring,
         common.monitor_interval_ms,
+        common.enable_diagnostics,
     )?;
     debug!("Runtime configuration loaded successfully");
 
@@ -337,6 +339,42 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         None
     };
     debug!("Monitoring initialization complete");
+
+    // Initialize diagnostic monitoring if enabled
+    debug!("Initializing diagnostic monitoring...");
+    let diagnostic_registry = Arc::new(crate::diagnostics::DiagnosticRegistry::new());
+    let _diagnostic_task = if runtime_config.diagnostics.enabled && shared_ros_node.is_some() {
+        if is_verbose() {
+            info!(
+                "Diagnostic monitoring enabled (topics: {:?})",
+                runtime_config.diagnostics.topics
+            );
+        } else {
+            debug!(
+                "Diagnostic monitoring enabled (topics: {:?})",
+                runtime_config.diagnostics.topics
+            );
+        }
+
+        // Spawn async diagnostic monitoring task
+        let task = tokio::spawn(crate::diagnostics::run_diagnostic_task(
+            runtime_config.diagnostics.clone(),
+            shared_ros_node.clone().unwrap(),
+            log_dir.clone(),
+            diagnostic_registry.clone(),
+            shutdown_signal.clone(),
+        ));
+
+        Some(task)
+    } else {
+        if runtime_config.diagnostics.enabled && shared_ros_node.is_none() {
+            warn!("Diagnostic monitoring enabled but ROS node unavailable - diagnostics disabled");
+        } else {
+            debug!("Diagnostic monitoring disabled");
+        }
+        None
+    };
+    debug!("Diagnostic monitoring initialization complete");
 
     // Start ROS service discovery task if enabled (default: true) (Phase 2: async task)
     let service_discovery_task = if runtime_config.container_readiness.wait_for_service_ready {
@@ -509,6 +547,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             member_handle.clone(), // Clone the Arc, not MemberHandle
             log_dir.clone(),
             state_broadcaster.clone(),
+            diagnostic_registry.clone(),
         ));
         let addr = common.web_ui_addr.clone();
         let port = common.web_ui_port;

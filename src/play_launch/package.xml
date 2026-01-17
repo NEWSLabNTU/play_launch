@@ -12,6 +12,7 @@
   <!-- Rust dependencies -->
   <depend>rcl_interfaces</depend>
   <depend>composition_interfaces</depend>
+  <depend>diagnostic_msgs</depend>
 
   <export>
     <build_type>ament_cargo</build_type>

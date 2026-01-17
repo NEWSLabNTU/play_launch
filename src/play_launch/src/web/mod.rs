@@ -2,7 +2,7 @@
 //!
 //! Provides a web interface for monitoring and controlling ROS nodes.
 
-use crate::member_actor::MemberHandle;
+use crate::{diagnostics::DiagnosticRegistry, member_actor::MemberHandle};
 use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -38,6 +38,8 @@ pub struct WebState {
     pub operations_in_progress: TokioMutex<HashSet<String>>,
     /// Broadcaster for state events to SSE clients
     pub state_broadcaster: Arc<StateEventBroadcaster>,
+    /// Diagnostic registry for storing diagnostic data
+    pub diagnostic_registry: Arc<DiagnosticRegistry>,
 }
 
 impl WebState {
@@ -46,12 +48,14 @@ impl WebState {
         member_handle: Arc<MemberHandle>,
         log_dir: PathBuf,
         state_broadcaster: Arc<StateEventBroadcaster>,
+        diagnostic_registry: Arc<DiagnosticRegistry>,
     ) -> Self {
         Self {
             member_handle,
             log_dir,
             operations_in_progress: TokioMutex::new(HashSet::new()),
             state_broadcaster,
+            diagnostic_registry,
         }
     }
 }
@@ -126,6 +130,12 @@ pub fn create_router(state: Arc<WebState>) -> Router {
         .route("/api/nodes/start-all", post(handlers::start_all))
         .route("/api/nodes/stop-all", post(handlers::stop_all))
         .route("/api/nodes/restart-all", post(handlers::restart_all))
+        // Diagnostics endpoints
+        .route("/api/diagnostics/list", get(handlers::list_diagnostics))
+        .route(
+            "/api/diagnostics/counts",
+            get(handlers::get_diagnostic_counts),
+        )
         // SSE endpoints for log streaming
         .route("/api/nodes/:name/logs/stdout", get(sse::stream_stdout))
         .route("/api/nodes/:name/logs/stderr", get(sse::stream_stderr))

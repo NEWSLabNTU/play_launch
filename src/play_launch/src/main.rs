@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod diagnostics;
 mod execution;
 mod member_actor;
 mod monitoring;

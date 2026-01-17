@@ -150,6 +150,7 @@ async fn run_direct(
         common.config.as_deref(),
         common.enable_monitoring,
         common.monitor_interval_ms,
+        common.enable_diagnostics,
     )?;
     info!("Runtime configuration loaded successfully");
 
@@ -161,6 +162,9 @@ async fn run_direct(
     let node_log_dir = log_dir.join("node");
     fs::create_dir(&node_log_dir)?;
     info!("Created node log directory");
+
+    // Create diagnostic registry (empty - diagnostic monitoring not supported in 'run' mode)
+    let diagnostic_registry = Arc::new(crate::diagnostics::DiagnosticRegistry::new());
 
     // Initialize NVML for GPU monitoring
     let nvml = match nvml_wrapper::Nvml::init() {
@@ -274,6 +278,7 @@ async fn run_direct(
             member_handle.clone(), // Clone the Arc, not MemberHandle
             log_dir.clone(),
             state_broadcaster.clone(),
+            diagnostic_registry.clone(),
         ));
         let addr = common.web_ui_addr.clone();
         let port = common.web_ui_port;

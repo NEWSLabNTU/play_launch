@@ -1,6 +1,7 @@
 //! HTTP handlers for the web API (event-driven architecture).
 
 use super::WebState;
+use crate::diagnostics::{DiagnosticCounts, DiagnosticStatus};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -940,4 +941,22 @@ pub async fn restart_all(State(state): State<Arc<WebState>>) -> Response {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("Error: {:#}", e)).into_response()
         }
     }
+}
+
+// ===== Diagnostics API =====
+
+/// List all current diagnostics (latest status for each hardware_id/name)
+pub async fn list_diagnostics(
+    State(state): State<Arc<WebState>>,
+) -> Result<Json<Vec<DiagnosticStatus>>, StatusCode> {
+    let diagnostics = state.diagnostic_registry.list_all();
+    Ok(Json(diagnostics))
+}
+
+/// Get diagnostic counts by level (OK/WARNING/ERROR/STALE)
+pub async fn get_diagnostic_counts(
+    State(state): State<Arc<WebState>>,
+) -> Result<Json<DiagnosticCounts>, StatusCode> {
+    let counts = state.diagnostic_registry.get_counts();
+    Ok(Json(counts))
 }

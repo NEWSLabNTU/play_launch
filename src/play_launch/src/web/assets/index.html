@@ -119,25 +119,71 @@
             right: 0;
             background: var(--bg-secondary);
             border-bottom: 1px solid var(--border-color);
-            padding: 12px 20px;
+            padding: 6px 16px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            gap: 16px;
-            flex-wrap: wrap;
+            gap: 12px;
             z-index: 100;
         }
 
         h1 {
-            font-size: 1.3rem;
+            font-size: 1.1rem;
             font-weight: 600;
+            margin: 0;
         }
 
         .header-controls {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 16px;
             flex-wrap: wrap;
+        }
+
+        .badge-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+        }
+
+        .badge-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        /* Navigation tabs */
+        .nav-tabs {
+            display: flex;
+            gap: 4px;
+            margin-right: auto;
+            margin-left: 16px;
+        }
+
+        .nav-tab {
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .nav-tab:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .nav-tab.active {
+            background: var(--bg-primary);
+            border-color: var(--border-color);
+            color: var(--text-primary);
         }
 
         /* Node control button loading states */
@@ -161,7 +207,8 @@
             background: var(--bg-primary);
             color: var(--text-primary);
             font-size: 0.9rem;
-            width: 200px;
+            flex: 1;
+            min-width: 150px;
         }
 
         .search-box::placeholder {
@@ -240,9 +287,146 @@
             background: var(--btn-secondary);
         }
 
+        /* Diagnostics view */
+        .diagnostics-view {
+            display: none;
+            width: 100%;
+            height: 100%;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        .diagnostics-view.active {
+            display: block;
+        }
+
+        .diagnostics-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .diagnostics-search {
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            width: 300px;
+        }
+
+        .diagnostics-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        .diagnostics-table th {
+            background: var(--bg-secondary);
+            padding: 10px;
+            text-align: left;
+            border-bottom: 2px solid var(--border-color);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .diagnostics-table th:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .diagnostics-table th.sortable::after {
+            content: ' ⇅';
+            color: var(--text-muted);
+            font-size: 0.7rem;
+        }
+
+        .diagnostics-table th.sorted-asc::after {
+            content: ' ↑';
+            color: var(--text-primary);
+        }
+
+        .diagnostics-table th.sorted-desc::after {
+            content: ' ↓';
+            color: var(--text-primary);
+        }
+
+        .diagnostics-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .diagnostics-table tr:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .diagnostics-table tr.fresh {
+            background: var(--running-bg);
+            font-weight: 500;
+        }
+
+        .diagnostics-table tr.fresh:hover {
+            background: var(--running-bg);
+            opacity: 0.9;
+        }
+
+        .diag-level {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 500;
+            font-size: 0.75rem;
+        }
+
+        .diag-level-ok {
+            background: var(--running-bg);
+            color: var(--running-text);
+            border: 1px solid var(--running-border);
+        }
+
+        .diag-level-warning {
+            background: var(--pending-bg);
+            color: var(--pending-text);
+            border: 1px solid var(--pending-border);
+        }
+
+        .diag-level-error {
+            background: var(--failed-bg);
+            color: var(--failed-text);
+            border: 1px solid var(--failed-border);
+        }
+
+        .diag-level-stale {
+            background: var(--blocked-bg);
+            color: var(--blocked-text);
+            border: 1px solid var(--blocked-border);
+        }
+
+        .diag-timestamp {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+        }
+
+        .diag-values {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-family: monospace;
+        }
+
+        .no-diagnostics {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
         .main-container {
             position: fixed;
-            top: 70px;
+            top: 50px;
             left: 0;
             right: 0;
             bottom: 0;
@@ -257,6 +441,18 @@
             transition: width 0.3s;
         }
 
+        .nodes-view {
+            width: 100%;
+            height: 100%;
+        }
+
+        .view-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
         .left-panel.with-sidebar {
             width: calc(100% - var(--right-panel-width));
             min-width: 300px;
@@ -264,7 +460,7 @@
 
         .panel-resizer {
             position: fixed;
-            top: 70px;
+            top: 50px;
             right: var(--right-panel-width);
             width: 0;
             bottom: 0;
@@ -285,7 +481,7 @@
 
         .right-panel {
             position: fixed;
-            top: 70px;
+            top: 50px;
             right: 0;
             width: 0;
             bottom: 0;
@@ -890,8 +1086,6 @@
             display: flex;
             gap: 8px;
             align-items: center;
-            padding: 0 16px;
-            margin-bottom: 8px;
         }
 
         .sort-controls label {
@@ -929,17 +1123,24 @@
 <body>
     <header>
         <h1>play_launch</h1>
+        <div class="nav-tabs">
+            <button class="nav-tab active" onclick="switchView('nodes', this)">Nodes</button>
+            <button class="nav-tab" onclick="switchView('diagnostics', this)">Diagnostics</button>
+        </div>
         <div class="header-controls">
-            <input type="text" class="search-box" id="search" placeholder="Filter nodes..." oninput="filterNodes(this.value)">
-            <div id="health-badges"
-                 hx-get="/api/health"
-                 hx-trigger="load, every 5s">
-                <span class="badge">Loading...</span>
+            <div class="badge-group">
+                <span class="badge-label">Nodes:</span>
+                <div id="health-badges"
+                     hx-get="/api/health"
+                     hx-trigger="load, every 5s">
+                    <span class="badge">Loading...</span>
+                </div>
             </div>
-            <div class="bulk-operations">
-                <button class="btn-bulk btn-success" onclick="startAll()">▶ Start All</button>
-                <button class="btn-bulk btn-danger" onclick="stopAll()">■ Stop All</button>
-                <button class="btn-bulk btn-secondary" onclick="restartAll()">↻ Restart All</button>
+            <div class="badge-group" id="diagnostic-badge-group" style="display:none;">
+                <span class="badge-label">Diagnostics:</span>
+                <div id="diagnostic-badges">
+                    <span class="badge">Loading...</span>
+                </div>
             </div>
             <button class="theme-toggle" onclick="toggleTheme()">
                 <span id="theme-icon">◐</span>
@@ -949,21 +1150,56 @@
 
     <div class="main-container">
         <div class="left-panel" id="left-panel">
-            <div class="sort-controls">
-                <label for="sort-by">Sort by:</label>
-                <select id="sort-by" onchange="sortNodes(this.value)">
-                    <option value="name">Name (A-Z)</option>
-                    <option value="name-desc">Name (Z-A)</option>
-                    <option value="type">Type</option>
-                    <option value="status">Status</option>
-                    <option value="default">Default (unsorted)</option>
-                </select>
+            <!-- Nodes View -->
+            <div id="nodes-view" class="nodes-view" style="display:block;">
+                <div class="view-header">
+                    <div class="sort-controls">
+                        <label for="sort-by">Sort by:</label>
+                        <select id="sort-by" onchange="sortNodes(this.value)">
+                            <option value="name">Name (A-Z)</option>
+                            <option value="name-desc">Name (Z-A)</option>
+                            <option value="type">Type</option>
+                            <option value="status">Status</option>
+                            <option value="default">Default (unsorted)</option>
+                        </select>
+                    </div>
+                    <input type="text" class="search-box" id="search" placeholder="Filter nodes..." oninput="filterNodes(this.value)">
+                    <div class="bulk-operations">
+                        <button class="btn-bulk btn-success" onclick="startAll()">▶ Start All</button>
+                        <button class="btn-bulk btn-danger" onclick="stopAll()">■ Stop All</button>
+                    </div>
+                </div>
+                <div id="node-list"
+                     class="node-list"
+                     hx-get="/api/nodes"
+                     hx-trigger="load, every 5s">
+                    <div class="no-nodes">Loading nodes...</div>
+                </div>
             </div>
-            <div id="node-list"
-                 class="node-list"
-                 hx-get="/api/nodes"
-                 hx-trigger="load, every 5s">
-                <div class="no-nodes">Loading nodes...</div>
+
+            <!-- Diagnostics View -->
+            <div id="diagnostics-view" class="diagnostics-view">
+                <div class="diagnostics-header">
+                    <h2 style="margin:0;">System Diagnostics</h2>
+                    <input type="text" class="diagnostics-search" id="diag-search" placeholder="Filter diagnostics..." oninput="filterDiagnostics(this.value)">
+                </div>
+                <table class="diagnostics-table" id="diagnostics-table">
+                    <thead>
+                        <tr>
+                            <th class="sortable" onclick="sortDiagnostics('hardware_id')">Hardware ID</th>
+                            <th class="sortable" onclick="sortDiagnostics('name')">Name</th>
+                            <th class="sortable sorted-desc" onclick="sortDiagnostics('level')">Level</th>
+                            <th>Message</th>
+                            <th>Values</th>
+                            <th class="sortable" onclick="sortDiagnostics('timestamp')">Last Seen</th>
+                        </tr>
+                    </thead>
+                    <tbody id="diagnostics-tbody">
+                        <tr>
+                            <td colspan="6" class="no-diagnostics">Loading diagnostics...</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -1929,6 +2165,240 @@
                     alert('Failed to restart all nodes: ' + error);
                 });
         }
+
+        // ===== Diagnostics View Management =====
+        let currentView = 'nodes';
+        let diagnosticsData = [];
+        let diagnosticsInterval = null;
+        let diagnosticsSortColumn = 'level';
+        let diagnosticsSortDirection = 'desc';
+
+        function applySortToDiagnostics() {
+            // Apply current sort without toggling direction
+            // Used when refreshing data
+            const levelPriority = { 'ERROR': 3, 'WARNING': 2, 'STALE': 1, 'OK': 0 };
+
+            const sorted = [...diagnosticsData].sort((a, b) => {
+                let comparison = 0;
+
+                if (diagnosticsSortColumn === 'level') {
+                    comparison = levelPriority[a.level] - levelPriority[b.level];
+                    // Secondary sort by name when level is the same
+                    if (comparison === 0) {
+                        comparison = a.name.localeCompare(b.name);
+                    }
+                } else if (diagnosticsSortColumn === 'timestamp') {
+                    comparison = new Date(a.timestamp) - new Date(b.timestamp);
+                } else {
+                    comparison = a[diagnosticsSortColumn].localeCompare(b[diagnosticsSortColumn]);
+                }
+
+                return diagnosticsSortDirection === 'asc' ? comparison : -comparison;
+            });
+
+            renderDiagnostics(sorted);
+        }
+
+        function sortDiagnostics(column) {
+            // Toggle direction if same column, else default to desc for level
+            if (diagnosticsSortColumn === column) {
+                diagnosticsSortDirection = diagnosticsSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                diagnosticsSortColumn = column;
+                diagnosticsSortDirection = column === 'level' ? 'desc' : 'asc';
+            }
+
+            // Update header classes
+            document.querySelectorAll('.diagnostics-table th').forEach(th => {
+                th.classList.remove('sorted-asc', 'sorted-desc');
+            });
+
+            const headers = {
+                'hardware_id': 0,
+                'name': 1,
+                'level': 2,
+                'timestamp': 5
+            };
+
+            const headerIndex = headers[column];
+            if (headerIndex !== undefined) {
+                const th = document.querySelectorAll('.diagnostics-table th')[headerIndex];
+                th.classList.add(diagnosticsSortDirection === 'asc' ? 'sorted-asc' : 'sorted-desc');
+            }
+
+            // Apply the sort
+            applySortToDiagnostics();
+        }
+
+        function formatRelativeTime(timestamp) {
+            const now = new Date();
+            const date = new Date(timestamp);
+            const seconds = Math.floor((now - date) / 1000);
+
+            if (seconds < 10) return 'just now';
+            if (seconds < 60) return `${seconds}s ago`;
+
+            const minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return `${minutes}m ago`;
+
+            const hours = Math.floor(minutes / 60);
+            if (hours < 24) return `${hours}h ago`;
+
+            const days = Math.floor(hours / 24);
+            if (days < 7) return `${days}d ago`;
+
+            const weeks = Math.floor(days / 7);
+            return `${weeks}w ago`;
+        }
+
+        function switchView(view, clickedTab) {
+            currentView = view;
+
+            // Update tab active states
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            if (clickedTab) {
+                clickedTab.classList.add('active');
+            } else {
+                // Fallback: find and activate the correct tab
+                document.querySelectorAll('.nav-tab').forEach(tab => {
+                    if ((view === 'nodes' && tab.textContent.trim() === 'Nodes') ||
+                        (view === 'diagnostics' && tab.textContent.trim() === 'Diagnostics')) {
+                        tab.classList.add('active');
+                    }
+                });
+            }
+
+            // Switch view visibility
+            const nodesView = document.getElementById('nodes-view');
+            const diagnosticsView = document.getElementById('diagnostics-view');
+
+            if (view === 'nodes') {
+                nodesView.style.display = 'block';
+                diagnosticsView.style.display = 'none';
+
+                // Stop diagnostic polling
+                if (diagnosticsInterval) {
+                    clearInterval(diagnosticsInterval);
+                    diagnosticsInterval = null;
+                }
+            } else {
+                nodesView.style.display = 'none';
+                diagnosticsView.style.display = 'block';
+
+                // Close right panel in diagnostics view
+                closeRightPanel();
+
+                // Start diagnostic polling
+                fetchDiagnostics();
+                if (!diagnosticsInterval) {
+                    diagnosticsInterval = setInterval(fetchDiagnostics, 5000);
+                }
+            }
+        }
+
+        function fetchDiagnostics() {
+            fetch('/api/diagnostics/list')
+                .then(response => response.json())
+                .then(data => {
+                    diagnosticsData = data;
+                    // Apply current sort when fetching new data (without toggling)
+                    applySortToDiagnostics();
+                })
+                .catch(error => {
+                    console.error('Error fetching diagnostics:', error);
+                });
+        }
+
+        function renderDiagnostics(diagnostics) {
+            const tbody = document.getElementById('diagnostics-tbody');
+
+            if (!diagnostics || diagnostics.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="no-diagnostics">No diagnostics available</td></tr>';
+                return;
+            }
+
+            const now = new Date();
+
+            tbody.innerHTML = diagnostics.map(diag => {
+                const levelClass = `diag-level-${diag.level.toLowerCase()}`;
+                const relativeTime = formatRelativeTime(diag.timestamp);
+
+                // Check if diagnostic is fresh (< 10 seconds old)
+                const diagDate = new Date(diag.timestamp);
+                const ageSeconds = Math.floor((now - diagDate) / 1000);
+                const freshClass = ageSeconds < 10 ? 'fresh' : '';
+
+                // Format key-value pairs
+                const values = Object.entries(diag.values || {})
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join(', ');
+
+                return `
+                    <tr class="${freshClass}">
+                        <td>${escapeHtml(diag.hardware_id)}</td>
+                        <td>${escapeHtml(diag.name)}</td>
+                        <td><span class="diag-level ${levelClass}">${diag.level}</span></td>
+                        <td>${escapeHtml(diag.message || '')}</td>
+                        <td class="diag-values">${escapeHtml(values || '-')}</td>
+                        <td class="diag-timestamp">${relativeTime}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function filterDiagnostics(query) {
+            if (!query) {
+                renderDiagnostics(diagnosticsData);
+                return;
+            }
+
+            const filtered = diagnosticsData.filter(diag => {
+                const searchStr = `${diag.hardware_id} ${diag.name} ${diag.message}`.toLowerCase();
+                return searchStr.includes(query.toLowerCase());
+            });
+
+            renderDiagnostics(filtered);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Fetch and update diagnostic counts
+        function updateDiagnosticCounts() {
+            fetch('/api/diagnostics/counts')
+                .then(response => response.json())
+                .then(counts => {
+                    const badgeGroup = document.getElementById('diagnostic-badge-group');
+                    const badges = document.getElementById('diagnostic-badges');
+
+                    if (counts.total === 0) {
+                        badgeGroup.style.display = 'none';
+                        return;
+                    }
+
+                    badgeGroup.style.display = 'flex';
+
+                    let html = '';
+                    if (counts.ok > 0) html += `<span class="badge" style="background: var(--running-bg); color: var(--running-text);">${counts.ok} OK</span>`;
+                    if (counts.warning > 0) html += `<span class="badge" style="background: var(--pending-bg); color: var(--pending-text);">${counts.warning} WARN</span>`;
+                    if (counts.error > 0) html += `<span class="badge" style="background: var(--failed-bg); color: var(--failed-text);">${counts.error} ERR</span>`;
+                    if (counts.stale > 0) html += `<span class="badge" style="background: var(--blocked-bg); color: var(--blocked-text);">${counts.stale} STALE</span>`;
+
+                    badges.innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error fetching diagnostic counts:', error);
+                });
+        }
+
+        // Poll diagnostic counts every 5 seconds
+        setInterval(updateDiagnosticCounts, 5000);
+        updateDiagnosticCounts(); // Initial fetch
     </script>
 </body>
 </html>

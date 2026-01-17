@@ -53,6 +53,7 @@ run-sim: check-autoware
         --web-ui-addr 0.0.0.0 \
         --web-ui-port 8080 \
         --enable-monitoring \
+        --enable-diagnostics \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
 
