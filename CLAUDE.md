@@ -44,14 +44,46 @@ play_launch plot
 - **Virtual Members**: Composable nodes managed as internal state by container actors (LoadNode/Unload operations)
 - **ListNodes Verification**: Automatic verification if LoadNode calls timeout (>30s)
 
+## Performance Characteristics
+
+play_launch is designed to be lightweight, with Phase 1 optimizations (2026-01-18) achieving:
+- **CPU**: ~19% on large deployments (115 nodes) = 0.17% per managed node
+- **Memory**: ~116 MB RSS
+- **Threads**: ~60 total
+  - 8-19 async worker threads (adaptive tokio pool)
+  - ~40 ROS/DDS threads
+  - ~2 other threads
+
+**Tuning Options:**
+- `--monitor-interval-ms <MS>`: Adjust sampling frequency (default: 2000ms)
+- `--disable-monitoring`: Disable resource monitoring entirely (~5% CPU savings)
+- `--disable-diagnostics`: Disable diagnostic subscriptions (~2% CPU savings)
+- `--disable-all`: Disable all features for minimal overhead
+
+**Technical Details:**
+- Tokio runtime: 8 worker threads, 16 max blocking threads
+- ROS executor: 50ms spin interval (acceptable latency for management operations)
+- Monitoring interval: 2000ms default (configurable via CLI or config file)
+
 ## Configuration
 
 **Key CLI Flags:**
 - `--config <PATH>`: Runtime config YAML
-- `--enable-monitoring`: Enable resource monitoring
-- `--web-ui`: Enable web-based management interface (localhost:8080)
-- `--web-ui-addr <ADDR>`: Bind address (default: 127.0.0.1)
+- `--enable <FEATURE>`: Enable only specific features (can be repeated)
+  - Values: `monitoring`, `diagnostics`, `web-ui`
+  - Conflicts with `--disable-*` flags
+- `--disable-monitoring`: Disable resource monitoring (enabled by default)
+- `--disable-diagnostics`: Disable diagnostic monitoring (enabled by default)
+- `--disable-web-ui`: Disable web UI (enabled by default)
+- `--disable-all`: Disable all features at once
+- `--web-addr <IP:PORT>`: Web UI address (default: 127.0.0.1:8080)
 - `--disable-respawn`: Disable automatic respawn
+
+**Default Behavior** (as of 2026-01-18):
+All features are **enabled by default** for better out-of-box experience:
+- Resource monitoring: ✅ enabled
+- Diagnostic monitoring: ✅ enabled
+- Web UI: ✅ enabled (http://127.0.0.1:8080)
 
 **Config YAML (see `test/autoware_planning_simulation/autoware_config.yaml`):**
 ```yaml
@@ -65,7 +97,15 @@ list_nodes:
 
 monitoring:
   enabled: false
-  sample_interval_ms: 1000
+  sample_interval_ms: 2000  # Default: 2000ms (reduced from 1000ms for lower CPU overhead)
+
+diagnostics:
+  enabled: false               # Enable ROS2 diagnostic monitoring
+  topics:                      # Topics to subscribe to
+    - /diagnostics
+    - /diagnostics_agg
+  debounce_ms: 100             # Min time between diagnostic updates
+  filter_hardware_ids: []      # Filter by hardware_id (empty = all)
 
 processes:
   - node_pattern: "NODE 'rclcpp_components/component_container*"
@@ -81,6 +121,7 @@ play_log/
 └── 2025-12-21_09-44-52/
     ├── params_files/
     ├── system_stats.csv           # System-wide metrics
+    ├── diagnostics.csv            # ROS2 diagnostic messages (when enabled)
     └── node/<node_name>/          # Flat structure (no composable subdirs)
         ├── metadata.json          # For containers: includes composable_nodes array
         ├── metrics.csv            # Per-process metrics (when enabled)
@@ -88,11 +129,13 @@ play_log/
         └── cmdline
 ```
 
-**Note**: Composable nodes don't have separate directories. Metadata appears in parent container's `metadata.json`.
+**Notes**:
+- Composable nodes don't have separate directories. Metadata appears in parent container's `metadata.json`.
+- `diagnostics.csv` contains all ROS2 diagnostic messages with columns: timestamp, hardware_id, diagnostic_name, level, level_name, message, key, value (each key-value pair is a separate row).
 
 ## Web UI
 
-Enable with `--web-ui` flag. Features:
+**Enabled by default** at http://127.0.0.1:8080 (disable with `--disable-web-ui`). Features:
 - Two-panel layout with light/dark theme
 - Node list with status colors, search/filter, clickable namespaces
 - Per-node controls (Start/Stop/Restart) + bulk operations
@@ -100,8 +143,15 @@ Enable with `--web-ui` flag. Features:
 - Real-time log streaming (stdout/stderr) with auto-reconnect
 - Stderr activity indicator
 - Auto-restart checkbox per node
+- **Diagnostics page** (enabled by default, disable with `--disable-diagnostics`):
+  - Real-time ROS2 diagnostic status monitoring
+  - Sortable table by hardware_id, name, level, or timestamp
+  - Color-coded by severity (OK/WARNING/ERROR/STALE)
+  - Visual indicators for fresh diagnostics (<10s old)
+  - Dashboard badge showing diagnostic counts
+  - Auto-refresh every 5 seconds
 
-Security: Binds to `127.0.0.1` by default (localhost only). Use `--web-ui-addr 0.0.0.0` only on trusted networks.
+Security: Binds to `127.0.0.1:8080` by default (localhost only). Use `--web-addr 0.0.0.0:8080` only on trusted networks.
 
 ## Development Practices
 
@@ -153,6 +203,11 @@ Enable debug logs: `RUST_LOG=play_launch=debug play_launch replay`
 
 ## Key Recent Changes
 
+- **2026-01-18**: Phase 1 resource optimizations - 46% CPU reduction (34.5% → 19.2%), 45% thread reduction (110 → 61), optimized tokio runtime (8 workers, 16 max blocking), ROS executor sleep (10ms → 50ms), monitoring interval (1000ms → 2000ms default)
+- **2026-01-18**: CLI defaults changed - All features (monitoring, diagnostics, Web UI) now enabled by default; new `--enable <FEATURE>` flag for selective enabling; merged `--web-ui-addr`/`--web-ui-port` into `--web-addr <IP:PORT>`
+- **2026-01-17**: Web UI modularization - Split 2,492-line index.html into 16 files (7 CSS modules, 8 JS modules) for better maintainability
+- **2026-01-17**: Diagnostic monitoring system - Full ROS2 `/diagnostics` topic monitoring with Web UI, CSV logging, and real-time dashboard
+- **2026-01-17**: Web UI diagnostics table - Sortable table with zebra striping, hover effects, color-coded severity, and fresh diagnostic indicators
 - **2026-01-17**: Logging cleanup - Removed Web UI console.log statements, changed internal state transitions to debug! level
 - **2026-01-17**: Fixed composable node log streaming - Added node_type/container_name fields to API, dynamic lookup
 - **2026-01-17**: Web UI improvements - View button styling, auto-switch panel, hierarchical sorting, tab preservation
