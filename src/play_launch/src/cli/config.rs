@@ -63,7 +63,7 @@ impl Default for MonitoringSettings {
 }
 
 fn default_sample_interval() -> u64 {
-    1000
+    2000 // Increased from 1000ms to reduce CPU overhead
 }
 fn default_true() -> bool {
     true
@@ -512,7 +512,7 @@ mod tests {
     fn test_default_config() {
         let config = RuntimeConfig::default();
         assert!(!config.monitoring.enabled);
-        assert_eq!(config.monitoring.sample_interval_ms, 1000);
+        assert_eq!(config.monitoring.sample_interval_ms, 2000);
         assert!(config.monitoring.monitor_all_nodes);
         assert!(config.processes.is_empty());
 

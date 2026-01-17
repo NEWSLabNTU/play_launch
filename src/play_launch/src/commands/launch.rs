@@ -8,12 +8,18 @@ use tracing::info;
 /// Handle the 'launch' subcommand
 pub fn handle_launch(args: &LaunchArgs) -> eyre::Result<()> {
     use crate::python::dump_launcher::DumpLauncher;
-    use tokio::runtime::Runtime;
 
     info!("Step 1/2: Recording launch execution...");
 
-    // Create tokio runtime for async operations
-    let runtime = Runtime::new()?;
+    // Create tokio runtime with adaptive thread pool configuration
+    let worker_threads = std::cmp::min(num_cpus::get(), 8);
+    let max_blocking = worker_threads * 2;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .max_blocking_threads(max_blocking)
+        .thread_name("play_launch-worker")
+        .enable_all()
+        .build()?;
 
     // Run dump phase
     runtime.block_on(async {

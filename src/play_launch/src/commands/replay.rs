@@ -25,7 +25,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use tokio::runtime::Runtime;
 use tracing::{debug, error, info, warn};
 
 /// Guard that ensures child processes are cleaned up on drop
@@ -111,8 +110,17 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
 
     // Note: ROS service discovery and anchor process now started in play() async function (Phase 2, 4)
 
-    // Build the async runtime
-    let runtime = Runtime::new()?;
+    // Build the async runtime with adaptive thread pool configuration
+    // Use number of CPUs capped at 8 for efficiency (async workload, mostly idle)
+    // Automatically adapts to platform: 2-core Pi, 4-core laptop, 8-core AGX Orin, 32-core server
+    let worker_threads = std::cmp::min(num_cpus::get(), 8);
+    let max_blocking = worker_threads * 2;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .max_blocking_threads(max_blocking)
+        .thread_name("play_launch-worker")
+        .enable_all()
+        .build()?;
 
     // Run the whole playing task in the runtime
     runtime.block_on(play(input_file, &args.common))

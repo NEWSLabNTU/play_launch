@@ -54,7 +54,6 @@ impl Drop for CleanupGuard {
 
 pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
     use crate::ros::launch_dump::{LaunchDump, NodeRecord};
-    use tokio::runtime::Runtime;
 
     info!("Running single node: {} {}", args.package, args.executable);
 
@@ -94,11 +93,18 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         file_data: HashMap::new(),
     };
 
-    // Build the async runtime and run directly
-    let runtime = Runtime::new()?;
+    // Build the async runtime with adaptive thread pool configuration
+    let worker_threads = std::cmp::min(num_cpus::get(), 8);
+    let max_blocking = worker_threads * 2;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .max_blocking_threads(max_blocking)
+        .thread_name("play_launch-worker")
+        .enable_all()
+        .build()?;
     debug!(
-        "Tokio runtime created (default config uses {} worker threads = num CPUs)",
-        num_cpus::get()
+        "Tokio runtime created ({} worker threads, {} max blocking threads)",
+        worker_threads, max_blocking
     );
 
     runtime.block_on(run_direct(&launch_dump, &args.common))
