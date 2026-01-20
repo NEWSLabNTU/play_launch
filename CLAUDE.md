@@ -201,8 +201,49 @@ debug!("{}: Transitioning {} blocked nodes to Unloaded", name, count);
 
 Enable debug logs: `RUST_LOG=play_launch=debug play_launch replay`
 
+## PyO3 and ROS2 Compatibility Notes
+
+### PyO3 0.23 API Changes
+
+When calling Python module-level functions from Rust, use `getattr` + `call0`:
+
+```rust
+// CORRECT (PyO3 0.23+)
+let main_fn = module.getattr("main")?;
+let result = main_fn.call0()?;
+
+// WRONG - call_method0 is for object methods, not module functions
+let result = module.call_method0("main")?;  // May cause TypeError
+```
+
+### launch_ros Property Access
+
+Some `launch_ros` attributes are properties, not methods:
+
+```python
+# CORRECT - expanded_node_namespace is a property
+namespace = target_container.expanded_node_namespace
+
+# WRONG - don't call it as a method
+namespace = target_container.expanded_node_namespace(context)
+```
+
+### Node Name Handling
+
+ROS2 node names may already be fully qualified (with leading `/`). Always check before constructing paths:
+
+```python
+# Handle already-qualified node names to avoid double slashes
+if node_name and node_name.startswith("/"):
+    full_name = node_name  # Already qualified
+else:
+    full_name = f"{namespace}/{node_name}"
+```
+
 ## Key Recent Changes
 
+- **2026-01-20**: Fixed PyO3 0.23 compatibility - Changed `call_method0("main")` to `getattr("main")?.call0()` for module-level function calls
+- **2026-01-20**: Fixed launch_ros compatibility - `expanded_node_namespace` is a property (not method), handle pre-qualified node names with leading slashes
 - **2026-01-18**: Phase 1 resource optimizations - 46% CPU reduction (34.5% → 19.2%), 45% thread reduction (110 → 61), optimized tokio runtime (8 workers, 16 max blocking), ROS executor sleep (10ms → 50ms), monitoring interval (1000ms → 2000ms default)
 - **2026-01-18**: CLI defaults changed - All features (monitoring, diagnostics, Web UI) now enabled by default; new `--enable <FEATURE>` flag for selective enabling; merged `--web-ui-addr`/`--web-ui-port` into `--web-addr <IP:PORT>`
 - **2026-01-17**: Web UI modularization - Split 2,492-line index.html into 16 files (7 CSS modules, 8 JS modules) for better maintainability
