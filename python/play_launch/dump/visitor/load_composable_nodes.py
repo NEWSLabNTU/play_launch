@@ -31,9 +31,14 @@ def visit_load_composable_nodes(
     if is_a_subclass(target_container, ComposableNodeContainer):
         # Build full node name: namespace + node_name
         # This must match the full ROS node name that will be used at runtime
-        namespace = target_container.expanded_node_namespace(context)
+        # Note: expanded_node_namespace is a property, not a method
+        namespace = target_container.expanded_node_namespace
         node_name = target_container.node_name
-        if namespace == "/":
+
+        # Handle case where node_name already has leading slash (fully qualified)
+        if node_name and node_name.startswith("/"):
+            load._LoadComposableNodes__final_target_container_name = node_name
+        elif namespace == "/":
             load._LoadComposableNodes__final_target_container_name = f"/{node_name}"
         elif namespace.endswith("/"):
             load._LoadComposableNodes__final_target_container_name = f"{namespace}{node_name}"
