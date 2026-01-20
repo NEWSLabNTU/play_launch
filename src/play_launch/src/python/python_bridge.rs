@@ -92,8 +92,11 @@ pub fn run_dump_launch(
                 .import("play_launch.dump")
                 .wrap_err("Failed to import play_launch.dump module")?;
 
-            let result = dump_module
-                .call_method0("main")
+            let main_fn = dump_module
+                .getattr("main")
+                .wrap_err("Failed to get main function from dump module")?;
+            let result = main_fn
+                .call0()
                 .wrap_err("Failed to call dump_launch main()")?;
 
             // Check return code
@@ -164,8 +167,11 @@ pub fn run_dump_run(package: &str, executable: &str, args: &[String], output: &P
                 .import("play_launch.dump")
                 .wrap_err("Failed to import play_launch.dump module")?;
 
-            let result = dump_module
-                .call_method0("main")
+            let main_fn = dump_module
+                .getattr("main")
+                .wrap_err("Failed to get main function from dump module")?;
+            let result = main_fn
+                .call0()
                 .wrap_err("Failed to call dump_launch main()")?;
 
             let return_code: i32 = result.extract().unwrap_or(0);
@@ -253,8 +259,11 @@ pub fn run_plot(
                 .import("play_launch.analyzer")
                 .wrap_err("Failed to import play_launch.analyzer module")?;
 
-            analyzer_module
-                .call_method0("main")
+            let main_fn = analyzer_module
+                .getattr("main")
+                .wrap_err("Failed to get main function from analyzer module")?;
+            main_fn
+                .call0()
                 .wrap_err("Failed to call play_launch_analyzer main()")?;
 
             Ok(())
