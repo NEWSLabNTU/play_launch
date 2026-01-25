@@ -1,0 +1,3 @@
+[submodule "src/play_launch_parser"]
+	path = src/play_launch_parser
+	url = https://github.com/jerry73204/play_launch_parser.git
