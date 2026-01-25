@@ -2,4 +2,5 @@
 resolver = "3"
 members = [
     "src/play_launch",
+    "src/play_launch_parser/src/play_launch_parser",
 ]
