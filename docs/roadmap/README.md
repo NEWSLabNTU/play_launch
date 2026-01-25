@@ -15,7 +15,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Current Status
 
-**Overall Progress**: ~96% complete (10 of 11 phases complete)
+**Overall Progress**: ~92% complete (10 of 12 phases complete, 1 planned)
 
 **Timeline**: Started October 2025, ongoing development
 
@@ -56,6 +56,12 @@ This directory contains the implementation roadmap for play_launch, organized by
 | **Phase 11**: Web UI Actor Integration | ⏳ Planned | - | [phase-11.md](./phase-11.md) |
 | **Phase 12**: Container-Managed Composable Nodes | ✅ Complete | 2026-01-13 | [phase-12.md](./phase-12.md) |
 
+### Performance & Maintainability
+
+| Phase | Status | Completion | Documentation |
+|-------|--------|------------|---------------|
+| **Phase 13**: Rust Parser Migration | ⏳ Planned | - | [phase-13.md](./phase-13.md) |
+
 ---
 
 ## Progress Summary
@@ -83,7 +89,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ### Planned ⏳
 
-- ⏳ Container-Managed Composable Nodes (Phase 12) - Merge composable node actors into container actors for simpler architecture
+- ⏳ **Rust Parser Migration (Phase 13)** - Replace Python dump_launch with Rust parser (5-10x performance improvement)
 - ⏳ Web UI Actor Integration (Phase 11) - Remove bridging layer, implement direct actor control
 - ⏳ Complete documentation (Phase 3)
 - ⏳ Comprehensive testing (Phase 4)
@@ -112,7 +118,8 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ### External
 - ROS 2 (Humble or Jazzy)
-- `dump_launch` package (Python component)
+- `dump_launch` package (Python component, optional fallback after Phase 13)
+- `play_launch_parser` (Rust submodule, primary parser after Phase 13)
 - System capabilities for privileged monitoring (`CAP_SYS_PTRACE`, `CAP_SYS_NICE`)
 
 ### Rust Crates
