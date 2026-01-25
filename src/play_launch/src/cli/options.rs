@@ -83,6 +83,10 @@ pub struct LaunchArgs {
     #[arg(trailing_var_arg = true)]
     pub launch_arguments: Vec<String>,
 
+    /// Use Python parser instead of Rust parser (fallback mode)
+    #[arg(long, default_value = "false")]
+    pub use_python_parser: bool,
+
     #[command(flatten)]
     pub common: CommonOptions,
 }
