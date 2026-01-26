@@ -1,6 +1,17 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+/// Parser backend selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ParserBackend {
+    /// Automatically select parser (try Rust first, fallback to Python on error)
+    Auto,
+    /// Use only Rust parser (fail if parsing fails, no fallback)
+    Rust,
+    /// Use only Python parser
+    Python,
+}
+
 /// Features that can be selectively enabled
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Feature {
@@ -83,9 +94,12 @@ pub struct LaunchArgs {
     #[arg(trailing_var_arg = true)]
     pub launch_arguments: Vec<String>,
 
-    /// Use Python parser instead of Rust parser (fallback mode)
-    #[arg(long, default_value = "false")]
-    pub use_python_parser: bool,
+    /// Parser backend to use for launch file parsing.
+    /// - auto: Try Rust parser first, fallback to Python on error (default)
+    /// - rust: Use only Rust parser, fail if parsing fails
+    /// - python: Use only Python parser
+    #[arg(long, value_enum, default_value = "auto")]
+    pub parser: ParserBackend,
 
     #[command(flatten)]
     pub common: CommonOptions,
