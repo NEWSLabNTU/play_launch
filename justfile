@@ -200,6 +200,29 @@ test:
     colcon test --packages-select dump_launch --pytest-args -m "not integration"
     colcon test-result --all --verbose
 
+# Test play_launch_parser library
+test-parser:
+    #!/usr/bin/env bash
+    set -e
+    cd src/play_launch_parser
+    cargo test --lib
+
+# Compare Rust vs Python parser outputs
+compare-parsers:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    source install/setup.bash
+    ./scripts/compare_parsers.sh
+
+# Benchmark Rust vs Python parser performance
+benchmark-parsers ITERATIONS="5":
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    source install/setup.bash
+    ITERATIONS={{ITERATIONS}} ./scripts/benchmark_parsers.sh
+
 # Run linters (clippy + ruff)
 lint:
     #!/usr/bin/env bash
