@@ -1,6 +1,6 @@
 //! Launch command - record and replay launch file execution
 
-use crate::cli::options::LaunchArgs;
+use crate::cli::options::{LaunchArgs, ParserBackend};
 use eyre::{Context, Result};
 use std::{collections::HashMap, path::PathBuf, time::Instant};
 use tracing::{debug, info, warn};
@@ -34,7 +34,7 @@ fn dump_launch_rust(args: &LaunchArgs) -> Result<()> {
 
     // 3. Call Rust parser
     let record = play_launch_parser::parse_launch_file(&launch_path, cli_args)
-        .map_err(|e| eyre::eyre!("Rust parser error: {}\n\nHint: If you encounter parsing issues, try the Python parser:\n  play_launch launch {} {} --use-python-parser",
+        .map_err(|e| eyre::eyre!("Rust parser error: {}\n\nHint: If you encounter parsing issues, try the Python parser:\n  play_launch launch {} {} --parser python",
             e,
             args.package_or_path,
             args.launch_file.as_deref().unwrap_or(""),
@@ -88,7 +88,10 @@ async fn dump_launch_python(args: &LaunchArgs) -> Result<()> {
 }
 
 /// Resolve launch file path from package name or direct path
-fn resolve_launch_file(package_or_path: &str, launch_file: Option<&str>) -> Result<PathBuf> {
+pub(super) fn resolve_launch_file(
+    package_or_path: &str,
+    launch_file: Option<&str>,
+) -> Result<PathBuf> {
     // Check if it looks like a direct file path
     if package_or_path.contains('/')
         || package_or_path.ends_with(".py")
@@ -150,48 +153,56 @@ fn resolve_launch_file(package_or_path: &str, launch_file: Option<&str>) -> Resu
 pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
     info!("Step 1/2: Recording launch execution...");
 
-    // Choose parser based on flag
-    if args.use_python_parser {
-        // Explicit Python mode
-        info!("Using Python parser (explicit --use-python-parser flag)");
+    // Choose parser based on selection
+    match args.parser {
+        ParserBackend::Python => {
+            // Explicit Python mode
+            info!("Using Python parser (--parser python)");
 
-        // Create tokio runtime for Python parser (async)
-        let worker_threads = std::cmp::min(num_cpus::get(), 8);
-        let max_blocking = worker_threads * 2;
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(worker_threads)
-            .max_blocking_threads(max_blocking)
-            .thread_name("play_launch-worker")
-            .enable_all()
-            .build()?;
+            // Create tokio runtime for Python parser (async)
+            let worker_threads = std::cmp::min(num_cpus::get(), 8);
+            let max_blocking = worker_threads * 2;
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(worker_threads)
+                .max_blocking_threads(max_blocking)
+                .thread_name("play_launch-worker")
+                .enable_all()
+                .build()?;
 
-        runtime.block_on(async { dump_launch_python(args).await })?;
-    } else {
-        // Default: Try Rust parser first
-        info!("Using Rust parser (default)");
+            runtime.block_on(async { dump_launch_python(args).await })?;
+        }
+        ParserBackend::Rust => {
+            // Explicit Rust mode - fail if error, no fallback
+            info!("Using Rust parser (--parser rust)");
+            dump_launch_rust(args)?;
+        }
+        ParserBackend::Auto => {
+            // Auto mode: Try Rust parser first, fallback to Python on error
+            info!("Using Rust parser (auto mode, will fallback to Python on error)");
 
-        match dump_launch_rust(args) {
-            Ok(()) => {
-                debug!("Rust parser completed successfully");
-            }
-            Err(e) => {
-                warn!("Rust parser failed: {}", e);
-                warn!("Falling back to Python parser...");
+            match dump_launch_rust(args) {
+                Ok(()) => {
+                    debug!("Rust parser completed successfully");
+                }
+                Err(e) => {
+                    warn!("Rust parser failed: {}", e);
+                    warn!("Falling back to Python parser...");
 
-                // Create tokio runtime for Python parser fallback
-                let worker_threads = std::cmp::min(num_cpus::get(), 8);
-                let max_blocking = worker_threads * 2;
-                let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(worker_threads)
-                    .max_blocking_threads(max_blocking)
-                    .thread_name("play_launch-worker")
-                    .enable_all()
-                    .build()?;
+                    // Create tokio runtime for Python parser fallback
+                    let worker_threads = std::cmp::min(num_cpus::get(), 8);
+                    let max_blocking = worker_threads * 2;
+                    let runtime = tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(worker_threads)
+                        .max_blocking_threads(max_blocking)
+                        .thread_name("play_launch-worker")
+                        .enable_all()
+                        .build()?;
 
-                // Automatic fallback to Python
-                runtime
-                    .block_on(async { dump_launch_python(args).await })
-                    .wrap_err("Both Rust and Python parsers failed")?;
+                    // Automatic fallback to Python
+                    runtime
+                        .block_on(async { dump_launch_python(args).await })
+                        .wrap_err("Both Rust and Python parsers failed")?;
+                }
             }
         }
     }
