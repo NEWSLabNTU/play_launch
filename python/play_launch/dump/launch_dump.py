@@ -36,8 +36,22 @@ class LoadNodeRecord:
 
 @dataclass
 class ComposableNodeContainerRecord:
+    # All fields from NodeRecord to avoid duplication
+    executable: str
+    package: str
     name: str
     namespace: str
+    exec_name: str | None
+    params: list[tuple[str, str]]
+    params_files: list[str]
+    remaps: list[tuple[str, str]]
+    ros_args: list[str] | None
+    args: list[str] | None
+    cmd: list[str]
+    env: list[tuple[str, str]] | None = None
+    respawn: bool | None = None
+    respawn_delay: float | None = None
+    global_params: list[tuple[str, str]] | None = None
 
 
 @dataclass
