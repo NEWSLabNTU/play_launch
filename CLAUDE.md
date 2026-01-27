@@ -5,9 +5,46 @@ Guide for Claude Code when working with this repository.
 ## Project Overview
 
 ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for performance analysis:
-- **dump_launch** (Python): Records launch execution to `record.json`
+- **play_launch_parser** (Rust): Parses launch files to `record.json` (default, 3-12x faster)
+- **dump_launch** (Python): Alternative parser for maximum compatibility
 - **play_launch** (Rust): Replays with resource monitoring
 - **play_launch_analyzer** (Python): Analyzes and visualizes logs
+
+## Launch File Parsing
+
+**Default**: Rust parser (`play_launch_parser` library)
+- **Performance**: 3-12x faster than Python parser
+- **Formats**: XML, YAML, Python launch files
+- **Compatibility**: 100% Autoware tested (218 unit tests)
+- **Behavior**: Fails immediately on error (no automatic fallback)
+
+**Alternative**: Python parser (for maximum compatibility)
+```bash
+play_launch launch <package> <file> --parser python
+play_launch dump launch <package> <file> --parser python
+```
+
+### Performance Comparison
+
+| Test Case | Rust Parser | Python Parser | Speedup |
+|-----------|-------------|---------------|---------|
+| Simple nodes (pure_nodes.launch.xml) | 0.133s | 0.390s | 2.93x |
+| Composable nodes (simple_test.launch.xml) | 0.136s | 1.570s | 11.54x |
+
+**Benchmark command**:
+```bash
+just benchmark-parsers 5  # Run 5 iterations
+```
+
+### When to Use Python Parser
+
+Use `--parser python` when:
+- Rust parser fails with a parsing error
+- Testing compatibility between parsers
+- Debugging launch file issues
+- Maximum compatibility is required
+
+The Rust parser is the default and recommended for all normal use cases.
 
 ## Installation & Usage
 
@@ -242,6 +279,7 @@ else:
 
 ## Key Recent Changes
 
+- **2026-01-27**: Phase 13 complete - Rust parser as default (3-12x speedup), Python parser as optional fallback, removed Auto mode for predictable behavior
 - **2026-01-20**: Fixed PyO3 0.23 compatibility - Changed `call_method0("main")` to `getattr("main")?.call0()` for module-level function calls
 - **2026-01-20**: Fixed launch_ros compatibility - `expanded_node_namespace` is a property (not method), handle pre-qualified node names with leading slashes
 - **2026-01-18**: Phase 1 resource optimizations - 46% CPU reduction (34.5% → 19.2%), 45% thread reduction (110 → 61), optimized tokio runtime (8 workers, 16 max blocking), ROS executor sleep (10ms → 50ms), monitoring interval (1000ms → 2000ms default)
