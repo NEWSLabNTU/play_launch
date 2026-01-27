@@ -28,6 +28,8 @@ play_launch launch demo_nodes_cpp talker_listener.launch.py
 
 Access Web UI at `http://127.0.0.1:8080` for real-time node management and log streaming.
 
+The Rust parser is used by default for speed. For maximum compatibility, use `--parser python`.
+
 ## Usage
 
 ### Launch Files
@@ -172,6 +174,10 @@ play_launch run <package> <executable> [args...]
 # Dump and replay
 play_launch dump launch <package> <launch_file> [args...]
 play_launch replay [--input-file record.json]
+
+# Parser selection (Rust is default)
+play_launch launch <pkg> <file> --parser rust     # Default, fast
+play_launch launch <pkg> <file> --parser python   # Maximum compatibility
 
 # Disable features
 play_launch launch <pkg> <file> --disable-monitoring
