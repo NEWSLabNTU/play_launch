@@ -4,11 +4,9 @@ use std::path::PathBuf;
 /// Parser backend selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ParserBackend {
-    /// Automatically select parser (try Rust first, fallback to Python on error)
-    Auto,
-    /// Use only Rust parser (fail if parsing fails, no fallback)
+    /// Use Rust parser (default, no fallback)
     Rust,
-    /// Use only Python parser
+    /// Use Python parser
     Python,
 }
 
@@ -95,10 +93,9 @@ pub struct LaunchArgs {
     pub launch_arguments: Vec<String>,
 
     /// Parser backend to use for launch file parsing.
-    /// - auto: Try Rust parser first, fallback to Python on error (default)
-    /// - rust: Use only Rust parser, fail if parsing fails
-    /// - python: Use only Python parser
-    #[arg(long, value_enum, default_value = "auto")]
+    /// - rust: Use Rust parser (default, fast, no fallback on error)
+    /// - python: Use Python parser (slower, maximum compatibility)
+    #[arg(long, value_enum, default_value = "rust")]
     pub parser: ParserBackend,
 
     #[command(flatten)]

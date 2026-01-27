@@ -13,19 +13,9 @@ pub fn handle_dump(args: &DumpArgs) -> Result<()> {
         DumpSubcommand::Launch(launch_args) => {
             // Choose parser based on selection
             match launch_args.parser {
-                ParserBackend::Python => {
-                    // Explicit Python mode
-                    info!("Using Python parser (--parser python)");
-                    dump_launch_python_wrapper(
-                        &launch_args.package_or_path,
-                        launch_args.launch_file.as_deref(),
-                        &launch_args.launch_arguments,
-                        &args.output,
-                    )?;
-                }
                 ParserBackend::Rust => {
-                    // Explicit Rust mode - fail if error, no fallback
-                    info!("Using Rust parser (--parser rust)");
+                    // Rust mode (default) - fail if error, no fallback
+                    info!("Using Rust parser");
                     dump_launch_rust_wrapper(
                         &launch_args.package_or_path,
                         launch_args.launch_file.as_deref(),
@@ -33,33 +23,15 @@ pub fn handle_dump(args: &DumpArgs) -> Result<()> {
                         &args.output,
                     )?;
                 }
-                ParserBackend::Auto => {
-                    // Auto mode: Try Rust parser first, fallback to Python on error
-                    info!("Using Rust parser (auto mode, will fallback to Python on error)");
-
-                    match dump_launch_rust_wrapper(
+                ParserBackend::Python => {
+                    // Python mode
+                    info!("Using Python parser");
+                    dump_launch_python_wrapper(
                         &launch_args.package_or_path,
                         launch_args.launch_file.as_deref(),
                         &launch_args.launch_arguments,
                         &args.output,
-                    ) {
-                        Ok(()) => {
-                            debug!("Rust parser completed successfully");
-                        }
-                        Err(e) => {
-                            warn!("Rust parser failed: {}", e);
-                            warn!("Falling back to Python parser...");
-
-                            // Automatic fallback to Python
-                            dump_launch_python_wrapper(
-                                &launch_args.package_or_path,
-                                launch_args.launch_file.as_deref(),
-                                &launch_args.launch_arguments,
-                                &args.output,
-                            )
-                            .wrap_err("Both Rust and Python parsers failed")?;
-                        }
-                    }
+                    )?;
                 }
             }
         }

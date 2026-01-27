@@ -155,9 +155,14 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
 
     // Choose parser based on selection
     match args.parser {
+        ParserBackend::Rust => {
+            // Rust mode (default) - fail if error, no fallback
+            info!("Using Rust parser");
+            dump_launch_rust(args)?;
+        }
         ParserBackend::Python => {
-            // Explicit Python mode
-            info!("Using Python parser (--parser python)");
+            // Python mode
+            info!("Using Python parser");
 
             // Create tokio runtime for Python parser (async)
             let worker_threads = std::cmp::min(num_cpus::get(), 8);
@@ -170,40 +175,6 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
                 .build()?;
 
             runtime.block_on(async { dump_launch_python(args).await })?;
-        }
-        ParserBackend::Rust => {
-            // Explicit Rust mode - fail if error, no fallback
-            info!("Using Rust parser (--parser rust)");
-            dump_launch_rust(args)?;
-        }
-        ParserBackend::Auto => {
-            // Auto mode: Try Rust parser first, fallback to Python on error
-            info!("Using Rust parser (auto mode, will fallback to Python on error)");
-
-            match dump_launch_rust(args) {
-                Ok(()) => {
-                    debug!("Rust parser completed successfully");
-                }
-                Err(e) => {
-                    warn!("Rust parser failed: {}", e);
-                    warn!("Falling back to Python parser...");
-
-                    // Create tokio runtime for Python parser fallback
-                    let worker_threads = std::cmp::min(num_cpus::get(), 8);
-                    let max_blocking = worker_threads * 2;
-                    let runtime = tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(worker_threads)
-                        .max_blocking_threads(max_blocking)
-                        .thread_name("play_launch-worker")
-                        .enable_all()
-                        .build()?;
-
-                    // Automatic fallback to Python
-                    runtime
-                        .block_on(async { dump_launch_python(args).await })
-                        .wrap_err("Both Rust and Python parsers failed")?;
-                }
-            }
         }
     }
 
