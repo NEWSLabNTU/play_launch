@@ -108,13 +108,14 @@ def normalize_record(record: Dict[str, Any]) -> Dict[str, Any]:
     if 'node' in record:
         nodes = [normalize_node(n) for n in record['node']]
         # Sort by (name, namespace, package) for consistent ordering
+        # Handle None values by converting to empty string for sorting
         normalized['node'] = sorted(
             nodes,
             key=lambda n: (
-                n.get('name', ''),
-                n.get('namespace', ''),
-                n.get('package', ''),
-                n.get('executable', '')
+                n.get('name') or '',
+                n.get('namespace') or '',
+                n.get('package') or '',
+                n.get('executable') or ''
             )
         )
     else:

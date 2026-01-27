@@ -47,10 +47,55 @@ run-all:
 plot:
     @play_launch plot
 
+# Dump composition.launch.xml using Rust parser
+dump-rust:
+    #!/usr/bin/env bash
+    set -e
+    echo "Dumping composition.launch.xml with Rust parser..."
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../install/setup.bash
+    play_launch dump --output record_rust.json launch \
+        --parser rust \
+        launch/composition.launch.xml
+    echo "✓ Rust parser dump complete: record_rust.json"
+
+# Dump composition.launch.xml using Python parser
+dump-python:
+    #!/usr/bin/env bash
+    set -e
+    echo "Dumping composition.launch.xml with Python parser..."
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../install/setup.bash
+    play_launch dump --output record_python.json launch \
+        --parser python \
+        launch/composition.launch.xml
+    echo "✓ Python parser dump complete: record_python.json"
+
+# Dump with both parsers
+dump-both: dump-rust dump-python
+
+# Compare Rust and Python parser outputs
+compare-dumps:
+    #!/usr/bin/env bash
+    set -e
+    if [ ! -f "record_rust.json" ]; then
+        echo "ERROR: record_rust.json not found. Run 'just dump-rust' first."
+        exit 1
+    fi
+    if [ ! -f "record_python.json" ]; then
+        echo "ERROR: record_python.json not found. Run 'just dump-python' first."
+        exit 1
+    fi
+    echo "Comparing Rust and Python parser outputs..."
+    echo ""
+    python3 ../../scripts/compare_records.py record_rust.json record_python.json
+    echo ""
+    echo "Comparison complete."
+
 # Clean generated files
 clean:
     #!/usr/bin/env bash
     set -e
     echo "Cleaning up..."
-    rm -rf play_log record.json
+    rm -rf play_log record*.json
     echo "Cleanup complete"
