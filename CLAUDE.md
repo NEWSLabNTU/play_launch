@@ -279,6 +279,11 @@ else:
 
 ## Key Recent Changes
 
+- **2026-01-31**: Fixed namespace normalization bug - Ensures all node/container namespaces start with `/` (fixes RCL "Namespace not remapped to a fully qualified name" errors). Applied normalization in 3 locations: generator.rs (nodes), container.rs (composable nodes), launch_ros.rs (Python API)
+- **2026-01-31**: Phase 14 complete - Python launch file execution through ROS 2 launch system (LaunchConfiguration resolution, global parameters, SetLaunchConfiguration support, 15 tests + 25+ fixtures, Autoware validation passes)
+- **2026-01-31**: Updated play_launch_parser submodule - Fixed node counting in Autoware test, poisoned mutex recovery, parameter file loading improvements
+- **2026-01-27**: Added parser comparison tools - New `dump-rust`, `dump-python`, `dump-both`, and `compare-dumps` recipes in test justfiles
+- **2026-01-27**: Python parser container fix - Containers now only appear in container[] array, not in node[] (matching Rust parser behavior)
 - **2026-01-27**: Phase 13 complete - Rust parser as default (3-12x speedup), Python parser as optional fallback, removed Auto mode for predictable behavior
 - **2026-01-20**: Fixed PyO3 0.23 compatibility - Changed `call_method0("main")` to `getattr("main")?.call0()` for module-level function calls
 - **2026-01-20**: Fixed launch_ros compatibility - `expanded_node_namespace` is a property (not method), handle pre-qualified node names with leading slashes
@@ -310,7 +315,10 @@ else:
 - `test/simple_test/`: Basic container with 2 nodes
 - `test/sequential_loading/`: FIFO queue testing
 - `test/concurrent_loading/`: Parallel loading testing
-- Each test workspace has `justfile` with `just run`, `just run-debug`
+- Each test workspace has `justfile` with:
+  - `just run`, `just run-debug`: Run tests
+  - `just dump-rust`, `just dump-python`, `just dump-both`: Generate record.json with Rust/Python parsers
+  - `just compare-dumps`: Compare Rust vs Python parser outputs using `scripts/compare_records.py`
 
 ## Distribution
 
@@ -319,3 +327,10 @@ else:
 - Binary optimization: 94% size reduction (strip + LTO)
 - Build: `just build` → `dist/play_launch-*.whl`
 - Publish: `just publish-pypi` or GitHub Actions on version tags
+
+## Documentation
+
+- **Migration Guide**: `docs/parser-migration-guide.md` - Guide for users migrating to Rust parser (v0.6.0+)
+- **Roadmap**: `docs/roadmap/README.md` - Implementation phases and progress tracking (95% complete, 12 of 14 phases done)
+- **Phase 13 (Complete)**: `docs/roadmap/phase-13.md` - Rust parser integration (3-12x speedup)
+- **Phase 14 (Complete)**: `docs/roadmap/phase-14-python_execution.md` - Python launch file execution with LaunchConfiguration resolution (85-90% implemented)

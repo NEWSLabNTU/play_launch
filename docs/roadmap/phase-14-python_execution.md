@@ -484,15 +484,15 @@ for entity in launch_desc.entities:
 ## Timeline
 
 **Planned**:
-| Phase | Duration | Cumulative |
-|-------|----------|------------|
-| 14.1: Core execution infrastructure | 4-5 hours | 4-5h |
-| 14.2: Integration with main parser | 2 hours | 6-7h |
-| 14.3: Capture resolved values | 2 hours | 8-9h |
-| 14.4: Parameter file collection | 2 hours | 10-11h |
-| 14.5: SetLaunchConfiguration | 1 hour | 11-12h |
-| 14.6: Testing & validation | 2 hours | 13-14h |
-| **Total** | **13-14 hours** | **~2 days** |
+| Phase                               | Duration        | Cumulative  |
+|-------------------------------------|-----------------|-------------|
+| 14.1: Core execution infrastructure | 4-5 hours       | 4-5h        |
+| 14.2: Integration with main parser  | 2 hours         | 6-7h        |
+| 14.3: Capture resolved values       | 2 hours         | 8-9h        |
+| 14.4: Parameter file collection     | 2 hours         | 10-11h      |
+| 14.5: SetLaunchConfiguration        | 1 hour          | 11-12h      |
+| 14.6: Testing & validation          | 2 hours         | 13-14h      |
+| **Total**                           | **13-14 hours** | **~2 days** |
 
 **Actual**: Implemented incrementally during Phase 13 development (January 2026)
 - Most infrastructure built alongside Phase 13 Rust parser integration
