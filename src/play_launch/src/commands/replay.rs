@@ -1144,35 +1144,27 @@ async fn forward_state_events_and_wait(
     runner.wait_for_completion().await
 }
 
-/// Print periodic startup progress (single line, every 10 seconds, stops when ready)
+/// Print periodic startup progress (every 10s while loading, immediate completion message)
 async fn print_periodic_statistics(
     member_handle: std::sync::Arc<crate::member_actor::MemberHandle>,
     mut shutdown_signal: tokio::sync::watch::Receiver<bool>,
 ) {
-    // Check initial status immediately
-    let initial_health = member_handle.get_health_summary().await;
-    let has_composable = initial_health.composable_total > 0;
+    // Print progress every 10 seconds while loading
+    let mut progress_interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+    progress_interval.tick().await; // Consume the immediate first tick
 
-    // Use shorter interval (1s) if no composable nodes to wait for, 10s otherwise
-    let interval_duration = if has_composable {
-        tokio::time::Duration::from_secs(10)
-    } else {
-        tokio::time::Duration::from_secs(1)
-    };
-
-    let mut interval = tokio::time::interval(interval_duration);
-    interval.tick().await; // Consume the immediate first tick
+    // Check completion every 100ms for immediate detection
+    let mut completion_check = tokio::time::interval(tokio::time::Duration::from_millis(100));
+    completion_check.tick().await; // Consume the immediate first tick
 
     loop {
         tokio::select! {
-            _ = interval.tick() => {
+            _ = progress_interval.tick() => {
+                // Print progress update every 10 seconds
                 let health = member_handle.get_health_summary().await;
-
-                // Check if startup is complete (all nodes ready or failed)
                 let startup_complete = health.composable_pending == 0;
 
                 if !startup_complete {
-                    // Print single-line progress
                     info!(
                         "Startup: nodes {}/{} running, containers {}/{} running, composable {}/{} loaded ({} pending)",
                         health.nodes_running,
@@ -1183,8 +1175,16 @@ async fn print_periodic_statistics(
                         health.composable_total,
                         health.composable_pending
                     );
-                } else {
-                    // Print completion message
+                }
+                // If complete, the completion_check will handle printing the message
+            }
+            _ = completion_check.tick() => {
+                // Check frequently for completion (every 100ms)
+                let health = member_handle.get_health_summary().await;
+                let startup_complete = health.composable_pending == 0;
+
+                if startup_complete {
+                    // Print completion message immediately
                     let total_failures = health.nodes_failed + health.containers_failed + health.composable_failed;
 
                     if total_failures == 0 {
