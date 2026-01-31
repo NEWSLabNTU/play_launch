@@ -279,7 +279,7 @@ else:
 
 ## Key Recent Changes
 
-- **2026-01-31**: Optimized startup progress checking - Reduced startup reporting from 10s to 1s for node-only launches (10x faster). Uses adaptive 1s interval for simple launches, 10s for composable nodes
+- **2026-01-31**: Revised monitor logic for immediate startup detection - Split progress updates (10s) from completion checks (100ms). Reports "Startup complete" in ~100-200ms instead of 1-10s
 - **2026-01-31**: Fixed namespace normalization bug - Ensures all node/container namespaces start with `/` (fixes RCL "Namespace not remapped to a fully qualified name" errors). Applied normalization in 3 locations: generator.rs (nodes), container.rs (composable nodes), launch_ros.rs (Python API)
 - **2026-01-31**: Phase 14 complete - Python launch file execution through ROS 2 launch system (LaunchConfiguration resolution, global parameters, SetLaunchConfiguration support, 15 tests + 25+ fixtures, Autoware validation passes)
 - **2026-01-31**: Updated play_launch_parser submodule - Fixed node counting in Autoware test, poisoned mutex recovery, parameter file loading improvements
