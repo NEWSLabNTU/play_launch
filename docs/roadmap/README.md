@@ -15,7 +15,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Current Status
 
-**Overall Progress**: ~92% complete (10 of 12 phases complete, 1 planned)
+**Overall Progress**: ~95% complete (12 of 14 phases complete, 0 planned, 2 in planning)
 
 **Timeline**: Started October 2025, ongoing development
 
@@ -60,7 +60,8 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 | Phase | Status | Completion | Documentation |
 |-------|--------|------------|---------------|
-| **Phase 13**: Rust Parser Migration | ⏳ Planned | - | [phase-13.md](./phase-13.md) |
+| **Phase 13**: Rust Parser Migration | ✅ Complete | 2026-01-27 | [phase-13.md](./phase-13.md) |
+| **Phase 14**: Python Launch File Execution | ✅ Complete | 2026-01-31 | [phase-14-python_execution.md](./phase-14-python_execution.md) |
 
 ---
 
@@ -89,13 +90,27 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ### Planned ⏳
 
-- ⏳ **Rust Parser Migration (Phase 13)** - Replace Python dump_launch with Rust parser (5-10x performance improvement)
 - ⏳ Web UI Actor Integration (Phase 11) - Remove bridging layer, implement direct actor control
 - ⏳ Complete documentation (Phase 3)
 - ⏳ Comprehensive testing (Phase 4)
 - ⏳ Optional enhancements (Phase 5)
 
 ### Recently Completed 🎉
+
+- ✅ Python Launch File Execution (Phase 14 - Complete 2026-01-31)
+  - ✅ Python files execute through ROS 2 launch system (not static analysis)
+  - ✅ LaunchConfiguration resolution via `perform()` method
+  - ✅ Global parameters captured from LAUNCH_CONFIGURATIONS
+  - ✅ SetLaunchConfiguration and all launch actions supported
+  - ✅ 15 Python tests + 25+ fixtures covering all major features
+  - ✅ Autoware comparison passes (Rust vs Python parsers equivalent)
+  - ⚠️ Parameter file paths captured (contents optional, not implemented)
+
+- ✅ Rust Parser Migration (Phase 13 - Complete 2026-01-27)
+  - ✅ Container record consolidation (only in container[], not node[])
+  - ✅ Global parameters capture for XML-parsed nodes and containers
+  - ✅ Simple test comparison passes (Rust vs Python parsers)
+  - ✅ XML parsing achieves full parity with Python dump visitor
 
 - ✅ Async Actor Pattern Transformation (Phase 10 - Complete 2026-01-01)
   - ✅ Actor infrastructure module created (Phase 10.1)
