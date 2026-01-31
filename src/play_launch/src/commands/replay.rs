@@ -1149,8 +1149,18 @@ async fn print_periodic_statistics(
     member_handle: std::sync::Arc<crate::member_actor::MemberHandle>,
     mut shutdown_signal: tokio::sync::watch::Receiver<bool>,
 ) {
-    // Print every 10 seconds (first tick happens immediately by default, so consume it)
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+    // Check initial status immediately
+    let initial_health = member_handle.get_health_summary().await;
+    let has_composable = initial_health.composable_total > 0;
+
+    // Use shorter interval (1s) if no composable nodes to wait for, 10s otherwise
+    let interval_duration = if has_composable {
+        tokio::time::Duration::from_secs(10)
+    } else {
+        tokio::time::Duration::from_secs(1)
+    };
+
+    let mut interval = tokio::time::interval(interval_duration);
     interval.tick().await; // Consume the immediate first tick
 
     loop {
