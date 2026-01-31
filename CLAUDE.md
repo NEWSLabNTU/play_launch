@@ -279,6 +279,8 @@ else:
 
 ## Key Recent Changes
 
+- **2026-01-31**: Fixed Python launch argument substitutions - Launch arguments now resolve substitutions ($(find-pkg-share), $(var), etc.) before passing to nested Python files, preventing FileNotFoundError with unresolved paths
+- **2026-01-31**: Python API type handling improvements - LogInfo and PythonExpression now accept PyObject (handling LaunchConfiguration, strings, lists) instead of requiring strings, enabling complex conditional expressions
 - **2026-01-31**: Revised monitor logic for immediate startup detection - Split progress updates (10s) from completion checks (100ms). Reports "Startup complete" in ~100-200ms instead of 1-10s
 - **2026-01-31**: Fixed namespace normalization bug - Ensures all node/container namespaces start with `/` (fixes RCL "Namespace not remapped to a fully qualified name" errors). Applied normalization in 3 locations: generator.rs (nodes), container.rs (composable nodes), launch_ros.rs (Python API)
 - **2026-01-31**: Phase 14 complete - Python launch file execution through ROS 2 launch system (LaunchConfiguration resolution, global parameters, SetLaunchConfiguration support, 15 tests + 25+ fixtures, Autoware validation passes)
