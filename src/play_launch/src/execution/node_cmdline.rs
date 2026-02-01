@@ -26,9 +26,37 @@ pub struct NodeCommandLine {
     pub env: HashMap<String, String>,
 }
 
+/// Substitute $(var name) patterns with values from the variables map
+fn substitute_variables(text: &str, variables: &HashMap<String, String>) -> String {
+    let mut result = text.to_string();
+
+    // Pattern: $(var name) or $(var name)
+    // Use regex-free approach for simplicity and performance
+    while let Some(start) = result.find("$(var ") {
+        if let Some(end) = result[start..].find(')') {
+            let var_name = &result[start + 6..start + end].trim();
+            if let Some(value) = variables.get(*var_name) {
+                result.replace_range(start..start + end + 1, value);
+            } else {
+                // Variable not found - leave it as is and move past it to avoid infinite loop
+                break;
+            }
+        } else {
+            // No closing parenthesis found
+            break;
+        }
+    }
+
+    result
+}
+
 impl NodeCommandLine {
     /// Construct from a ROS node record in the launch dump.
-    pub fn from_node_record(record: &NodeRecord, params_files_dir: &Path) -> eyre::Result<Self> {
+    pub fn from_node_record(
+        record: &NodeRecord,
+        params_files_dir: &Path,
+        variables: &HashMap<String, String>,
+    ) -> eyre::Result<Self> {
         let NodeRecord {
             executable,
             package,
@@ -71,7 +99,7 @@ impl NodeCommandLine {
                 .iter()
                 .flat_map(|args| chain!(["--ros-args"], args.iter().map(|s| s.as_str()), ["--"]));
             chain!(user_nonros_args, user_ros_args)
-                .map(|s| s.to_string())
+                .map(|s| substitute_variables(s, variables))
                 .collect()
         };
 
@@ -348,5 +376,36 @@ mod tests {
             env: HashMap::new(),
         };
         let _ = cmdline.to_command(false, None);
+    }
+
+    #[test]
+    fn test_substitute_variables() {
+        let mut variables = HashMap::new();
+        variables.insert("log_level".to_string(), "info".to_string());
+        variables.insert("config_dir".to_string(), "/path/to/config".to_string());
+
+        // Test simple substitution
+        assert_eq!(
+            substitute_variables("--log-level $(var log_level)", &variables),
+            "--log-level info"
+        );
+
+        // Test multiple substitutions
+        assert_eq!(
+            substitute_variables("$(var log_level) and $(var config_dir)", &variables),
+            "info and /path/to/config"
+        );
+
+        // Test no substitution
+        assert_eq!(
+            substitute_variables("--no-vars-here", &variables),
+            "--no-vars-here"
+        );
+
+        // Test unknown variable (should leave as-is)
+        assert_eq!(
+            substitute_variables("--value $(var unknown)", &variables),
+            "--value $(var unknown)"
+        );
     }
 }

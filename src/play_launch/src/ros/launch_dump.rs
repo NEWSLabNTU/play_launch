@@ -24,6 +24,11 @@ pub struct LaunchDump {
     /// File data cache for parameter files (used by removed print_shell functionality)
     #[allow(dead_code)]
     pub file_data: HashMap<PathBuf, String>,
+    /// Launch configuration variables (e.g., from DeclareLaunchArgument or CLI args)
+    /// Maps variable names to their resolved values
+    /// Used to substitute $(var name) patterns in command arguments during replay
+    #[serde(default)]
+    pub variables: HashMap<String, String>,
 }
 
 /// The serialization format for a node container record.

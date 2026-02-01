@@ -317,7 +317,11 @@ pub fn prepare_node_contexts(
             fs::create_dir_all(&params_files_dir)?;
 
             // Build the command line.
-            let cmdline = NodeCommandLine::from_node_record(record, &params_files_dir)?;
+            let cmdline = NodeCommandLine::from_node_record(
+                record,
+                &params_files_dir,
+                &launch_dump.variables,
+            )?;
 
             // Create metadata
             let duplicate_index = if dir_name.contains('_') && dir_name != base_name {

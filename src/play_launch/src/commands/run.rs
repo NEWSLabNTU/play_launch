@@ -91,6 +91,7 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         container: vec![],
         lifecycle_node: vec![],
         file_data: HashMap::new(),
+        variables: HashMap::new(),
     };
 
     // Build the async runtime with adaptive thread pool configuration
