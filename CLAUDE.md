@@ -46,6 +46,71 @@ Use `--parser python` when:
 
 The Rust parser is the default and recommended for all normal use cases.
 
+### Python Parser as Ground Truth
+
+**CRITICAL RULE**: When Rust and Python parser behaviors differ, **Python's behavior is always correct**.
+
+- Python parser (`dump_launch`) is the authoritative reference implementation
+- Rust parser must match Python's output exactly
+- If a test expects different behavior than Python produces, **the test is wrong**
+- Always validate Rust parser changes against Python parser output on real launch files
+
+**Validation workflow**:
+1. Parse with Python: `play_launch dump launch <package> <file> --parser python -o record_python.json`
+2. Parse with Rust: `play_launch dump launch <package> <file> --parser rust -o record_rust.json`
+3. Compare outputs: Check that Rust matches Python for all fields (node names, parameters, container targets, etc.)
+4. If Rust differs: Fix Rust, not Python
+
+**Example cases**:
+- Substitution resolution in `target_container_name`: Python resolves to actual container names (e.g., `/pointcloud_container`), so Rust must too
+- Namespace handling: Python's namespace concatenation rules are authoritative
+- Parameter type preservation: Match Python's type conversions (int vs float)
+
+### Parser Architecture: Conditional Evaluation
+
+**Important**: The parser does not process every conditional path. Instead, it:
+1. **Evaluates conditions during parsing** using real LaunchConfiguration values
+2. **Parses only the selected path** based on the condition result
+3. **Preserves LaunchConfiguration substitutions** as `$(var name)` for later resolution
+
+**Implementation Details** (`src/python/api/utils.rs`):
+- **Evaluating substitutions** (call `perform()` with real LaunchContext):
+  - Conditional: `EqualsSubstitution`, `IfElseSubstitution`, `NotEqualsSubstitution`, `AndSubstitution`, `OrSubstitution`, `NotSubstitution`
+  - Content: `FileContent` (reads files, resolves nested substitutions), `PathJoinSubstitution` (joins paths, resolves nested)
+  - Expression: `PythonExpression` (evaluates Python code like `'true' if 'offline' == 'realtime' else 'false'`)
+- **LaunchConfiguration substitutions** call `__str__()` to preserve as `$(var name)` for replay-time resolution
+- **Other substitutions** call `__str__()` to preserve their format
+- **Float parameters** always include decimal point (e.g., `0.0` not `0`) to preserve type information for ROS
+
+This design allows:
+- Conditional expressions to evaluate correctly and select the right execution path
+- Python expressions in parameters to evaluate instead of being passed as raw strings
+- LaunchConfiguration values to be re-resolved at replay time with different values
+- Complex nested conditionals to work properly
+- ROS parameter type checking to work correctly (INTEGER vs DOUBLE distinction preserved)
+
+**Examples**:
+```python
+# Example 1: IfElseSubstitution in namespace
+# With cli_args: mode='debug'
+namespace = IfElseSubstitution(
+    EqualsSubstitution(LaunchConfiguration('mode'), 'debug'),
+    '/debug_ns',    # Parser takes this path (condition evaluates to true)
+    '/release_ns'   # This path is not processed
+)
+
+# Example 2: PythonExpression in parameter
+# With cli_args: mode='offline'
+use_sensor_data_qos = PythonExpression([
+    "'true' if '", LaunchConfiguration('mode'), "' == 'realtime' else 'false'"
+])
+# Parser evaluates to: "false" (not the raw Python expression string)
+
+# Example 3: Float parameter preservation
+parameters=[{'sync_tolerance_ms': 0.0}]
+# Parser outputs: "0.0" (not "0") to preserve DOUBLE type for ROS
+```
+
 ## Installation & Usage
 
 ```sh
@@ -277,8 +342,69 @@ else:
     full_name = f"{namespace}/{node_name}"
 ```
 
+### Python API Type Handling Pattern (Phase 15)
+
+When implementing ROS 2 launch API classes in PyO3, parameters that accept `SomeSubstitutionsType` in the Python API should accept `PyObject` in our PyO3 bindings:
+
+**ROS 2 Type Definition:**
+```python
+SomeSubstitutionsType = Union[
+    Text,                              # Plain string
+    Substitution,                      # LaunchConfiguration, FindPackageShare, etc.
+    Iterable[Union[Text, Substitution]], # List of strings and/or substitutions
+]
+```
+
+**Implementation Pattern:**
+```rust
+// In struct: store resolved String
+pub struct Action {
+    param: String,
+}
+
+// In constructor: accept PyObject and convert
+#[pymethods]
+impl Action {
+    #[new]
+    fn new(py: Python, param: PyObject) -> PyResult<Self> {
+        // Use shared utility function
+        let param_str = crate::python::api::utils::pyobject_to_string(py, &param)?;
+
+        Ok(Self {
+            param: param_str,
+        })
+    }
+}
+```
+
+**Shared Helper:** `src/python/api/utils.rs::pyobject_to_string()`
+- Handles strings, substitutions (LaunchConfiguration), and lists
+- **Conditional substitutions** (EqualsSubstitution, IfElseSubstitution, etc.): Calls `perform()` with real LaunchContext to evaluate to "true"/"false"
+- **LaunchConfiguration substitutions**: Calls `__str__()` to preserve as `$(var name)` for replay-time resolution
+- **Other substitutions**: Calls `__str__()` to preserve their format
+- **Lists**: Recursively concatenates elements
+- Used by: SetEnvironmentVariable, AppendEnvironmentVariable, ExecuteProcess, Node.arguments, and others
+
+**When to Use:**
+- Any parameter documented in ROS 2 as `SomeSubstitutionsType`
+- Parameters that should accept LaunchConfiguration or other substitutions
+- Command arrays, paths, environment variables, node arguments, etc.
+
+**Examples:**
+```python
+# All these should work:
+SetEnvironmentVariable('VAR', 'plain_string')
+SetEnvironmentVariable('VAR', LaunchConfiguration('var'))
+SetEnvironmentVariable('VAR', [LaunchConfiguration('prefix'), '/suffix'])
+```
+
 ## Key Recent Changes
 
+- **2026-02-01**: Phase 14 complete - Substitution Context Unification: Fixed nested substitution resolution by extracting launch_configurations from Python context and populating Rust LaunchContext. Enables proper resolution of `$(var other_var)` patterns where `other_var` contains substitutions. Helper functions: `create_context_from_python()`, `resolve_substitution_string()`. All 297 tests pass, Autoware validated.
+- **2026-02-01**: Security updates - Upgraded `lru` from 0.12 to 0.16.3 (fixes RUSTSEC-2026-0002 IterMut soundness issue). PyO3 upgrade to 0.24.1 deferred due to 268 breaking API changes; vulnerable function `PyString::from_object` not used in codebase.
+- **2026-02-01**: Comprehensive test script - Added `tmp/run_all_checks.sh` with timeouts on all tests: (1) Root quality (5min), (2) Parser quality (3min), (3) Simple test (10s), (4) Autoware simulation (30s), (5) LCTK demo (30s). Prevents infinite hangs, proper exit code handling.
+- **2026-02-01**: Substitution evaluation improvements - (1) Added PythonExpression.perform() to evaluate Python conditional expressions in parameters (fixes "Couldn't parse parameter override rule" errors with IfElse expressions). (2) Fixed float type preservation: floats now output with decimal point (e.g., "0.0" not "0") to prevent ROS INTEGER vs DOUBLE type errors. (3) Extended evaluating substitutions to include FileContent and PathJoinSubstitution for proper nested substitution resolution. (4) Parser evaluates conditional logic and processes only the selected path, not all paths. LaunchConfiguration substitutions preserved as $(var name) for replay-time resolution.
+- **2026-01-31**: Phase 15 complete - Python API Type Safety improvements for SetEnvironmentVariable, AppendEnvironmentVariable, ExecuteProcess, and Node.arguments to accept PyObject instead of String, enabling full SomeSubstitutionsType compatibility (handles strings, substitutions, and lists)
 - **2026-01-31**: Fixed Python launch argument substitutions - Launch arguments now resolve substitutions ($(find-pkg-share), $(var), etc.) before passing to nested Python files, preventing FileNotFoundError with unresolved paths
 - **2026-01-31**: Python API type handling improvements - LogInfo and PythonExpression now accept PyObject (handling LaunchConfiguration, strings, lists) instead of requiring strings, enabling complex conditional expressions
 - **2026-01-31**: Revised monitor logic for immediate startup detection - Split progress updates (10s) from completion checks (100ms). Reports "Startup complete" in ~100-200ms instead of 1-10s
@@ -314,14 +440,55 @@ else:
 
 ## Testing
 
-- `test/autoware_planning_simulation/`: Full Autoware test (52 composable nodes, 15 containers)
+### Test Workspaces
+
+- `test/autoware_planning_simulation/`: Full Autoware test (46 nodes, 15 containers, 54 composable nodes)
 - `test/simple_test/`: Basic container with 2 nodes
 - `test/sequential_loading/`: FIFO queue testing
 - `test/concurrent_loading/`: Parallel loading testing
-- Each test workspace has `justfile` with:
-  - `just run`, `just run-debug`: Run tests
-  - `just dump-rust`, `just dump-python`, `just dump-both`: Generate record.json with Rust/Python parsers
-  - `just compare-dumps`: Compare Rust vs Python parser outputs using `scripts/compare_records.py`
+
+Each test workspace has `justfile` with:
+- `just run`, `just run-debug`: Run tests
+- `just dump-rust`, `just dump-python`, `just dump-both`: Generate record.json with Rust/Python parsers
+- `just compare-dumps`: Compare Rust vs Python parser outputs using `scripts/compare_records.py`
+
+### Comprehensive Test Script
+
+**Location**: `tmp/run_all_checks.sh`
+
+Runs 5 comprehensive tests with proper timeouts to prevent infinite hangs:
+
+1. **Root quality check** (5 min timeout)
+   - Build + format + lint + all tests
+   - Command: `timeout 300 just quality`
+
+2. **Parser quality check** (3 min timeout)
+   - 297 unit tests
+   - Command: `timeout 180 just quality`
+
+3. **Play launch basic test** (10 sec timeout)
+   - Verifies basic node execution
+   - Command: `timeout 10 just run-pure-nodes`
+   - Location: `test/simple_test/`
+
+4. **Autoware simulation test** (30 sec timeout)
+   - Full Autoware integration (46 nodes, 15 containers, 54 composable)
+   - Command: `timeout 30 just run-sim`
+   - Location: `test/autoware_planning_simulation/`
+
+5. **LCTK demo test** (30 sec timeout)
+   - External package integration
+   - Command: `timeout 30 just demo`
+   - Location: `~/repos/LCTK`
+
+**Usage**:
+```bash
+cd /home/aeon/repos/play_launch
+bash tmp/run_all_checks.sh
+```
+
+**Typical execution time**: ~4-5 minutes
+**Maximum execution time**: ~9.5 minutes (all timeouts)
 
 ## Distribution
 
