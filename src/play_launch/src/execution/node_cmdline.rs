@@ -79,12 +79,16 @@ impl NodeCommandLine {
             bail!(r#""package" is not set"#);
         };
 
+        // Resolve any substitutions in the executable name (e.g., $(var container_executable))
+        // This is needed for Python launch files that use LaunchConfiguration
+        let resolved_executable = substitute_variables(executable, variables);
+
         // Find the executable directly using ament index instead of ros2 run CLI
-        let exe_path = crate::ros::ament_index::find_executable(package, executable)
+        let exe_path = crate::ros::ament_index::find_executable(package, &resolved_executable)
             .wrap_err_with(|| {
                 format!(
-                    "Failed to find executable '{}' in package '{}'",
-                    executable, package
+                    "Failed to find executable '{}' in package '{}' (original: '{}', resolved: '{}')",
+                    resolved_executable, package, executable, resolved_executable
                 )
             })?;
 
