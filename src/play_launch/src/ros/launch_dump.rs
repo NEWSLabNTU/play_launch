@@ -1,5 +1,5 @@
 use itertools::{chain, Itertools};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -12,7 +12,7 @@ use std::{
 pub type ParameterValue = String;
 
 /// The serialization format for a recorded launch.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LaunchDump {
     pub node: Vec<NodeRecord>,
     pub load_node: Vec<ComposableNodeRecord>,
@@ -27,19 +27,37 @@ pub struct LaunchDump {
     /// Launch configuration variables (e.g., from DeclareLaunchArgument or CLI args)
     /// Maps variable names to their resolved values
     /// Used to substitute $(var name) patterns in command arguments during replay
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub variables: HashMap<String, String>,
 }
 
 /// The serialization format for a node container record.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NodeContainerRecord {
-    pub namespace: String,
+    pub executable: String,
+    pub package: String,
     pub name: String,
+    pub namespace: String,
+    pub exec_name: Option<String>,
+    #[serde(default)]
+    pub params: Vec<(String, ParameterValue)>,
+    pub params_files: Vec<String>,
+    #[serde(default)]
+    pub remaps: Vec<(String, String)>,
+    pub ros_args: Option<Vec<String>>,
+    pub args: Option<Vec<String>>,
+    pub cmd: Vec<String>,
+    pub env: Option<Vec<(String, String)>>,
+    #[serde(default)]
+    pub respawn: Option<bool>,
+    #[serde(default)]
+    pub respawn_delay: Option<f64>,
+    #[serde(default)]
+    pub global_params: Option<Vec<(String, ParameterValue)>>,
 }
 
 /// The serialization format for a ROS node record.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NodeRecord {
     pub executable: String,
     pub package: Option<String>,
@@ -67,7 +85,7 @@ pub struct NodeRecord {
 }
 
 /// The serialization format for a composable node record.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ComposableNodeRecord {
     pub package: String,
     pub plugin: String,
