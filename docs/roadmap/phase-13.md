@@ -30,7 +30,7 @@ Migrate from Python-based `dump_launch` to the Rust `play_launch_parser` submodu
 - **Simpler dependencies**: Pure Rust integration (PyO3 becomes optional)
 - **Better maintainability**: Single-language codebase
 - **Smaller binary**: Optional Python support reduces binary size
-- **Production-ready**: 260 unit tests, 100% Autoware compatibility
+- **Production-ready**: 310 unit tests, 100% Autoware compatibility
 
 ---
 
@@ -811,7 +811,7 @@ if args.use_python_parser {
 ## Risks & Mitigation
 
 ### Risk: Parser Compatibility Issues
-**Likelihood**: Low (260 tests, 100% Autoware coverage)
+**Likelihood**: Low (310 tests, 100% Autoware coverage)
 **Impact**: High (users cannot parse launch files)
 
 **Mitigation**:

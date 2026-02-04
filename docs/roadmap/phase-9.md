@@ -1,4 +1,8 @@
-# Web UI Status System Refactoring
+# Phase 9: Web UI Status System Refactoring
+
+**Status**: 🔄 In Progress
+**Priority**: Medium
+**Dependencies**: Phase 8 (Web UI), Phase 12 (Container-Managed Composable Nodes)
 
 ## Overview
 
