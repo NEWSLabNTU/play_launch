@@ -4,7 +4,7 @@ use eyre::bail;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     fs::File,
     io::prelude::*,
@@ -69,12 +69,6 @@ fn build_name_map(names: Vec<String>) -> HashMap<String, Vec<String>> {
     }
 
     result
-}
-
-/// ROS node contexts classified into disjoint sets.
-pub struct NodeContextClasses {
-    pub container_contexts: Vec<NodeContainerContext>,
-    pub non_container_node_contexts: Vec<NodeContext>,
 }
 
 /// A set of composable node contexts belonging to the same node
@@ -256,12 +250,11 @@ pub struct ExecutionContext {
     pub command: tokio::process::Command,
 }
 
-/// Load and classify node records in the dump by its kind.
+/// Load regular node records from the dump (containers are handled separately).
 pub fn prepare_node_contexts(
     launch_dump: &LaunchDump,
     node_log_dir: &Path,
-    container_names: &HashSet<String>,
-) -> eyre::Result<NodeContextClasses> {
+) -> eyre::Result<Vec<NodeContext>> {
     // First pass: Collect node names for deduplication
     let node_names: Vec<String> = launch_dump
         .node
@@ -341,7 +334,7 @@ pub fn prepare_node_contexts(
                 exec_name: record.exec_name.clone(),
                 name: record.name.clone(),
                 namespace: record.namespace.clone(),
-                is_container: false, // Will be updated later for containers
+                is_container: false,
                 container_full_name: None,
                 duplicate_index,
                 note: if record.name.is_none() {
@@ -363,74 +356,123 @@ pub fn prepare_node_contexts(
             })
         })
         .collect();
-    let node_contexts = node_contexts?;
 
-    // Classify the node contexts by checking if it's a node container
-    // or not.
-    let (container_contexts, non_container_node_contexts): (Vec<_>, Vec<_>) =
-        node_contexts.into_par_iter().partition_map(|context| {
-            use rayon::iter::Either;
+    node_contexts
+}
 
-            let NodeContext {
-                record: NodeRecord {
-                    name, namespace, ..
-                },
-                ..
-            } = &context;
+/// Prepare container execution contexts from container records.
+/// Reads directly from launch_dump.container[] array with full spawn information.
+pub fn prepare_container_contexts(
+    launch_dump: &LaunchDump,
+    container_log_dir: &Path,
+) -> eyre::Result<Vec<NodeContainerContext>> {
+    // First pass: Collect container names for deduplication
+    let container_names: Vec<String> = launch_dump
+        .container
+        .iter()
+        .map(|record| record.name.clone())
+        .collect();
 
-            // Check if the package/node_name is a known node
-            // container name.
-            let container_name = {
-                let (Some(namespace), Some(name)) = (namespace, name) else {
-                    return Either::Right(context);
-                };
+    let name_map = build_name_map(container_names);
+    let mut name_indices: HashMap<String, usize> = HashMap::new();
 
-                // Handle namespace ending with '/' to avoid double slashes
-                let container_name = if namespace.ends_with('/') {
-                    format!("{namespace}{name}")
-                } else {
-                    format!("{namespace}/{name}")
-                };
-                if !container_names.contains(&container_name) {
-                    return Either::Right(context);
-                };
-                container_name
-            };
-            let container_context = NodeContainerContext {
-                node_container_name: container_name,
-                node_context: context,
-            };
-            Either::Left(container_context)
-        });
-
-    // Update metadata for containers to reflect they are containers
-    for container_ctx in &container_contexts {
-        let NodeContext { output_dir, .. } = &container_ctx.node_context;
-
-        // Read existing metadata
-        let metadata_path = output_dir.join("metadata.json");
-        if metadata_path.exists() {
-            if let Ok(metadata_str) = fs::read_to_string(&metadata_path) {
-                if let Ok(mut metadata) = serde_json::from_str::<serde_json::Value>(&metadata_str) {
-                    // Update fields
-                    metadata["type"] = serde_json::json!("container");
-                    metadata["is_container"] = serde_json::json!(true);
-                    metadata["container_full_name"] =
-                        serde_json::json!(&container_ctx.node_container_name);
-
-                    // Write back
-                    if let Ok(updated_json) = serde_json::to_string_pretty(&metadata) {
-                        let _ = fs::write(&metadata_path, updated_json);
-                    }
-                }
-            }
-        }
+    // Build a vector of (record, dir_name) pairs first
+    let mut record_dirs: Vec<(&crate::ros::launch_dump::NodeContainerRecord, String)> = Vec::new();
+    for record in &launch_dump.container {
+        let base_name = &record.name;
+        let index = name_indices.entry(base_name.clone()).or_insert(0);
+        let unique_names = name_map.get(base_name).unwrap();
+        let dir_name = unique_names[*index].clone();
+        *index += 1;
+        record_dirs.push((record, dir_name));
     }
 
-    Ok(NodeContextClasses {
-        container_contexts,
-        non_container_node_contexts,
-    })
+    // Process containers in parallel
+    let container_contexts: Result<Vec<_>, _> = record_dirs
+        .par_iter()
+        .map(|(container_record, dir_name)| {
+            // Convert NodeContainerRecord to NodeRecord
+            let node_record = NodeRecord {
+                executable: container_record.executable.clone(),
+                package: Some(container_record.package.clone()),
+                name: Some(container_record.name.clone()),
+                namespace: Some(container_record.namespace.clone()),
+                exec_name: container_record.exec_name.clone(),
+                params: container_record.params.clone(),
+                params_files: container_record.params_files.clone(),
+                remaps: container_record.remaps.clone(),
+                ros_args: container_record.ros_args.clone(),
+                args: container_record.args.clone(),
+                cmd: container_record.cmd.clone(),
+                env: container_record.env.clone(),
+                respawn: container_record.respawn,
+                respawn_delay: container_record.respawn_delay,
+                global_params: container_record.global_params.clone(),
+            };
+
+            // Build full container name for matching with composable nodes
+            let full_container_name = if container_record.namespace.ends_with('/') {
+                format!("{}{}", container_record.namespace, container_record.name)
+            } else {
+                format!("{}/{}", container_record.namespace, container_record.name)
+            };
+
+            // Create flat directory structure
+            let output_dir = container_log_dir.join(dir_name);
+            let params_files_dir = output_dir.join("params_files");
+            fs::create_dir_all(&params_files_dir)?;
+
+            // Build the command line
+            let cmdline = NodeCommandLine::from_node_record(
+                &node_record,
+                &params_files_dir,
+                &launch_dump.variables,
+            )?;
+
+            // Create metadata
+            let duplicate_index = if dir_name.contains('_') && dir_name != &container_record.name {
+                // Extract index from name like "map_container_2"
+                dir_name
+                    .rsplit('_')
+                    .next()
+                    .and_then(|s| s.parse::<usize>().ok())
+            } else {
+                None
+            };
+
+            let metadata = NodeMetadata {
+                node_type: "container".to_string(),
+                package: Some(container_record.package.clone()),
+                executable: container_record.executable.clone(),
+                exec_name: container_record.exec_name.clone(),
+                name: Some(container_record.name.clone()),
+                namespace: Some(container_record.namespace.clone()),
+                is_container: true,
+                container_full_name: Some(full_container_name.clone()),
+                duplicate_index,
+                note: None,
+            };
+
+            // Write metadata.json
+            let metadata_path = output_dir.join("metadata.json");
+            let metadata_json = serde_json::to_string_pretty(&metadata)?;
+            fs::write(metadata_path, metadata_json)?;
+
+            // Create NodeContext
+            let node_context = NodeContext {
+                record: node_record,
+                cmdline,
+                output_dir,
+            };
+
+            eyre::Ok(NodeContainerContext {
+                node_container_name: full_container_name,
+                node_context,
+            })
+        })
+        .collect();
+
+    container_contexts
 }
 
 /// Load composable node records in the dump.

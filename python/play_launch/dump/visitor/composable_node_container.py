@@ -6,7 +6,6 @@ from launch_ros.descriptions import Parameter
 
 from ..launch_dump import ComposableNodeContainerRecord, LaunchDump
 from ..utils import param_to_kv
-from .execute_process import visit_execute_process
 
 
 def visit_composable_node_container(
@@ -39,7 +38,8 @@ def visit_composable_node_container(
             )
         ]
 
-    # Process container as a node (ExecuteProcess)
+    # Extract container information directly without delegating to visit_node or visit_execute_process
+    # Container metadata is added ONLY to container[] array (not node[])
     container._perform_substitutions(context)
 
     def substitute(subst):
@@ -79,9 +79,6 @@ def visit_composable_node_container(
         container.cmd.extend(cmd_extension)
     context.extend_locals({"ros_specific_arguments": ros_specific_arguments})
 
-    # Visit ExecuteProcess for container_actions
-    container_actions = visit_execute_process(container, context, dump)
-
     # Extract parameters
     params_files = []
     params = []
@@ -91,16 +88,38 @@ def visit_composable_node_container(
         for entry, is_file in node_params:
             if is_file:
                 path = entry
-                try:
-                    with open(path) as fp:
-                        data = fp.read()
-                        params_files.append(data)
-                        dump.file_data[path] = data
-                except (OSError, FileNotFoundError) as e:
-                    import launch.logging
+                # Check if this is a temporary parameter file (created by launch system)
+                # If so, extract the parameters as inline params instead
+                if "/tmp/launch_params_" in path:
+                    try:
+                        import yaml
 
-                    logger = launch.logging.get_logger(container.name)
-                    logger.error(f"Unable to read parameter file {path}: {e}")
+                        with open(path) as fp:
+                            data = yaml.safe_load(fp)
+                            # Extract params from YAML structure: {namespace/node_name: {ros__parameters: {key: value}}}
+                            for _node_path, node_data in data.items():
+                                if isinstance(node_data, dict) and "ros__parameters" in node_data:
+                                    for param_name, param_value in node_data[
+                                        "ros__parameters"
+                                    ].items():
+                                        params.append((param_name, str(param_value)))
+                    except Exception as e:
+                        import launch.logging
+
+                        logger = launch.logging.get_logger(container.name)
+                        logger.warning(f"Unable to parse temp parameter file {path}: {e}")
+                else:
+                    # Real parameter file - keep as file
+                    try:
+                        with open(path) as fp:
+                            data = fp.read()
+                            params_files.append(data)
+                            dump.file_data[path] = data
+                    except (OSError, FileNotFoundError) as e:
+                        import launch.logging
+
+                        logger = launch.logging.get_logger(container.name)
+                        logger.error(f"Unable to read parameter file {path}: {e}")
             else:
                 assert is_a(entry, Parameter)
                 name, value = param_to_kv(entry)
@@ -128,19 +147,21 @@ def visit_composable_node_container(
                     env_vars.append((key_str, value_str))
 
     # Extract respawn configuration
+    # Only set respawn if explicitly True - treat False/unset as None for consistency with Rust parser
     respawn = None
     respawn_delay = None
     if hasattr(container, "_ExecuteLocal__respawn"):
         try:
             respawn_value = container._ExecuteLocal__respawn
             if isinstance(respawn_value, bool):
-                respawn = respawn_value
+                # Only keep True values; False is equivalent to None (no respawn)
+                if respawn_value:
+                    respawn = True
             else:
                 respawn_str = substitute(respawn_value)
                 if respawn_str.lower() in ("true", "1", "yes"):
                     respawn = True
-                elif respawn_str.lower() in ("false", "0", "no", ""):
-                    respawn = False
+                # Treat false/empty as None (no respawn)
         except Exception as e:
             import launch.logging
 
@@ -159,13 +180,49 @@ def visit_composable_node_container(
 
     # Save container record with all node information
     node_name = container._Node__expanded_node_name
+
+    # Convert cmd list elements to strings - each element might be a list of substitutions
+    cmd_strings = []
+    if container.cmd is not None:
+        for cmd_elem in container.cmd:
+            if isinstance(cmd_elem, list):
+                # It's a list of substitutions - perform them
+                resolved = perform_substitutions(context, cmd_elem)
+                cmd_strings.append(resolved)
+            elif isinstance(cmd_elem, str):
+                cmd_strings.append(cmd_elem)
+            else:
+                # Single substitution object
+                resolved = perform_substitutions(
+                    context, normalize_to_list_of_substitutions(cmd_elem)
+                )
+                cmd_strings.append(resolved)
+
+    # Get exec_name - this is the process/action name
+    # Try multiple sources: process description, node name, or fall back to executable
+    exec_name_val = None
+    if hasattr(container, "_ExecuteLocal__process_description"):
+        process_desc = container._ExecuteLocal__process_description
+        if hasattr(process_desc, "final_name"):
+            exec_name_val = process_desc.final_name
+
+    # Fall back to node name or executable if process_description doesn't have final_name
+    if exec_name_val is None:
+        exec_name_val = node_name if node_name else executable
+
+    # Strip counter suffix (e.g., "container-1" -> "container") to match Rust parser
+    if exec_name_val and "-" in exec_name_val:
+        parts = exec_name_val.rsplit("-", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            exec_name_val = parts[0]
+
     record = ComposableNodeContainerRecord(
         executable=executable,
         package=package,
         name=node_name,
-        namespace=namespace,
-        exec_name=container.name,
-        cmd=container.cmd,
+        namespace=namespace if namespace else "/",
+        exec_name=exec_name_val,
+        cmd=cmd_strings,
         remaps=remaps,
         params=params,
         params_files=params_files,
@@ -178,10 +235,5 @@ def visit_composable_node_container(
     )
     dump.container.append(record)
 
-    if container_actions is not None and load_actions is not None:
-        return container_actions + load_actions
-    if container_actions is not None:
-        return container_actions
-    if load_actions is not None:
-        return load_actions
-    return None
+    # Return load_actions for composable nodes (no container_actions since container is not in node[])
+    return load_actions if load_actions is not None else []

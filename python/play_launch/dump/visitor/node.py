@@ -6,6 +6,7 @@ from launch.utilities import (
     normalize_to_list_of_substitutions,
     perform_substitutions,
 )
+from launch_ros.actions.composable_node_container import ComposableNodeContainer
 from launch_ros.actions.node import Node
 from launch_ros.descriptions import Parameter
 from launch_ros.utilities import add_node_name, get_node_name_count
@@ -21,6 +22,13 @@ _on_exit_warning_shown = False
 def visit_node(
     node: Node, context: LaunchContext, dump: LaunchDump
 ) -> list[LaunchDescriptionEntity] | None:
+    # Skip ComposableNodeContainers - they are handled by visit_composable_node_container
+    # and should only appear in container[] array, not node[]
+    if isinstance(node, ComposableNodeContainer):
+        # Container is already processed by visit_composable_node_container
+        # Don't add it to dump.node
+        return None
+
     node._perform_substitutions(context)
 
     def substitute(subst):
@@ -77,25 +85,80 @@ def visit_node(
     # Extract parameters
     params_files = []
     params = []
+    temp_param_files = []  # Track temp files to remove from cmd
     node_params = node._Node__expanded_parameter_arguments
 
     if node_params is not None:
         for entry, is_file in node_params:
             if is_file:
                 path = entry
-                try:
-                    with open(path) as fp:
-                        data = fp.read()
-                        params_files.append(data)
-                        dump.file_data[path] = data
-                except (OSError, FileNotFoundError) as e:
-                    execute_process_logger = launch.logging.get_logger(node.name)
-                    execute_process_logger.error(f"Unable to read parameter file {path}: {e}")
-                    # Continue without this params file
+                # Check if this is a temporary parameter file (created by launch system)
+                # If so, extract the parameters as inline params instead
+                if "/tmp/launch_params_" in path:
+                    temp_param_files.append(path)
+                    try:
+                        import yaml
+
+                        with open(path) as fp:
+                            data = yaml.safe_load(fp)
+                            # Extract params from YAML structure: {namespace/node_name: {ros__parameters: {key: value}}}
+                            for _node_path, node_data in data.items():
+                                if isinstance(node_data, dict) and "ros__parameters" in node_data:
+                                    for param_name, param_value in node_data[
+                                        "ros__parameters"
+                                    ].items():
+                                        params.append((param_name, str(param_value)))
+                    except Exception as e:
+                        execute_process_logger = launch.logging.get_logger(node.name)
+                        execute_process_logger.warning(
+                            f"Unable to parse temp parameter file {path}: {e}"
+                        )
+                else:
+                    # Real parameter file - keep as file
+                    try:
+                        with open(path) as fp:
+                            data = fp.read()
+                            params_files.append(data)
+                            dump.file_data[path] = data
+                    except Exception as e:
+                        execute_process_logger = launch.logging.get_logger(node.name)
+                        execute_process_logger.error(f"Unable to read parameter file {path}: {e}")
             else:
                 assert is_a(entry, Parameter)
                 name, value = param_to_kv(entry)
                 params.append((name, value))
+
+    # Build cmd - convert cmd list elements to strings and remove temp param files
+    cmd_strings = []
+    if node.cmd is not None:
+        skip_next = False
+        for i, cmd_elem in enumerate(node.cmd):
+            if skip_next:
+                skip_next = False
+                continue
+
+            # Convert to string
+            if isinstance(cmd_elem, list):
+                resolved = perform_substitutions(context, cmd_elem)
+            elif isinstance(cmd_elem, str):
+                resolved = cmd_elem
+            else:
+                resolved = perform_substitutions(
+                    context, normalize_to_list_of_substitutions(cmd_elem)
+                )
+
+            # Check if this is --params-file followed by a temp file
+            if resolved == "--params-file" and i + 1 < len(node.cmd):
+                next_elem = node.cmd[i + 1]
+                next_str = str(next_elem) if not isinstance(next_elem, str) else next_elem
+                if any(temp_file in next_str for temp_file in temp_param_files):
+                    # Skip both --params-file and the file path, add inline params instead
+                    skip_next = True
+                    for param_name, param_value in params:
+                        cmd_strings.extend(["-p", f"{param_name}:={param_value}"])
+                    continue
+
+            cmd_strings.append(resolved)
 
     if node.expanded_remapping_rules is None:
         remaps = []
@@ -122,6 +185,7 @@ def visit_node(
                     env_vars.append((key_str, value_str))
 
     # Extract respawn configuration
+    # Note: Only set respawn if explicitly True - treat False/unset as None for consistency with Rust parser
     respawn = None
     respawn_delay = None
     if hasattr(node, "_ExecuteLocal__respawn"):
@@ -129,14 +193,15 @@ def visit_node(
             # Respawn can be a bool or a substitution
             respawn_value = node._ExecuteLocal__respawn
             if isinstance(respawn_value, bool):
-                respawn = respawn_value
+                # Only keep True values; False is equivalent to None (no respawn)
+                if respawn_value:
+                    respawn = True
             else:
                 # Try to resolve substitution
                 respawn_str = substitute(respawn_value)
                 if respawn_str.lower() in ("true", "1", "yes"):
                     respawn = True
-                elif respawn_str.lower() in ("false", "0", "no", ""):
-                    respawn = False
+                # Treat false/empty as None (no respawn)
         except Exception as e:
             execute_process_logger = launch.logging.get_logger(node.name)
             execute_process_logger.warning(f"Unable to extract respawn parameter: {e}")
@@ -173,13 +238,22 @@ def visit_node(
     if "<node_name_unspecified>" in node_name:
         node_name = None
 
+    # Get exec_name - strip counter suffix (e.g., "talker-1" -> "talker")
+    # to match Rust parser behavior which doesn't include counters
+    exec_name = node.name
+    if exec_name and "-" in exec_name:
+        # Check if last part after '-' is a number (counter)
+        parts = exec_name.rsplit("-", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            exec_name = parts[0]
+
     record = NodeRecord(
         executable=executable,
         package=package,
         name=node_name,
         namespace=namespace,
-        exec_name=node.name,
-        cmd=node.cmd,
+        exec_name=exec_name,
+        cmd=cmd_strings,
         remaps=remaps,
         params=params,
         params_files=params_files,

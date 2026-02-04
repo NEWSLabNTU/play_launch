@@ -3,7 +3,7 @@
 use crate::{
     cli,
     cli::config::load_runtime_config,
-    execution::context::{prepare_node_contexts, NodeContextClasses},
+    execution::context::prepare_node_contexts,
     member_actor::{ActorConfig, MemberCoordinatorBuilder},
     monitoring::resource_monitor::MonitorConfig,
     process::{kill_all_descendants, kill_process_group},
@@ -14,7 +14,7 @@ use crate::{
 use eyre::WrapErr;
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -226,11 +226,7 @@ async fn run_direct(
     };
 
     // Prepare node execution contexts
-    let container_names = HashSet::new();
-    let NodeContextClasses {
-        container_contexts: _,
-        non_container_node_contexts: pure_node_contexts,
-    } = prepare_node_contexts(launch_dump, &node_log_dir, &container_names)?;
+    let pure_node_contexts = prepare_node_contexts(launch_dump, &node_log_dir)?;
 
     // Create MemberCoordinatorBuilder
     let mut builder = MemberCoordinatorBuilder::new();

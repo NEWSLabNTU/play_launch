@@ -4,23 +4,19 @@ use crate::{
     cli,
     cli::config::load_runtime_config,
     execution::context::{
-        prepare_composable_node_contexts, prepare_node_contexts, ComposableNodeContextSet,
-        NodeContextClasses,
+        prepare_composable_node_contexts, prepare_container_contexts, prepare_node_contexts,
+        ComposableNodeContextSet,
     },
     monitoring::resource_monitor::MonitorConfig,
     process::{kill_all_descendants, kill_process_group},
-    ros::{
-        container_readiness::SERVICE_DISCOVERY_HANDLE,
-        launch_dump::{load_launch_dump, NodeContainerRecord},
-    },
+    ros::{container_readiness::SERVICE_DISCOVERY_HANDLE, launch_dump::load_launch_dump},
     util::{log_dir::create_log_dir, logging::is_verbose},
     web,
 };
 use eyre::Context;
 use futures::stream::FuturesUnordered;
-use rayon::prelude::*;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -404,32 +400,12 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         None
     };
 
-    // Build a table of composable node containers
-    debug!("Building container names table...");
-    let container_names: HashSet<String> = launch_dump
-        .container
-        .par_iter()
-        .map(|record| {
-            let NodeContainerRecord { namespace, name } = record;
-            // Handle namespace ending with '/' to avoid double slashes
-            if namespace.ends_with('/') {
-                format!("{namespace}{name}")
-            } else {
-                format!("{namespace}/{name}")
-            }
-        })
-        .collect();
-    debug!(
-        "Container names table built with {} containers",
-        container_names.len()
-    );
-
-    // Prepare node execution contexts
+    // Prepare node and container execution contexts
     debug!("Preparing node execution contexts...");
-    let NodeContextClasses {
-        container_contexts,
-        non_container_node_contexts: pure_node_contexts,
-    } = prepare_node_contexts(&launch_dump, &node_log_dir, &container_names)?;
+    let pure_node_contexts = prepare_node_contexts(&launch_dump, &node_log_dir)?;
+
+    debug!("Preparing container execution contexts...");
+    let container_contexts = prepare_container_contexts(&launch_dump, &node_log_dir)?;
 
     // Prepare LoadNode request execution contexts
     let ComposableNodeContextSet { load_node_contexts } =
