@@ -15,8 +15,9 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for pe
 **Default**: Rust parser (`play_launch_parser` library)
 - **Performance**: 3-12x faster than Python parser
 - **Formats**: XML, YAML, Python launch files
-- **Compatibility**: 100% Autoware tested (310 unit tests)
+- **Compatibility**: 100% Autoware tested (310 parser unit tests)
 - **Behavior**: Fails immediately on error (no automatic fallback)
+- **Known Issues**: Minor discrepancies in exec_name, global parameters, and params_files (Phase 17 in progress)
 
 **Alternative**: Python parser (for maximum compatibility)
 ```bash
@@ -318,9 +319,11 @@ When killing play_launch or ros2 launch:
   ```
 - Use `just kill-orphans` to clean up stray ROS processes
 
-### Temporary Files
+### Temporary Files and Scripts
 - **ALWAYS** store temp files in `/home/aeon/repos/play_launch/tmp/` (gitignored)
 - **NEVER** use system `/tmp` for project-related files
+- **Create temporary scripts using Write tool**: Use `Write` to create scripts in `tmp/`, never inline Python/shell scripts in Bash commands
+- **Script naming**: Use descriptive names like `compare_parameters.py`, `analyze_nodes.sh`
 
 ### Logging Practices
 
@@ -481,6 +484,10 @@ SetEnvironmentVariable('VAR', [LaunchConfiguration('prefix'), '/suffix'])
 
 ## Key Recent Changes
 
+- **2026-02-06**: Context unification investigation and namespace fix - **Fixed namespace propagation** by identifying and resolving incompatible semantics between LaunchContext (fully-qualified stack) and ParseContext (segment-based stack). Implemented bidirectional namespace synchronization in `lib.rs::execute_python_file()`. Namespace now correct: `/perception/traffic_light_recognition/camera6/classification` ✅. **Architectural issue identified**: Two separate context structures cause synchronization complexity. Created Phase 17 roadmap (`docs/roadmap/phase-17-context_unification.md`) for unifying contexts into single structure. **Remaining discrepancies**: (1) exec_name using node name instead of executable, (2) namespace not used in `__ns:=` cmd argument, (3) global parameters missing in Rust output, (4) params_files mismatch, (5) executable path resolution differences. See Phase 17 roadmap for detailed work items and success criteria.
+- **2026-02-06**: Parser comparison and executable path resolution - Modified `./tmp/run_all_checks.sh` to dump and compare both Rust and Python parser outputs in Autoware test stage. Implemented `find_package_executable()` in bridge.rs to resolve full executable paths (searches AMENT_PREFIX_PATH and ROS_DISTRO locations) instead of using `ros2 run` commands. Fixed `exec_name` field to use executable name instead of node name.
+- **2026-02-06**: XML composable node YAML parameter loading - Fixed massive parameter loss in composable nodes (behavior_path_planner: 15 → 813 params). Modified `ComposableNodeAction::from_entity` in container.rs to call `extract_params_from_yaml()` when encountering `<param from="file.yaml"/>` elements. Loads and flattens ROS 2 YAML parameter files with `/**` wildcard and `ros__parameters` wrapper support. All three LoadNodeRecord creation paths now merge global parameters correctly. Achieves 100% parameter count parity with Python parser (813 params). Minor formatting differences remain (array spacing, string quoting).
+- **2026-02-04**: Composable node namespace normalization fix - Fixed LoadNode service "Couldn't parse remap rule: '-r __ns:=adapi/node'" errors in Autoware by ensuring all composable node namespaces have leading slashes. Modified `ComposableNode::capture_as_load_node` in launch_ros.rs to normalize namespaces for RCL compatibility. Fixed 16 load_node entries (adapi/node → /adapi/node, pointcloud_container → /pointcloud_container, etc.). All namespace-related LoadNode errors resolved, composable nodes now load successfully.
 - **2026-02-04**: Debug logging cleanup - Converted all 13 `eprintln!` debug statements in library code to proper `log::debug!` and `log::trace!` calls. Library code now uses structured logging via `RUST_LOG` environment variable. User-facing error messages in main.rs and test debug output preserved. All 310 tests pass.
 - **2026-02-04**: Runtime substitution resolution - Fixed pre-existing Autoware container startup issue where Python `LaunchConfiguration` objects created unresolved `$(var container_executable)` substitutions. Added runtime fallback in `node_cmdline.rs` to resolve substitutions before ament index lookup. Simple 3-line fix using existing `substitute_variables()` function. All 15 Autoware containers now start successfully. Zero breaking changes, backward compatible.
 - **2026-02-04**: `<let>` statement temporal ordering test - Added comprehensive test fixture (`test_let_ordering.launch.xml`) validating sequential parse-time resolution semantics. Test verifies that `<let>` statements immediately update context and subsequent `$(var)` substitutions see the new value. Confirms both Python and Rust parsers use correct temporal ordering. Documentation created explaining parse-time vs runtime resolution architecture. Test count: 310 (was 308).
@@ -488,7 +495,7 @@ SetEnvironmentVariable('VAR', [LaunchConfiguration('prefix'), '/suffix'])
 - **2026-02-03**: YAML parameter file substitution resolution - Fixed Autoware node failures caused by unresolved substitutions in YAML parameter files (e.g., `ekf_enabled: $(var ekf_enabled)` passed as literal string instead of boolean). Implemented `load_and_resolve_param_file()` in params.rs to recursively resolve all substitutions in YAML structure and convert resolved strings to proper YAML types (boolean, integer, float). Type conversion: `"true"/"false"` → bool, `"123"` → i64, `"123.45"` → f64, others → string. Fixes `parameter 'ekf_enabled' has invalid type` errors. All 308 tests pass, Autoware nodes start successfully.
 - **2026-02-01**: Phase 14 complete - Substitution Context Unification: Fixed nested substitution resolution by extracting launch_configurations from Python context and populating Rust LaunchContext. Enables proper resolution of `$(var other_var)` patterns where `other_var` contains substitutions. Helper functions: `create_context_from_python()`, `resolve_substitution_string()`. All 297 tests pass, Autoware validated.
 - **2026-02-01**: Security updates - Upgraded `lru` from 0.12 to 0.16.3 (fixes RUSTSEC-2026-0002 IterMut soundness issue). PyO3 upgrade to 0.24.1 deferred due to 268 breaking API changes; vulnerable function `PyString::from_object` not used in codebase.
-- **2026-02-01**: Comprehensive test script - Added `tmp/run_all_checks.sh` with timeouts on all tests: (1) Root quality (5min), (2) Parser quality (3min), (3) Simple test (10s), (4) Autoware simulation (30s), (5) LCTK demo (30s). Prevents infinite hangs, proper exit code handling.
+- **2026-02-01**: Comprehensive test script - Added `tmp/run_all_checks.sh` with timeouts on all tests: (1) Root quality (5min), (2) Parser quality (3min), (3) Simple test (10s), (4) Autoware parser comparison (dumps both parsers and compares outputs, 60s), (5) LCTK demo (30s). Prevents infinite hangs, proper exit code handling. Updated 2026-02-06 to use parser comparison instead of runtime simulation test.
 - **2026-02-01**: Substitution evaluation improvements - (1) Added PythonExpression.perform() to evaluate Python conditional expressions in parameters (fixes "Couldn't parse parameter override rule" errors with IfElse expressions). (2) Fixed float type preservation: floats now output with decimal point (e.g., "0.0" not "0") to prevent ROS INTEGER vs DOUBLE type errors. (3) Extended evaluating substitutions to include FileContent and PathJoinSubstitution for proper nested substitution resolution. (4) Parser evaluates conditional logic and processes only the selected path, not all paths. LaunchConfiguration substitutions preserved as $(var name) for replay-time resolution.
 - **2026-01-31**: Phase 15 complete - Python API Type Safety improvements for SetEnvironmentVariable, AppendEnvironmentVariable, ExecuteProcess, and Node.arguments to accept PyObject instead of String, enabling full SomeSubstitutionsType compatibility (handles strings, substitutions, and lists)
 - **2026-01-31**: Fixed Python launch argument substitutions - Launch arguments now resolve substitutions ($(find-pkg-share), $(var), etc.) before passing to nested Python files, preventing FileNotFoundError with unresolved paths
