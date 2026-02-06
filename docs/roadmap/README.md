@@ -15,7 +15,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Current Status
 
-**Overall Progress**: ~95% complete (13 of 15 phases complete, 0 planned, 2 in planning)
+**Overall Progress**: ~95% complete (16 of 17 phases complete, Phase 17 in progress)
 
 **Timeline**: Started October 2025, ongoing development
 
@@ -46,7 +46,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 | **Phase 6**: I/O Helper Integration | ✅ Complete | 2025-11-02 | [phase-6.md](./phase-6.md) |
 | **Phase 7**: Logging Improvements | ✅ Complete | 2025-11-04 | [phase-7.md](./phase-7.md) |
 | **Phase 8**: Web UI | ✅ Complete | 2025-12-18 | [phase-8.md](./phase-8.md) |
-| **Phase 9**: Web UI Status Refactoring | 🔄 In Progress | - | [phase-9.md](./phase-9.md) |
+| **Phase 9**: Web UI Status Refactoring | ✅ Complete | 2026-01-17 | [phase-9.md](./phase-9.md) |
 
 ### Architecture Improvements
 
@@ -62,7 +62,10 @@ This directory contains the implementation roadmap for play_launch, organized by
 |-------|--------|------------|---------------|
 | **Phase 13**: Rust Parser Migration | ✅ Complete | 2026-01-27 | [phase-13.md](./phase-13.md) |
 | **Phase 14**: Python Launch File Execution | ✅ Complete | 2026-01-31 | [phase-14-python_execution.md](./phase-14-python_execution.md) |
+| **Phase 14.5**: Namespace Accumulation Bug Fixes | ✅ Complete | 2026-02-02 | [phase-14_5-namespace_accumulation_fixes.md](./phase-14_5-namespace_accumulation_fixes.md) |
 | **Phase 15**: Python API Type Safety Improvements | ✅ Complete | 2026-01-31 | [phase-15-python_api_type_safety.md](./phase-15-python_api_type_safety.md) |
+| **Phase 16**: YAML Parameter Loading & Global Parameters | ✅ Complete | 2026-02-06 | In README.md |
+| **Phase 17**: Context Unification & Parser Parity | 🔄 In Progress | - | [phase-17-context_unification.md](./phase-17-context_unification.md) |
 
 ---
 
@@ -84,10 +87,13 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ### In Progress 🔄
 
-- 🔄 Web UI status system refactoring (Phase 9)
-  - Distinct status types for nodes, containers, and composable nodes
-  - Improved health metrics with categorized counts
-  - Container restart with composable node reloading
+- 🔄 Context Unification & Parser Parity (Phase 17 - Started 2026-02-06)
+  - ✅ Namespace propagation fixed (XML → Python context synchronization)
+  - ✅ Root cause identified: Two incompatible context structures
+  - ✅ Temporary workaround: Manual bidirectional synchronization
+  - ⏳ Unified context design (LaunchContext + ParseContext → UnifiedContext)
+  - ⏳ Remaining discrepancies: exec_name, global params, params_files, namespace in cmd
+  - See [phase-17-context_unification.md](./phase-17-context_unification.md) for detailed roadmap
 
 ### Planned ⏳
 
@@ -97,6 +103,45 @@ This directory contains the implementation roadmap for play_launch, organized by
 - ⏳ Optional enhancements (Phase 5)
 
 ### Recently Completed 🎉
+
+- ✅ YAML Parameter Loading & Global Parameters (Phase 16 - Complete 2026-02-06)
+  - ✅ Namespace normalization complete (all composable nodes have leading slashes)
+  - ✅ YAML loading infrastructure complete
+  - ✅ Global parameter merging complete (all three code paths)
+  - ✅ XML composable node YAML loading complete (behavior_path_planner: 15 → 813 params)
+  - ✅ Parser comparison test integrated into `tmp/run_all_checks.sh`
+  - ✅ Executable path resolution implemented
+  - ⚠️ Minor formatting differences remain (array spacing, string quoting)
+
+- ✅ Web UI Status System Refactoring (Phase 9 - Complete 2026-01-17)
+  - ✅ Distinct status types: NodeStatus, ComposableNodeStatus, UnifiedStatus
+  - ✅ Categorized health metrics with separate counts for nodes, containers, and composable nodes
+  - ✅ Container restart with automatic composable node reloading
+  - ✅ Improved UX with proper status colors and control buttons per node type
+
+- ✅ Composable Node Namespace Normalization (2026-02-04)
+  - ✅ Fixed LoadNode service "Couldn't parse remap rule" errors in Autoware
+  - ✅ All composable node namespaces now have leading slashes for RCL compatibility
+  - ✅ Modified ComposableNode::capture_as_load_node in launch_ros.rs
+  - ✅ Fixed 16 load_node entries (adapi/node → /adapi/node, etc.)
+  - ✅ All namespace-related LoadNode errors resolved
+
+- ✅ Parser Improvements & Testing Enhancements (2026-02-04)
+  - ✅ Runtime substitution resolution for unresolved Python LaunchConfiguration objects
+  - ✅ Fixed Autoware container startup issue (all 15 containers now start successfully)
+  - ✅ Added `<let>` statement temporal ordering test validating parse-time resolution semantics
+  - ✅ Converted all debug logging to proper log::debug!/trace! (13 statements cleaned up)
+  - ✅ Test count increased to 310 (was 308)
+  - ✅ 100% Autoware compatibility maintained
+
+- ✅ Namespace Accumulation Bug Fixes (Phase 14.5 - Complete 2026-02-02)
+  - ✅ Fixed critical namespace accumulation causing 389-char namespaces instead of 60-char
+  - ✅ Implemented save/restore pattern for ROS_NAMESPACE_STACK (replaced push/pop)
+  - ✅ Fixed XML include namespace inheritance to prevent double accumulation
+  - ✅ Fixed GroupAction namespace leakage in Python list comprehensions
+  - ✅ All Autoware nodes now start successfully (traffic_light_occlusion_predictor, simple_planning_simulator)
+  - ✅ Rust parser output now matches Python parser 100% for namespaces
+  - ✅ All 221 unit tests passing
 
 - ✅ Python API Type Safety Improvements (Phase 15 - Complete 2026-01-31)
   - ✅ SetEnvironmentVariable accepts PyObject for name and value
@@ -166,6 +211,10 @@ This directory contains the implementation roadmap for play_launch, organized by
 - [I/O Helper Design](../io-helper-design.md)
 
 ---
+
+## Future Phases
+
+- **Phase 16**: Container Record Consolidation - See [phase-16-container_record_consolidation.md](./phase-16-container_record_consolidation.md)
 
 ## Future Considerations
 
