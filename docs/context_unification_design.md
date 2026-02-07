@@ -229,45 +229,62 @@ This eliminates 2 `Lazy<Arc<Mutex<...>>>` globals and their sync code.
 
 ## 6. Migration Strategy
 
-### Phase 1: Create UnifiedContext (Phase 17.2)
+### Phase 1: Extend LaunchContext with captures (Phase 17.2) ✅ COMPLETE
 
-1. Copy `LaunchContext` to `UnifiedContext` in a new file `src/context/unified.rs` (or just update `src/context.rs`)
-2. Add capture fields from `ParseContext`
-3. Add capture methods (capture_node, captured_nodes, etc.)
-4. Implement all existing `LaunchContext` methods
-5. Write comprehensive tests
-6. **Both old types still exist** — no breaking changes yet
+Rather than creating a separate `UnifiedContext` type, we extend `LaunchContext` directly
+with capture fields. This avoids a rename/migration of every import and keeps the changes minimal.
 
-### Phase 2: Migrate XML Parser (Phase 17.3)
+**What was done**:
+1. Created `src/captures.rs` — extracted `NodeCapture`, `ContainerCapture`, `LoadNodeCapture`, `IncludeCapture` struct definitions from `python/bridge.rs` into a neutral top-level module (eliminates `substitution → python` circular dependency)
+2. Updated all imports (6 files: `context.rs`, `bridge.rs`, `node.rs`, `executable.rs`, `load_composable_node.rs`, `launch_ros.rs`, `actions.rs`) to use `crate::captures::*`
+3. Added 4 capture fields to `LaunchContext`: `captured_nodes`, `captured_containers`, `captured_load_nodes`, `captured_includes`
+4. Added 12 capture methods to `LaunchContext` (matching ParseContext's API): `capture_node()`, `captured_nodes()`, `captured_nodes_mut()`, etc.
+5. Captures are **local only** — `child()` starts with empty captures (not inherited via `ParentScope`)
+6. Wrote 7 unit tests: capture node/container/load_node/include, multiple entities, child isolation, mutable clear
+7. All 317 tests pass (309 existing + 8 new), zero clippy warnings
 
-1. Replace `LaunchContext` with `UnifiedContext` in `LaunchTraverser`
-2. Remove `parse_context` field from `LaunchTraverser`
-3. Update `traverse_entity()` to capture to `context` directly
-4. Update `into_record_json()` to read captures from `context`
-5. Update all action files that reference `LaunchContext`
-6. Run all 310+ tests
+**Key design decisions**:
+- No new type: `LaunchContext` gains captures directly, avoiding import churn
+- `ParentScope` unchanged: captures don't participate in scope chain inheritance
+- `to_record()` impls stay in `bridge.rs`: they still depend on `GLOBAL_PARAMETERS` (cleaned up in Phase 4)
+- `captures.rs` is a neutral module importable by both `substitution/` and `python/`
 
-### Phase 3: Migrate Python API (Phase 17.4)
+### Phase 2+3: Migrate XML + Python to LaunchContext (Phase 17.3 + 17.4) ✅ COMPLETE
 
-1. Update thread-local to store `*mut UnifiedContext`
-2. Update all `with_parse_context()` calls to `with_context()`
-3. Python API captures go directly to `UnifiedContext`
-4. **No namespace conversion needed** — same type, same semantics
-5. Run all Python tests
+Phases 17.3 and 17.4 were implemented together since they are tightly coupled.
 
-### Phase 4: Remove Synchronization (Phase 17.5)
+**What was done**:
+1. `bridge.rs`: Changed thread-local from `*mut ParseContext` to `*mut LaunchContext`
+2. `bridge.rs`: Renamed `set_current_parse_context` → `set_current_launch_context`, etc.
+3. `bridge.rs`: Renamed `with_parse_context` → `with_launch_context` (same API, different type)
+4. `bridge.rs`: **Critical namespace fix** — removed "/" prefix normalization in `push_ros_namespace()`. LaunchContext handles relative/absolute semantics correctly; the old bridge normalization would have made relative namespaces absolute.
+5. `bridge.rs`: Updated all capture and namespace functions to use `with_launch_context`
+6. `lib.rs`: Removed `parse_context: ParseContext` field from `LaunchTraverser`
+7. `lib.rs`: Updated `execute_python_file()` — removed all namespace sync code (both directions), set thread-local to `&mut self.context`
+8. `lib.rs`: Updated `traverse_entity("push/pop-ros-namespace")` — only `self.context` (no dual context sync)
+9. `lib.rs`: Updated `traverse_entity("load_composable_node")` — capture to `self.context`
+10. `lib.rs`: Updated `process_include()` and `process_xml_include_with_namespace()` — merge captures from child `context` not `parse_context`
+11. `lib.rs`: Updated `process_includes_parallel()` — no `parse_context` in child traverser
+12. `lib.rs`: Updated `into_record_json()` — read captures from `self.context`
+13. Kept `pub use context::ParseContext` for backward compatibility
+14. All 316 tests pass, zero clippy warnings, entity counts match (46/15/54)
+
+**Key elimination**: The namespace synchronization code is completely removed. Previously, `execute_python_file()` had 20+ lines converting between LaunchContext's fully-qualified stack and ParseContext's segment-based stack. With unified context, Python operates directly on LaunchContext — no conversion needed.
+
+### Phase 4: Remove synchronization and ParseContext (Phase 17.5)
 
 1. Remove namespace sync in `execute_python_file()` (6 sync points → 0)
-2. Remove `LAUNCH_CONFIGURATIONS` global — Python reads from `UnifiedContext`
-3. Remove `GLOBAL_PARAMETERS` global — Python writes to `UnifiedContext`
-4. Remove `ParseContext` entirely
-5. Remove old `LaunchContext` (if renamed to UnifiedContext)
+2. Remove `LAUNCH_CONFIGURATIONS` global — Python reads from `LaunchContext` via thread-local
+3. Remove `GLOBAL_PARAMETERS` global — Python writes to `LaunchContext` via thread-local
+4. Remove `ParseContext` entirely (`src/context.rs`)
+5. Update `to_record()` impls to take global params as parameter instead of reading from global
+6. Run all tests + Autoware comparison
 
 ### Rollback Strategy
 
 Each phase is independently testable. If a phase breaks tests:
-1. **Phase 2 rollback**: Revert XML migration, keep `UnifiedContext` + `LaunchContext`
-2. **Phase 3 rollback**: Revert Python migration, keep XML on `UnifiedContext`
+1. **Phase 2 rollback**: Revert XML migration, LaunchContext captures are unused but harmless
+2. **Phase 3 rollback**: Revert Python migration, keep XML on LaunchContext captures
 3. **Phase 4 rollback**: Keep sync code temporarily while fixing edge cases
 
 The key safety net is that 310+ parser tests + Autoware comparison will catch any regression.

@@ -1,359 +1,155 @@
-# Phase 17: Context Unification and Parser Parity Completion
+# Phase 17: Context Unification
 
-**Status**: 🔄 In Progress (Investigation)
+**Status**: Phases 17.1–17.6 complete, 17.7 (remaining parity) next
 **Started**: 2026-02-06
-**Priority**: High (Affects parser correctness)
-**Complexity**: Medium-High (Architectural refactoring)
+**Priority**: High (Affects parser correctness and maintainability)
 
 ## Overview
 
-Unify the two separate context structures (LaunchContext and ParseContext) that have incompatible semantics, causing synchronization issues between XML and Python launch file parsing. Complete remaining parser discrepancies to achieve 100% Rust-Python parity.
+Unify all parser state into a single `LaunchContext` structure, eliminating global statics and the duplicate `ParseContext` type. Then fix remaining parser discrepancies to achieve full Rust–Python parity.
 
-## Problem Statement
+## Completed Work
 
-Currently, the Rust parser uses two separate context structures:
+### Phase 17.1: Architecture Design (COMPLETE)
 
-1. **LaunchContext** (`src/substitution/context.rs`)
-   - Used by: XML parsing, substitution resolution
-   - Namespace stack: Contains fully-qualified namespaces
-   - Namespace retrieval: Returns last element
-   - Example stack: `["/", "/perception", "/perception/traffic_light_recognition"]`
-   - Current namespace: `/perception/traffic_light_recognition`
+Delivered `docs/context_unification_design.md` with field mapping, migration plan, and decision to use LaunchContext's fully-qualified namespace semantics.
 
-2. **ParseContext** (`src/context.rs`)
-   - Used by: Python API via thread-local storage
-   - Namespace stack: Contains relative segments
-   - Namespace retrieval: Joins all elements
-   - Example stack: `["", "/perception", "/traffic_light_recognition"]`
-   - Current namespace: `/perception/traffic_light_recognition` (after join)
+### Phase 17.2: LaunchContext Extended (COMPLETE)
 
-**Issues**:
-- **Incompatible semantics** require manual synchronization
-- **Error-prone** context switching between XML and Python
-- **Duplication** of configuration/parameter/environment storage
-- **Maintenance burden** keeping two systems in sync
+Created `src/captures.rs` module with `NodeCapture`, `ContainerCapture`, `LoadNodeCapture`, `IncludeCapture`. Added 4 capture fields + 12 methods to LaunchContext. Captures are local-only (not inherited by `child()`).
 
-## Discovery Timeline
+### Phase 17.3 + 17.4: Unified Context Migration (COMPLETE)
 
-**2026-02-06**:
-1. Initial investigation revealed namespace propagation failure from XML to Python
-2. Root cause identified: Two separate context structures with incompatible stack semantics
-3. Temporary fix implemented: Manual synchronization in `lib.rs::execute_python_file()`
-   - Convert fully-qualified namespace to segment-based before Python execution
-   - Convert back to fully-qualified after Python execution
-4. Namespace issue resolved, but underlying architectural problem remains
+- `LaunchTraverser.parse_context` field removed; uses single `context: LaunchContext`
+- Thread-local changed from `ParseContext` to `*mut LaunchContext`
+- All namespace sync code removed from `execute_python_file()`
+- All capture/namespace operations use `self.context` only
 
-## Goals
+### Phase 17.5: Global Static Removal — GLOBAL_PARAMETERS (COMPLETE)
 
-### Primary Goal
-✅ **Unified Context Structure**: Single context type used by both XML and Python parsers with consistent semantics
+- `GLOBAL_PARAMETERS` static deleted from `bridge.rs`
+- `SetParameter` writes to LaunchContext via `with_launch_context()`
+- `to_record()` methods accept `&Option<Vec<(String, String)>>` instead of reading globals
+- XML actions read global params from context parameter
+- `ParseContext` type deleted (`context.rs` removed, `pub use` removed)
+- 306 tests pass, zero clippy warnings
 
-### Secondary Goals
-1. ✅ **100% Parser Parity**: Rust parser output matches Python parser exactly
-2. ✅ **Simplified Architecture**: Eliminate synchronization code
-3. ✅ **Type Safety**: Compile-time guarantees for context operations
-4. ✅ **Maintainability**: Single source of truth for context state
+### Phase 17.5.5: Eliminate LAUNCH_CONFIGURATIONS (COMPLETE)
 
-## Work Items
+Removed the last global static. All 10 usage sites (2 writers, 8 readers) migrated to `with_launch_context()`. `PythonLaunchExecutor` simplified to unit struct, `parking_lot` dependency removed. 306 tests pass, zero clippy warnings.
 
-### Phase 17.1: Context Analysis and Design (1-2 days)
+### Phase 17.6: Parser Parity Fixes (COMPLETE)
 
-**Tasks**:
-- [ ] Audit all LaunchContext usage in XML parsing
-- [ ] Audit all ParseContext usage in Python API
-- [ ] Document all fields in both contexts and their purposes
-- [ ] Identify overlapping fields vs unique fields
-- [ ] Design unified context structure
-- [ ] Choose namespace stack semantic (fully-qualified vs segments)
-- [ ] Plan migration strategy
+Fixed 6 concrete bugs in record generation. All 306 tests pass.
 
-**Deliverables**:
-- Architecture document: `docs/context_unification_design.md`
-- Field mapping table (LaunchContext ↔ ParseContext)
-- Migration checklist
+#### Changes Made
 
-**Success Criteria**:
-- [ ] All context fields documented with usage examples
-- [ ] Unified context design approved (handles both XML and Python needs)
-- [ ] Migration plan with rollback strategy defined
+**`record/generator.rs`** — Fixes 1, 3, 4, 5, 6:
+- **Fix 1**: `exec_name` always uses `executable` (was preferring node `name`)
+- **Fix 3**: `__ns` only added to cmd when namespace is non-root (was always `__ns:=/`)
+- **Fix 4**: Global parameters added as `-p key:=value` entries in cmd
+- **Fix 5**: `--params-file` entries added to cmd for non-temp param files
+- **Fix 6**: `resolve_executable_path()` uses `find_package_executable()` with fallback
+- **Refactor**: `generate_node_record()` builds cmd inline via `build_node_command()` using already-resolved values; `generate_node_command()` delegates to `generate_node_record()`
 
-### Phase 17.2: Unified Context Implementation (2-3 days)
+**`python/bridge.rs`** — Fix 2 + shared helper:
+- **Fix 2**: Container `exec_name` uses `self.name` (was `format!("{}-1", executable)`)
+- `find_package_executable()` changed to `pub(crate)` for cross-module use
+- Container cmd: exec path uses `find_package_executable()` with fallback; `__ns` only added when non-root
 
-**Tasks**:
-- [ ] Create new `UnifiedContext` struct (or rename one of the existing)
-- [ ] Standardize namespace stack semantic
-  - **Recommended**: Fully-qualified (simpler, matches ROS 2 behavior)
-  - Each push concatenates with current namespace
-  - Single `current_namespace()` returns last element
-- [ ] Merge configuration storage (launch_configurations)
-- [ ] Merge environment variables
-- [ ] Merge global parameters
-- [ ] Add methods for both XML and Python use cases
-- [ ] Implement comprehensive tests for all operations
+**`actions/container.rs`** — Consistent with above:
+- Both `to_container_record()` and `to_node_record()`: exec path via `find_package_executable()`; `__ns` only added when non-root
 
-**Deliverables**:
-- New context implementation in `src/context/unified.rs` or updated `src/context.rs`
-- Unit tests covering all context operations
-- Documentation for public API
+#### Autoware Verification (46 nodes, 15 containers, 54 load_nodes)
 
-**Success Criteria**:
-- [ ] All LaunchContext operations work with UnifiedContext
-- [ ] All ParseContext operations work with UnifiedContext
-- [ ] Namespace push/pop behavior consistent
-- [ ] 100% test coverage for context operations
-- [ ] Zero unsafe code
+| Fix                               | Metric                             | Result                   |
+|-----------------------------------|------------------------------------|--------------------------|
+| Fix 1: exec_name = executable     | exec_name matches executable field | **46/46**                |
+| Fix 2: container exec_name = name | Old `-1` format eliminated         | **0/15** have old format |
+| Fix 3: `__ns:=/` eliminated       | Root namespace in cmd              | **0/46** (was 46/46)     |
+| Fix 4: global params in cmd       | Nodes with `use_sim_time` in cmd   | **32/46**                |
+| Fix 5: `--params-file` in cmd     | Nodes with `--params-file`         | **19/46** (was 0)        |
+| Fix 6: exec path resolution       | Resolved via AMENT_PREFIX_PATH     | **44/46** (was 0)        |
 
-### Phase 17.3: XML Parser Migration (1-2 days)
+## Phase 17.7: Remaining Parser Parity Gaps
 
-**Tasks**:
-- [ ] Update XML parser to use UnifiedContext
-- [ ] Remove LaunchContext references
-- [ ] Update substitution resolution to use UnifiedContext
-- [ ] Update include processing
-- [ ] Fix any namespace-related issues
-- [ ] Run XML parsing tests
+Entity counts match (46 nodes, 15 containers, 54 load_nodes). No exact node matches yet — every node has at least one remaining difference. The remaining gaps fall into 6 categories.
 
-**Deliverables**:
-- Updated XML parser using UnifiedContext
-- Updated substitution resolver
+### 1. Global params missing from 14 XML nodes' cmd
 
-**Success Criteria**:
-- [ ] All XML parsing tests pass (260+ tests)
-- [ ] Simple test comparison passes (Rust vs Python)
-- [ ] No LaunchContext references remain in XML code
+**Affected**: 14/46 nodes (the 32 Python-captured nodes are correct)
 
-### Phase 17.4: Python API Migration (1-2 days)
+**Root cause**: XML nodes are parsed into `NodeRecord` inline via `generate_node_record()`. At parse time, `context.global_parameters()` may be empty because `SetParameter` actions run in Python launch files included later. The `global_params` record field is backfilled for captures in `into_record_json()`, but the cmd is built at parse time and never updated.
 
-**Tasks**:
-- [ ] Update Python API to use UnifiedContext
-- [ ] Remove ParseContext references
-- [ ] Update thread-local context storage
-- [ ] Update bridge.rs to use UnifiedContext
-- [ ] Fix Node/Container/ComposableNode capture
-- [ ] Run Python parsing tests
+**Fix approach**: Either (a) rebuild cmd for XML NodeRecords during the backfill step in `into_record_json()`, or (b) defer cmd generation entirely until all parsing is complete. Option (a) is simpler — iterate XML records and insert `-p key:=value` entries before the cmd's end.
 
-**Deliverables**:
-- Updated Python API using UnifiedContext
-- Updated bridge.rs
+### 2. Namespace field differs for 23 nodes
 
-**Success Criteria**:
-- [ ] All Python parsing tests pass (15+ tests)
-- [ ] Python launch files execute correctly
-- [ ] Nodes captured with correct namespace
-- [ ] No ParseContext references remain in Python code
+**Affected**: 23/46 nodes
 
-### Phase 17.5: Context Synchronization Cleanup (0.5 days)
+**Breakdown**:
+- 15 have different namespace values (e.g., Rust=`/` vs Python=`/system`)
+- 4 Rust has None where Python has a namespace
+- 4 Rust has a namespace where Python has None
 
-**Tasks**:
-- [ ] Remove manual namespace synchronization from `execute_python_file()`
-- [ ] Remove namespace conversion logic
-- [ ] Simplify XML-to-Python transition
-- [ ] Add debug logging for context state
+**Root cause**: XML namespace resolution doesn't fully propagate group/include namespace context. Python launch files set namespace via `PushRosNamespace` which updates the thread-local LaunchContext, but the resolved namespace at parse time for XML nodes may not reflect the full include chain.
 
-**Deliverables**:
-- Simplified `lib.rs::execute_python_file()`
-- Removed synchronization code
+**Fix approach**: Investigate how namespace context flows through XML include chains. The namespace should accumulate through `<group>` and `<include>` scoping in the same way Python's `PushRosNamespace` does.
 
-**Success Criteria**:
-- [ ] No manual context copying between XML and Python
-- [ ] Single context flows through entire parsing pipeline
-- [ ] Debug logging shows correct namespace throughout
+### 3. exec_name differs for 36 nodes
 
-### Phase 17.6: Remaining Parser Discrepancies (1-2 days)
+**Affected**: 36/46 nodes
 
-**Tasks**:
-- [ ] Fix exec_name field (should use executable, not node name)
-  - Currently: `exec_name: self.name.clone()`
-  - Should be: `exec_name: Some(self.executable.clone())`
-  - Location: `src/python/bridge.rs:76`
-- [ ] Fix namespace in command line generation
-  - Issue: `__ns:=/` instead of `__ns:=/perception/traffic_light_recognition/camera6/classification`
-  - Root cause: `generate_command()` uses `self.namespace` but it's not set correctly
-  - Location: `src/python/bridge.rs::generate_command()`
-- [ ] Add global parameters to Rust node output
-  - Python nodes include vehicle parameters (wheel_radius, etc.)
-  - Rust nodes missing these parameters
-  - Location: `src/python/bridge.rs::generate_command()` line 150-156
-- [ ] Investigate params_files discrepancy
-  - Rust: References map_projector_info.yaml
-  - Python: References actual node parameter file
-  - May be related to YAML parameter loading logic
-- [ ] Investigate executable path resolution
-  - Rust: Uses `/opt/ros/humble/lib/...`
-  - Python: Uses workspace-specific `/home/.../install/.../lib/...`
-  - Issue: AMENT_PREFIX_PATH search order or caching
-  - Location: `src/python/bridge.rs::find_package_executable()`
+**Breakdown**:
+- 7 nodes: Rust executable missing `_node` suffix (e.g., `traffic_light_map_based_detector` vs `traffic_light_map_based_detector_node`)
+- 29 nodes: Other naming differences between Rust's `executable` field and Python's `exec_name`
 
-**Deliverables**:
-- Fixed exec_name generation
-- Fixed namespace in command line
-- Global parameters included in all nodes
-- Params_files using correct files
-- Executable paths matching Python parser
+**Root cause**: Fix 1 correctly changed exec_name to always use the `executable` field. But the `executable` field itself differs from Python for these nodes — either the XML `exec` attribute is being parsed differently, or Python resolves executable names through a different mechanism (e.g., package metadata lookup).
 
-**Success Criteria**:
-- [ ] Autoware comparison passes with zero discrepancies
-- [ ] All node fields match between Rust and Python parsers
-- [ ] Command lines identical except for path normalization
+**Fix approach**: Compare how Rust extracts the `exec` attribute from XML vs how Python's `Node` class resolves the executable name. May need to match Python's resolution logic.
 
-### Phase 17.7: Validation and Testing (1 day)
+### 4. params_files content differs for 28 nodes
 
-**Tasks**:
-- [ ] Run full test suite (310+ tests)
-- [ ] Run Autoware comparison test
-- [ ] Run simple_test comparison
-- [ ] Run LCTK demo comparison
-- [ ] Performance benchmarking (ensure no regression)
-- [ ] Update documentation
+**Affected**: 28/46 nodes
 
-**Deliverables**:
-- Test results summary
-- Performance comparison (before/after)
-- Updated CLAUDE.md
+**Root cause**: Two distinct sub-issues:
+- **Representation**: Rust stores resolved YAML content in `params_files[]`; Python extracts YAML params as inline `params[]` entries. Same data, different location.
+- **Wrong file**: Some nodes reference a different YAML file entirely (e.g., map config instead of node-specific config). This indicates incorrect param file path resolution during include processing.
 
-**Success Criteria**:
-- [ ] All 310+ parser tests pass
-- [ ] Autoware comparison: 0 discrepancies
-- [ ] Simple test comparison: 0 discrepancies
-- [ ] No performance regression (< 5% slowdown acceptable)
-- [ ] Documentation updated
+**Fix approach**: Align param file handling — either extract YAML to inline params (matching Python) or keep as files but ensure the correct file paths are resolved. The Python parser's `file_data` field (19 entries, empty in Rust) is related — it stores the raw param file contents.
 
-## Success Criteria (Overall)
+### 5. Container ordering mismatch (9 containers shifted)
 
-### Must Have
-- [ ] Single context structure used by both XML and Python
-- [ ] No manual synchronization code
-- [ ] All 310+ tests pass
-- [ ] Autoware comparison: 0 discrepancies
+**Affected**: 9/15 containers (C4–C12)
 
-### Should Have
-- [ ] Performance maintained or improved
-- [ ] Code complexity reduced (fewer lines of context management code)
-- [ ] Clear documentation of unified context API
+**Symptom**: Container exec_names are correct individually but shifted by one position. Container 4 in Rust = Container 5 in Python, etc.
 
-### Nice to Have
-- [ ] Migration guide for external users (if any)
-- [ ] Debug tooling for context inspection
+**Root cause**: A container is captured at a different position in the parsing sequence between Rust and Python. Likely one container is captured during XML processing in Rust but during Python processing in Python (or vice versa), causing all subsequent containers to shift.
 
-## Remaining Parser Discrepancies (Detailed)
+**Fix approach**: Compare the capture order of containers between parsers. Identify which container appears at a different position and why. May be related to include processing order.
 
-Based on Autoware comparison test (2026-02-06):
+### 6. Executable path fallback for 2 nodes
 
-### 1. exec_name Field (All Nodes)
-**Issue**: Uses node name instead of executable name
-**Example**:
-```
-Rust:   exec_name: "traffic_light_occlusion_predictor"
-Python: exec_name: "traffic_light_occlusion_predictor_node"
-```
-**Impact**: High - Affects all 46 nodes
-**Fix Complexity**: Low - Single line change in bridge.rs:76
+**Affected**: 2/46 nodes still use `/opt/ros/humble/lib/` fallback
 
-### 2. Namespace in Command Line (All Nodes)
-**Issue**: `__ns:=/` instead of actual namespace
-**Example**:
-```
-Rust:   '-r', '__ns:=/'
-Python: '-r', '__ns:=/perception/traffic_light_recognition/camera6/classification'
-```
-**Impact**: High - Affects runtime behavior
-**Fix Complexity**: Medium - Need to pass namespace to generate_command()
+**Root cause**: These 2 packages are not installed in any AMENT_PREFIX_PATH location. Either the package name doesn't match the installed directory, or the executable name doesn't match the installed binary.
 
-### 3. Global Parameters Missing (All Nodes)
-**Issue**: Vehicle dimension parameters not included in Rust output
-**Example**:
-```
-Python has: '-p', 'wheel_radius:=0.383', '-p', 'wheel_base:=2.79', ...
-Rust missing these parameters
-```
-**Impact**: Medium - May affect node behavior if nodes rely on these
-**Fix Complexity**: Low - Already implemented, may not be passed correctly
+**Fix approach**: Log which packages fail resolution and verify against the actual filesystem. Low priority — affects only path format, not functionality.
 
-### 4. params_files Content Mismatch (Specific Nodes)
-**Issue**: Different YAML files referenced
-**Example** (traffic_light_occlusion_predictor):
-```
-Rust:   map_projector_info.yaml + lanelet2_map.osm paths
-Python: Actual node parameters (azimuth_occlusion_resolution_deg, etc.)
-```
-**Impact**: Medium - Wrong configuration loaded
-**Fix Complexity**: Medium - YAML parameter loading logic issue
+### Priority Order
 
-### 5. Executable Path Resolution (All Nodes)
-**Issue**: Different installation paths
-**Example**:
-```
-Rust:   /opt/ros/humble/lib/package/executable
-Python: /home/.../workspace/install/package/lib/package/executable
-```
-**Impact**: Low - Both should work, but inconsistent
-**Fix Complexity**: Low - Adjust search order in find_package_executable()
-
-## Risks and Mitigation
-
-### Risk 1: Breaking Existing Functionality
-**Probability**: Medium
-**Impact**: High
-**Mitigation**:
-- Comprehensive test coverage before changes
-- Incremental migration (XML first, then Python)
-- Keep old contexts temporarily for comparison
-- Extensive validation on real launch files
-
-### Risk 2: Performance Regression
-**Probability**: Low
-**Impact**: Medium
-**Mitigation**:
-- Benchmark before/after
-- Profile critical paths
-- Optimize unified context operations
-- Use Arc/Cow for efficient cloning if needed
-
-### Risk 3: Semantic Mismatches
-**Probability**: Medium
-**Impact**: High
-**Mitigation**:
-- Thorough analysis of both context semantics
-- Document all edge cases
-- Extensive testing with complex launch files
-- Validate with Autoware (46 nodes, 15 containers, 54 composables)
-
-## Dependencies
-
-- None (self-contained refactoring)
-
-## Timeline Estimate
-
-**Total**: 8-13 days
-
-- Phase 17.1 (Analysis): 1-2 days
-- Phase 17.2 (Implementation): 2-3 days
-- Phase 17.3 (XML Migration): 1-2 days
-- Phase 17.4 (Python Migration): 1-2 days
-- Phase 17.5 (Cleanup): 0.5 days
-- Phase 17.6 (Discrepancies): 1-2 days
-- Phase 17.7 (Validation): 1 day
-
-**Buffer**: 2-3 days for unexpected issues
-
-## Related Issues
-
-- Parser comparison failing with namespace mismatches (Fixed 2026-02-06)
-- Manual synchronization in execute_python_file (To be removed)
-- Duplicate context maintenance burden (To be eliminated)
+1. **Global params in XML cmd** (14 nodes) — Backfill during `into_record_json()`, straightforward
+2. **Namespace resolution** (23 nodes) — Deepest architectural issue, highest parity impact
+3. **params_files representation** (28 nodes) — Align with Python's inline extraction
+4. **Container ordering** (9 containers) — Find the shifted container
+5. **exec_name resolution** (36 nodes) — Match Python's executable resolution
+6. **Exec path fallback** (2 nodes) — Low priority
 
 ## References
 
-- `src/context.rs` - ParseContext implementation
-- `src/substitution/context.rs` - LaunchContext implementation
-- `src/lib.rs` - Parser entry point with manual synchronization
-- `src/python/bridge.rs` - Thread-local context management
-- `tmp/run_all_checks.sh` - Comprehensive test script with parser comparison
-- `docs/roadmap/README.md` - Overall roadmap tracking
-
-## Notes
-
-- **Current Workaround**: Manual namespace synchronization in `execute_python_file()` works but is fragile
-- **Python Parser as Ground Truth**: When in doubt, match Python parser behavior exactly
-- **Backward Compatibility**: This is an internal refactoring; no API changes expected
-- **Code Quality**: Aim to reduce total lines of context management code by 30-40%
+- `src/substitution/context.rs` — LaunchContext (unified context)
+- `src/python/bridge.rs` — Thread-local context, capture helpers, `find_package_executable()`
+- `src/python/executor.rs` — PythonLaunchExecutor (unit struct)
+- `src/record/generator.rs` — `build_node_command()`, `resolve_executable_path()`
+- `src/actions/container.rs` — XML container record generation
+- `docs/context_unification_design.md` — Architecture document
