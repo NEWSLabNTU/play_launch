@@ -116,41 +116,6 @@ install-wheel:
     set -e
     pip install dist/play_launch-*.whl --force-reinstall
 
-# Test pip-installed wheel (in a fresh venv)
-test-wheel:
-    #!/usr/bin/env bash
-    set -e
-
-    if ! ls dist/play_launch-*.whl &>/dev/null; then
-        echo "Error: No wheel found in dist/. Run 'just build' first."
-        exit 1
-    fi
-
-    # Create temp venv
-    VENV_DIR=$(mktemp -d)
-    python3 -m venv "$VENV_DIR"
-    source "$VENV_DIR/bin/activate"
-
-    # Source ROS2 (required runtime dependency)
-    source /opt/ros/{{ros_distro}}/setup.bash
-
-    # Install wheel
-    pip install dist/play_launch-*.whl pytest
-
-    # Run tests
-    echo "Testing pip-installed package..."
-    play_launch --help
-    python -c "from play_launch.dump import LaunchInspector; print('dump module: OK')"
-    python -c "from play_launch.analyzer import main; print('analyzer module: OK')"
-
-    # Run integration tests
-    pytest tests/test_pip_install.py -v
-
-    # Cleanup
-    deactivate
-    rm -rf "$VENV_DIR"
-    echo "All tests passed!"
-
 # Publish wheel to PyPI (requires PYPI_TOKEN env var)
 publish-pypi:
     #!/usr/bin/env bash
@@ -189,23 +154,53 @@ publish-testpypi:
     pip install twine
     twine upload --repository testpypi dist/*.whl -u __token__ -p "$TESTPYPI_TOKEN"
 
-# Run all tests
+# Run standard tests — parser unit tests + fast integration tests (~3s)
 test:
     #!/usr/bin/env bash
     set -e
-    source /opt/ros/{{ros_distro}}/setup.bash
-    source install/setup.bash
-    # Only test Python packages (Rust testing not compatible with colcon-cargo-ros2)
-    # Skip integration tests that require dump_launch command in PATH
-    colcon test --packages-select dump_launch --pytest-args -m "not integration"
-    colcon test-result --all --verbose
+    echo "=== Parser unit tests ==="
+    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast)
+    echo ""
+    echo "=== Integration tests (fast) ==="
+    (cd tests && cargo nextest run -E 'binary(simple_workspace) & not test(/launch/)' --no-fail-fast)
 
-# Test play_launch_parser library
-test-parser:
+# Run all tests — parser unit + all integration including Autoware (~30s)
+test-all:
+    #!/usr/bin/env bash
+    set -e
+    echo "=== Parser unit tests ==="
+    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast)
+    echo ""
+    echo "=== Integration tests (all) ==="
+    (cd tests && cargo nextest run --no-fail-fast)
+
+# Run parser unit tests only
+test-unit:
     #!/usr/bin/env bash
     set -e
     cd src/play_launch_parser
-    cargo test --lib
+    cargo nextest run -p play_launch_parser --no-fail-fast
+
+# Run all integration tests (simple + Autoware)
+test-integration:
+    #!/usr/bin/env bash
+    set -e
+    cd tests
+    cargo nextest run --no-fail-fast
+
+# Run simple workspace integration tests
+test-simple:
+    #!/usr/bin/env bash
+    set -e
+    cd tests
+    cargo nextest run -E 'binary(simple_workspace)' --no-fail-fast
+
+# Run Autoware integration tests
+test-autoware:
+    #!/usr/bin/env bash
+    set -e
+    cd tests
+    cargo nextest run -E 'binary(autoware)' --no-fail-fast
 
 # Compare Rust vs Python parser outputs
 compare-parsers:
@@ -276,100 +271,3 @@ bump-version TYPE:
 # Set explicit version
 set-version VERSION:
     python3 scripts/bump_version.py --set {{VERSION}}
-
-# Test play_launch in test/* workspaces (excluding autoware_planning_simulation)
-test-workspaces:
-    #!/usr/bin/env bash
-    set -e
-
-    # Ensure play_launch is built
-    if [ ! -f install/setup.bash ]; then
-        echo "Error: install/setup.bash not found. Run 'just build' first."
-        exit 1
-    fi
-
-    # Source ROS2 and local install
-    source /opt/ros/{{ros_distro}}/setup.bash
-    source install/setup.bash
-
-    echo "=================================================="
-    echo "Testing play_launch in test/* workspaces"
-    echo "Using local install (not pip-installed version)"
-    echo "=================================================="
-    echo ""
-
-    # Test 1: composition_demo
-    echo "=========================================="
-    echo "Test 1/3: composition_demo"
-    echo "=========================================="
-    cd test/composition_demo
-    make clean
-    make test-all
-    cd ../..
-    echo ""
-
-    # Test 2: io_stress
-    echo "=========================================="
-    echo "Test 2/3: io_stress"
-    echo "=========================================="
-    cd test/io_stress
-
-    # Build io_stress package if needed
-    if [ ! -f ../../install/io_stress/lib/io_stress/io_stress_node ]; then
-        echo "Building io_stress package..."
-        cd ../..
-        colcon build --base-paths test/io_stress --symlink-install
-        source install/setup.bash
-        cd test/io_stress
-    fi
-
-    # Run a quick 5-second test
-    echo "Running io_stress for 5 seconds..."
-    timeout 5 play_launch launch io_stress io_stress.launch.xml --enable-monitoring || true
-
-    # Verify record.json was created
-    if [ -f record.json ]; then
-        echo "✅ io_stress test passed (record.json created)"
-    else
-        echo "❌ io_stress test failed (no record.json)"
-        exit 1
-    fi
-
-    make clean
-    cd ../..
-    echo ""
-
-    # Test 3: set_parameter_test
-    echo "=========================================="
-    echo "Test 3/3: set_parameter_test"
-    echo "=========================================="
-    cd test/set_parameter_test
-
-    # Test Python launch file
-    echo "Testing test_set_param.launch.py..."
-    play_launch dump launch test_set_param.launch.py
-    if [ -f record.json ]; then
-        echo "✅ Python launch file test passed"
-        rm -f record.json
-    else
-        echo "❌ Python launch file test failed"
-        exit 1
-    fi
-
-    # Test XML launch file
-    echo "Testing test_set_param.launch.xml..."
-    play_launch dump launch test_set_param.launch.xml
-    if [ -f record.json ]; then
-        echo "✅ XML launch file test passed"
-        rm -f record.json
-    else
-        echo "❌ XML launch file test failed"
-        exit 1
-    fi
-
-    cd ../..
-    echo ""
-
-    echo "=================================================="
-    echo "✅ All workspace tests passed!"
-    echo "=================================================="

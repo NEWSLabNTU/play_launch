@@ -1505,6 +1505,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "play-launch-tests"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "which",
+]
+
+[[package]]
 name = "play_launch"
 version = "0.5.1"
 dependencies = [
@@ -1558,10 +1569,10 @@ dependencies = [
  "clap",
  "dashmap 5.5.3",
  "env_logger",
+ "indexmap",
  "log",
  "lru",
  "once_cell",
- "parking_lot",
  "pyo3",
  "rand",
  "rayon",
@@ -2910,5 +2921,21 @@ dependencies = [
 ]
 
 [[patch.unused]]
+name = "action_msgs"
+version = "1.2.2"
+
+[[patch.unused]]
+name = "example_interfaces"
+version = "0.9.3"
+
+[[patch.unused]]
 name = "geometry_msgs"
 version = "4.9.0"
+
+[[patch.unused]]
+name = "rclrs_example_msgs"
+version = "0.5.0"
+
+[[patch.unused]]
+name = "unique_identifier_msgs"
+version = "2.2.1"

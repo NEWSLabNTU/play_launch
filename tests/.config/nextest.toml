@@ -1,0 +1,21 @@
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 2 }
+fail-fast = false
+
+[profile.default.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true
+
+# Autoware tests need longer timeouts
+[[profile.default.overrides]]
+filter = "binary(autoware)"
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+[[profile.default.overrides]]
+filter = "binary(simple_workspace)"
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+[profile.ci]
+slow-timeout = { period = "30s", terminate-after = 2 }
+fail-fast = true

@@ -21,6 +21,7 @@ play_log/
 
 # Added by cargo
 /target
+/tests/target
 
 # Created by colcon build
 /build/
@@ -47,3 +48,6 @@ package-lock.json
 # Temporary lint extraction files
 .tmp-extracted.js
 .tmp-extracted.css
+
+# Nextest JUnit output
+junit.xml
