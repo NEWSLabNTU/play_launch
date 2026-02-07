@@ -165,6 +165,108 @@ compare-dumps:
     echo ""
     echo "Comparison complete."
 
+# Count running processes vs expected (from record.json)
+count-processes PARSER="rust": check-autoware
+    #!/usr/bin/env bash
+    set -e
+    SCRIPT_DIR="{{script_dir}}"
+    cd "$SCRIPT_DIR"
+
+    MAP_PATH="{{map_path}}"
+    PARSER="{{PARSER}}"
+
+    # Source ROS and Autoware setup
+    source ../../install/setup.bash
+    source autoware/install/setup.bash
+    export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
+
+    # Clean previous play_log
+    rm -rf play_log/latest 2>/dev/null || true
+
+    # Dump record.json to get expected counts
+    echo "Dumping with $PARSER parser to get expected counts..."
+    play_launch dump --output record_count.json launch \
+        --parser "$PARSER" \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="$MAP_PATH"
+
+    EXPECTED=$(python3 -c "import json; r=json.load(open('record_count.json')); print(len(r.get('node',[])) + len(r.get('container',[])))")
+    echo "Expected processes: $EXPECTED"
+
+    # Start play_launch in background
+    echo "Starting play_launch with --parser $PARSER..."
+    play_launch launch \
+        --disable-web-ui \
+        --parser "$PARSER" \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="$MAP_PATH" &
+    PL_PID=$!
+    PGID=$(ps -o pgid= -p $PL_PID | tr -d ' ')
+
+    cleanup() {
+        echo "Cleaning up (PGID=$PGID)..."
+        kill -TERM -$PGID 2>/dev/null || true
+        sleep 2
+        kill -9 -$PGID 2>/dev/null || true
+    }
+    trap cleanup EXIT
+
+    # Poll pid files until count stabilizes or timeout (60s)
+    PREV_COUNT=0
+    STABLE=0
+    TIMEOUT=60
+    ELAPSED=0
+    INTERVAL=2
+
+    echo "Waiting for processes to start (timeout: ${TIMEOUT}s)..."
+    while [ $ELAPSED -lt $TIMEOUT ]; do
+        sleep $INTERVAL
+        ELAPSED=$((ELAPSED + INTERVAL))
+
+        # Count cmdline files (containers don't write pid files, but do write cmdline)
+        if [ -d "play_log/latest/node" ]; then
+            ACTUAL=$(find play_log/latest/node -name "cmdline" -type f ! -empty 2>/dev/null | wc -l)
+        else
+            ACTUAL=0
+        fi
+
+        echo "  ${ELAPSED}s: $ACTUAL/$EXPECTED processes"
+
+        if [ "$ACTUAL" -eq "$PREV_COUNT" ] && [ "$ACTUAL" -gt 0 ]; then
+            STABLE=$((STABLE + 1))
+        else
+            STABLE=0
+        fi
+        PREV_COUNT=$ACTUAL
+
+        # Stabilized for 3 consecutive polls
+        if [ $STABLE -ge 3 ]; then
+            echo "Process count stabilized at $ACTUAL"
+            break
+        fi
+
+        # Already at expected count — wait one more poll to confirm
+        if [ "$ACTUAL" -ge "$EXPECTED" ] && [ $STABLE -ge 1 ]; then
+            echo "Reached expected count ($ACTUAL >= $EXPECTED)"
+            break
+        fi
+    done
+
+    echo ""
+    set +e
+    python3 ../../scripts/count_processes.py record_count.json --play-log-dir play_log/latest
+    RESULT=$?
+    set -e
+
+    rm -f record_count.json
+    exit $RESULT
+
+# Count processes using Rust parser
+count-processes-rust: (count-processes "rust")
+
+# Count processes using Python parser
+count-processes-python: (count-processes "python")
+
 # Kill orphan ROS nodes
 kill-orphans:
     @./scripts/kill_orphan_nodes.sh
