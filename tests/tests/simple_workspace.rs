@@ -7,8 +7,8 @@ fn dump_launch(launch_file: &str, parser: &str) -> serde_json::Value {
     let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let output_path = tmp.path().join("record.json");
 
-    let status = fixtures::play_launch_cmd(&env)
-        .args([
+    let mut proc = ManagedProcess::spawn(
+        fixtures::play_launch_cmd(&env).args([
             "dump",
             "--output",
             output_path.to_str().unwrap(),
@@ -16,10 +16,11 @@ fn dump_launch(launch_file: &str, parser: &str) -> serde_json::Value {
             "--parser",
             parser,
             launch_file,
-        ])
-        .status()
-        .expect("failed to run play_launch dump");
+        ]),
+    )
+    .expect("failed to spawn play_launch dump");
 
+    let status = proc.wait_with_timeout(std::time::Duration::from_secs(60));
     assert!(status.success(), "play_launch dump failed for {launch_file}");
     assert!(
         output_path.is_file(),
@@ -175,8 +176,8 @@ fn test_launch_pure_nodes() {
     let tmp = tempfile::TempDir::new().unwrap();
     let record_path = tmp.path().join("record.json");
 
-    let status = fixtures::play_launch_cmd(&env)
-        .args([
+    let mut dump_proc = ManagedProcess::spawn(
+        fixtures::play_launch_cmd(&env).args([
             "dump",
             "--output",
             record_path.to_str().unwrap(),
@@ -184,9 +185,11 @@ fn test_launch_pure_nodes() {
             "--parser",
             "rust",
             launch.to_str().unwrap(),
-        ])
-        .status()
-        .expect("dump failed");
+        ]),
+    )
+    .expect("failed to spawn dump");
+
+    let status = dump_proc.wait_with_timeout(std::time::Duration::from_secs(60));
     assert!(status.success());
 
     let expected = fixtures::count_expected_processes(&record_path);
@@ -204,7 +207,7 @@ fn test_launch_pure_nodes() {
         launch.to_str().unwrap(),
     ]);
 
-    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
     let play_log = work_dir.join("play_log/latest");
     fixtures::wait_for_processes(&play_log, expected, std::time::Duration::from_secs(15));
@@ -215,6 +218,5 @@ fn test_launch_pure_nodes() {
         "process count mismatch: actual={actual}, expected={expected}"
     );
 
-    // ManagedProcess::drop will clean up
-    drop(proc);
+    // _proc dropped here — ManagedProcess::drop kills the process group
 }

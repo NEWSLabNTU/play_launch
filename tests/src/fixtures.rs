@@ -228,6 +228,30 @@ pub fn count_expected_processes(record_path: &Path) -> usize {
     nodes + containers
 }
 
+/// Run `scripts/compare_records.py` on two record.json files.
+///
+/// Returns `(success, output)` where `success` is true when the script exits 0
+/// (records are functionally equivalent) and `output` is the combined
+/// stdout+stderr for diagnostic printing on failure.
+pub fn compare_records(rust_record: &Path, python_record: &Path) -> (bool, String) {
+    let script = repo_root().join("scripts/compare_records.py");
+    assert!(script.is_file(), "compare_records.py not found");
+
+    let output = Command::new("python3")
+        .arg(&script)
+        .arg(rust_record)
+        .arg(python_record)
+        .output()
+        .expect("failed to run compare_records.py");
+
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    (output.status.success(), combined)
+}
+
 /// Wait until the cmdline file count in `play_log_dir` reaches `expected` or
 /// stabilizes, up to `timeout`.
 pub fn wait_for_processes(play_log_dir: &Path, expected: usize, timeout: std::time::Duration) {

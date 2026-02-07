@@ -159,48 +159,48 @@ test:
     #!/usr/bin/env bash
     set -e
     echo "=== Parser unit tests ==="
-    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast)
+    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output immediate-final)
     echo ""
     echo "=== Integration tests (fast) ==="
-    (cd tests && cargo nextest run -E 'binary(simple_workspace) & not test(/launch/)' --no-fail-fast)
+    (cd tests && cargo nextest run -E 'binary(simple_workspace) & not test(/launch/)' --no-fail-fast --failure-output immediate-final)
 
 # Run all tests — parser unit + all integration including Autoware (~30s)
 test-all:
     #!/usr/bin/env bash
     set -e
     echo "=== Parser unit tests ==="
-    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast)
+    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output immediate-final)
     echo ""
     echo "=== Integration tests (all) ==="
-    (cd tests && cargo nextest run --no-fail-fast)
+    (cd tests && cargo nextest run --no-fail-fast --failure-output immediate-final)
 
 # Run parser unit tests only
 test-unit:
     #!/usr/bin/env bash
     set -e
     cd src/play_launch_parser
-    cargo nextest run -p play_launch_parser --no-fail-fast
+    cargo nextest run -p play_launch_parser --no-fail-fast --failure-output immediate-final
 
 # Run all integration tests (simple + Autoware)
 test-integration:
     #!/usr/bin/env bash
     set -e
     cd tests
-    cargo nextest run --no-fail-fast
+    cargo nextest run --no-fail-fast --failure-output immediate-final
 
 # Run simple workspace integration tests
 test-simple:
     #!/usr/bin/env bash
     set -e
     cd tests
-    cargo nextest run -E 'binary(simple_workspace)' --no-fail-fast
+    cargo nextest run -E 'binary(simple_workspace)' --no-fail-fast --failure-output immediate-final
 
 # Run Autoware integration tests
 test-autoware:
     #!/usr/bin/env bash
     set -e
     cd tests
-    cargo nextest run -E 'binary(autoware)' --no-fail-fast
+    cargo nextest run -E 'binary(autoware)' --no-fail-fast --failure-output immediate-final
 
 # Compare Rust vs Python parser outputs
 compare-parsers:

@@ -19,7 +19,11 @@ fn autoware_launch_args() -> Vec<String> {
     ]
 }
 
-fn dump_autoware(parser: &str) -> serde_json::Value {
+/// Dump Autoware with the given parser, returning (parsed JSON, temp dir).
+///
+/// The temp dir is returned so callers can access the record.json file path
+/// (at `tmp.path().join("record.json")`) for script-based comparison.
+fn dump_autoware(parser: &str) -> (serde_json::Value, tempfile::TempDir) {
     require_autoware();
     let env = fixtures::autoware_env();
     let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
@@ -35,18 +39,20 @@ fn dump_autoware(parser: &str) -> serde_json::Value {
     ];
     args.extend(autoware_launch_args());
 
-    let status = fixtures::play_launch_cmd(&env)
-        .args(&args)
-        .status()
-        .expect("failed to run play_launch dump");
+    let mut proc = ManagedProcess::spawn(
+        fixtures::play_launch_cmd(&env).args(&args),
+    )
+    .expect("failed to spawn play_launch dump");
 
+    let status = proc.wait_with_timeout(std::time::Duration::from_secs(60));
     assert!(
         status.success(),
         "play_launch dump (parser={parser}) failed"
     );
 
     let data = std::fs::read_to_string(&output_path).expect("failed to read record.json");
-    serde_json::from_str(&data).expect("failed to parse record.json")
+    let record = serde_json::from_str(&data).expect("failed to parse record.json");
+    (record, tmp)
 }
 
 fn array_len(val: &serde_json::Value, key: &str) -> usize {
@@ -59,7 +65,7 @@ fn array_len(val: &serde_json::Value, key: &str) -> usize {
 
 #[test]
 fn test_autoware_dump_rust() {
-    let record = dump_autoware("rust");
+    let (record, _tmp) = dump_autoware("rust");
     assert_eq!(array_len(&record, "node"), 46, "expected 46 nodes");
     assert_eq!(
         array_len(&record, "container"),
@@ -75,7 +81,7 @@ fn test_autoware_dump_rust() {
 
 #[test]
 fn test_autoware_dump_python() {
-    let record = dump_autoware("python");
+    let (record, _tmp) = dump_autoware("python");
     assert_eq!(array_len(&record, "node"), 46, "expected 46 nodes");
     assert_eq!(
         array_len(&record, "container"),
@@ -93,29 +99,16 @@ fn test_autoware_dump_python() {
 
 #[test]
 fn test_autoware_parser_parity() {
-    let rust = dump_autoware("rust");
-    let python = dump_autoware("python");
+    let (_, rust_tmp) = dump_autoware("rust");
+    let (_, python_tmp) = dump_autoware("python");
 
-    assert_eq!(
-        array_len(&rust, "node"),
-        array_len(&python, "node"),
-        "node count mismatch: rust={}, python={}",
-        array_len(&rust, "node"),
-        array_len(&python, "node")
-    );
-    assert_eq!(
-        array_len(&rust, "container"),
-        array_len(&python, "container"),
-        "container count mismatch: rust={}, python={}",
-        array_len(&rust, "container"),
-        array_len(&python, "container")
-    );
-    assert_eq!(
-        array_len(&rust, "load_node"),
-        array_len(&python, "load_node"),
-        "load_node count mismatch: rust={}, python={}",
-        array_len(&rust, "load_node"),
-        array_len(&python, "load_node")
+    let rust_record = rust_tmp.path().join("record.json");
+    let python_record = python_tmp.path().join("record.json");
+
+    let (success, output) = fixtures::compare_records(&rust_record, &python_record);
+    assert!(
+        success,
+        "Rust vs Python parser comparison failed:\n{output}"
     );
 }
 
@@ -141,10 +134,12 @@ fn test_autoware_process_count_rust() {
     ];
     dump_args.extend(autoware_launch_args());
 
-    let status = fixtures::play_launch_cmd(&env)
-        .args(&dump_args)
-        .status()
-        .expect("dump failed");
+    let mut dump_proc = ManagedProcess::spawn(
+        fixtures::play_launch_cmd(&env).args(&dump_args),
+    )
+    .expect("failed to spawn dump");
+
+    let status = dump_proc.wait_with_timeout(std::time::Duration::from_secs(60));
     assert!(status.success());
 
     let expected = fixtures::count_expected_processes(&record_path);
@@ -163,7 +158,7 @@ fn test_autoware_process_count_rust() {
     cmd.current_dir(&work_dir);
     cmd.args(&launch_args);
 
-    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
     let play_log = work_dir.join("play_log/latest");
     fixtures::wait_for_processes(&play_log, expected, std::time::Duration::from_secs(60));
@@ -174,7 +169,7 @@ fn test_autoware_process_count_rust() {
         "process count: {actual}/{expected}"
     );
 
-    drop(proc);
+    // _proc dropped here — ManagedProcess::drop kills the process group
 }
 
 #[test]
@@ -197,10 +192,12 @@ fn test_autoware_process_count_python() {
     ];
     dump_args.extend(autoware_launch_args());
 
-    let status = fixtures::play_launch_cmd(&env)
-        .args(&dump_args)
-        .status()
-        .expect("dump failed");
+    let mut dump_proc = ManagedProcess::spawn(
+        fixtures::play_launch_cmd(&env).args(&dump_args),
+    )
+    .expect("failed to spawn dump");
+
+    let status = dump_proc.wait_with_timeout(std::time::Duration::from_secs(60));
     assert!(status.success());
 
     let expected = fixtures::count_expected_processes(&record_path);
@@ -219,7 +216,7 @@ fn test_autoware_process_count_python() {
     cmd.current_dir(&work_dir);
     cmd.args(&launch_args);
 
-    let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
     let play_log = work_dir.join("play_log/latest");
     fixtures::wait_for_processes(&play_log, expected, std::time::Duration::from_secs(60));
@@ -230,5 +227,5 @@ fn test_autoware_process_count_python() {
         "process count: {actual}/{expected}"
     );
 
-    drop(proc);
+    // _proc dropped here — ManagedProcess::drop kills the process group
 }
