@@ -498,39 +498,8 @@ SetEnvironmentVariable('VAR', [LaunchConfiguration('prefix'), '/suffix'])
 - **2026-02-01**: Security updates - Upgraded `lru` from 0.12 to 0.16.3 (fixes RUSTSEC-2026-0002 IterMut soundness issue). PyO3 upgrade to 0.24.1 deferred due to 268 breaking API changes; vulnerable function `PyString::from_object` not used in codebase.
 - **2026-02-01**: Comprehensive test script - Added `tmp/run_all_checks.sh` with timeouts on all tests: (1) Root quality (5min), (2) Parser quality (3min), (3) Simple test (10s), (4) Autoware parser comparison (dumps both parsers and compares outputs, 60s), (5) LCTK demo (30s). Prevents infinite hangs, proper exit code handling. Updated 2026-02-06 to use parser comparison instead of runtime simulation test.
 - **2026-02-01**: Substitution evaluation improvements - (1) Added PythonExpression.perform() to evaluate Python conditional expressions in parameters (fixes "Couldn't parse parameter override rule" errors with IfElse expressions). (2) Fixed float type preservation: floats now output with decimal point (e.g., "0.0" not "0") to prevent ROS INTEGER vs DOUBLE type errors. (3) Extended evaluating substitutions to include FileContent and PathJoinSubstitution for proper nested substitution resolution. (4) Parser evaluates conditional logic and processes only the selected path, not all paths. LaunchConfiguration substitutions preserved as $(var name) for replay-time resolution.
-- **2026-01-31**: Phase 15 complete - Python API Type Safety improvements for SetEnvironmentVariable, AppendEnvironmentVariable, ExecuteProcess, and Node.arguments to accept PyObject instead of String, enabling full SomeSubstitutionsType compatibility (handles strings, substitutions, and lists)
-- **2026-01-31**: Fixed Python launch argument substitutions - Launch arguments now resolve substitutions ($(find-pkg-share), $(var), etc.) before passing to nested Python files, preventing FileNotFoundError with unresolved paths
-- **2026-01-31**: Python API type handling improvements - LogInfo and PythonExpression now accept PyObject (handling LaunchConfiguration, strings, lists) instead of requiring strings, enabling complex conditional expressions
-- **2026-01-31**: Revised monitor logic for immediate startup detection - Split progress updates (10s) from completion checks (100ms). Reports "Startup complete" in ~100-200ms instead of 1-10s
-- **2026-01-31**: Fixed namespace normalization bug - Ensures all node/container namespaces start with `/` (fixes RCL "Namespace not remapped to a fully qualified name" errors). Applied normalization in 3 locations: generator.rs (nodes), container.rs (composable nodes), launch_ros.rs (Python API)
-- **2026-01-31**: Phase 14 complete - Python launch file execution through ROS 2 launch system (LaunchConfiguration resolution, global parameters, SetLaunchConfiguration support, 15 tests + 25+ fixtures, Autoware validation passes)
-- **2026-01-31**: Updated play_launch_parser submodule - Fixed node counting in Autoware test, poisoned mutex recovery, parameter file loading improvements
-- **2026-01-27**: Added parser comparison tools - New `dump-rust`, `dump-python`, `dump-both`, and `compare-dumps` recipes in test justfiles
-- **2026-01-27**: Python parser container fix - Containers now only appear in container[] array, not in node[] (matching Rust parser behavior)
-- **2026-01-27**: Phase 13 complete - Rust parser as default (3-12x speedup), Python parser as optional fallback, removed Auto mode for predictable behavior
-- **2026-01-20**: Fixed PyO3 0.23 compatibility - Changed `call_method0("main")` to `getattr("main")?.call0()` for module-level function calls
-- **2026-01-20**: Fixed launch_ros compatibility - `expanded_node_namespace` is a property (not method), handle pre-qualified node names with leading slashes
-- **2026-01-18**: Phase 1 resource optimizations - 46% CPU reduction (34.5% → 19.2%), 45% thread reduction (110 → 61), optimized tokio runtime (8 workers, 16 max blocking), ROS executor sleep (10ms → 50ms), monitoring interval (1000ms → 2000ms default)
-- **2026-01-18**: CLI defaults changed - All features (monitoring, diagnostics, Web UI) now enabled by default; new `--enable <FEATURE>` flag for selective enabling; merged `--web-ui-addr`/`--web-ui-port` into `--web-addr <IP:PORT>`
-- **2026-01-17**: Web UI modularization - Split 2,492-line index.html into 16 files (7 CSS modules, 8 JS modules) for better maintainability
-- **2026-01-17**: Diagnostic monitoring system - Full ROS2 `/diagnostics` topic monitoring with Web UI, CSV logging, and real-time dashboard
-- **2026-01-17**: Web UI diagnostics table - Sortable table with zebra striping, hover effects, color-coded severity, and fresh diagnostic indicators
-- **2026-01-17**: Logging cleanup - Removed Web UI console.log statements, changed internal state transitions to debug! level
-- **2026-01-17**: Fixed composable node log streaming - Added node_type/container_name fields to API, dynamic lookup
-- **2026-01-17**: Web UI improvements - View button styling, auto-switch panel, hierarchical sorting, tab preservation
-- **2026-01-17**: Unloading state implementation - Proper completion handling with immediate visual feedback
-- **2026-01-16**: Composable node matching fix - Python/Rust coordination for full ROS names with namespaces
-- **2026-01-16**: Web UI bulk operations - Start/Stop/Restart All, Load/Unload All per container
-- **2026-01-14**: Container restart race condition fix - 200ms warmup delay after service ready
-- **2026-01-14**: Logging level improvements - Changed many info! to debug! for cleaner output
-- **2026-01-13**: Member name simplification - Removed "NODE ''" and "LOAD_NODE ''" prefixes
-- **2026-01-13**: Phase 12 cleanup - Removed deprecated composable node actor code
-- **2026-01-12**: Phase 12 - Container-managed composable nodes (virtual members)
-- **2026-01-10**: ListNodes verification system - On-demand verification for stuck loading states
-- **2026-01-09**: Orphan process prevention - PR_SET_PDEATHSIG implementation
-- **2026-01-05**: Single shared ROS node architecture - Reduced resource usage
-- **2026-01-03**: Async/Tokio refactoring - Unified shutdown handling
-- **2026-01-01**: Actor pattern migration - Cleaner state management
+- **2026-01-31**: Phase 14 complete - Python launch file execution through ROS 2 launch system (LaunchConfiguration resolution, global parameters, SetLaunchConfiguration support, Autoware validation passes)
+- **2026-01-27**: Phase 13 complete - Rust parser as default (3-12x speedup), Python parser as optional fallback
 
 ## Testing
 
@@ -595,83 +564,22 @@ Each test workspace has `justfile` with:
 ## Documentation
 
 - **Migration Guide**: `docs/parser-migration-guide.md` - Guide for users migrating to Rust parser (v0.6.0+)
-- **Roadmap**: `docs/roadmap/README.md` - Implementation phases and progress tracking (95% complete, 12 of 14 phases done)
+- **Roadmap**: `docs/roadmap/README.md` - Implementation phases and progress tracking (Phase 18 complete)
 - **Phase 13 (Complete)**: `docs/roadmap/phase-13.md` - Rust parser integration (3-12x speedup)
-- **Phase 14 (Complete)**: `docs/roadmap/phase-14-python_execution.md` - Python launch file execution with LaunchConfiguration resolution (85-90% implemented)
+- **Phase 14 (Complete)**: `docs/roadmap/phase-14-python_execution.md` - Python launch file execution with LaunchConfiguration resolution
 
-## Parser Parity Fixes (2026-02-03) - SetParameter Global Parameters ✅
+## Parser Parity Status
 
-### ROOT CAUSE IDENTIFIED AND FIXED
+**Autoware Validation** (Phase 17.9 complete):
+- Entity counts: 46 nodes, 15 containers, 54 load_nodes — all match Python parser
+- Functional equivalence: 45/45 nodes (100%)
+- Process count: 61/61 (both parsers)
 
-**Issue**: SetParameter actions in Python launch files (e.g., `global_params.launch.py`, `vehicle_info.launch.py`) set global ROS parameters that should apply to all nodes. But Rust parser nodes weren't receiving them.
-
-**Root Cause**: Confusion between two concepts:
-1. **Launch Configurations** - Launch arguments/variables used for substitutions (map_path, vehicle_model, etc.)
-2. **Global Parameters** - ROS parameters passed to ALL nodes via SetParameter actions (use_sim_time, wheel_*, etc.)
-
-The parser was storing both in `LAUNCH_CONFIGURATIONS`, causing all launch args to be treated as global params (63 params instead of 11).
-
-**Solution**: Separated storage:
-- `LAUNCH_CONFIGURATIONS` - For LaunchConfiguration resolution (all launch args available for $(var X))
-- `GLOBAL_PARAMETERS` - For SetParameter values only (ROS global params to pass to nodes)
-
-**Files Changed**:
-- `src/python/bridge.rs`: Added separate `GLOBAL_PARAMETERS` static storage
-- `src/python/api/launch_ros.rs`: SetParameter stores in `GLOBAL_PARAMETERS` (not LAUNCH_CONFIGURATIONS)
-- `src/python/executor.rs`: Populate LAUNCH_CONFIGURATIONS but clear GLOBAL_PARAMETERS before execution
-- `src/lib.rs`: After Python execution, copy GLOBAL_PARAMETERS to context.global_parameters()
-- `src/record/generator.rs`, `src/actions/container.rs`: Read from context.global_parameters()
-
-**Result**: ✅ **ALL 46 nodes now receive exactly 11 global parameters** from SetParameter (use_sim_time + 10 vehicle params), matching Python parser behavior. No more bloated parameter lists or missing parameters.
-
-**Additional Fix**: Backfill global_params at end of parsing for nodes created before SetParameter runs (7 XML nodes backfilled).
-
-**Validation**:
-- Entity counts match: 46 nodes, 15 containers, 54 load_nodes ✅
-- All nodes have global_params (0 missing) ✅
-- Boolean case fixed: "False" not "false" ✅
-
-### Remaining Issues
-
-Comparison of Rust parser vs Python dump_launch on `test/autoware_planning_simulation` (after SetParameter fix):
-
-**Counts**:
-- Nodes: Rust=44, Python=46 (2 missing)
-- Containers: Rust=10, Python=15 (5 missing!)
-- Load nodes: Rust=23, Python=54 (31 missing!)
-
-**Remaining Key Issues**:
-
-1. ✅ **SetParameter global params** - FIXED (see above)
-
-2. **Missing containers**:
-   - Missing: mrm_comfortable_stop_operator_container, mrm_emergency_stop_operator_container, pointcloud_container, 2× generic "container"
-   - Rust parser finds some containers but misses others from Python launch files
-   - Need to investigate container capture mechanism
-
-3. **Wrong namespaces**:
-   - Many nodes show "/" instead of proper namespaces ("/system", "/control", "/default_ad_api/helpers", etc.)
-   - Namespace resolution from Python context may not be working correctly
-
-4. **Wrong executable paths**:
-   - Rust uses: `/opt/ros/humble/lib/package/executable`
-   - Python uses: `/home/aeon/.../autoware/install/package/lib/package/executable`
-   - Need to use actual install path from package resolution
-
-5. **exec_name inconsistencies**:
-   - Sometimes missing "_node" suffix (e.g., "crosswalk_traffic_light_estimator" vs "crosswalk_traffic_light_estimator_node")
-   - Need to match Python's exec_name extraction logic
-
-6. **Parameter format differences**:
-   - Rust uses params_files with YAML content
-   - Python extracts as inline params
-   - Boolean case: Rust=lowercase ("false"), Python=title case ("False")
-
-### Fix Priority
-
-1. **High**: SetParameter → LAUNCH_CONFIGURATIONS (affects all nodes)
-2. **High**: Missing containers/composable nodes (31 load_nodes missing)
-3. **Medium**: Namespace resolution
-4. **Medium**: Executable path resolution
-5. **Low**: Boolean case normalization
-6. **Low**: exec_name suffix consistency
+**Remaining cosmetic (non-functional) differences:**
+- CMD param deduplication: Rust deduplicates, Python preserves duplicates from nested includes
+- params_files expansion: Rust keeps YAML file references, Python inlines parameters (3 nodes)
+- CMD ordering: same parameters in different order (2 nodes)
+- XML whitespace: robot_state_publisher xacro newlines vs spaces (1 node)
+- Array quoting: `[a, b]` vs `['a', 'b']` (1 node)
+- Load node boolean case: `False` vs `false`
+- Load node extra_args: Rust omits default `use_intra_process_comms` when not set (18 nodes)
