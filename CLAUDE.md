@@ -15,7 +15,7 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for pe
 **Default**: Rust parser (`play_launch_parser` library)
 - **Performance**: 3-12x faster than Python parser
 - **Formats**: XML, YAML, Python launch files
-- **Compatibility**: 100% Autoware tested (310 parser unit tests)
+- **Compatibility**: 100% Autoware tested (311 parser unit tests)
 - **Behavior**: Fails immediately on error (no automatic fallback)
 - **Known Issues**: Minor discrepancies in exec_name, global parameters, and params_files (Phase 17 in progress)
 
@@ -484,6 +484,7 @@ SetEnvironmentVariable('VAR', [LaunchConfiguration('prefix'), '/suffix'])
 
 ## Key Recent Changes
 
+- **2026-02-07**: Nextest-based integration test infrastructure - Created standalone `play-launch-tests` crate (`tests/`) with `ManagedProcess` RAII guard (setsid + PR_SET_PDEATHSIG + PGID kill on Drop) for guaranteed process cleanup. All process spawning goes through `ManagedProcess` — no raw `.status()` calls. Nextest config with test groups (Python serialization) and timeout overrides. Reorganized justfile: `just test` (~3s, 317 tests), `just test-all` (~30s, 323 tests). Deep Autoware parity comparison via `compare_records.py`.
 - **2026-02-06**: Context unification investigation and namespace fix - **Fixed namespace propagation** by identifying and resolving incompatible semantics between LaunchContext (fully-qualified stack) and ParseContext (segment-based stack). Implemented bidirectional namespace synchronization in `lib.rs::execute_python_file()`. Namespace now correct: `/perception/traffic_light_recognition/camera6/classification` ✅. **Architectural issue identified**: Two separate context structures cause synchronization complexity. Created Phase 17 roadmap (`docs/roadmap/phase-17-context_unification.md`) for unifying contexts into single structure. **Remaining discrepancies**: (1) exec_name using node name instead of executable, (2) namespace not used in `__ns:=` cmd argument, (3) global parameters missing in Rust output, (4) params_files mismatch, (5) executable path resolution differences. See Phase 17 roadmap for detailed work items and success criteria.
 - **2026-02-06**: Parser comparison and executable path resolution - Modified `./tmp/run_all_checks.sh` to dump and compare both Rust and Python parser outputs in Autoware test stage. Implemented `find_package_executable()` in bridge.rs to resolve full executable paths (searches AMENT_PREFIX_PATH and ROS_DISTRO locations) instead of using `ros2 run` commands. Fixed `exec_name` field to use executable name instead of node name.
 - **2026-02-06**: XML composable node YAML parameter loading - Fixed massive parameter loss in composable nodes (behavior_path_planner: 15 → 813 params). Modified `ComposableNodeAction::from_entity` in container.rs to call `extract_params_from_yaml()` when encountering `<param from="file.yaml"/>` elements. Loads and flattens ROS 2 YAML parameter files with `/**` wildcard and `ros__parameters` wrapper support. All three LoadNodeRecord creation paths now merge global parameters correctly. Achieves 100% parameter count parity with Python parser (813 params). Minor formatting differences remain (array spacing, string quoting).
@@ -533,6 +534,44 @@ SetEnvironmentVariable('VAR', [LaunchConfiguration('prefix'), '/suffix'])
 
 ## Testing
 
+### Test Infrastructure
+
+Tests use [nextest](https://nexte.st/) as the test runner, with two separate crates:
+
+1. **Parser unit tests** (`src/play_launch_parser/`): 311 tests for the Rust parser
+2. **Integration tests** (`tests/`): Standalone crate (`play-launch-tests`) for end-to-end testing
+
+The integration test crate is excluded from the cargo workspace (`exclude = ["tests"]` in root `Cargo.toml`) because `play_launch` has ROS dependencies that only resolve under colcon.
+
+### Test Recipes
+
+```bash
+just test              # Parser unit (311) + fast integration (6), ~3s
+just test-all          # Parser unit (311) + all integration (12), ~30s
+just test-unit         # Parser unit tests only
+just test-integration  # All integration tests (simple + Autoware)
+just test-simple       # simple_workspace binary only
+just test-autoware     # Autoware binary only
+```
+
+All recipes use `--no-fail-fast --failure-output immediate-final`.
+
+### Nextest Configuration
+
+- **Parser** (`.config/nextest.toml`): Python tests serialized via test group (max 1 thread)
+- **Integration** (`tests/.config/nextest.toml`): 60s slow-timeout for simple_workspace and Autoware binaries
+
+### Process Cleanup (ManagedProcess)
+
+All integration tests spawn processes through `ManagedProcess` (`tests/src/process.rs`), an RAII guard that guarantees cleanup:
+
+- **`setsid()`**: Child runs in its own process group — `kill(-pgid, ...)` kills the entire tree
+- **`PR_SET_PDEATHSIG(SIGKILL)`**: Kernel kills child if the test runner process dies unexpectedly
+- **`Drop`**: Sends SIGTERM then SIGKILL to the process group if the child is still running
+- **`wait_with_timeout()`**: Polls with deadline, kills group on timeout
+
+This prevents orphan ROS processes from lingering after test panics, assertion failures, or timeouts.
+
 ### Test Workspaces
 
 - `test/autoware_planning_simulation/`: Full Autoware test (46 nodes, 15 containers, 54 composable nodes)
@@ -544,44 +583,6 @@ Each test workspace has `justfile` with:
 - `just run`, `just run-debug`: Run tests
 - `just dump-rust`, `just dump-python`, `just dump-both`: Generate record.json with Rust/Python parsers
 - `just compare-dumps`: Compare Rust vs Python parser outputs using `scripts/compare_records.py`
-
-### Comprehensive Test Script
-
-**Location**: `tmp/run_all_checks.sh`
-
-Runs 5 comprehensive tests with proper timeouts to prevent infinite hangs:
-
-1. **Root quality check** (5 min timeout)
-   - Build + format + lint + all tests
-   - Command: `timeout 300 just quality`
-
-2. **Parser quality check** (3 min timeout)
-   - 310 unit tests
-   - Command: `timeout 180 just quality`
-
-3. **Play launch basic test** (10 sec timeout)
-   - Verifies basic node execution
-   - Command: `timeout 10 just run-pure-nodes`
-   - Location: `test/simple_test/`
-
-4. **Autoware simulation test** (30 sec timeout)
-   - Full Autoware integration (46 nodes, 15 containers, 54 composable)
-   - Command: `timeout 30 just run-sim`
-   - Location: `test/autoware_planning_simulation/`
-
-5. **LCTK demo test** (30 sec timeout)
-   - External package integration
-   - Command: `timeout 30 just demo`
-   - Location: `~/repos/LCTK`
-
-**Usage**:
-```bash
-cd /home/aeon/repos/play_launch
-bash tmp/run_all_checks.sh
-```
-
-**Typical execution time**: ~4-5 minutes
-**Maximum execution time**: ~9.5 minutes (all timeouts)
 
 ## Distribution
 
