@@ -1,4 +1,7 @@
+use std::process::Stdio;
+
 use play_launch_tests::fixtures;
+use play_launch_tests::health::HealthReport;
 use play_launch_tests::process::ManagedProcess;
 
 fn require_autoware() {
@@ -167,6 +170,61 @@ fn test_autoware_process_count_rust() {
     assert_eq!(
         actual, expected,
         "process count: {actual}/{expected}"
+    );
+
+    // _proc dropped here — ManagedProcess::drop kills the process group
+}
+
+// ---- Smoke test ----
+
+#[test]
+fn test_autoware_smoke_test() {
+    // 1. Dump record.json to get expected process count
+    let (record, _dump_tmp) = dump_autoware("rust");
+    let expected = array_len(&record, "node") + array_len(&record, "container");
+    assert_eq!(expected, 61, "expected 61 processes (46 nodes + 15 containers)");
+
+    // 2. Set up stderr capture
+    let stderr_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let stderr_path = stderr_tmp.path().join("play_launch_stderr.log");
+
+    // 3. Launch play_launch
+    let env = fixtures::autoware_env();
+    let work_dir = fixtures::repo_root().join("test/autoware_planning_simulation");
+
+    let mut launch_args = vec![
+        "launch".to_string(),
+        "--disable-web-ui".to_string(),
+        "--parser".to_string(),
+        "rust".to_string(),
+    ];
+    launch_args.extend(autoware_launch_args());
+
+    let stderr_file =
+        std::fs::File::create(&stderr_path).expect("failed to create stderr file");
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(&work_dir);
+    cmd.args(&launch_args);
+    cmd.stderr(Stdio::from(stderr_file));
+
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+
+    // 4. Wait for processes to stabilize, then settle for LoadNode operations
+    let play_log = work_dir.join("play_log/latest");
+    fixtures::wait_for_processes(&play_log, expected, std::time::Duration::from_secs(60));
+    std::thread::sleep(std::time::Duration::from_secs(15));
+
+    // 5. Analyze health
+    let report = HealthReport::analyze(&play_log, &stderr_path, expected);
+
+    // 6. Print report (visible with --no-capture or on failure)
+    eprintln!("\n{report}");
+
+    // 7. Assert healthy
+    assert!(
+        report.is_healthy(),
+        "Smoke test failed:\n{report}"
     );
 
     // _proc dropped here — ManagedProcess::drop kills the process group
