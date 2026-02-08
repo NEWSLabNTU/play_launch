@@ -28,38 +28,47 @@ pub struct HealthReport {
 }
 
 impl HealthReport {
-    /// Analyze play_launch stderr output and play_log directory to build a
-    /// health report.
+    /// Analyze play_launch output and play_log directory to build a health
+    /// report.
     ///
     /// - `play_log`: path to `play_log/latest`
-    /// - `stderr_path`: path to the captured stderr file
+    /// - `output_path`: path to the captured stdout file (play_launch writes
+    ///   tracing output to stdout)
     /// - `expected_procs`: expected number of processes (nodes + containers)
     pub fn analyze(
         play_log: &Path,
-        stderr_path: &Path,
+        output_path: &Path,
         expected_procs: usize,
     ) -> Self {
         let processes_actual = fixtures::count_cmdline_files(play_log);
 
-        let stderr_content = std::fs::read_to_string(stderr_path)
+        let raw_content = std::fs::read_to_string(output_path)
             .unwrap_or_default();
+        let content = strip_ansi_escapes(&raw_content);
 
         let mut node_exits = Vec::new();
+        let mut seen_exits = std::collections::HashSet::new();
         let mut load_node_failures = Vec::new();
+        let mut seen_failures = std::collections::HashSet::new();
 
-        for line in stderr_content.lines() {
+        for line in content.lines() {
             // Match: ERROR ... [node_name] Exited without code
             // Match: ERROR ... [node_name] Exited with code N
             if line.contains("ERROR") && line.contains("Exited") {
                 if let Some(exit) = parse_node_exit(line) {
-                    node_exits.push(exit);
+                    if seen_exits.insert(exit.name.clone()) {
+                        node_exits.push(exit);
+                    }
                 }
             }
 
             // Match: WARN ... container_name: LoadNode FAILED for component_name: error='...'
             if line.contains("LoadNode FAILED") {
                 if let Some(failure) = parse_load_node_failure(line) {
-                    load_node_failures.push(failure);
+                    let key = format!("{}/{}", failure.container, failure.component);
+                    if seen_failures.insert(key) {
+                        load_node_failures.push(failure);
+                    }
                 }
             }
         }
@@ -73,12 +82,42 @@ impl HealthReport {
         }
     }
 
-    /// Returns true if no errors were detected.
-    pub fn is_healthy(&self) -> bool {
-        self.node_exits.is_empty()
+    /// Returns true if no errors were detected (ignoring known environment issues).
+    ///
+    /// `ignored_exits` is a list of node names to skip (e.g., nodes that require
+    /// hardware like TensorRT or a display server).
+    pub fn is_healthy(&self, ignored_exits: &[&str]) -> bool {
+        let unexpected_exits = self
+            .node_exits
+            .iter()
+            .filter(|e| !ignored_exits.contains(&e.name.as_str()))
+            .count();
+        unexpected_exits == 0
             && self.load_node_failures.is_empty()
             && self.processes_actual == self.processes_expected
     }
+}
+
+/// Strip ANSI escape sequences from a string.
+fn strip_ansi_escapes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip ESC + '[' + parameters + final byte
+            if let Some('[') = chars.next() {
+                // Consume until we hit a letter (the final byte of the sequence)
+                for c2 in chars.by_ref() {
+                    if c2.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 /// Parse a node exit line like:
@@ -220,7 +259,7 @@ impl fmt::Display for HealthReport {
         }
 
         writeln!(f)?;
-        if self.is_healthy() {
+        if self.is_healthy(&[]) {
             writeln!(f, "RESULT: PASS")?;
         } else {
             let mut parts = Vec::new();

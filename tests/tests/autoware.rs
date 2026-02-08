@@ -184,9 +184,9 @@ fn test_autoware_smoke_test() {
     let expected = array_len(&record, "node") + array_len(&record, "container");
     assert_eq!(expected, 61, "expected 61 processes (46 nodes + 15 containers)");
 
-    // 2. Set up stderr capture
-    let stderr_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
-    let stderr_path = stderr_tmp.path().join("play_launch_stderr.log");
+    // 2. Set up stdout capture (play_launch writes tracing output to stdout)
+    let output_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let output_path = output_tmp.path().join("play_launch_output.log");
 
     // 3. Launch play_launch
     let env = fixtures::autoware_env();
@@ -200,13 +200,13 @@ fn test_autoware_smoke_test() {
     ];
     launch_args.extend(autoware_launch_args());
 
-    let stderr_file =
-        std::fs::File::create(&stderr_path).expect("failed to create stderr file");
+    let output_file =
+        std::fs::File::create(&output_path).expect("failed to create output file");
 
     let mut cmd = fixtures::play_launch_cmd(&env);
     cmd.current_dir(&work_dir);
     cmd.args(&launch_args);
-    cmd.stderr(Stdio::from(stderr_file));
+    cmd.stdout(Stdio::from(output_file));
 
     let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
@@ -216,14 +216,17 @@ fn test_autoware_smoke_test() {
     std::thread::sleep(std::time::Duration::from_secs(15));
 
     // 5. Analyze health
-    let report = HealthReport::analyze(&play_log, &stderr_path, expected);
+    let report = HealthReport::analyze(&play_log, &output_path, expected);
 
     // 6. Print report (visible with --no-capture or on failure)
     eprintln!("\n{report}");
 
-    // 7. Assert healthy
+    // 7. Assert healthy (ignore environment-specific node exits)
+    // shape_estimation: requires TensorRT (libnvinfer.so.8) which is GPU-specific
+    // rviz2: requires X display server (not available in headless/CI environments)
+    let ignored_exits = &["shape_estimation", "rviz2"];
     assert!(
-        report.is_healthy(),
+        report.is_healthy(ignored_exits),
         "Smoke test failed:\n{report}"
     );
 
