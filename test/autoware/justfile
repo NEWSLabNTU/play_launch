@@ -6,25 +6,21 @@ default:
 
 # Variables
 script_dir := justfile_directory()
-autoware_link := script_dir / "autoware"
+activate_script := script_dir / "activate_autoware.sh"
 map_path := env_var_or_default('MAP_PATH', env_var('HOME') / 'autoware_map/sample-map-planning')
 
 # Verify Autoware installation
 check-autoware:
     #!/usr/bin/env bash
     set -e
-    if [ ! -L "{{autoware_link}}" ]; then
-        echo "ERROR: 'autoware' symlink not found"
-        echo "Create symlink: ln -s /path/to/autoware autoware"
+    if [ ! -f "{{activate_script}}" ]; then
+        echo "ERROR: activate_autoware.sh not found"
         exit 1
     fi
-    AUTOWARE_PATH=$(readlink -f "{{autoware_link}}" 2>/dev/null)
-    if [ -z "$AUTOWARE_PATH" ] || [ ! -d "$AUTOWARE_PATH" ]; then
-        echo "ERROR: autoware symlink points to invalid path"
-        exit 1
-    fi
-    if [ ! -f "$AUTOWARE_PATH/install/setup.bash" ]; then
-        echo "ERROR: install/setup.bash not found"
+    source "{{activate_script}}"
+    if ! ros2 pkg prefix autoware_launch &>/dev/null; then
+        echo "ERROR: autoware_launch package not found"
+        echo "Edit activate_autoware.sh to activate your Autoware environment"
         exit 1
     fi
 
@@ -44,7 +40,7 @@ run-sim: check-autoware
 
     # Source ROS and Autoware setup
     source ../../install/setup.bash
-    source autoware/install/setup.bash
+    source activate_autoware.sh
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
     # Run with play_launch
@@ -53,7 +49,7 @@ run-sim: check-autoware
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
 
-# Run Autoware demo (simulator + autonomous test) using GNU Parallel
+# Run Autoware demo (simulator + autonomous test)
 run-demo: check-autoware
     #!/usr/bin/env bash
     set -e
@@ -61,34 +57,42 @@ run-demo: check-autoware
     cd "$SCRIPT_DIR"
 
     MAP_PATH="{{map_path}}"
-    AUTOWARE_PATH=$(readlink -f autoware)
 
     if [ ! -f "$SCRIPT_DIR/cyclonedds.xml" ]; then
         echo "ERROR: CycloneDDS configuration file not found at $SCRIPT_DIR/cyclonedds.xml"
         exit 1
     fi
 
-    # Check for GNU Parallel
-    if ! command -v parallel &> /dev/null; then
-        echo "ERROR: GNU Parallel not found. Install with: sudo apt install parallel"
-        exit 1
-    fi
-
-    # Source ROS and Autoware setup
-    source "$AUTOWARE_PATH/install/setup.bash"
+    # Source ROS, Autoware, and play_launch setup
+    source activate_autoware.sh
     source "$SCRIPT_DIR/../../install/setup.bash"
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
-    # Export variables for parallel to inherit
-    export MAP_PATH
-    export CYCLONEDDS_URI
-    export SCRIPT_DIR
+    # Start simulator in background
+    echo "[Demo] Starting Autoware planning simulator..."
+    play_launch launch \
+        --web-addr 0.0.0.0:8080 \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="$MAP_PATH" &
+    SIM_PID=$!
+    SIM_PGID=$(ps -o pgid= -p $SIM_PID | tr -d ' ')
 
-    # Run simulator and test in parallel
-    # Simulator runs continuously, test waits 60s then runs
-    parallel --line-buffer ::: \
-        "play_launch launch --web-addr 0.0.0.0:8080 autoware_launch planning_simulator.launch.xml map_path:=\"$MAP_PATH\"" \
-        "sleep 60 && python3 $SCRIPT_DIR/scripts/test_autonomous_drive.py && echo '[Demo] Test completed. Press Ctrl-C to stop simulator.'"
+    cleanup() {
+        echo "[Demo] Shutting down (PGID=$SIM_PGID)..."
+        kill -TERM -$SIM_PGID 2>/dev/null || true
+        sleep 2
+        kill -9 -$SIM_PGID 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM
+
+    echo "[Demo] Waiting 60s for system initialization..."
+    sleep 60
+
+    echo "[Demo] Running autonomous driving test..."
+    python3 scripts/test_autonomous_drive.py
+    echo "[Demo] Test completed. Press Ctrl-C to stop simulator."
+
+    wait $SIM_PID
 
 # Generate resource usage plots from latest play_log
 plot:
@@ -105,7 +109,7 @@ dump-rust: check-autoware
 
     # Source ROS and Autoware setup
     source ../../install/setup.bash
-    source autoware/install/setup.bash
+    source activate_autoware.sh
 
     echo "Dumping with Rust parser..."
     play_launch dump --output record_rust.json launch \
@@ -126,7 +130,7 @@ dump-python: check-autoware
 
     # Source ROS and Autoware setup
     source ../../install/setup.bash
-    source autoware/install/setup.bash
+    source activate_autoware.sh
 
     echo "Dumping with Python parser..."
     play_launch dump --output record_python.json launch \
@@ -177,7 +181,7 @@ count-processes PARSER="rust": check-autoware
 
     # Source ROS and Autoware setup
     source ../../install/setup.bash
-    source autoware/install/setup.bash
+    source activate_autoware.sh
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
     # Clean previous play_log

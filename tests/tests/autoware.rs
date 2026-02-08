@@ -5,12 +5,12 @@ use play_launch_tests::health::HealthReport;
 use play_launch_tests::process::ManagedProcess;
 
 fn require_autoware() {
-    let link = fixtures::repo_root().join("test/autoware_planning_simulation/autoware");
+    let script = fixtures::repo_root().join("test/autoware/activate_autoware.sh");
     assert!(
-        link.exists(),
-        "Autoware symlink not found: {}. \
-         Create it: ln -s /path/to/autoware test/autoware_planning_simulation/autoware",
-        link.display()
+        script.is_file(),
+        "activate_autoware.sh not found: {}. \
+         Edit it to source your Autoware install's setup.bash",
+        script.display()
     );
 }
 
@@ -121,7 +121,7 @@ fn test_autoware_parser_parity() {
 fn test_autoware_process_count_rust() {
     require_autoware();
     let env = fixtures::autoware_env();
-    let work_dir = fixtures::repo_root().join("test/autoware_planning_simulation");
+    let work_dir = fixtures::repo_root().join("test/autoware");
 
     // Dump to get expected count
     let tmp = tempfile::TempDir::new().unwrap();
@@ -190,7 +190,7 @@ fn test_autoware_smoke_test() {
 
     // 3. Launch play_launch
     let env = fixtures::autoware_env();
-    let work_dir = fixtures::repo_root().join("test/autoware_planning_simulation");
+    let work_dir = fixtures::repo_root().join("test/autoware");
 
     let mut launch_args = vec![
         "launch".to_string(),
@@ -237,7 +237,7 @@ fn test_autoware_smoke_test() {
 fn test_autoware_process_count_python() {
     require_autoware();
     let env = fixtures::autoware_env();
-    let work_dir = fixtures::repo_root().join("test/autoware_planning_simulation");
+    let work_dir = fixtures::repo_root().join("test/autoware");
 
     // Dump to get expected count
     let tmp = tempfile::TempDir::new().unwrap();

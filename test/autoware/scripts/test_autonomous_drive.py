@@ -14,7 +14,7 @@ from pathlib import Path
 def load_poses_config():
     """Load poses from configuration file."""
     # Use local config file
-    config_path = Path(__file__).parent / "poses_config.yaml"
+    config_path = Path(__file__).parent.parent / "poses_config.yaml"
     if not config_path.exists():
         print(f"ERROR: Config file not found: {config_path}")
         print("Using default poses for sample-map-planning")

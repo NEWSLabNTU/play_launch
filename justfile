@@ -66,28 +66,6 @@ run *ARGS:
     source install/setup.bash
     ros2 run play_launch play_launch {{ARGS}}
 
-# Run Autoware planning simulator with play_launch (uses local binary)
-run-sim *ARGS:
-    #!/usr/bin/env bash
-    set -e
-    source /opt/ros/{{ros_distro}}/setup.bash
-    source install/setup.bash
-    AUTOWARE_DIR="test/autoware_planning_simulation"
-    if [ ! -L "$AUTOWARE_DIR/autoware" ]; then
-        echo "ERROR: autoware symlink not found in $AUTOWARE_DIR"
-        echo "Create symlink: ln -s /path/to/autoware $AUTOWARE_DIR/autoware"
-        exit 1
-    fi
-    source "$AUTOWARE_DIR/autoware/install/setup.bash"
-    MAP_PATH="${MAP_PATH:-$HOME/autoware_map/sample-map-planning}"
-    if [ -f "$AUTOWARE_DIR/cyclonedds.xml" ]; then
-        export CYCLONEDDS_URI="file://$(cd "$AUTOWARE_DIR" && pwd)/cyclonedds.xml"
-    fi
-    install/play_launch/lib/play_launch/play_launch launch \
-        --web-addr 0.0.0.0:8080 \
-        autoware_launch planning_simulator.launch.xml \
-        map_path:="$MAP_PATH" {{ARGS}}
-
 # Apply CAP_SYS_PTRACE to I/O helper (requires sudo)
 setcap-io-helper:
     #!/bin/bash
@@ -218,7 +196,7 @@ test-simple:
     cargo nextest run -E 'binary(simple_workspace)' --no-fail-fast --failure-output immediate-final
 
 # Run Autoware smoke test (health check: node exits + LoadNode failures)
-smoke-test:
+smoke-test-autoware:
     #!/usr/bin/env bash
     set -e
     cd tests

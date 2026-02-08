@@ -111,17 +111,12 @@ pub fn install_env() -> HashMap<String, String> {
 
 /// Return environment variables with ROS + install + Autoware sourced.
 pub fn autoware_env() -> HashMap<String, String> {
-    let autoware_link = repo_root().join("test/autoware_planning_simulation/autoware");
+    let activate_script = repo_root().join("test/autoware/activate_autoware.sh");
     assert!(
-        autoware_link.exists(),
-        "Autoware symlink not found: {}",
-        autoware_link.display()
-    );
-
-    let autoware_setup = autoware_link.join("install/setup.bash");
-    assert!(
-        autoware_setup.is_file(),
-        "Autoware install/setup.bash not found"
+        activate_script.is_file(),
+        "activate_autoware.sh not found: {}. \
+         Edit it to source your Autoware install's setup.bash",
+        activate_script.display()
     );
 
     let install_setup = repo_root().join("install/setup.bash");
@@ -136,7 +131,7 @@ pub fn autoware_env() -> HashMap<String, String> {
         "/opt/ros/jazzy/setup.bash"
     };
 
-    let cyclonedds_xml = repo_root().join("test/autoware_planning_simulation/cyclonedds.xml");
+    let cyclonedds_xml = repo_root().join("test/autoware/cyclonedds.xml");
 
     let output = Command::new("bash")
         .arg("-c")
@@ -144,7 +139,7 @@ pub fn autoware_env() -> HashMap<String, String> {
             "source {} >/dev/null 2>&1 && source {} >/dev/null 2>&1 && source {} >/dev/null 2>&1 && env -0",
             ros_setup,
             install_setup.display(),
-            autoware_setup.display(),
+            activate_script.display(),
         ))
         .output()
         .expect("failed to run bash");
