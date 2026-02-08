@@ -21,6 +21,14 @@ slow-timeout = { period = "90s", terminate-after = 2 }
 filter = "binary(simple_workspace)"
 slow-timeout = { period = "60s", terminate-after = 2 }
 
+[[profile.default.overrides]]
+filter = "binary(sequential_loading) | binary(concurrent_loading) | binary(mixed_loading)"
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+[[profile.default.overrides]]
+filter = "binary(io_stress)"
+slow-timeout = { period = "60s", terminate-after = 2 }
+
 [profile.ci]
 slow-timeout = { period = "30s", terminate-after = 2 }
 fail-fast = true

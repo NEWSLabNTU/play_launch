@@ -1,6 +1,7 @@
 use std::process::Stdio;
 
 use play_launch_tests::fixtures;
+use play_launch_tests::fixtures::array_len;
 use play_launch_tests::health::HealthReport;
 use play_launch_tests::process::ManagedProcess;
 
@@ -58,11 +59,6 @@ fn dump_autoware(parser: &str) -> (serde_json::Value, tempfile::TempDir) {
     (record, tmp)
 }
 
-fn array_len(val: &serde_json::Value, key: &str) -> usize {
-    val.get(key)
-        .and_then(|v| v.as_array())
-        .map_or(0, |a| a.len())
-}
 
 // ---- Dump tests ----
 

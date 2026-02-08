@@ -1,40 +1,11 @@
 use play_launch_tests::fixtures;
+use play_launch_tests::fixtures::array_len;
 use play_launch_tests::process::ManagedProcess;
 
-/// Dump a launch file and return the parsed record.json as serde_json::Value.
 fn dump_launch(launch_file: &str, parser: &str) -> serde_json::Value {
     let env = fixtures::install_env();
-    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
-    let output_path = tmp.path().join("record.json");
-
-    let mut proc = ManagedProcess::spawn(
-        fixtures::play_launch_cmd(&env).args([
-            "dump",
-            "--output",
-            output_path.to_str().unwrap(),
-            "launch",
-            "--parser",
-            parser,
-            launch_file,
-        ]),
-    )
-    .expect("failed to spawn play_launch dump");
-
-    let status = proc.wait_with_timeout(std::time::Duration::from_secs(60));
-    assert!(status.success(), "play_launch dump failed for {launch_file}");
-    assert!(
-        output_path.is_file(),
-        "record.json not created for {launch_file}"
-    );
-
-    let data = std::fs::read_to_string(&output_path).expect("failed to read record.json");
-    serde_json::from_str(&data).expect("failed to parse record.json")
-}
-
-fn array_len(val: &serde_json::Value, key: &str) -> usize {
-    val.get(key)
-        .and_then(|v| v.as_array())
-        .map_or(0, |a| a.len())
+    let (record, _tmp) = fixtures::dump_launch(&env, launch_file, parser);
+    record
 }
 
 // ---- Dump tests ----

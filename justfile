@@ -162,7 +162,7 @@ test:
     (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output immediate-final)
     echo ""
     echo "=== Integration tests (fast) ==="
-    (cd tests && cargo nextest run -E 'binary(simple_workspace) & not test(/launch/)' --no-fail-fast --failure-output immediate-final)
+    (cd tests && cargo nextest run -E 'not binary(autoware) & not binary(io_stress) & not test(/launch/)' --no-fail-fast --failure-output immediate-final)
 
 # Run all tests — parser unit + all integration including Autoware (~30s)
 test-all:

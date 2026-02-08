@@ -16,6 +16,22 @@ path = "tests/simple_workspace.rs"
 name = "autoware"
 path = "tests/autoware.rs"
 
+[[test]]
+name = "sequential_loading"
+path = "tests/sequential_loading.rs"
+
+[[test]]
+name = "concurrent_loading"
+path = "tests/concurrent_loading.rs"
+
+[[test]]
+name = "mixed_loading"
+path = "tests/mixed_loading.rs"
+
+[[test]]
+name = "io_stress"
+path = "tests/io_stress.rs"
+
 [dependencies]
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }

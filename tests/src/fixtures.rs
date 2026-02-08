@@ -174,12 +174,62 @@ pub fn autoware_map_path() -> String {
     })
 }
 
+/// Shorthand for `repo_root().join("test").join(name)`.
+pub fn test_workspace_path(name: &str) -> PathBuf {
+    repo_root().join("test").join(name)
+}
+
 /// Build a `Command` for `play_launch` with the given environment.
 pub fn play_launch_cmd(env: &HashMap<String, String>) -> Command {
     let mut cmd = Command::new(play_launch_bin());
     cmd.env_clear();
     cmd.envs(env);
     cmd
+}
+
+/// Count elements in a JSON array field, returning 0 if the field is missing.
+pub fn array_len(val: &serde_json::Value, key: &str) -> usize {
+    val.get(key)
+        .and_then(|v| v.as_array())
+        .map_or(0, |a| a.len())
+}
+
+/// Dump a launch file with the given environment and parser, returning the
+/// parsed `record.json` and the temp directory (kept alive for the caller).
+pub fn dump_launch(
+    env: &HashMap<String, String>,
+    launch_file: &str,
+    parser: &str,
+) -> (serde_json::Value, tempfile::TempDir) {
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let output_path = tmp.path().join("record.json");
+
+    let mut proc = crate::process::ManagedProcess::spawn(
+        play_launch_cmd(env).args([
+            "dump",
+            "--output",
+            output_path.to_str().unwrap(),
+            "launch",
+            "--parser",
+            parser,
+            launch_file,
+        ]),
+    )
+    .expect("failed to spawn play_launch dump");
+
+    let status = proc.wait_with_timeout(std::time::Duration::from_secs(60));
+    assert!(
+        status.success(),
+        "play_launch dump (parser={parser}) failed for {launch_file}"
+    );
+    assert!(
+        output_path.is_file(),
+        "record.json not created for {launch_file}"
+    );
+
+    let data = std::fs::read_to_string(&output_path).expect("failed to read record.json");
+    let record = serde_json::from_str(&data).expect("failed to parse record.json");
+    (record, tmp)
 }
 
 /// Count non-empty `cmdline` files under `play_log_dir/node/*/cmdline`.
