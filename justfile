@@ -247,21 +247,28 @@ benchmark-parsers ITERATIONS="5":
     source install/setup.bash
     ITERATIONS={{ITERATIONS}} ./scripts/benchmark_parsers.sh
 
-# Run linters (clippy + ruff)
-lint:
+# Run checks (clippy + rustfmt check + ruff)
+check:
     #!/usr/bin/env bash
     set -e
     source install/setup.bash
 
+    echo "=== play_launch (clippy) ==="
     (
     cd src/play_launch &&
     cargo clippy --config ../../build/ros2_cargo_config.toml --all-targets --all-features -- -D warnings
     )
 
+    echo ""
+    echo "=== play_launch_parser (clippy + rustfmt) ==="
+    (cd src/play_launch_parser && just check)
+
+    echo ""
+    echo "=== Python (ruff) ==="
     python3 -m ruff check python/
 
-# Lint Web UI (HTML, CSS, JavaScript)
-lint-web-ui:
+# Check Web UI (HTML, CSS, JavaScript)
+check-web-ui:
     #!/usr/bin/env bash
     set -e
 
@@ -278,16 +285,17 @@ lint-web-ui:
 format:
     #!/usr/bin/env bash
     (cd src/play_launch && cargo +nightly fmt)
+    (cd src/play_launch_parser && cargo +nightly fmt)
     ruff format python/
 
-# Run format and lint checks
+# Run format and check
 quality:
     #!/usr/bin/env bash
     set -e
     echo "Running format..."
     just format
-    echo "Running lint..."
-    just lint
+    echo "Running checks..."
+    just check
 
 # Check version consistency across all files
 version-check:
