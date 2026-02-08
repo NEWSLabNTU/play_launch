@@ -325,7 +325,7 @@ def inject_statistics_panel(
     container_map_json = json.dumps(container_map or {})
 
     # JavaScript code to add statistics panel
-    js_code = f'''
+    js_code = f"""
 <script>
 window.addEventListener('load', function() {{
     // Find the Plotly div (first div with class 'plotly-graph-div')
@@ -442,7 +442,7 @@ window.addEventListener('load', function() {{
     }});
 }});
 </script>
-'''
+"""
 
     # Insert JavaScript before </body> tag
     html_content = html_content.replace("</body>", js_code + "\n</body>")
