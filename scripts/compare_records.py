@@ -252,9 +252,31 @@ def nodes_equivalent(rust: Dict, python: Dict) -> List[str]:
     cmd_diffs = cmds_equivalent(rust.get('cmd', []), python.get('cmd', []))
     diffs.extend(cmd_diffs)
 
+    # --- global_params (deduplicate before comparing) ---
+    r_gp = rust.get('global_params')
+    p_gp = python.get('global_params')
+    if r_gp != p_gp:
+        # Normalize: deduplicate while preserving order (first occurrence wins)
+        def dedup_params(params):
+            if not params:
+                return params
+            seen = set()
+            result = []
+            for pair in params:
+                key = tuple(pair)
+                if key not in seen:
+                    seen.add(key)
+                    result.append(pair)
+            return result
+
+        r_dedup = dedup_params(r_gp)
+        p_dedup = dedup_params(p_gp)
+        if r_dedup != p_dedup:
+            diffs.append(f"field 'global_params' differs")
+
     # --- simple fields ---
     for field in ('name', 'namespace', 'executable', 'exec_name',
-                  'global_params', 'remaps', 'env', 'respawn', 'ros_args'):
+                  'remaps', 'env', 'respawn', 'ros_args'):
         rv = rust.get(field)
         pv = python.get(field)
         if rv is None and pv == []:

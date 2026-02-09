@@ -166,6 +166,21 @@ pub fn autoware_env() -> HashMap<String, String> {
     env
 }
 
+/// Expected entity counts from `activate_autoware.sh` env vars.
+///
+/// Returns `(nodes, containers, load_nodes)` as `Option<usize>` — `None` if
+/// the corresponding `EXPECTED_*` variable is not set.
+pub fn autoware_expected_counts(
+    env: &HashMap<String, String>,
+) -> (Option<usize>, Option<usize>, Option<usize>) {
+    let get = |key: &str| env.get(key).and_then(|v| v.parse::<usize>().ok());
+    (
+        get("EXPECTED_NODES"),
+        get("EXPECTED_CONTAINERS"),
+        get("EXPECTED_LOAD_NODES"),
+    )
+}
+
 /// Default map_path for Autoware tests.
 pub fn autoware_map_path() -> String {
     std::env::var("MAP_PATH").unwrap_or_else(|_| {

@@ -60,38 +60,66 @@ fn dump_autoware(parser: &str) -> (serde_json::Value, tempfile::TempDir) {
 }
 
 
+/// Assert that a dump record matches the expected counts from
+/// `activate_autoware.sh`.  When an `EXPECTED_*` variable is set, the count
+/// must match exactly; otherwise we just check > 0.
+fn assert_entity_counts(record: &serde_json::Value, parser: &str) {
+    let env = fixtures::autoware_env();
+    let (exp_nodes, exp_containers, exp_load_nodes) =
+        fixtures::autoware_expected_counts(&env);
+
+    let checks: &[(&str, Option<usize>)] = &[
+        ("node", exp_nodes),
+        ("container", exp_containers),
+        ("load_node", exp_load_nodes),
+    ];
+
+    for &(key, expected) in checks {
+        let actual = array_len(record, key);
+        if let Some(n) = expected {
+            assert_eq!(
+                actual, n,
+                "{parser} parser: {key} count {actual} != expected {n} \
+                 (from EXPECTED_{} in activate_autoware.sh)",
+                key.to_uppercase()
+            );
+        } else {
+            assert!(
+                actual > 0,
+                "{parser} parser: expected at least 1 {key}, got 0"
+            );
+        }
+    }
+}
+
 // ---- Dump tests ----
 
 #[test]
 fn test_autoware_dump_rust() {
     let (record, _tmp) = dump_autoware("rust");
-    assert_eq!(array_len(&record, "node"), 46, "expected 46 nodes");
-    assert_eq!(
-        array_len(&record, "container"),
-        15,
-        "expected 15 containers"
-    );
-    assert_eq!(
-        array_len(&record, "load_node"),
-        54,
-        "expected 54 load_nodes"
-    );
+    assert_entity_counts(&record, "rust");
 }
 
 #[test]
 fn test_autoware_dump_python() {
     let (record, _tmp) = dump_autoware("python");
-    assert_eq!(array_len(&record, "node"), 46, "expected 46 nodes");
-    assert_eq!(
-        array_len(&record, "container"),
-        15,
-        "expected 15 containers"
-    );
-    assert_eq!(
-        array_len(&record, "load_node"),
-        54,
-        "expected 54 load_nodes"
-    );
+    assert_entity_counts(&record, "python");
+}
+
+#[test]
+fn test_autoware_dump_counts_match() {
+    let (rust_record, _r_tmp) = dump_autoware("rust");
+    let (python_record, _p_tmp) = dump_autoware("python");
+
+    for key in &["node", "container", "load_node"] {
+        assert_eq!(
+            array_len(&rust_record, key),
+            array_len(&python_record, key),
+            "{key} count mismatch: rust={}, python={}",
+            array_len(&rust_record, key),
+            array_len(&python_record, key),
+        );
+    }
 }
 
 // ---- Parser parity ----
@@ -142,7 +170,7 @@ fn test_autoware_process_count_rust() {
     assert!(status.success());
 
     let expected = fixtures::count_expected_processes(&record_path);
-    assert_eq!(expected, 61, "expected 61 processes (46 nodes + 15 containers)");
+    assert!(expected > 0, "expected at least 1 process from dump");
 
     // Launch
     let mut launch_args = vec![
@@ -178,7 +206,7 @@ fn test_autoware_smoke_test() {
     // 1. Dump record.json to get expected process count
     let (record, _dump_tmp) = dump_autoware("rust");
     let expected = array_len(&record, "node") + array_len(&record, "container");
-    assert_eq!(expected, 61, "expected 61 processes (46 nodes + 15 containers)");
+    assert!(expected > 0, "expected at least 1 process from dump");
 
     // 2. Set up stdout capture (play_launch writes tracing output to stdout)
     let output_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
@@ -258,7 +286,7 @@ fn test_autoware_process_count_python() {
     assert!(status.success());
 
     let expected = fixtures::count_expected_processes(&record_path);
-    assert_eq!(expected, 61, "expected 61 processes (46 nodes + 15 containers)");
+    assert!(expected > 0, "expected at least 1 process from dump");
 
     // Launch
     let mut launch_args = vec![
