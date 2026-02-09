@@ -229,7 +229,7 @@ All features are **enabled by default** for better out-of-box experience:
 - Diagnostic monitoring: ✅ enabled
 - Web UI: ✅ enabled (http://127.0.0.1:8080)
 
-**Config YAML (see `test/autoware/autoware_config.yaml`):**
+**Config YAML (see `tests/fixtures/autoware/autoware_config.yaml`):**
 ```yaml
 composable_node_loading:
   load_node_timeout_millis: 30000
@@ -543,10 +543,10 @@ This prevents orphan ROS processes from lingering after test panics, assertion f
 
 ### Test Workspaces
 
-- `test/autoware/`: Full Autoware test (46 nodes, 15 containers, 54 composable nodes)
-- `test/simple_test/`: Basic container with 2 nodes
-- `test/sequential_loading/`: FIFO queue testing
-- `test/concurrent_loading/`: Parallel loading testing
+- `tests/fixtures/autoware/`: Full Autoware test (46 nodes, 15 containers, 54 composable nodes)
+- `tests/fixtures/simple_test/`: Basic container with 2 nodes
+- `tests/fixtures/sequential_loading/`: FIFO queue testing
+- `tests/fixtures/concurrent_loading/`: Parallel loading testing
 
 Each test workspace has `justfile` with:
 - `just run`, `just run-debug`: Run tests
