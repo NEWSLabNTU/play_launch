@@ -20,8 +20,8 @@ NC='\033[0m' # No Color
 
 # Test cases: "package:launch_file:description"
 TEST_CASES=(
-    "test/simple_test/launch/pure_nodes.launch.xml::Simple"
-    "test/simple_test/launch/composition.launch.xml::Composable"
+    "tests/fixtures/simple_test/launch/pure_nodes.launch.xml::Simple"
+    "tests/fixtures/simple_test/launch/composition.launch.xml::Composable"
 )
 
 # Note: Autoware test requires external symlink, skip for now

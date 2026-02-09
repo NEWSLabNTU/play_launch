@@ -111,7 +111,7 @@ pub fn install_env() -> HashMap<String, String> {
 
 /// Return environment variables with ROS + install + Autoware sourced.
 pub fn autoware_env() -> HashMap<String, String> {
-    let activate_script = repo_root().join("test/autoware/activate_autoware.sh");
+    let activate_script = test_workspace_path("autoware").join("activate_autoware.sh");
     assert!(
         activate_script.is_file(),
         "activate_autoware.sh not found: {}. \
@@ -131,7 +131,7 @@ pub fn autoware_env() -> HashMap<String, String> {
         "/opt/ros/jazzy/setup.bash"
     };
 
-    let cyclonedds_xml = repo_root().join("test/autoware/cyclonedds.xml");
+    let cyclonedds_xml = test_workspace_path("autoware").join("cyclonedds.xml");
 
     let output = Command::new("bash")
         .arg("-c")
@@ -174,9 +174,11 @@ pub fn autoware_map_path() -> String {
     })
 }
 
-/// Shorthand for `repo_root().join("test").join(name)`.
+/// Shorthand for the fixture workspace at `tests/fixtures/<name>`.
 pub fn test_workspace_path(name: &str) -> PathBuf {
-    repo_root().join("test").join(name)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join(name)
 }
 
 /// Build a `Command` for `play_launch` with the given environment.

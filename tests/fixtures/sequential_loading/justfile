@@ -14,7 +14,7 @@ run:
     echo "Running sequential loading test (5 nodes → 1 container)..."
     echo "Expected: Nodes load one-by-one in FIFO order"
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     play_launch launch launch/sequential.launch.xml
 
 # Check timing metrics

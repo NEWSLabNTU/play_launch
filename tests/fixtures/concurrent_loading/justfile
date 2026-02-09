@@ -14,7 +14,7 @@ run:
     echo "Running concurrent loading test (4 nodes → 4 containers)..."
     echo "Expected: All nodes load in parallel"
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     play_launch launch launch/concurrent.launch.xml
 
 # Run with debug logs to see concurrency
@@ -23,7 +23,7 @@ run-debug:
     set -e
     echo "Running with debug logs (check timestamps for concurrent loading)..."
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     RUST_LOG=debug play_launch launch launch/concurrent.launch.xml 2>&1 | grep -E "LoadNode|Starting load"
 
 # Check timing metrics

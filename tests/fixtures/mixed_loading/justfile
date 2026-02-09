@@ -14,7 +14,7 @@ run:
     echo "Running mixed loading test (5 nodes → 2 containers)..."
     echo "Expected: Sequential loading within each container, concurrent across containers"
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     play_launch launch launch/mixed.launch.xml
 
 # Run with debug logs
@@ -23,7 +23,7 @@ run-debug:
     set -e
     echo "Running with debug logs..."
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     RUST_LOG=debug play_launch launch launch/mixed.launch.xml 2>&1 | grep -E "LoadNode|Starting load|container_[ab]"
 
 # Check timing metrics

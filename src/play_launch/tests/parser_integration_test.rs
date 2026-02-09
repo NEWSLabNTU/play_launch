@@ -63,7 +63,7 @@ fn test_rust_parser_with_arguments() {
 #[ignore] // TODO (Phase 13.2): Remove ignore when implemented
 fn test_rust_parser_composable_nodes() {
     // Test parsing launch file with composable nodes
-    // Use: test/simple_test/simple_test.launch.xml
+    // Use: tests/fixtures/simple_test/simple_test.launch.xml
     //
     // Expected:
     // - Container entry created
@@ -299,7 +299,7 @@ fn test_file_data_preservation() {
 //
 // 3. Test environment requirements:
 //    - ROS 2 environment must be sourced
-//    - Test packages must be built (demo_nodes_cpp, test/*)
+//    - Test packages must be built (demo_nodes_cpp, tests/fixtures/*)
 //    - Python dump_launch must be available (for comparison tests)
 //
 // 4. Performance tests should be opt-in:

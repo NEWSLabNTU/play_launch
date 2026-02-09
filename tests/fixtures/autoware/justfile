@@ -39,7 +39,7 @@ run-sim: check-autoware
     fi
 
     # Source ROS and Autoware setup
-    source ../../install/setup.bash
+    source ../../../install/setup.bash
     source activate_autoware.sh
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
@@ -65,7 +65,7 @@ run-demo: check-autoware
 
     # Source ROS, Autoware, and play_launch setup
     source activate_autoware.sh
-    source "$SCRIPT_DIR/../../install/setup.bash"
+    source "$SCRIPT_DIR/../../../install/setup.bash"
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
     # Start simulator in background
@@ -108,7 +108,7 @@ dump-rust: check-autoware
     MAP_PATH="{{map_path}}"
 
     # Source ROS and Autoware setup
-    source ../../install/setup.bash
+    source ../../../install/setup.bash
     source activate_autoware.sh
 
     echo "Dumping with Rust parser..."
@@ -129,7 +129,7 @@ dump-python: check-autoware
     MAP_PATH="{{map_path}}"
 
     # Source ROS and Autoware setup
-    source ../../install/setup.bash
+    source ../../../install/setup.bash
     source activate_autoware.sh
 
     echo "Dumping with Python parser..."
@@ -164,7 +164,7 @@ compare-dumps:
     echo ""
 
     # Use the compare_records.py script from the repo root
-    python3 ../../scripts/compare_records.py record_rust.json record_python.json
+    python3 ../../../scripts/compare_records.py record_rust.json record_python.json
 
     echo ""
     echo "Comparison complete."
@@ -180,7 +180,7 @@ count-processes PARSER="rust": check-autoware
     PARSER="{{PARSER}}"
 
     # Source ROS and Autoware setup
-    source ../../install/setup.bash
+    source ../../../install/setup.bash
     source activate_autoware.sh
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
@@ -258,7 +258,7 @@ count-processes PARSER="rust": check-autoware
 
     echo ""
     set +e
-    python3 ../../scripts/count_processes.py record_count.json --play-log-dir play_log/latest
+    python3 ../../../scripts/count_processes.py record_count.json --play-log-dir play_log/latest
     RESULT=$?
     set -e
 

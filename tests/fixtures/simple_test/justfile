@@ -13,7 +13,7 @@ run-pure-nodes:
     set -e
     echo "Running pure nodes..."
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     play_launch launch  launch/pure_nodes.launch.xml
 
 # Run composition.launch.xml from local launch directory
@@ -22,7 +22,7 @@ run-composition:
     set -e
     echo "Running composition..."
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     play_launch launch  launch/composition.launch.xml
 
 # Run set_parameter.launch.xml from local launch directory
@@ -31,7 +31,7 @@ run-set-parameter:
     set -e
     echo "Running set_parameter..."
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     play_launch launch  launch/set_parameter.launch.xml
 
 # Run all.launch.xml from local launch directory
@@ -40,7 +40,7 @@ run-all:
     set -e
     echo "Running all tests combined..."
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     play_launch launch  launch/all.launch.xml
 
 # Generate plots from latest run
@@ -53,7 +53,7 @@ dump-rust:
     set -e
     echo "Dumping composition.launch.xml with Rust parser..."
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     play_launch dump --output record_rust.json launch \
         --parser rust \
         launch/composition.launch.xml
@@ -65,7 +65,7 @@ dump-python:
     set -e
     echo "Dumping composition.launch.xml with Python parser..."
     . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../install/setup.bash
+    . ../../../install/setup.bash
     play_launch dump --output record_python.json launch \
         --parser python \
         launch/composition.launch.xml
@@ -88,7 +88,7 @@ compare-dumps:
     fi
     echo "Comparing Rust and Python parser outputs..."
     echo ""
-    python3 ../../scripts/compare_records.py record_rust.json record_python.json
+    python3 ../../../scripts/compare_records.py record_rust.json record_python.json
     echo ""
     echo "Comparison complete."
 

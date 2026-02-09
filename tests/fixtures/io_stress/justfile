@@ -6,12 +6,12 @@ set shell := ["bash", "-c"]
 # Build io_stress package
 build:
     @echo "Building io_stress package..."
-    @cd ../.. && colcon build --base-paths test/io_stress --symlink-install
+    @cd ../../.. && colcon build --base-paths tests/fixtures/io_stress --symlink-install
 
 # Run I/O stress test with monitoring
 run:
     @echo "Running I/O stress test with monitoring..."
-    @. ../../install/setup.sh && play_launch launch io_stress io_stress.launch.xml
+    @. ../../../install/setup.sh && play_launch launch io_stress io_stress.launch.xml
 
 # Generate resource plots
 plot:

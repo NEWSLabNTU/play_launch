@@ -12,8 +12,8 @@ fn dump_launch(launch_file: &str, parser: &str) -> serde_json::Value {
 
 #[test]
 fn test_dump_pure_nodes_rust() {
-    let launch = fixtures::repo_root()
-        .join("test/simple_test/launch/pure_nodes.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test")
+        .join("launch/pure_nodes.launch.xml");
     let record = dump_launch(launch.to_str().unwrap(), "rust");
 
     let nodes = array_len(&record, "node");
@@ -28,8 +28,8 @@ fn test_dump_pure_nodes_rust() {
 
 #[test]
 fn test_dump_composition_rust() {
-    let launch = fixtures::repo_root()
-        .join("test/simple_test/launch/composition.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test")
+        .join("launch/composition.launch.xml");
     let record = dump_launch(launch.to_str().unwrap(), "rust");
 
     let containers = array_len(&record, "container");
@@ -46,8 +46,8 @@ fn test_dump_composition_rust() {
 
 #[test]
 fn test_dump_pure_nodes_python() {
-    let launch = fixtures::repo_root()
-        .join("test/simple_test/launch/pure_nodes.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test")
+        .join("launch/pure_nodes.launch.xml");
     let record = dump_launch(launch.to_str().unwrap(), "python");
 
     let nodes = array_len(&record, "node");
@@ -59,8 +59,8 @@ fn test_dump_pure_nodes_python() {
 
 #[test]
 fn test_dump_composition_python() {
-    let launch = fixtures::repo_root()
-        .join("test/simple_test/launch/composition.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test")
+        .join("launch/composition.launch.xml");
     let record = dump_launch(launch.to_str().unwrap(), "python");
 
     let containers = array_len(&record, "container");
@@ -79,8 +79,8 @@ fn test_dump_composition_python() {
 
 #[test]
 fn test_parser_parity_pure_nodes() {
-    let launch = fixtures::repo_root()
-        .join("test/simple_test/launch/pure_nodes.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test")
+        .join("launch/pure_nodes.launch.xml");
     let launch_str = launch.to_str().unwrap();
 
     let rust = dump_launch(launch_str, "rust");
@@ -105,8 +105,8 @@ fn test_parser_parity_pure_nodes() {
 
 #[test]
 fn test_parser_parity_composition() {
-    let launch = fixtures::repo_root()
-        .join("test/simple_test/launch/composition.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test")
+        .join("launch/composition.launch.xml");
     let launch_str = launch.to_str().unwrap();
 
     let rust = dump_launch(launch_str, "rust");
@@ -140,8 +140,8 @@ fn test_parser_parity_composition() {
 #[test]
 fn test_launch_pure_nodes() {
     let env = fixtures::install_env();
-    let launch = fixtures::repo_root()
-        .join("test/simple_test/launch/pure_nodes.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test")
+        .join("launch/pure_nodes.launch.xml");
 
     // First dump to get expected process count
     let tmp = tempfile::TempDir::new().unwrap();
@@ -167,7 +167,7 @@ fn test_launch_pure_nodes() {
     assert!(expected > 0, "expected at least 1 process");
 
     // Launch and wait for processes
-    let work_dir = fixtures::repo_root().join("test/simple_test");
+    let work_dir = fixtures::test_workspace_path("simple_test");
     let mut cmd = fixtures::play_launch_cmd(&env);
     cmd.current_dir(&work_dir);
     cmd.args([

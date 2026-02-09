@@ -16,8 +16,8 @@ NC='\033[0m' # No Color
 # Test cases: "path_or_package:launch_file:description"
 # Use direct paths for test workspace files
 TEST_CASES=(
-    "test/simple_test/launch/pure_nodes.launch.xml::Simple nodes"
-    "test/simple_test/launch/composition.launch.xml::Composable nodes"
+    "tests/fixtures/simple_test/launch/pure_nodes.launch.xml::Simple nodes"
+    "tests/fixtures/simple_test/launch/composition.launch.xml::Composable nodes"
 )
 
 # Note: Autoware test requires external symlink, skip for now
