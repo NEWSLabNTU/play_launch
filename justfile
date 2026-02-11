@@ -158,6 +158,10 @@ publish-testpypi:
 test:
     #!/usr/bin/env bash
     set -e
+    echo "=== C++ build check ==="
+    source /opt/ros/{{ros_distro}}/setup.bash
+    colcon build --packages-select play_launch_msgs play_launch_container --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
+    echo ""
     echo "=== Parser unit tests ==="
     (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output immediate-final)
     echo ""
@@ -168,6 +172,10 @@ test:
 test-all:
     #!/usr/bin/env bash
     set -e
+    echo "=== C++ build check ==="
+    source /opt/ros/{{ros_distro}}/setup.bash
+    colcon build --packages-select play_launch_msgs play_launch_container --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
+    echo ""
     echo "=== Parser unit tests ==="
     (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output immediate-final)
     echo ""
@@ -225,7 +233,7 @@ benchmark-parsers ITERATIONS="5":
     source install/setup.bash
     ITERATIONS={{ITERATIONS}} ./scripts/benchmark_parsers.sh
 
-# Run checks (clippy + rustfmt check + ruff)
+# Run checks (clippy + rustfmt check + ruff + cpplint + clang-format)
 check:
     #!/usr/bin/env bash
     set -e
@@ -245,6 +253,14 @@ check:
     echo "=== Python (ruff) ==="
     python3 -m ruff check python/
 
+    echo ""
+    echo "=== C++ (cpplint) ==="
+    ament_cpplint {{cpp_packages}}
+
+    echo ""
+    echo "=== C++ (clang-format check) ==="
+    ament_clang_format {{cpp_packages}}
+
 # Check Web UI (HTML, CSS, JavaScript)
 check-web-ui:
     #!/usr/bin/env bash
@@ -259,12 +275,16 @@ check-web-ui:
     echo "Linting Web UI..."
     npm run lint
 
-# Format code (Rust + Python)
+# C++ packages to lint/format
+cpp_packages := "src/play_launch_container"
+
+# Format code (Rust + Python + C++)
 format:
     #!/usr/bin/env bash
     (cd src/play_launch && cargo +nightly fmt)
     (cd src/play_launch_parser && cargo +nightly fmt)
     ruff format python/
+    ament_clang_format --reformat {{cpp_packages}}
 
 # Run format and check
 quality:
