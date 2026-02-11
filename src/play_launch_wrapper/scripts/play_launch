@@ -1,5 +1,0 @@
-#!/bin/bash
-# Wrapper script to run play_launch via ros2 run
-# This allows users to run 'play_launch' directly after sourcing the workspace
-
-exec ros2 run play_launch play_launch "$@"
