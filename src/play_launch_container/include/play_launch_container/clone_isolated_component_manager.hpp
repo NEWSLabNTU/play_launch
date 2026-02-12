@@ -17,10 +17,12 @@
 
 #include <sys/types.h>
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #include "play_launch_container/observable_component_manager.hpp"
 
@@ -66,14 +68,21 @@ private:
     size_t stack_size;
     uint64_t node_id;
     std::string node_name;
-    void * tls;    // glibc TLS block (allocated via _dl_allocate_tls)
-    void * boot;   // ChildBootstrap* — passed to clone child, freed on cleanup
+    void * tls;   // glibc TLS block (allocated via _dl_allocate_tls)
+    void * boot;  // ChildBootstrap* — passed to clone child, freed on cleanup
   };
 
   void cleanup_child(ChildInfo & child);
+  void monitor_loop();
+  void handle_child_death(uint64_t node_id);
 
   std::mutex children_mutex_;
   std::map<uint64_t, ChildInfo> children_;
+
+  int epoll_fd_ = -1;
+  int stop_fd_ = -1;
+  std::thread monitor_thread_;
+  std::atomic<bool> monitor_running_{false};
 
   static constexpr size_t kChildStackSize = 8 * 1024 * 1024;  // 8 MB
 };

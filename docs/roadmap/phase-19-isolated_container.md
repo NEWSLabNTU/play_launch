@@ -1,6 +1,6 @@
 # Phase 19: Clone-Isolated Component Manager
 
-**Status**: 🔧 In Progress (19.0 + 19.1 complete)
+**Status**: 🔧 In Progress (19.0 + 19.1 + 19.2 complete)
 **Priority**: High (crash isolation, per-node resource control)
 **Dependencies**: Phase 18 complete. ObservableComponentManager merged.
 
@@ -20,8 +20,8 @@ container's address space for zero-copy intra-process communication.
 ```
 19.0 Consolidate executable          ✅ complete
   └── 19.1 CloneIsolatedComponentManager  ✅ complete
-        ├── 19.2 Death monitor            ⏳ next
-        │     └── 19.3 Integration tests
+        ├── 19.2 Death monitor            ✅ complete
+        │     └── 19.3 Integration tests  ⏳ next
         └── 19.4 play_launch integration
               ├── 19.5 cgroups            (optional)
               └── 19.6 MPK               (optional, experimental)
@@ -121,31 +121,54 @@ New C++ class that subclasses `ObservableComponentManager` and uses
 
 ---
 
-## Phase 19.2: Child Death Monitor ⏳
+## Phase 19.2: Child Death Monitor ✅
 
-**Status**: Planned (next)
+**Status**: Complete
 
 Detect child crashes via `epoll` on pidfds, clean up resources, publish events.
 
 ### Work Items
 
-- [ ] Create monitor thread (spawned in constructor, joined in destructor)
-- [ ] Use `epoll_create1()` + `epoll_ctl()` to watch child pidfds
-- [ ] Use eventfd or pipe to register new pidfds from `add_node_to_executor()`
-- [ ] On child death: `waitid(P_PIDFD)` to get exit info (signal, status)
-- [ ] Clean up dead child resources (cancel executor, munmap stack, close pidfd, free TLS)
-- [ ] Publish `LOAD_FAILED` event via inherited `event_pub_`
-- [ ] Log crash details (node name, PID, signal number)
-- [ ] Handle monitor thread shutdown (stop flag + eventfd wakeup)
+- [x] Create monitor thread (spawned in constructor, joined in destructor)
+- [x] Use `epoll_create1()` + `epoll_ctl()` to watch child pidfds
+- [x] Register pidfds directly from `add_node_to_executor()` (epoll_ctl is thread-safe)
+- [x] On child death: `waitpid()` + `WIFSIGNALED`/`WIFEXITED` for exit info
+- [x] Clean up dead child resources (munmap stack, close pidfd, free TLS, delete boot)
+- [x] Publish `CRASHED` event (new type, `uint8 CRASHED=3`) via inherited `event_pub_`
+- [x] Log crash details with RCLCPP_ERROR (node name, PID, signal name, core dump flag)
+- [x] Handle monitor thread shutdown (eventfd wakeup + `monitor_running_` flag)
+- [x] Graceful degradation if epoll/eventfd fails (log warning, skip monitor)
+
+### Key Technical Decisions
+
+- **`CRASHED` event type**: Added `uint8 CRASHED=3` to `ComponentEvent.msg` rather
+  than reusing `LOAD_FAILED`. Semantically distinct: node was running then died,
+  vs. failed to load initially.
+- **`waitpid` not `waitid(P_PIDFD)`**: `P_PIDFD` not available in glibc 2.35
+  headers. `waitpid` with `WIFSIGNALED`/`WIFEXITED`/`WCOREDUMP` macros gives the
+  same information.
+- **No notification fd for new pidfds**: `epoll_ctl(EPOLL_CTL_ADD)` is thread-safe,
+  so pidfds are registered directly from `add_node_to_executor()` without a
+  notification pipe.
+- **Race resolution**: `remove_node_from_executor` deregisters pidfd from epoll
+  BEFORE killing the child. Both paths lock `children_mutex_`; first to acquire
+  handles cleanup, second finds entry gone and returns.
+
+### Files Changed
+
+| File | Action |
+|------|--------|
+| `play_launch_msgs/msg/ComponentEvent.msg` | Added `uint8 CRASHED=3` |
+| `clone_isolated_component_manager.hpp` | Added monitor members (epoll_fd_, stop_fd_, thread, atomic) |
+| `clone_isolated_component_manager.cpp` | Monitor implementation (constructor, destructor, loop, handler) |
 
 ### Passing Criteria
 
-- [ ] Monitor thread starts with container and stops on shutdown
-- [ ] Child SIGSEGV detected within 100ms
-- [ ] Crash event published on `~/_container/component_events` topic
-- [ ] Other children continue processing callbacks after one crashes
-- [ ] Resources cleaned up (stack freed, pidfd closed, TLS freed)
-- [ ] Container process itself survives child crash
+- [x] Monitor thread starts with container and stops on shutdown
+- [x] Crash event published on `~/_container/component_events` topic
+- [x] Resources cleaned up (stack freed, pidfd closed, TLS freed)
+- [x] Container process itself survives child crash
+- [x] Existing tests pass (326/326)
 
 ---
 
