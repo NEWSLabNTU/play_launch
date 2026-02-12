@@ -13,16 +13,49 @@
 // limitations under the License.
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "play_launch_container/observable_component_manager.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 int main(int argc, char * argv[])
 {
-  /// Observable component container with a single-threaded executor.
+  /// Observable component container with configurable executor.
+  ///
+  /// Usage:
+  ///   component_container                              # single-threaded (default)
+  ///   component_container --use_multi_threaded_executor # multi-threaded
   rclcpp::init(argc, argv);
-  auto exec = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+
+  // Parse CLI args (same pattern as upstream component_container_isolated.cpp)
+  bool use_multi_threaded = false;
+  std::vector<std::string> args = rclcpp::remove_ros_arguments(argc, argv);
+  for (const auto & arg : args) {
+    if (arg == "--use_multi_threaded_executor") {
+      use_multi_threaded = true;
+    }
+  }
+
+  // Create executor
+  std::shared_ptr<rclcpp::Executor> exec;
+  if (use_multi_threaded) {
+    exec = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
+  } else {
+    exec = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+  }
+
+  // Create manager
   auto node = std::make_shared<play_launch_container::ObservableComponentManager>(exec);
+
+  // Handle thread_num parameter for MT mode
+  if (use_multi_threaded && node->has_parameter("thread_num")) {
+    const auto thread_num = node->get_parameter("thread_num").as_int();
+    exec = std::make_shared<rclcpp::executors::MultiThreadedExecutor>(
+      rclcpp::ExecutorOptions{}, thread_num);
+    node->set_executor(exec);
+  }
+
   exec->add_node(node);
   exec->spin();
 }

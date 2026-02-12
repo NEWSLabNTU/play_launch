@@ -18,21 +18,16 @@ target_include_directories(observable_component_manager PUBLIC
 ament_target_dependencies(observable_component_manager
   rclcpp rclcpp_components composition_interfaces play_launch_msgs)
 
-# Single-threaded container
+# Container executable (single binary, configurable via CLI flags)
 add_executable(component_container src/component_container.cpp)
 target_link_libraries(component_container observable_component_manager)
 ament_target_dependencies(component_container rclcpp)
-
-# Multi-threaded container
-add_executable(component_container_mt src/component_container_mt.cpp)
-target_link_libraries(component_container_mt observable_component_manager)
-ament_target_dependencies(component_container_mt rclcpp)
 
 install(TARGETS observable_component_manager
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
-install(TARGETS component_container component_container_mt
+install(TARGETS component_container
   RUNTIME DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 
