@@ -67,6 +67,13 @@ This directory contains the implementation roadmap for play_launch, organized by
 | **Phase 16**: YAML Parameter Loading & Global Parameters | ✅ Complete | 2026-02-06 | In README.md |
 | **Phase 17**: Context Unification & Parser Parity | 🔄 In Progress | - | [phase-17-context_unification.md](./phase-17-context_unification.md) |
 
+### Container Isolation
+
+| Phase | Status | Completion | Documentation |
+|-------|--------|------------|---------------|
+| **Phase 18**: Code Quality Improvements | ✅ Complete | 2026-02-08 | [phase-18-code_quality.md](./phase-18-code_quality.md) |
+| **Phase 19**: Clone-Isolated Component Manager | ⏳ Planned | - | [phase-19-isolated_container.md](./phase-19-isolated_container.md) |
+
 ---
 
 ## Progress Summary
@@ -97,6 +104,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ### Planned ⏳
 
+- ⏳ Clone-Isolated Component Manager (Phase 19) - Consolidate container into single binary, per-node process isolation via `clone(CLONE_VM)`, crash detection, cgroups CPU control
 - ⏳ Web UI Actor Integration (Phase 11) - Remove bridging layer, implement direct actor control
 - ⏳ Complete documentation (Phase 3)
 - ⏳ Comprehensive testing (Phase 4)
@@ -214,7 +222,14 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Future Phases
 
-- **Phase 16**: Container Record Consolidation - See [phase-16-container_record_consolidation.md](./phase-16-container_record_consolidation.md)
+- **Phase 19**: Clone-Isolated Component Manager - See [phase-19-isolated_container.md](./phase-19-isolated_container.md)
+  - Phase 19.0: Consolidate ST/MT into single `component_container` binary with CLI flags
+  - Phase 19.1-19.2: Per-node process isolation via `clone(CLONE_VM)` with pidfd death monitoring
+  - Phase 19.3: Integration tests (crash isolation, IPC, PID visibility)
+  - Phase 19.4: play_launch Rust integration (config-driven container mode selection)
+  - Phase 19.5: Per-node cgroups CPU control via `CLONE_INTO_CGROUP` (optional)
+  - Phase 19.6: Intel MPK memory domain protection (optional, experimental)
+  - Design docs: `docs/container-isolation-design.md`, `docs/clone-vm-container-design.md`
 
 ## Future Considerations
 
