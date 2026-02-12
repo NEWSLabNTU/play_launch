@@ -1,0 +1,10 @@
+<launch>
+  <node_container pkg="play_launch_container" exec="component_container"
+                  name="event_container" namespace=""
+                  args="--isolated">
+    <composable_node pkg="composition" plugin="composition::Talker"
+                     name="talker" namespace=""/>
+    <composable_node pkg="composition" plugin="composition::Listener"
+                     name="listener" namespace=""/>
+  </node_container>
+</launch>

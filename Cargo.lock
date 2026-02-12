@@ -1569,6 +1569,7 @@ dependencies = [
  "num_cpus",
  "nvml-wrapper",
  "pkg-config",
+ "play_launch_msgs",
  "play_launch_parser",
  "pyo3",
  "rayon",
@@ -1588,6 +1589,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "which",
+]
+
+[[package]]
+name = "play_launch_msgs"
+version = "0.1.0"
+dependencies = [
+ "builtin_interfaces",
+ "rosidl_runtime_rs",
 ]
 
 [[package]]

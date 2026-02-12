@@ -1,0 +1,45 @@
+# Container Events Test Suite
+
+# Variables
+ros_distro := env_var_or_default('ROS_DISTRO', 'humble')
+
+# Show help
+default:
+    @just --list
+
+# Dump with Rust parser
+dump-rust:
+    #!/usr/bin/env bash
+    set -e
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../../install/setup.bash
+    play_launch dump launch launch/container_events.launch.xml
+
+# Dump with Python parser
+dump-python:
+    #!/usr/bin/env bash
+    set -e
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../../install/setup.bash
+    play_launch dump launch --parser python launch/container_events.launch.xml
+
+# Compare Rust vs Python parser output
+compare-dumps:
+    #!/usr/bin/env bash
+    set -e
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../../install/setup.bash
+    echo "=== Rust parser ==="
+    play_launch dump --output /tmp/container_events_rust.json launch launch/container_events.launch.xml
+    echo "=== Python parser ==="
+    play_launch dump --output /tmp/container_events_python.json launch --parser python launch/container_events.launch.xml
+    echo "=== Diff ==="
+    python3 ../../../scripts/compare_records.py /tmp/container_events_rust.json /tmp/container_events_python.json || true
+
+# Clean generated files
+clean:
+    #!/usr/bin/env bash
+    set -e
+    echo "Cleaning up..."
+    rm -rf play_log record.json
+    echo "Cleanup complete"

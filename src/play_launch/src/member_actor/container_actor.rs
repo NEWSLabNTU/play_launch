@@ -19,6 +19,7 @@ use super::{
 };
 use crate::execution::context::NodeContext;
 use eyre::{Context as _, Result};
+use rclrs::IntoPrimitiveOptions;
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
@@ -147,6 +148,11 @@ pub struct ContainerActor {
     load_client: Option<rclrs::Client<composition_interfaces::srv::LoadNode>>,
     /// ROS service client for UnloadNode
     unload_client: Option<rclrs::Client<composition_interfaces::srv::UnloadNode>>,
+    /// ROS subscription for ComponentEvent messages (Phase 19.4a)
+    component_event_sub: Option<rclrs::Subscription<play_launch_msgs::msg::ComponentEvent>>,
+    /// Receiver for ComponentEvent messages bridged from ROS callback
+    component_event_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<play_launch_msgs::msg::ComponentEvent>>,
     /// Queue of pending load requests
     pending_loads: VecDeque<LoadRequest>,
     /// Currently processing load
@@ -228,6 +234,8 @@ impl ContainerActor {
             ros_node,
             load_client: None,
             unload_client: None,
+            component_event_sub: None,
+            component_event_rx: None,
             pending_loads: VecDeque::new(),
             current_load: None,
             current_unload: None,
@@ -1005,6 +1013,63 @@ impl ContainerActor {
         }
     }
 
+    /// Handle a ComponentEvent message from the container (Phase 19.4a)
+    ///
+    /// CRASHED is the only event that provides new information — LOADED/UNLOADED/LOAD_FAILED
+    /// are already handled by service responses. We reuse `ComposableState::Failed` and
+    /// `StateEvent::LoadFailed` to avoid touching every match arm in the codebase.
+    async fn handle_component_event(
+        &mut self,
+        event: play_launch_msgs::msg::ComponentEvent,
+    ) {
+        let unique_id = event.unique_id;
+        let event_type = event.event_type;
+
+        // Find composable node by unique_id
+        let entry = self
+            .composable_nodes
+            .iter_mut()
+            .find(|(_, e)| e.unique_id == Some(unique_id));
+
+        let Some((name, entry)) = entry else {
+            return;
+        };
+        let name = name.clone();
+
+        match event_type {
+            play_launch_msgs::msg::ComponentEvent::CRASHED => {
+                error!(
+                    "{}: Composable node '{}' crashed: {}",
+                    self.name, name, event.error_message
+                );
+
+                entry.state = ComposableState::Failed {
+                    error: event.error_message.clone(),
+                };
+                entry.unique_id = None;
+
+                // Update shared state for Web UI
+                self.shared_state.insert(
+                    name.clone(),
+                    super::web_query::MemberState::Failed {
+                        error: format!("Crashed: {}", event.error_message),
+                    },
+                );
+
+                // Emit StateEvent for logging/Web UI
+                let _ = self
+                    .state_tx
+                    .send(StateEvent::LoadFailed {
+                        name: name.clone(),
+                        error: format!("Crashed: {}", event.error_message),
+                    })
+                    .await;
+            }
+            // LOADED/UNLOADED/LOAD_FAILED already handled by service responses
+            _ => {}
+        }
+    }
+
     /// Check for composable nodes stuck in Loading state and trigger ListNodes verification
     ///
     /// Called periodically from the main loop to detect nodes that have exceeded
@@ -1192,6 +1257,44 @@ impl ContainerActor {
                                 // Don't fail the container - composable nodes will get errors when trying to unload
                             }
                         }
+
+                        // Phase 19.4a: Create ComponentEvent subscription
+                        let event_topic = format!(
+                            "{}/_container/component_events",
+                            self.full_node_name()
+                        );
+                        debug!(
+                            "{}: Creating ComponentEvent subscription on {}",
+                            self.name, event_topic
+                        );
+
+                        let (event_tx, event_rx) =
+                            tokio::sync::mpsc::unbounded_channel();
+                        match ros_node.create_subscription(
+                            event_topic
+                                .as_str()
+                                .reliable()
+                                .transient_local()
+                                .keep_last(100),
+                            move |msg: play_launch_msgs::msg::ComponentEvent| {
+                                let _ = event_tx.send(msg);
+                            },
+                        ) {
+                            Ok(sub) => {
+                                self.component_event_sub = Some(sub);
+                                self.component_event_rx = Some(event_rx);
+                                debug!(
+                                    "{}: ComponentEvent subscription created successfully",
+                                    self.name
+                                );
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "{}: Failed to create ComponentEvent subscription: {:#}",
+                                    self.name, e
+                                );
+                            }
+                        }
                     } else {
                         warn!(
                             "{}: No ROS node available for LoadNode service calls",
@@ -1316,9 +1419,11 @@ impl ContainerActor {
                     // Drain load queue (container crashed)
                     self.drain_queue("Container crashed");
 
-                    // Clear service client so it's recreated on restart
+                    // Clear service clients and subscription so they're recreated on restart
                     self.load_client = None;
                     self.unload_client = None;
+                    self.component_event_sub = None;
+                    self.component_event_rx = None;
 
                     // Phase 12: Transition composable nodes to Blocked
                     self.transition_all_composables_to_blocked(BlockReason::Failed).await;
@@ -1374,9 +1479,11 @@ impl ContainerActor {
                             // Drain load queue
                             self.drain_queue("Container stopped");
 
-                            // Clear service client so it's recreated on restart
+                            // Clear service clients and subscription so they're recreated on restart
                             self.load_client = None;
-                    self.unload_client = None;
+                            self.unload_client = None;
+                            self.component_event_sub = None;
+                            self.component_event_rx = None;
 
                             // Phase 12: Transition composable nodes to Blocked
                             debug!("{}: Transitioning {} composable nodes to Blocked state (reason: Stopped)",
@@ -1414,9 +1521,11 @@ impl ContainerActor {
                             // Drain load queue
                             self.drain_queue("Container restarting");
 
-                            // Clear service client so it's recreated on restart
+                            // Clear service clients and subscription so they're recreated on restart
                             self.load_client = None;
-                    self.unload_client = None;
+                            self.unload_client = None;
+                            self.component_event_sub = None;
+                            self.component_event_rx = None;
 
                             // Phase 12: Transition composable nodes to Blocked (will be reloaded on restart)
                             self.transition_all_composables_to_blocked(BlockReason::Stopped).await;
@@ -1697,6 +1806,16 @@ impl ContainerActor {
                     self.check_loading_timeouts().await;
                 }
 
+                // Phase 19.4a: Handle ComponentEvent messages from container
+                Some(event) = async {
+                    match &mut self.component_event_rx {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.handle_component_event(event).await;
+                }
+
                 // Check for shutdown signal
                 _ = self.shutdown_rx.changed() => {
                     if *self.shutdown_rx.borrow() {
@@ -1817,9 +1936,11 @@ impl ContainerActor {
                     ControlEvent::Stop => {
                         debug!("{}: Stop requested during respawn delay", self.name);
 
-                        // Clear service client (should already be None, but be explicit)
+                        // Clear service clients and subscription (should already be None, but be explicit)
                         self.load_client = None;
-                    self.unload_client = None;
+                        self.unload_client = None;
+                        self.component_event_sub = None;
+                        self.component_event_rx = None;
 
                         self.state = NodeState::Stopped { exit_code: None };
 

@@ -32,6 +32,10 @@ path = "tests/mixed_loading.rs"
 name = "io_stress"
 path = "tests/io_stress.rs"
 
+[[test]]
+name = "container_events"
+path = "tests/container_events.rs"
+
 [dependencies]
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
