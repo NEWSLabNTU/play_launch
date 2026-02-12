@@ -1,6 +1,6 @@
 # Phase 19: Clone-Isolated Component Manager
 
-**Status**: ⏳ Planned
+**Status**: 🔧 In Progress (19.0 + 19.1 complete)
 **Priority**: High (crash isolation, per-node resource control)
 **Dependencies**: Phase 18 complete. ObservableComponentManager merged.
 
@@ -10,502 +10,237 @@ Replace `std::thread`-based executor isolation with `clone(CLONE_VM)`-based
 process isolation. Each composable node gets its own Linux PID while sharing the
 container's address space for zero-copy intra-process communication.
 
-This gives: signal-level crash isolation, per-node PID, per-node cgroup CPU
-control, `waitpid()` death detection, `pidfd` monitoring — all without
-sacrificing the shared-memory IPC that containers exist for.
-
 ## Design References
 
 - `docs/container-isolation-design.md` — background, rationale, Linux isolation analysis
 - `docs/clone-vm-container-design.md` — detailed implementation design
 
-## Phases
-
-### Phase 19.0: Consolidate Container Executable
-
-**Goal**: Merge the two separate main() files (`component_container.cpp` and
-`component_container_mt.cpp`) into a single executable with runtime
-configuration via CLI flags.
-
-**Rationale**: Separate ST/MT binaries are not a ROS requirement — just
-historical convention from `rclcpp_components`. Upstream already demonstrates
-consolidation in `component_container_isolated.cpp`, which uses a single binary
-with `--use_multi_threaded_executor`. Consolidating now simplifies Phase 19.1
-(one binary to extend, not three) and Phase 19.4 (one executable to spawn).
-
-#### Current State
+## Implementation Order
 
 ```
-src/play_launch_container/
-├── include/.../observable_component_manager.hpp   # 1 class
-├── src/observable_component_manager.cpp           # Event publishing logic
-├── src/component_container.cpp                    # main() — SingleThreadedExecutor
-└── src/component_container_mt.cpp                 # main() — MultiThreadedExecutor
+19.0 Consolidate executable          ✅ complete
+  └── 19.1 CloneIsolatedComponentManager  ✅ complete
+        ├── 19.2 Death monitor            ⏳ next
+        │     └── 19.3 Integration tests
+        └── 19.4 play_launch integration
+              ├── 19.5 cgroups            (optional)
+              └── 19.6 MPK               (optional, experimental)
 ```
 
-The two main() files are nearly identical (6 vs 10 lines of logic). The only
-difference is executor type and `thread_num` parameter handling.
+---
 
-#### Target State
+## Phase 19.0: Consolidate Container Executable ✅
 
-```
-src/play_launch_container/
-├── include/.../observable_component_manager.hpp   # Unchanged
-├── src/observable_component_manager.cpp           # Unchanged
-└── src/component_container.cpp                    # Single main() with CLI flags
-```
+**Status**: Complete
 
-#### Implementation
+Merged `component_container.cpp` and `component_container_mt.cpp` into a single
+binary with `--use_multi_threaded_executor` CLI flag.
 
-Single `component_container.cpp` with CLI flag parsing (follows upstream
-`component_container_isolated.cpp` pattern):
+### Work Items
 
-```cpp
-int main(int argc, char * argv[])
-{
-  rclcpp::init(argc, argv);
+- [x] Rewrite `component_container.cpp` with CLI flag parsing
+- [x] Delete `component_container_mt.cpp`
+- [x] Update `CMakeLists.txt` to remove MT target
 
-  // Parse CLI args (same pattern as upstream component_container_isolated.cpp)
-  bool use_multi_threaded = false;
-  auto args = rclcpp::remove_ros_arguments(argc, argv);
-  for (auto & arg : args) {
-    if (arg == "--use_multi_threaded_executor") {
-      use_multi_threaded = true;
-    }
-  }
-
-  // Create executor
-  std::shared_ptr<rclcpp::Executor> exec;
-  if (use_multi_threaded) {
-    exec = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
-  } else {
-    exec = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
-  }
-
-  // Create manager, handle thread_num parameter for MT mode
-  auto node = std::make_shared<play_launch_container::ObservableComponentManager>(exec);
-  if (use_multi_threaded && node->has_parameter("thread_num")) {
-    auto thread_num = node->get_parameter("thread_num").as_int();
-    exec = std::make_shared<rclcpp::executors::MultiThreadedExecutor>(
-      rclcpp::ExecutorOptions{}, thread_num);
-    node->set_executor(exec);
-  }
-
-  exec->add_node(node);
-  exec->spin();
-}
-```
-
-#### CMakeLists.txt Changes
-
-```cmake
-# Before: two executables
-add_executable(component_container src/component_container.cpp)
-add_executable(component_container_mt src/component_container_mt.cpp)
-
-# After: one executable
-add_executable(component_container src/component_container.cpp)
-```
-
-#### Files Changed
+### Files Changed
 
 | File | Action |
 |------|--------|
-| `src/play_launch_container/src/component_container.cpp` | Rewrite: single main() with CLI flags |
-| `src/play_launch_container/src/component_container_mt.cpp` | **Delete** |
-| `src/play_launch_container/CMakeLists.txt` | Remove `component_container_mt` target |
+| `src/play_launch_container/src/component_container.cpp` | Rewritten: single main() with CLI flags |
+| `src/play_launch_container/src/component_container_mt.cpp` | Deleted |
+| `src/play_launch_container/CMakeLists.txt` | Removed `component_container_mt` target |
 
-#### play_launch Rust Side
+### Passing Criteria
 
-Update `container_actor.rs` to pass `--use_multi_threaded_executor` when
-spawning MT containers instead of using a different executable name.
-
-#### Backward Compatibility
-
-The `component_container` binary name is unchanged. Launch files that reference
-`component_container` continue to work. Launch files that reference
-`component_container_mt` need to switch to
-`component_container --use_multi_threaded_executor`.
-
-Since play_launch controls container spawning (not user launch files), this is
-an internal change with no user-facing impact.
-
-#### Success Criteria
-
-- [ ] Single `component_container` executable builds
-- [ ] Default mode: single-threaded executor (same as before)
-- [ ] `--use_multi_threaded_executor` flag selects MT executor
-- [ ] `thread_num` parameter works in MT mode
-- [ ] Existing tests pass without changes
-- [ ] `component_container_mt.cpp` deleted
+- [x] Single `component_container` executable builds
+- [x] Default mode: single-threaded executor (same as before)
+- [x] `--use_multi_threaded_executor` flag selects MT executor
+- [x] `thread_num` parameter works in MT mode
+- [x] Existing tests pass (326/326)
+- [x] `component_container_mt.cpp` deleted
 
 ---
 
-### Phase 19.1: CloneIsolatedComponentManager (C++)
+## Phase 19.1: CloneIsolatedComponentManager ✅
 
-**Goal**: Subclass `ObservableComponentManager` that spawns each node's executor
-loop in a `clone(CLONE_VM)` child process. Inherits event publishing from
-`ObservableComponentManager`.
+**Status**: Complete
 
-#### Files
+New C++ class that subclasses `ObservableComponentManager` and uses
+`clone(CLONE_VM)` to spawn each node's executor in its own process.
 
-| File | Description |
-|------|-------------|
-| `src/play_launch_container/include/play_launch_container/clone_isolated_component_manager.hpp` | Header |
-| `src/play_launch_container/src/clone_isolated_component_manager.cpp` | Implementation |
+### Work Items
 
-No new executable — the consolidated `component_container` gains an `--isolated`
-CLI flag:
+- [x] Create `clone_isolated_component_manager.hpp` header
+- [x] Implement `add_node_to_executor()` — clone child with dedicated executor
+- [x] Implement `remove_node_from_executor()` — cancel + waitpid + cleanup
+- [x] Implement `cleanup_child()` — destructor helper (SIGTERM → SIGKILL)
+- [x] Add `--isolated` CLI flag to `component_container.cpp`
+- [x] Solve glibc TLS sharing — `_dl_allocate_tls()` + `CLONE_SETTLS`
+- [x] Solve TID-in-TLS — runtime offset discovery + `ARCH_GET_FS` in child
+- [x] Fix shutdown crash — explicit `exec->remove_node(); node.reset(); rclcpp::shutdown()` ordering
+- [x] Change `event_pub_` from private to protected in `ObservableComponentManager`
+- [x] Add new source to `CMakeLists.txt`
 
-```cpp
-// In component_container.cpp (from Phase 19.0), add:
-bool use_isolated = false;
-for (auto & arg : args) {
-  if (arg == "--use_multi_threaded_executor") use_multi_threaded = true;
-  if (arg == "--isolated") use_isolated = true;
-}
+### Files Changed
 
-// Create appropriate manager
-rclcpp::Node::SharedPtr node;
-if (use_isolated) {
-  node = std::make_shared<play_launch_container::CloneIsolatedComponentManager>(exec);
-} else {
-  node = std::make_shared<play_launch_container::ObservableComponentManager>(exec);
-}
-```
+| File | Action |
+|------|--------|
+| `clone_isolated_component_manager.hpp` | New — class declaration + ChildInfo struct |
+| `clone_isolated_component_manager.cpp` | New — clone(CLONE_VM) + TLS + TID implementation |
+| `observable_component_manager.hpp` | Modified — `event_pub_` private → protected |
+| `component_container.cpp` | Modified — `--isolated` flag + explicit shutdown ordering |
+| `CMakeLists.txt` | Modified — added new source file |
 
-#### Class Hierarchy
+### Key Technical Decisions
 
-```
-rclcpp_components::ComponentManager         (upstream: load/unload services)
-  └── ObservableComponentManager            (ours: event publishing)
-        └── CloneIsolatedComponentManager   (ours: clone(CLONE_VM) isolation)
-```
+- **clone() not clone3()**: glibc's `clone()` wrapper handles stack setup and
+  TLS passing via `CLONE_SETTLS`. `clone3()` would require a raw syscall wrapper
+  with no benefit for our use case.
+- **`_dl_allocate_tls` + CLONE_SETTLS**: Without separate TLS, parent and child
+  share glibc's per-thread malloc cache (tcache) → double-free. Fresh TLS block
+  allocated via glibc internal `_dl_allocate_tls(nullptr)`.
+- **TID offset discovery**: `_dl_allocate_tls` zeroes the TLS block, leaving
+  `tid=0`. DDS calls `pthread_create` internally, which checks caller's TID →
+  EAGAIN. Solved by scanning parent's TLS for matching TID at startup (offset
+  720 on glibc 2.35 x86_64), then setting child's TID via `ARCH_GET_FS` +
+  memcpy.
+- **pidfd via `pidfd_open()`**: Obtained after clone() rather than via
+  `CLONE_PIDFD` (which requires clone3). Used for Phase 19.2 death monitor.
 
-`CloneIsolatedComponentManager` inherits event publishing from
-`ObservableComponentManager` automatically. No composition needed — the death
-monitor (Phase 19.2) calls the inherited `event_pub_` publisher directly.
+### Passing Criteria
 
-#### Implementation
-
-Override two virtual methods (same pattern as upstream
-`rclcpp_components::ComponentManagerIsolated`):
-
-**`add_node_to_executor(uint64_t node_id)`**:
-1. Create a dedicated `SingleThreadedExecutor`
-2. Add the node to it (`exec->add_node(wrapper.get_node_base_interface())`)
-3. `mmap(MAP_ANONYMOUS | MAP_STACK)` a child stack (default 8 MB)
-4. `clone3()` with flags:
-   - `CLONE_VM` — share address space
-   - `CLONE_FILES` — share file descriptors
-   - `CLONE_FS` — share cwd/root/umask
-   - `CLONE_PIDFD` — get pidfd for monitoring
-   - `CLONE_CLEAR_SIGHAND` — child gets default signal handlers
-   - exit_signal = `SIGCHLD`
-5. Child function: `exec->spin(); _exit(0);`
-6. Store `{child_pid, pidfd, executor, stack_ptr, stack_size}` in `children_` map
-
-**`remove_node_from_executor(uint64_t node_id)`**:
-1. Look up child in `children_` map
-2. `exec->cancel()` — child's `spin()` returns
-3. `waitpid(child_pid, &status, WNOHANG)` — check if already exited
-4. If still running: `kill(child_pid, SIGTERM)`, then `waitpid(child_pid, &status, 0)`
-5. `munmap(stack_ptr, stack_size)` — free child stack
-6. `close(pidfd)`
-7. Erase from `children_` map
-
-**Constructor**: Start a monitor thread (see 19.2).
-
-#### Key Data Structures
-
-```cpp
-struct ChildInfo {
-    pid_t pid;
-    int pidfd;
-    std::shared_ptr<rclcpp::Executor> executor;
-    void* stack_ptr;
-    size_t stack_size;
-    uint64_t node_id;
-    std::string node_name;
-};
-
-std::mutex children_mutex_;  // Robust mutex (pthread_mutex_t ROBUST)
-std::map<uint64_t, ChildInfo> children_;  // node_id -> child info
-```
-
-#### clone3 Wrapper
-
-Write a thin C wrapper since `clone3()` has no glibc wrapper:
-
-```cpp
-static pid_t clone3_vm(
-    int (*fn)(void*), void* arg,
-    void* stack, size_t stack_size,
-    int* pidfd_out);
-```
-
-#### Success Criteria
-
-- [ ] `component_container --isolated` starts successfully
-- [ ] LoadNode service creates clone'd child
-- [ ] Child spins executor and processes callbacks
-- [ ] UnloadNode kills child cleanly
-- [ ] Composable node pub/sub works (shared address space IPC)
+- [x] `component_container --isolated` starts and stays alive
+- [x] LoadNode creates clone'd child in S state (not zombie)
+- [x] Child spins executor and processes callbacks (Talker publishes)
+- [x] Cross-node pub/sub works (Listener receives Talker messages)
+- [x] Two children alive (S state) after loading 2 components
+- [x] UnloadNode kills child cleanly (child count drops 2 → 1)
+- [x] Container survives unload
+- [x] Clean shutdown on SIGTERM (no crash, no core dump)
+- [x] Existing tests pass (326/326)
 
 ---
 
-### Phase 19.2: Child Death Monitor
+## Phase 19.2: Child Death Monitor ⏳
 
-**Goal**: Detect child crashes via `epoll` on pidfds, clean up resources, publish
-events.
+**Status**: Planned (next)
 
-#### Implementation
+Detect child crashes via `epoll` on pidfds, clean up resources, publish events.
 
-A dedicated monitor thread (spawned in constructor):
+### Work Items
 
-```
-monitor_thread:
-    epoll_fd = epoll_create1(0)
+- [ ] Create monitor thread (spawned in constructor, joined in destructor)
+- [ ] Use `epoll_create1()` + `epoll_ctl()` to watch child pidfds
+- [ ] Use eventfd or pipe to register new pidfds from `add_node_to_executor()`
+- [ ] On child death: `waitid(P_PIDFD)` to get exit info (signal, status)
+- [ ] Clean up dead child resources (cancel executor, munmap stack, close pidfd, free TLS)
+- [ ] Publish `LOAD_FAILED` event via inherited `event_pub_`
+- [ ] Log crash details (node name, PID, signal number)
+- [ ] Handle monitor thread shutdown (stop flag + eventfd wakeup)
 
-    loop:
-        // New children registered via a pipe/eventfd from add_node_to_executor
-        register_new_pidfds_with_epoll()
+### Passing Criteria
 
-        epoll_wait(epoll_fd, events, max_events, timeout_ms)
-
-        for each ready pidfd:
-            siginfo_t info;
-            waitid(P_PIDFD, pidfd, &info, WEXITED | WNOHANG)
-
-            if child exited:
-                log: "Node {name} (PID {pid}) died: signal {sig}"
-
-                // Cleanup in shared address space:
-                exec->cancel()          // may be no-op
-                exec->remove_node(...)  // remove from executor
-                munmap(stack)
-                close(pidfd)
-
-                // Publish event via inherited event_pub_:
-                publish_event(LOAD_FAILED, node_id, node_name, error_msg)
-
-                // Erase from children_ map
-                erase_child(node_id)
-
-                // Leave node_wrappers_ entry for on_unload_node to clean up
-                // (or auto-unload if configured)
-```
-
-#### Event Publishing
-
-`CloneIsolatedComponentManager` inherits `event_pub_` from
-`ObservableComponentManager`. The death monitor publishes `LOAD_FAILED` events
-directly — no bridging or composition needed.
-
-#### Success Criteria
-
-- [ ] Monitor thread starts with container
+- [ ] Monitor thread starts with container and stops on shutdown
 - [ ] Child SIGSEGV detected within 100ms
 - [ ] Crash event published on `~/_container/component_events` topic
-- [ ] Other children unaffected (continue processing callbacks)
-- [ ] Resources cleaned up (stack freed, pidfd closed)
+- [ ] Other children continue processing callbacks after one crashes
+- [ ] Resources cleaned up (stack freed, pidfd closed, TLS freed)
+- [ ] Container process itself survives child crash
 
 ---
 
-### Phase 19.3: Integration Tests
+## Phase 19.3: Integration Tests
 
-**Goal**: Verify crash isolation and normal operation.
+**Status**: Planned
 
-#### Test Cases
+Automated tests for crash isolation and normal operation.
 
-**19.3.1: Normal load/unload cycle**
-- Load 3 composable nodes into isolated container
-- Verify all 3 are running (ListNodes)
-- Unload one, verify other 2 still running
-- Unload remaining
+### Work Items
 
-**19.3.2: Crash isolation**
-- Load 3 composable nodes
-- Cause SIGSEGV in one node (test fixture node that dereferences null on timer)
-- Verify: crashed node dies, other 2 continue processing
-- Verify: LOAD_FAILED event published for crashed node
-- Verify: container process itself survives
+- [ ] Create test workspace `tests/fixtures/crash_isolation/`
+- [ ] Write `crash_node.cpp` — composable node that segfaults on timer
+- [ ] Write `healthy_node.cpp` — composable node that publishes at 10 Hz
+- [ ] Test 19.3.1: Normal load/unload cycle (load 3, unload 1, verify 2 remain)
+- [ ] Test 19.3.2: Crash isolation (crash 1 of 3 nodes, verify others survive)
+- [ ] Test 19.3.3: Intra-process communication (pub/sub between isolated nodes)
+- [ ] Test 19.3.4: Per-node PID visibility (`kill(pid, 0)` checks)
+- [ ] Integrate into `just test-all` via nextest
 
-**19.3.3: Intra-process communication**
-- Load a publisher and subscriber composable node with `use_intra_process_comms: true`
-- Verify messages flow between them (zero-copy path via IntraProcessManager)
-- Kill publisher node, verify subscriber detects no more messages
-
-**19.3.4: Per-node PID visibility**
-- Load nodes, verify each has its own PID in `/proc`
-- Verify `kill(child_pid, 0)` returns 0 (child exists)
-- After unload, verify `kill(child_pid, 0)` returns ESRCH (child gone)
-
-#### Test Fixtures
-
-New test workspace: `tests/fixtures/crash_isolation/`
-- `crash_node.cpp` — composable node that segfaults on a timer callback
-- `healthy_node.cpp` — composable node that publishes at 10 Hz
-- `launch file` — loads crash_node + 2 healthy_nodes into isolated container
-
-All tests use `component_container --isolated` (single binary).
-
-#### Success Criteria
+### Passing Criteria
 
 - [ ] All 4 test cases pass
 - [ ] Tests integrated into `just test-all`
 - [ ] No orphan processes after test completion (ManagedProcess cleanup)
+- [ ] Tests complete within 60s timeout
 
 ---
 
-### Phase 19.4: play_launch Integration (Rust)
+## Phase 19.4: play_launch Integration (Rust)
 
-**Goal**: Make `container_actor.rs` work with all container modes via the
-consolidated single binary.
+**Status**: Planned
 
-#### Changes
+Make `container_actor.rs` spawn isolated containers via config.
 
-**Container spawning** (`container_actor.rs`):
-- Always spawn `component_container` (single binary from our package)
-- Pass CLI flags based on config:
-  - `"standard"` → no extra flags (default: single-threaded)
-  - `"mt"` → `--use_multi_threaded_executor`
-  - `"isolated"` → `--isolated`
-  - `"isolated_mt"` → `--isolated --use_multi_threaded_executor`
+### Work Items
 
-```rust
-// Build command for container
-let mut cmd = Command::new("component_container");
-match config.container_type.as_str() {
-    "mt" => { cmd.arg("--use_multi_threaded_executor"); }
-    "isolated" => { cmd.arg("--isolated"); }
-    "isolated_mt" => {
-        cmd.arg("--isolated");
-        cmd.arg("--use_multi_threaded_executor");
-    }
-    _ => {} // "standard" — no extra flags
-}
-```
+- [ ] Add `container_type` config field (`"standard"`, `"mt"`, `"isolated"`, `"isolated_mt"`)
+- [ ] Update container spawning to pass `--isolated` / `--use_multi_threaded_executor` flags
+- [ ] Handle `LOAD_FAILED` events from child crashes in event subscriber
+- [ ] Add optional `auto_reload_on_crash` config (re-issue LoadNode on crash)
+- [ ] Update config YAML schema and documentation
 
-**Event handling**:
-- `LOAD_FAILED` events from child crashes already fit the existing event
-  subscription in `container_actor.rs` — no change needed for detection
-- Add optional auto-reload behavior: when a `LOAD_FAILED` event arrives due to
-  child crash (not a load error), automatically re-issue the LoadNode request
+### Passing Criteria
 
-**Config YAML**:
-
-```yaml
-composable_node_loading:
-  container_type: isolated    # "standard" (default), "mt", "isolated", "isolated_mt"
-  auto_reload_on_crash: true  # Re-load nodes that crash (isolated only)
-```
-
-#### Success Criteria
-
-- [ ] `play_launch replay` can use isolated container via config
-- [ ] Crashed composable nodes are detected and reported
-- [ ] Optional auto-reload works
-- [ ] Existing tests still pass with default container type
+- [ ] `play_launch replay` uses isolated container when configured
+- [ ] Crashed composable nodes detected and reported in logs
+- [ ] Optional auto-reload re-loads crashed nodes
+- [ ] Default config (`"standard"`) unchanged — existing tests pass
 
 ---
 
-### Phase 19.5: Per-Node cgroups (Optional)
+## Phase 19.5: Per-Node cgroups (Optional)
 
-**Goal**: Assign CPU cgroup limits to each composable node at spawn time via
-`CLONE_INTO_CGROUP`.
+**Status**: Planned
 
-#### Design
+Assign CPU cgroup limits to each composable node at spawn time.
 
-Pre-create cgroup hierarchy:
+### Work Items
 
-```
-/sys/fs/cgroup/play_launch/
-├── <container_name>/
-│   ├── <node_name_1>/   (cpu.max, cpuset.cpus)
-│   ├── <node_name_2>/
-│   └── ...
-```
+- [ ] Create cgroup hierarchy under `/sys/fs/cgroup/play_launch/<container>/<node>/`
+- [ ] Write `cpu.max` and `cpuset.cpus` from config
+- [ ] Open cgroup dir fd and pass to clone via `CLONE_INTO_CGROUP` (requires clone3)
+- [ ] Clean up cgroup dirs on container shutdown
+- [ ] Add per-node cgroup config to YAML schema
 
-In `add_node_to_executor()`:
-1. `mkdir` the node's cgroup dir
-2. Write cpu.max, cpuset.cpus from config
-3. `open()` the cgroup dir → fd
-4. Pass fd as `clone_args.cgroup` with `CLONE_INTO_CGROUP`
-
-#### Config YAML
-
-```yaml
-composable_node_loading:
-  container_type: isolated
-  cgroups:
-    enabled: true
-    base_path: /sys/fs/cgroup/play_launch
-    defaults:
-      cpu_max: "max 100000"     # No limit by default
-      cpuset_cpus: "0-7"
-    per_node:
-      "pointcloud_filter":
-        cpu_max: "50000 100000"  # 50% of one core
-        cpuset_cpus: "0-3"
-      "tensorrt_detector":
-        cpu_max: "200000 100000" # 200% (2 cores)
-        cpuset_cpus: "4-7"
-```
-
-#### Success Criteria
+### Passing Criteria
 
 - [ ] Cgroup dirs created on container start
 - [ ] Children born into their cgroup (no race window)
-- [ ] CPU limits enforced (verify with `stress` in test node)
-- [ ] Cgroup dirs cleaned up on container shutdown
+- [ ] CPU limits enforced (verify with stress test)
+- [ ] Cgroup dirs cleaned up on shutdown
 
 ---
 
-### Phase 19.6: MPK Memory Domains (Optional, Experimental)
+## Phase 19.6: MPK Memory Domains (Optional, Experimental)
 
-**Goal**: Use Intel Memory Protection Keys to isolate each node's heap, catching
-cross-node memory corruption before it happens.
+**Status**: Planned
 
-#### Design
+Use Intel Memory Protection Keys to isolate each node's heap.
 
-1. At `dlopen()` time, allocate a `pkey` for the new plugin
-2. Create a jemalloc arena for the plugin, backed by `mmap`'d memory
-3. `pkey_mprotect()` the arena's pages with the plugin's key
-4. Before `exec->spin()`, set PKRU to allow only that plugin's key + key 0
-5. Child runs with restricted PKRU — stray pointers to other plugins' heaps
-   trigger SIGSEGV before corruption occurs
+### Work Items
 
-#### Prerequisites
+- [ ] Detect MPK support at runtime (`pku` in `/proc/cpuinfo`)
+- [ ] Allocate per-node pkeys via `pkey_alloc()`
+- [ ] Create jemalloc arenas per node with `pkey_mprotect()`
+- [ ] Set PKRU in child before `exec->spin()` to restrict memory access
+- [ ] Graceful fallback when MPK not available
 
-- Intel Skylake+ or AMD Zen 3+ (check `pku` in `/proc/cpuinfo`)
-- jemalloc (replace glibc malloc via `LD_PRELOAD`)
-- Up to 14 composable nodes per container (hardware limit)
+### Passing Criteria
 
-#### Implementation
-
-New files:
-- `src/play_launch_container/include/play_launch_container/mpk_allocator.hpp`
-- `src/play_launch_container/src/mpk_allocator.cpp`
-
-Interface:
-```cpp
-class MpkAllocator {
-public:
-    static bool is_supported();  // checks /proc/cpuinfo for pku
-    int create_domain();         // pkey_alloc()
-    void* allocate(int domain, size_t size);  // from domain's arena
-    void activate_domain(int domain);  // WRPKRU
-    void deactivate_all();       // WRPKRU = deny all non-zero keys
-};
-```
-
-#### Success Criteria
-
-- [ ] MPK support detected at runtime (graceful fallback if unsupported)
+- [ ] MPK detected at runtime (graceful fallback if unsupported)
 - [ ] Per-node heap arenas created with separate pkeys
 - [ ] Cross-domain write causes SIGSEGV (not silent corruption)
-- [ ] Performance overhead < 1% (WRPKRU at callback boundaries only)
+- [ ] Performance overhead < 1%
 
 ---
 
@@ -513,40 +248,19 @@ public:
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
+| glibc TLS sharing (tcache double-free) | Critical (solved) | `_dl_allocate_tls()` + `CLONE_SETTLS` + TID offset discovery |
 | Shared memory corruption after child crash | Critical | MPK (19.6) + jemalloc arenas limit blast radius |
-| rclcpp mutex poisoning on child death | Critical | Children crash outside lock-held windows in most cases; watchdog timer as backstop |
+| rclcpp mutex poisoning on child death | Critical | Children crash outside lock-held windows; watchdog as backstop |
 | glibc malloc lock poisoning | Critical | Use jemalloc with per-node arenas |
 | DDS thread ownership confusion | Medium | Nodes constructed in parent; DDS threads stay in parent |
 | Leaked shared_ptr refcounts | Low | Parent holds authoritative refs; bounded leak per restart |
-| TLS confusion | Low | CLONE_CLEAR_SIGHAND + child uses only executor spin |
-
-## Implementation Order
-
-```
-19.0 (Consolidate executable)          ← prerequisite: single binary
-  │
-  └── 19.1 (CloneIsolatedComponentManager)  ← core functionality
-        │
-        ├── 19.2 (Death monitor)            ← crash detection
-        │     │
-        │     └── 19.3 (Integration tests)  ← verify isolation works
-        │
-        └── 19.4 (play_launch integration)  ← user-facing
-              │
-              ├── 19.5 (cgroups)            ← optional resource control
-              │
-              └── 19.6 (MPK)               ← optional memory protection
-```
-
-19.0 is a quick prerequisite. 19.1 → 19.2 → 19.3 is the critical path.
-19.4 makes it usable. 19.5 and 19.6 are independent enhancements.
 
 ## References
 
 - `docs/container-isolation-design.md` — background, rationale, Linux isolation analysis
 - `docs/clone-vm-container-design.md` — detailed implementation design
-- `external/rclcpp/rclcpp_components/src/component_container_isolated.cpp` — upstream consolidation pattern
-- `external/rclcpp/rclcpp_components/include/rclcpp_components/component_manager_isolated.hpp` — subclass pattern
-- [clone3(2)](https://man.archlinux.org/man/clone3.2.en)
+- `external/rclcpp/rclcpp_components/include/rclcpp_components/component_manager_isolated.hpp` — upstream subclass pattern
+- [clone(2)](https://man7.org/linux/man-pages/man2/clone.2.html)
+- [pidfd_open(2)](https://man7.org/linux/man-pages/man2/pidfd_open.2.html)
 - [Robust futexes — kernel docs](https://docs.kernel.org/locking/robust-futexes.html)
 - [Memory Protection Keys — kernel docs](https://docs.kernel.org/core-api/protection-keys.html)

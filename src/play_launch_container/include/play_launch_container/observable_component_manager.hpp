@@ -55,7 +55,7 @@ protected:
     const std::shared_ptr<UnloadNode::Request> request,
     std::shared_ptr<UnloadNode::Response> response) override;
 
-private:
+protected:
   rclcpp::Publisher<play_launch_msgs::msg::ComponentEvent>::SharedPtr event_pub_;
 };
 

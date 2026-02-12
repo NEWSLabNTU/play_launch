@@ -16,24 +16,30 @@
 #include <string>
 #include <vector>
 
+#include "play_launch_container/clone_isolated_component_manager.hpp"
 #include "play_launch_container/observable_component_manager.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 int main(int argc, char * argv[])
 {
-  /// Observable component container with configurable executor.
+  /// Observable component container with configurable executor and isolation.
   ///
   /// Usage:
   ///   component_container                              # single-threaded (default)
   ///   component_container --use_multi_threaded_executor # multi-threaded
+  ///   component_container --isolated                   # clone(CLONE_VM) per-node
+  ///   component_container --isolated --use_multi_threaded_executor
   rclcpp::init(argc, argv);
 
   // Parse CLI args (same pattern as upstream component_container_isolated.cpp)
   bool use_multi_threaded = false;
+  bool use_isolated = false;
   std::vector<std::string> args = rclcpp::remove_ros_arguments(argc, argv);
   for (const auto & arg : args) {
     if (arg == "--use_multi_threaded_executor") {
       use_multi_threaded = true;
+    } else if (arg == "--isolated") {
+      use_isolated = true;
     }
   }
 
@@ -45,8 +51,13 @@ int main(int argc, char * argv[])
     exec = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
   }
 
-  // Create manager
-  auto node = std::make_shared<play_launch_container::ObservableComponentManager>(exec);
+  // Create manager (CloneIsolated inherits from Observable)
+  std::shared_ptr<play_launch_container::ObservableComponentManager> node;
+  if (use_isolated) {
+    node = std::make_shared<play_launch_container::CloneIsolatedComponentManager>(exec);
+  } else {
+    node = std::make_shared<play_launch_container::ObservableComponentManager>(exec);
+  }
 
   // Handle thread_num parameter for MT mode
   if (use_multi_threaded && node->has_parameter("thread_num")) {
@@ -58,4 +69,12 @@ int main(int argc, char * argv[])
 
   exec->add_node(node);
   exec->spin();
+
+  // Explicit cleanup order: remove the manager from the parent executor,
+  // destroy it (which kills any isolated child processes), then shutdown.
+  // Without this, auto-destruction order can trigger "Node needs to be
+  // associated with an executor" during rclcpp::shutdown().
+  exec->remove_node(node);
+  node.reset();
+  rclcpp::shutdown();
 }

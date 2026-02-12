@@ -9,9 +9,10 @@ find_package(rclcpp_components REQUIRED)
 find_package(composition_interfaces REQUIRED)
 find_package(play_launch_msgs REQUIRED)
 
-# Shared library
+# Shared library (both component manager classes)
 add_library(observable_component_manager SHARED
-  src/observable_component_manager.cpp)
+  src/observable_component_manager.cpp
+  src/clone_isolated_component_manager.cpp)
 target_include_directories(observable_component_manager PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include/${PROJECT_NAME}>")
