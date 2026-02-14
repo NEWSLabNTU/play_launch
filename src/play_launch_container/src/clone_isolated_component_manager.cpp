@@ -28,6 +28,7 @@
 #include <cerrno>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 namespace play_launch_container
 {
@@ -133,11 +134,19 @@ CloneIsolatedComponentManager::CloneIsolatedComponentManager(
 : ObservableComponentManager(executor, std::move(node_name), node_options),
   use_multi_threaded_(use_multi_threaded)
 {
-  RCLCPP_INFO(get_logger(), "Using clone(CLONE_VM) per-node process isolation");
+  RCLCPP_INFO(get_logger(), "Using clone(CLONE_VM) per-node process isolation (non-blocking load)");
+
+  // Start worker thread pool for async node construction
+  workers_running_ = true;
+  for (size_t i = 0; i < kWorkerThreadCount; ++i) {
+    worker_threads_.emplace_back(&CloneIsolatedComponentManager::worker_loop, this);
+  }
+
   if (!get_tls_allocator()) {
     RCLCPP_WARN(
       get_logger(),
-      "_dl_allocate_tls not found; children will share parent TLS (may cause heap issues)");
+      "_dl_allocate_tls not found; children will share "
+      "parent TLS (may cause heap issues)");
   }
   // Find the tid offset once — it's the same for all threads in this process.
   if (g_tls_tid_offset < 0) {
@@ -177,6 +186,18 @@ CloneIsolatedComponentManager::CloneIsolatedComponentManager(
 
 CloneIsolatedComponentManager::~CloneIsolatedComponentManager()
 {
+  // Stop worker threads first (they may hold load_mutex_)
+  {
+    std::lock_guard<std::mutex> lock(work_queue_mutex_);
+    workers_running_ = false;
+  }
+  work_queue_cv_.notify_all();
+  for (auto & t : worker_threads_) {
+    if (t.joinable()) {
+      t.join();
+    }
+  }
+
   // Stop monitor thread before cleaning up children
   if (monitor_thread_.joinable()) {
     monitor_running_ = false;
@@ -205,11 +226,244 @@ CloneIsolatedComponentManager::~CloneIsolatedComponentManager()
   }
 }
 
+// ── Worker thread pool ──────────────────────────────────────────────────
+
+void CloneIsolatedComponentManager::worker_loop()
+{
+  while (true) {
+    std::function<void()> work;
+    {
+      std::unique_lock<std::mutex> lock(work_queue_mutex_);
+      work_queue_cv_.wait(lock, [this] { return !workers_running_ || !work_queue_.empty(); });
+      if (!workers_running_ && work_queue_.empty()) {
+        return;
+      }
+      work = std::move(work_queue_.front());
+      work_queue_.pop();
+    }
+    work();
+  }
+}
+
+void CloneIsolatedComponentManager::submit_work(std::function<void()> work)
+{
+  {
+    std::lock_guard<std::mutex> lock(work_queue_mutex_);
+    work_queue_.push(std::move(work));
+  }
+  work_queue_cv_.notify_one();
+}
+
+// ── Non-blocking on_load_node ───────────────────────────────────────────
+//
+// Phase 1 (synchronous): validate plugin, pre-assign unique_id, respond.
+// Phase 2 (async worker): construct node, add to executor, publish event.
+
+void CloneIsolatedComponentManager::on_load_node(
+  const std::shared_ptr<rmw_request_id_t> /*request_header*/,
+  const std::shared_ptr<LoadNode::Request> request, std::shared_ptr<LoadNode::Response> response)
+{
+  // ── Phase 1: synchronous validation + pre-assign unique_id ──
+
+  // Look up component resources (ament index, fast)
+  auto resources = get_component_resources(request->package_name);
+
+  // Find matching plugin and create factory
+  std::shared_ptr<rclcpp_components::NodeFactory> factory;
+  for (const auto & resource : resources) {
+    if (resource.first != request->plugin_name) {
+      continue;
+    }
+    auto f = create_component_factory(resource);
+    if (f) {
+      factory = std::move(f);
+      break;
+    }
+  }
+
+  if (!factory) {
+    response->success = false;
+    response->error_message =
+      "Failed to find class with the requested plugin name '" + request->plugin_name + "'";
+    RCLCPP_ERROR(get_logger(), "%s", response->error_message.c_str());
+    return;
+  }
+
+  // Pre-create node options (parses params, fast)
+  auto options = create_node_options(request);
+
+  uint64_t node_id;
+  {
+    std::lock_guard<std::mutex> lock(load_mutex_);
+    node_id = unique_id_++;
+    if (0 == node_id) {
+      throw std::overflow_error("exhausted the unique ids for components in this process");
+    }
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(pending_mutex_);
+    pending_node_ids_.insert(node_id);
+  }
+
+  // Approximate full_node_name for the immediate response.
+  // The actual name comes from the constructed node (published via
+  // ComponentEvent).
+  std::string approx_name;
+  if (!request->node_namespace.empty() && request->node_namespace != "/") {
+    approx_name = request->node_namespace + "/" + request->node_name;
+  } else if (!request->node_name.empty()) {
+    approx_name = "/" + request->node_name;
+  } else {
+    approx_name = request->plugin_name;
+  }
+
+  // Respond immediately — node is not yet constructed
+  response->success = true;
+  response->unique_id = node_id;
+  response->full_node_name = approx_name;
+
+  RCLCPP_INFO(
+    get_logger(),
+    "Accepted load request for '%s' (pre-assigned id %lu), "
+    "constructing async...",
+    request->plugin_name.c_str(), static_cast<uint64_t>(node_id));
+
+  // ── Phase 2: async construction on worker thread ──
+
+  // Capture everything needed by the worker lambda.
+  // factory and options are moved; request fields copied for the event.
+  auto pkg = request->package_name;
+  auto plugin = request->plugin_name;
+
+  submit_work([this, factory = std::move(factory), options = std::move(options), node_id, pkg,
+               plugin]() {
+    try {
+      // Construct the node (SLOW — may take seconds or minutes)
+      auto wrapper = factory->create_node_instance(options);
+
+      std::string actual_name;
+      {
+        std::lock_guard<std::mutex> lock(load_mutex_);
+        node_wrappers_[node_id] = wrapper;
+        add_node_to_executor(node_id);
+        actual_name = node_wrappers_[node_id].get_node_base_interface()->get_fully_qualified_name();
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        pending_node_ids_.erase(node_id);
+      }
+
+      RCLCPP_INFO(
+        get_logger(), "Component '%s' loaded as '%s' (id %lu)", plugin.c_str(), actual_name.c_str(),
+        static_cast<uint64_t>(node_id));
+
+      // Publish LOADED event
+      auto event = play_launch_msgs::msg::ComponentEvent();
+      event.stamp = now();
+      event.event_type = play_launch_msgs::msg::ComponentEvent::LOADED;
+      event.unique_id = node_id;
+      event.full_node_name = actual_name;
+      event.package_name = pkg;
+      event.plugin_name = plugin;
+      event_pub_->publish(event);
+    } catch (const std::exception & ex) {
+      RCLCPP_ERROR(
+        get_logger(), "Failed to construct component '%s' (id %lu): %s", plugin.c_str(),
+        static_cast<uint64_t>(node_id), ex.what());
+
+      {
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        pending_node_ids_.erase(node_id);
+      }
+
+      // Publish LOAD_FAILED event
+      auto event = play_launch_msgs::msg::ComponentEvent();
+      event.stamp = now();
+      event.event_type = play_launch_msgs::msg::ComponentEvent::LOAD_FAILED;
+      event.unique_id = node_id;
+      event.package_name = pkg;
+      event.plugin_name = plugin;
+      event.error_message = ex.what();
+      event_pub_->publish(event);
+    }
+  });
+}
+
+// ── on_unload_node override (thread-safe) ───────────────────────────────
+
+void CloneIsolatedComponentManager::on_unload_node(
+  const std::shared_ptr<rmw_request_id_t> request_header,
+  const std::shared_ptr<UnloadNode::Request> request,
+  std::shared_ptr<UnloadNode::Response> response)
+{
+  // Reject unload if node is still being constructed
+  {
+    std::lock_guard<std::mutex> lock(pending_mutex_);
+    if (pending_node_ids_.count(request->unique_id) > 0) {
+      response->success = false;
+      response->error_message =
+        "Node with unique_id " + std::to_string(request->unique_id) + " is still being constructed";
+      RCLCPP_WARN(get_logger(), "%s", response->error_message.c_str());
+      return;
+    }
+  }
+
+  // Capture node name before parent erases it
+  std::string full_name;
+  {
+    std::lock_guard<std::mutex> lock(load_mutex_);
+    auto it = node_wrappers_.find(request->unique_id);
+    if (it != node_wrappers_.end()) {
+      full_name = it->second.get_node_base_interface()->get_fully_qualified_name();
+    }
+  }
+
+  // Delegate to parent (which calls remove_node_from_executor →
+  // children_mutex_)
+  {
+    std::lock_guard<std::mutex> lock(load_mutex_);
+    ComponentManager::on_unload_node(request_header, request, response);
+  }
+
+  // Publish UNLOADED event on success
+  if (response->success) {
+    auto event = play_launch_msgs::msg::ComponentEvent();
+    event.stamp = now();
+    event.event_type = play_launch_msgs::msg::ComponentEvent::UNLOADED;
+    event.unique_id = request->unique_id;
+    event.full_node_name = full_name;
+    event_pub_->publish(event);
+  }
+}
+
+// ── on_list_nodes override (thread-safe, excludes pending) ──────────────
+
+void CloneIsolatedComponentManager::on_list_nodes(
+  const std::shared_ptr<rmw_request_id_t> /*request_header*/,
+  const std::shared_ptr<ListNodes::Request> /*request*/,
+  std::shared_ptr<ListNodes::Response> response)
+{
+  std::lock_guard<std::mutex> lock1(load_mutex_);
+  std::lock_guard<std::mutex> lock2(pending_mutex_);
+
+  for (auto & wrapper : node_wrappers_) {
+    // Skip nodes still being constructed
+    if (pending_node_ids_.count(wrapper.first) > 0) {
+      continue;
+    }
+    response->unique_ids.push_back(wrapper.first);
+    response->full_node_names.push_back(
+      wrapper.second.get_node_base_interface()->get_fully_qualified_name());
+  }
+}
+
 // ── add_node_to_executor ────────────────────────────────────────────────
 //
-// Called by on_load_node() after the node is constructed and stored in
-// node_wrappers_.  We create a dedicated executor and spawn a clone'd
-// child process to spin it.
+// Called from worker thread after the node is constructed and stored in
+// node_wrappers_.  Caller must hold load_mutex_.  We create a dedicated
+// executor and spawn a clone'd child process to spin it.
 
 void CloneIsolatedComponentManager::add_node_to_executor(uint64_t node_id)
 {

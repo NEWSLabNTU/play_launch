@@ -187,7 +187,6 @@ impl MemberCoordinatorBuilder {
     pub async fn spawn(
         self,
         shared_ros_node: Option<Arc<rclrs::Node>>,
-        list_nodes_config: Option<crate::cli::config::ListNodesSettings>,
     ) -> (MemberHandle, MemberRunner) {
         let (state_tx, state_rx) = mpsc::channel(100);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -454,33 +453,6 @@ impl MemberCoordinatorBuilder {
             control_channels.insert(member_name, control_tx);
         }
 
-        // Spawn ListNodesManager task (if config provided and ROS node available)
-        let list_nodes_event_tx =
-            if let (Some(config), Some(ros_node)) = (list_nodes_config, shared_ros_node.as_ref()) {
-                let (manager_event_tx, manager_event_rx) = mpsc::channel(10);
-
-                let manager = super::list_nodes_manager::ListNodesManager::new(
-                    config,
-                    Arc::clone(ros_node),
-                    manager_event_rx,
-                    state_tx.clone(),
-                    shutdown_rx.clone(),
-                );
-
-                let manager_task = tokio::spawn(async move {
-                    manager.run().await;
-                    Ok(())
-                });
-
-                // Store manager task (use reserved name)
-                tasks.insert("__list_nodes_manager__".to_string(), manager_task);
-
-                debug!("ListNodesManager task spawned");
-                Some(manager_event_tx)
-            } else {
-                None
-            };
-
         // state_tx and shutdown_rx are dropped here (actors have their clones)
 
         // Populate shared state map with initial states for all members
@@ -513,7 +485,6 @@ impl MemberCoordinatorBuilder {
             tasks,
             state_rx,
             shared_state,
-            list_nodes_event_tx,
         };
 
         (handle, runner)
@@ -826,7 +797,7 @@ impl MemberHandle {
                     }
                 }
                 other => {
-                    // Forward other events as-is (like DiscoveredLoaded)
+                    // Forward other events as-is
                     other
                 }
             };
@@ -1069,85 +1040,6 @@ impl MemberHandle {
     pub fn shared_state(&self) -> &Arc<dashmap::DashMap<String, MemberState>> {
         &self.shared_state
     }
-
-    /// Handle node discovery from ListNodes query
-    /// Matches discovered nodes to composable actors and sends DiscoveredLoaded control event
-    pub async fn handle_node_discovered(
-        &self,
-        container_name: &str,
-        full_node_name: &str,
-        unique_id: u64,
-    ) {
-        debug!(
-            "Handling node discovery: container='{}', node='{}', unique_id={}",
-            container_name, full_node_name, unique_id
-        );
-
-        // Find all composable nodes that match this container and full node name
-        let metadata_guard = self.metadata.read().await;
-        let mut matched_actors = Vec::new();
-
-        for (actor_name, meta) in metadata_guard.iter() {
-            // Only check composable nodes
-            if meta.member_type != MemberType::ComposableNode {
-                continue;
-            }
-
-            // Check if this node belongs to the discovered container
-            if let Some(ref target_container) = meta.target_container {
-                // Normalize target container name (may or may not have leading slash)
-                let normalized_target = if target_container.starts_with('/') {
-                    target_container.clone()
-                } else {
-                    format!("/{}", target_container)
-                };
-
-                if normalized_target != container_name {
-                    continue; // Wrong container
-                }
-            } else {
-                continue; // No target container
-            }
-
-            // Construct the expected full node name for this actor
-            if let (Some(ref namespace), Some(ref node_name)) = (&meta.namespace, &meta.node_name) {
-                let expected_full_name = if namespace == "/" {
-                    format!("/{}", node_name)
-                } else if namespace.ends_with('/') {
-                    format!("{}{}", namespace, node_name)
-                } else {
-                    format!("{}/{}", namespace, node_name)
-                };
-
-                if expected_full_name == full_node_name {
-                    debug!(
-                        "Matched discovered node '{}' to actor '{}'",
-                        full_node_name, actor_name
-                    );
-                    matched_actors.push(actor_name.clone());
-                }
-            }
-        }
-        drop(metadata_guard);
-
-        // Send DiscoveredLoaded control event to all matched actors
-        for actor_name in matched_actors {
-            match self
-                .send_control(&actor_name, ControlEvent::DiscoveredLoaded { unique_id })
-                .await
-            {
-                Ok(_) => {
-                    debug!(
-                        "Sent DiscoveredLoaded to '{}' (unique_id: {})",
-                        actor_name, unique_id
-                    );
-                }
-                Err(e) => {
-                    warn!("Failed to send DiscoveredLoaded to '{}': {}", actor_name, e);
-                }
-            }
-        }
-    }
 }
 
 /// Runner that waits for all actors to complete
@@ -1159,26 +1051,12 @@ pub struct MemberRunner {
     state_rx: mpsc::Receiver<StateEvent>,
     /// Shared state map (actors write directly, runner only reads for logging)
     shared_state: Arc<dashmap::DashMap<String, MemberState>>,
-    /// Channel to forward ListNodesRequested events to the manager
-    list_nodes_event_tx: Option<mpsc::Sender<StateEvent>>,
 }
 
 impl MemberRunner {
     /// Get the next state event (for web UI forwarding)
     pub async fn next_state_event(&mut self) -> Option<StateEvent> {
-        let event = self.state_rx.recv().await;
-
-        // Forward ListNodesRequested events to the manager
-        if let Some(ref evt) = event {
-            if let StateEvent::ListNodesRequested { .. } = evt {
-                if let Some(ref tx) = self.list_nodes_event_tx {
-                    // Send to manager (non-blocking, ignore errors if manager is gone)
-                    let _ = tx.try_send(evt.clone());
-                }
-            }
-        }
-
-        event
+        self.state_rx.recv().await
     }
 
     /// Wait for all actors to complete (takes mut self!)
@@ -1190,7 +1068,6 @@ impl MemberRunner {
             tasks,
             mut state_rx,
             shared_state: _shared_state,
-            list_nodes_event_tx: _list_nodes_event_tx,
         } = self;
 
         // Track task count before moving into FuturesUnordered

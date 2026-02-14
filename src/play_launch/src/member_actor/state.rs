@@ -19,9 +19,6 @@ pub struct ActorConfig {
     pub output_dir: PathBuf,
     /// Process group ID for spawned processes
     pub pgid: Option<i32>,
-    /// ListNodes verification timeout for composable nodes (seconds)
-    /// Only applicable to container actors
-    pub list_nodes_loading_timeout_secs: u64,
 }
 
 /// State machine for a regular node or container

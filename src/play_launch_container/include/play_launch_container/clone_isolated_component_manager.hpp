@@ -18,11 +18,16 @@
 #include <sys/types.h>
 
 #include <atomic>
+#include <condition_variable>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <queue>
+#include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "play_launch_container/observable_component_manager.hpp"
 
@@ -55,10 +60,27 @@ public:
   ~CloneIsolatedComponentManager() override;
 
 protected:
+  void on_load_node(
+    const std::shared_ptr<rmw_request_id_t> request_header,
+    const std::shared_ptr<LoadNode::Request> request,
+    std::shared_ptr<LoadNode::Response> response) override;
+
+  void on_unload_node(
+    const std::shared_ptr<rmw_request_id_t> request_header,
+    const std::shared_ptr<UnloadNode::Request> request,
+    std::shared_ptr<UnloadNode::Response> response) override;
+
+  void on_list_nodes(
+    const std::shared_ptr<rmw_request_id_t> request_header,
+    const std::shared_ptr<ListNodes::Request> request,
+    std::shared_ptr<ListNodes::Response> response) override;
+
   void add_node_to_executor(uint64_t node_id) override;
   void remove_node_from_executor(uint64_t node_id) override;
 
 private:
+  void worker_loop();
+  void submit_work(std::function<void()> work);
   struct ChildInfo
   {
     pid_t pid;
@@ -77,6 +99,22 @@ private:
   void handle_child_death(uint64_t node_id);
 
   bool use_multi_threaded_;
+
+  // Thread safety for inherited protected members (node_wrappers_, loaders_, unique_id_)
+  std::mutex load_mutex_;
+
+  // Worker thread pool for async node construction
+  std::vector<std::thread> worker_threads_;
+  std::mutex work_queue_mutex_;
+  std::condition_variable work_queue_cv_;
+  std::queue<std::function<void()>> work_queue_;
+  std::atomic<bool> workers_running_{false};
+  static constexpr size_t kWorkerThreadCount = 4;
+
+  // Track nodes with unique_id assigned but not yet constructed
+  std::set<uint64_t> pending_node_ids_;
+  std::mutex pending_mutex_;
+
   std::mutex children_mutex_;
   std::map<uint64_t, ChildInfo> children_;
 

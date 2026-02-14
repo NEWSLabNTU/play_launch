@@ -29,6 +29,10 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 filter = "binary(io_stress)"
 slow-timeout = { period = "60s", terminate-after = 2 }
 
+[[profile.default.overrides]]
+filter = "binary(parallel_loading)"
+slow-timeout = { period = "60s", terminate-after = 2 }
+
 [profile.ci]
 slow-timeout = { period = "30s", terminate-after = 2 }
 fail-fast = true

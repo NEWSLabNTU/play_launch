@@ -2,7 +2,7 @@
 //!
 //! This module defines the event types for communication between composable node
 //! actors and container actors. Composable nodes send LoadNode requests to their
-//! container actor, which processes them sequentially via a queue.
+//! container actor, which dispatches them concurrently.
 
 use eyre::Result;
 use std::time::Instant;
@@ -58,8 +58,6 @@ pub enum ContainerControlEvent {
         parameters: Vec<(String, String)>,
         /// Extra arguments (key-value pairs)
         extra_args: Vec<(String, String)>,
-        /// Channel to send the response
-        response_tx: oneshot::Sender<Result<LoadNodeResponse>>,
     },
     /// Request to unload a composable node from this container
     UnloadNode {
@@ -91,8 +89,6 @@ pub(super) struct LoadRequest {
     pub parameters: Vec<(String, String)>,
     /// Extra arguments (key-value pairs)
     pub extra_args: Vec<(String, String)>,
-    /// Channel to send the response
-    pub response_tx: oneshot::Sender<Result<LoadNodeResponse>>,
     /// When the request was received (for metrics)
     pub request_time: Instant,
 }
@@ -111,14 +107,10 @@ pub(super) struct LoadParams {
     pub request_time: Instant,
 }
 
-/// Current load being processed
-pub(super) struct CurrentLoad {
-    /// The load request
-    pub request: LoadRequest,
-    /// When the service call started (for metrics)
-    pub start_time: Instant,
-    /// Task handle for the LoadNode service call
-    pub task: tokio::task::JoinHandle<eyre::Result<LoadNodeResponse>>,
+/// Completion of a LoadNode service call (sent from spawned task back to actor)
+pub(super) struct LoadCompletion {
+    pub composable_name: String,
+    pub result: Result<LoadNodeResponse>,
 }
 
 /// Current unload being processed
@@ -129,34 +121,4 @@ pub(super) struct CurrentUnload {
     pub start_time: Instant,
     /// Task handle for the UnloadNode service call
     pub task: tokio::task::JoinHandle<eyre::Result<UnloadNodeResponse>>,
-}
-
-impl From<ContainerControlEvent> for Option<LoadRequest> {
-    fn from(event: ContainerControlEvent) -> Self {
-        match event {
-            ContainerControlEvent::LoadNode {
-                composable_name,
-                package,
-                plugin,
-                node_name,
-                node_namespace,
-                remap_rules,
-                parameters,
-                extra_args,
-                response_tx,
-            } => Some(LoadRequest {
-                composable_name,
-                package,
-                plugin,
-                node_name,
-                node_namespace,
-                remap_rules,
-                parameters,
-                extra_args,
-                response_tx,
-                request_time: Instant::now(),
-            }),
-            ContainerControlEvent::UnloadNode { .. } => None,
-        }
-    }
 }

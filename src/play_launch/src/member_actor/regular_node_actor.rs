@@ -544,13 +544,6 @@ impl RegularNodeActor {
                 );
                 Ok(true) // Ignore
             }
-            ControlEvent::DiscoveredLoaded { .. } => {
-                warn!(
-                    "[{}] DiscoveredLoaded not supported for regular nodes",
-                    self.name
-                );
-                Ok(true) // Ignore
-            }
         }
     }
 

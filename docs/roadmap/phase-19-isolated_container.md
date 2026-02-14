@@ -1,6 +1,6 @@
 # Phase 19: Clone-Isolated Component Manager
 
-**Status**: 🔧 In Progress (19.0–19.2 complete, 19.3 partially complete, 19.4 in progress)
+**Status**: 🔧 In Progress (19.0–19.2 complete, 19.3 partially complete, 19.4–19.5 complete)
 **Priority**: High (crash isolation, per-node resource control)
 **Dependencies**: Phase 18 complete. ObservableComponentManager merged.
 
@@ -26,7 +26,11 @@ container's address space for zero-copy intra-process communication.
               ├── 19.4a ComponentEvent sub ✅ complete
               ├── 19.4b Container tests   ✅ complete
               └── 19.4c Exec rewrite      ⏳ planned
-        └── 19.5 Event-driven container status  ⏳ planned
+        └── 19.5 Event-driven container status  ✅ complete
+              └── 19.8 Parallel node loading   ⏳ planned
+                    ├── 19.8a C++ async loading  (non-blocking on_load_node)
+                    ├── 19.8b Rust parallel dispatch (concurrent in-flight loads)
+                    └── 19.8c Integration tests  (TensorRT-like slow loader)
               ├── 19.6 cgroups            (optional)
               └── 19.7 MPK               (optional, experimental)
 ```
@@ -310,7 +314,7 @@ The upstream `ComponentManagerIsolated` solves this with a template parameter
 
 ## Phase 19.5: Event-Driven Container Status
 
-**Status**: Planned
+**Status**: ✅ Complete
 
 Replace service-response-based composable node tracking with ComponentEvent
 subscription as the primary source of truth.
@@ -366,7 +370,7 @@ ComponentEvent can replace it entirely.
 - **No polling**: Events arrive at publish time — no 30-second timeout, no
   rate-limited ListNodes queries, no coordinator round-trip.
 
-### Phase 19.5a: Handle LOADED/LOAD_FAILED events
+### Phase 19.5a: Handle LOADED/LOAD_FAILED events ✅
 
 **Goal**: Transition composable node state from ComponentEvent instead of
 service response.
@@ -418,7 +422,7 @@ subscription created because the topic doesn't exist), fall back to the
 current service-response path. This means the refactoring is backward
 compatible.
 
-### Phase 19.5b: Add timeout to LoadNode service call
+### Phase 19.5b: Add timeout to LoadNode service call ✅
 
 **Goal**: Stop waiting forever for service responses.
 
@@ -439,7 +443,7 @@ This timeout is now a safety net only — the ComponentEvent should arrive
 first. If the service times out but the LOADED event already arrived, the
 composable node is already in `Loaded` state and the timeout is harmless.
 
-### Phase 19.5c: Remove ListNodes polling
+### Phase 19.5c: Remove ListNodes polling ✅
 
 **Goal**: Eliminate the `check_loading_timeouts()` timer, `ListNodesManager`,
 `ListNodesRequested`/`NodeDiscovered`/`DiscoveredLoaded` event types, and
@@ -469,7 +473,7 @@ ListNodes was designed to catch is now handled by:
 **Keep `ListNodes` service client creation ability** — it's useful for
 on-demand debugging (web UI "refresh" button) even if not used for polling.
 
-### Phase 19.5d: Clean up legacy code
+### Phase 19.5d: Clean up legacy code ✅
 
 **Goal**: Remove dead paths and simplify the select loop.
 
@@ -520,6 +524,370 @@ New tests for Phase 19.5:
 | Event arrives before service response processing | Check `entry.state != Loading` before service-response transition                                                                                                                  |
 | Event lost due to QoS overflow                   | Depth 100 + reliable QoS; 100 is generous for any realistic launch                                                                                                                 |
 | Autoware uses stock containers, not ours         | For Autoware containers launched via stock `rclcpp_components`, play_launch uses its own container binary (`play_launch_container`) anyway — the `exec` is rewritten during replay |
+
+---
+
+## Phase 19.8: Parallel Non-Blocking Node Loading
+
+**Status**: Planned
+**Dependencies**: Phase 19.5 complete (ComponentEvent as primary source of truth)
+
+### Motivation
+
+In Autoware, some composable nodes trigger TensorRT compilation in their
+constructor, blocking for **minutes**. The current architecture serializes
+loading at three levels:
+
+1. **C++ `on_load_node()`**: Synchronous service callback — `dlopen()` →
+   constructor → `clone()` → respond. A blocking constructor freezes the
+   executor, making the container unresponsive to all other service calls
+   (LoadNode, UnloadNode, ListNodes).
+2. **C++ callback group**: Services use the default
+   `MutuallyExclusiveCallbackGroup`, serializing callbacks even with
+   `MultiThreadedExecutor`.
+3. **Rust `current_load`**: `Option<CurrentLoad>` allows at most one
+   in-flight LoadNode request. `start_next_load()` returns immediately
+   if `current_load.is_some()`.
+
+With 54 composable nodes across 15 containers in Autoware, a single slow
+TensorRT node blocks all subsequent loads into that container.
+
+### Design
+
+**Key insight**: `LoadNode` service clients (launch_ros, ros2 CLI,
+play_launch) do **not** expect the node to be operational after the
+response. They only use the response for:
+
+- `unique_id` — for future UnloadNode calls and display
+- `full_node_name` — for logging and duplicate name detection
+- `success` — pass/fail
+
+Node operational readiness is handled asynchronously through DDS discovery.
+This means we can **decouple the service response from node construction**.
+
+**Two-phase loading**:
+
+```
+Phase 1 (synchronous, microseconds):
+  on_load_node() → validate plugin → pre-assign unique_id → respond success
+
+Phase 2 (async worker thread, seconds to minutes):
+  worker → create_node_instance() → add_node_to_executor() → ComponentEvent
+```
+
+The `unique_id` serves as the correlation token between the immediate
+service response and the deferred ComponentEvent.
+
+### Phase 19.8a: C++ Non-Blocking on_load_node
+
+**Goal**: Return from `on_load_node()` immediately after plugin validation,
+deferring the actual node construction and `clone()` to a worker thread.
+
+**Override `on_load_node()` in `CloneIsolatedComponentManager`**:
+
+```cpp
+void CloneIsolatedComponentManager::on_load_node(
+    const std::shared_ptr<rmw_request_id_t> request_header,
+    const std::shared_ptr<LoadNode::Request> request,
+    std::shared_ptr<LoadNode::Response> response)
+{
+  (void)request_header;
+
+  // Phase 1: Synchronous validation + immediate response
+  try {
+    auto resources = get_component_resources(request->package_name);
+    auto factory = /* find matching factory (same logic as parent) */;
+    if (!factory) {
+      response->success = false;
+      response->error_message = "Plugin not found";
+      return;
+    }
+
+    auto options = create_node_options(request);
+    auto node_id = unique_id_++;
+
+    // Compute full_node_name from request (before actual construction)
+    std::string full_node_name;
+    if (!request->node_namespace.empty() && !request->node_name.empty()) {
+      full_node_name = request->node_namespace + "/" + request->node_name;
+    } else if (!request->node_name.empty()) {
+      full_node_name = "/" + request->node_name;
+    }
+
+    response->success = true;
+    response->unique_id = node_id;
+    response->full_node_name = full_node_name;
+
+    // Phase 2: Async construction on worker thread
+    auto work = [this, factory, options, node_id, request]() {
+      try {
+        node_wrappers_[node_id] = factory->create_node_instance(options);
+        add_node_to_executor(node_id);
+
+        // Publish LOADED event with actual full_node_name
+        auto event = play_launch_msgs::msg::ComponentEvent();
+        event.stamp = now();
+        event.event_type = CE::LOADED;
+        event.unique_id = node_id;
+        event.full_node_name =
+            node_wrappers_[node_id].get_node_base_interface()
+                ->get_fully_qualified_name();
+        event.package_name = request->package_name;
+        event.plugin_name = request->plugin_name;
+        event_pub_->publish(event);
+      } catch (const std::exception & ex) {
+        auto event = play_launch_msgs::msg::ComponentEvent();
+        event.stamp = now();
+        event.event_type = CE::LOAD_FAILED;
+        event.unique_id = node_id;
+        event.error_message = ex.what();
+        event.package_name = request->package_name;
+        event.plugin_name = request->plugin_name;
+        event_pub_->publish(event);
+      }
+    };
+    worker_pool_.submit(std::move(work));
+
+  } catch (const ComponentManagerException & ex) {
+    response->success = false;
+    response->error_message = ex.what();
+  }
+}
+```
+
+**Worker thread pool**: Simple pool (2–4 threads) for concurrent node
+construction. Could use `std::thread` with a task queue, or a lightweight
+thread pool library.
+
+**Thread safety**: `node_wrappers_`, `loaders_` are accessed from both
+the executor thread (service callbacks) and worker threads. Need mutex
+protection. `unique_id_` is only incremented in service callbacks
+(executor thread), so no contention.
+
+**Why only in `CloneIsolatedComponentManager`**: Non-isolated
+`ObservableComponentManager` keeps synchronous loading — its event
+publishing is tightly coupled to the service response in the same
+callback. Changing it would break stock container compatibility.
+
+**Work items**:
+
+- [ ] Add worker thread pool to `CloneIsolatedComponentManager` (start in
+  constructor, join in destructor)
+- [ ] Override `on_load_node()` — validate plugin synchronously, respond
+  immediately, spawn construction work
+- [ ] Add mutex on `node_wrappers_` and `loaders_` for thread safety
+- [ ] Worker publishes `ComponentEvent::LOADED` or `LOAD_FAILED` after
+  construction
+- [ ] Compute approximate `full_node_name` from request fields for
+  immediate response
+- [ ] Override `on_list_nodes()` to exclude not-yet-constructed nodes
+  (entries in `node_wrappers_` not yet populated by worker)
+
+**Key technical decisions**:
+
+- **Plugin validation is synchronous**: `get_component_resources()` (ament
+  index lookup) and `create_component_factory()` (dlopen, cached after
+  first load) are fast (milliseconds). This catches wrong
+  package/plugin errors immediately in the service response.
+- **Constructor is async**: `create_node_instance()` is the slow path
+  (TensorRT, large model loading). This runs on the worker thread.
+- **`unique_id` pre-assignment**: Counter is incremented in the service
+  callback (single-threaded executor context). Worker receives the
+  assigned ID; no contention.
+- **`full_node_name` approximation**: Response carries the expected name
+  from request fields. The ComponentEvent carries the actual name from
+  `get_fully_qualified_name()`. launch_ros falls back to
+  `request.node_name` if response's name is empty. play_launch uses
+  ComponentEvent as primary source (Phase 19.5).
+- **`on_unload_node()` with pending loads**: If the client tries to unload
+  a node that's still being constructed (unique_id assigned but not yet
+  in `node_wrappers_`), return an error. The client shouldn't unload
+  a node before LOADED event confirms it.
+
+### Phase 19.8b: Rust Parallel Load Dispatch
+
+**Goal**: Remove the `current_load` serialization in `container_actor.rs`.
+Allow multiple concurrent LoadNode service calls and use `unique_id` from
+the immediate response to correlate with ComponentEvent.
+
+**Replace single in-flight load with concurrent tracking**:
+
+```rust
+// Before: at most one load in flight
+current_load: Option<CurrentLoad>,
+
+// After: multiple concurrent loads, keyed by composable_name
+in_flight_loads: HashMap<String, InFlightLoad>,
+```
+
+```rust
+struct InFlightLoad {
+    request: LoadRequest,
+    start_time: Instant,
+    task: JoinHandle<Result<LoadNodeResponse>>,
+    /// Pre-assigned unique_id from immediate service response (None until
+    /// the service task completes and stores it)
+    unique_id: Option<u64>,
+}
+```
+
+**New loading flow**:
+
+1. `pending_loads` queue → `start_all_pending_loads()`: dispatch ALL
+   pending loads concurrently (no serialization gate)
+2. Each service call returns immediately (microseconds) with
+   `success=true` + `unique_id`
+3. Service response handler stores `unique_id` in `InFlightLoad` and in
+   `ComposableNodeEntry`, but does NOT transition to `Loaded` — state
+   stays `Loading`
+4. `ComponentEvent::LOADED` arrives with matching `unique_id` →
+   transitions from `Loading` to `Loaded`
+5. `ComponentEvent::LOAD_FAILED` arrives → transitions to `Failed`
+
+**Service response handling changes**:
+
+```rust
+// Before: service response transitions to Loaded
+Ok(response) if response.success => {
+    if matches!(entry.state, ComposableState::Loading { .. }) {
+        entry.state = ComposableState::Loaded { unique_id };
+    }
+}
+
+// After: service response only stores unique_id, no state transition
+Ok(response) if response.success => {
+    entry.unique_id = Some(response.unique_id);
+    // State stays Loading — wait for ComponentEvent
+}
+```
+
+**ComponentEvent matching**:
+
+```rust
+// Before: match against single current_load
+let composable_name = match &self.current_load {
+    Some(load) => load.request.composable_name.clone(),
+    None => return,
+};
+
+// After: match by unique_id across all composable entries
+CE::LOADED => {
+    let entry = self.composable_nodes.iter_mut()
+        .find(|(_, e)| e.unique_id == Some(event.unique_id));
+    if let Some((name, entry)) = entry {
+        if matches!(entry.state, ComposableState::Loading { .. }) {
+            entry.state = ComposableState::Loaded { unique_id: event.unique_id };
+        }
+    }
+}
+```
+
+**Poll multiple in-flight tasks**: Replace the single `current_load` task
+poll in `select!` with `FuturesUnordered` or iterate over `in_flight_loads`:
+
+```rust
+// Before: poll single task
+result = async {
+    match &mut self.current_load {
+        Some(load) => (&mut load.task).await,
+        None => std::future::pending().await,
+    }
+}, if self.current_load.is_some() => { ... }
+
+// After: poll any completed task from in_flight_loads
+result = self.in_flight_futures.next(),
+    if !self.in_flight_futures.is_empty() => { ... }
+```
+
+**Backward compatibility with stock containers**: When the container is a
+stock `rclcpp_components` container (no ComponentEvent subscription), the
+service response IS the completion signal. Detect this by checking if
+`component_event_sub` is `None` and fall back to service-response-driven
+state transitions (existing behavior).
+
+**Work items**:
+
+- [ ] Replace `current_load: Option<CurrentLoad>` with
+  `in_flight_loads: HashMap<String, InFlightLoad>`
+- [ ] Replace `start_next_load()` with `start_all_pending_loads()` —
+  dispatch all pending loads concurrently
+- [ ] Service response handler: store `unique_id` in composable entry,
+  do NOT transition to `Loaded`
+- [ ] ComponentEvent LOADED/LOAD_FAILED: match by `unique_id` instead
+  of `current_load` composable name
+- [ ] Use `FuturesUnordered` to poll multiple in-flight service tasks
+- [ ] Remove `start_next_load()` call after each task completion (no
+  longer needed — all loads started immediately)
+- [ ] Backward compatibility: fall back to service-response transitions
+  when ComponentEvent subscription is absent
+- [ ] Update `pending_loads: VecDeque<LoadRequest>` flush to also cancel
+  in-flight tasks on container shutdown
+
+### Phase 19.8c: Integration Tests
+
+**Goal**: Verify parallel loading works correctly with slow-constructing
+nodes.
+
+**Create `slow_loader` test component** (`src/play_launch_container/test/`):
+
+A composable node whose constructor sleeps for a configurable duration
+(simulating TensorRT compilation). Use a ROS parameter to control the
+delay:
+
+```cpp
+class SlowLoader : public rclcpp::Node {
+public:
+  SlowLoader(const rclcpp::NodeOptions & options) : Node("slow_loader", options) {
+    auto delay_ms = declare_parameter("load_delay_ms", 5000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    // Publish a "ready" message after construction
+    pub_ = create_publisher<std_msgs::msg::String>("~/ready", 10);
+    timer_ = create_wall_timer(100ms, [this]() {
+      pub_->publish(std_msgs::msg::String().set__data("ready"));
+    });
+  }
+};
+```
+
+**Test scenarios**:
+
+| Test                                    | Description                                                                                                                                |
+|-----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+| `test_parallel_load_2_slow_nodes`       | Load 2 SlowLoader nodes (3s each) into isolated container. Verify both LOADED events arrive within ~4s (parallel), not ~7s (sequential).   |
+| `test_container_responsive_during_load` | Load 1 SlowLoader (5s), immediately load 1 fast node (Talker). Verify Talker's LOADED event arrives within ~1s, not blocked by SlowLoader. |
+| `test_load_failure_during_parallel`     | Load 1 SlowLoader + 1 invalid plugin concurrently. Verify LOAD_FAILED for invalid plugin arrives immediately, SlowLoader still completes.  |
+| `test_list_nodes_excludes_pending`      | Load 1 SlowLoader, immediately call ListNodes. Verify response doesn't include the still-constructing node.                                |
+| `test_unload_during_construction`       | Load SlowLoader (5s), attempt UnloadNode with its pre-assigned unique_id during construction. Verify error response.                       |
+
+**Test fixture**: `tests/fixtures/parallel_loading/` with launch files
+using `play_launch_container` with `--isolated`.
+
+**Work items**:
+
+- [ ] Create `SlowLoader` composable node component
+- [ ] Register `SlowLoader` in `play_launch_container` CMakeLists
+- [ ] Create test launch files in `tests/fixtures/parallel_loading/`
+- [ ] Implement 5 integration tests
+- [ ] Verify all existing tests still pass
+
+### File Changes Summary
+
+| Phase | Files modified                                  | Lines (est.) |
+|-------|-------------------------------------------------|--------------|
+| 19.8a | `clone_isolated_component_manager.{hpp,cpp}`    | +150, -5     |
+| 19.8b | `container_actor.rs`, `container_control.rs`    | +80, -60     |
+| 19.8c | New: `slow_loader.cpp`, launch files, test file | +250         |
+
+### Risks
+
+| Risk                                                                           | Severity | Mitigation                                                                                              |
+|--------------------------------------------------------------------------------|----------|---------------------------------------------------------------------------------------------------------|
+| Worker thread crashes during construction (shared addr space)                  | High     | Same risk as current clone(CLONE_VM) — accept per earlier discussion                                    |
+| Race between worker `node_wrappers_` write and executor `on_list_nodes()` read | Medium   | Mutex on `node_wrappers_`; `on_list_nodes` only returns fully-constructed entries                       |
+| `dlopen` not thread-safe for same library                                      | Low      | `loaders_` map caches `ClassLoader` per library path; protect with mutex to avoid double-dlopen         |
+| `unique_id` overflow with pre-assignment + failure                             | None     | Failed loads consume a `unique_id` — 2^64 IDs still effectively infinite                                |
+| Approximate `full_node_name` differs from actual                               | Low      | launch_ros falls back to `request.node_name`; play_launch uses ComponentEvent (actual name)             |
+| Stock containers (non-isolated) break                                          | None     | Only `CloneIsolatedComponentManager` overrides `on_load_node()`; `ObservableComponentManager` unchanged |
 
 ---
 

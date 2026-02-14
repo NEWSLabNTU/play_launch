@@ -1,0 +1,15 @@
+<launch>
+  <!-- Parallel loading test: 2 SlowLoader nodes (3s each) in one isolated container.
+       With parallel non-blocking load, both should complete in ~3s (not 6s). -->
+  <node_container pkg="play_launch_container" exec="component_container"
+                  name="parallel_container" namespace="" args="--isolated">
+    <composable_node pkg="play_launch_container" plugin="play_launch_container::SlowLoader"
+                     name="slow1" namespace="">
+      <param name="load_delay_ms" value="3000"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container" plugin="play_launch_container::SlowLoader"
+                     name="slow2" namespace="">
+      <param name="load_delay_ms" value="3000"/>
+    </composable_node>
+  </node_container>
+</launch>

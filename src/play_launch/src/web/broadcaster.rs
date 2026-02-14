@@ -90,8 +90,6 @@ impl EventType for StateEvent {
             StateEvent::LoadFailed { .. } => "LoadFailed",
             StateEvent::Unloaded { .. } => "Unloaded",
             StateEvent::Blocked { .. } => "Blocked",
-            StateEvent::NodeDiscovered { .. } => "NodeDiscovered",
-            StateEvent::ListNodesRequested { .. } => "ListNodesRequested",
         }
     }
 }

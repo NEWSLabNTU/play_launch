@@ -48,11 +48,6 @@ pub enum ControlEvent {
     Load,
     /// Unload a composable node (composable node actors only)
     Unload,
-    /// Notify actor that it was discovered as loaded via ListNodes
-    DiscoveredLoaded {
-        /// Unique ID from ListNodes response
-        unique_id: u64,
-    },
 }
 
 /// State events emitted by actors
@@ -132,22 +127,6 @@ pub enum StateEvent {
         /// Reason for blocking
         reason: super::state::BlockReason,
     },
-    /// Node discovered via ListNodes query
-    NodeDiscovered {
-        /// Container name
-        container_name: String,
-        /// Full ROS node name (with namespace)
-        full_node_name: String,
-        /// Unique ID from ListNodes response
-        unique_id: u64,
-    },
-    /// ListNodes query requested for a container
-    ListNodesRequested {
-        /// Container name to query
-        container_name: String,
-        /// Member name that requested the query
-        requester: String,
-    },
 }
 
 impl StateEvent {
@@ -164,8 +143,6 @@ impl StateEvent {
             | StateEvent::LoadFailed { name, .. }
             | StateEvent::Unloaded { name }
             | StateEvent::Blocked { name, .. } => name,
-            StateEvent::NodeDiscovered { container_name, .. } => container_name,
-            StateEvent::ListNodesRequested { requester, .. } => requester,
         }
     }
 

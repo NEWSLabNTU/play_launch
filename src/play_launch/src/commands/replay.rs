@@ -444,7 +444,6 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             max_respawn_attempts: None,
             output_dir: context.output_dir.clone(),
             pgid: Some(pgid),
-            list_nodes_loading_timeout_secs: runtime_config.list_nodes.loading_timeout_secs,
         };
 
         builder.add_regular_node(
@@ -474,7 +473,6 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             max_respawn_attempts: None,
             output_dir: context.node_context.output_dir.clone(),
             pgid: Some(pgid),
-            list_nodes_loading_timeout_secs: runtime_config.list_nodes.loading_timeout_secs,
         };
 
         // Add container (oneshot receiver is ignored since composable nodes will be matched internally)
@@ -500,9 +498,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // Now spawn all actors at once and get handle + runner
     // Pass the shared ROS node for container actors to use
     debug!("Spawning all {} actors...", builder.member_count());
-    let (member_handle, member_runner) = builder
-        .spawn(shared_ros_node, Some(runtime_config.list_nodes.clone()))
-        .await;
+    let (member_handle, member_runner) = builder.spawn(shared_ros_node).await;
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
     debug!("All actors spawned successfully");
 
@@ -547,14 +543,8 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         });
 
         // Runner task forwards state events and waits for completion
-        let runner_handle_for_updates = member_handle.clone();
         let runner_task = tokio::spawn(async move {
-            forward_state_events_and_wait(
-                member_runner,
-                state_broadcaster,
-                runner_handle_for_updates,
-            )
-            .await
+            forward_state_events_and_wait(member_runner, state_broadcaster).await
         });
 
         (Some(runner_task), Some(web_server_task))
@@ -1080,7 +1070,6 @@ async fn wait_for_completion_windows<F>(
 async fn forward_state_events_and_wait(
     mut runner: crate::member_actor::MemberRunner,
     broadcaster: std::sync::Arc<crate::web::StateEventBroadcaster>,
-    member_handle: std::sync::Arc<crate::member_actor::MemberHandle>,
 ) -> eyre::Result<()> {
     tracing::debug!("Starting state event forwarding and completion waiting");
 
@@ -1089,19 +1078,6 @@ async fn forward_state_events_and_wait(
     loop {
         match runner.next_state_event().await {
             Some(event) => {
-                // Handle NodeDiscovered events before updating state cache
-                if let crate::member_actor::StateEvent::NodeDiscovered {
-                    ref container_name,
-                    ref full_node_name,
-                    unique_id,
-                } = event
-                {
-                    // Match discovered node to composable actors and send DiscoveredLoaded
-                    member_handle
-                        .handle_node_discovered(container_name, full_node_name, unique_id)
-                        .await;
-                }
-
                 // Actors write directly to shared_state, no need to update from events
 
                 // Broadcast to all SSE subscribers

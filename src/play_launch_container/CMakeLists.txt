@@ -19,12 +19,19 @@ target_include_directories(observable_component_manager PUBLIC
 ament_target_dependencies(observable_component_manager
   rclcpp rclcpp_components composition_interfaces play_launch_msgs)
 
+# SlowLoader test component (shared library for composition)
+add_library(slow_loader SHARED src/slow_loader.cpp)
+ament_target_dependencies(slow_loader rclcpp rclcpp_components)
+rclcpp_components_register_node(slow_loader
+  PLUGIN "play_launch_container::SlowLoader"
+  EXECUTABLE slow_loader_node)
+
 # Container executable (single binary, configurable via CLI flags)
 add_executable(component_container src/component_container.cpp)
 target_link_libraries(component_container observable_component_manager)
 ament_target_dependencies(component_container rclcpp)
 
-install(TARGETS observable_component_manager
+install(TARGETS observable_component_manager slow_loader
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)

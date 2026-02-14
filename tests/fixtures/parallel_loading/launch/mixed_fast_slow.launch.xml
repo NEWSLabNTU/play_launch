@@ -1,0 +1,13 @@
+<launch>
+  <!-- Mixed fast/slow loading test: 1 SlowLoader (5s) + 1 fast Talker in one isolated container.
+       With parallel non-blocking load, the Talker should load before SlowLoader finishes. -->
+  <node_container pkg="play_launch_container" exec="component_container"
+                  name="mixed_container" namespace="" args="--isolated">
+    <composable_node pkg="play_launch_container" plugin="play_launch_container::SlowLoader"
+                     name="slow_node" namespace="">
+      <param name="load_delay_ms" value="3000"/>
+    </composable_node>
+    <composable_node pkg="composition" plugin="composition::Talker"
+                     name="fast_talker" namespace=""/>
+  </node_container>
+</launch>
