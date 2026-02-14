@@ -33,6 +33,19 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 filter = "binary(parallel_loading)"
 slow-timeout = { period = "60s", terminate-after = 2 }
 
+# Isolated container launch tests create multiple DDS participants via
+# clone(CLONE_VM). Serialize to avoid FastRTPS SHM port exhaustion.
+[test-groups.isolated-container]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = "binary(parallel_loading) & not test(dump)"
+test-group = "isolated-container"
+
+[[profile.default.overrides]]
+filter = "binary(container_events) & test(crash|launch)"
+test-group = "isolated-container"
+
 [profile.ci]
 slow-timeout = { period = "30s", terminate-after = 2 }
 fail-fast = true
