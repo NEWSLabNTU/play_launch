@@ -104,7 +104,7 @@ static int child_executor_fn(void * arg)
   // Without this, pthread_create() and mutex operations fail with EAGAIN.
   if (boot->tls_tid_offset >= 0) {
     auto my_tid = static_cast<pid_t>(syscall(SYS_gettid));
-    unsigned long fs_val = 0;
+    uint64_t fs_val = 0;
     syscall(SYS_arch_prctl, 0x1003 /* ARCH_GET_FS */, &fs_val);
     auto * tls_base = reinterpret_cast<char *>(fs_val);
     std::memcpy(tls_base + boot->tls_tid_offset, &my_tid, sizeof(my_tid));
@@ -183,7 +183,8 @@ CloneIsolatedComponentManager::~CloneIsolatedComponentManager()
     if (stop_fd_ >= 0) {
       uint64_t val = 1;
       if (write(stop_fd_, &val, sizeof(val)) < 0) {
-      }  // best-effort wakeup
+        // best-effort wakeup — ignore errors
+      }
     }
     monitor_thread_.join();
   }
@@ -301,7 +302,7 @@ void CloneIsolatedComponentManager::add_node_to_executor(uint64_t node_id)
 
   RCLCPP_INFO(
     get_logger(), "Spawned isolated child PID %d for node '%s' (id %lu)", child_pid,
-    node_name.c_str(), static_cast<unsigned long>(node_id));
+    node_name.c_str(), static_cast<uint64_t>(node_id));
 }
 
 // ── remove_node_from_executor ───────────────────────────────────────────
@@ -391,7 +392,8 @@ void CloneIsolatedComponentManager::monitor_loop()
         // Shutdown signal — drain eventfd and exit
         uint64_t val;
         if (read(stop_fd_, &val, sizeof(val)) < 0) {
-        }  // best-effort drain
+          // best-effort drain — ignore errors
+        }
         continue;
       }
       handle_child_death(events[i].data.u64);
