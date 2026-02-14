@@ -54,7 +54,8 @@ int main(int argc, char * argv[])
   // Create manager (CloneIsolated inherits from Observable)
   std::shared_ptr<play_launch_container::ObservableComponentManager> node;
   if (use_isolated) {
-    node = std::make_shared<play_launch_container::CloneIsolatedComponentManager>(exec);
+    node = std::make_shared<play_launch_container::CloneIsolatedComponentManager>(
+      exec, use_multi_threaded);
   } else {
     node = std::make_shared<play_launch_container::ObservableComponentManager>(exec);
   }

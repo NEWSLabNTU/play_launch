@@ -128,9 +128,10 @@ static int child_executor_fn(void * arg)
 // ── Constructor / Destructor ────────────────────────────────────────────
 
 CloneIsolatedComponentManager::CloneIsolatedComponentManager(
-  std::weak_ptr<rclcpp::Executor> executor, std::string node_name,
+  std::weak_ptr<rclcpp::Executor> executor, bool use_multi_threaded, std::string node_name,
   const rclcpp::NodeOptions & node_options)
-: ObservableComponentManager(executor, std::move(node_name), node_options)
+: ObservableComponentManager(executor, std::move(node_name), node_options),
+  use_multi_threaded_(use_multi_threaded)
 {
   RCLCPP_INFO(get_logger(), "Using clone(CLONE_VM) per-node process isolation");
   if (!get_tls_allocator()) {
@@ -211,8 +212,13 @@ CloneIsolatedComponentManager::~CloneIsolatedComponentManager()
 
 void CloneIsolatedComponentManager::add_node_to_executor(uint64_t node_id)
 {
-  // Create a dedicated single-threaded executor for this node
-  auto exec = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+  // Create a dedicated executor for this node, matching the container's flavor
+  std::shared_ptr<rclcpp::Executor> exec;
+  if (use_multi_threaded_) {
+    exec = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
+  } else {
+    exec = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+  }
   exec->add_node(node_wrappers_[node_id].get_node_base_interface());
 
   // Allocate child stack (MAP_STACK hints the kernel for guard pages)

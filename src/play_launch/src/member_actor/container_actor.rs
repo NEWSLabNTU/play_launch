@@ -1018,10 +1018,7 @@ impl ContainerActor {
     /// CRASHED is the only event that provides new information — LOADED/UNLOADED/LOAD_FAILED
     /// are already handled by service responses. We reuse `ComposableState::Failed` and
     /// `StateEvent::LoadFailed` to avoid touching every match arm in the codebase.
-    async fn handle_component_event(
-        &mut self,
-        event: play_launch_msgs::msg::ComponentEvent,
-    ) {
+    async fn handle_component_event(&mut self, event: play_launch_msgs::msg::ComponentEvent) {
         let unique_id = event.unique_id;
         let event_type = event.event_type;
 
@@ -1259,17 +1256,14 @@ impl ContainerActor {
                         }
 
                         // Phase 19.4a: Create ComponentEvent subscription
-                        let event_topic = format!(
-                            "{}/_container/component_events",
-                            self.full_node_name()
-                        );
+                        let event_topic =
+                            format!("{}/_container/component_events", self.full_node_name());
                         debug!(
                             "{}: Creating ComponentEvent subscription on {}",
                             self.name, event_topic
                         );
 
-                        let (event_tx, event_rx) =
-                            tokio::sync::mpsc::unbounded_channel();
+                        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
                         match ros_node.create_subscription(
                             event_topic
                                 .as_str()

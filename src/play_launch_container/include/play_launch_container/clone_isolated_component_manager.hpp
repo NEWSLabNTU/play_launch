@@ -48,7 +48,7 @@ public:
   CloneIsolatedComponentManager(
     std::weak_ptr<rclcpp::Executor> executor =
       std::weak_ptr<rclcpp::executors::MultiThreadedExecutor>(),
-    std::string node_name = "ComponentManager",
+    bool use_multi_threaded = false, std::string node_name = "ComponentManager",
     const rclcpp::NodeOptions & node_options =
       rclcpp::NodeOptions().start_parameter_services(false).start_parameter_event_publisher(false));
 
@@ -76,6 +76,7 @@ private:
   void monitor_loop();
   void handle_child_death(uint64_t node_id);
 
+  bool use_multi_threaded_;
   std::mutex children_mutex_;
   std::map<uint64_t, ChildInfo> children_;
 
