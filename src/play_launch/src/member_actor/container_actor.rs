@@ -1033,37 +1033,34 @@ impl ContainerActor {
         };
         let name = name.clone();
 
-        match event_type {
-            play_launch_msgs::msg::ComponentEvent::CRASHED => {
-                error!(
-                    "{}: Composable node '{}' crashed: {}",
-                    self.name, name, event.error_message
-                );
+        // LOADED/UNLOADED/LOAD_FAILED already handled by service responses
+        if event_type == play_launch_msgs::msg::ComponentEvent::CRASHED {
+            error!(
+                "{}: Composable node '{}' crashed: {}",
+                self.name, name, event.error_message
+            );
 
-                entry.state = ComposableState::Failed {
-                    error: event.error_message.clone(),
-                };
-                entry.unique_id = None;
+            entry.state = ComposableState::Failed {
+                error: event.error_message.clone(),
+            };
+            entry.unique_id = None;
 
-                // Update shared state for Web UI
-                self.shared_state.insert(
-                    name.clone(),
-                    super::web_query::MemberState::Failed {
-                        error: format!("Crashed: {}", event.error_message),
-                    },
-                );
+            // Update shared state for Web UI
+            self.shared_state.insert(
+                name.clone(),
+                super::web_query::MemberState::Failed {
+                    error: format!("Crashed: {}", event.error_message),
+                },
+            );
 
-                // Emit StateEvent for logging/Web UI
-                let _ = self
-                    .state_tx
-                    .send(StateEvent::LoadFailed {
-                        name: name.clone(),
-                        error: format!("Crashed: {}", event.error_message),
-                    })
-                    .await;
-            }
-            // LOADED/UNLOADED/LOAD_FAILED already handled by service responses
-            _ => {}
+            // Emit StateEvent for logging/Web UI
+            let _ = self
+                .state_tx
+                .send(StateEvent::LoadFailed {
+                    name: name.clone(),
+                    error: format!("Crashed: {}", event.error_message),
+                })
+                .await;
         }
     }
 
