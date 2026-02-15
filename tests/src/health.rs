@@ -18,12 +18,22 @@ pub struct LoadNodeFailure {
     pub log_line: String,
 }
 
+/// A composable node that crashed inside its container (e.g. SIGSEGV in
+/// a clone(CLONE_VM) child).
+pub struct ComposableNodeCrash {
+    pub container: String,
+    pub component: String,
+    pub detail: String,
+    pub log_line: String,
+}
+
 /// Aggregated health report from a play_launch run.
 pub struct HealthReport {
     pub processes_expected: usize,
     pub processes_actual: usize,
     pub node_exits: Vec<NodeExit>,
     pub load_node_failures: Vec<LoadNodeFailure>,
+    pub composable_crashes: Vec<ComposableNodeCrash>,
     pub play_log: PathBuf,
 }
 
@@ -50,6 +60,8 @@ impl HealthReport {
         let mut seen_exits = std::collections::HashSet::new();
         let mut load_node_failures = Vec::new();
         let mut seen_failures = std::collections::HashSet::new();
+        let mut composable_crashes = Vec::new();
+        let mut seen_crashes = std::collections::HashSet::new();
 
         for line in content.lines() {
             // Match: ERROR ... [node_name] Exited without code
@@ -71,6 +83,16 @@ impl HealthReport {
                     }
                 }
             }
+
+            // Match: ERROR ... container_name: Composable node 'component' crashed: detail
+            if line.contains("crashed:") && line.contains("Composable node") {
+                if let Some(crash) = parse_composable_crash(line) {
+                    let key = format!("{}/{}", crash.container, crash.component);
+                    if seen_crashes.insert(key) {
+                        composable_crashes.push(crash);
+                    }
+                }
+            }
         }
 
         HealthReport {
@@ -78,6 +100,7 @@ impl HealthReport {
             processes_actual,
             node_exits,
             load_node_failures,
+            composable_crashes,
             play_log: play_log.to_path_buf(),
         }
     }
@@ -101,6 +124,7 @@ impl HealthReport {
             .count();
         unexpected_exits == 0
             && unexpected_load_failures == 0
+            && self.composable_crashes.is_empty()
             && self.processes_actual == self.processes_expected
     }
 }
@@ -198,6 +222,41 @@ fn parse_load_node_failure(line: &str) -> Option<LoadNodeFailure> {
     })
 }
 
+/// Parse a composable node crash line like:
+///   `2026-02-15T01:46:03 ERROR play_launch::... pointcloud_container: Composable node 'voxel_grid_downsample_filter_node' crashed: killed by signal 11 (Segmentation fault) (core dumped)`
+fn parse_composable_crash(line: &str) -> Option<ComposableNodeCrash> {
+    // Find "Composable node '"
+    let marker = "Composable node '";
+    let marker_pos = line.find(marker)?;
+
+    // Container name: word before ": Composable node"
+    let before_marker = &line[..marker_pos];
+    let colon_pos = before_marker.rfind(": ")?;
+    let before_colon = before_marker[..colon_pos].trim();
+    let container = before_colon
+        .rsplit_once(|c: char| c.is_whitespace())
+        .map(|(_, name)| name)
+        .unwrap_or(before_colon)
+        .to_string();
+
+    // Component name: between "Composable node '" and "' crashed:"
+    let after_marker = &line[marker_pos + marker.len()..];
+    let end_quote = after_marker.find("' crashed:")?;
+    let component = after_marker[..end_quote].to_string();
+
+    // Detail: everything after "crashed: "
+    let crashed_marker = "crashed: ";
+    let crashed_pos = after_marker.find(crashed_marker)?;
+    let detail = after_marker[crashed_pos + crashed_marker.len()..].trim().to_string();
+
+    Some(ComposableNodeCrash {
+        container,
+        component,
+        detail,
+        log_line: line.to_string(),
+    })
+}
+
 /// Read the last N lines of a file, returning them as a single string.
 fn tail_lines(path: &Path, n: usize) -> String {
     match std::fs::read_to_string(path) {
@@ -265,6 +324,24 @@ impl fmt::Display for HealthReport {
             }
         }
 
+        if !self.composable_crashes.is_empty() {
+            writeln!(f)?;
+            writeln!(
+                f,
+                "--- Composable Node Crashes ({}) ---",
+                self.composable_crashes.len()
+            )?;
+            for crash in &self.composable_crashes {
+                writeln!(f)?;
+                writeln!(
+                    f,
+                    "  {} / {}: {}",
+                    crash.container, crash.component, crash.detail
+                )?;
+                writeln!(f, "    Log: {}", crash.log_line)?;
+            }
+        }
+
         writeln!(f)?;
         if self.is_healthy(&[], &[]) {
             writeln!(f, "RESULT: PASS")?;
@@ -277,6 +354,12 @@ impl fmt::Display for HealthReport {
                 parts.push(format!(
                     "{} load_node failures",
                     self.load_node_failures.len()
+                ));
+            }
+            if !self.composable_crashes.is_empty() {
+                parts.push(format!(
+                    "{} composable crashes",
+                    self.composable_crashes.len()
                 ));
             }
             if self.processes_actual != self.processes_expected {
