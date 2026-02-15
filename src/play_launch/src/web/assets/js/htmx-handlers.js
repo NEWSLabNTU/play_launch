@@ -20,12 +20,15 @@ document.body.addEventListener('htmx:afterRequest', function(evt) {
             }, 600);
         }
     } else if (path.includes('/load') || path.includes('/unload')) {
-        // For load/unload, the card swaps immediately, so open panel right away
+        // For load/unload, only update the panel if it's already open
         if (nodeMatch && nodeMatch[1]) {
-            const nodeName = decodeURIComponent(nodeMatch[1]);
-            setTimeout(() => {
-                showNodePanel(nodeName, true); // preserveTab = true
-            }, 100);
+            const panelOpen = document.getElementById('right-panel').classList.contains('open');
+            if (panelOpen) {
+                const nodeName = decodeURIComponent(nodeMatch[1]);
+                setTimeout(() => {
+                    showNodePanel(nodeName, true); // preserveTab = true
+                }, 100);
+            }
         }
     }
 });

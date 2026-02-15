@@ -270,7 +270,7 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
             format!(
                 r#"{}
     {}
-    <button onclick="showNodePanel('{}')" class="btn-view">View</button>"#,
+    <button onclick="showNodePanel('{}', false, true)" class="btn-view">View</button>"#,
                 auto_load_checkbox, load_unload_button, js_escaped_name
             )
         }
@@ -361,9 +361,11 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
             "[]".to_string()
         };
 
+        // Escape single quotes in preview JSON since the attribute uses single-quote delimiters
+        let preview_escaped = preview_json.replace('\'', "&#39;");
         format!(
             r#" data-stderr-mtime="{}" data-stderr-size="{}" data-stderr-preview='{}'"#,
-            mtime, node.stderr_size, preview_json
+            mtime, node.stderr_size, preview_escaped
         )
     } else {
         String::new()

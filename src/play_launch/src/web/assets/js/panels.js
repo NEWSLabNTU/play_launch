@@ -152,7 +152,12 @@ function switchTab(tabName) {
     }
 }
 
-function showNodePanel(nodeName, preserveTab) {
+function showNodePanel(nodeName, preserveTab, onlyIfOpen) {
+    // If onlyIfOpen is set, skip when panel is closed
+    if (onlyIfOpen && !document.getElementById('right-panel').classList.contains('open')) {
+        return;
+    }
+
     // Fetch node details first
     fetch(`/api/nodes/${encodeURIComponent(nodeName)}`)
         .then(res => res.json())
