@@ -13,9 +13,9 @@ pub enum ParserBackend {
 /// Container mode selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ContainerMode {
-    /// Use play_launch_container with ComponentEvent publishing (default)
+    /// Use play_launch_container with ComponentEvent publishing
     Observable,
-    /// Use play_launch_container with clone(CLONE_VM) per-node isolation
+    /// Use play_launch_container with clone(CLONE_VM) per-node isolation (default)
     Isolated,
     /// Use the original container from the launch file (no override)
     Stock,
@@ -222,10 +222,10 @@ pub struct CommonOptions {
     pub disable_respawn: bool,
 
     /// Container mode: which container binary to use for composable nodes.
-    /// - observable: use play_launch_container with ComponentEvent publishing (default)
-    /// - isolated: use play_launch_container with clone(CLONE_VM) per-node isolation
+    /// - observable: use play_launch_container with ComponentEvent publishing
+    /// - isolated: use play_launch_container with clone(CLONE_VM) per-node isolation (default)
     /// - stock: use the original container from the launch file (no override)
-    #[arg(long, value_enum, default_value = "observable")]
+    #[arg(long, value_enum, default_value = "isolated")]
     pub container_mode: ContainerMode,
 
     /// Web UI address in IP:PORT format (default: 127.0.0.1:8080).
@@ -249,7 +249,7 @@ impl Default for CommonOptions {
             standalone_composable_nodes: false,
             load_orphan_composable_nodes: false,
             disable_respawn: false,
-            container_mode: ContainerMode::Observable,
+            container_mode: ContainerMode::Isolated,
             web_addr: "127.0.0.1:8080".to_string(),
         }
     }
