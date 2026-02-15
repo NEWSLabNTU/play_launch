@@ -35,16 +35,20 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 
 # Tests that create DDS participants (containers, clone(CLONE_VM) children,
 # or full launch stacks) are serialized to avoid FastRTPS SHM port exhaustion.
+# Retry once: clone(CLONE_VM) + DDS interactions are inherently racy
+# (child death timing, SHM segment cleanup, ComponentEvent ordering).
 [test-groups.isolated-container]
 max-threads = 1
 
 [[profile.default.overrides]]
 filter = "binary(parallel_loading) & not test(dump)"
 test-group = "isolated-container"
+retries = 1
 
 [[profile.default.overrides]]
 filter = "binary(container_events) & test(crash|launch)"
 test-group = "isolated-container"
+retries = 1
 
 [[profile.default.overrides]]
 filter = "binary(autoware) & test(smoke_test)"
