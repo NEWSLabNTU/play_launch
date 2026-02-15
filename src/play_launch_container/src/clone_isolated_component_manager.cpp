@@ -92,11 +92,25 @@ struct ChildBootstrap
   int tls_tid_offset;
 };
 
+// Thread-local executor pointer for the clone child's SIGTERM handler.
+// Each child has its own TLS (via CLONE_SETTLS), so this is per-child
+// despite the shared address space.
+static thread_local rclcpp::Executor * g_child_executor = nullptr;
+
+static void child_sigterm_handler(int sig)
+{
+  // cancel() triggers the executor's interrupt guard condition (a pipe write),
+  // which is async-signal-safe.  This causes spin() to return.
+  if (g_child_executor) {
+    g_child_executor->cancel();
+  }
+}
+
 // ── Child entry point ───────────────────────────────────────────────────
 //
 // Runs in a clone'd process with its own stack, PID, and (if CLONE_SETTLS
-// succeeded) its own TLS.  Sets the TID in TLS, resets signal handlers,
-// then spins the executor.
+// succeeded) its own TLS.  Sets the TID in TLS, installs a graceful SIGTERM
+// handler, then spins the executor until cancelled.
 static int child_executor_fn(void * arg)
 {
   auto * boot = static_cast<ChildBootstrap *>(arg);
@@ -111,7 +125,7 @@ static int child_executor_fn(void * arg)
     std::memcpy(tls_base + boot->tls_tid_offset, &my_tid, sizeof(my_tid));
   }
 
-  // Reset all signal handlers to SIG_DFL (equivalent to CLONE_CLEAR_SIGHAND).
+  // Reset all signal handlers to SIG_DFL first (equivalent to CLONE_CLEAR_SIGHAND).
   // Without CLONE_SIGHAND the child has its own copy of the signal handler
   // table, so this only affects the child.
   struct sigaction sa
@@ -122,8 +136,20 @@ static int child_executor_fn(void * arg)
     sigaction(sig, &sa, nullptr);
   }
 
+  // Install graceful SIGTERM handler so destructors run (cleans up DDS/SHM).
+  // The handler calls executor->cancel(), which wakes up spin() via a pipe write
+  // (async-signal-safe).
+  g_child_executor = boot->exec;
+  sa.sa_handler = child_sigterm_handler;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  sigaction(SIGTERM, &sa, nullptr);
+
   boot->exec->spin();
-  _exit(0);
+
+  // Normal return (not _exit) — C++ destructors run, including FastRTPS
+  // cleanup which unlinks /dev/shm/fastrtps_* segments.
+  return 0;
 }
 
 // ── Constructor / Destructor ────────────────────────────────────────────
@@ -235,7 +261,9 @@ void CloneIsolatedComponentManager::worker_loop()
     {
       std::unique_lock<std::mutex> lock(work_queue_mutex_);
       work_queue_cv_.wait(lock, [this] { return !workers_running_ || !work_queue_.empty(); });
-      if (!workers_running_ && work_queue_.empty()) {
+      if (!workers_running_) {
+        // Exit immediately on shutdown — don't process remaining items,
+        // the rcl context may already be invalid.
         return;
       }
       work = std::move(work_queue_.front());
@@ -338,9 +366,27 @@ void CloneIsolatedComponentManager::on_load_node(
 
   submit_work([this, factory = std::move(factory), options = std::move(options), node_id, pkg,
                plugin]() {
+    // Guard: if shutdown already started, skip construction entirely.
+    // The rcl context may be invalid (ros2/rclcpp#812).
+    if (!rclcpp::ok()) {
+      std::lock_guard<std::mutex> lock(pending_mutex_);
+      pending_node_ids_.erase(node_id);
+      return;
+    }
+
     try {
       // Construct the node (SLOW — may take seconds or minutes)
       auto wrapper = factory->create_node_instance(options);
+
+      // Re-check after construction — SIGTERM may have arrived mid-build
+      if (!rclcpp::ok()) {
+        RCLCPP_DEBUG(
+          get_logger(), "Shutdown during construction of '%s' (id %lu), discarding", plugin.c_str(),
+          static_cast<uint64_t>(node_id));
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        pending_node_ids_.erase(node_id);
+        return;
+      }
 
       std::string actual_name;
       {
@@ -359,24 +405,35 @@ void CloneIsolatedComponentManager::on_load_node(
         get_logger(), "Component '%s' loaded as '%s' (id %lu)", plugin.c_str(), actual_name.c_str(),
         static_cast<uint64_t>(node_id));
 
-      // Publish LOADED event
-      auto event = play_launch_msgs::msg::ComponentEvent();
-      event.stamp = now();
-      event.event_type = play_launch_msgs::msg::ComponentEvent::LOADED;
-      event.unique_id = node_id;
-      event.full_node_name = actual_name;
-      event.package_name = pkg;
-      event.plugin_name = plugin;
-      event_pub_->publish(event);
+      // Publish LOADED event (skip if context is shutting down)
+      if (rclcpp::ok()) {
+        auto event = play_launch_msgs::msg::ComponentEvent();
+        event.stamp = now();
+        event.event_type = play_launch_msgs::msg::ComponentEvent::LOADED;
+        event.unique_id = node_id;
+        event.full_node_name = actual_name;
+        event.package_name = pkg;
+        event.plugin_name = plugin;
+        event_pub_->publish(event);
+      }
     } catch (const std::exception & ex) {
-      RCLCPP_ERROR(
-        get_logger(), "Failed to construct component '%s' (id %lu): %s", plugin.c_str(),
-        static_cast<uint64_t>(node_id), ex.what());
-
       {
         std::lock_guard<std::mutex> lock(pending_mutex_);
         pending_node_ids_.erase(node_id);
       }
+
+      // During shutdown, rcl context errors are expected — don't publish
+      // events (the publisher may also be invalid) or log errors.
+      if (!rclcpp::ok()) {
+        RCLCPP_DEBUG(
+          get_logger(), "Construction interrupted by shutdown for '%s' (id %lu)", plugin.c_str(),
+          static_cast<uint64_t>(node_id));
+        return;
+      }
+
+      RCLCPP_ERROR(
+        get_logger(), "Failed to construct component '%s' (id %lu): %s", plugin.c_str(),
+        static_cast<uint64_t>(node_id), ex.what());
 
       // Publish LOAD_FAILED event
       auto event = play_launch_msgs::msg::ComponentEvent();
@@ -427,8 +484,8 @@ void CloneIsolatedComponentManager::on_unload_node(
     ComponentManager::on_unload_node(request_header, request, response);
   }
 
-  // Publish UNLOADED event on success
-  if (response->success) {
+  // Publish UNLOADED event on success (skip if context is shutting down)
+  if (response->success && rclcpp::ok()) {
     auto event = play_launch_msgs::msg::ComponentEvent();
     event.stamp = now();
     event.event_type = play_launch_msgs::msg::ComponentEvent::UNLOADED;
@@ -703,14 +760,19 @@ void CloneIsolatedComponentManager::handle_child_death(uint64_t node_id)
     get_logger(), "Child PID %d crashed for node '%s': %s", child.pid, child.node_name.c_str(),
     error_msg.c_str());
 
-  // Publish CRASHED event
-  auto event = play_launch_msgs::msg::ComponentEvent();
-  event.stamp = now();
-  event.event_type = play_launch_msgs::msg::ComponentEvent::CRASHED;
-  event.unique_id = node_id;
-  event.full_node_name = child.node_name;
-  event.error_message = error_msg;
-  event_pub_->publish(event);
+  // Publish CRASHED event. Use try-catch instead of rclcpp::ok() guard here
+  // because crash detection must work during normal operation (not just shutdown).
+  try {
+    auto event = play_launch_msgs::msg::ComponentEvent();
+    event.stamp = now();
+    event.event_type = play_launch_msgs::msg::ComponentEvent::CRASHED;
+    event.unique_id = node_id;
+    event.full_node_name = child.node_name;
+    event.error_message = error_msg;
+    event_pub_->publish(event);
+  } catch (const std::exception & ex) {
+    RCLCPP_WARN(get_logger(), "Failed to publish CRASHED event: %s", ex.what());
+  }
 
   // Free resources
   munmap(child.stack_ptr, child.stack_size);

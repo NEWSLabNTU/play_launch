@@ -201,6 +201,14 @@ pub fn play_launch_cmd(env: &HashMap<String, String>) -> Command {
     let mut cmd = Command::new(play_launch_bin());
     cmd.env_clear();
     cmd.envs(env);
+    // Disable FastDDS SHM transport in tests.  Clone children clean up SHM
+    // segments on graceful SIGTERM shutdown, but SIGKILL'd processes (crash
+    // tests, ManagedProcess timeout) leak segments.  UDP-only prevents
+    // accumulation in CI where tests run back-to-back indefinitely.
+    let fastdds_profile = repo_root().join("tests/fixtures/fastdds_no_shm.xml");
+    if fastdds_profile.is_file() {
+        cmd.env("FASTRTPS_DEFAULT_PROFILES_FILE", &fastdds_profile);
+    }
     cmd
 }
 

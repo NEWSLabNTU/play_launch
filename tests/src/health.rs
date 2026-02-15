@@ -86,14 +86,21 @@ impl HealthReport {
     ///
     /// `ignored_exits` is a list of node names to skip (e.g., nodes that require
     /// hardware like TensorRT or a display server).
-    pub fn is_healthy(&self, ignored_exits: &[&str]) -> bool {
+    /// `ignored_load_errors` is a list of substrings to match against LoadNode
+    /// error messages (e.g., known upstream races like rcl context shutdown).
+    pub fn is_healthy(&self, ignored_exits: &[&str], ignored_load_errors: &[&str]) -> bool {
         let unexpected_exits = self
             .node_exits
             .iter()
             .filter(|e| !ignored_exits.contains(&e.name.as_str()))
             .count();
+        let unexpected_load_failures = self
+            .load_node_failures
+            .iter()
+            .filter(|f| !ignored_load_errors.iter().any(|p| f.error.contains(p)))
+            .count();
         unexpected_exits == 0
-            && self.load_node_failures.is_empty()
+            && unexpected_load_failures == 0
             && self.processes_actual == self.processes_expected
     }
 }
@@ -259,7 +266,7 @@ impl fmt::Display for HealthReport {
         }
 
         writeln!(f)?;
-        if self.is_healthy(&[]) {
+        if self.is_healthy(&[], &[]) {
             writeln!(f, "RESULT: PASS")?;
         } else {
             let mut parts = Vec::new();

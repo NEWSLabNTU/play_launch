@@ -59,6 +59,47 @@ fn wait_for_line(output_path: &std::path::Path, pattern: &str, timeout: Duration
     wait_for_pattern(output_path, &[pattern], 1, timeout) >= 1
 }
 
+/// Wait for all composable nodes to be ready. Checks for "Startup complete"
+/// (most reliable), falling back to counting ComponentEvent LOADED / LoadSucceeded events.
+fn wait_for_all_loaded(output_path: &std::path::Path, count: usize, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        std::thread::sleep(Duration::from_secs(1));
+        let content = std::fs::read_to_string(output_path).unwrap_or_default();
+        // "Startup complete" is the most reliable signal — play_launch
+        // emits it when all nodes and composable nodes are ready.
+        if content.contains("Startup complete") {
+            return true;
+        }
+        // Fallback: count distinct node names that appear in LOADED/LoadSucceeded
+        // events (a single node can produce both, so we deduplicate by name).
+        let mut loaded_names = std::collections::HashSet::new();
+        for l in content.lines() {
+            if l.contains("UNLOADED") || l.contains("FAILED") {
+                continue;
+            }
+            // Extract node name from "ComponentEvent LOADED for '<name>'"
+            if let Some(start_idx) = l.find("ComponentEvent LOADED for '") {
+                let name_start = start_idx + "ComponentEvent LOADED for '".len();
+                if let Some(end_idx) = l[name_start..].find('\'') {
+                    loaded_names.insert(l[name_start..name_start + end_idx].to_string());
+                }
+            }
+            // Extract node name from 'LoadSucceeded { name: "<name>"'
+            if let Some(start_idx) = l.find("LoadSucceeded { name: \"") {
+                let name_start = start_idx + "LoadSucceeded { name: \"".len();
+                if let Some(end_idx) = l[name_start..].find('"') {
+                    loaded_names.insert(l[name_start..name_start + end_idx].to_string());
+                }
+            }
+        }
+        if loaded_names.len() >= count {
+            return true;
+        }
+    }
+    false
+}
+
 /// Call the play_launch web API. Returns (status_code, body).
 fn web_api_post(port: u16, path: &str) -> (u32, String) {
     let url = format!("http://127.0.0.1:{}{}", port, path);
@@ -124,16 +165,17 @@ fn test_dump_mixed_fast_slow() {
 fn test_parallel_load_completes() {
     let env = fixtures::install_env();
     let launch = parallel_slow_launch();
-    let work_dir = fixtures::test_workspace_path("parallel_loading");
 
-    let output_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
-    let output_path = output_tmp.path().join("stdout.log");
-    let stderr_path = output_tmp.path().join("stderr.log");
+    // Use temp work directory to avoid stale play_log/latest from prior tests
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let work_dir = work_tmp.path();
+    let output_path = work_dir.join("stdout.log");
+    let stderr_path = work_dir.join("stderr.log");
     let output_file = std::fs::File::create(&output_path).expect("failed to create stdout file");
     let stderr_file = std::fs::File::create(&stderr_path).expect("failed to create stderr file");
 
     let mut cmd = fixtures::play_launch_cmd(&env);
-    cmd.current_dir(&work_dir);
+    cmd.current_dir(work_dir);
     cmd.args([
         "launch",
         "--disable-web-ui",
@@ -147,7 +189,7 @@ fn test_parallel_load_completes() {
 
     let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
-    // Wait for the container process to appear
+    // Wait for the container process to appear (fresh play_log, no stale data)
     let play_log = work_dir.join("play_log/latest");
     fixtures::wait_for_processes(&play_log, 1, std::time::Duration::from_secs(30));
 
@@ -191,16 +233,17 @@ fn test_parallel_load_completes() {
 fn test_fast_not_blocked_by_slow() {
     let env = fixtures::install_env();
     let launch = mixed_fast_slow_launch();
-    let work_dir = fixtures::test_workspace_path("parallel_loading");
 
-    let output_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
-    let output_path = output_tmp.path().join("stdout.log");
-    let stderr_path = output_tmp.path().join("stderr.log");
+    // Use temp work directory to avoid stale play_log/latest from prior tests
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let work_dir = work_tmp.path();
+    let output_path = work_dir.join("stdout.log");
+    let stderr_path = work_dir.join("stderr.log");
     let output_file = std::fs::File::create(&output_path).expect("failed to create stdout file");
     let stderr_file = std::fs::File::create(&stderr_path).expect("failed to create stderr file");
 
     let mut cmd = fixtures::play_launch_cmd(&env);
-    cmd.current_dir(&work_dir);
+    cmd.current_dir(work_dir);
     cmd.args([
         "launch",
         "--disable-web-ui",
@@ -214,7 +257,7 @@ fn test_fast_not_blocked_by_slow() {
 
     let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
 
-    // Wait for the container to start
+    // Wait for the container to start (fresh play_log, no stale data)
     let play_log = work_dir.join("play_log/latest");
     fixtures::wait_for_processes(&play_log, 1, std::time::Duration::from_secs(30));
 
@@ -228,24 +271,24 @@ fn test_fast_not_blocked_by_slow() {
     while start.elapsed() < timeout {
         std::thread::sleep(std::time::Duration::from_secs(1));
         let stdout = std::fs::read_to_string(&output_path).unwrap_or_default();
-        if stdout.contains("ComponentEvent LOADED for 'fast_talker'") {
+
+        let talker_done = stdout.contains("ComponentEvent LOADED for 'fast_talker'")
+            || stdout.contains("LoadSucceeded { name: \"fast_talker\"");
+        let slow_done = stdout.contains("ComponentEvent LOADED for 'slow_node'")
+            || stdout.contains("LoadSucceeded { name: \"slow_node\"");
+
+        if talker_done && !talker_loaded {
             talker_loaded = true;
-            if talker_loaded_at.is_none() {
-                talker_loaded_at = Some(start.elapsed());
-            }
+            talker_loaded_at = Some(start.elapsed());
         }
-        // Check for both loaded
-        let loaded_count = stdout
-            .lines()
-            .filter(|line| line.contains("ComponentEvent LOADED"))
-            .count();
-        if loaded_count >= 2 {
+        if talker_done && slow_done {
             break;
         }
     }
 
     let stdout_final = std::fs::read_to_string(&output_path).unwrap_or_default();
-    let slow_loaded = stdout_final.contains("ComponentEvent LOADED for 'slow_node'");
+    let slow_loaded = stdout_final.contains("ComponentEvent LOADED for 'slow_node'")
+        || stdout_final.contains("LoadSucceeded { name: \"slow_node\"");
 
     eprintln!("--- Final output (last 3000 chars) ---");
     let snippet_start = stdout_final.len().saturating_sub(3000);
@@ -325,19 +368,13 @@ fn test_unload_via_web_api() {
     let (_proc, output_path, _tmp) = spawn_lifecycle_play_launch(&env, &launch, port);
 
     // Wait for both composable nodes to finish loading
-    let loaded = wait_for_pattern(
-        &output_path,
-        &["ComponentEvent LOADED", "LoadSucceeded"],
-        2,
-        Duration::from_secs(30),
-    );
     assert!(
-        loaded >= 2,
-        "Expected 2 LOADED events before unload test, found {loaded}"
+        wait_for_all_loaded(&output_path, 2, Duration::from_secs(30)),
+        "Expected both nodes to load before unload test"
     );
 
-    // Wait a moment for web UI to start
-    std::thread::sleep(Duration::from_secs(1));
+    // Wait a moment for web UI to start and construction to settle
+    std::thread::sleep(Duration::from_secs(2));
 
     // Unload fast_talker via web API
     eprintln!("Unloading fast_talker via POST /api/nodes/fast_talker/unload");
@@ -376,24 +413,27 @@ fn test_unload_and_reload() {
     let (_proc, output_path, _tmp) = spawn_lifecycle_play_launch(&env, &launch, port);
 
     // Wait for both composable nodes to finish loading
-    let loaded = wait_for_pattern(
-        &output_path,
-        &["ComponentEvent LOADED", "LoadSucceeded"],
-        2,
-        Duration::from_secs(30),
-    );
     assert!(
-        loaded >= 2,
-        "Expected 2 LOADED events, found {loaded}"
+        wait_for_all_loaded(&output_path, 2, Duration::from_secs(30)),
+        "Expected both nodes to load before reload test"
     );
 
-    std::thread::sleep(Duration::from_secs(1));
+    std::thread::sleep(Duration::from_secs(2));
 
-    // Count LOADED events before unload (baseline)
+    // Count LOADED events before unload (baseline).
+    // Accept ComponentEvent (DDS), LoadSucceeded (actor log), and LoadNode SUCCESS
+    // (service response) patterns because DDS events may be lost under SHM exhaustion.
+    let reload_patterns: &[&str] = &[
+        "ComponentEvent LOADED for 'fast_talker'",
+        "LoadSucceeded { name: \"fast_talker\"",
+        "LoadNode SUCCESS for fast_talker",
+    ];
     let stdout_before = std::fs::read_to_string(&output_path).unwrap_or_default();
     let loaded_before = stdout_before
         .lines()
-        .filter(|l| l.contains("ComponentEvent LOADED for 'fast_talker'"))
+        .filter(|l| {
+            reload_patterns.iter().any(|p| l.contains(p)) && !l.contains("UNLOADED")
+        })
         .count();
     eprintln!("LOADED events for fast_talker before unload: {loaded_before}");
 
@@ -425,7 +465,9 @@ fn test_unload_and_reload() {
         "Reload failed with status {status}"
     );
 
-    // Wait for a new LOADED event (count should increase)
+    // Wait for evidence of successful reload: ComponentEvent LOADED, LoadSucceeded,
+    // or LoadNode SUCCESS (the DDS event may be lost under SHM port pressure,
+    // but the service response proves the container accepted the reload).
     let start = Instant::now();
     let timeout = Duration::from_secs(30);
     let mut loaded_after = loaded_before;
@@ -434,7 +476,9 @@ fn test_unload_and_reload() {
         let stdout = std::fs::read_to_string(&output_path).unwrap_or_default();
         loaded_after = stdout
             .lines()
-            .filter(|l| l.contains("ComponentEvent LOADED for 'fast_talker'"))
+            .filter(|l| {
+                reload_patterns.iter().any(|p| l.contains(p)) && !l.contains("UNLOADED")
+            })
             .count();
         if loaded_after > loaded_before {
             break;
@@ -465,22 +509,11 @@ fn test_unload_during_construction() {
     let launch = lifecycle_launch("construct");
     let (_proc, output_path, _tmp) = spawn_lifecycle_play_launch(&env, &launch, port);
 
-    // Wait for the fast_talker to load (proves container is up)
-    let talker_loaded = wait_for_line(
-        &output_path,
-        "ComponentEvent LOADED for 'fast_talker'",
-        Duration::from_secs(30),
+    // Wait for both nodes to load (slow_node takes 3s construction)
+    assert!(
+        wait_for_all_loaded(&output_path, 2, Duration::from_secs(30)),
+        "Expected both nodes to load before unload-during-construction test"
     );
-    assert!(talker_loaded, "fast_talker should have loaded");
-
-    // Now wait for slow_node to also finish loading (3s construction)
-    // Then unload it, and verify it works
-    let slow_loaded = wait_for_line(
-        &output_path,
-        "ComponentEvent LOADED for 'slow_node'",
-        Duration::from_secs(30),
-    );
-    assert!(slow_loaded, "slow_node should have loaded eventually");
 
     // Now unload slow_node (it's fully constructed)
     std::thread::sleep(Duration::from_secs(1));

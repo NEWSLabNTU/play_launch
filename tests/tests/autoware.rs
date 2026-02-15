@@ -245,12 +245,15 @@ fn test_autoware_smoke_test() {
     // 6. Print report (visible with --no-capture or on failure)
     eprintln!("\n{report}");
 
-    // 7. Assert healthy (ignore environment-specific node exits)
+    // 7. Assert healthy (ignore environment-specific node exits and known upstream races)
     // shape_estimation: requires TensorRT (libnvinfer.so.8) which is GPU-specific
     // rviz2: requires X display server (not available in headless/CI environments)
     let ignored_exits = &["shape_estimation", "rviz2"];
+    // rcl context shutdown race (ros2/rclcpp#812): SIGTERM signal handler
+    // asynchronously invalidates the context while LoadNode is in progress
+    let ignored_load_errors = &["context is not valid", "context is invalid"];
     assert!(
-        report.is_healthy(ignored_exits),
+        report.is_healthy(ignored_exits, ignored_load_errors),
         "Smoke test failed:\n{report}"
     );
 

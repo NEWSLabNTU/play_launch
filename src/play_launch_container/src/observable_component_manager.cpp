@@ -49,7 +49,10 @@ void ObservableComponentManager::on_load_node(
     event.event_type = play_launch_msgs::msg::ComponentEvent::LOAD_FAILED;
     event.error_message = response->error_message;
   }
-  event_pub_->publish(event);
+  // Guard against shutdown race (ros2/rclcpp#812)
+  if (rclcpp::ok()) {
+    event_pub_->publish(event);
+  }
 }
 
 void ObservableComponentManager::on_unload_node(
@@ -67,7 +70,8 @@ void ObservableComponentManager::on_unload_node(
   // Parent does the actual unloading (erases from node_wrappers_)
   ComponentManager::on_unload_node(request_header, request, response);
 
-  if (response->success) {
+  // Guard against shutdown race (ros2/rclcpp#812)
+  if (response->success && rclcpp::ok()) {
     auto event = play_launch_msgs::msg::ComponentEvent();
     event.stamp = now();
     event.event_type = play_launch_msgs::msg::ComponentEvent::UNLOADED;

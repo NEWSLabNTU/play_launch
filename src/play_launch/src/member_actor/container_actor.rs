@@ -472,6 +472,56 @@ impl ContainerActor {
         }
     }
 
+    /// Check for composable nodes stuck in Loading state and promote them to
+    /// Loaded if the LoadNode service succeeded more than 10 seconds ago.
+    /// This handles DDS event loss where ComponentEvent LOADED never arrives.
+    async fn check_loading_timeouts(&mut self) {
+        const LOADING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+        let mut promoted = Vec::new();
+        for (name, entry) in &self.composable_nodes {
+            if let ComposableState::Loading { started_at } = &entry.state {
+                // Only promote if LoadNode succeeded (we have a unique_id)
+                // and the timeout has elapsed
+                if let Some(uid) = entry.unique_id {
+                    if started_at.elapsed() > LOADING_TIMEOUT {
+                        promoted.push((name.clone(), uid));
+                    }
+                }
+            }
+        }
+
+        for (name, unique_id) in promoted {
+            warn!(
+                "{}: ComponentEvent LOADED not received for '{}' (unique_id: {}) \
+                 after {}s — falling back to service response",
+                self.name,
+                name,
+                unique_id,
+                LOADING_TIMEOUT.as_secs()
+            );
+
+            if let Some(entry) = self.composable_nodes.get_mut(&name) {
+                entry.state = ComposableState::Loaded { unique_id };
+                entry.load_started_at = None;
+
+                self.shared_state.insert(
+                    name.clone(),
+                    super::web_query::MemberState::Loaded { unique_id },
+                );
+
+                let _ = self
+                    .state_tx
+                    .send(StateEvent::LoadSucceeded {
+                        name: name.clone(),
+                        full_node_name: String::new(),
+                        unique_id,
+                    })
+                    .await;
+            }
+        }
+    }
+
     /// Call the LoadNode ROS service for a composable node
     /// This is a standalone function so it can be spawned as an async task
     async fn call_load_node_service(
@@ -673,14 +723,15 @@ impl ContainerActor {
             container_name, unique_id
         );
 
-        // Call the service
+        // Call the service with timeout (DDS SHM port exhaustion can cause hangs)
         let response_future: rclrs::Promise<composition_interfaces::srv::UnloadNode_Response> =
             client
                 .call(&ros_request)
                 .context("Failed to initiate UnloadNode service call")?;
 
-        match response_future.await {
-            Ok(response) => {
+        let service_timeout = std::time::Duration::from_secs(30);
+        match tokio::time::timeout(service_timeout, response_future).await {
+            Ok(Ok(response)) => {
                 debug!(
                     "{}: UnloadNode response: success={}, error_message={}",
                     container_name, response.success, response.error_message
@@ -691,9 +742,18 @@ impl ContainerActor {
                     error_message: response.error_message.clone(),
                 })
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 warn!("{}: UnloadNode service call error: {:?}", container_name, e);
                 Err(eyre::eyre!("Service call failed: {:?}", e))
+            }
+            Err(_) => {
+                warn!(
+                    "{}: UnloadNode service call timed out after {}s (unique_id: {})",
+                    container_name,
+                    service_timeout.as_secs(),
+                    unique_id
+                );
+                Err(eyre::eyre!("UnloadNode service call timed out"))
             }
         }
     }
@@ -1486,6 +1546,11 @@ impl ContainerActor {
     async fn handle_running(&mut self, mut child: tokio::process::Child, pid: u32) -> Result<bool> {
         debug!("{}: Container running with PID {}", self.name, pid);
 
+        let mut loading_timeout_interval = tokio::time::interval(Duration::from_secs(5));
+        loading_timeout_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Skip the first immediate tick
+        loading_timeout_interval.tick().await;
+
         loop {
             tokio::select! {
                 // Wait for child to exit
@@ -1761,6 +1826,14 @@ impl ContainerActor {
                     }
                 } => {
                     self.handle_component_event(event).await;
+                }
+
+                // Fallback timeout: if a composable node has been Loading for >10s
+                // with a known unique_id (LoadNode succeeded), promote to Loaded.
+                // This handles DDS event loss (FastRTPS SHM port exhaustion) where
+                // the ComponentEvent LOADED never arrives (ros2/rclcpp#812).
+                _ = loading_timeout_interval.tick() => {
+                    self.check_loading_timeouts().await;
                 }
 
                 // Check for shutdown signal

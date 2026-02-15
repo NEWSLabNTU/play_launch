@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  FastDDS profile that disables shared memory transport for integration tests.
+  SHM segments in /dev/shm/fastrtps_* are not cleaned up when processes are
+  killed with SIGKILL, causing resource exhaustion in subsequent tests.
+  UDP-only transport is sufficient for test correctness.
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <profiles>
+        <transport_descriptors>
+            <transport_descriptor>
+                <transport_id>udp_transport</transport_id>
+                <type>UDPv4</type>
+            </transport_descriptor>
+        </transport_descriptors>
+
+        <participant profile_name="participant_profile" is_default_profile="true">
+            <rtps>
+                <userTransports>
+                    <transport_id>udp_transport</transport_id>
+                </userTransports>
+                <useBuiltinTransports>false</useBuiltinTransports>
+            </rtps>
+        </participant>
+    </profiles>
+</dds>
