@@ -179,8 +179,8 @@ struct clone_args args = {
 
 **Flags NOT used:**
 - `CLONE_THREAD` — we want separate thread groups (separate PID, own signals)
-- `CLONE_SIGHAND` — we want separate signal handlers (child gets SIG_DFL)
-- `CLONE_SETTLS` — child doesn't need its own TLS (careful: see risks)
+- `CLONE_SIGHAND` — we want separate signal handlers (child installs its own)
+- `CLONE_SETTLS` — *(originally planned to omit; now used — see TLS section)*
 
 **Adding `CLONE_CLEAR_SIGHAND`** (Linux 5.5+): Resets all child signal handlers
 to SIG_DFL. SIGSEGV in the child causes immediate death (default behavior)
@@ -279,27 +279,220 @@ thread group, not the child's.
 When the parent cleans up the node (erases from `node_wrappers_`), the
 destructor properly shuts down DDS entities.
 
-### Risk 6: Child Calls `exit()` Instead of `_exit()` (LOW)
+### Risk 6: Child Exit Path (LOW)
 
-**Problem**: `exit()` runs `atexit` handlers and flushes `stdio` buffers in the
-shared address space.
+**Problem**: Clone children must exit cleanly without running `atexit` handlers
+or flushing `stdio` buffers in the shared address space.
 
-**Mitigation**: The child function is a tight loop:
+**Mitigation**: The child installs a graceful SIGTERM handler that calls
+`executor->cancel()`, causing `spin()` to return. The clone function then
+returns, which the kernel handles as `_exit(return_value)` — no atexit
+handlers, no stdio flush. See [Child Signal Handling](#child-signal-handling)
+for the full design.
 
-```c
-int child_fn(void* arg) {
-    auto* exec = static_cast<rclcpp::Executor*>(arg);
-    exec->spin();
-    _exit(0);  // NEVER exit(), always _exit()
+### Risk 7: TLS Confusion (SOLVED)
+
+**Problem**: Without `CLONE_SETTLS`, the child shares the parent's TLS pointer,
+causing glibc tcache double-free and `pthread_create` EAGAIN failures.
+
+**Solution**: `CLONE_SETTLS` is used. TLS blocks are allocated via
+`_dl_allocate_tls(nullptr)` (glibc internal), and the child's TID is set
+manually at offset 720 (glibc 2.35 x86_64), discovered by scanning the
+parent's TLS at startup. See Phase 19.1 in the roadmap for details.
+
+### Risk 8: FastDDS SHM Segment Leakage (LOW)
+
+**Problem**: FastRTPS (the DDS implementation in ROS2 Humble) creates shared
+memory segments in `/dev/shm/fastrtps_*` for zero-copy transport. When a
+process is killed with SIGKILL, `shm_unlink()` never runs, leaving orphaned
+segments that accumulate and can eventually exhaust SHM ports or cause
+DDS startup failures in subsequent processes.
+
+**Mitigation**: The graceful SIGTERM handler (Risk 6) ensures children exit
+through the normal return path, allowing FastRTPS cleanup to run. For
+SIGKILL'd processes (crash tests, OOM kills), two additional mitigations exist:
+
+1. **`FASTRTPS_DEFAULT_PROFILES_FILE`**: Point to a FastDDS XML profile that
+   disables SHM transport (UDP-only). Used in integration tests.
+2. **Manual cleanup**: `rm -f /dev/shm/fastrtps_*` between test runs.
+
+See [FastDDS SHM Transport](#fastdds-shm-transport) for the full analysis.
+
+## Child Signal Handling
+
+Clone children need graceful signal handling for two reasons:
+
+1. **DDS/SHM cleanup**: FastRTPS creates `/dev/shm/fastrtps_*` segments that
+   must be unlinked by destructors. `SIG_DFL` for SIGTERM terminates the
+   process immediately without running any C++ destructors.
+2. **Parent cleanup flow**: `cleanup_child()` sends SIGTERM first, waits
+   500ms, then SIGKILL. With graceful handling, children exit within
+   milliseconds of receiving SIGTERM.
+
+### Implementation
+
+Each child stores its executor pointer in a `thread_local` variable (each
+child has its own TLS via `CLONE_SETTLS`). The SIGTERM handler calls
+`executor->cancel()`, which writes to the executor's interrupt guard condition
+(a pipe write — async-signal-safe). This wakes up `spin()`, which returns.
+The clone function then returns, and the kernel calls `_exit()`.
+
+```cpp
+// Thread-local: per-child despite shared address space (CLONE_SETTLS)
+static thread_local rclcpp::Executor * g_child_executor = nullptr;
+
+static void child_sigterm_handler(int sig)
+{
+  (void)sig;
+  if (g_child_executor) {
+    g_child_executor->cancel();  // pipe write, async-signal-safe
+  }
+}
+
+static int child_executor_fn(void * arg)
+{
+  auto * boot = static_cast<ChildBootstrap *>(arg);
+
+  // ... TID setup, signal handler reset ...
+
+  // Install graceful SIGTERM handler
+  g_child_executor = boot->exec;
+  struct sigaction sa{};
+  sa.sa_handler = child_sigterm_handler;
+  sigaction(SIGTERM, &sa, nullptr);
+
+  boot->exec->spin();   // blocks until cancel() or shutdown
+  return 0;             // kernel does _exit(0) — no atexit, no stdio flush
 }
 ```
 
-### Risk 7: TLS Confusion (LOW)
+### Why not spin_some() / spin_once() polling?
 
-**Problem**: Without `CLONE_SETTLS`, the child inherits the parent's TLS pointer.
+Early iterations used a poll loop (`while (!flag) { spin_some(); usleep(1ms); }`)
+or `spin_once(100ms)`. Both broke service callback latency:
 
-**Mitigation**: `rclcpp::Executor::spin()` is well-behaved and does not depend
-on caller TLS. Use `CLONE_SETTLS` if needed.
+- `spin_some()` processes available callbacks then returns immediately, requiring
+  a sleep to avoid busy-wait. The sleep adds latency to incoming service calls.
+- `spin_once(timeout)` processes only ONE callback per call. With multiple
+  queued service requests, throughput drops dramatically.
+
+`spin()` blocks efficiently inside `rcl_wait` (epoll) and processes all ready
+callbacks. `cancel()` wakes it via the interrupt guard condition — the exact
+mechanism ROS2's own signal handler uses.
+
+### Shutdown sequence
+
+When the container receives SIGTERM:
+
+```
+1. ROS2 signal handler fires → rclcpp::ok() = false
+2. Main executor loop exits → rclcpp::shutdown()
+3. ~CloneIsolatedComponentManager() runs:
+   a. Stop worker threads (join)
+   b. Stop monitor thread (eventfd wakeup + join)
+   c. For each child:
+      - executor->cancel()     ← redundant with SIGTERM handler, harmless
+      - kill(child_pid, SIGTERM) ← handler calls cancel(), spin() returns
+      - waitpid (up to 500ms)  ← child exits within milliseconds
+      - SIGKILL if still alive ← fallback for stuck children
+      - munmap(stack), close(pidfd), free(TLS)
+```
+
+The 500ms wait in `cleanup_child()` is generous — with the cancel-based
+handler, children typically exit in <1ms after SIGTERM.
+
+## FastDDS SHM Transport
+
+FastRTPS (ROS2 Humble's DDS) uses shared memory segments in `/dev/shm/` for
+high-throughput, zero-copy inter-process communication. Each DDS participant
+creates multiple segments (`fastrtps_<hash>` and `fastrtps_<hash>_el`).
+
+### The Problem
+
+When a process exits **gracefully**, FastRTPS destructors call `shm_unlink()`
+to remove these segments. When a process is killed with **SIGKILL**:
+
+- Destructors never run
+- `shm_unlink()` is never called
+- Segments persist in `/dev/shm/` as orphans
+- The kernel keeps the segment data alive as long as any fd references it,
+  but the **name** persists indefinitely since no process calls `shm_unlink()`
+
+Over time, orphaned segments accumulate. FastRTPS has a finite number of SHM
+"ports" (2^15 per domain). Exhaustion causes:
+
+- DDS participant creation failures (new containers can't start)
+- Lost DDS messages (ComponentEvent LOADED never arrives)
+- Service call hangs (LoadNode/UnloadNode never get responses)
+
+### Sources of SIGKILL'd Processes
+
+| Source | Description |
+|--------|-------------|
+| `test_crash_detection` | Explicitly SIGKILLs a clone child to test crash monitoring |
+| `ManagedProcess::drop` | Sends SIGTERM, waits 2s, then SIGKILL to the process group |
+| `PR_SET_PDEATHSIG` | Kernel sends SIGKILL to child if parent dies unexpectedly |
+| OOM killer | Kernel sends SIGKILL to processes exceeding memory limits |
+
+### Mitigations
+
+**1. Graceful SIGTERM handler (primary)**
+
+The clone child's SIGTERM handler (see above) ensures `spin()` returns and
+the clone function exits normally. This allows the parent's destructor to
+clean up DDS entities via `node_wrappers_.erase()`, which triggers FastRTPS
+destructors and `shm_unlink()`.
+
+**Effectiveness**: Eliminates SHM leakage for all normal shutdown paths.
+Does not help SIGKILL'd processes (by definition).
+
+**2. FastDDS XML profile — disable SHM transport (tests)**
+
+For integration tests, set `FASTRTPS_DEFAULT_PROFILES_FILE` to a profile
+that disables SHM transport entirely:
+
+```xml
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>udp_transport</transport_id>
+        <type>UDPv4</type>
+      </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="participant_profile" is_default_profile="true">
+      <rtps>
+        <userTransports>
+          <transport_id>udp_transport</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>
+```
+
+This profile is at `tests/fixtures/fastdds_no_shm.xml` and is set by the
+test harness in `fixtures::play_launch_cmd()`.
+
+**Trade-off**: UDP transport has higher latency than SHM for large messages,
+but is functionally equivalent for testing purposes.
+
+**3. Manual cleanup**
+
+```bash
+rm -f /dev/shm/fastrtps_*
+```
+
+### Loading Timeout Fallback
+
+Even with SHM disabled, DDS can occasionally lose messages under load. The
+Rust `container_actor` implements a fallback timer: if a composable node has
+been in `Loading` state for >10 seconds with a known `unique_id` (LoadNode
+service succeeded), it is promoted to `Loaded` and a warning is logged.
+
+This prevents nodes from being stuck in `Loading` state permanently when
+`ComponentEvent LOADED` is lost.
 
 ## Per-Node cgroups via CLONE_INTO_CGROUP
 
