@@ -59,7 +59,7 @@ package-dir = {"" = "python"}
 where = ["python"]
 
 [tool.setuptools.package-data]
-"play_launch" = ["bin/*"]
+"play_launch" = ["bin/*", "lib/*"]
 
 [tool.ruff]
 line-length = 100

@@ -50,7 +50,12 @@ build:
     cp install/play_launch/lib/play_launch/play_launch_io_helper python/play_launch/bin/
     chmod +x python/play_launch/bin/*
 
-    # Step 3: Build wheel with uv
+    # Step 3: Bundle play_launch_msgs shared libraries
+    echo "Copying play_launch_msgs libraries to python/play_launch/lib/..."
+    mkdir -p python/play_launch/lib
+    cp install/play_launch_msgs/lib/libplay_launch_msgs*.so python/play_launch/lib/
+
+    # Step 4: Build wheel with uv
     echo "Building wheel..."
     uv build --wheel
 
@@ -102,7 +107,7 @@ verify-io-helper:
 
 # Clean all build artifacts
 clean:
-    rm -rf build install log dist target python/play_launch/bin/play_launch python/play_launch/bin/play_launch_io_helper
+    rm -rf build install log dist target python/play_launch/bin/play_launch python/play_launch/bin/play_launch_io_helper python/play_launch/lib
 
 # Build source distribution
 build-sdist:
