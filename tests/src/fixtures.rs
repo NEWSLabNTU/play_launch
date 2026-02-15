@@ -1,6 +1,22 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Per-process counter combined with PID to produce a unique ROS_DOMAIN_ID
+/// across all nextest worker processes (each test binary is a separate process).
+static CALL_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// Return a ROS_DOMAIN_ID unique across concurrent nextest processes.
+/// Combines PID (unique per process) with a per-process call counter,
+/// then maps into the valid DDS domain range 1..=232 (FastDDS port
+/// formula overflows u16 above 232).
+fn next_domain_id() -> u32 {
+    let pid = std::process::id();
+    let seq = CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
+    // Mix pid and seq to spread across domain space; avoid domain 0 (system default)
+    (pid.wrapping_mul(7).wrapping_add(seq) % 232) + 1
+}
 
 /// Repository root (parent of `tests/`).
 pub fn repo_root() -> PathBuf {
@@ -197,10 +213,16 @@ pub fn test_workspace_path(name: &str) -> PathBuf {
 }
 
 /// Build a `Command` for `play_launch` with the given environment.
+///
+/// Each call gets a unique `ROS_DOMAIN_ID` (10, 11, 12, …) so concurrent
+/// nextest processes don't interfere over DDS discovery/services/topics.
 pub fn play_launch_cmd(env: &HashMap<String, String>) -> Command {
     let mut cmd = Command::new(play_launch_bin());
     cmd.env_clear();
     cmd.envs(env);
+    // Unique DDS domain per invocation — prevents cross-talk between
+    // concurrent tests that spawn containers on the same machine.
+    cmd.env("ROS_DOMAIN_ID", next_domain_id().to_string());
     // Disable FastDDS SHM transport in tests.  Clone children clean up SHM
     // segments on graceful SIGTERM shutdown, but SIGKILL'd processes (crash
     // tests, ManagedProcess timeout) leak segments.  UDP-only prevents
