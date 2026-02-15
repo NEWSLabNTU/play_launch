@@ -10,6 +10,17 @@ pub enum ParserBackend {
     Python,
 }
 
+/// Container mode selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ContainerMode {
+    /// Use play_launch_container with ComponentEvent publishing (default)
+    Observable,
+    /// Use play_launch_container with clone(CLONE_VM) per-node isolation
+    Isolated,
+    /// Use the original container from the launch file (no override)
+    Stock,
+}
+
 /// Features that can be selectively enabled
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Feature {
@@ -210,6 +221,13 @@ pub struct CommonOptions {
     #[arg(long)]
     pub disable_respawn: bool,
 
+    /// Container mode: which container binary to use for composable nodes.
+    /// - observable: use play_launch_container with ComponentEvent publishing (default)
+    /// - isolated: use play_launch_container with clone(CLONE_VM) per-node isolation
+    /// - stock: use the original container from the launch file (no override)
+    #[arg(long, value_enum, default_value = "observable")]
+    pub container_mode: ContainerMode,
+
     /// Web UI address in IP:PORT format (default: 127.0.0.1:8080).
     /// Use 0.0.0.0:8080 to expose to network (insecure, use with caution).
     #[arg(long, value_name = "IP:PORT", default_value = "127.0.0.1:8080")]
@@ -231,6 +249,7 @@ impl Default for CommonOptions {
             standalone_composable_nodes: false,
             load_orphan_composable_nodes: false,
             disable_respawn: false,
+            container_mode: ContainerMode::Observable,
             web_addr: "127.0.0.1:8080".to_string(),
         }
     }
