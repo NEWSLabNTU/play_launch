@@ -179,10 +179,10 @@ test:
     colcon build --packages-select play_launch_msgs play_launch_container --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
     echo ""
     echo "=== Parser unit tests ==="
-    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output immediate-final)
+    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
     echo ""
     echo "=== Integration tests (fast) ==="
-    (cd tests && cargo nextest run -E 'not binary(autoware) & not binary(io_stress) & not test(/launch/)' --no-fail-fast --failure-output immediate-final)
+    (cd tests && cargo nextest run -E 'not binary(autoware) & not binary(io_stress) & not test(/launch/)' --no-fail-fast --failure-output final)
 
 # Run all tests — parser unit + all integration including Autoware (~30s)
 test-all:
@@ -193,31 +193,31 @@ test-all:
     colcon build --packages-select play_launch_msgs play_launch_container --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
     echo ""
     echo "=== Parser unit tests ==="
-    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output immediate-final)
+    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
     echo ""
     echo "=== Integration tests (all) ==="
-    (cd tests && cargo nextest run --no-fail-fast --failure-output immediate-final)
+    (cd tests && cargo nextest run --no-fail-fast --failure-output final)
 
 # Run parser unit tests only
 test-unit:
     #!/usr/bin/env bash
     set -e
     cd src/play_launch_parser
-    cargo nextest run -p play_launch_parser --no-fail-fast --failure-output immediate-final
+    cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final
 
 # Run all integration tests (simple + Autoware)
 test-integration:
     #!/usr/bin/env bash
     set -e
     cd tests
-    cargo nextest run --no-fail-fast --failure-output immediate-final
+    cargo nextest run --no-fail-fast --failure-output final
 
 # Run simple workspace integration tests
 test-simple:
     #!/usr/bin/env bash
     set -e
     cd tests
-    cargo nextest run -E 'binary(simple_workspace)' --no-fail-fast --failure-output immediate-final
+    cargo nextest run -E 'binary(simple_workspace)' --no-fail-fast --failure-output final
 
 # Run Autoware smoke test (health check: node exits + LoadNode failures)
 smoke-test-autoware:
@@ -231,7 +231,7 @@ test-autoware:
     #!/usr/bin/env bash
     set -e
     cd tests
-    cargo nextest run -E 'binary(autoware)' --no-fail-fast --failure-output immediate-final
+    cargo nextest run -E 'binary(autoware)' --no-fail-fast --failure-output final
 
 # Compare Rust vs Python parser outputs
 compare-parsers:
