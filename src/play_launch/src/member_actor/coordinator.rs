@@ -51,6 +51,8 @@ struct ContainerDefinition {
     metadata: MemberMetadata,
     /// Channel to send container state receiver back to caller
     state_tx: Option<tokio::sync::oneshot::Sender<watch::Receiver<super::state::ContainerState>>>,
+    /// Whether to subscribe to ComponentEvent topic (only for play_launch_container)
+    use_component_events: bool,
 }
 
 /// Definition of a composable node to be spawned (Phase 12: managed by containers)
@@ -119,6 +121,7 @@ impl MemberCoordinatorBuilder {
         context: crate::execution::context::NodeContext,
         config: super::state::ActorConfig,
         process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
+        use_component_events: bool,
     ) -> tokio::sync::oneshot::Receiver<watch::Receiver<super::state::ContainerState>> {
         let (state_tx, state_rx) = tokio::sync::oneshot::channel();
 
@@ -144,6 +147,7 @@ impl MemberCoordinatorBuilder {
             process_registry,
             metadata,
             state_tx: Some(state_tx),
+            use_component_events,
         });
 
         state_rx
@@ -292,6 +296,7 @@ impl MemberCoordinatorBuilder {
                 load_control_rx,
                 shared_ros_node.clone(),
                 shared_state.clone(),
+                def.use_component_events,
             );
 
             // Get container state receiver before spawning

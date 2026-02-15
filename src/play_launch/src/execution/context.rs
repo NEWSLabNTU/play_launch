@@ -1,5 +1,8 @@
 use super::node_cmdline::NodeCommandLine;
-use crate::ros::launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord};
+use crate::{
+    cli::options::ContainerMode,
+    ros::launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord},
+};
 use eyre::bail;
 use rayon::prelude::*;
 use serde::Serialize;
@@ -362,9 +365,14 @@ pub fn prepare_node_contexts(
 
 /// Prepare container execution contexts from container records.
 /// Reads directly from launch_dump.container[] array with full spawn information.
+///
+/// When `container_mode` is `Observable` or `Isolated`, the container package/executable
+/// is overridden to use `play_launch_container` instead of the stock container from the
+/// launch file.
 pub fn prepare_container_contexts(
     launch_dump: &LaunchDump,
     container_log_dir: &Path,
+    container_mode: ContainerMode,
 ) -> eyre::Result<Vec<NodeContainerContext>> {
     // First pass: Collect container names for deduplication
     let container_names: Vec<String> = launch_dump
@@ -391,10 +399,44 @@ pub fn prepare_container_contexts(
     let container_contexts: Result<Vec<_>, _> = record_dirs
         .par_iter()
         .map(|(container_record, dir_name)| {
+            // Determine package, executable, and extra args based on container mode
+            let (package, executable, mut extra_args) = match container_mode {
+                ContainerMode::Stock => (
+                    container_record.package.clone(),
+                    container_record.executable.clone(),
+                    Vec::<String>::new(),
+                ),
+                ContainerMode::Observable | ContainerMode::Isolated => {
+                    let mut args = Vec::new();
+                    // If the original was a multi-threaded container, pass the flag
+                    if container_record.executable == "component_container_mt" {
+                        args.push("--use_multi_threaded_executor".to_string());
+                    }
+                    if container_mode == ContainerMode::Isolated {
+                        args.push("--isolated".to_string());
+                    }
+                    (
+                        "play_launch_container".to_string(),
+                        "component_container".to_string(),
+                        args,
+                    )
+                }
+            };
+
+            // Prepend extra args to existing args
+            let final_args = if extra_args.is_empty() {
+                container_record.args.clone()
+            } else {
+                if let Some(mut existing) = container_record.args.clone() {
+                    extra_args.append(&mut existing);
+                }
+                Some(extra_args)
+            };
+
             // Convert NodeContainerRecord to NodeRecord
             let node_record = NodeRecord {
-                executable: container_record.executable.clone(),
-                package: Some(container_record.package.clone()),
+                executable,
+                package: Some(package),
                 name: Some(container_record.name.clone()),
                 namespace: Some(container_record.namespace.clone()),
                 exec_name: container_record.exec_name.clone(),
@@ -402,7 +444,7 @@ pub fn prepare_container_contexts(
                 params_files: container_record.params_files.clone(),
                 remaps: container_record.remaps.clone(),
                 ros_args: container_record.ros_args.clone(),
-                args: container_record.args.clone(),
+                args: final_args,
                 cmd: container_record.cmd.clone(),
                 env: container_record.env.clone(),
                 respawn: container_record.respawn,

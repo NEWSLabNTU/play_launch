@@ -405,7 +405,8 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     let pure_node_contexts = prepare_node_contexts(&launch_dump, &node_log_dir)?;
 
     debug!("Preparing container execution contexts...");
-    let container_contexts = prepare_container_contexts(&launch_dump, &node_log_dir)?;
+    let container_contexts =
+        prepare_container_contexts(&launch_dump, &node_log_dir, common.container_mode)?;
 
     // Prepare LoadNode request execution contexts
     let ComposableNodeContextSet { load_node_contexts } =
@@ -476,11 +477,14 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         };
 
         // Add container (oneshot receiver is ignored since composable nodes will be matched internally)
+        let use_component_events =
+            common.container_mode != crate::cli::options::ContainerMode::Stock;
         std::mem::drop(builder.add_container(
             member_name.clone(),
             context.node_context,
             actor_config,
             Some(process_registry.clone()),
+            use_component_events,
         ));
     }
 

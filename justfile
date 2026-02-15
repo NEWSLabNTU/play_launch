@@ -55,6 +55,17 @@ build:
     mkdir -p python/play_launch/lib
     cp install/play_launch_msgs/lib/libplay_launch_msgs*.so python/play_launch/lib/
 
+    # Step 3b: Bundle play_launch_container
+    echo "Copying play_launch_container binary and library..."
+    mkdir -p python/play_launch/lib/play_launch_container
+    cp install/play_launch_container/lib/play_launch_container/component_container python/play_launch/lib/play_launch_container/
+    chmod +x python/play_launch/lib/play_launch_container/component_container
+    cp install/play_launch_container/lib/libobservable_component_manager.so python/play_launch/lib/
+
+    # Create ament index marker so find_executable() discovers it
+    mkdir -p python/play_launch/share/ament_index/resource_index/packages
+    touch python/play_launch/share/ament_index/resource_index/packages/play_launch_container
+
     # Step 4: Build wheel with uv
     echo "Building wheel..."
     uv build --wheel
@@ -107,7 +118,7 @@ verify-io-helper:
 
 # Clean all build artifacts
 clean:
-    rm -rf build install log dist target python/play_launch/bin/play_launch python/play_launch/bin/play_launch_io_helper python/play_launch/lib
+    rm -rf build install log dist target python/play_launch/bin/play_launch python/play_launch/bin/play_launch_io_helper python/play_launch/lib python/play_launch/share
 
 # Build source distribution
 build-sdist:

@@ -55,11 +55,16 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Add bundled play_launch_msgs libraries to LD_LIBRARY_PATH
+    # Add bundled libraries to LD_LIBRARY_PATH
+    pkg_dir = str(Path(__file__).parent)
     lib_dir = str(Path(__file__).parent / "lib")
     env = os.environ.copy()
     ld_path = env.get("LD_LIBRARY_PATH", "")
     env["LD_LIBRARY_PATH"] = f"{lib_dir}:{ld_path}" if ld_path else lib_dir
+
+    # Add bundled directory to AMENT_PREFIX_PATH so ament_index finds play_launch_container
+    ament_path = env.get("AMENT_PREFIX_PATH", "")
+    env["AMENT_PREFIX_PATH"] = f"{pkg_dir}:{ament_path}" if ament_path else pkg_dir
 
     # Pass through all arguments
     result = subprocess.run([binary] + sys.argv[1:], env=env)

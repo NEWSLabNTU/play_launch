@@ -84,6 +84,7 @@ pub async fn run_container(
     load_control_rx: mpsc::Receiver<ContainerControlEvent>,
     ros_node: Option<Arc<rclrs::Node>>,
     shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
+    use_component_events: bool,
 ) -> Result<()> {
     // Create the actor and run it (wrapper approach for Phase 5)
     let actor = ContainerActor::new(
@@ -97,6 +98,7 @@ pub async fn run_container(
         load_control_rx,
         ros_node,
         shared_state,
+        use_component_events,
     );
     actor.run().await
 }
@@ -160,6 +162,8 @@ pub struct ContainerActor {
     current_unload: Option<CurrentUnload>,
     /// Shared state map for direct state updates
     shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
+    /// Whether to subscribe to ComponentEvent topic (only when using play_launch_container)
+    use_component_events: bool,
 }
 
 impl ContainerActor {
@@ -214,6 +218,7 @@ impl ContainerActor {
         load_control_rx: mpsc::Receiver<ContainerControlEvent>,
         ros_node: Option<Arc<rclrs::Node>>,
         shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
+        use_component_events: bool,
     ) -> Self {
         let (container_state_tx, _container_state_rx) = watch::channel(ContainerState::Pending);
         let (load_completion_tx, load_completion_rx) = mpsc::unbounded_channel();
@@ -241,6 +246,7 @@ impl ContainerActor {
             load_completion_rx,
             current_unload: None,
             shared_state,
+            use_component_events,
         }
     }
 
@@ -1410,38 +1416,46 @@ impl ContainerActor {
                         }
 
                         // Phase 19.4a: Create ComponentEvent subscription
-                        let event_topic =
-                            format!("{}/_container/component_events", self.full_node_name());
-                        debug!(
-                            "{}: Creating ComponentEvent subscription on {}",
-                            self.name, event_topic
-                        );
+                        // Only when using play_launch_container (not stock containers)
+                        if self.use_component_events {
+                            let event_topic =
+                                format!("{}/_container/component_events", self.full_node_name());
+                            debug!(
+                                "{}: Creating ComponentEvent subscription on {}",
+                                self.name, event_topic
+                            );
 
-                        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-                        match ros_node.create_subscription(
-                            event_topic
-                                .as_str()
-                                .reliable()
-                                .transient_local()
-                                .keep_last(100),
-                            move |msg: play_launch_msgs::msg::ComponentEvent| {
-                                let _ = event_tx.send(msg);
-                            },
-                        ) {
-                            Ok(sub) => {
-                                self.component_event_sub = Some(sub);
-                                self.component_event_rx = Some(event_rx);
-                                debug!(
-                                    "{}: ComponentEvent subscription created successfully",
-                                    self.name
-                                );
+                            let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+                            match ros_node.create_subscription(
+                                event_topic
+                                    .as_str()
+                                    .reliable()
+                                    .transient_local()
+                                    .keep_last(100),
+                                move |msg: play_launch_msgs::msg::ComponentEvent| {
+                                    let _ = event_tx.send(msg);
+                                },
+                            ) {
+                                Ok(sub) => {
+                                    self.component_event_sub = Some(sub);
+                                    self.component_event_rx = Some(event_rx);
+                                    debug!(
+                                        "{}: ComponentEvent subscription created successfully",
+                                        self.name
+                                    );
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "{}: Failed to create ComponentEvent subscription: {:#}",
+                                        self.name, e
+                                    );
+                                }
                             }
-                            Err(e) => {
-                                warn!(
-                                    "{}: Failed to create ComponentEvent subscription: {:#}",
-                                    self.name, e
-                                );
-                            }
+                        } else {
+                            debug!(
+                                "{}: Skipping ComponentEvent subscription (stock container)",
+                                self.name
+                            );
                         }
                     } else {
                         warn!(
