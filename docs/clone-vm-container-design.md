@@ -290,15 +290,42 @@ returns, which the kernel handles as `_exit(return_value)` — no atexit
 handlers, no stdio flush. See [Child Signal Handling](#child-signal-handling)
 for the full design.
 
-### Risk 7: TLS Confusion (SOLVED)
+### Risk 7: TLS and struct pthread Initialization (SOLVED)
 
-**Problem**: Without `CLONE_SETTLS`, the child shares the parent's TLS pointer,
-causing glibc tcache double-free and `pthread_create` EAGAIN failures.
+**Problem**: `clone(CLONE_VM)` without `CLONE_SETTLS` shares the parent's TLS
+pointer → glibc tcache double-free. Even with `CLONE_SETTLS`,
+`_dl_allocate_tls(nullptr)` allocates TLS data (`.tdata`/`.tbss` sections) but
+does NOT initialize the `struct pthread` header fields that `pthread_create` →
+`start_thread` would normally set up. This causes SIGSEGV crashes in the clone
+child when glibc functions access these uninitialized fields:
 
-**Solution**: `CLONE_SETTLS` is used. TLS blocks are allocated via
-`_dl_allocate_tls(nullptr)` (glibc internal), and the child's TID is set
-manually at offset 720 (glibc 2.35 x86_64), discovered by scanning the
-parent's TLS at startup. See Phase 19.1 in the roadmap for details.
+| Missing Field              | Crash Symptom                                                       |
+|----------------------------|---------------------------------------------------------------------|
+| `locale` pointer (NULL)    | `__printf_fp_l` SIGSEGV on `%f` float formatting                    |
+| ctype tables (NULL)        | `isalpha()`/`rcl_validate_topic_name` SIGSEGV via `__ctype_b_loc()` |
+| tcbhead_t.self/tcb (NULL)  | `THREAD_SELF` returns NULL → random SIGSEGV in any glibc call       |
+| `multiple_threads` (0)     | Potential futex operation races                                     |
+| Many struct pthread fields | `pthread_create` SIGSEGV (robust_list, stack info, etc.)            |
+
+**Solution**: Five-part initialization in `child_executor_fn`, before any glibc
+calls:
+
+1. **TID**: Set manually at offset 720 (glibc 2.35 x86_64), discovered by
+   scanning the parent's TLS at startup.
+2. **tcbhead_t.self/tcb**: Set to FS register value (offsets 0x00, 0x10).
+3. **multiple_threads**: Set to 1 (offset 0x18).
+4. **Locale**: `uselocale(LC_GLOBAL_LOCALE)` → glibc falls back to global locale.
+5. **Ctype tables**: `__ctype_init()` via `dlsym` → populates per-thread ctype
+   pointers from the current locale (same as glibc's `start_thread()` does).
+
+**Executor constraint**: Clone children always use `SingleThreadedExecutor`,
+regardless of the container's `use_multi_threaded_` setting. `pthread_create()`
+accesses too many struct pthread fields to safely initialize manually. Each node
+already runs in its own isolated process, so multi-threading within each child
+process adds complexity for no benefit.
+
+See Phase 19.1 (initial TLS) and Phase 19.9 (struct pthread init) in the
+roadmap for details.
 
 ### Risk 8: FastDDS SHM Segment Leakage (LOW)
 

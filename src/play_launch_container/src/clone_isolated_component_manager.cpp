@@ -25,6 +25,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <execinfo.h>
+#include <locale.h>
+
 #include <cerrno>
 #include <cstring>
 #include <stdexcept>
@@ -106,6 +109,25 @@ static void child_sigterm_handler(int sig)
   }
 }
 
+// Crash handler for clone children: prints a backtrace to stderr before
+// re-raising to produce a core dump.  Helps diagnose issues in the isolated
+// child process (fresh TLS, no debugger attached).
+static void child_crash_handler(int sig)
+{
+  const char msg[] = "\n=== CLONE CHILD CRASH BACKTRACE ===\n";
+  if (write(STDERR_FILENO, msg, sizeof(msg) - 1) < 0) {}
+  void * bt[64];
+  int n = backtrace(bt, 64);
+  backtrace_symbols_fd(bt, n, STDERR_FILENO);
+  const char end[] = "=== END BACKTRACE ===\n";
+  if (write(STDERR_FILENO, end, sizeof(end) - 1) < 0) {}
+  // Re-raise with SIG_DFL to get core dump
+  struct sigaction sa{};
+  sa.sa_handler = SIG_DFL;
+  sigaction(sig, &sa, nullptr);
+  raise(sig);
+}
+
 // ── Child entry point ───────────────────────────────────────────────────
 //
 // Runs in a clone'd process with its own stack, PID, and (if CLONE_SETTLS
@@ -117,12 +139,44 @@ static int child_executor_fn(void * arg)
 
   // Set our TID in the TLS block so that glibc knows our identity.
   // Without this, pthread_create() and mutex operations fail with EAGAIN.
+  auto my_tid = static_cast<pid_t>(syscall(SYS_gettid));
+  uint64_t fs_val = 0;
+  syscall(SYS_arch_prctl, 0x1003 /* ARCH_GET_FS */, &fs_val);
+  auto * tls_base = reinterpret_cast<char *>(fs_val);
+
   if (boot->tls_tid_offset >= 0) {
-    auto my_tid = static_cast<pid_t>(syscall(SYS_gettid));
-    uint64_t fs_val = 0;
-    syscall(SYS_arch_prctl, 0x1003 /* ARCH_GET_FS */, &fs_val);
-    auto * tls_base = reinterpret_cast<char *>(fs_val);
     std::memcpy(tls_base + boot->tls_tid_offset, &my_tid, sizeof(my_tid));
+  }
+
+  // Ensure tcbhead_t.self and tcbhead_t.tcb point back to the TLS base.
+  // _dl_allocate_tls() may not set these; they're needed by THREAD_SELF.
+  // Also set multiple_threads = 1 (we're in a clone child alongside other threads).
+  {
+    auto ** self_field = reinterpret_cast<void **>(tls_base + 0x10);
+    if (*self_field == nullptr) {
+      // tcbhead_t.tcb = tcbhead_t.self = fs_base
+      *reinterpret_cast<void **>(tls_base) = reinterpret_cast<void *>(fs_val);
+      *self_field = reinterpret_cast<void *>(fs_val);
+    }
+    *reinterpret_cast<int *>(tls_base + 0x18) = 1;  // multiple_threads
+  }
+
+  // _dl_allocate_tls() creates a fresh TLS block but does NOT initialize the
+  // struct pthread fields that pthread_create would normally set up:
+  //
+  //   1. locale pointer = NULL → __printf_fp_l SIGSEGV on float formatting
+  //   2. ctype tables = NULL  → isalpha/isdigit SIGSEGV via __ctype_b_loc()
+  //
+  // Fix: set locale to global (so _NL_CURRENT falls back to global locale),
+  // then call __ctype_init() to populate the per-thread ctype table pointers
+  // from the current locale (what glibc's start_thread() does internally).
+  uselocale(LC_GLOBAL_LOCALE);
+  {
+    using ctype_init_fn = void (*)();
+    auto ctype_init = reinterpret_cast<ctype_init_fn>(dlsym(RTLD_DEFAULT, "__ctype_init"));
+    if (ctype_init) {
+      ctype_init();
+    }
   }
 
   // Reset all signal handlers to SIG_DFL first (equivalent to CLONE_CLEAR_SIGHAND).
@@ -144,6 +198,13 @@ static int child_executor_fn(void * arg)
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = 0;
   sigaction(SIGTERM, &sa, nullptr);
+
+  // Install crash handlers for diagnosis (backtrace to stderr, then core dump)
+  sa.sa_handler = child_crash_handler;
+  sa.sa_flags = SA_RESETHAND;  // one-shot, then SIG_DFL for core dump
+  sigaction(SIGSEGV, &sa, nullptr);
+  sigaction(SIGABRT, &sa, nullptr);
+  sigaction(SIGBUS, &sa, nullptr);
 
   boot->exec->spin();
 
@@ -524,13 +585,14 @@ void CloneIsolatedComponentManager::on_list_nodes(
 
 void CloneIsolatedComponentManager::add_node_to_executor(uint64_t node_id)
 {
-  // Create a dedicated executor for this node, matching the container's flavor
-  std::shared_ptr<rclcpp::Executor> exec;
-  if (use_multi_threaded_) {
-    exec = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
-  } else {
-    exec = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
-  }
+  // Always use SingleThreadedExecutor for clone children.
+  // _dl_allocate_tls(nullptr) creates TLS but does NOT fully initialize the
+  // struct pthread header (robust_list, thread list, stack info, etc.) that
+  // pthread_create needs.  MultiThreadedExecutor::spin() calls pthread_create
+  // to spawn worker threads, which crashes because the calling thread's struct
+  // pthread is incomplete.  Each node already runs in its own isolated process,
+  // so multi-threading within each child is unnecessary.
+  auto exec = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
   exec->add_node(node_wrappers_[node_id].get_node_base_interface());
 
   // Allocate child stack (MAP_STACK hints the kernel for guard pages)
