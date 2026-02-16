@@ -56,11 +56,16 @@ Custom C++ container (`src/play_launch_container/`) replaces stock `rclcpp_compo
 ```
 rclcpp_components::ComponentManager           (upstream)
   └── ObservableComponentManager              (ours: event publishing)
-        └── CloneIsolatedComponentManager     (ours: clone(CLONE_VM) isolation)
+        └── CloneIsolatedComponentManager     (ours: fork+exec per-node isolation)
 ```
 
 - **ObservableComponentManager**: publishes `ComponentEvent` on `~/_container/component_events` (reliable, transient_local, depth 100)
-- **Single binary**: `component_container [--use_multi_threaded_executor] [--isolated]`
+- **CloneIsolatedComponentManager**: fork()+exec() of `component_node` binary per composable node
+  - Parameters: `request->parameters` serialized to temp YAML (`/**:` wildcard namespace), passed via `--params-file`
+  - `extra_arguments`: only `use_intra_process_comms` is extracted and forwarded as `--use-intra-process-comms`
+  - Ready pipe protocol: child writes `"OK name\n"` or `"ERR msg\n"`, 30s timeout
+  - YAML type preservation: double values always include decimal point (`0.0` not `0`) to prevent integer_array/double_array mismatch
+- **Two binaries**: `component_container [--use_multi_threaded_executor] [--isolated]` and `component_node` (standalone single-node loader)
 - **Design docs**: `docs/container-isolation-design.md`, `docs/clone-vm-container-design.md`
 - **Roadmap**: `docs/roadmap/phase-19-isolated_container.md`
 
@@ -70,9 +75,9 @@ All features **enabled by default**: monitoring, diagnostics, web UI (http://127
 
 Key flags: `--config <PATH>`, `--disable-monitoring`, `--disable-diagnostics`, `--disable-web-ui`, `--disable-all`, `--web-addr <IP:PORT>`, `--disable-respawn`, `--enable <FEATURE>`, `--container-mode <MODE>`.
 
-**Container mode** (`--container-mode`, default `observable`):
+**Container mode** (`--container-mode`, default `isolated`):
 - `observable` — override all containers to use `play_launch_container` with `ComponentEvent` publishing
-- `isolated` — use `play_launch_container` with `--isolated` (clone(CLONE_VM) per-node isolation)
+- `isolated` — use `play_launch_container` with `--isolated` (fork+exec per-node process isolation)
 - `stock` — use the original container binary from the launch file (no override, no `ComponentEvent` subscription)
 
 When mode is not `stock`, `prepare_container_contexts()` in `src/execution/context.rs` overrides the container's `package` and `executable`. If the original was `component_container_mt`, `--use_multi_threaded_executor` is prepended to args. Original `args` from the launch file (e.g. `--isolated`) are preserved.
@@ -135,7 +140,8 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
-- **2026-02-15**: Default `--container-mode observable` — replay overrides stock containers to `play_launch_container`. `ComponentEvent` subscription conditional on mode (skipped for `stock`). Nextest failure output deferred to end (`--failure-output final`); isolated-container tests retry once for DDS flakes.
+- **2026-02-16**: Fix container parameter passing in fork+exec isolation: `write_params_file()` now serializes `request->parameters` (not `extra_arguments`), uses `/**:` wildcard YAML namespace, enforces decimal points on double arrays. Smoke test (`tests/src/health.rs`) detects `ComponentEvent LOAD_FAILED` events. `component_node` supports `--use-intra-process-comms`. Autoware: 64/64 composable nodes load successfully.
+- **2026-02-15**: Default `--container-mode isolated` — replay overrides stock containers to `play_launch_container` with fork+exec isolation. `ComponentEvent` subscription conditional on mode (skipped for `stock`). Nextest failure output deferred to end (`--failure-output final`); isolated-container tests retry once for DDS flakes.
 - **2026-02-11**: Consolidated 5 container docs → 2 (`container-isolation-design.md` + `clone-vm-container-design.md`). Revised Phase 19 roadmap with Phase 19.0 (consolidate binary).
 - **2026-02-08**: Phase 18 complete — ObservableComponentManager + play_launch_msgs packages.
 - **2026-02-07**: Nextest integration test infrastructure with ManagedProcess RAII guard.
