@@ -56,7 +56,7 @@ Custom C++ container (`src/play_launch_container/`) replaces stock `rclcpp_compo
 ```
 rclcpp_components::ComponentManager           (upstream)
   └── ObservableComponentManager              (ours: event publishing)
-        └── CloneIsolatedComponentManager     (planned: clone(CLONE_VM) isolation)
+        └── CloneIsolatedComponentManager     (ours: clone(CLONE_VM) isolation)
 ```
 
 - **ObservableComponentManager**: publishes `ComponentEvent` on `~/_container/component_events` (reliable, transient_local, depth 100)
@@ -68,7 +68,14 @@ rclcpp_components::ComponentManager           (upstream)
 
 All features **enabled by default**: monitoring, diagnostics, web UI (http://127.0.0.1:8080).
 
-Key flags: `--config <PATH>`, `--disable-monitoring`, `--disable-diagnostics`, `--disable-web-ui`, `--disable-all`, `--web-addr <IP:PORT>`, `--disable-respawn`, `--enable <FEATURE>`.
+Key flags: `--config <PATH>`, `--disable-monitoring`, `--disable-diagnostics`, `--disable-web-ui`, `--disable-all`, `--web-addr <IP:PORT>`, `--disable-respawn`, `--enable <FEATURE>`, `--container-mode <MODE>`.
+
+**Container mode** (`--container-mode`, default `observable`):
+- `observable` — override all containers to use `play_launch_container` with `ComponentEvent` publishing
+- `isolated` — use `play_launch_container` with `--isolated` (clone(CLONE_VM) per-node isolation)
+- `stock` — use the original container binary from the launch file (no override, no `ComponentEvent` subscription)
+
+When mode is not `stock`, `prepare_container_contexts()` in `src/execution/context.rs` overrides the container's `package` and `executable`. If the original was `component_container_mt`, `--use_multi_threaded_executor` is prepended to args. Original `args` from the launch file (e.g. `--isolated`) are preserved.
 
 See `tests/fixtures/autoware/autoware_config.yaml` for full config YAML reference.
 
@@ -101,6 +108,7 @@ Composable nodes don't have separate directories — metadata in parent containe
 ### Logging
 - `error!`: unrecoverable | `warn!`: recoverable | `info!`: user-facing | `debug!`: technical
 - Default `RUST_LOG=play_launch=info`. Enable debug: `RUST_LOG=play_launch=debug`
+- **`info!` is only for end-users** — never promote `debug!` to `info!` just to make tests pass. Use `RUST_LOG` to control log visibility in tests instead (e.g. `cmd.env("RUST_LOG", "play_launch=debug")`)
 
 ## PyO3 and ROS2 Gotchas
 
@@ -114,17 +122,20 @@ Composable nodes don't have separate directories — metadata in parent containe
 
 ```bash
 just test              # Parser unit (311) + fast integration (6), ~3s
-just test-all          # Parser unit (311) + all integration (12), ~30s
+just test-all          # Parser unit (311) + all integration (42), ~70s
 just test-unit         # Parser unit tests only
 just test-integration  # All integration tests (simple + Autoware)
 ```
 
 Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests (`tests/`, excluded from workspace). Integration tests use `ManagedProcess` RAII guard (`tests/src/process.rs`) for guaranteed cleanup via `setsid()` + `PR_SET_PDEATHSIG` + PGID kill on Drop.
 
-Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading}/` — each has `just dump-rust`, `just dump-python`, `just compare-dumps`.
+**DDS isolation**: `play_launch_cmd()` in `tests/src/fixtures.rs` assigns a unique `ROS_DOMAIN_ID` per invocation (PID + counter) so concurrent nextest processes don't cross-talk over DDS.
+
+Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading}/` — each has `just dump-rust`, `just dump-python`, `just compare-dumps`.
 
 ## Key Recent Changes
 
+- **2026-02-15**: Default `--container-mode observable` — replay overrides stock containers to `play_launch_container`. `ComponentEvent` subscription conditional on mode (skipped for `stock`). Nextest failure output deferred to end (`--failure-output final`); isolated-container tests retry once for DDS flakes.
 - **2026-02-11**: Consolidated 5 container docs → 2 (`container-isolation-design.md` + `clone-vm-container-design.md`). Revised Phase 19 roadmap with Phase 19.0 (consolidate binary).
 - **2026-02-08**: Phase 18 complete — ObservableComponentManager + play_launch_msgs packages.
 - **2026-02-07**: Nextest integration test infrastructure with ManagedProcess RAII guard.
