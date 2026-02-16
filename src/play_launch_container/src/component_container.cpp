@@ -27,7 +27,7 @@ int main(int argc, char * argv[])
   /// Usage:
   ///   component_container                              # single-threaded (default)
   ///   component_container --use_multi_threaded_executor # multi-threaded
-  ///   component_container --isolated                   # clone(CLONE_VM) per-node
+  ///   component_container --isolated                   # fork+exec per-node
   ///   component_container --isolated --use_multi_threaded_executor
   rclcpp::init(argc, argv);
 

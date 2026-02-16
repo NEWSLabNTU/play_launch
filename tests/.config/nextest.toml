@@ -46,7 +46,7 @@ test-group = "isolated-container"
 retries = 1
 
 [[profile.default.overrides]]
-filter = "binary(container_events) & test(crash|launch)"
+filter = "binary(container_events) & test(/crash|launch/)"
 test-group = "isolated-container"
 retries = 1
 

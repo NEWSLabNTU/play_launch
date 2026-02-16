@@ -59,7 +59,9 @@ build:
     echo "Copying play_launch_container binary and library..."
     mkdir -p python/play_launch/lib/play_launch_container
     cp install/play_launch_container/lib/play_launch_container/component_container python/play_launch/lib/play_launch_container/
+    cp install/play_launch_container/lib/play_launch_container/component_node python/play_launch/lib/play_launch_container/
     chmod +x python/play_launch/lib/play_launch_container/component_container
+    chmod +x python/play_launch/lib/play_launch_container/component_node
     cp install/play_launch_container/lib/libobservable_component_manager.so python/play_launch/lib/
 
     # Create ament index marker so find_executable() discovers it
@@ -176,7 +178,7 @@ test:
     set -e
     echo "=== C++ build check ==="
     source /opt/ros/{{ros_distro}}/setup.bash
-    colcon build --packages-select play_launch_msgs play_launch_container --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
+    colcon build --packages-select play_launch_msgs play_launch_container --symlink-install --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
     echo ""
     echo "=== Parser unit tests ==="
     (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
@@ -190,7 +192,7 @@ test-all:
     set -e
     echo "=== C++ build check ==="
     source /opt/ros/{{ros_distro}}/setup.bash
-    colcon build --packages-select play_launch_msgs play_launch_container --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
+    colcon build --packages-select play_launch_msgs play_launch_container --symlink-install --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
     echo ""
     echo "=== Parser unit tests ==="
     (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)

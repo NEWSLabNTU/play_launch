@@ -84,6 +84,16 @@ impl HealthReport {
                 }
             }
 
+            // Match: WARN ... container_name: ComponentEvent LOAD_FAILED for 'component': error
+            if line.contains("ComponentEvent LOAD_FAILED") {
+                if let Some(failure) = parse_component_event_load_failed(line) {
+                    let key = format!("{}/{}", failure.container, failure.component);
+                    if seen_failures.insert(key) {
+                        load_node_failures.push(failure);
+                    }
+                }
+            }
+
             // Match: ERROR ... container_name: Composable node 'component' crashed: detail
             if line.contains("crashed:") && line.contains("Composable node") {
                 if let Some(crash) = parse_composable_crash(line) {
@@ -253,6 +263,42 @@ fn parse_composable_crash(line: &str) -> Option<ComposableNodeCrash> {
         container,
         component,
         detail,
+        log_line: line.to_string(),
+    })
+}
+
+/// Parse a ComponentEvent LOAD_FAILED line like:
+///   `2026-02-16T01:46:03 WARN play_launch::... container_name: ComponentEvent LOAD_FAILED for 'component': error_message`
+fn parse_component_event_load_failed(line: &str) -> Option<LoadNodeFailure> {
+    let marker = "ComponentEvent LOAD_FAILED for '";
+    let marker_pos = line.find(marker)?;
+
+    // Container name: word before ": ComponentEvent LOAD_FAILED"
+    let before_marker = &line[..marker_pos];
+    let colon_pos = before_marker.rfind(": ")?;
+    let before_colon = before_marker[..colon_pos].trim();
+    let container = before_colon
+        .rsplit_once(|c: char| c.is_whitespace())
+        .map(|(_, name)| name)
+        .unwrap_or(before_colon)
+        .to_string();
+
+    // Component name: between "for '" and "'"
+    let after_marker = &line[marker_pos + marker.len()..];
+    let end_quote = after_marker.find("'")?;
+    let component = after_marker[..end_quote].to_string();
+
+    // Error: everything after "': "
+    let error = if end_quote + 2 < after_marker.len() {
+        after_marker[end_quote + 2..].trim().to_string()
+    } else {
+        String::new()
+    };
+
+    Some(LoadNodeFailure {
+        container,
+        component,
+        error,
         log_line: line.to_string(),
     })
 }

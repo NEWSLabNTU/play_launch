@@ -35,18 +35,18 @@ namespace play_launch_container
 {
 
 /// Component manager that isolates each composable node in its own Linux process
-/// via clone(CLONE_VM).
+/// via fork()+exec() of the `component_node` binary.
 ///
-/// Each node's executor spins in a clone'd child process (own PID, own signal
-/// disposition) while sharing the container's address space for zero-copy
-/// intra-process communication.
+/// Each node runs as a fully independent process with its own address space,
+/// glibc, TLS, and DDS participant.  This avoids all TLS/glibc issues that
+/// plague clone(CLONE_VM) and supports full MultiThreadedExecutor.
 ///
 /// Class hierarchy:
 ///   ComponentManager -> ObservableComponentManager -> CloneIsolatedComponentManager
 ///
 /// Inherits event publishing from ObservableComponentManager.
 /// Overrides add_node_to_executor / remove_node_from_executor (same pattern as
-/// upstream ComponentManagerIsolated, but clone() instead of std::thread).
+/// upstream ComponentManagerIsolated, but fork+exec instead of std::thread).
 class CloneIsolatedComponentManager : public ObservableComponentManager
 {
 public:
@@ -81,24 +81,31 @@ protected:
 private:
   void worker_loop();
   void submit_work(std::function<void()> work);
+
   struct ChildInfo
   {
     pid_t pid;
     int pidfd;
-    std::shared_ptr<rclcpp::Executor> executor;
-    void * stack_ptr;
-    size_t stack_size;
     uint64_t node_id;
     std::string node_name;
-    void * tls;   // glibc TLS block (allocated via _dl_allocate_tls)
-    void * boot;  // ChildBootstrap* — passed to clone child, freed on cleanup
+    std::string param_file;  // temp YAML to unlink on cleanup
   };
+
+  /// Serialize LoadNode::Request parameters to a temp YAML file.
+  /// Returns empty string if no parameters.
+  std::string write_params_file(const std::shared_ptr<LoadNode::Request> & request);
+
+  /// Fork+exec component_node for the given load request.
+  /// Returns ChildInfo on success, throws on failure.
+  ChildInfo spawn_child_process(
+    uint64_t node_id, const std::shared_ptr<LoadNode::Request> & request);
 
   void cleanup_child(ChildInfo & child);
   void monitor_loop();
   void handle_child_death(uint64_t node_id);
 
   bool use_multi_threaded_;
+  std::string component_node_path_;  // resolved once in constructor
 
   // Thread safety for inherited protected members (node_wrappers_, loaders_, unique_id_)
   std::mutex load_mutex_;
@@ -122,8 +129,6 @@ private:
   int stop_fd_ = -1;
   std::thread monitor_thread_;
   std::atomic<bool> monitor_running_{false};
-
-  static constexpr size_t kChildStackSize = 8 * 1024 * 1024;  // 8 MB
 };
 
 }  // namespace play_launch_container

@@ -14,203 +14,45 @@
 
 #include "play_launch_container/clone_isolated_component_manager.hpp"
 
-#include <dlfcn.h>
-#include <pthread.h>
-#include <sched.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
-#include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <execinfo.h>
-#include <locale.h>
-
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
 namespace play_launch_container
 {
 
-// ── TLS allocation via glibc internals ──────────────────────────────────
+// ── Helper: resolve component_node binary path ──────────────────────────
 //
-// clone(CLONE_VM) shares the address space but NOT thread-local storage.
-// Without CLONE_SETTLS, the child shares the parent's TLS pointer, which
-// causes glibc's per-thread malloc cache (tcache) to be shared → double-free.
-//
-// Solution: allocate a fresh TLS block in the parent (via glibc's internal
-// _dl_allocate_tls), then pass it to clone() with CLONE_SETTLS so the child
-// starts with its own errno, tcache, and other thread-locals.
-//
-// The child must also set its TID in the TLS block so that glibc operations
-// (pthread_create, mutex ownership checks) work correctly.
-using dl_allocate_tls_fn = void * (*)(void *);
-using dl_deallocate_tls_fn = void (*)(void *, bool);
+// component_node is installed next to component_container under
+// lib/<project_name>/.  We find our own directory via /proc/self/exe.
 
-static dl_allocate_tls_fn get_tls_allocator()
+static std::string resolve_component_node_path()
 {
-  static auto fn = reinterpret_cast<dl_allocate_tls_fn>(dlsym(RTLD_DEFAULT, "_dl_allocate_tls"));
-  return fn;
-}
-
-static dl_deallocate_tls_fn get_tls_deallocator()
-{
-  static auto fn =
-    reinterpret_cast<dl_deallocate_tls_fn>(dlsym(RTLD_DEFAULT, "_dl_deallocate_tls"));
-  return fn;
-}
-
-// Find the offset of the `tid` field in glibc's struct pthread (the TLS
-// header).  We scan the first 2048 bytes of the current thread's TLS for
-// a match with our TID.  This offset is stable for a given glibc build.
-static int find_tls_tid_offset()
-{
-  auto my_tid = static_cast<pid_t>(syscall(SYS_gettid));
-  auto * tls_base = reinterpret_cast<char *>(pthread_self());
-  for (int offset = 0; offset < 2048; offset += 4) {
-    pid_t val;
-    std::memcpy(&val, tls_base + offset, sizeof(val));
-    if (val == my_tid) {
-      return offset;
-    }
+  char buf[4096];
+  ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+  if (len <= 0) {
+    return "component_node";  // fallback: hope it's on PATH
   }
-  return -1;
-}
-
-// The TID offset is the same for all threads/children in this process.
-static int g_tls_tid_offset = -1;
-
-// ── Child bootstrap ─────────────────────────────────────────────────────
-//
-// Passed through clone()'s `arg` to the child.  Lives in the shared address
-// space (heap-allocated by parent, freed after child exits).
-
-struct ChildBootstrap
-{
-  rclcpp::Executor * exec;
-  int tls_tid_offset;
-};
-
-// Thread-local executor pointer for the clone child's SIGTERM handler.
-// Each child has its own TLS (via CLONE_SETTLS), so this is per-child
-// despite the shared address space.
-static thread_local rclcpp::Executor * g_child_executor = nullptr;
-
-static void child_sigterm_handler(int sig)
-{
-  // cancel() triggers the executor's interrupt guard condition (a pipe write),
-  // which is async-signal-safe.  This causes spin() to return.
-  if (g_child_executor) {
-    g_child_executor->cancel();
+  buf[len] = '\0';
+  std::string exe_path(buf);
+  auto slash = exe_path.rfind('/');
+  if (slash == std::string::npos) {
+    return "component_node";
   }
-}
-
-// Crash handler for clone children: prints a backtrace to stderr before
-// re-raising to produce a core dump.  Helps diagnose issues in the isolated
-// child process (fresh TLS, no debugger attached).
-static void child_crash_handler(int sig)
-{
-  const char msg[] = "\n=== CLONE CHILD CRASH BACKTRACE ===\n";
-  if (write(STDERR_FILENO, msg, sizeof(msg) - 1) < 0) {}
-  void * bt[64];
-  int n = backtrace(bt, 64);
-  backtrace_symbols_fd(bt, n, STDERR_FILENO);
-  const char end[] = "=== END BACKTRACE ===\n";
-  if (write(STDERR_FILENO, end, sizeof(end) - 1) < 0) {}
-  // Re-raise with SIG_DFL to get core dump
-  struct sigaction sa{};
-  sa.sa_handler = SIG_DFL;
-  sigaction(sig, &sa, nullptr);
-  raise(sig);
-}
-
-// ── Child entry point ───────────────────────────────────────────────────
-//
-// Runs in a clone'd process with its own stack, PID, and (if CLONE_SETTLS
-// succeeded) its own TLS.  Sets the TID in TLS, installs a graceful SIGTERM
-// handler, then spins the executor until cancelled.
-static int child_executor_fn(void * arg)
-{
-  auto * boot = static_cast<ChildBootstrap *>(arg);
-
-  // Set our TID in the TLS block so that glibc knows our identity.
-  // Without this, pthread_create() and mutex operations fail with EAGAIN.
-  auto my_tid = static_cast<pid_t>(syscall(SYS_gettid));
-  uint64_t fs_val = 0;
-  syscall(SYS_arch_prctl, 0x1003 /* ARCH_GET_FS */, &fs_val);
-  auto * tls_base = reinterpret_cast<char *>(fs_val);
-
-  if (boot->tls_tid_offset >= 0) {
-    std::memcpy(tls_base + boot->tls_tid_offset, &my_tid, sizeof(my_tid));
-  }
-
-  // Ensure tcbhead_t.self and tcbhead_t.tcb point back to the TLS base.
-  // _dl_allocate_tls() may not set these; they're needed by THREAD_SELF.
-  // Also set multiple_threads = 1 (we're in a clone child alongside other threads).
-  {
-    auto ** self_field = reinterpret_cast<void **>(tls_base + 0x10);
-    if (*self_field == nullptr) {
-      // tcbhead_t.tcb = tcbhead_t.self = fs_base
-      *reinterpret_cast<void **>(tls_base) = reinterpret_cast<void *>(fs_val);
-      *self_field = reinterpret_cast<void *>(fs_val);
-    }
-    *reinterpret_cast<int *>(tls_base + 0x18) = 1;  // multiple_threads
-  }
-
-  // _dl_allocate_tls() creates a fresh TLS block but does NOT initialize the
-  // struct pthread fields that pthread_create would normally set up:
-  //
-  //   1. locale pointer = NULL → __printf_fp_l SIGSEGV on float formatting
-  //   2. ctype tables = NULL  → isalpha/isdigit SIGSEGV via __ctype_b_loc()
-  //
-  // Fix: set locale to global (so _NL_CURRENT falls back to global locale),
-  // then call __ctype_init() to populate the per-thread ctype table pointers
-  // from the current locale (what glibc's start_thread() does internally).
-  uselocale(LC_GLOBAL_LOCALE);
-  {
-    using ctype_init_fn = void (*)();
-    auto ctype_init = reinterpret_cast<ctype_init_fn>(dlsym(RTLD_DEFAULT, "__ctype_init"));
-    if (ctype_init) {
-      ctype_init();
-    }
-  }
-
-  // Reset all signal handlers to SIG_DFL first (equivalent to CLONE_CLEAR_SIGHAND).
-  // Without CLONE_SIGHAND the child has its own copy of the signal handler
-  // table, so this only affects the child.
-  struct sigaction sa
-  {
-  };
-  sa.sa_handler = SIG_DFL;
-  for (int sig = 1; sig < _NSIG; ++sig) {
-    sigaction(sig, &sa, nullptr);
-  }
-
-  // Install graceful SIGTERM handler so destructors run (cleans up DDS/SHM).
-  // The handler calls executor->cancel(), which wakes up spin() via a pipe write
-  // (async-signal-safe).
-  g_child_executor = boot->exec;
-  sa.sa_handler = child_sigterm_handler;
-  sigemptyset(&sa.sa_mask);
-  sa.sa_flags = 0;
-  sigaction(SIGTERM, &sa, nullptr);
-
-  // Install crash handlers for diagnosis (backtrace to stderr, then core dump)
-  sa.sa_handler = child_crash_handler;
-  sa.sa_flags = SA_RESETHAND;  // one-shot, then SIG_DFL for core dump
-  sigaction(SIGSEGV, &sa, nullptr);
-  sigaction(SIGABRT, &sa, nullptr);
-  sigaction(SIGBUS, &sa, nullptr);
-
-  boot->exec->spin();
-
-  // Normal return (not _exit) — C++ destructors run, including FastRTPS
-  // cleanup which unlinks /dev/shm/fastrtps_* segments.
-  return 0;
+  return exe_path.substr(0, slash + 1) + "component_node";
 }
 
 // ── Constructor / Destructor ────────────────────────────────────────────
@@ -219,28 +61,16 @@ CloneIsolatedComponentManager::CloneIsolatedComponentManager(
   std::weak_ptr<rclcpp::Executor> executor, bool use_multi_threaded, std::string node_name,
   const rclcpp::NodeOptions & node_options)
 : ObservableComponentManager(executor, std::move(node_name), node_options),
-  use_multi_threaded_(use_multi_threaded)
+  use_multi_threaded_(use_multi_threaded),
+  component_node_path_(resolve_component_node_path())
 {
-  RCLCPP_INFO(get_logger(), "Using clone(CLONE_VM) per-node process isolation (non-blocking load)");
+  RCLCPP_INFO(get_logger(), "Using fork()+exec() per-node process isolation (non-blocking load)");
+  RCLCPP_DEBUG(get_logger(), "component_node binary: %s", component_node_path_.c_str());
 
-  // Start worker thread pool for async node construction
+  // Start worker thread pool for async node spawning
   workers_running_ = true;
   for (size_t i = 0; i < kWorkerThreadCount; ++i) {
     worker_threads_.emplace_back(&CloneIsolatedComponentManager::worker_loop, this);
-  }
-
-  if (!get_tls_allocator()) {
-    RCLCPP_WARN(
-      get_logger(),
-      "_dl_allocate_tls not found; children will share "
-      "parent TLS (may cause heap issues)");
-  }
-  // Find the tid offset once — it's the same for all threads in this process.
-  if (g_tls_tid_offset < 0) {
-    g_tls_tid_offset = find_tls_tid_offset();
-    if (g_tls_tid_offset < 0) {
-      RCLCPP_WARN(get_logger(), "Could not find TID offset in glibc TLS; children may fail");
-    }
   }
 
   // Set up child death monitor (epoll on pidfds)
@@ -343,10 +173,351 @@ void CloneIsolatedComponentManager::submit_work(std::function<void()> work)
   work_queue_cv_.notify_one();
 }
 
+// ── Parameter serialization ─────────────────────────────────────────────
+//
+// Convert LoadNode::Request parameters (rcl_interfaces/Parameter[])
+// to a YAML file that can be passed via --params-file.
+
+std::string CloneIsolatedComponentManager::write_params_file(
+  const std::shared_ptr<LoadNode::Request> & request)
+{
+  if (request->parameters.empty()) {
+    return "";
+  }
+
+  // Use wildcard namespace — component_node uses use_global_arguments(true)
+  // so the YAML namespace must match any node name.
+  std::ostringstream yaml;
+  yaml << "/**:\n";
+  yaml << "  ros__parameters:\n";
+
+  for (const auto & param : request->parameters) {
+    yaml << "    " << param.name << ": ";
+
+    const auto & val = param.value;
+    switch (val.type) {
+      case rcl_interfaces::msg::ParameterType::PARAMETER_BOOL:
+        yaml << (val.bool_value ? "true" : "false");
+        break;
+      case rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER:
+        yaml << val.integer_value;
+        break;
+      case rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE: {
+        char dbuf[64];
+        std::snprintf(dbuf, sizeof(dbuf), "%.17g", val.double_value);
+        std::string ds(dbuf);
+        // Ensure decimal point for ROS type preservation
+        if (ds.find('.') == std::string::npos && ds.find('e') == std::string::npos) {
+          ds += ".0";
+        }
+        yaml << ds;
+        break;
+      }
+      case rcl_interfaces::msg::ParameterType::PARAMETER_STRING:
+        yaml << "'" << param.value.string_value << "'";
+        break;
+      case rcl_interfaces::msg::ParameterType::PARAMETER_BYTE_ARRAY: {
+        yaml << "[";
+        for (size_t i = 0; i < val.byte_array_value.size(); ++i) {
+          if (i > 0) yaml << ", ";
+          yaml << static_cast<int>(val.byte_array_value[i]);
+        }
+        yaml << "]";
+        break;
+      }
+      case rcl_interfaces::msg::ParameterType::PARAMETER_BOOL_ARRAY: {
+        yaml << "[";
+        for (size_t i = 0; i < val.bool_array_value.size(); ++i) {
+          if (i > 0) yaml << ", ";
+          yaml << (val.bool_array_value[i] ? "true" : "false");
+        }
+        yaml << "]";
+        break;
+      }
+      case rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER_ARRAY: {
+        yaml << "[";
+        for (size_t i = 0; i < val.integer_array_value.size(); ++i) {
+          if (i > 0) yaml << ", ";
+          yaml << val.integer_array_value[i];
+        }
+        yaml << "]";
+        break;
+      }
+      case rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE_ARRAY: {
+        yaml << "[";
+        for (size_t i = 0; i < val.double_array_value.size(); ++i) {
+          if (i > 0) yaml << ", ";
+          char dbuf[64];
+          std::snprintf(dbuf, sizeof(dbuf), "%.17g", val.double_array_value[i]);
+          std::string ds(dbuf);
+          // Ensure decimal point for ROS type preservation
+          if (ds.find('.') == std::string::npos && ds.find('e') == std::string::npos) {
+            ds += ".0";
+          }
+          yaml << ds;
+        }
+        yaml << "]";
+        break;
+      }
+      case rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY: {
+        yaml << "[";
+        for (size_t i = 0; i < val.string_array_value.size(); ++i) {
+          if (i > 0) yaml << ", ";
+          yaml << "'" << val.string_array_value[i] << "'";
+        }
+        yaml << "]";
+        break;
+      }
+      default:
+        yaml << "null";
+        break;
+    }
+    yaml << "\n";
+  }
+
+  // Write to temp file
+  char tmp_path[] = "/tmp/play_launch_params_XXXXXX";
+  int fd = mkstemp(tmp_path);
+  if (fd < 0) {
+    RCLCPP_WARN(get_logger(), "Failed to create temp params file: %s", std::strerror(errno));
+    return "";
+  }
+
+  std::string content = yaml.str();
+  size_t written = 0;
+  while (written < content.size()) {
+    auto n = ::write(fd, content.data() + written, content.size() - written);
+    if (n <= 0) {
+      break;
+    }
+    written += static_cast<size_t>(n);
+  }
+  close(fd);
+
+  return std::string(tmp_path);
+}
+
+// ── spawn_child_process ─────────────────────────────────────────────────
+//
+// Fork+exec the component_node binary for a single composable node.
+// Reads the ready pipe to get the node's full name or error message.
+
+CloneIsolatedComponentManager::ChildInfo CloneIsolatedComponentManager::spawn_child_process(
+  uint64_t node_id, const std::shared_ptr<LoadNode::Request> & request)
+{
+  // Build argument list for component_node
+  std::vector<std::string> args;
+  args.push_back(component_node_path_);
+  args.push_back("--package");
+  args.push_back(request->package_name);
+  args.push_back("--plugin");
+  args.push_back(request->plugin_name);
+
+  // Ready pipe fd — will be set after pipe() below
+  args.push_back("--ready-fd");
+  args.push_back("");  // placeholder, filled after pipe()
+
+  if (use_multi_threaded_) {
+    args.push_back("--use-multi-threaded-executor");
+  }
+
+  // Check extra_arguments for use_intra_process_comms
+  for (const auto & extra : request->extra_arguments) {
+    if (
+      extra.name == "use_intra_process_comms" &&
+      extra.value.type == rcl_interfaces::msg::ParameterType::PARAMETER_BOOL &&
+      extra.value.bool_value) {
+      args.push_back("--use-intra-process-comms");
+      break;
+    }
+  }
+
+  // Serialize parameters to temp YAML
+  std::string param_file = write_params_file(request);
+
+  // --ros-args section
+  args.push_back("--ros-args");
+
+  // Node name and namespace remapping
+  if (!request->node_name.empty()) {
+    args.push_back("-r");
+    args.push_back("__node:=" + request->node_name);
+  }
+  if (!request->node_namespace.empty()) {
+    args.push_back("-r");
+    args.push_back("__ns:=" + request->node_namespace);
+  }
+
+  // Log level (uint8: 0=unset, 10=DEBUG, 20=INFO, 30=WARN, 40=ERROR, 50=FATAL)
+  if (request->log_level > 0) {
+    args.push_back("--log-level");
+    args.push_back(std::to_string(request->log_level));
+  }
+
+  // Extra remap rules
+  for (const auto & remap : request->remap_rules) {
+    args.push_back("-r");
+    args.push_back(remap);
+  }
+
+  // Params file
+  if (!param_file.empty()) {
+    args.push_back("--params-file");
+    args.push_back(param_file);
+  }
+
+  // Create ready pipe
+  int pipefd[2];
+  if (pipe(pipefd) != 0) {
+    if (!param_file.empty()) {
+      unlink(param_file.c_str());
+    }
+    throw std::runtime_error("pipe() failed: " + std::string(std::strerror(errno)));
+  }
+
+  // Fill in the ready-fd placeholder
+  args[6] = std::to_string(pipefd[1]);
+
+  // Build C-style argv
+  std::vector<char *> c_argv;
+  for (auto & a : args) {
+    c_argv.push_back(a.data());
+  }
+  c_argv.push_back(nullptr);
+
+  pid_t child_pid = fork();
+  if (child_pid < 0) {
+    int err = errno;
+    close(pipefd[0]);
+    close(pipefd[1]);
+    if (!param_file.empty()) {
+      unlink(param_file.c_str());
+    }
+    throw std::runtime_error("fork() failed: " + std::string(std::strerror(err)));
+  }
+
+  if (child_pid == 0) {
+    // ── Child process ──
+    close(pipefd[0]);  // close read end
+
+    // Ask the kernel to send SIGTERM to this child if the parent (container)
+    // dies for any reason (including SIGKILL).  This prevents orphans.
+    // Must be called after fork() but before exec() — PR_SET_PDEATHSIG is
+    // reset across setuid exec but preserved across normal exec.
+    prctl(PR_SET_PDEATHSIG, SIGTERM);
+
+    // Guard against a race: if the parent already died between fork() and
+    // the prctl() above, getppid() returns 1 (init adopted us).
+    if (getppid() == 1) {
+      _exit(1);
+    }
+
+    // The write end (pipefd[1]) must NOT be close-on-exec since component_node
+    // reads the fd number from --ready-fd.  pipe() fds are not CLOEXEC by default.
+
+    execvp(c_argv[0], c_argv.data());
+
+    // If exec fails, write error to pipe and exit
+    std::string err = "ERR execvp failed: " + std::string(std::strerror(errno));
+    err += "\n";
+    if (write(pipefd[1], err.data(), err.size()) < 0) {
+    }
+    close(pipefd[1]);
+    _exit(127);
+  }
+
+  // ── Parent process ──
+  close(pipefd[1]);  // close write end
+
+  // Read ready message from pipe with timeout
+  struct pollfd pfd
+  {
+  };
+  pfd.fd = pipefd[0];
+  pfd.events = POLLIN;
+  constexpr int kReadyTimeoutMs = 30000;  // 30s matches LoadNode service timeout
+
+  std::string ready_buf;
+  bool got_response = false;
+
+  while (true) {
+    int ret = poll(&pfd, 1, kReadyTimeoutMs);
+    if (ret <= 0) {
+      // Timeout or error
+      break;
+    }
+    char buf[1024];
+    ssize_t n = read(pipefd[0], buf, sizeof(buf) - 1);
+    if (n <= 0) {
+      break;  // EOF or error
+    }
+    buf[n] = '\0';
+    ready_buf += buf;
+    if (ready_buf.find('\n') != std::string::npos) {
+      got_response = true;
+      break;
+    }
+  }
+  close(pipefd[0]);
+
+  // Parse response
+  std::string node_name;
+  if (!got_response || ready_buf.empty()) {
+    // Child died or timed out before responding
+    kill(child_pid, SIGKILL);
+    waitpid(child_pid, nullptr, 0);
+    if (!param_file.empty()) {
+      unlink(param_file.c_str());
+    }
+    throw std::runtime_error("component_node did not respond (timeout or crash)");
+  }
+
+  // Trim trailing newline
+  if (!ready_buf.empty() && ready_buf.back() == '\n') {
+    ready_buf.pop_back();
+  }
+
+  if (ready_buf.substr(0, 3) == "OK ") {
+    node_name = ready_buf.substr(3);
+  } else if (ready_buf.substr(0, 4) == "ERR ") {
+    std::string err_msg = ready_buf.substr(4);
+    kill(child_pid, SIGKILL);
+    waitpid(child_pid, nullptr, 0);
+    if (!param_file.empty()) {
+      unlink(param_file.c_str());
+    }
+    throw std::runtime_error("component_node failed: " + err_msg);
+  } else {
+    kill(child_pid, SIGKILL);
+    waitpid(child_pid, nullptr, 0);
+    if (!param_file.empty()) {
+      unlink(param_file.c_str());
+    }
+    throw std::runtime_error("component_node: unexpected response: " + ready_buf);
+  }
+
+  // Get pidfd for race-free monitoring (Linux 5.3+)
+  int pidfd = static_cast<int>(syscall(SYS_pidfd_open, child_pid, 0));
+
+  // Register pidfd with epoll for crash monitoring
+  if (epoll_fd_ >= 0 && pidfd >= 0) {
+    epoll_event ev{};
+    ev.events = EPOLLIN;
+    ev.data.u64 = node_id;
+    epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, pidfd, &ev);
+  }
+
+  RCLCPP_INFO(
+    get_logger(), "Spawned isolated child PID %d for node '%s' (id %lu)", child_pid,
+    node_name.c_str(), static_cast<uint64_t>(node_id));
+
+  return ChildInfo{child_pid, pidfd, node_id, node_name, param_file};
+}
+
 // ── Non-blocking on_load_node ───────────────────────────────────────────
 //
-// Phase 1 (synchronous): validate plugin, pre-assign unique_id, respond.
-// Phase 2 (async worker): construct node, add to executor, publish event.
+// Phase 1 (synchronous): validate plugin exists, pre-assign unique_id, respond.
+// Phase 2 (async worker): fork+exec component_node, read ready pipe, publish event.
 
 void CloneIsolatedComponentManager::on_load_node(
   const std::shared_ptr<rmw_request_id_t> /*request_header*/,
@@ -357,29 +528,22 @@ void CloneIsolatedComponentManager::on_load_node(
   // Look up component resources (ament index, fast)
   auto resources = get_component_resources(request->package_name);
 
-  // Find matching plugin and create factory
-  std::shared_ptr<rclcpp_components::NodeFactory> factory;
+  // Verify plugin exists
+  bool found = false;
   for (const auto & resource : resources) {
-    if (resource.first != request->plugin_name) {
-      continue;
-    }
-    auto f = create_component_factory(resource);
-    if (f) {
-      factory = std::move(f);
+    if (resource.first == request->plugin_name) {
+      found = true;
       break;
     }
   }
 
-  if (!factory) {
+  if (!found) {
     response->success = false;
     response->error_message =
       "Failed to find class with the requested plugin name '" + request->plugin_name + "'";
     RCLCPP_ERROR(get_logger(), "%s", response->error_message.c_str());
     return;
   }
-
-  // Pre-create node options (parses params, fast)
-  auto options = create_node_options(request);
 
   uint64_t node_id;
   {
@@ -396,8 +560,6 @@ void CloneIsolatedComponentManager::on_load_node(
   }
 
   // Approximate full_node_name for the immediate response.
-  // The actual name comes from the constructed node (published via
-  // ComponentEvent).
   std::string approx_name;
   if (!request->node_namespace.empty() && request->node_namespace != "/") {
     approx_name = request->node_namespace + "/" + request->node_name;
@@ -407,7 +569,7 @@ void CloneIsolatedComponentManager::on_load_node(
     approx_name = request->plugin_name;
   }
 
-  // Respond immediately — node is not yet constructed
+  // Respond immediately — node is not yet spawned
   response->success = true;
   response->unique_id = node_id;
   response->full_node_name = approx_name;
@@ -415,20 +577,16 @@ void CloneIsolatedComponentManager::on_load_node(
   RCLCPP_INFO(
     get_logger(),
     "Accepted load request for '%s' (pre-assigned id %lu), "
-    "constructing async...",
+    "spawning async...",
     request->plugin_name.c_str(), static_cast<uint64_t>(node_id));
 
-  // ── Phase 2: async construction on worker thread ──
+  // ── Phase 2: async spawn on worker thread ──
 
-  // Capture everything needed by the worker lambda.
-  // factory and options are moved; request fields copied for the event.
   auto pkg = request->package_name;
   auto plugin = request->plugin_name;
 
-  submit_work([this, factory = std::move(factory), options = std::move(options), node_id, pkg,
-               plugin]() {
-    // Guard: if shutdown already started, skip construction entirely.
-    // The rcl context may be invalid (ros2/rclcpp#812).
+  submit_work([this, request, node_id, pkg, plugin]() {
+    // Guard: if shutdown already started, skip spawn entirely.
     if (!rclcpp::ok()) {
       std::lock_guard<std::mutex> lock(pending_mutex_);
       pending_node_ids_.erase(node_id);
@@ -436,25 +594,23 @@ void CloneIsolatedComponentManager::on_load_node(
     }
 
     try {
-      // Construct the node (SLOW — may take seconds or minutes)
-      auto wrapper = factory->create_node_instance(options);
+      auto child = spawn_child_process(node_id, request);
+      std::string actual_name = child.node_name;
 
-      // Re-check after construction — SIGTERM may have arrived mid-build
+      // Re-check after spawn — SIGTERM may have arrived
       if (!rclcpp::ok()) {
         RCLCPP_DEBUG(
-          get_logger(), "Shutdown during construction of '%s' (id %lu), discarding", plugin.c_str(),
+          get_logger(), "Shutdown during spawn of '%s' (id %lu), killing child", plugin.c_str(),
           static_cast<uint64_t>(node_id));
+        cleanup_child(child);
         std::lock_guard<std::mutex> lock(pending_mutex_);
         pending_node_ids_.erase(node_id);
         return;
       }
 
-      std::string actual_name;
       {
-        std::lock_guard<std::mutex> lock(load_mutex_);
-        node_wrappers_[node_id] = wrapper;
-        add_node_to_executor(node_id);
-        actual_name = node_wrappers_[node_id].get_node_base_interface()->get_fully_qualified_name();
+        std::lock_guard<std::mutex> lock(children_mutex_);
+        children_[node_id] = std::move(child);
       }
 
       {
@@ -466,7 +622,7 @@ void CloneIsolatedComponentManager::on_load_node(
         get_logger(), "Component '%s' loaded as '%s' (id %lu)", plugin.c_str(), actual_name.c_str(),
         static_cast<uint64_t>(node_id));
 
-      // Publish LOADED event (skip if context is shutting down)
+      // Publish LOADED event
       if (rclcpp::ok()) {
         auto event = play_launch_msgs::msg::ComponentEvent();
         event.stamp = now();
@@ -483,17 +639,15 @@ void CloneIsolatedComponentManager::on_load_node(
         pending_node_ids_.erase(node_id);
       }
 
-      // During shutdown, rcl context errors are expected — don't publish
-      // events (the publisher may also be invalid) or log errors.
       if (!rclcpp::ok()) {
         RCLCPP_DEBUG(
-          get_logger(), "Construction interrupted by shutdown for '%s' (id %lu)", plugin.c_str(),
+          get_logger(), "Spawn interrupted by shutdown for '%s' (id %lu)", plugin.c_str(),
           static_cast<uint64_t>(node_id));
         return;
       }
 
       RCLCPP_ERROR(
-        get_logger(), "Failed to construct component '%s' (id %lu): %s", plugin.c_str(),
+        get_logger(), "Failed to spawn component '%s' (id %lu): %s", plugin.c_str(),
         static_cast<uint64_t>(node_id), ex.what());
 
       // Publish LOAD_FAILED event
@@ -509,10 +663,10 @@ void CloneIsolatedComponentManager::on_load_node(
   });
 }
 
-// ── on_unload_node override (thread-safe) ───────────────────────────────
+// ── on_unload_node override ─────────────────────────────────────────────
 
 void CloneIsolatedComponentManager::on_unload_node(
-  const std::shared_ptr<rmw_request_id_t> request_header,
+  const std::shared_ptr<rmw_request_id_t> /*request_header*/,
   const std::shared_ptr<UnloadNode::Request> request,
   std::shared_ptr<UnloadNode::Response> response)
 {
@@ -528,25 +682,35 @@ void CloneIsolatedComponentManager::on_unload_node(
     }
   }
 
-  // Capture node name before parent erases it
   std::string full_name;
   {
-    std::lock_guard<std::mutex> lock(load_mutex_);
-    auto it = node_wrappers_.find(request->unique_id);
-    if (it != node_wrappers_.end()) {
-      full_name = it->second.get_node_base_interface()->get_fully_qualified_name();
+    std::lock_guard<std::mutex> lock(children_mutex_);
+    auto it = children_.find(request->unique_id);
+    if (it == children_.end()) {
+      response->success = false;
+      response->error_message = "No node with unique_id " + std::to_string(request->unique_id);
+      return;
     }
+
+    full_name = it->second.node_name;
+
+    // Deregister pidfd from epoll BEFORE killing
+    if (epoll_fd_ >= 0 && it->second.pidfd >= 0) {
+      epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, it->second.pidfd, nullptr);
+    }
+
+    cleanup_child(it->second);
+    children_.erase(it);
   }
 
-  // Delegate to parent (which calls remove_node_from_executor →
-  // children_mutex_)
-  {
-    std::lock_guard<std::mutex> lock(load_mutex_);
-    ComponentManager::on_unload_node(request_header, request, response);
-  }
+  response->success = true;
 
-  // Publish UNLOADED event on success (skip if context is shutting down)
-  if (response->success && rclcpp::ok()) {
+  RCLCPP_INFO(
+    get_logger(), "Unloaded node '%s' (id %lu)", full_name.c_str(),
+    static_cast<uint64_t>(request->unique_id));
+
+  // Publish UNLOADED event
+  if (rclcpp::ok()) {
     auto event = play_launch_msgs::msg::ComponentEvent();
     event.stamp = now();
     event.event_type = play_launch_msgs::msg::ComponentEvent::UNLOADED;
@@ -563,183 +727,37 @@ void CloneIsolatedComponentManager::on_list_nodes(
   const std::shared_ptr<ListNodes::Request> /*request*/,
   std::shared_ptr<ListNodes::Response> response)
 {
-  std::lock_guard<std::mutex> lock1(load_mutex_);
+  std::lock_guard<std::mutex> lock1(children_mutex_);
   std::lock_guard<std::mutex> lock2(pending_mutex_);
 
-  for (auto & wrapper : node_wrappers_) {
+  for (const auto & [id, child] : children_) {
     // Skip nodes still being constructed
-    if (pending_node_ids_.count(wrapper.first) > 0) {
+    if (pending_node_ids_.count(id) > 0) {
       continue;
     }
-    response->unique_ids.push_back(wrapper.first);
-    response->full_node_names.push_back(
-      wrapper.second.get_node_base_interface()->get_fully_qualified_name());
+    response->unique_ids.push_back(id);
+    response->full_node_names.push_back(child.node_name);
   }
 }
 
 // ── add_node_to_executor ────────────────────────────────────────────────
 //
-// Called from worker thread after the node is constructed and stored in
-// node_wrappers_.  Caller must hold load_mutex_.  We create a dedicated
-// executor and spawn a clone'd child process to spin it.
+// Not used in fork+exec mode (children manage their own executors).
+// Kept as a no-op to satisfy the override requirement.
 
-void CloneIsolatedComponentManager::add_node_to_executor(uint64_t node_id)
+void CloneIsolatedComponentManager::add_node_to_executor(uint64_t /*node_id*/)
 {
-  // Always use SingleThreadedExecutor for clone children.
-  // _dl_allocate_tls(nullptr) creates TLS but does NOT fully initialize the
-  // struct pthread header (robust_list, thread list, stack info, etc.) that
-  // pthread_create needs.  MultiThreadedExecutor::spin() calls pthread_create
-  // to spawn worker threads, which crashes because the calling thread's struct
-  // pthread is incomplete.  Each node already runs in its own isolated process,
-  // so multi-threading within each child is unnecessary.
-  auto exec = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
-  exec->add_node(node_wrappers_[node_id].get_node_base_interface());
-
-  // Allocate child stack (MAP_STACK hints the kernel for guard pages)
-  void * stack = mmap(
-    nullptr, kChildStackSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1,
-    0);
-  if (stack == MAP_FAILED) {
-    throw std::runtime_error(
-      "Failed to mmap stack for clone child: " + std::string(std::strerror(errno)));
-  }
-
-  // clone() needs the TOP of the stack (stack grows downward on x86_64/aarch64)
-  void * stack_top = static_cast<char *>(stack) + kChildStackSize;
-
-  // Allocate fresh TLS for the child (parent context, so malloc is safe).
-  // This gives the child its own errno, tcache, and other glibc thread-locals.
-  void * child_tls = nullptr;
-  auto tls_alloc = get_tls_allocator();
-  if (tls_alloc) {
-    child_tls = tls_alloc(nullptr);
-  }
-
-  // Bootstrap struct lives on the heap (shared address space).
-  // The child reads it; we store the pointer in ChildInfo for cleanup.
-  auto * boot = new ChildBootstrap{exec.get(), g_tls_tid_offset};
-
-  // CLONE_VM:      share address space (zero-copy intra-process)
-  // CLONE_FILES:   share file descriptor table
-  // CLONE_FS:      share cwd/root/umask
-  // CLONE_SETTLS:  give child its own TLS (avoids tcache sharing)
-  // low byte:      SIGCHLD — notify parent on child exit
-  int flags = CLONE_VM | CLONE_FILES | CLONE_FS | SIGCHLD;
-  if (child_tls) {
-    flags |= CLONE_SETTLS;
-  }
-
-  // clone(fn, stack_top, flags, arg, ptid, tls, ctid)
-  pid_t child_pid = clone(
-    child_executor_fn, stack_top, flags, boot,
-    /*ptid=*/nullptr, /*tls=*/child_tls, /*ctid=*/nullptr);
-  if (child_pid == -1) {
-    int err = errno;
-    delete boot;
-    munmap(stack, kChildStackSize);
-    if (child_tls) {
-      auto tls_dealloc = get_tls_deallocator();
-      if (tls_dealloc) {
-        tls_dealloc(child_tls, true);
-      }
-    }
-    throw std::runtime_error("clone() failed: " + std::string(std::strerror(err)));
-  }
-
-  // Get pidfd for race-free monitoring (Linux 5.3+).
-  // Can fail if the child already exited; -1 is acceptable.
-  int pidfd = static_cast<int>(syscall(SYS_pidfd_open, child_pid, 0));
-
-  // Get node name for logging
-  std::string node_name;
-  auto it = node_wrappers_.find(node_id);
-  if (it != node_wrappers_.end()) {
-    node_name = it->second.get_node_base_interface()->get_fully_qualified_name();
-  }
-
-  // Store child info (boot pointer kept for lifetime — child may still read it)
-  {
-    std::lock_guard<std::mutex> lock(children_mutex_);
-    children_[node_id] = ChildInfo{child_pid, pidfd,           exec,
-                                   stack,     kChildStackSize, node_id,
-                                   node_name, child_tls,       static_cast<void *>(boot)};
-  }
-
-  // Register pidfd with epoll for crash monitoring
-  if (epoll_fd_ >= 0 && pidfd >= 0) {
-    epoll_event ev{};
-    ev.events = EPOLLIN;
-    ev.data.u64 = node_id;
-    epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, pidfd, &ev);
-  }
-
-  RCLCPP_INFO(
-    get_logger(), "Spawned isolated child PID %d for node '%s' (id %lu)", child_pid,
-    node_name.c_str(), static_cast<uint64_t>(node_id));
+  // No-op: fork+exec children manage their own executor.
 }
 
 // ── remove_node_from_executor ───────────────────────────────────────────
 //
-// Called by on_unload_node() before the node is erased from node_wrappers_.
-// We cancel the executor, wait for the child to exit, and clean up.
+// Not used in fork+exec mode (children are killed directly).
+// Kept as a no-op to satisfy the override requirement.
 
-void CloneIsolatedComponentManager::remove_node_from_executor(uint64_t node_id)
+void CloneIsolatedComponentManager::remove_node_from_executor(uint64_t /*node_id*/)
 {
-  std::lock_guard<std::mutex> lock(children_mutex_);
-  auto it = children_.find(node_id);
-  if (it == children_.end()) {
-    // Already cleaned up by monitor (child crashed)
-    return;
-  }
-
-  auto & child = it->second;
-
-  // Deregister pidfd from epoll BEFORE killing — ensures the monitor only
-  // sees unexpected deaths, not graceful unloads.
-  if (epoll_fd_ >= 0 && child.pidfd >= 0) {
-    epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, child.pidfd, nullptr);
-  }
-
-  // Wait for the executor to start spinning before cancelling, same pattern
-  // as upstream ComponentManagerIsolated::cancel_executor
-  while (!child.executor->is_spinning()) {
-    rclcpp::sleep_for(std::chrono::milliseconds(1));
-  }
-
-  // Cancel executor: sets spinning=false, child's spin() returns → _exit(0)
-  child.executor->cancel();
-
-  // Wait for graceful exit (child calls _exit after spin returns)
-  int status = 0;
-  for (int i = 0; i < 200; ++i) {
-    if (waitpid(child.pid, &status, WNOHANG) != 0) {
-      break;
-    }
-    usleep(10000);  // 10ms, up to 2 seconds total
-  }
-
-  // Force kill if still alive
-  if (waitpid(child.pid, &status, WNOHANG) == 0) {
-    kill(child.pid, SIGKILL);
-    waitpid(child.pid, &status, 0);
-  }
-
-  RCLCPP_INFO(
-    get_logger(), "Removed isolated child PID %d for node '%s'", child.pid,
-    child.node_name.c_str());
-
-  // Free resources
-  munmap(child.stack_ptr, child.stack_size);
-  if (child.pidfd >= 0) {
-    close(child.pidfd);
-  }
-  auto tls_dealloc = get_tls_deallocator();
-  if (tls_dealloc && child.tls) {
-    tls_dealloc(child.tls, true);
-  }
-  delete static_cast<ChildBootstrap *>(child.boot);
-
-  children_.erase(it);
+  // No-op: fork+exec children are killed directly in on_unload_node.
 }
 
 // ── monitor_loop — epoll on pidfds ──────────────────────────────────────
@@ -788,32 +806,20 @@ void CloneIsolatedComponentManager::handle_child_death(uint64_t node_id)
   auto & child = it->second;
 
   // Reap child and get exit details
-  siginfo_t info{};
   int status = 0;
   waitpid(child.pid, &status, WNOHANG);
+
+  std::string error_msg;
   if (WIFSIGNALED(status)) {
-    info.si_code = CLD_KILLED;
-    info.si_status = WTERMSIG(status);
+    error_msg = "killed by signal " + std::to_string(WTERMSIG(status)) + " (" +
+                std::string(strsignal(WTERMSIG(status))) + ")";
 #ifdef WCOREDUMP
     if (WCOREDUMP(status)) {
-      info.si_code = CLD_DUMPED;
+      error_msg += " (core dumped)";
     }
 #endif
   } else if (WIFEXITED(status)) {
-    info.si_code = CLD_EXITED;
-    info.si_status = WEXITSTATUS(status);
-  }
-
-  // Build error message with crash details
-  std::string error_msg;
-  if (info.si_code == CLD_KILLED || info.si_code == CLD_DUMPED) {
-    error_msg = "killed by signal " + std::to_string(info.si_status) + " (" +
-                std::string(strsignal(info.si_status)) + ")";
-    if (info.si_code == CLD_DUMPED) {
-      error_msg += " (core dumped)";
-    }
-  } else if (info.si_code == CLD_EXITED) {
-    error_msg = "exited with status " + std::to_string(info.si_status);
+    error_msg = "exited with status " + std::to_string(WEXITSTATUS(status));
   } else {
     error_msg = "died (unknown cause)";
   }
@@ -822,8 +828,7 @@ void CloneIsolatedComponentManager::handle_child_death(uint64_t node_id)
     get_logger(), "Child PID %d crashed for node '%s': %s", child.pid, child.node_name.c_str(),
     error_msg.c_str());
 
-  // Publish CRASHED event. Use try-catch instead of rclcpp::ok() guard here
-  // because crash detection must work during normal operation (not just shutdown).
+  // Publish CRASHED event
   try {
     auto event = play_launch_msgs::msg::ComponentEvent();
     event.stamp = now();
@@ -836,25 +841,22 @@ void CloneIsolatedComponentManager::handle_child_death(uint64_t node_id)
     RCLCPP_WARN(get_logger(), "Failed to publish CRASHED event: %s", ex.what());
   }
 
-  // Free resources
-  munmap(child.stack_ptr, child.stack_size);
+  // Clean up resources
   if (child.pidfd >= 0) {
     close(child.pidfd);
   }
-  auto tls_dealloc = get_tls_deallocator();
-  if (tls_dealloc && child.tls) {
-    tls_dealloc(child.tls, true);
+  if (!child.param_file.empty()) {
+    unlink(child.param_file.c_str());
   }
-  delete static_cast<ChildBootstrap *>(child.boot);
 
   children_.erase(it);
 }
 
-// ── cleanup_child (destructor helper) ───────────────────────────────────
+// ── cleanup_child (destructor / unload helper) ──────────────────────────
 
 void CloneIsolatedComponentManager::cleanup_child(ChildInfo & child)
 {
-  child.executor->cancel();
+  // Graceful shutdown: SIGTERM, wait, then SIGKILL
   kill(child.pid, SIGTERM);
   int status = 0;
   for (int i = 0; i < 50; ++i) {
@@ -867,15 +869,13 @@ void CloneIsolatedComponentManager::cleanup_child(ChildInfo & child)
     kill(child.pid, SIGKILL);
     waitpid(child.pid, &status, 0);
   }
-  munmap(child.stack_ptr, child.stack_size);
+
   if (child.pidfd >= 0) {
     close(child.pidfd);
   }
-  auto tls_dealloc = get_tls_deallocator();
-  if (tls_dealloc && child.tls) {
-    tls_dealloc(child.tls, true);
+  if (!child.param_file.empty()) {
+    unlink(child.param_file.c_str());
   }
-  delete static_cast<ChildBootstrap *>(child.boot);
 }
 
 }  // namespace play_launch_container
