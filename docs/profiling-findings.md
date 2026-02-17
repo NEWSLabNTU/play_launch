@@ -7,44 +7,44 @@
 
 ## Summary
 
-After two rounds of optimization, play_launch CPU usage dropped from **~13% (40 threads)** to **~5.5% (39 threads)** during Autoware steady-state — a **58% reduction**.
+After three rounds of optimization, play_launch CPU usage dropped from **~13% (40 threads)** to **~4.7% (41 threads)** during Autoware steady-state — a **64% reduction**.
 
-| Metric                | Before optimization | After monitoring fix | After DDS tuning |
-|-----------------------|--------------------:|---------------------:|-----------------:|
-| CPU usage             |                ~13% |                ~9.5% |            ~5.5% |
-| Threads               |                  40 |                   42 |               39 |
-| Samples (20s @ 499Hz) |                 N/A |                 1405 |             1209 |
+| Metric                | Original | + monitoring cache | + DDS tuning | + sysinfo opt |
+|-----------------------|---------:|-------------------:|-------------:|--------------:|
+| CPU usage             |     ~13% |              ~9.5% |        ~5.5% |        ~4.7%  |
+| Threads               |       40 |                 42 |           39 |           41  |
+| Samples (20s @ 499Hz) |      N/A |               1405 |         1209 |          849  |
 
 Optimizations applied:
 1. **Monitoring: network connection caching** — namespace-wide `/proc/net/*` cache reduced 400 reads/tick to 4 reads/tick + stack-buffer newline counting (zero heap allocation). Eliminated the #1 app hotspot (12% -> ~0%).
 2. **CycloneDDS tuning** — `AllowMulticast=spdp` + heartbeat/ACK tuning reduced DDS overhead by 45%. See `src/play_launch/cyclonedds_play_launch.xml`.
+3. **sysinfo optimization** — disabled `multithread` feature (removes rayon `/proc` enumeration overhead), cached subprocess PID tree (refresh every 5 ticks instead of every tick), removed redundant CPU refresh.
 
-## A/B Comparison: Default vs Tuned DDS
+## Profile Comparison
 
-Profiled with `scripts/profile_autoware.sh` (monitoring optimization applied in both runs).
+Profiled with `perf record -F 499 -g --call-graph dwarf,16384` for 20 seconds each.
 
 ### Per-Thread Sample Distribution
 
-| Thread                          | Default DDS |     % | Tuned DDS |     % |    Change |
-|---------------------------------|------------:|------:|----------:|------:|----------:|
-| play_launch (main+tokio)        |         714 | 50.8% |       675 | 55.8% |       -5% |
-| play_launch-wor (rayon/sysinfo) |         401 | 28.5% |       376 | 31.1% |       -6% |
-| recvMC (DDS multicast)          |         133 |  9.5% |         0 |    0% | **-100%** |
-| recv (DDS unicast)              |          29 |  2.1% |       120 |  9.9% |     +314% |
-| tev (DDS transport events)      |          99 |  7.0% |        24 |  2.0% |  **-76%** |
-| dq.builtins (DDS delivery)      |          21 |  1.5% |        12 |  1.0% |      -43% |
-| recvUC                          |           4 |  0.3% |         0 |    0% |     -100% |
-| gc                              |           3 |  0.2% |         1 |  0.1% |      -67% |
-| **Total**                       |    **1405** |       |  **1209** |       |  **-14%** |
+| Thread                     | Default DDS | DDS tuned | Fully optimized | Total change |
+|----------------------------|------------:|----------:|----------------:|-------------:|
+| play_launch (main+tokio)   |         714 |       675 |             300 |     **-58%** |
+| play_launch-wor (tokio wk) |         401 |       376 |             380 |          -5% |
+| recvMC (DDS multicast)     |         133 |         0 |               0 |    **-100%** |
+| recv (DDS unicast)         |          29 |       120 |             138 |        ~same |
+| tev (DDS transport events) |          99 |        24 |              23 |     **-77%** |
+| dq.builtins (DDS delivery) |          21 |        12 |               6 |     **-71%** |
+| recvUC                     |           4 |         0 |               0 |       -100%  |
+| gc                         |           3 |         1 |               0 |       -100%  |
+| **Total**                  |    **1405** |  **1209** |         **849** |     **-40%** |
 
 ### Key Observations
 
 - **recvMC eliminated entirely**: `AllowMulticast=spdp` stops play_launch from processing the flood of multicast data from ~100 Autoware processes. This was the single biggest DDS cost.
-- **tev reduced 76%**: Heartbeat/ACK/NACK tuning (slower heartbeats, batched ACKs) dramatically reduced transport-event processing.
-- **recv (unicast) increased**: Expected — data previously received via multicast now arrives via unicast. But total recv (MC+UC+recv) dropped from 166 to 120 samples (**28% reduction**).
-- **Total DDS samples**: 287 -> 157, a **45% reduction** in DDS overhead.
-- **Thread count**: 42 -> 39. `MultipleReceiveThreads=false` merged separate unicast/multicast recv threads into one.
-- **Application threads unchanged**: sysinfo/rayon monitoring is now the dominant cost (~31%), not DDS.
+- **tev reduced 77%**: Heartbeat/ACK/NACK tuning (slower heartbeats, batched ACKs) dramatically reduced transport-event processing.
+- **play_launch main thread halved**: Disabling sysinfo's `multithread` feature eliminated rayon's parallel `/proc` enumeration overhead. The sysinfo crate reads ALL of `/proc` even when given specific PIDs to refresh (`ProcessesToUpdate::Some(...)` only filters after reading). Without rayon, this is a simpler sequential scan with no work-stealing overhead.
+- **Thread count**: 42 -> 39 -> 41. DDS tuning removed recv threads; sysinfo optimization removed rayon threads but tokio workers remain.
+- **No single hotspot**: After all optimizations, no userspace function exceeds 2% of samples. The profile is well-distributed across malloc/free, path operations, and kernel syscalls.
 
 ## Original CPU Breakdown (Before Any Optimization)
 
@@ -137,11 +137,27 @@ Users can optimize their own CycloneDDS configuration separately. Common options
 - **Larger `SocketReceiveBufferSize`** (10MB+) for bursty LiDAR/camera data
 - **`WhcHigh>500kB`** to increase writer history cache for reliable topics
 
+## Optimization #3: sysinfo Multithread + Subprocess Cache (DONE)
+
+**Status**: Implemented, verified in profiling.
+
+**Problem**: sysinfo 0.32 with default features includes `multithread`, which uses rayon to parallelize `/proc` enumeration. Critically, even `refresh_processes_specifics(ProcessesToUpdate::Some(pids))` reads ALL `/proc` entries then filters — the `Some(...)` filter is post-hoc. On a system with ~900 PIDs but only ~50 monitored, 95% of work was wasted. Additionally, `find_subprocess_pids()` walked `/proc/<pid>/task/<tid>/children` for every monitored process every tick.
+
+**Solution** (three parts):
+
+1. **Disable sysinfo `multithread` feature**: `sysinfo = { version = "0.32", default-features = false, features = ["system", "network"] }`. Eliminates rayon thread pool overhead (scheduling, work-stealing) for the `/proc` enumeration.
+
+2. **Cache subprocess PID tree**: Refresh every 5th tick (~10 seconds) instead of every tick. Process trees are stable in Autoware steady-state.
+
+3. **Remove redundant CPU refresh**: `refresh_cpu_usage()` was called before process refresh, then `refresh_cpu_all()` (superset) was called again in `collect_system_stats()`. Now `refresh_cpu_all()` is called once at the start of the tick.
+
+**Result**: CPU from ~5.5% to ~4.7%. Total samples from 1209 to 849 (30% reduction). The `play_launch` main thread samples dropped from 675 to 300 (55% reduction).
+
 ## Remaining Optimization Opportunities
 
-1. **Cache subprocess PID tree** — `find_subprocess_pids()` still reads `/proc/<pid>/task/<tid>/children` every tick. Refresh every N ticks instead (process trees are stable in steady-state). Currently ~2% of CPU.
+1. **Bypass sysinfo for per-process refresh** — sysinfo still reads ALL of `/proc` to find the ~50 monitored PIDs. Could read `/proc/<pid>/stat` and `/proc/<pid>/statm` directly for each monitored PID (memory, CPU, disk_usage are all available from procfs). Would eliminate the full `/proc` enumeration entirely.
 
-2. **Reduce sysinfo overhead** — `sysinfo::get_all_pid_entries` (reading `/proc` dirs via rayon) is now the dominant cost at ~31% of samples. Consider reducing monitoring frequency from 2s to 5s, or caching the process list.
+2. **Reduce monitoring frequency** — The 2-second default may be unnecessarily frequent for steady-state. A 5-second interval would cut monitoring overhead by 60%.
 
 3. **Add `--disable-network-stats` flag** — Allow users who don't need TCP/UDP connection counts to skip network monitoring entirely.
 
