@@ -187,9 +187,9 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
             let auto_load_checkbox = if let Some(auto_load) = node.auto_load {
                 let checked = if auto_load { "checked" } else { "" };
                 format!(
-                    r#"<label class="auto-load-checkbox" title="Auto-load when container starts">
+                    r#"<label class="toggle-checkbox" title="Auto-load when container starts">
         <input type="checkbox" {} onchange="toggleAutoLoad('{}', this.checked)">
-        <span class="auto-load-label">Auto-load</span>
+        <span class="toggle-label">Auto-load</span>
     </label>"#,
                     checked, js_escaped_name
                 )
@@ -320,28 +320,25 @@ fn render_node_card(node: &super::web_types::NodeSummary, indent_class: &str) ->
                 String::new()
             };
 
-            // Add respawn checkbox if respawn configuration is available
-            let respawn_checkbox = if let Some(respawn_enabled) = node.respawn_enabled {
-                let checked = if respawn_enabled { "checked" } else { "" };
-                let delay_text = if let Some(delay) = node.respawn_delay {
-                    if delay > 0.0 {
-                        format!(" ({}s)", delay)
-                    } else {
-                        String::new()
-                    }
+            // Respawn checkbox — always shown for nodes/containers (defaults to unchecked)
+            let respawn_enabled = node.respawn_enabled.unwrap_or(false);
+            let checked = if respawn_enabled { "checked" } else { "" };
+            let delay_text = if let Some(delay) = node.respawn_delay {
+                if delay > 0.0 {
+                    format!(" ({}s)", delay)
                 } else {
                     String::new()
-                };
-                format!(
-                    r#"<label class="respawn-checkbox" title="Auto-restart when node exits">
-        <input type="checkbox" {} onchange="toggleRespawn('{}', this.checked)">
-        <span class="respawn-label">Auto-restart{}</span>
-    </label>"#,
-                    checked, js_escaped_name, delay_text
-                )
+                }
             } else {
                 String::new()
             };
+            let respawn_checkbox = format!(
+                r#"<label class="toggle-checkbox" title="Auto-restart when node exits">
+        <input type="checkbox" {} onchange="toggleRespawn('{}', this.checked)">
+        <span class="toggle-label">Auto-restart{}</span>
+    </label>"#,
+                checked, js_escaped_name, delay_text
+            );
 
             format!(
                 r#"{}

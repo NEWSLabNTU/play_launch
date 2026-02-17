@@ -293,8 +293,8 @@ button:hover:not(:disabled) {
 .btn-load-all { background: #059669; }
 .btn-unload-all { background: #dc2626; }
 
-/* Respawn checkbox */
-.respawn-checkbox {
+/* Toggle checkbox (shared style for Auto-restart and Auto-load) */
+.toggle-checkbox {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -309,18 +309,18 @@ button:hover:not(:disabled) {
     user-select: none;
 }
 
-.respawn-checkbox:hover {
+.toggle-checkbox:hover {
     background: var(--border-color);
 }
 
-.respawn-checkbox input[type="checkbox"] {
+.toggle-checkbox input[type="checkbox"] {
     cursor: pointer;
     width: 14px;
     height: 14px;
     margin: 0;
 }
 
-.respawn-label {
+.toggle-label {
     white-space: nowrap;
 }
 

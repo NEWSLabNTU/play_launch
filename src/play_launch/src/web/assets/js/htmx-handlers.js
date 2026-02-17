@@ -6,29 +6,19 @@ document.body.addEventListener('htmx:afterRequest', function(evt) {
     // Extract node name from path (e.g., /api/nodes/my_node/start -> my_node)
     const nodeMatch = path.match(/\/api\/nodes\/([^/]+)\/(start|stop|restart|load|unload)/);
 
-    if (path.includes('/start') || path.includes('/stop') || path.includes('/restart')) {
+    if (path.includes('/start') || path.includes('/stop') || path.includes('/restart') ||
+        path.includes('/load') || path.includes('/unload')) {
         setTimeout(() => {
             htmx.ajax('GET', '/api/nodes', {target: '#node-list'});
             htmx.ajax('GET', '/api/health', {target: '#health-badges'});
         }, 500);
 
-        // Open right panel for the node that was controlled
+        // Update right panel only if it's already open
         if (nodeMatch && nodeMatch[1]) {
             const nodeName = decodeURIComponent(nodeMatch[1]);
             setTimeout(() => {
-                showNodePanel(nodeName, true); // preserveTab = true
+                showNodePanel(nodeName, true, true); // preserveTab=true, onlyIfOpen=true
             }, 600);
-        }
-    } else if (path.includes('/load') || path.includes('/unload')) {
-        // For load/unload, only update the panel if it's already open
-        if (nodeMatch && nodeMatch[1]) {
-            const panelOpen = document.getElementById('right-panel').classList.contains('open');
-            if (panelOpen) {
-                const nodeName = decodeURIComponent(nodeMatch[1]);
-                setTimeout(() => {
-                    showNodePanel(nodeName, true); // preserveTab = true
-                }, 100);
-            }
         }
     }
 });
