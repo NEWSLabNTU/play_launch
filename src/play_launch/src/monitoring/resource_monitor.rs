@@ -181,24 +181,32 @@ pub struct ResourceMonitor {
     io_helper: Option<super::io_helper_client::IoHelperClient>,
     io_helper_unavailable: bool, // Track if helper failed to spawn (warn once)
     io_stats_cache: std::collections::HashMap<u32, play_launch::ipc::ProcIoStats>, // Cache for batch I/O reads
+
+    // Network connection counts cached once per tick (/proc/net/* is namespace-wide)
+    net_connections_cache: Option<(u32, u32)>, // (tcp, udp) — same for all processes in namespace
 }
 
-/// Count network connections from /proc/<pid>/net/{tcp,udp} files
-/// Each line (except header) represents a connection
+/// Count newlines in a file using a stack buffer (no heap allocation).
+/// Returns line count minus 1 (to skip the header line in /proc/net/* files).
 #[cfg(target_os = "linux")]
-fn count_connections_in_file(path: &str) -> u32 {
-    match std::fs::read_to_string(path) {
-        Ok(content) => {
-            // Count lines minus 1 for header
-            let line_count = content.lines().count();
-            if line_count > 0 {
-                (line_count - 1) as u32
-            } else {
-                0
+fn count_lines_in_file(path: &str) -> u32 {
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return 0,
+    };
+    let mut buf = [0u8; 8192];
+    let mut newlines: u32 = 0;
+    loop {
+        match file.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                newlines += buf[..n].iter().filter(|&&b| b == b'\n').count() as u32;
             }
+            Err(_) => break,
         }
-        Err(_) => 0, // File may not exist if no connections
     }
+    newlines.saturating_sub(1) // subtract header line
 }
 
 /// Find all subprocess PIDs recursively (Linux only)
@@ -293,6 +301,7 @@ impl ResourceMonitor {
             io_helper: None,
             io_helper_unavailable: true, // Will be set to false if helper spawns successfully
             io_stats_cache: HashMap::new(),
+            net_connections_cache: None,
         })
     }
 
@@ -670,14 +679,20 @@ impl ResourceMonitor {
         Ok((None, None, None, None, None, None, None))
     }
 
-    /// Count TCP and UDP connections for a process (Linux-specific)
+    /// Count TCP and UDP connections (Linux-specific).
+    /// /proc/<pid>/net/* is namespace-wide — all processes in the same network
+    /// namespace return identical data. We cache the result once per tick and
+    /// reuse it for every process, turning ~400 reads into 4.
     #[cfg(target_os = "linux")]
-    fn collect_network_connections(&self, pid: u32) -> (u32, u32) {
-        let tcp_count = count_connections_in_file(&format!("/proc/{}/net/tcp", pid))
-            + count_connections_in_file(&format!("/proc/{}/net/tcp6", pid));
-        let udp_count = count_connections_in_file(&format!("/proc/{}/net/udp", pid))
-            + count_connections_in_file(&format!("/proc/{}/net/udp6", pid));
-
+    fn collect_network_connections(&mut self, pid: u32) -> (u32, u32) {
+        if let Some(cached) = self.net_connections_cache {
+            return cached;
+        }
+        let tcp_count = count_lines_in_file(&format!("/proc/{}/net/tcp", pid))
+            + count_lines_in_file(&format!("/proc/{}/net/tcp6", pid));
+        let udp_count = count_lines_in_file(&format!("/proc/{}/net/udp", pid))
+            + count_lines_in_file(&format!("/proc/{}/net/udp6", pid));
+        self.net_connections_cache = Some((tcp_count, udp_count));
         (tcp_count, udp_count)
     }
 
@@ -1181,8 +1196,11 @@ pub async fn run_monitoring_task(
                     );
                 }
 
-                // Batch read I/O stats for all PIDs
+                // Clear per-tick caches
                 monitor.io_stats_cache.clear();
+                monitor.net_connections_cache = None;
+
+                // Batch read I/O stats for all PIDs
                 if let Some(ref mut helper) = monitor.io_helper {
                     let pids: Vec<u32> = processes.keys().copied().collect();
 
