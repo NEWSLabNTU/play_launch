@@ -184,6 +184,10 @@ pub struct ResourceMonitor {
 
     // Network connection counts cached once per tick (/proc/net/* is namespace-wide)
     net_connections_cache: Option<(u32, u32)>, // (tcp, udp) — same for all processes in namespace
+
+    // Subprocess PID cache — refreshed by time interval (process trees are stable in steady-state)
+    subprocess_cache: HashMap<u32, Vec<u32>>, // parent PID -> child PIDs
+    subprocess_cache_last_refresh: std::time::Instant,
 }
 
 /// Count newlines in a file using a stack buffer (no heap allocation).
@@ -302,6 +306,8 @@ impl ResourceMonitor {
             io_helper_unavailable: true, // Will be set to false if helper spawns successfully
             io_stats_cache: HashMap::new(),
             net_connections_cache: None,
+            subprocess_cache: HashMap::new(),
+            subprocess_cache_last_refresh: std::time::Instant::now(),
         })
     }
 
@@ -314,8 +320,8 @@ impl ResourceMonitor {
             .process(pid_obj)
             .ok_or_else(|| eyre::eyre!("Process {} not found", pid))?;
 
-        // Discover subprocesses for aggregation
-        let subprocess_pids = find_subprocess_pids(pid);
+        // Discover subprocesses for aggregation (cached, refreshed by time interval)
+        let subprocess_pids = self.subprocess_cache.get(&pid).cloned().unwrap_or_default();
 
         // Parse /proc/[pid]/stat for accurate CPU times (in clock ticks)
         // Aggregate from parent + all children
@@ -495,8 +501,9 @@ impl ResourceMonitor {
         let current_time = SystemTime::now();
 
         // Refresh system-wide information
+        // Note: refresh_cpu_all() is already called at the start of the tick
+        // (before process refresh), so we only need memory and network here.
         self.system.refresh_memory();
-        self.system.refresh_cpu_all();
         self.networks.refresh();
 
         // Collect CPU metrics
@@ -1182,8 +1189,10 @@ pub async fn run_monitoring_task(
 
                 if !pids_to_refresh.is_empty() {
 
-                    // CRITICAL: Refresh global CPU times first!
-                    monitor.system.refresh_cpu_usage();
+                    // Refresh global CPU times first (needed for per-process CPU %).
+                    // refresh_cpu_all() is called later in collect_system_stats() which
+                    // is a superset, but we need global times BEFORE process refresh.
+                    monitor.system.refresh_cpu_all();
 
                     // Refresh processes
                     monitor.system.refresh_processes_specifics(
@@ -1199,6 +1208,21 @@ pub async fn run_monitoring_task(
                 // Clear per-tick caches
                 monitor.io_stats_cache.clear();
                 monitor.net_connections_cache = None;
+
+                // Refresh subprocess tree cache every 10 seconds,
+                // OR immediately when the monitored PID set changes (new process registered).
+                // Process trees are stable in steady-state; no need to walk /proc every tick.
+                const SUBPROCESS_CACHE_INTERVAL: Duration = Duration::from_secs(1);
+                let pids_changed = processes.len() != monitor.subprocess_cache.len()
+                    || processes.keys().any(|pid| !monitor.subprocess_cache.contains_key(pid));
+                if pids_changed || monitor.subprocess_cache_last_refresh.elapsed() >= SUBPROCESS_CACHE_INTERVAL {
+                    monitor.subprocess_cache.clear();
+                    for &pid in processes.keys() {
+                        let children = find_subprocess_pids(pid);
+                        monitor.subprocess_cache.insert(pid, children);
+                    }
+                    monitor.subprocess_cache_last_refresh = std::time::Instant::now();
+                }
 
                 // Batch read I/O stats for all PIDs
                 if let Some(ref mut helper) = monitor.io_helper {
