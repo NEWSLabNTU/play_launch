@@ -57,6 +57,20 @@ impl Drop for CleanupGuard {
 pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     let input_file = &args.input_file;
 
+    // Become a child subreaper so orphaned grandchildren get reparented to us
+    // instead of PID 1. This ensures waitpid() catches exits of any descendant
+    // even if the intermediate parent dies first.
+    #[cfg(target_os = "linux")]
+    {
+        use libc::{prctl, PR_SET_CHILD_SUBREAPER};
+        if unsafe { prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0 {
+            warn!(
+                "Failed to set PR_SET_CHILD_SUBREAPER: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+
     // Load runtime configuration to check service readiness settings
     let runtime_config = cli::config::load_runtime_config(
         args.common.config.as_deref(),
