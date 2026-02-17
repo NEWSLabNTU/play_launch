@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  CycloneDDS profile optimized for the play_launch monitoring process.
+
+  play_launch is a lightweight DDS participant that only subscribes to
+  ComponentEvent topics and (optionally) /diagnostics. It does not publish
+  user data. This profile reduces DDS CPU overhead by minimizing multicast
+  traffic, discovery frequency, and reliable-protocol chattiness.
+
+  Set via: CYCLONEDDS_URI=file:///path/to/cyclonedds_play_launch.xml
+
+  Note: this config is inherited by child processes (they share the env).
+  For single-host Autoware workloads, these settings are safe for all
+  participants. For multi-host setups with data multicast, users should
+  use their own CYCLONEDDS_URI or omit this config.
+-->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config
+              https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain Id="any">
+    <General>
+      <!-- Only use multicast for SPDP participant discovery.
+           Data and SEDP endpoint discovery use unicast only.
+           Biggest CPU win: recv threads no longer process the flood of
+           multicast data traffic from ~100 Autoware processes. -->
+      <AllowMulticast>spdp</AllowMulticast>
+
+      <!-- Larger messages = fewer packets = fewer recv thread wakeups. -->
+      <MaxMessageSize>65500B</MaxMessageSize>
+    </General>
+
+    <Discovery>
+      <!-- Reduce SPDP announcement frequency (default: ~80% of lease, max 30s).
+           30s is fine — play_launch doesn't need fast participant discovery. -->
+      <SPDPInterval>30s</SPDPInterval>
+
+      <!-- Longer lease = fewer keepalive messages from remote participants.
+           Trade-off: crashed participants not detected for up to 60s.
+           Acceptable for a monitoring tool. -->
+      <LeaseDuration>60s</LeaseDuration>
+    </Discovery>
+
+    <Internal>
+      <!-- Single receive thread — play_launch has low data throughput.
+           Default spawns separate unicast + multicast threads. -->
+      <MultipleReceiveThreads>false</MultipleReceiveThreads>
+
+      <!-- Squash all DCPS participants into one DDSI participant.
+           Reduces per-participant liveliness assertion traffic. -->
+      <SquashParticipants>true</SquashParticipants>
+
+      <!-- Minimal built-in endpoint set — only the first participant
+           publishes discovery data. Reduces SEDP overhead.
+           Note: only fully compatible with CycloneDDS peers. -->
+      <BuiltinEndpointSet>minimal</BuiltinEndpointSet>
+
+      <!-- Slow down heartbeats for reliable subscriptions (ComponentEvent).
+           Default: 100ms base, 5ms min, 8s max.
+           play_launch processes events asynchronously; latency is not critical. -->
+      <HeartbeatInterval min="50ms" minsched="200ms" max="30s">1s</HeartbeatInterval>
+
+      <!-- Batch ACK/NACK responses to reduce tev thread work.
+           Default NackDelay=100ms, AckDelay=10ms. -->
+      <NackDelay>500ms</NackDelay>
+      <AckDelay>100ms</AckDelay>
+
+      <!-- Merge duplicate retransmit requests (reduces redundant work). -->
+      <RetransmitMerging>adaptive</RetransmitMerging>
+      <RetransmitMergingPeriod>20ms</RetransmitMergingPeriod>
+
+      <!-- Adequate socket buffer to prevent busy-looping on drops. -->
+      <SocketReceiveBufferSize min="2MB"/>
+    </Internal>
+  </Domain>
+</CycloneDDS>

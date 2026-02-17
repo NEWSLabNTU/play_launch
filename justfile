@@ -313,6 +313,14 @@ quality:
     echo "Running checks..."
     just check
 
+# Profile play_launch during Autoware execution (default DDS config)
+profile-autoware:
+    scripts/profile_autoware.sh
+
+# Profile play_launch with optimized CycloneDDS config
+profile-autoware-tuned:
+    scripts/profile_autoware.sh --dds-tuned
+
 # Check version consistency across all files
 version-check:
     python3 scripts/bump_version.py --check
