@@ -85,6 +85,7 @@ int main(int argc, char * argv[])
   if (package_name.empty() || plugin_name.empty()) {
     const char * msg = "component_node: --package and --plugin are required\n";
     if (write(STDERR_FILENO, msg, std::strlen(msg)) < 0) {
+      // Suppress warn_unused_result; best-effort write before exit
     }
     if (ready_fd >= 0) {
       write_ready(ready_fd, "ERR --package and --plugin are required");

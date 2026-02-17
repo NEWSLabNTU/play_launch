@@ -421,6 +421,7 @@ CloneIsolatedComponentManager::ChildInfo CloneIsolatedComponentManager::spawn_ch
     std::string err = "ERR execvp failed: " + std::string(std::strerror(errno));
     err += "\n";
     if (write(pipefd[1], err.data(), err.size()) < 0) {
+      // Suppress warn_unused_result; best-effort write before _exit
     }
     close(pipefd[1]);
     _exit(127);
