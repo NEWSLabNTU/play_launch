@@ -319,6 +319,22 @@ quality:
     echo "Running checks..."
     just check
 
+# Run Autoware planning simulation using the project build
+run-autoware *ARGS:
+    #!/usr/bin/env bash
+    set -e
+    source /home/aeon/repos/autoware/1.5.0-ws/install/setup.bash
+    source install/setup.bash
+    export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    export DISPLAY=${DISPLAY:-:1}
+    ros2 run play_launch play_launch launch \
+        --web-addr 0.0.0.0:8080 \
+        {{ARGS}} \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="$HOME/autoware_map/sample-map-planning" \
+        vehicle_model:=sample_vehicle \
+        sensor_model:=sample_sensor_kit
+
 # Profile play_launch during Autoware execution (default DDS config)
 profile-autoware:
     scripts/profile_autoware.sh
