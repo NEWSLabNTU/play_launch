@@ -34,7 +34,10 @@ Implementation: `src/python/api/utils.rs` (substitution handling), `src/params.r
 ## Installation & Usage
 
 ```sh
-just build                          # Build (ALWAYS use this, NEVER colcon directly)
+just build                          # Full build: colcon + bundle + wheel
+just build-cpp                      # C++ only (msgs + container)
+just build-rust                     # Rust only (assumes C++ install/ exists)
+just build-wheel                    # Bundle + wheel only (no colcon rebuild)
 just run launch <pkg> <launch_file> # Run with colcon build
 play_launch launch <pkg> <launch>   # Run if installed via pip
 play_launch plot                    # Analysis
@@ -140,13 +143,12 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-02-18**: Phase 21 (build optimization) mostly complete: `scripts/bundle_wheel.sh` with artifact manifest, incremental build recipes (`build-cpp`, `build-rust`, `build-wheel`), proper wheel platform tag via `wheel tags`. Phase 20 (web UI modernization) planned: Preact + htm + SSE-driven state, vendored locally (no CDN), zero polling.
+- **2026-02-17**: Phase 19 complete — fork()+exec() isolation, child death monitoring, parallel loading, event-driven container status. PR_SET_CHILD_SUBREAPER added to replay. Subprocess PID cache uses time-based 1s interval.
 - **2026-02-16**: Fix container parameter passing in fork+exec isolation: `write_params_file()` now serializes `request->parameters` (not `extra_arguments`), uses `/**:` wildcard YAML namespace, enforces decimal points on double arrays. Smoke test (`tests/src/health.rs`) detects `ComponentEvent LOAD_FAILED` events. `component_node` supports `--use-intra-process-comms`. Autoware: 64/64 composable nodes load successfully.
 - **2026-02-15**: Default `--container-mode isolated` — replay overrides stock containers to `play_launch_container` with fork+exec isolation. `ComponentEvent` subscription conditional on mode (skipped for `stock`). Nextest failure output deferred to end (`--failure-output final`); isolated-container tests retry once for DDS flakes.
-- **2026-02-11**: Consolidated 5 container docs → 2 (`container-isolation-design.md` + `clone-vm-container-design.md`). Revised Phase 19 roadmap with Phase 19.0 (consolidate binary).
 - **2026-02-08**: Phase 18 complete — ObservableComponentManager + play_launch_msgs packages.
-- **2026-02-07**: Nextest integration test infrastructure with ManagedProcess RAII guard.
 - **2026-02-06**: Context unification investigation, namespace fix, YAML parameter loading for composable nodes. See `docs/roadmap/phase-17-context_unification.md`.
-- **2026-02-04**: Namespace normalization, runtime substitution resolution, `<let>` ordering test, debug logging cleanup.
 - **2026-02-01**: Phase 14 complete — Python launch file execution. Phase 15 — PyO3 type safety.
 - **2026-01-27**: Phase 13 complete — Rust parser as default (3-12x speedup).
 
@@ -155,6 +157,8 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 - **Roadmap**: `docs/roadmap/README.md` — all phases and progress
 - **Container Design**: `docs/container-isolation-design.md` — why containers, Linux isolation, RMW consequences
 - **Clone VM Design**: `docs/clone-vm-container-design.md` — clone(CLONE_VM) implementation spec
+- **Web UI Modernization**: `docs/roadmap/phase-20-web_ui_modernization.md` — Preact + SSE migration plan
+- **Build Optimization**: `docs/roadmap/phase-21-build_optimization.md` — bundle script, incremental builds
 - **Migration Guide**: `docs/parser-migration-guide.md` — Rust parser migration (v0.6.0+)
 
 ## Parser Parity Status
