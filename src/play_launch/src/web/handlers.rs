@@ -385,23 +385,9 @@ pub async fn unload_all_nodes(
 /// Toggle respawn for a node
 pub async fn toggle_respawn(
     State(state): State<Arc<WebState>>,
-    Path((name, enabled_str)): Path<(String, String)>,
+    Path((name, enabled)): Path<(String, super::web_types::BoolParam)>,
 ) -> Response {
-    let enabled = match enabled_str.as_str() {
-        "true" | "1" => true,
-        "false" | "0" => false,
-        _ => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "Invalid enabled value: '{}'. Use 'true' or 'false'",
-                    enabled_str
-                ),
-            )
-                .into_response();
-        }
-    };
-
+    let enabled = enabled.as_bool();
     let coordinator = &state.member_handle;
     match coordinator.toggle_respawn(&name, enabled).await {
         Ok(()) => {
@@ -430,23 +416,9 @@ pub async fn toggle_respawn(
 /// Toggle auto-load for a composable node
 pub async fn toggle_auto_load(
     State(state): State<Arc<WebState>>,
-    Path((name, enabled_str)): Path<(String, String)>,
+    Path((name, enabled)): Path<(String, super::web_types::BoolParam)>,
 ) -> Response {
-    let enabled = match enabled_str.as_str() {
-        "true" | "1" => true,
-        "false" | "0" => false,
-        _ => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "Invalid enabled value: '{}'. Use 'true' or 'false'",
-                    enabled_str
-                ),
-            )
-                .into_response();
-        }
-    };
-
+    let enabled = enabled.as_bool();
     let coordinator = &state.member_handle;
     match coordinator.toggle_auto_load(&name, enabled).await {
         Ok(()) => {

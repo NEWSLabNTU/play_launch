@@ -1,6 +1,6 @@
 # Phase 20: Web UI Modernization
 
-**Status**: Complete (Phase 20.0–20.5)
+**Status**: Complete (Phase 20.0–20.6)
 **Priority**: Medium (DX improvement, eliminates polling overhead, enables future features)
 **Dependencies**: None (standalone frontend refactor, no backend API changes required)
 
@@ -116,6 +116,7 @@ function NodeCard({ node }) {
               └── 20.3 Panel + log components   ✅ complete
                     └── 20.4 Diagnostics + cleanup  ✅ complete
 20.5 Type-safe API contract (ts-rs)            ✅ complete
+20.6 Typed path parameters (BoolParam)         ✅ complete
 ```
 
 Each phase is independently deployable — the app works after each phase, with
@@ -576,6 +577,81 @@ Type errors caught at lint time             ← e.g. "status.value.status"
 - [x] `npm run lint` includes type checking
 - [x] Vendor JS files excluded from checking (no false positives from minified code)
 - [x] ts-rs is a dev-dependency only (no runtime or binary size impact)
+
+---
+
+## Phase 20.6: Typed Path Parameters
+
+**Status**: Complete
+
+Replace stringly-typed path parameters in API handlers with Rust enums that
+serde deserializes automatically and ts-rs exports as TypeScript literal unions.
+
+### Audit Findings
+
+All API routes were audited for stringly-typed parameters:
+
+| Route pattern                          | Parameter     | Before            | After                    |
+|----------------------------------------|---------------|-------------------|--------------------------|
+| `/api/nodes/:name/respawn/:enabled`    | `:enabled`    | `String` + manual match on `"true"/"false"/"1"/"0"` (14 lines) | `BoolParam` enum (1 line) |
+| `/api/nodes/:name/auto-load/:enabled`  | `:enabled`    | `String` + manual match (same 14 lines) | `BoolParam` enum (1 line) |
+| `/api/nodes/:name/start` etc.          | (none)        | Fixed route paths — no parameters | No change needed |
+| `/api/nodes/start-all` etc.            | (none)        | No parameters | No change needed |
+| SSE event `type` field                 | (JSON body)   | Already typed via `StateEvent` ts-rs union | No change needed |
+| `node_type` field                      | (JSON body)   | Already typed via `NodeType` ts-rs union | No change needed |
+| Status strings                         | (JSON body)   | Already typed via `UnifiedStatus` ts-rs union | No change needed |
+
+Only the two toggle endpoints had stringly-typed path parameters. All other
+string-based patterns (event types, node types, status values) are already
+covered by ts-rs type generation from Phase 20.5.
+
+### BoolParam Enum
+
+```rust
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BoolParam {
+    True,   // deserializes from "true"
+    False,  // deserializes from "false"
+}
+```
+
+ts-rs generates: `export type BoolParam = "true" | "false";`
+
+Benefits:
+- **Rust**: Axum deserializes path segment automatically, returns 422 for invalid values
+- **TypeScript**: `toBoolParam()` helper returns `BoolParam` type — tsc catches `'enable'`/`'disable'` mistakes at lint time
+- **28 lines removed** from handlers (two 14-line manual match blocks)
+
+### Work Items
+
+- [x] Add `BoolParam` enum to `web_types.rs` with `Serialize + Deserialize + TS` derives
+- [x] Rewrite `toggle_respawn()`: `Path<(String, String)>` → `Path<(String, BoolParam)>`
+- [x] Rewrite `toggle_auto_load()`: same change
+- [x] Add `toBoolParam()` typed helper in `NodeCard.js`
+- [x] Update checkbox `onChange` handlers to use `toBoolParam(e.target.checked)`
+- [x] Regenerate bindings (11 files, was 10)
+- [x] Update `types.d.ts` barrel to include `BoolParam`
+- [x] `tsc --noEmit` passes
+
+### Files Changed
+
+| File                                  | Action                                                |
+|---------------------------------------|-------------------------------------------------------|
+| `src/web/web_types.rs`               | Add `BoolParam` enum + `as_bool()` method            |
+| `src/web/handlers.rs`                | Simplify both toggle handlers (remove manual parsing) |
+| `src/web/assets/js/components/NodeCard.js` | Add `toBoolParam()` helper, use in checkboxes   |
+| `src/play_launch/bindings/BoolParam.ts` | New: auto-generated `"true" \| "false"` type       |
+| `src/web/assets/js/types.d.ts`       | Add `BoolParam` re-export                            |
+
+### Passing Criteria
+
+- [x] `BoolParam.ts` generated with correct `"true" | "false"` literal union
+- [x] `toggle_respawn()` and `toggle_auto_load()` use `BoolParam` (no string parsing)
+- [x] `tsc --noEmit` passes with zero errors
+- [x] `toBoolParam()` return type is `BoolParam` (tsc enforces literal correctness)
+- [x] `just build` succeeds
+- [x] Auto-restart / Auto-load checkboxes function correctly
 
 ---
 

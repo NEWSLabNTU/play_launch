@@ -119,6 +119,14 @@ function StderrIcon({ node }) {
     `;
 }
 
+/** Convert a boolean to a BoolParam path segment ("true" | "false").
+ * @param {boolean} value
+ * @returns {import('../types').BoolParam}
+ */
+function toBoolParam(value) {
+    return value ? 'true' : 'false';
+}
+
 /** POST action helper — fires action and refreshes store. */
 async function postAction(url) {
     try {
@@ -221,14 +229,14 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
                 ${isProcess && node.respawn_enabled !== undefined && html`
                     <label class="toggle-checkbox" onClick=${(e) => e.stopPropagation()}>
                         <input type="checkbox" checked=${node.respawn_enabled}
-                            onChange=${(e) => postAction('/api/nodes/' + encodeURIComponent(name) + '/respawn/' + (e.target.checked ? 'enable' : 'disable'))} />
+                            onChange=${(e) => postAction('/api/nodes/' + encodeURIComponent(name) + '/respawn/' + toBoolParam(e.target.checked))} />
                         <span class="toggle-label">Auto-restart</span>
                     </label>
                 `}
                 ${isComposable && node.auto_load !== undefined && html`
                     <label class="toggle-checkbox" onClick=${(e) => e.stopPropagation()}>
                         <input type="checkbox" checked=${node.auto_load}
-                            onChange=${(e) => postAction('/api/nodes/' + encodeURIComponent(name) + '/auto-load/' + (e.target.checked ? 'enable' : 'disable'))} />
+                            onChange=${(e) => postAction('/api/nodes/' + encodeURIComponent(name) + '/auto-load/' + toBoolParam(e.target.checked))} />
                         <span class="toggle-label">Auto-load</span>
                     </label>
                 `}
@@ -240,7 +248,7 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
                     <${ComposableButton} name=${name} statusStr=${statusStr}
                         pendingAction=${pendingAction} setPendingAction=${setPendingAction} />
                 `}
-                ${isContainer && html`
+                ${isContainer && statusStr === 'running' && html`
                     <button class="btn-load-all" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/load-all')}>
                         Load All
                     </button>

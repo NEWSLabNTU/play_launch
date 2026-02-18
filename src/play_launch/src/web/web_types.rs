@@ -8,7 +8,7 @@
 //! the `.d.ts` files in `bindings/`.
 
 use crate::member_actor::{MemberState as ActorMemberState, MemberSummary as ActorMemberSummary};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use ts_rs::TS;
 
@@ -227,4 +227,23 @@ pub struct NodeDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional = nullable))]
     pub cmdline: Option<String>,
+}
+
+/// Boolean path parameter for toggle endpoints (e.g. `/respawn/true`).
+///
+/// Replaces manual `match enabled_str { "true" => ..., "false" => ... }` parsing.
+/// Axum deserializes the path segment automatically; ts-rs generates `"true" | "false"`.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export))]
+#[serde(rename_all = "lowercase")]
+pub enum BoolParam {
+    True,
+    False,
+}
+
+impl BoolParam {
+    pub fn as_bool(self) -> bool {
+        matches!(self, BoolParam::True)
+    }
 }

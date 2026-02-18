@@ -3,6 +3,7 @@
 // Regenerate with: cargo test -- export_bindings (in src/play_launch/)
 
 export type { BlockReason } from '../../../../bindings/BlockReason';
+export type { BoolParam } from '../../../../bindings/BoolParam';
 export type { ComposableBlockReason } from '../../../../bindings/ComposableBlockReason';
 export type { ComposableNodeStatus } from '../../../../bindings/ComposableNodeStatus';
 export type { HealthSummary } from '../../../../bindings/HealthSummary';
