@@ -33,49 +33,38 @@ install-deps:
     rosdep update
     rosdep install --from-paths src --ignore-src -r -y
 
-# Build Rust binaries with colcon and package Python wheel
+# Full build: colcon + bundle + wheel
 build:
     #!/usr/bin/env bash
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
-
-    # Step 1: Build Rust binaries with colcon
-    echo "Building Rust binaries with colcon..."
     colcon build {{colcon_flags}} --base-paths src
-
-    # Step 2: Copy binaries to Python package
-    echo "Copying binaries to python/play_launch/bin/..."
-    mkdir -p python/play_launch/bin
-    cp install/play_launch/lib/play_launch/play_launch python/play_launch/bin/
-    cp install/play_launch/lib/play_launch/play_launch_io_helper python/play_launch/bin/
-    chmod +x python/play_launch/bin/*
-
-    # Step 3: Bundle play_launch_msgs shared libraries
-    echo "Copying play_launch_msgs libraries to python/play_launch/lib/..."
-    mkdir -p python/play_launch/lib
-    cp install/play_launch_msgs/lib/libplay_launch_msgs*.so python/play_launch/lib/
-
-    # Step 3b: Bundle play_launch_container
-    echo "Copying play_launch_container binary and library..."
-    mkdir -p python/play_launch/lib/play_launch_container
-    cp install/play_launch_container/lib/play_launch_container/component_container python/play_launch/lib/play_launch_container/
-    cp install/play_launch_container/lib/play_launch_container/component_node python/play_launch/lib/play_launch_container/
-    chmod +x python/play_launch/lib/play_launch_container/component_container
-    chmod +x python/play_launch/lib/play_launch_container/component_node
-    cp install/play_launch_container/lib/libobservable_component_manager.so python/play_launch/lib/
-
-    # Create ament index marker so find_executable() discovers it
-    mkdir -p python/play_launch/share/ament_index/resource_index/packages
-    touch python/play_launch/share/ament_index/resource_index/packages/play_launch_container
-
-    # Step 4: Build wheel with uv
-    echo "Building wheel..."
+    scripts/bundle_wheel.sh
     uv build --wheel
-
-    # Show output
     echo ""
     echo "Build complete:"
     ls -lh dist/*.whl
+
+# C++ only (msgs + container)
+build-cpp:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    colcon build {{colcon_flags}} --packages-select play_launch_msgs play_launch_container --base-paths src
+
+# Rust only (assumes C++ install/ exists)
+build-rust:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    colcon build {{colcon_flags}} --packages-select play_launch --base-paths src
+
+# Bundle colcon artifacts + build wheel (no colcon rebuild)
+build-wheel:
+    #!/usr/bin/env bash
+    set -e
+    scripts/bundle_wheel.sh
+    uv build --wheel
 
 # Run play_launch with optional arguments (e.g., just run launch demo_nodes_cpp talker_listener.launch.py)
 run *ARGS:
@@ -120,7 +109,8 @@ verify-io-helper:
 
 # Clean all build artifacts
 clean:
-    rm -rf build install log dist target python/play_launch/bin/play_launch python/play_launch/bin/play_launch_io_helper python/play_launch/lib python/play_launch/share
+    rm -rf build install log dist target
+    scripts/bundle_wheel.sh --clean
 
 # Build source distribution
 build-sdist:

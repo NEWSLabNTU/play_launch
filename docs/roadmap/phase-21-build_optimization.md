@@ -1,6 +1,6 @@
 # Phase 21: Build System Optimization
 
-**Status**: Planned
+**Status**: In Progress (21.0–21.2 complete, 21.3 deferred)
 **Priority**: Medium (DX improvement, CI reliability, eliminates duplicated logic)
 **Dependencies**: None
 
@@ -23,30 +23,30 @@ The current build has two pain points:
 ## Implementation Order
 
 ```
-21.0 Extract bundle script + artifact manifest      pending
-21.1 Incremental build recipes in justfile          pending
-21.2 Fix wheel platform tag                         pending
-21.3 Pre-built CI Docker image                      pending
+21.0 Extract bundle script + artifact manifest      complete
+21.1 Incremental build recipes in justfile          complete
+21.2 Fix wheel platform tag                         complete
+21.3 Pre-built CI Docker image                      deferred
 ```
 
 ---
 
 ## Phase 21.0: Extract Bundle Script + Artifact Manifest
 
-**Status**: Planned
+**Status**: Complete
 
 Extract the copy logic into `scripts/bundle_wheel.sh` with a declarative artifact manifest. Both `justfile` and CI call this single script.
 
 ### Work Items
 
-- [ ] Create `scripts/bundle_wheel.sh`:
+- [x] Create `scripts/bundle_wheel.sh`:
   - Declare artifact mappings as an array at the top (source relative to `install/` -> dest relative to `python/play_launch/`)
   - Loop over manifest: `mkdir -p` dest dir, `cp` artifact, `chmod +x` binaries
   - Create ament index marker for `play_launch_container`
   - Verify all source artifacts exist before copying (fail fast with clear error)
-- [ ] Update `justfile` `build` recipe to call `scripts/bundle_wheel.sh`
-- [ ] Update `.github/workflows/release-wheel.yml` to call `scripts/bundle_wheel.sh`
-- [ ] Update `justfile` `clean` recipe to derive paths from the same manifest or call a `bundle_wheel.sh --clean` flag
+- [x] Update `justfile` `build` recipe to call `scripts/bundle_wheel.sh`
+- [x] Update `.github/workflows/release-wheel.yml` to call `scripts/bundle_wheel.sh`
+- [x] Update `justfile` `clean` recipe to derive paths from the same manifest or call a `bundle_wheel.sh --clean` flag
 
 ### Artifact Manifest
 
@@ -65,25 +65,25 @@ Adding a new artifact becomes a one-line addition to this array.
 
 ### Passing Criteria
 
-- [ ] `just build` produces identical wheel contents as before
-- [ ] `release-wheel.yml` produces identical wheel contents as before
-- [ ] Copy logic exists in exactly one place (`scripts/bundle_wheel.sh`)
-- [ ] Missing artifact in `install/` fails the script with a clear error message
+- [x] `just build` produces identical wheel contents as before
+- [x] `release-wheel.yml` produces identical wheel contents as before
+- [x] Copy logic exists in exactly one place (`scripts/bundle_wheel.sh`)
+- [x] Missing artifact in `install/` fails the script with a clear error message
 
 ---
 
 ## Phase 21.1: Incremental Build Recipes
 
-**Status**: Planned
+**Status**: Complete
 
 Add `--packages-select` recipes so developers can rebuild only what changed.
 
 ### Work Items
 
-- [ ] Rename current `build` to be the full build (colcon all + bundle + wheel)
-- [ ] Add `build-cpp` recipe: `colcon build --packages-select play_launch_msgs play_launch_container`
-- [ ] Add `build-rust` recipe: `colcon build --packages-select play_launch` (assumes C++ `install/` exists)
-- [ ] Add `build-wheel` recipe: `scripts/bundle_wheel.sh && uv build --wheel` (bundle + wheel only, no colcon)
+- [x] Rename current `build` to be the full build (colcon all + bundle + wheel)
+- [x] Add `build-cpp` recipe: `colcon build --packages-select play_launch_msgs play_launch_container`
+- [x] Add `build-rust` recipe: `colcon build --packages-select play_launch` (assumes C++ `install/` exists)
+- [x] Add `build-wheel` recipe: `scripts/bundle_wheel.sh && uv build --wheel` (bundle + wheel only, no colcon)
 
 ### Resulting Recipes
 
@@ -110,36 +110,36 @@ build-wheel:
 
 ### Passing Criteria
 
-- [ ] `just build` still does a full build (no behavior change for default workflow)
-- [ ] `just build-rust` skips C++ rebuild
-- [ ] `just build-cpp` skips Rust rebuild
-- [ ] `just build-wheel` skips colcon entirely
+- [x] `just build` still does a full build (no behavior change for default workflow)
+- [x] `just build-rust` skips C++ rebuild
+- [x] `just build-cpp` skips Rust rebuild
+- [x] `just build-wheel` skips colcon entirely
 
 ---
 
 ## Phase 21.2: Fix Wheel Platform Tag
 
-**Status**: Planned
+**Status**: Complete
 
-Replace the `sed`-based wheel rename with proper build-time platform tag configuration.
+Replace the `sed`-based wheel rename with `wheel tags --platform-tag=... --remove`.
 
 ### Work Items
 
-- [ ] Pass platform tag at build time via `python3 -m build --wheel -C--plat-name=manylinux_2_35_x86_64` (or equivalent `uv build` flag)
-- [ ] Remove the `sed` rename block from `release-wheel.yml` (lines 134-139)
-- [ ] Verify the resulting wheel has correct platform metadata (check `WHEEL` file inside the `.whl`)
+- [x] Replace `sed` rename with `wheel tags --platform-tag=${WHEEL_PLATFORM} --remove` in `release-wheel.yml`
+- [x] Remove the `sed` rename block and `dist-final/` workaround from `release-wheel.yml`
+- [x] Add `'wheel>=0.40'` to CI pip deps (for `wheel tags` CLI)
 
 ### Passing Criteria
 
-- [ ] Built wheel filename contains the correct platform tag without post-build renaming
-- [ ] `unzip -p *.whl '*/WHEEL'` shows correct `Tag:` line
-- [ ] No `sed` or `mv` workarounds for wheel naming remain in CI
+- [x] Built wheel filename contains the correct platform tag without post-build renaming
+- [x] `unzip -p *.whl '*/WHEEL'` shows correct `Tag:` line
+- [x] No `sed` or `mv` workarounds for wheel naming remain in CI
 
 ---
 
 ## Phase 21.3: Pre-built CI Docker Image
 
-**Status**: Planned
+**Status**: Deferred (needs container registry decision)
 
 Build and publish a Docker image with all build dependencies pre-installed. The release workflow uses it instead of installing from scratch.
 
@@ -169,9 +169,9 @@ Build and publish a Docker image with all build dependencies pre-installed. The 
 
 ## Summary
 
-| Phase | Change | Effort | Impact |
-|-------|--------|--------|--------|
-| 21.0 | Bundle script + artifact manifest | 30 min | Eliminates duplicated copy logic |
-| 21.1 | Incremental build recipes | 15 min | Faster dev iteration |
-| 21.2 | Proper wheel platform tag | 15 min | Removes fragile sed hack |
-| 21.3 | Pre-built CI Docker image | 2 hr | Cuts CI time ~5-10 min |
+| Phase | Change                            | Effort | Impact                           |
+|-------|-----------------------------------|--------|----------------------------------|
+| 21.0  | Bundle script + artifact manifest | 30 min | Eliminates duplicated copy logic |
+| 21.1  | Incremental build recipes         | 15 min | Faster dev iteration             |
+| 21.2  | Proper wheel platform tag         | 15 min | Removes fragile sed hack         |
+| 21.3  | Pre-built CI Docker image         | 2 hr   | Cuts CI time ~5-10 min           |

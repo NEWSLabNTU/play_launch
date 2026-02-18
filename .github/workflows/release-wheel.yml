@@ -83,14 +83,17 @@ jobs:
               ros-humble-unique-identifier-msgs \
               ros-humble-rosgraph-msgs \
               ros-humble-example-interfaces \
-              ros-humble-test-msgs
+              ros-humble-test-msgs \
+              ros-humble-rclcpp-components \
+              ros-humble-class-loader \
+              ros-humble-ament-index-cpp
 
             # Install Rust
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             source ~/.cargo/env
 
-            # Install colcon-cargo-ros2
-            pip3 install colcon-cargo-ros2 build wheel
+            # Install colcon-cargo-ros2 and build tools
+            pip3 install colcon-cargo-ros2 build 'wheel>=0.40'
 
             # Build with colcon
             cd /workspace
@@ -98,35 +101,25 @@ jobs:
             echo 'Building with colcon...'
             colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release --base-paths src
 
-            # Copy binaries to Python package
-            echo 'Copying binaries...'
-            mkdir -p python/play_launch/bin
-            cp install/play_launch/lib/play_launch/play_launch python/play_launch/bin/
-            cp install/play_launch/lib/play_launch/play_launch_io_helper python/play_launch/bin/
-            chmod +x python/play_launch/bin/*
+            # Bundle colcon artifacts into python/play_launch/{bin,lib,share}
+            scripts/bundle_wheel.sh
 
-            # Build wheel with setuptools
+            # Build wheel
             echo 'Building wheel...'
             python3 -m build --wheel
 
-            # Rename wheel with platform tag
-            mkdir -p dist-final
+            # Apply correct platform tag (replaces fragile sed rename)
             for whl in dist/*.whl; do
-              # Replace 'any' platform with actual platform
-              new_name=\$(basename \"\$whl\" | sed \"s/-py3-none-any.whl/-py3-none-${WHEEL_PLATFORM}.whl/\")
-              mv \"\$whl\" \"dist-final/\$new_name\"
+              wheel tags --platform-tag=${WHEEL_PLATFORM} --remove \"\$whl\"
             done
 
             # Show built wheels
-            ls -lh dist-final/
+            ls -lh dist/
 
             # Fix file ownership for GitHub Actions runner
-            chown -R \$(stat -c '%u:%g' /workspace) dist-final/ dist/ build/ install/ || true
+            chown -R \$(stat -c '%u:%g' /workspace) dist/ build/ install/ || true
           "
 
-        # Move final wheels to dist
-        mkdir -p dist
-        mv dist-final/*.whl dist/ 2>/dev/null || true
         ls -lh dist/
 
     - name: Upload wheel artifact

@@ -15,7 +15,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Current Status
 
-**Overall Progress**: ~95% complete (16 of 17 phases complete, Phase 17 in progress)
+**Overall Progress**: ~95% complete (17 of 18 phases complete, Phase 17 in progress, Phase 20 planned)
 
 **Timeline**: Started October 2025, ongoing development
 
@@ -72,7 +72,19 @@ This directory contains the implementation roadmap for play_launch, organized by
 | Phase | Status | Completion | Documentation |
 |-------|--------|------------|---------------|
 | **Phase 18**: Code Quality Improvements | ✅ Complete | 2026-02-08 | [phase-18-code_quality.md](./phase-18-code_quality.md) |
-| **Phase 19**: Clone-Isolated Component Manager | ⏳ Planned | - | [phase-19-isolated_container.md](./phase-19-isolated_container.md) |
+| **Phase 19**: Isolated Component Manager | ✅ Complete | 2026-02-17 | [phase-19-isolated_container.md](./phase-19-isolated_container.md) |
+
+### Web UI
+
+| Phase | Status | Completion | Documentation |
+|-------|--------|------------|---------------|
+| **Phase 20**: Web UI Modernization | ⏳ Planned | - | [phase-20-web_ui_modernization.md](./phase-20-web_ui_modernization.md) |
+
+### Build & Distribution
+
+| Phase | Status | Completion | Documentation |
+|-------|--------|------------|---------------|
+| **Phase 21**: Build System Optimization | 🔄 In Progress | - | [phase-21-build_optimization.md](./phase-21-build_optimization.md) |
 
 ---
 
@@ -104,13 +116,21 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ### Planned ⏳
 
-- ⏳ Clone-Isolated Component Manager (Phase 19) - Consolidate container into single binary, per-node process isolation via `clone(CLONE_VM)`, crash detection, cgroups CPU control
+- ⏳ Web UI Modernization (Phase 20) - Replace htmx + vanilla JS with Preact + htm + SSE-driven state
 - ⏳ Web UI Actor Integration (Phase 11) - Remove bridging layer, implement direct actor control
 - ⏳ Complete documentation (Phase 3)
 - ⏳ Comprehensive testing (Phase 4)
 - ⏳ Optional enhancements (Phase 5)
 
 ### Recently Completed 🎉
+
+- ✅ Isolated Component Manager (Phase 19 - Complete 2026-02-17)
+  - ✅ Consolidated ST/MT into single `component_container` binary (19.0)
+  - ✅ Per-node process isolation via fork()+exec() of `component_node` binary (19.1, 19.9, 19.10)
+  - ✅ Child death monitoring via pidfd + epoll (19.2)
+  - ✅ Container integration tests (19.4b)
+  - ✅ Event-driven container status with ComponentEvent (19.5)
+  - ✅ Parallel non-blocking node loading (19.8)
 
 - ✅ YAML Parameter Loading & Global Parameters (Phase 16 - Complete 2026-02-06)
   - ✅ Namespace normalization complete (all composable nodes have leading slashes)
@@ -222,14 +242,18 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Future Phases
 
-- **Phase 19**: Clone-Isolated Component Manager - See [phase-19-isolated_container.md](./phase-19-isolated_container.md)
-  - Phase 19.0: Consolidate ST/MT into single `component_container` binary with CLI flags
-  - Phase 19.1-19.2: Per-node process isolation via `clone(CLONE_VM)` with pidfd death monitoring
-  - Phase 19.3: Integration tests (crash isolation, IPC, PID visibility)
-  - Phase 19.4: play_launch Rust integration (config-driven container mode selection)
-  - Phase 19.5: Per-node cgroups CPU control via `CLONE_INTO_CGROUP` (optional)
-  - Phase 19.6: Intel MPK memory domain protection (optional, experimental)
-  - Design docs: `docs/container-isolation-design.md`, `docs/clone-vm-container-design.md`
+- **Phase 20**: Web UI Modernization - See [phase-20-web_ui_modernization.md](./phase-20-web_ui_modernization.md)
+  - Phase 20.0: Backend JSON-only API (convert HTML fragment endpoints to JSON)
+  - Phase 20.1: Client state store + SSE consumer (Preact signals, EventSource)
+  - Phase 20.2: Node list components (NodeCard, NodeList, Header, BulkOperations)
+  - Phase 20.3: Right panel + log viewer components (RightPanel, InfoTab, LogTab)
+  - Phase 20.4: Diagnostics view + cleanup (remove legacy JS, htmx)
+
+- **Phase 21**: Build System Optimization - See [phase-21-build_optimization.md](./phase-21-build_optimization.md)
+  - ✅ Phase 21.0: Extract bundle script + artifact manifest (deduplicate copy logic)
+  - ✅ Phase 21.1: Incremental build recipes in justfile
+  - ✅ Phase 21.2: Fix wheel platform tag (replace sed hack)
+  - ⏳ Phase 21.3: Pre-built CI Docker image (deferred)
 
 ## Future Considerations
 
