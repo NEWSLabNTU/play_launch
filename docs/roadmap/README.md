@@ -84,7 +84,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 | Phase | Status | Completion | Documentation |
 |-------|--------|------------|---------------|
-| **Phase 21**: Build System Optimization | 🔄 In Progress | - | [phase-21-build_optimization.md](./phase-21-build_optimization.md) |
+| **Phase 21**: Build System Optimization | ✅ Complete | 2026-02-18 | [phase-21-build_optimization.md](./phase-21-build_optimization.md) |
 
 ---
 
@@ -253,7 +253,7 @@ This directory contains the implementation roadmap for play_launch, organized by
   - ✅ Phase 21.0: Extract bundle script + artifact manifest (deduplicate copy logic)
   - ✅ Phase 21.1: Incremental build recipes in justfile
   - ✅ Phase 21.2: Fix wheel platform tag (replace sed hack)
-  - ⏳ Phase 21.3: Pre-built CI Docker image (deferred)
+  - ✅ Phase 21.3: Pre-built CI Docker image
 
 ## Future Considerations
 

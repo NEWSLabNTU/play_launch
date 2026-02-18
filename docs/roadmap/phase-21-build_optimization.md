@@ -1,6 +1,6 @@
 # Phase 21: Build System Optimization
 
-**Status**: In Progress (21.0–21.2 complete, 21.3 deferred)
+**Status**: Complete
 **Priority**: Medium (DX improvement, CI reliability, eliminates duplicated logic)
 **Dependencies**: None
 
@@ -26,7 +26,7 @@ The current build has two pain points:
 21.0 Extract bundle script + artifact manifest      complete
 21.1 Incremental build recipes in justfile          complete
 21.2 Fix wheel platform tag                         complete
-21.3 Pre-built CI Docker image                      deferred
+21.3 Pre-built CI Docker image                      complete
 ```
 
 ---
@@ -139,31 +139,33 @@ Replace the `sed`-based wheel rename with `wheel tags --platform-tag=... --remov
 
 ## Phase 21.3: Pre-built CI Docker Image
 
-**Status**: Deferred (needs container registry decision)
+**Status**: Complete
 
 Build and publish a Docker image with all build dependencies pre-installed. The release workflow uses it instead of installing from scratch.
 
 ### Work Items
 
-- [ ] Create `docker/builder.Dockerfile` with:
+- [x] Create `docker/builder.Dockerfile` with:
   - Base: `ubuntu:22.04`
   - ROS2 Humble (ros-humble-ros-core + all required packages)
   - Rust toolchain (stable)
   - Python build tools (pip, build, wheel, colcon-cargo-ros2)
   - `just` command runner
-- [ ] Create `.github/workflows/builder-image.yml`:
+  - `uv` (fast wheel builder)
+- [x] Create `.github/workflows/builder-image.yml`:
   - Triggered on changes to `docker/builder.Dockerfile` or manual dispatch
-  - Builds for `linux/amd64` and `linux/arm64` (QEMU)
-  - Pushes to `ghcr.io/<org>/play-launch-builder:humble`
-- [ ] Update `release-wheel.yml` to use the pre-built image instead of bare `ubuntu:22.04`
-- [ ] Document image rebuild process in the Dockerfile
+  - Builds for `linux/amd64` and `linux/arm64` (QEMU + buildx)
+  - Pushes to `ghcr.io/<owner>/play-launch-builder:humble` + SHA-tagged
+  - GHA cache for layer reuse across builds
+- [x] Update `release-wheel.yml` to use the pre-built image instead of bare `ubuntu:22.04`
+- [x] Document image rebuild process in the Dockerfile
 
 ### Passing Criteria
 
-- [ ] `release-wheel.yml` build step is reduced to `source /opt/ros/humble/setup.bash && just build`
-- [ ] CI build time reduced (no apt-get install, no rustup on every run)
-- [ ] Builder image is versioned and reproducible
-- [ ] arm64 wheel builds still work via QEMU + multi-platform image
+- [x] `release-wheel.yml` build step reduced to colcon build + bundle + wheel (no apt/rustup/pip)
+- [x] CI build time reduced (no apt-get install, no rustup on every run)
+- [x] Builder image is versioned and reproducible (`:humble` + `:humble-<sha>` tags)
+- [x] arm64 wheel builds still work via QEMU + multi-platform image
 
 ---
 
