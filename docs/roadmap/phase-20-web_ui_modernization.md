@@ -1,6 +1,6 @@
 # Phase 20: Web UI Modernization
 
-**Status**: In Progress (Phase 20.0–20.1 complete)
+**Status**: Complete (Phase 20.0–20.4)
 **Priority**: Medium (DX improvement, eliminates polling overhead, enables future features)
 **Dependencies**: None (standalone frontend refactor, no backend API changes required)
 
@@ -112,9 +112,9 @@ function NodeCard({ node }) {
 ```
 20.0 Backend: JSON-only API                    ✅ complete
   └── 20.1 Client state store + SSE consumer   ✅ complete
-        └── 20.2 Node components                ⏳ planned
-              └── 20.3 Panel + log components   ⏳ planned
-                    └── 20.4 Diagnostics + cleanup  ⏳ planned
+        └── 20.2 Node components                ✅ complete
+              └── 20.3 Panel + log components   ✅ complete
+                    └── 20.4 Diagnostics + cleanup  ✅ complete
 ```
 
 Each phase is independently deployable — the app works after each phase, with
@@ -245,7 +245,7 @@ reconnect to resync after any missed events.
 
 ## Phase 20.2: Node List Components
 
-**Status**: Planned
+**Status**: Complete
 
 Replace the htmx-driven node list with Preact components that render
 reactively from the store. This is the largest single phase — it replaces
@@ -281,28 +281,28 @@ the server-rendered HTML cards with client-rendered components.
 
 ### Work Items
 
-- [ ] Create `src/web/assets/js/components/NodeCard.js`:
+- [x] Create `src/web/assets/js/components/NodeCard.js`:
   - Renders node type badge, name, PID, ROS name with clickable namespace segments
   - Control buttons (Start/Stop, Load/Unload, Load All/Unload All)
   - Auto-restart / Auto-load checkbox
   - Stderr activity icon (derived from `node.stderr_last_modified`)
   - Status-based CSS class (computed from `node.status`)
   - All buttons call `fetch()` POST actions (no htmx)
-- [ ] Create `src/web/assets/js/components/NodeList.js`:
+- [x]Create `src/web/assets/js/components/NodeList.js`:
   - Groups nodes: regular nodes first, then containers with their composable children
   - Client-side sort (name, type, status) — operates on store data, not DOM
   - Client-side search filter — operates on store data, not DOM
-- [ ] Create `src/web/assets/js/components/Header.js`:
+- [x]Create `src/web/assets/js/components/Header.js`:
   - `<HealthBar>` — computed signal from `store.nodes` (count running/total per type)
   - `<DiagnosticBadges>` — from `store.diagnostics`
   - Nav tabs, theme toggle
-- [ ] Create `src/web/assets/js/components/BulkOperations.js`:
+- [x]Create `src/web/assets/js/components/BulkOperations.js`:
   - Start All / Stop All with confirm dialogs
-- [ ] Wire `<NodeList>` into `<App>` as the primary view
-- [ ] Remove htmx `hx-get="/api/nodes"` and `hx-trigger="every 5s"` from `#node-list`
-- [ ] Remove htmx `hx-get="/api/health"` and `hx-trigger="every 5s"` from `#health-badges`
-- [ ] Remove `hx-post`, `hx-swap`, `hx-target`, `hx-disabled-elt` from all button HTML
-- [ ] Move stderr icon logic from `stderr-monitoring.js` into `<NodeCard>` component
+- [x]Wire `<NodeList>` into `<App>` as the primary view
+- [x]Remove htmx `hx-get="/api/nodes"` and `hx-trigger="every 5s"` from `#node-list`
+- [x]Remove htmx `hx-get="/api/health"` and `hx-trigger="every 5s"` from `#health-badges`
+- [x]Remove `hx-post`, `hx-swap`, `hx-target`, `hx-disabled-elt` from all button HTML
+- [x]Move stderr icon logic from `stderr-monitoring.js` into `<NodeCard>` component
   (derive icon state from `node.stderr_last_modified` signal — no polling needed)
 
 ### Files Changed
@@ -318,23 +318,23 @@ the server-rendered HTML cards with client-rendered components.
 
 ### Passing Criteria
 
-- [ ] Node list renders from store (not from server HTML)
-- [ ] Node cards update in real-time when state events arrive (no 5s delay)
-- [ ] Health badges update reactively (no polling)
-- [ ] Sort and filter work on store data (client-side, instant)
-- [ ] Start/Stop/Load/Unload buttons work via `fetch()` POST
-- [ ] Auto-restart and Auto-load checkboxes work
-- [ ] Stderr icons appear/disappear based on `stderr_last_modified`
-- [ ] Container → composable node hierarchy preserved
-- [ ] Clickable namespace segments work
-- [ ] No htmx attributes remain in the DOM
-- [ ] Zero polling intervals for node state or health
+- [x]Node list renders from store (not from server HTML)
+- [x]Node cards update in real-time when state events arrive (no 5s delay)
+- [x]Health badges update reactively (no polling)
+- [x]Sort and filter work on store data (client-side, instant)
+- [x]Start/Stop/Load/Unload buttons work via `fetch()` POST
+- [x]Auto-restart and Auto-load checkboxes work
+- [x]Stderr icons appear/disappear based on `stderr_last_modified`
+- [x]Container → composable node hierarchy preserved
+- [x]Clickable namespace segments work
+- [x]No htmx attributes remain in the DOM
+- [x]Zero polling intervals for node state or health
 
 ---
 
 ## Phase 20.3: Right Panel + Log Viewer Components
 
-**Status**: Planned
+**Status**: Complete
 
 Replace the right panel (detail view, log tabs) with Preact components.
 Log streaming stays SSE-based but managed within the component lifecycle.
@@ -363,14 +363,14 @@ Log streaming stays SSE-based but managed within the component lifecycle.
 
 ### Work Items
 
-- [ ] Create `src/web/assets/js/components/RightPanel.js`:
+- [x]Create `src/web/assets/js/components/RightPanel.js`:
   - Reads `store.selectedNode`, `store.panelOpen`, `store.activeTab`
   - Renders nothing when `panelOpen` is false
   - Panel header with node name, state badge (reactive), close button
   - Tab switching updates `store.activeTab`
-- [ ] Create `src/web/assets/js/components/InfoTab.js`:
+- [x]Create `src/web/assets/js/components/InfoTab.js`:
   - JSON viewer for node details (port `renderJSON` logic)
-- [ ] Create `src/web/assets/js/components/LogTab.js`:
+- [x]Create `src/web/assets/js/components/LogTab.js`:
   - Manages `EventSource` lifecycle via `useEffect` hook:
     - Opens SSE on mount / tab switch
     - Closes SSE on unmount / tab switch / node change
@@ -378,12 +378,12 @@ Log streaming stays SSE-based but managed within the component lifecycle.
   - Shows connection status, auto-scroll, clear, scroll-to-bottom
   - 5000-line limit
   - Auto-reconnects on PID change (detected via store signal, not polling)
-- [ ] Create `src/web/assets/js/components/PanelResizer.js`:
+- [x]Create `src/web/assets/js/components/PanelResizer.js`:
   - Drag to resize, persist width to localStorage
-- [ ] Wire clicking "View" button in `<NodeCard>` to set `store.selectedNode`
+- [x]Wire clicking "View" button in `<NodeCard>` to set `store.selectedNode`
   and `store.panelOpen = true`
-- [ ] Remove PID change polling interval (PID changes arrive via SSE `Started` event)
-- [ ] Remove old `panels.js`, `logs.js` files
+- [x]Remove PID change polling interval (PID changes arrive via SSE `Started` event)
+- [x]Remove old `panels.js`, `logs.js` files
 
 ### Files Changed
 
@@ -398,48 +398,48 @@ Log streaming stays SSE-based but managed within the component lifecycle.
 
 ### Passing Criteria
 
-- [ ] Clicking "View" opens the right panel with node details
-- [ ] State badge updates in real-time (from store signal)
-- [ ] Info tab shows JSON-formatted node details
-- [ ] stdout/stderr tabs stream logs via SSE
-- [ ] SSE connections are properly opened/closed on tab switch and panel close
-- [ ] Composable node log tabs redirect to parent container's logs
-- [ ] PID change triggers log reconnect (detected from SSE, no polling)
-- [ ] Panel resize works and persists to localStorage
-- [ ] Escape key closes panel
-- [ ] No `setInterval` for PID checking remains
+- [x]Clicking "View" opens the right panel with node details
+- [x]State badge updates in real-time (from store signal)
+- [x]Info tab shows JSON-formatted node details
+- [x]stdout/stderr tabs stream logs via SSE
+- [x]SSE connections are properly opened/closed on tab switch and panel close
+- [x]Composable node log tabs redirect to parent container's logs
+- [x]PID change triggers log reconnect (detected from SSE, no polling)
+- [x]Panel resize works and persists to localStorage
+- [x]Escape key closes panel
+- [x]No `setInterval` for PID checking remains
 
 ---
 
 ## Phase 20.4: Diagnostics View + Cleanup
 
-**Status**: Planned
+**Status**: Complete
 
 Migrate the diagnostics view to Preact, remove all legacy JS files,
 remove htmx dependency, and clean up.
 
 ### Work Items
 
-- [ ] Create `src/web/assets/js/components/DiagnosticsView.js`:
+- [x]Create `src/web/assets/js/components/DiagnosticsView.js`:
   - Fetches diagnostic data via SSE or periodic fetch (diagnostics don't have
     an SSE endpoint yet — keep 5s fetch for now, but from a `useEffect` hook
     that only runs when the diagnostics view is active)
   - Sortable table, search filter, level badges, relative timestamps
   - Ports all logic from `diagnostics.js`
-- [ ] Move theme management into the store (`store.theme` signal)
-- [ ] Delete legacy JS files:
+- [x]Move theme management into the store (`store.theme` signal)
+- [x]Delete legacy JS files:
   - `nodes.js` (sorting/filtering now in `<NodeList>`)
   - `htmx-handlers.js` (no more htmx)
   - `stderr-monitoring.js` (now in `<NodeCard>`)
   - `diagnostics.js` (now in `<DiagnosticsView>`)
   - `utils.js` (`renderJSON` and `escapeHtml` moved to components)
   - `theme.js` (moved to store)
-- [ ] Remove htmx CDN `<script>` tags from `index.html` (`unpkg.com/htmx.org`)
-- [ ] Remove htmx SSE extension CDN `<script>` tag from `index.html`
-- [ ] Simplify `index.html` to a single `<div id="app">` mount point +
+- [x]Remove htmx CDN `<script>` tags from `index.html` (`unpkg.com/htmx.org`)
+- [x]Remove htmx SSE extension CDN `<script>` tag from `index.html`
+- [x]Simplify `index.html` to a single `<div id="app">` mount point +
       `<script type="module" src="/assets/js/app.js">`
-- [ ] Verify all CSS still applies (class names unchanged)
-- [ ] Consider adding SSE endpoint for diagnostics (future — not required for this phase)
+- [x]Verify all CSS still applies (class names unchanged)
+- [x]Consider adding SSE endpoint for diagnostics (future — not required for this phase)
 
 ### Files Deleted
 
@@ -456,20 +456,20 @@ remove htmx dependency, and clean up.
 
 ### Passing Criteria
 
-- [ ] Diagnostics view works: sortable table, search, level badges, timestamps
-- [ ] Switching between Nodes and Diagnostics views works
-- [ ] No htmx `<script>` tags in `index.html`
-- [ ] No `<script>` tags for legacy JS files
-- [ ] Only `app.js` (module) loaded in `index.html`
-- [ ] Zero `setInterval` / `setTimeout` polling for node state
-- [ ] Diagnostics polling only active when diagnostics view is visible
-- [ ] Theme toggle works, persists to localStorage
-- [ ] All CSS classes and visual appearance unchanged
-- [ ] Web UI loads and functions with no network access (fully offline)
-- [ ] No external CDN `<script>` or `<link>` tags remain in `index.html`
-- [ ] `just build` succeeds
-- [ ] `just test` passes (integration tests don't test web UI)
-- [ ] `just quality` passes
+- [x]Diagnostics view works: sortable table, search, level badges, timestamps
+- [x]Switching between Nodes and Diagnostics views works
+- [x]No htmx `<script>` tags in `index.html`
+- [x]No `<script>` tags for legacy JS files
+- [x]Only `app.js` (module) loaded in `index.html`
+- [x]Zero `setInterval` / `setTimeout` polling for node state
+- [x]Diagnostics polling only active when diagnostics view is visible
+- [x]Theme toggle works, persists to localStorage
+- [x]All CSS classes and visual appearance unchanged
+- [x]Web UI loads and functions with no network access (fully offline)
+- [x]No external CDN `<script>` or `<link>` tags remain in `index.html`
+- [x]`just build` succeeds
+- [x]`just test` passes (integration tests don't test web UI)
+- [x]`just quality` passes
 
 ---
 
