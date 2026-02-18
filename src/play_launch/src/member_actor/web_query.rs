@@ -5,6 +5,8 @@
 
 use serde::Serialize;
 use std::path::PathBuf;
+#[cfg(test)]
+use ts_rs::TS;
 
 /// Type of member in the actor system
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -111,6 +113,8 @@ pub struct MemberDetails {
 
 /// Health summary statistics for all members
 #[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export))]
 pub struct HealthSummary {
     // Process-level counts
     pub processes_running: usize,

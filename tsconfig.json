@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+    "strict": false,
+    "target": "ES2021",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "baseUrl": "."
+  },
+  "include": [
+    "src/play_launch/src/web/assets/js/**/*.js",
+    "src/play_launch/src/web/assets/js/**/*.d.ts",
+    "src/play_launch/bindings/**/*.ts"
+  ],
+  "exclude": [
+    "**/vendor/**"
+  ]
+}

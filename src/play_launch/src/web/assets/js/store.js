@@ -5,42 +5,32 @@ import { signal, computed } from './vendor/signals.module.js';
 
 // --- Node state ---
 
-/** @type {import('./vendor/signals.module.js').Signal<Map<string, object>>} */
+/** @type {{ value: Map<string, import('./types').NodeSummary> }} */
 export const nodes = signal(new Map());
 
 // --- UI state ---
 
-/** @type {import('./vendor/signals.module.js').Signal<string|null>} */
 export const selectedNode = signal(null);
-
-/** @type {import('./vendor/signals.module.js').Signal<boolean>} */
 export const panelOpen = signal(false);
-
-/** @type {import('./vendor/signals.module.js').Signal<'info'|'stdout'|'stderr'>} */
 export const activeTab = signal('stderr');
-
-/** @type {import('./vendor/signals.module.js').Signal<'light'|'dark'>} */
 export const theme = signal(localStorage.getItem('theme') || 'light');
-
-/** @type {import('./vendor/signals.module.js').Signal<'nodes'|'diagnostics'>} */
 export const currentView = signal('nodes');
 
 // --- Diagnostics ---
 
-/** @type {import('./vendor/signals.module.js').Signal<object[]>} */
 export const diagnostics = signal([]);
 
 // --- Health summary ---
 
-/** @type {import('./vendor/signals.module.js').Signal<object>} */
-export const healthSummary = signal({
+/** @type {{ value: import('./types').HealthSummary }} */
+export const healthSummary = signal(/** @type {any} */ ({
     nodes_running: 0,
     nodes_total: 0,
     containers_running: 0,
     containers_total: 0,
     composable_loaded: 0,
     composable_total: 0,
-});
+}));
 
 // --- Computed values ---
 
@@ -48,9 +38,33 @@ export const nodeList = computed(() => Array.from(nodes.value.values()));
 
 export const nodeCount = computed(() => nodes.value.size);
 
+// --- Helpers ---
+
+/** Extract the simple status string from a UnifiedStatus object.
+ *
+ * Serde formats:
+ *   Process:    {"type": "Process",    "value": "running"}           — value is a string
+ *   Composable: {"type": "Composable", "value": {"status": "loaded"}} — value is an object
+ *
+ * @param {import('./types').UnifiedStatus | null | undefined} status
+ * @returns {string}
+ */
+export function getStatusString(status) {
+    if (!status) return 'unknown';
+    if (status.type === 'Process') {
+        return (typeof status.value === 'string') ? status.value : 'unknown';
+    }
+    if (status.type === 'Composable') {
+        return status.value?.status || 'unknown';
+    }
+    return 'unknown';
+}
+
 // --- Actions ---
 
-/** Replace all node state from GET /api/nodes response. */
+/** Replace all node state from GET /api/nodes response.
+ * @param {import('./types').NodeSummary[]} nodeArray
+ */
 export function loadNodes(nodeArray) {
     const map = new Map();
     for (const node of nodeArray) {
@@ -65,6 +79,8 @@ export function loadNodes(nodeArray) {
  *   {"type":"started","name":"foo","pid":123}
  *   {"type":"exited","name":"foo","exit_code":0}
  *   {"type":"load_succeeded","name":"foo","full_node_name":"/ns/foo","unique_id":1}
+ *
+ * @param {import('./types').StateEvent} event
  */
 export function applyStateEvent(event) {
     const name = event.name;
@@ -79,30 +95,30 @@ export function applyStateEvent(event) {
 
     switch (event.type) {
         case 'started':
-            updated.status = { type: 'Process', value: { status: 'running' } };
+            updated.status = { type: 'Process', value: 'running' };
             updated.pid = event.pid;
             break;
 
         case 'exited':
             if (event.exit_code != null && event.exit_code !== 0) {
-                updated.status = { type: 'Process', value: { status: 'failed' } };
+                updated.status = { type: 'Process', value: 'failed' };
             } else {
-                updated.status = { type: 'Process', value: { status: 'stopped' } };
+                updated.status = { type: 'Process', value: 'stopped' };
             }
             updated.pid = null;
             break;
 
         case 'respawning':
-            updated.status = { type: 'Process', value: { status: 'running' } };
+            updated.status = { type: 'Process', value: 'running' };
             break;
 
         case 'terminated':
-            updated.status = { type: 'Process', value: { status: 'stopped' } };
+            updated.status = { type: 'Process', value: 'stopped' };
             updated.pid = null;
             break;
 
         case 'failed':
-            updated.status = { type: 'Process', value: { status: 'failed' } };
+            updated.status = { type: 'Process', value: 'failed' };
             updated.pid = null;
             break;
 
@@ -123,9 +139,12 @@ export function applyStateEvent(event) {
             break;
 
         case 'blocked':
+            // Note: SSE BlockReason uses PascalCase ("NotStarted") while REST API
+            // ComposableBlockReason uses snake_case ("container_not_started").
+            // The UI only checks the status string, not the reason value.
             updated.status = {
                 type: 'Composable',
-                value: { status: 'blocked', reason: event.reason },
+                value: { status: 'blocked', reason: /** @type {any} */ (event.reason) },
             };
             break;
 

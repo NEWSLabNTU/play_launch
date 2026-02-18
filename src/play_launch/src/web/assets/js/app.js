@@ -48,6 +48,6 @@ function App() {
 render(html`<${App} />`, document.getElementById('app'));
 
 // Expose store on window for debugging (browser console: store.nodes.value)
-window.store = store;
+/** @type {any} */ (window).store = store;
 
 console.debug('[app] play_launch Preact app initialized');

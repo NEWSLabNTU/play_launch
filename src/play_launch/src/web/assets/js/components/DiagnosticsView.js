@@ -12,7 +12,7 @@ const LEVEL_PRIORITY = { 'ERROR': 3, 'WARNING': 2, 'STALE': 1, 'OK': 0 };
 function formatRelativeTime(timestamp) {
     const now = new Date();
     const date = new Date(timestamp);
-    const seconds = Math.floor((now - date) / 1000);
+    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
     if (seconds < 10) return 'just now';
     if (seconds < 60) return seconds + 's ago';
     const minutes = Math.floor(seconds / 60);
@@ -121,7 +121,7 @@ export function DiagnosticsView() {
                 cmp = (LEVEL_PRIORITY[a.level] || 0) - (LEVEL_PRIORITY[b.level] || 0);
                 if (cmp === 0) cmp = a.name.localeCompare(b.name);
             } else if (sortCol === 'timestamp') {
-                cmp = new Date(a.timestamp) - new Date(b.timestamp);
+                cmp = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
             } else {
                 cmp = (a[sortCol] || '').localeCompare(b[sortCol] || '');
             }
@@ -162,7 +162,7 @@ export function DiagnosticsView() {
                     `}
                     ${sorted.map(diag => {
                         const diagDate = new Date(diag.timestamp);
-                        const ageSeconds = Math.floor((now - diagDate) / 1000);
+                        const ageSeconds = Math.floor((now.getTime() - diagDate.getTime()) / 1000);
                         const freshClass = ageSeconds < 10 ? 'fresh' : '';
                         return html`
                             <tr class=${freshClass} key=${diag.hardware_id + '/' + diag.name}>

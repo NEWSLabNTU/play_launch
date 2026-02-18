@@ -2,12 +2,20 @@
 //!
 //! Contains all data types used by the web UI for displaying node state,
 //! statistics, and status information.
+//!
+//! Types derive `ts_rs::TS` to auto-generate TypeScript declarations that
+//! mirror the exact serde JSON shapes. Run `cargo test` to regenerate
+//! the `.d.ts` files in `bindings/`.
 
 use crate::member_actor::{MemberState as ActorMemberState, MemberSummary as ActorMemberSummary};
 use serde::Serialize;
+#[cfg(test)]
+use ts_rs::TS;
 
 /// Node status for regular nodes and containers (process-based)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export))]
 #[serde(rename_all = "lowercase")]
 pub enum NodeStatus {
     /// Node is currently running
@@ -22,6 +30,8 @@ pub enum NodeStatus {
 
 /// Reason why a composable node is blocked
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export))]
 #[serde(rename_all = "snake_case")]
 #[allow(clippy::enum_variant_names)]
 pub enum ComposableBlockReason {
@@ -37,6 +47,8 @@ pub enum ComposableBlockReason {
 
 /// Status for composable nodes (loaded into containers)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export))]
 #[serde(rename_all = "lowercase", tag = "status", content = "reason")]
 pub enum ComposableNodeStatus {
     /// Successfully loaded into container
@@ -60,6 +72,8 @@ pub enum ComposableNodeStatus {
 
 /// Unified status for all node types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export))]
 #[serde(tag = "type", content = "value")]
 pub enum UnifiedStatus {
     /// Process-based status (regular nodes and containers)
@@ -70,6 +84,8 @@ pub enum UnifiedStatus {
 
 /// Type of node in the registry
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export))]
 #[serde(rename_all = "snake_case")]
 pub enum NodeType {
     /// Regular ROS node
@@ -82,6 +98,8 @@ pub enum NodeType {
 
 /// Summary information about a node (for web UI listings)
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export))]
 pub struct NodeSummary {
     pub name: String,
     pub node_type: NodeType,
@@ -91,30 +109,40 @@ pub struct NodeSummary {
     pub executable: String,
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub target_container: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub container_name: Option<String>,
     pub is_container: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub exec_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub node_name: Option<String>,
     /// Unix timestamp (seconds) when stderr was last modified
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable, type = "number"))]
     pub stderr_last_modified: Option<u64>,
     /// Size of stderr file in bytes
+    #[cfg_attr(test, ts(type = "number"))]
     pub stderr_size: u64,
     /// Last few lines of stderr for quick preview
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub stderr_preview: Option<Vec<String>>,
     /// Whether respawn is enabled for this node
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub respawn_enabled: Option<bool>,
     /// Respawn delay in seconds
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub respawn_delay: Option<f64>,
     /// Auto-load when container starts (for composable nodes)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub auto_load: Option<bool>,
 }
 
@@ -190,10 +218,13 @@ impl NodeSummary {
 
 /// Detailed information about a node (for API responses)
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export))]
 #[allow(dead_code)]
 pub struct NodeDetails {
     #[serde(flatten)]
     pub summary: NodeSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub cmdline: Option<String>,
 }

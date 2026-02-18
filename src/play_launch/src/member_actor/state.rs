@@ -5,6 +5,8 @@
 use serde::Serialize;
 use std::path::PathBuf;
 use tokio::process::Child;
+#[cfg(test)]
+use ts_rs::TS;
 
 /// Configuration for a member actor
 #[derive(Debug, Clone)]
@@ -95,6 +97,8 @@ pub enum ComposableState {
 
 /// Reason why a composable node is blocked
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[cfg_attr(test, ts(export))]
 pub enum BlockReason {
     /// Container hasn't started yet (Pending)
     NotStarted,

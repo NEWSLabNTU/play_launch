@@ -3,18 +3,11 @@
 import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { selectedNode, panelOpen, activeTab, nodes } from '../store.js';
+import { selectedNode, panelOpen, activeTab, nodes, getStatusString } from '../store.js';
 import { InfoTab } from './InfoTab.js';
 import { LogTab } from './LogTab.js';
 
 const html = htm.bind(h);
-
-function getStatusString(status) {
-    if (!status) return 'unknown';
-    if (status.type === 'Process') return status.value?.status || 'unknown';
-    if (status.type === 'Composable') return status.value?.status || 'unknown';
-    return 'unknown';
-}
 
 export function RightPanel() {
     const name = selectedNode.value;

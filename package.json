@@ -4,7 +4,8 @@
   "description": "Web UI linting tools for play_launch",
   "private": true,
   "scripts": {
-    "lint": "npm run lint:html && npm run lint:css && npm run lint:js",
+    "lint": "npm run lint:html && npm run lint:css && npm run lint:js && npm run typecheck",
+    "typecheck": "tsc --noEmit",
     "lint:html": "htmlhint src/play_launch/src/web/assets/index.html",
     "lint:css": "node scripts/lint-inline-css.js",
     "lint:js": "node scripts/lint-inline-js.js",
@@ -14,6 +15,7 @@
     "eslint": "^8.56.0",
     "htmlhint": "^1.1.4",
     "stylelint": "^16.1.0",
-    "stylelint-config-standard": "^36.0.0"
+    "stylelint-config-standard": "^36.0.0",
+    "typescript": "^5.7.0"
   }
 }

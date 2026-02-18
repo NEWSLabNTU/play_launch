@@ -1,19 +1,11 @@
 // NodeCard component — renders a single node in the node list.
 
 import { h } from '../vendor/preact.module.js';
-import { useState, useCallback, useMemo } from '../vendor/hooks.module.js';
+import { useState, useCallback, useEffect } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { selectedNode, panelOpen, activeTab, fetchNodes, fetchHealth } from '../store.js';
+import { selectedNode, fetchNodes, fetchHealth, getStatusString } from '../store.js';
 
 const html = htm.bind(h);
-
-/** Extract the simple status string from a UnifiedStatus object. */
-function getStatusString(status) {
-    if (!status) return 'unknown';
-    if (status.type === 'Process') return status.value?.status || 'unknown';
-    if (status.type === 'Composable') return status.value?.status || 'unknown';
-    return 'unknown';
-}
 
 /** Get CSS class for the node card based on status. */
 function getStatusClass(status) {
@@ -142,6 +134,51 @@ async function postAction(url) {
     setTimeout(() => { fetchNodes(); fetchHealth(); }, 500);
 }
 
+/** Process node action button (Start or Stop, mutually exclusive). */
+function ProcessButton({ name, statusStr, pendingAction, setPendingAction }) {
+    if (pendingAction === 'starting' || statusStr === 'pending') {
+        return html`<button class="btn-pending" disabled>Starting...</button>`;
+    }
+    if (pendingAction === 'stopping') {
+        return html`<button class="btn-pending" disabled>Stopping...</button>`;
+    }
+    if (statusStr === 'running') {
+        return html`<button class="btn-stop" onClick=${() => {
+            setPendingAction('stopping');
+            postAction('/api/nodes/' + encodeURIComponent(name) + '/stop');
+        }}>Stop</button>`;
+    }
+    // stopped, failed, or unknown → Start
+    return html`<button class="btn-start" onClick=${() => {
+        setPendingAction('starting');
+        postAction('/api/nodes/' + encodeURIComponent(name) + '/start');
+    }}>Start</button>`;
+}
+
+/** Composable node action button (Load or Unload, mutually exclusive). */
+function ComposableButton({ name, statusStr, pendingAction, setPendingAction }) {
+    if (pendingAction === 'loading' || statusStr === 'loading') {
+        return html`<button class="btn-pending" disabled>Loading...</button>`;
+    }
+    if (pendingAction === 'unloading' || statusStr === 'unloading') {
+        return html`<button class="btn-pending" disabled>Unloading...</button>`;
+    }
+    if (statusStr === 'loaded') {
+        return html`<button class="btn-unload" onClick=${() => {
+            setPendingAction('unloading');
+            postAction('/api/nodes/' + encodeURIComponent(name) + '/unload');
+        }}>Unload</button>`;
+    }
+    if (statusStr === 'blocked') {
+        return null; // container not started — no button
+    }
+    // unloaded, failed, pending, or unknown → Load
+    return html`<button class="btn-load" onClick=${() => {
+        setPendingAction('loading');
+        postAction('/api/nodes/' + encodeURIComponent(name) + '/load');
+    }}>Load</button>`;
+}
+
 /** NodeCard component. */
 export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
     const name = node.name;
@@ -150,6 +187,13 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
     const isComposable = node.node_type === 'composable_node';
     const isContainer = node.node_type === 'container';
     const isSelected = selectedNode.value === name;
+
+    const [pendingAction, setPendingAction] = useState(null);
+
+    // Clear pending action when status changes (SSE delivered the update)
+    useEffect(() => {
+        setPendingAction(null);
+    }, [statusStr]);
 
     let cardClass = 'node-card ' + getStatusClass(node.status);
     if (isChild) cardClass += ' child-node';
@@ -174,39 +218,6 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
                 </div>
             </div>
             <div class="node-controls">
-                ${isProcess && html`
-                    <button class="btn-start" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/start')}
-                        disabled=${statusStr === 'running'}>
-                        <span class="btn-text">Start</span>
-                    </button>
-                    <button class="btn-stop" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/stop')}
-                        disabled=${statusStr === 'stopped' || statusStr === 'failed' || statusStr === 'pending'}>
-                        <span class="btn-text">Stop</span>
-                    </button>
-                    <button class="btn-restart" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/restart')}
-                        disabled=${statusStr !== 'running'}>
-                        <span class="btn-text">Restart</span>
-                    </button>
-                `}
-                ${isComposable && html`
-                    <button class="btn-load" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/load')}
-                        disabled=${statusStr === 'loaded' || statusStr === 'loading'}>
-                        <span class="btn-text">Load</span>
-                    </button>
-                    <button class="btn-unload" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/unload')}
-                        disabled=${statusStr !== 'loaded'}>
-                        <span class="btn-text">Unload</span>
-                    </button>
-                `}
-                ${isContainer && html`
-                    <button class="btn-load-all" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/load-all')}>
-                        <span class="btn-text">Load All</span>
-                    </button>
-                    <button class="btn-unload-all" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/unload-all')}>
-                        <span class="btn-text">Unload All</span>
-                    </button>
-                `}
-                <button class="btn-view" onClick=${handleView}>View</button>
                 ${isProcess && node.respawn_enabled !== undefined && html`
                     <label class="toggle-checkbox" onClick=${(e) => e.stopPropagation()}>
                         <input type="checkbox" checked=${node.respawn_enabled}
@@ -221,6 +232,23 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
                         <span class="toggle-label">Auto-load</span>
                     </label>
                 `}
+                ${isProcess && html`
+                    <${ProcessButton} name=${name} statusStr=${statusStr}
+                        pendingAction=${pendingAction} setPendingAction=${setPendingAction} />
+                `}
+                ${isComposable && html`
+                    <${ComposableButton} name=${name} statusStr=${statusStr}
+                        pendingAction=${pendingAction} setPendingAction=${setPendingAction} />
+                `}
+                ${isContainer && html`
+                    <button class="btn-load-all" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/load-all')}>
+                        Load All
+                    </button>
+                    <button class="btn-unload-all" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/unload-all')}>
+                        Unload All
+                    </button>
+                `}
+                <button class="btn-view" onClick=${handleView}>View</button>
             </div>
         </div>
     `;

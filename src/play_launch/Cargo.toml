@@ -67,6 +67,7 @@ pkg-config = "0.3"
 
 [dev-dependencies]
 tempfile = "3.8"
+ts-rs = "12"
 
 # Release profile optimization for smaller binary size
 [profile.release]

@@ -269,7 +269,17 @@ check:
     echo "=== C++ (clang-format check) ==="
     ament_clang_format {{cpp_packages}}
 
-# Check Web UI (HTML, CSS, JavaScript)
+# Generate TypeScript bindings from Rust types (ts-rs)
+generate-bindings:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    source install/setup.bash
+    echo "Generating TypeScript bindings..."
+    (cd src/play_launch && cargo test --config ../../build/ros2_cargo_config.toml -- export_bindings)
+    echo "Generated $(ls src/play_launch/bindings/*.ts | wc -l) type files in src/play_launch/bindings/"
+
+# Check Web UI (HTML, CSS, JavaScript, TypeScript types)
 check-web-ui:
     #!/usr/bin/env bash
     set -e
@@ -280,8 +290,14 @@ check-web-ui:
         npm install
     fi
 
-    echo "Linting Web UI..."
-    npm run lint
+    echo "=== Web UI lint ==="
+    npm run lint:html
+    npm run lint:css
+    npm run lint:js
+
+    echo ""
+    echo "=== TypeScript type check ==="
+    npm run typecheck
 
 # C++ packages to lint/format
 cpp_packages := "src/play_launch_container"

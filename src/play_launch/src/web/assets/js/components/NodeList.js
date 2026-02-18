@@ -4,16 +4,14 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useMemo, useCallback } from '../vendor/hooks.module.js';
 import { useSignal } from '../vendor/signals.module.js';
 import htm from '../vendor/htm.module.js';
-import { nodeList, selectedNode, panelOpen, activeTab } from '../store.js';
+import { nodeList, selectedNode, panelOpen, activeTab, getStatusString } from '../store.js';
 import { NodeCard } from './NodeCard.js';
 
 const html = htm.bind(h);
 
 /** Status priority for sorting. */
 function statusPriority(node) {
-    const s = node.status;
-    if (!s) return 4;
-    const val = s.value?.status;
+    const val = getStatusString(node.status);
     if (val === 'running' || val === 'loaded') return 0;
     if (val === 'loading' || val === 'unloading') return 1;
     if (val === 'failed') return 2;
@@ -23,7 +21,6 @@ function statusPriority(node) {
 
 /** Sort comparator factory. */
 function makeSorter(sortBy) {
-    if (sortBy === 'default') return null;
     return (a, b) => {
         if (sortBy === 'name') return a.name.localeCompare(b.name);
         if (sortBy === 'name-desc') return b.name.localeCompare(a.name);
@@ -58,7 +55,7 @@ function buildRosName(node) {
 }
 
 export function NodeList() {
-    const [sortBy, setSortBy] = useState('default');
+    const [sortBy, setSortBy] = useState('name');
     const [filterTerm, setFilterTerm] = useState('');
 
     const allNodes = nodeList.value;
@@ -87,12 +84,9 @@ export function NodeList() {
         }
 
         const sorter = makeSorter(sortBy);
-
-        if (sorter) {
-            regularNodes.sort(sorter);
-            containers.sort(sorter);
-            containerChildren.forEach(children => children.sort(sorter));
-        }
+        regularNodes.sort(sorter);
+        containers.sort(sorter);
+        containerChildren.forEach(children => children.sort(sorter));
 
         // Build flat output: regular nodes, then container groups
         const result = [];
@@ -136,7 +130,6 @@ export function NodeList() {
                 <div class="sort-controls">
                     <label for="sort-by">Sort by:</label>
                     <select id="sort-by" value=${sortBy} onChange=${(e) => setSortBy(e.target.value)}>
-                        <option value="default">Default (unsorted)</option>
                         <option value="name">Name (A-Z)</option>
                         <option value="name-desc">Name (Z-A)</option>
                         <option value="type">Type</option>

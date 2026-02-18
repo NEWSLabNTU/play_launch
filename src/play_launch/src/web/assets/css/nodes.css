@@ -286,7 +286,7 @@ button:hover:not(:disabled) {
 
 .btn-start { background: var(--btn-success); }
 .btn-stop { background: var(--btn-danger); }
-.btn-restart { background: var(--btn-primary); }
+.btn-pending { background: #6b7280; cursor: not-allowed; }
 .btn-view { background: #7c3aed; }
 .btn-load { background: var(--btn-success); }
 .btn-unload { background: var(--btn-danger); }
