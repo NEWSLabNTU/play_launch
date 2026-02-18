@@ -1,6 +1,6 @@
 # Phase 20: Web UI Modernization
 
-**Status**: In Progress (Phase 20.0 complete)
+**Status**: In Progress (Phase 20.0–20.1 complete)
 **Priority**: Medium (DX improvement, eliminates polling overhead, enables future features)
 **Dependencies**: None (standalone frontend refactor, no backend API changes required)
 
@@ -111,7 +111,7 @@ function NodeCard({ node }) {
 
 ```
 20.0 Backend: JSON-only API                    ✅ complete
-  └── 20.1 Client state store + SSE consumer   ⏳ planned
+  └── 20.1 Client state store + SSE consumer   ✅ complete
         └── 20.2 Node components                ⏳ planned
               └── 20.3 Panel + log components   ⏳ planned
                     └── 20.4 Diagnostics + cleanup  ⏳ planned
@@ -160,7 +160,7 @@ pure data API; all rendering moves to the frontend.
 
 ## Phase 20.1: Client State Store + SSE Consumer
 
-**Status**: Planned
+**Status**: Complete
 
 Create the Preact app shell, the reactive state store, and connect it to
 the SSE state updates endpoint. This phase renders nothing visible yet —
@@ -199,14 +199,13 @@ reconnect to resync after any missed events.
 
 ### Work Items
 
-- [ ] Vendor Preact libraries into `src/web/assets/js/vendor/`:
-  - Download ESM bundles: `preact.module.js`, `preact-hooks.module.js`,
-    `signals.module.js`, `htm.module.js`
-  - Rewrite internal import specifiers to use relative paths
-    (e.g. `from 'preact'` → `from './preact.module.js'`)
-  - Commit vendored files to the repo
-- [ ] Create `src/web/assets/js/app.js` as ES module entry point
-- [ ] Create `src/web/assets/js/store.js` — Preact signals-based state store:
+- [x] Vendor Preact libraries into `src/web/assets/js/vendor/`:
+  - Downloaded ESM bundles: `preact.module.js`, `hooks.module.js`,
+    `signals-core.module.js`, `signals.module.js`, `htm.module.js`
+  - Rewrote internal import specifiers to use relative paths
+  - Versions: preact 10.25.4, @preact/signals 1.3.1, @preact/signals-core 1.8.0, htm 3.1.1
+- [x] Create `src/web/assets/js/app.js` as ES module entry point
+- [x] Create `src/web/assets/js/store.js` — Preact signals-based state store:
   - `nodes` signal: `Map<string, NodeSummary>`
   - `selectedNode` signal: `string | null`
   - `panelOpen` signal: `boolean`
@@ -215,13 +214,13 @@ reconnect to resync after any missed events.
   - `currentView` signal: `'nodes' | 'diagnostics'`
   - `diagnostics` signal: `DiagnosticStatus[]`
   - `healthSummary` signal: `HealthSummary`
-- [ ] Create `src/web/assets/js/sse.js` — SSE connection manager:
+- [x] Create `src/web/assets/js/sse.js` — SSE connection manager:
   - Connects to `/api/state/updates` on init
   - On message: parse JSON, call `store.applyStateEvent(event)`
   - On error/reconnect: fetch `/api/nodes` for full resync
   - Exports nothing — side-effect module that writes to the store
-- [ ] Update `index.html` to load `app.js` as `<script type="module">`
-- [ ] Keep all existing JS files temporarily (old UI still works during migration)
+- [x] Update `index.html` to load `app.js` as `<script type="module">`
+- [x] Keep all existing JS files temporarily (old UI still works during migration)
 
 ### Files Changed
 
@@ -235,12 +234,12 @@ reconnect to resync after any missed events.
 
 ### Passing Criteria
 
-- [ ] Opening the page connects to `/api/state/updates` SSE (visible in browser DevTools Network tab)
-- [ ] `store.nodes` signal contains all nodes after initial `GET /api/nodes`
-- [ ] State events update `store.nodes` in real-time (verify by triggering a node start/stop and inspecting store in console)
-- [ ] SSE reconnect triggers a full resync via `GET /api/nodes`
-- [ ] No polling intervals for node state (the 5s htmx poll is removed for the new code path)
-- [ ] Old UI still functions (graceful coexistence during migration)
+- [x] Opening the page connects to `/api/state/updates` SSE (visible in browser DevTools Network tab)
+- [x] `store.nodes` signal contains all nodes after initial `GET /api/nodes`
+- [x] State events update `store.nodes` in real-time (verify by triggering a node start/stop and inspecting store in console)
+- [x] SSE reconnect triggers a full resync via `GET /api/nodes`
+- [x] No polling intervals for node state (the new code path uses SSE only; htmx polls remain for legacy UI coexistence)
+- [x] Old UI still functions (graceful coexistence during migration)
 
 ---
 
