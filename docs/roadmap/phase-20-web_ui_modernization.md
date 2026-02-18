@@ -1,6 +1,6 @@
 # Phase 20: Web UI Modernization
 
-**Status**: Planned
+**Status**: In Progress (Phase 20.0 complete)
 **Priority**: Medium (DX improvement, eliminates polling overhead, enables future features)
 **Dependencies**: None (standalone frontend refactor, no backend API changes required)
 
@@ -33,14 +33,14 @@ architectural pain points:
 
 ### Current Polling Inventory (to be eliminated)
 
-| Poll | Interval | Transport | Purpose |
-|------|----------|-----------|---------|
-| `hx-trigger="every 5s"` on `#node-list` | 5s | htmx GET → HTML | Node card list |
-| `hx-trigger="every 5s"` on `#health-badges` | 5s | htmx GET → HTML | Health summary |
-| `setInterval(fetchDiagnostics, 5000)` | 5s | fetch → JSON | Diagnostic list |
-| `setInterval(updateDiagnosticCounts, 5000)` | 5s | fetch → JSON | Diagnostic badges |
-| `setInterval(updateStderrIcons, 1000)` | 1s | DOM scan | Stderr icon animation |
-| `setInterval(PID check, 2000)` | 2s | fetch → JSON | Detect node restarts |
+| Poll                                        | Interval | Transport       | Purpose               |
+|---------------------------------------------|----------|-----------------|-----------------------|
+| `hx-trigger="every 5s"` on `#node-list`     | 5s       | htmx GET → HTML | Node card list        |
+| `hx-trigger="every 5s"` on `#health-badges` | 5s       | htmx GET → HTML | Health summary        |
+| `setInterval(fetchDiagnostics, 5000)`       | 5s       | fetch → JSON    | Diagnostic list       |
+| `setInterval(updateDiagnosticCounts, 5000)` | 5s       | fetch → JSON    | Diagnostic badges     |
+| `setInterval(updateStderrIcons, 1000)`      | 1s       | DOM scan        | Stderr icon animation |
+| `setInterval(PID check, 2000)`              | 2s       | fetch → JSON    | Detect node restarts  |
 
 ### Target Architecture
 
@@ -110,7 +110,7 @@ function NodeCard({ node }) {
 ## Implementation Order
 
 ```
-20.0 Backend: JSON-only API                    ⏳ planned
+20.0 Backend: JSON-only API                    ✅ complete
   └── 20.1 Client state store + SSE consumer   ⏳ planned
         └── 20.2 Node components                ⏳ planned
               └── 20.3 Panel + log components   ⏳ planned
@@ -124,38 +124,37 @@ an increasing percentage of the UI migrated.
 
 ## Phase 20.0: Backend — JSON-Only API
 
-**Status**: Planned
+**Status**: Complete
 
 Convert the remaining HTML-fragment endpoints to JSON. The backend becomes a
 pure data API; all rendering moves to the frontend.
 
 ### Work Items
 
-- [ ] Convert `list_nodes()` to return `Json<Vec<NodeSummary>>` instead of HTML
-- [ ] Convert `health_summary()` to return `Json<HealthSummary>` instead of HTML badges
-- [ ] Convert `load_node()` / `unload_node()` to return `Json<NodeSummary>` instead of HTML card
-- [ ] Add `HealthSummary` struct to `web_types.rs` with `nodes_running`, `nodes_total`,
-      `containers_running`, `containers_total`, `composable_loaded`, `composable_total`
-- [ ] Keep all POST action endpoints unchanged (they already return text status)
-- [ ] Keep SSE endpoints unchanged
-- [ ] Remove `render_node_card()`, `render_clickable_ros_name()`, `clean_node_name()` from handlers.rs
+- [x] Convert `list_nodes()` to return `Json<Vec<NodeSummary>>` instead of HTML
+- [x] Convert `health_summary()` to return `Json<HealthSummary>` instead of HTML badges
+- [x] Convert `load_node()` / `unload_node()` to return `Json<NodeSummary>` instead of HTML card
+- [x] `HealthSummary` already exists in `member_actor::web_query` with full field set (reused directly)
+- [x] Keep all POST action endpoints unchanged (they already return text status)
+- [x] Keep SSE endpoints unchanged
+- [x] Remove `render_node_card()`, `render_clickable_ros_name()`, `clean_node_name()` from handlers.rs
 
 ### Files Changed
 
-| File | Action |
-|------|--------|
-| `src/web/handlers.rs` | Rewrite `list_nodes()`, `health_summary()`, `load_node()`, `unload_node()` to return JSON. Delete `render_node_card()` and helper functions (~300 lines removed) |
-| `src/web/web_types.rs` | Add `HealthSummary` struct |
+| File                   | Action                                                                                                                                                           |
+|------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `src/web/handlers.rs`  | Rewrite `list_nodes()`, `health_summary()`, `load_node()`, `unload_node()` to return JSON. Delete `render_node_card()` and helper functions (~300 lines removed) |
+| `src/web/web_types.rs` | Add `HealthSummary` struct                                                                                                                                       |
 
 ### Passing Criteria
 
-- [ ] `GET /api/nodes` returns `Content-Type: application/json` with `Vec<NodeSummary>`
-- [ ] `GET /api/health` returns `Content-Type: application/json` with `HealthSummary`
-- [ ] `POST /api/nodes/:name/load` returns JSON `NodeSummary`
-- [ ] All POST action endpoints still return text status codes
-- [ ] SSE endpoints unchanged
-- [ ] `just build` succeeds
-- [ ] Existing integration tests pass (they don't test the web UI)
+- [x] `GET /api/nodes` returns `Content-Type: application/json` with `Vec<NodeSummary>`
+- [x] `GET /api/health` returns `Content-Type: application/json` with `HealthSummary`
+- [x] `POST /api/nodes/:name/load` returns JSON `NodeSummary`
+- [x] All POST action endpoints still return text status codes
+- [x] SSE endpoints unchanged
+- [x] `just build` succeeds
+- [x] Existing integration tests pass (they don't test the web UI)
 
 ---
 
@@ -181,18 +180,18 @@ as separate signals.
 
 **SSE event merging logic**:
 
-| StateEvent | Store update |
-|------------|-------------|
-| `Started { name, pid }` | Set node status to Running, update pid |
-| `Exited { name, exit_code }` | Set status to Stopped or Failed |
-| `Respawning { name, ... }` | Set status to Running (respawning) |
-| `Terminated { name }` | Set status to Stopped |
-| `Failed { name, error }` | Set status to Failed |
-| `LoadStarted { name }` | Set status to Loading |
-| `LoadSucceeded { name, ... }` | Set status to Loaded |
-| `LoadFailed { name, error }` | Set status to Failed |
-| `Unloaded { name }` | Set status to Unloaded |
-| `Blocked { name, reason }` | Set status to Blocked(reason) |
+| StateEvent                    | Store update                           |
+|-------------------------------|----------------------------------------|
+| `Started { name, pid }`       | Set node status to Running, update pid |
+| `Exited { name, exit_code }`  | Set status to Stopped or Failed        |
+| `Respawning { name, ... }`    | Set status to Running (respawning)     |
+| `Terminated { name }`         | Set status to Stopped                  |
+| `Failed { name, error }`      | Set status to Failed                   |
+| `LoadStarted { name }`        | Set status to Loading                  |
+| `LoadSucceeded { name, ... }` | Set status to Loaded                   |
+| `LoadFailed { name, error }`  | Set status to Failed                   |
+| `Unloaded { name }`           | Set status to Unloaded                 |
+| `Blocked { name, reason }`    | Set status to Blocked(reason)          |
 
 For fields not in the event (e.g. `stderr_size`, `respawn_delay`), the store
 retains the last known value. A full refresh (`GET /api/nodes`) runs on SSE
@@ -226,13 +225,13 @@ reconnect to resync after any missed events.
 
 ### Files Changed
 
-| File | Action |
-|------|--------|
-| `src/web/assets/js/vendor/*.module.js` | New: vendored Preact, signals, hooks, htm |
-| `src/web/assets/js/app.js` | New: Preact app shell, imports store + sse |
-| `src/web/assets/js/store.js` | New: reactive state store |
-| `src/web/assets/js/sse.js` | New: SSE state event consumer |
-| `src/web/assets/index.html` | Add `<script type="module" src="/assets/js/app.js">` |
+| File                                   | Action                                               |
+|----------------------------------------|------------------------------------------------------|
+| `src/web/assets/js/vendor/*.module.js` | New: vendored Preact, signals, hooks, htm            |
+| `src/web/assets/js/app.js`             | New: Preact app shell, imports store + sse           |
+| `src/web/assets/js/store.js`           | New: reactive state store                            |
+| `src/web/assets/js/sse.js`             | New: SSE state event consumer                        |
+| `src/web/assets/index.html`            | Add `<script type="module" src="/assets/js/app.js">` |
 
 ### Passing Criteria
 
@@ -309,14 +308,14 @@ the server-rendered HTML cards with client-rendered components.
 
 ### Files Changed
 
-| File | Action |
-|------|--------|
-| `src/web/assets/js/components/NodeCard.js` | New |
-| `src/web/assets/js/components/NodeList.js` | New |
-| `src/web/assets/js/components/Header.js` | New |
-| `src/web/assets/js/components/BulkOperations.js` | New |
-| `src/web/assets/js/app.js` | Mount `<App>` with node list |
-| `src/web/assets/index.html` | Simplify: remove htmx attributes, reduce to mount point |
+| File                                             | Action                                                  |
+|--------------------------------------------------|---------------------------------------------------------|
+| `src/web/assets/js/components/NodeCard.js`       | New                                                     |
+| `src/web/assets/js/components/NodeList.js`       | New                                                     |
+| `src/web/assets/js/components/Header.js`         | New                                                     |
+| `src/web/assets/js/components/BulkOperations.js` | New                                                     |
+| `src/web/assets/js/app.js`                       | Mount `<App>` with node list                            |
+| `src/web/assets/index.html`                      | Simplify: remove htmx attributes, reduce to mount point |
 
 ### Passing Criteria
 
@@ -389,14 +388,14 @@ Log streaming stays SSE-based but managed within the component lifecycle.
 
 ### Files Changed
 
-| File | Action |
-|------|--------|
-| `src/web/assets/js/components/RightPanel.js` | New |
-| `src/web/assets/js/components/InfoTab.js` | New |
-| `src/web/assets/js/components/LogTab.js` | New |
-| `src/web/assets/js/components/PanelResizer.js` | New |
-| `src/web/assets/js/panels.js` | Delete |
-| `src/web/assets/js/logs.js` | Delete |
+| File                                           | Action |
+|------------------------------------------------|--------|
+| `src/web/assets/js/components/RightPanel.js`   | New    |
+| `src/web/assets/js/components/InfoTab.js`      | New    |
+| `src/web/assets/js/components/LogTab.js`       | New    |
+| `src/web/assets/js/components/PanelResizer.js` | New    |
+| `src/web/assets/js/panels.js`                  | Delete |
+| `src/web/assets/js/logs.js`                    | Delete |
 
 ### Passing Criteria
 
@@ -445,16 +444,16 @@ remove htmx dependency, and clean up.
 
 ### Files Deleted
 
-| File | Reason |
-|------|--------|
-| `src/web/assets/js/nodes.js` | Logic moved to `<NodeList>` component |
-| `src/web/assets/js/htmx-handlers.js` | htmx removed |
-| `src/web/assets/js/stderr-monitoring.js` | Logic moved to `<NodeCard>` component |
-| `src/web/assets/js/diagnostics.js` | Logic moved to `<DiagnosticsView>` component |
-| `src/web/assets/js/utils.js` | Helpers inlined in components |
-| `src/web/assets/js/theme.js` | Moved to store |
-| `src/web/assets/js/panels.js` | Already deleted in 20.3 |
-| `src/web/assets/js/logs.js` | Already deleted in 20.3 |
+| File                                     | Reason                                       |
+|------------------------------------------|----------------------------------------------|
+| `src/web/assets/js/nodes.js`             | Logic moved to `<NodeList>` component        |
+| `src/web/assets/js/htmx-handlers.js`     | htmx removed                                 |
+| `src/web/assets/js/stderr-monitoring.js` | Logic moved to `<NodeCard>` component        |
+| `src/web/assets/js/diagnostics.js`       | Logic moved to `<DiagnosticsView>` component |
+| `src/web/assets/js/utils.js`             | Helpers inlined in components                |
+| `src/web/assets/js/theme.js`             | Moved to store                               |
+| `src/web/assets/js/panels.js`            | Already deleted in 20.3                      |
+| `src/web/assets/js/logs.js`              | Already deleted in 20.3                      |
 
 ### Passing Criteria
 
@@ -479,19 +478,19 @@ remove htmx dependency, and clean up.
 
 ### Before vs After
 
-| Aspect | Before (htmx + vanilla JS) | After (Preact + SSE) |
-|--------|---------------------------|---------------------|
-| Rendering | Split: server HTML + client JS | Client-only (Preact components) |
-| State management | DOM (classList, attributes) | Reactive signals (single store) |
-| Updates | 6 polling intervals (1–5s each) | 1 SSE connection (real-time) |
-| Dependencies | htmx (14KB, CDN) + SSE ext (2KB, CDN) | Preact (3KB) + signals (1KB) + htm (0.7KB) — all vendored |
-| Build step | None | None (vendored ES modules) |
-| Offline support | No (htmx loaded from unpkg.com CDN) | Yes (all assets embedded in binary) |
-| Node list | Server renders ~400 lines of `format!()` HTML | `<NodeCard>` component (~100 lines) |
-| Adding a field | Change Rust HTML + JS rendering + CSS | Change component + CSS |
-| Backend | Mixed (HTML fragments + JSON + SSE) | Pure (JSON + SSE) |
-| JS files | 8 files, 700+ lines, global state | ~8 component modules, scoped state |
-| Log streaming | SSE (unchanged) | SSE (unchanged, managed by hooks) |
+| Aspect           | Before (htmx + vanilla JS)                    | After (Preact + SSE)                                      |
+|------------------|-----------------------------------------------|-----------------------------------------------------------|
+| Rendering        | Split: server HTML + client JS                | Client-only (Preact components)                           |
+| State management | DOM (classList, attributes)                   | Reactive signals (single store)                           |
+| Updates          | 6 polling intervals (1–5s each)               | 1 SSE connection (real-time)                              |
+| Dependencies     | htmx (14KB, CDN) + SSE ext (2KB, CDN)         | Preact (3KB) + signals (1KB) + htm (0.7KB) — all vendored |
+| Build step       | None                                          | None (vendored ES modules)                                |
+| Offline support  | No (htmx loaded from unpkg.com CDN)           | Yes (all assets embedded in binary)                       |
+| Node list        | Server renders ~400 lines of `format!()` HTML | `<NodeCard>` component (~100 lines)                       |
+| Adding a field   | Change Rust HTML + JS rendering + CSS         | Change component + CSS                                    |
+| Backend          | Mixed (HTML fragments + JSON + SSE)           | Pure (JSON + SSE)                                         |
+| JS files         | 8 files, 700+ lines, global state             | ~8 component modules, scoped state                        |
+| Log streaming    | SSE (unchanged)                               | SSE (unchanged, managed by hooks)                         |
 
 ### Risk Assessment
 
