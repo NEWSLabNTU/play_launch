@@ -348,14 +348,17 @@ fn wait_for_container_log(
     let start = std::time::Instant::now();
     while start.elapsed() < timeout {
         std::thread::sleep(Duration::from_secs(1));
-        let node_dir = play_log_dir.join("node");
-        if let Ok(entries) = std::fs::read_dir(&node_dir) {
-            for entry in entries.flatten() {
-                for filename in ["err", "out"] {
-                    let log_file = entry.path().join(filename);
-                    if let Ok(content) = std::fs::read_to_string(&log_file) {
-                        if content.contains(pattern) {
-                            return Some(content);
+        // Scan both node/ (containers) and load_node/ (per-composable-node logs in isolated mode)
+        for subdir in ["node", "load_node"] {
+            let dir = play_log_dir.join(subdir);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    for filename in ["err", "out"] {
+                        let log_file = entry.path().join(filename);
+                        if let Ok(content) = std::fs::read_to_string(&log_file) {
+                            if content.contains(pattern) {
+                                return Some(content);
+                            }
                         }
                     }
                 }
@@ -417,20 +420,22 @@ fn test_isolated_data_delivery() {
 
     // Collect diagnostics on failure
     if result.is_none() {
-        let node_dir = play_log.join("node");
-        eprintln!("--- Container log files ---");
-        if let Ok(entries) = std::fs::read_dir(&node_dir) {
-            for entry in entries.flatten() {
-                for filename in ["err", "out"] {
-                    let log_file = entry.path().join(filename);
-                    if let Ok(content) = std::fs::read_to_string(&log_file) {
-                        eprintln!(
-                            "--- {} ({} bytes) ---",
-                            log_file.display(),
-                            content.len()
-                        );
-                        let snippet_start = content.len().saturating_sub(2000);
-                        eprintln!("{}", &content[snippet_start..]);
+        eprintln!("--- Log files ---");
+        for subdir in ["node", "load_node"] {
+            let dir = play_log.join(subdir);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    for filename in ["err", "out"] {
+                        let log_file = entry.path().join(filename);
+                        if let Ok(content) = std::fs::read_to_string(&log_file) {
+                            eprintln!(
+                                "--- {} ({} bytes) ---",
+                                log_file.display(),
+                                content.len()
+                            );
+                            let snippet_start = content.len().saturating_sub(2000);
+                            eprintln!("{}", &content[snippet_start..]);
+                        }
                     }
                 }
             }
@@ -583,6 +588,8 @@ fn test_observable_data_delivery() {
         "--disable-web-ui",
         "--disable-monitoring",
         "--disable-diagnostics",
+        "--container-mode",
+        "observable",
         &launch,
     ]);
     cmd.stdout(Stdio::from(output_file));
@@ -603,7 +610,7 @@ fn test_observable_data_delivery() {
         "Expected 2 LOADED events, found {loaded}"
     );
 
-    // Wait for data delivery
+    // Wait for data delivery — in observable mode logs go to the container's stderr
     let play_log = work_dir.join("play_log/latest");
     let result = wait_for_container_log(&play_log, "I heard:", Duration::from_secs(15));
 
