@@ -82,12 +82,47 @@
     background: var(--bg-tertiary);
 }
 
+/* Log level badges */
+.log-level {
+    font-size: 0.75rem;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 600;
+    margin-right: 6px;
+    display: inline-block;
+    min-width: 42px;
+    text-align: center;
+}
+
+.log-level-debug { background: var(--bg-tertiary);  color: var(--text-muted); }
+.log-level-info  { background: var(--running-bg);   color: var(--running-text); }
+.log-level-warn  { background: var(--pending-bg);   color: var(--pending-text); }
+.log-level-error { background: var(--failed-bg);    color: var(--failed-text); }
+.log-level-fatal { background: var(--failed-bg);    color: var(--failed-text); font-weight: 800; }
+
+/* Formatted log parts */
+.log-ts     { color: var(--text-muted);      margin-right: 6px; }
+.log-logger { color: var(--text-secondary);  margin-right: 6px; }
+.log-msg    { color: var(--text-primary); }
+
+/* Tint the full line background for errors/warnings */
+.log-line.log-line-error { background: color-mix(in srgb, var(--failed-bg) 30%, transparent); }
+.log-line.log-line-fatal { background: color-mix(in srgb, var(--failed-bg) 40%, transparent); }
+.log-line.log-line-warn  { background: color-mix(in srgb, var(--pending-bg) 20%, transparent); }
+
 .log-controls {
     display: flex;
     justify-content: space-between;
-    padding: 12px;
+    align-items: center;
+    padding: 8px 12px;
     border-top: 1px solid var(--border-color);
     flex-shrink: 0;
+}
+
+.log-controls-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .log-controls button {
@@ -98,6 +133,42 @@
 
 .log-controls button:hover:not(:disabled) {
     background: var(--border-color);
+}
+
+.log-controls button.active {
+    background: var(--btn-primary);
+    color: white;
+    border-color: var(--btn-primary);
+}
+
+.log-level-select:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.log-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.log-checkbox input {
+    margin: 0;
+    cursor: pointer;
+}
+
+.log-level-select {
+    padding: 4px 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
 }
 
 .log-status {
