@@ -9,7 +9,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/play-launch-builder
 
 jobs:
   build-and-push:
@@ -21,6 +20,10 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
+    - name: Compute image name
+      id: image
+      run: echo "name=${GITHUB_REPOSITORY_OWNER,,}/play-launch-builder" >> "$GITHUB_OUTPUT"
 
     - name: Set up QEMU (for arm64)
       uses: docker/setup-qemu-action@v3
@@ -45,7 +48,7 @@ jobs:
         platforms: linux/amd64,linux/arm64
         push: true
         tags: |
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:humble
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:humble-${{ github.sha }}
+          ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:humble
+          ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:humble-${{ github.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max

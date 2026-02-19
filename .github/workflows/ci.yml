@@ -9,6 +9,8 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/newslabnttu/play-launch-builder:humble
 
     steps:
     - name: Checkout code
@@ -16,83 +18,17 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Set up ROS 2 Humble
-      run: |
-        sudo apt update
-        sudo apt install -y software-properties-common
-        sudo add-apt-repository universe
-        sudo apt update && sudo apt install -y curl
-
-        # Add ROS 2 apt repository
-        sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
-
-        sudo apt update
-        sudo apt install -y \
-          ros-humble-ros-base \
-          ros-humble-ament-index-python \
-          ros-humble-launch \
-          python3-colcon-common-extensions \
-          ros-humble-rcl \
-          ros-humble-rcutils \
-          ros-humble-rmw \
-          ros-humble-rosidl-typesupport-c \
-          ros-humble-composition-interfaces \
-          ros-humble-rcl-interfaces \
-          ros-humble-builtin-interfaces \
-          ros-humble-action-msgs \
-          ros-humble-unique-identifier-msgs \
-          ros-humble-rosgraph-msgs \
-          ros-humble-example-interfaces \
-          ros-humble-test-msgs \
-          ros-humble-ros2launch \
-          ros-humble-demo-nodes-cpp
-
-    - name: Install Rust
-      run: |
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-        source $HOME/.cargo/env
-        rustc --version
-
-    - name: Install just
-      run: |
-        curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to ~/bin
-        echo "$HOME/bin" >> $GITHUB_PATH
-
-    - name: Install dependencies
-      run: |
-        source $HOME/.cargo/env
-        source /opt/ros/humble/setup.bash
-        pip3 install --user colcon-cargo-ros2 ruff
-        sudo apt install -y python3-pip python3-rosdep
-        sudo rosdep init || true
-        rosdep update
-        rosdep install --from-paths src --ignore-src -r -y
-
-        # Install uv for wheel building
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-        # Install cargo-nextest for test runner
-        cargo install cargo-nextest --locked
-
     - name: Build workspace
       run: |
-        source $HOME/.cargo/env
         source /opt/ros/humble/setup.bash
         just build
 
     - name: Run tests
       run: |
-        source $HOME/.cargo/env
         source /opt/ros/humble/setup.bash
         source install/setup.bash
-        # Verify dump_launch is in PATH
         which dump_launch || echo "Warning: dump_launch not found in PATH"
         just test
 
-    - name: Run linters
-      run: |
-        source $HOME/.cargo/env
-        source /opt/ros/humble/setup.bash
-        just lint
+    - name: Run checks
+      run: just check

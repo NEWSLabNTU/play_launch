@@ -1,5 +1,5 @@
-# Pre-built CI image for play_launch wheel builds.
-# Contains ROS2 Humble, Rust, and all Python/C++ build dependencies.
+# Pre-built CI image for play_launch builds, tests, and wheel releases.
+# Contains ROS2 Humble, Rust, and all build/test/lint dependencies.
 #
 # Rebuild when:
 #   - ROS2 packages are added/changed in CMakeLists.txt or package.xml
@@ -7,7 +7,7 @@
 #   - Build tool versions change (colcon-cargo-ros2, uv, just, etc.)
 #
 # The image is built and pushed by .github/workflows/builder-image.yml
-# and consumed by .github/workflows/release-wheel.yml.
+# and consumed by .github/workflows/ci.yml and release-wheel.yml.
 #
 # Manual build (amd64 only, for testing):
 #   docker build -f docker/builder.Dockerfile -t play-launch-builder:humble .
@@ -29,7 +29,7 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       python3-pip python3-dev python3-venv python3-colcon-common-extensions \
-      ros-humble-ros-core \
+      ros-humble-ros-base \
       ros-humble-ament-index-python \
       ros-humble-launch \
       ros-humble-rcl \
@@ -46,7 +46,11 @@ RUN apt-get update && \
       ros-humble-test-msgs \
       ros-humble-rclcpp-components \
       ros-humble-class-loader \
-      ros-humble-ament-index-cpp && \
+      ros-humble-ament-index-cpp \
+      ros-humble-ros2launch \
+      ros-humble-demo-nodes-cpp \
+      ros-humble-ament-cpplint \
+      ros-humble-ament-clang-format && \
     rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -60,9 +64,14 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
     rustc --version
 
 # ---------------------------------------------------------------------------
-# Python build tools
+# cargo-nextest (test runner)
 # ---------------------------------------------------------------------------
-RUN pip3 install --no-cache-dir colcon-cargo-ros2 build 'wheel>=0.40'
+RUN cargo install cargo-nextest --locked
+
+# ---------------------------------------------------------------------------
+# Python build/lint tools
+# ---------------------------------------------------------------------------
+RUN pip3 install --no-cache-dir colcon-cargo-ros2 build 'wheel>=0.40' ruff
 
 # ---------------------------------------------------------------------------
 # just (command runner)

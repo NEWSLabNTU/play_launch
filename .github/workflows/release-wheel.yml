@@ -53,7 +53,7 @@ jobs:
         docker run --rm --platform=${DOCKER_ARCH} \
           -v $PWD:/workspace \
           -w /workspace \
-          ghcr.io/${{ github.repository_owner }}/play-launch-builder:humble \
+          ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/play-launch-builder:humble \
           bash -c "
             set -e
             source /opt/ros/humble/setup.bash
