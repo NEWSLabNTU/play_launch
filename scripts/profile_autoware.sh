@@ -19,7 +19,9 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-AUTOWARE_WS="${AUTOWARE_WS:-/home/aeon/repos/autoware/1.5.0-ws}"
+
+# Source the shared Autoware activation script
+source "$PROJECT_ROOT/tests/fixtures/autoware/activate_autoware.sh"
 
 # Defaults
 DDS_TUNED=false
@@ -60,14 +62,8 @@ if [ "$PARANOID" -gt 1 ]; then
     echo "  Fix: sudo sysctl kernel.perf_event_paranoid=-1"
     exit 1
 fi
-if [ ! -d "$AUTOWARE_WS/install" ]; then
-    echo "ERROR: Autoware workspace not found at $AUTOWARE_WS"
-    echo "  Set AUTOWARE_WS to your Autoware workspace path"
-    exit 1
-fi
-
 # --- Environment setup ---
-source "$AUTOWARE_WS/install/setup.bash"
+# activate_autoware.sh already sourced setup.bash above
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export DISPLAY="${DISPLAY:-:1}"
 

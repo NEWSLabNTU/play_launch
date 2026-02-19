@@ -323,7 +323,7 @@ quality:
 run-autoware *ARGS:
     #!/usr/bin/env bash
     set -e
-    source /home/aeon/repos/autoware/1.5.0-ws/install/setup.bash
+    source tests/fixtures/autoware/activate_autoware.sh
     source install/setup.bash
     export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
     export DISPLAY=${DISPLAY:-:1}
