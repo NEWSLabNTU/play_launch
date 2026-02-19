@@ -62,6 +62,54 @@ button:hover:not(:disabled) {
     opacity: 0.85;
 }
 
+/* Connection lost overlay */
+.connection-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.connection-overlay-content {
+    text-align: center;
+    color: #fff;
+    padding: 32px 48px;
+    background: rgba(30, 30, 30, 0.9);
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.connection-spinner {
+    width: 36px;
+    height: 36px;
+    margin: 0 auto 16px;
+    border: 3px solid rgba(255, 255, 255, 0.2);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.connection-text {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.connection-subtext {
+    font-size: 0.85rem;
+    opacity: 0.7;
+}
+
 @media (max-width: 768px) {
     .left-panel.with-sidebar {
         width: 100%;

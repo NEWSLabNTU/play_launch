@@ -27,20 +27,47 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e =
     }
 });
 
+/** Blocking overlay shown when SSE connection is lost (not on initial load). */
+function ConnectionOverlay() {
+    const connState = store.connected.value;
+    if (connState === null || connState === true) { return null; }
+
+    return html`
+        <div class="connection-overlay">
+            <div class="connection-overlay-content">
+                <div class="connection-spinner"></div>
+                <div class="connection-text">Connection lost</div>
+                <div class="connection-subtext">Waiting for server...</div>
+            </div>
+        </div>
+    `;
+}
+
 function App() {
     const view = store.currentView.value;
     const isOpen = store.panelOpen.value;
 
+    // Nodes and Diagnostics live in separate containers toggled by display.
+    // This suppresses the left-panel width transition on view switches
+    // (display:none → visible doesn't trigger CSS transitions) while
+    // preserving the slide animation when the user opens/closes the panel.
     return html`
         <${Header} />
         <div class="main-container">
-            <div class="left-panel ${isOpen ? 'with-sidebar' : ''}">
-                ${view === 'nodes' && html`<${NodeList} />`}
+            <div class="left-panel ${isOpen ? 'with-sidebar' : ''}"
+                 style=${{ display: view === 'nodes' ? '' : 'none' }}>
+                <${NodeList} />
+            </div>
+            <div class="left-panel"
+                 style=${{ display: view === 'diagnostics' ? '' : 'none' }}>
                 <${DiagnosticsView} />
             </div>
-            <${PanelResizer} />
-            <${RightPanel} />
+            ${view === 'nodes' && html`
+                <${PanelResizer} />
+                <${RightPanel} />
+            `}
         </div>
+        <${ConnectionOverlay} />
     `;
 }
 

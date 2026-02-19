@@ -57,12 +57,21 @@ function buildRosName(node) {
 export function NodeList() {
     const [sortBy, setSortBy] = useState('name');
     const [filterTerm, setFilterTerm] = useState('');
+    const [treeView, setTreeView] = useState(true);
 
     const allNodes = nodeList.value;
 
-    // Group nodes: containers with their composable children, regular nodes standalone
     const grouped = useMemo(() => {
-        // Build container member-name -> composable nodes map
+        const sorter = makeSorter(sortBy);
+
+        if (!treeView) {
+            // Flat mode: all nodes sorted together, no parent-child grouping
+            const flat = allNodes.filter(n => matchesFilter(n, filterTerm));
+            flat.sort(sorter);
+            return flat.map(node => ({ node, isChild: false }));
+        }
+
+        // Tree mode: containers with their composable children grouped together
         const containerChildren = new Map();
         const containers = [];
         const regularNodes = [];
@@ -83,12 +92,10 @@ export function NodeList() {
             }
         }
 
-        const sorter = makeSorter(sortBy);
         regularNodes.sort(sorter);
         containers.sort(sorter);
         containerChildren.forEach(children => children.sort(sorter));
 
-        // Build flat output: regular nodes, then container groups
         const result = [];
         for (const node of regularNodes) {
             if (matchesFilter(node, filterTerm)) {
@@ -100,10 +107,8 @@ export function NodeList() {
             const containerMatches = matchesFilter(container, filterTerm);
             const matchingChildren = children.filter(c => matchesFilter(c, filterTerm));
 
-            // Show container if it matches or any child matches
             if (containerMatches || matchingChildren.length > 0) {
                 result.push({ node: container, isChild: false });
-                // Show all children if container matches, otherwise only matching children
                 const childrenToShow = containerMatches ? children : matchingChildren;
                 for (const child of childrenToShow) {
                     result.push({ node: child, isChild: true });
@@ -112,7 +117,7 @@ export function NodeList() {
         }
 
         return result;
-    }, [allNodes, sortBy, filterTerm]);
+    }, [allNodes, sortBy, filterTerm, treeView]);
 
     const onFilterNamespace = useCallback((ns) => {
         setFilterTerm(ns);
@@ -135,6 +140,11 @@ export function NodeList() {
                         <option value="type">Type</option>
                         <option value="status">Status</option>
                     </select>
+                    <label class="toggle-checkbox tree-toggle">
+                        <input type="checkbox" checked=${treeView}
+                            onChange=${(e) => setTreeView(e.target.checked)} />
+                        <span class="toggle-label">Tree</span>
+                    </label>
                 </div>
                 <input type="text" class="search-box" id="search" placeholder="Filter nodes..."
                     value=${filterTerm} onInput=${(e) => setFilterTerm(e.target.value)} />

@@ -73,7 +73,7 @@ async fn stream_log_file(state: Arc<WebState>, node_name: &str, file_name: &str)
     Sse::new(stream)
         .keep_alive(
             axum::response::sse::KeepAlive::new()
-                .interval(Duration::from_secs(15))
+                .interval(Duration::from_secs(3))
                 .text("keep-alive"),
         )
         .into_response()
@@ -195,27 +195,38 @@ pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Respons
     // Subscribe to state events
     let mut rx = state.state_broadcaster.subscribe().await;
 
-    // Create the event stream
+    // Create the event stream with periodic heartbeat data events.
+    // We send heartbeats as `data: keep-alive` (not SSE comments) because
+    // JavaScript's EventSource.onmessage only fires for data events.
     let stream = async_stream::stream! {
-        while let Some(event) = rx.recv().await {
-            // Serialize StateEvent to JSON
-            match serde_json::to_string(&event) {
-                Ok(json) => {
-                    yield Ok::<_, Infallible>(Event::default().data(json));
+        let mut heartbeat = tokio::time::interval(Duration::from_secs(3));
+        // First tick fires immediately — skip it since the client just connected.
+        heartbeat.tick().await;
+
+        loop {
+            tokio::select! {
+                event = rx.recv() => {
+                    match event {
+                        Some(event) => {
+                            match serde_json::to_string(&event) {
+                                Ok(json) => {
+                                    yield Ok::<_, Infallible>(Event::default().data(json));
+                                }
+                                Err(e) => {
+                                    error!("Failed to serialize StateEvent: {}", e);
+                                }
+                            }
+                        }
+                        None => break, // channel closed
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to serialize StateEvent: {}", e);
+                _ = heartbeat.tick() => {
+                    yield Ok::<_, Infallible>(Event::default().data("keep-alive"));
                 }
             }
         }
         debug!("SSE state updates stream ended");
     };
 
-    Sse::new(stream)
-        .keep_alive(
-            axum::response::sse::KeepAlive::new()
-                .interval(Duration::from_secs(15))
-                .text("keep-alive"),
-        )
-        .into_response()
+    Sse::new(stream).into_response()
 }

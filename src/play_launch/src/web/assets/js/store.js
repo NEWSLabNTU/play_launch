@@ -16,6 +16,11 @@ export const activeTab = signal('stderr');
 export const theme = signal(localStorage.getItem('theme') || 'light');
 export const currentView = signal('nodes');
 
+// --- Connection state ---
+
+/** SSE connection state: null = initial (never connected), true = connected, false = lost. */
+export const connected = signal(null);
+
 // --- Diagnostics ---
 
 export const diagnostics = signal([]);

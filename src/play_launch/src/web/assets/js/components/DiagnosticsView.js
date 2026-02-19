@@ -24,12 +24,6 @@ function formatRelativeTime(timestamp) {
     return Math.floor(days / 7) + 'w ago';
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = String(text);
-    return div.innerHTML;
-}
-
 function DiagValues({ values }) {
     if (!values || Object.keys(values).length === 0) return html`<span>-</span>`;
     const entries = Object.entries(values);
@@ -136,8 +130,6 @@ export function DiagnosticsView() {
         return 'sortable ' + (sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
     };
 
-    const now = new Date();
-
     return html`
         <div class="diagnostics-view" style=${{ display: view === 'diagnostics' ? 'block' : 'none' }}>
             <div class="diagnostics-header">
@@ -160,21 +152,16 @@ export function DiagnosticsView() {
                     ${sorted.length === 0 && html`
                         <tr><td colspan="6" class="no-diagnostics">No diagnostics available</td></tr>
                     `}
-                    ${sorted.map(diag => {
-                        const diagDate = new Date(diag.timestamp);
-                        const ageSeconds = Math.floor((now.getTime() - diagDate.getTime()) / 1000);
-                        const freshClass = ageSeconds < 10 ? 'fresh' : '';
-                        return html`
-                            <tr class=${freshClass} key=${diag.hardware_id + '/' + diag.name}>
-                                <td>${diag.hardware_id}</td>
-                                <td>${diag.name}</td>
-                                <td><span class="diag-level diag-level-${diag.level.toLowerCase()}">${diag.level}</span></td>
-                                <td>${diag.message || ''}</td>
-                                <td class="diag-values"><${DiagValues} values=${diag.values} /></td>
-                                <td class="diag-timestamp">${formatRelativeTime(diag.timestamp)}</td>
-                            </tr>
-                        `;
-                    })}
+                    ${sorted.map(diag => html`
+                        <tr key=${diag.hardware_id + '/' + diag.name}>
+                            <td>${diag.hardware_id}</td>
+                            <td>${diag.name}</td>
+                            <td><span class="diag-level diag-level-${diag.level.toLowerCase()}">${diag.level}</span></td>
+                            <td>${diag.message || ''}</td>
+                            <td class="diag-values"><${DiagValues} values=${diag.values} /></td>
+                            <td class="diag-timestamp">${formatRelativeTime(diag.timestamp)}</td>
+                        </tr>
+                    `)}
                 </tbody>
             </table>
         </div>

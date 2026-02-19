@@ -30,22 +30,23 @@
 
 .diagnostics-table {
     width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
+    border-collapse: collapse;
     font-size: 0.85rem;
+    border: 1px solid var(--border-color);
 }
 
 .diagnostics-table th {
     background: var(--bg-secondary);
     padding: 10px;
     text-align: left;
-    border-bottom: 2px solid var(--border-color);
+    border: 1px solid var(--border-color);
     font-weight: 600;
     position: sticky;
     top: 0;
     z-index: 10;
     cursor: pointer;
     user-select: none;
+    vertical-align: top;
 }
 
 .diagnostics-table th:hover {
@@ -53,25 +54,23 @@
 }
 
 .diagnostics-table th.sortable::after {
-    content: ' ⇅';
+    content: ' \u21C5';
     color: var(--text-muted);
     font-size: 0.7rem;
 }
 
 .diagnostics-table th.sorted-asc::after {
-    content: ' ↑';
+    content: ' \u2191';
     color: var(--text-primary);
 }
 
 .diagnostics-table th.sorted-desc::after {
-    content: ' ↓';
+    content: ' \u2193';
     color: var(--text-primary);
 }
 
 .diagnostics-table tbody tr {
     background: var(--bg-primary);
-    border-bottom: 1px solid var(--border-color);
-    transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .diagnostics-table tbody tr:nth-child(even) {
@@ -80,26 +79,12 @@
 
 .diagnostics-table td {
     padding: 10px;
-    border-bottom: 1px solid var(--border-color);
+    border: 1px solid var(--border-color);
+    vertical-align: top;
 }
 
 .diagnostics-table tbody tr:hover {
     background: var(--bg-tertiary) !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    position: relative;
-    z-index: 1;
-}
-
-.diagnostics-table tr.fresh {
-    background: var(--running-bg) !important;
-    font-weight: 500;
-    border-left: 3px solid var(--running-border);
-}
-
-.diagnostics-table tr.fresh:hover {
-    background: var(--running-bg) !important;
-    opacity: 0.95;
-    box-shadow: 0 2px 8px rgba(15, 81, 50, 0.2);
 }
 
 .diag-level {
