@@ -144,6 +144,8 @@ pub struct NodeSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional = nullable))]
     pub auto_load: Option<bool>,
+    /// Whether this composable node has its own log files (isolated mode)
+    pub has_own_logs: bool,
 }
 
 impl NodeSummary {
@@ -160,6 +162,10 @@ impl NodeSummary {
 
         // Convert state to UnifiedStatus
         let status = Self::convert_state(&member.state);
+
+        // Composable nodes have their own logs when running in isolated mode
+        let has_own_logs = node_type == NodeType::ComposableNode
+            && (member.output_dir.join("out").exists() || member.output_dir.join("err").exists());
 
         Self {
             name: member.name.clone(),
@@ -181,6 +187,7 @@ impl NodeSummary {
             respawn_enabled: member.respawn_enabled,
             respawn_delay: member.respawn_delay,
             auto_load: member.auto_load,
+            has_own_logs,
         }
     }
 

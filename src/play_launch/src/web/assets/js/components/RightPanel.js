@@ -57,7 +57,10 @@ export function RightPanel() {
     const status = storeNode?.status;
     const statusStr = getStatusString(status);
     const isComposable = storeNode?.node_type === 'composable_node';
-    const containerName = isComposable ? storeNode?.container_name : null;
+    // Composable nodes with their own logs (isolated mode) stream directly;
+    // others fall back to the container's log stream.
+    const hasOwnLogs = storeNode?.has_own_logs;
+    const containerName = (isComposable && !hasOwnLogs) ? storeNode?.container_name : null;
 
     return html`
         <div class="right-panel open">

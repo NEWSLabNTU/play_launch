@@ -14,6 +14,7 @@
 
 #include "play_launch_container/clone_isolated_component_manager.hpp"
 
+#include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/epoll.h>
@@ -321,14 +322,18 @@ CloneIsolatedComponentManager::ChildInfo CloneIsolatedComponentManager::spawn_ch
     args.push_back("--use-multi-threaded-executor");
   }
 
-  // Check extra_arguments for use_intra_process_comms
+  // Check extra_arguments for use_intra_process_comms and log_dir
+  std::string log_dir;
   for (const auto & extra : request->extra_arguments) {
     if (
       extra.name == "use_intra_process_comms" &&
       extra.value.type == rcl_interfaces::msg::ParameterType::PARAMETER_BOOL &&
       extra.value.bool_value) {
       args.push_back("--use-intra-process-comms");
-      break;
+    } else if (
+      extra.name == "log_dir" &&
+      extra.value.type == rcl_interfaces::msg::ParameterType::PARAMETER_STRING) {
+      log_dir = extra.value.string_value;
     }
   }
 
@@ -410,6 +415,22 @@ CloneIsolatedComponentManager::ChildInfo CloneIsolatedComponentManager::spawn_ch
     // the prctl() above, getppid() returns 1 (init adopted us).
     if (getppid() == 1) {
       _exit(1);
+    }
+
+    // Redirect stdout/stderr to per-node log files if log_dir is set
+    if (!log_dir.empty()) {
+      std::string out_path = log_dir + "/out";
+      std::string err_path = log_dir + "/err";
+      int out_fd = open(out_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      int err_fd = open(err_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      if (out_fd >= 0) {
+        dup2(out_fd, STDOUT_FILENO);
+        close(out_fd);
+      }
+      if (err_fd >= 0) {
+        dup2(err_fd, STDERR_FILENO);
+        close(err_fd);
+      }
     }
 
     // The write end (pipefd[1]) must NOT be close-on-exec since component_node

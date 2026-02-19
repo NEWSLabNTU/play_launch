@@ -397,6 +397,7 @@ impl MemberCoordinatorBuilder {
                         parameters,
                         extra_args,
                         auto_load: def.auto_load,
+                        output_dir: def.context.output_dir.clone(),
                     };
 
                     // Add composable node to container

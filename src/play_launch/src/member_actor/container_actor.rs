@@ -52,6 +52,8 @@ pub struct ComposableNodeMetadata {
     pub extra_args: Vec<rcl_interfaces::msg::Parameter>,
     /// Auto-load on container startup
     pub auto_load: bool,
+    /// Output directory for per-node logging (isolated mode)
+    pub output_dir: PathBuf,
 }
 
 /// Entry for a composable node managed by this container (Phase 12)
@@ -352,6 +354,7 @@ impl ContainerActor {
                 remap_rules: request.remap_rules,
                 parameters: request.parameters,
                 extra_args: request.extra_args,
+                output_dir: request.output_dir,
                 request_time: request.request_time,
             };
 
@@ -546,7 +549,40 @@ impl ContainerActor {
             )
         })?;
 
+        // Create per-node output directory for isolated container logging
+        let output_dir = params.output_dir.clone();
+        if !output_dir.as_os_str().is_empty() {
+            if let Err(e) = std::fs::create_dir_all(&output_dir) {
+                warn!(
+                    "{}: Failed to create output dir for {}: {}",
+                    container_name, params.composable_name, e
+                );
+            }
+        }
+
         // Build LoadNode request
+        let mut extra_arguments =
+            crate::ros::component_loader::convert_parameters_to_ros(&params.extra_args)?;
+
+        // Inject log_dir so the isolated container can redirect stdout/stderr
+        if !output_dir.as_os_str().is_empty() {
+            extra_arguments.push(rcl_interfaces::msg::Parameter {
+                name: "log_dir".to_string(),
+                value: rcl_interfaces::msg::ParameterValue {
+                    type_: rcl_interfaces::msg::ParameterType::PARAMETER_STRING,
+                    string_value: output_dir.to_string_lossy().to_string(),
+                    bool_value: false,
+                    integer_value: 0,
+                    double_value: 0.0,
+                    byte_array_value: Vec::new(),
+                    bool_array_value: Vec::new(),
+                    integer_array_value: Vec::new(),
+                    double_array_value: Vec::new(),
+                    string_array_value: Vec::new(),
+                },
+            });
+        }
+
         let ros_request = composition_interfaces::srv::LoadNode_Request {
             package_name: params.package.clone(),
             plugin_name: params.plugin.clone(),
@@ -557,9 +593,7 @@ impl ContainerActor {
             parameters: crate::ros::component_loader::convert_parameters_to_ros(
                 &params.parameters,
             )?,
-            extra_arguments: crate::ros::component_loader::convert_parameters_to_ros(
-                &params.extra_args,
-            )?,
+            extra_arguments,
         };
 
         // Wait for LoadNode service to be available
@@ -903,6 +937,7 @@ impl ContainerActor {
                         remap_rules: entry.metadata.remap_rules.clone(),
                         parameters,
                         extra_args,
+                        output_dir: entry.metadata.output_dir.clone(),
                         request_time: started_at,
                     };
 
@@ -1731,6 +1766,7 @@ impl ContainerActor {
                             remap_rules,
                             parameters,
                             extra_args,
+                            output_dir,
                         } => {
                             debug!("{}: Received load request for {}", self.name, composable_name);
 
@@ -1743,6 +1779,7 @@ impl ContainerActor {
                                 remap_rules,
                                 parameters,
                                 extra_args,
+                                output_dir,
                                 request_time: std::time::Instant::now(),
                             };
 

@@ -5,7 +5,7 @@
 //! container actor, which dispatches them concurrently.
 
 use eyre::Result;
-use std::time::Instant;
+use std::{path::PathBuf, time::Instant};
 use tokio::sync::oneshot;
 
 /// Response from loading a composable node
@@ -58,6 +58,8 @@ pub enum ContainerControlEvent {
         parameters: Vec<(String, String)>,
         /// Extra arguments (key-value pairs)
         extra_args: Vec<(String, String)>,
+        /// Output directory for per-node logging (isolated mode)
+        output_dir: PathBuf,
     },
     /// Request to unload a composable node from this container
     UnloadNode {
@@ -89,6 +91,8 @@ pub(super) struct LoadRequest {
     pub parameters: Vec<(String, String)>,
     /// Extra arguments (key-value pairs)
     pub extra_args: Vec<(String, String)>,
+    /// Output directory for per-node logging (isolated mode)
+    pub output_dir: PathBuf,
     /// When the request was received (for metrics)
     pub request_time: Instant,
 }
@@ -104,6 +108,7 @@ pub(super) struct LoadParams {
     pub remap_rules: Vec<String>,
     pub parameters: Vec<(String, String)>,
     pub extra_args: Vec<(String, String)>,
+    pub output_dir: PathBuf,
     pub request_time: Instant,
 }
 
