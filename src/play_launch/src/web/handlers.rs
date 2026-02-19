@@ -82,7 +82,17 @@ pub async fn list_nodes(
             // Populate container_name for composable nodes
             if summary.node_type == super::web_types::NodeType::ComposableNode {
                 if let Some(ref target) = summary.target_container {
-                    summary.container_name = container_lookup.get(target).cloned();
+                    // Normalize: target_container may lack leading "/" while
+                    // container_lookup keys always start with "/"
+                    let normalized = if target.starts_with('/') {
+                        target.clone()
+                    } else {
+                        format!("/{}", target)
+                    };
+                    summary.container_name = container_lookup
+                        .get(&normalized)
+                        .or_else(|| container_lookup.get(target))
+                        .cloned();
                 }
             }
             summary
@@ -109,21 +119,27 @@ pub async fn get_node(State(state): State<Arc<WebState>>, Path(name): Path<Strin
         // For composable nodes, find the container's member name (not the full ROS name)
         let container_member_name = if node.node_type == super::web_types::NodeType::ComposableNode
         {
-            if let Some(ref target_container_ros_name) = node.target_container {
+            if let Some(ref target) = node.target_container {
+                let normalized_target = if target.starts_with('/') {
+                    target.clone()
+                } else {
+                    format!("/{}", target)
+                };
                 // Look up all members to find the container with matching ROS name
                 let all_members = coordinator.list_members().await;
                 all_members
                     .iter()
                     .find(|m| {
-                        m.is_container
-                            && m.namespace
-                                .as_ref()
-                                .map(|ns| {
-                                    format!("{}/{}", ns, m.node_name.as_ref().unwrap_or(&m.name))
-                                })
-                                .or_else(|| m.node_name.as_ref().map(|n| format!("/{}", n)))
-                                .as_ref()
-                                == Some(target_container_ros_name)
+                        if !m.is_container {
+                            return false;
+                        }
+                        let node_name = m.node_name.as_ref().unwrap_or(&m.name);
+                        let ros_name = match m.namespace.as_deref() {
+                            Some("/") | None => format!("/{}", node_name),
+                            Some(ns) if ns.ends_with('/') => format!("{}{}", ns, node_name),
+                            Some(ns) => format!("{}/{}", ns, node_name),
+                        };
+                        ros_name == normalized_target
                     })
                     .map(|container| container.name.clone())
             } else {
