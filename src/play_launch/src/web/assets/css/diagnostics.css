@@ -13,9 +13,23 @@
 
 .diagnostics-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 12px;
     margin-bottom: 16px;
+}
+
+.diagnostics-header h2 {
+    margin-right: auto;
+}
+
+.diag-level-select {
+    padding: 6px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
 }
 
 .diagnostics-search {
@@ -54,18 +68,18 @@
 }
 
 .diagnostics-table th.sortable::after {
-    content: ' \u21C5';
+    content: ' \25B8';
     color: var(--text-muted);
     font-size: 0.7rem;
 }
 
 .diagnostics-table th.sorted-asc::after {
-    content: ' \u2191';
+    content: ' \2191';
     color: var(--text-primary);
 }
 
 .diagnostics-table th.sorted-desc::after {
-    content: ' \u2193';
+    content: ' \2193';
     color: var(--text-primary);
 }
 

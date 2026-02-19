@@ -7,7 +7,14 @@ import { diagnostics, currentView } from '../store.js';
 
 const html = htm.bind(h);
 
-const LEVEL_PRIORITY = { 'ERROR': 3, 'WARNING': 2, 'STALE': 1, 'OK': 0 };
+const LEVEL_PRIORITY = {
+    'OK': 0, 'Ok': 0,
+    'WARNING': 1, 'Warning': 1,
+    'ERROR': 2, 'Error': 2,
+    'STALE': 3, 'Stale': 3,
+};
+
+const LEVEL_FILTER_OPTIONS = ['ALL', 'OK', 'WARNING', 'ERROR', 'STALE'];
 
 function formatRelativeTime(timestamp) {
     const now = new Date();
@@ -64,6 +71,7 @@ function DiagValues({ values }) {
 export function DiagnosticsView() {
     const [sortCol, setSortCol] = useState('level');
     const [sortDir, setSortDir] = useState('desc');
+    const [levelFilter, setLevelFilter] = useState('ALL');
     const [filterTerm, setFilterTerm] = useState('');
 
     const view = currentView.value;
@@ -99,7 +107,13 @@ export function DiagnosticsView() {
     const sorted = useMemo(() => {
         let data = [...diags];
 
-        // Filter
+        // Level filter
+        if (levelFilter !== 'ALL') {
+            const minPriority = LEVEL_PRIORITY[levelFilter] ?? 0;
+            data = data.filter(d => (LEVEL_PRIORITY[d.level] ?? 0) >= minPriority);
+        }
+
+        // Text filter
         if (filterTerm) {
             const lower = filterTerm.toLowerCase();
             data = data.filter(d => {
@@ -112,7 +126,7 @@ export function DiagnosticsView() {
         data.sort((a, b) => {
             let cmp = 0;
             if (sortCol === 'level') {
-                cmp = (LEVEL_PRIORITY[a.level] || 0) - (LEVEL_PRIORITY[b.level] || 0);
+                cmp = (LEVEL_PRIORITY[a.level] ?? 0) - (LEVEL_PRIORITY[b.level] ?? 0);
                 if (cmp === 0) cmp = a.name.localeCompare(b.name);
             } else if (sortCol === 'timestamp') {
                 cmp = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
@@ -123,17 +137,21 @@ export function DiagnosticsView() {
         });
 
         return data;
-    }, [diags, sortCol, sortDir, filterTerm]);
+    }, [diags, sortCol, sortDir, levelFilter, filterTerm]);
 
     const sortClass = (col) => {
         if (sortCol !== col) return 'sortable';
-        return 'sortable ' + (sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+        return sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc';
     };
 
     return html`
         <div class="diagnostics-view" style=${{ display: view === 'diagnostics' ? 'block' : 'none' }}>
             <div class="diagnostics-header">
                 <h2 style="margin:0;">System Diagnostics</h2>
+                <select class="diag-level-select" value=${levelFilter}
+                    onChange=${(e) => setLevelFilter(e.target.value)}>
+                    ${LEVEL_FILTER_OPTIONS.map(l => html`<option key=${l} value=${l}>${l}</option>`)}
+                </select>
                 <input type="text" class="diagnostics-search" placeholder="Filter diagnostics..."
                     value=${filterTerm} onInput=${(e) => setFilterTerm(e.target.value)} />
             </div>
