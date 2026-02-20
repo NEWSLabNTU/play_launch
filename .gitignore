@@ -37,6 +37,9 @@ python/play_launch/bin/play_launch_io_helper
 python/play_launch/lib/
 python/play_launch/share/
 
+# Parser output artifacts
+/record.json
+
 # Temporary files for testing/debugging
 tmp/
 
