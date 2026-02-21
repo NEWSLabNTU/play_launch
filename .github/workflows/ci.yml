@@ -10,7 +10,7 @@ jobs:
   build-and-test:
     runs-on: ubuntu-22.04
     container:
-      image: ghcr.io/newslabnttu/play-launch-builder:humble
+      image: ghcr.io/newslabntu/play-launch-builder:humble
 
     steps:
     - name: Checkout code
