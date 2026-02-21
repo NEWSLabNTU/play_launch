@@ -158,9 +158,9 @@ impl LaunchProgram {
 ## Implementation Order
 
 ```
-22.0 IR type definitions + module                     planned
-22.1 Align action parse helpers (Container, Include)  planned
-22.2 XML IR builder (analyze_launch_file)             planned
+22.0 IR type definitions + module                     complete
+22.1 Align action parse helpers (Container, Include)  complete
+22.2 XML IR builder (analyze_launch_file)             complete
 22.3 IR evaluator (LaunchProgram::evaluate)           planned
 22.4 Python launch file IR support                    planned
 22.5 Static analysis passes                           future
@@ -170,50 +170,50 @@ impl LaunchProgram {
 
 ## Phase 22.0: IR Type Definitions
 
-**Status**: Planned
+**Status**: Complete
 
 Define all IR types in a new `ir` module. No functional changes — compilation-only validation.
 
 ### Work Items
 
-- [ ] Create `src/play_launch_parser/src/play_launch_parser/src/ir.rs`
-- [ ] Define `Expr`, `Span`, `Condition`, `Action`, `ActionKind`, `LaunchProgram`
-- [ ] Define supporting types: `IncludeArg`, `ParamDecl`, `RemapDecl`, `EnvDecl`, `ComposableNodeDecl`
-- [ ] Add `pub mod ir` to `lib.rs`
-- [ ] Implement `Expr` helper methods (`literal()`, `is_literal()`, `as_literal()`)
-- [ ] Add `From<Vec<Substitution>> for Expr` impl
+- [x] Create `src/play_launch_parser/src/play_launch_parser/src/ir.rs`
+- [x] Define `Expr`, `Span`, `Condition`, `Action`, `ActionKind` (14 variants), `LaunchProgram`
+- [x] Define supporting types: `IncludeArg`, `ParamDecl`, `RemapDecl`, `EnvDecl`, `ComposableNodeDecl`
+- [x] Add `pub mod ir` to `lib.rs`
+- [x] Implement `Expr` helper methods (`literal()`, `is_literal()`, `as_literal()`)
+- [x] Add `From<Vec<Substitution>> for Expr` impl
 
 ### Files
 
 | File | Change |
 |---|---|
-| `src/.../ir.rs` | **New** |
+| `src/.../ir.rs` | **New** — 209 lines |
 | `src/.../lib.rs` | Add `pub mod ir` |
 
 ### Verification
 
-- [ ] `cargo build` compiles
-- [ ] `just test` — all 311+ existing tests pass (no behavior change)
+- [x] `cargo build` compiles
+- [x] `just test` — all existing tests pass (no behavior change)
 
 ---
 
 ## Phase 22.1: Align Action Parse Helpers
 
-**Status**: Planned
+**Status**: Complete
 
 Change `ContainerAction`, `ComposableNodeAction`, and `IncludeAction` to store fields as `Vec<Substitution>` (deferred resolution), matching `NodeAction`'s existing pattern.
 
 ### Work Items
 
-- [ ] `ContainerAction`: change `name`, `package`, `executable`, `namespace` from `String` to `Vec<Substitution>`
-- [ ] Update `ContainerAction::from_entity()` to call `parse_substitutions()` but NOT `resolve_substitutions()`
-- [ ] Update `ContainerAction::to_container_record()` and `to_node_record()` to resolve at use site
-- [ ] `ComposableNodeAction`: change `package`, `plugin`, `name`, `namespace` to `Vec<Substitution>`
-- [ ] Update `ComposableNodeAction::from_entity()` accordingly
-- [ ] Update `to_load_node_record()` to resolve at use site
-- [ ] `IncludeAction`: change `args` values from `String` to `Vec<Substitution>`
-- [ ] Update `process_include()` to resolve arg values at use site
-- [ ] Add `From` impls: `NodeAction → ActionKind::SpawnNode`, `ContainerAction → ActionKind::SpawnContainer`, etc.
+- [x] `ContainerAction`: change `name`, `package`, `executable`, `namespace` from `String` to `Vec<Substitution>`
+- [x] Update `ContainerAction::from_entity()` to call `parse_substitutions()` but NOT `resolve_substitutions()`
+- [x] Update `ContainerAction::to_container_record()` and `to_node_record()` to resolve at use site
+- [x] `ComposableNodeAction`: change `package`, `plugin`, `name`, `namespace` to `Vec<Substitution>`
+- [x] Update `ComposableNodeAction::from_entity()` accordingly
+- [x] Update `to_load_node_record()` to resolve at use site
+- [x] `IncludeAction`: change `args` values from `String` to `Vec<Substitution>`
+- [x] Update `process_include()` to resolve arg values at use site
+- [x] Add `From` impls: 11 impls converting all action types to IR `ActionKind`
 
 ### Files
 
@@ -222,62 +222,73 @@ Change `ContainerAction`, `ComposableNodeAction`, and `IncludeAction` to store f
 | `src/.../actions/container.rs`            | Fields → `Vec<Substitution>`, resolve at use site   |
 | `src/.../actions/load_composable_node.rs` | `ComposableNodeAction` fields → `Vec<Substitution>` |
 | `src/.../actions/include.rs`              | Arg values → `Vec<Substitution>`                    |
-| `src/.../actions/mod.rs`                  | Add `From` impls for `ActionKind`                   |
+| `src/.../actions/mod.rs`                  | Add 11 `From` impls for `ActionKind`                |
 | `src/.../traverser/entity.rs`             | Update callers to resolve before use                |
 | `src/.../traverser/include.rs`            | Update include arg resolution                       |
 
 ### Verification
 
-- [ ] `just test` — all 311+ parser unit tests pass
-- [ ] `just test-all` — all 353 tests pass (including integration)
-- [ ] Autoware dump backward compat: `test_autoware_dump_rust` produces identical `record.json`
+- [x] `just test` — all 326 parser tests pass
+- [x] `just test-all` — all 356 tests pass (326 parser + 30 integration)
+- [x] Zero clippy warnings
 
 ---
 
 ## Phase 22.2: XML IR Builder
 
-**Status**: Planned
+**Status**: Complete
 
 Add `build_ir_entity()` to the traverser that constructs `LaunchProgram` from XML, preserving all conditional branches and unevaluated expressions. Add `analyze_launch_file()` public API.
 
 ### Work Items
 
-- [ ] Add `build_ir_entity()` method on `LaunchTraverser` (parallel to `traverse_entity()`)
+- [x] Add `build_ir_entity()` method on `LaunchTraverser` (parallel to `traverse_entity()`)
   - Records `if=`/`unless=` as `Condition` instead of evaluating
   - Groups collect children into `body: Vec<Action>`
   - Includes recursively call `build_ir_file()` and set `body`
-  - Extracts `Span` from XML entity position
-- [ ] Add `build_ir_file()` dispatching by extension (`.xml`, `.yaml`)
-- [ ] Python files: emit `ActionKind::OpaqueFunction` placeholder (to be filled in 22.4)
-- [ ] Add `analyze_launch_file(path) -> Result<LaunchProgram>` to `lib.rs`
-- [ ] Add CLI subcommand: `play_launch_parser analyze <file>` (outputs IR as JSON or debug format)
+  - Extracts `Span` from XML entity position via `XmlEntity::line_number()`
+- [x] Add `build_ir_file()` dispatching by extension (`.xml`, `.yaml`)
+- [x] Python/YAML files: emit `ActionKind::OpaqueFunction` placeholder (to be filled in 22.4)
+- [x] Add `analyze_launch_file(path)` and `analyze_launch_file_with_args(path, args)` to `lib.rs`
+- [ ] Add CLI subcommand: `play_launch_parser analyze <file>` (deferred — not critical for library use)
 
-### Tests
+### Implementation Notes
 
-- [ ] `test_ir_simple_node`: parse a simple XML with one node → IR has one `SpawnNode` action
-- [ ] `test_ir_conditional_branches`: XML with `if=` → IR has both branches (condition stored, not evaluated)
-- [ ] `test_ir_include_tree`: XML with includes → IR has nested `LaunchProgram` in `Include.body`
-- [ ] `test_ir_group_scoping`: XML with `<group>` → IR has `Group` with `body` containing children
-- [ ] `test_ir_variable_expressions`: `$(var name)` in node fields → `Expr` contains `LaunchConfiguration`, not resolved string
-- [ ] `test_ir_let_and_arg`: `<let>` and `<arg>` → `SetVariable` and `DeclareArgument` actions
-- [ ] `test_ir_container_with_composable_nodes`: container XML → `SpawnContainer` with `nodes` list
+- IR builder in `traverser/ir_builder.rs` (separate from `entity.rs` for clarity)
+- `build_ir_entity()` still applies `<arg>`, `<let>`, `<declare_argument>` to context so include file paths can resolve
+- `build_ir_include()` returns `Option<Box<LaunchProgram>>` — gracefully degrades to `None` if file path cannot be resolved
+- `extract_condition()` and `make_span()` helper functions for condition/provenance extraction
+
+### Tests (15 tests in `tests/ir_tests.rs`)
+
+- [x] `test_ir_simple_node`: one node → `SpawnNode` with correct fields and span
+- [x] `test_ir_conditional_branches`: `if=`/`unless=` → both branches preserved with `Condition`
+- [x] `test_ir_include_tree`: nested include → `Include.body` contains parsed sub-program
+- [x] `test_ir_include_with_args`: include with `<arg>` children → `IncludeArg` values preserved
+- [x] `test_ir_group_scoping`: `<group ns="...">` → `Group` with children in `body`
+- [x] `test_ir_variable_expressions`: `$(var name)_suffix` → `Expr` contains `LaunchConfiguration`
+- [x] `test_ir_let_and_arg`: `<arg>` → `DeclareArgument`, `<let>` → `SetVariable`
+- [x] `test_ir_container_with_composable_nodes`: container → `SpawnContainer` with `nodes` list
+- [x] `test_ir_set_env_and_unset_env`, `test_ir_set_parameter`, `test_ir_set_remap`
+- [x] `test_ir_push_namespace`, `test_ir_executable`, `test_ir_load_composable_node`
+- [x] `test_ir_span_line_numbers`: second node has greater line number than first
 
 ### Files
 
-| File                           | Change                          |
-|--------------------------------|---------------------------------|
-| `src/.../traverser/entity.rs`  | Add `build_ir_entity()`         |
-| `src/.../traverser/include.rs` | Add `build_ir_include()`        |
-| `src/.../lib.rs`               | Add `analyze_launch_file()`     |
-| `src/.../main.rs`              | Add `analyze` subcommand        |
-| `src/.../tests/ir_tests.rs`    | **New** — IR construction tests |
+| File                              | Change                                       |
+|-----------------------------------|----------------------------------------------|
+| `src/.../traverser/ir_builder.rs` | **New** — `build_ir_entity/file/include()`   |
+| `src/.../traverser/mod.rs`        | Add `mod ir_builder`                         |
+| `src/.../xml/entity.rs`           | Add `XmlEntity::line_number()`               |
+| `src/.../lib.rs`                  | Add `analyze_launch_file[_with_args]()`      |
+| `src/.../tests/ir_tests.rs`       | **New** — 15 IR construction tests           |
 
 ### Verification
 
-- [ ] `just test` — all existing tests pass + new IR tests pass
-- [ ] `analyze_launch_file()` on `tests/fixtures/simple_test/` produces IR with correct structure
-- [ ] `analyze_launch_file()` on test XML with `if=`/`unless=` preserves both branches
-- [ ] Autoware backward compat: `parse_launch_file()` unchanged, `test_autoware_dump_rust` passes
+- [x] `just test` — all 326 parser tests + 15 new IR tests pass
+- [x] `just test-all` — all 356 tests pass (326 parser + 30 integration)
+- [x] Zero clippy warnings
+- [x] Backward compat: `parse_launch_file()` unchanged, all existing tests pass
 
 ---
 

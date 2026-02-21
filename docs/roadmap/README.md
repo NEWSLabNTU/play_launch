@@ -86,6 +86,12 @@ This directory contains the implementation roadmap for play_launch, organized by
 |-------|--------|------------|---------------|
 | **Phase 21**: Build System Optimization | ✅ Complete | 2026-02-18 | [phase-21-build_optimization.md](./phase-21-build_optimization.md) |
 
+### Static Analysis
+
+| Phase | Status | Completion | Documentation |
+|-------|--------|------------|---------------|
+| **Phase 22**: Launch Tree IR | 🔄 In Progress | - | [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md) |
+
 ---
 
 ## Progress Summary
@@ -113,6 +119,15 @@ This directory contains the implementation roadmap for play_launch, organized by
   - ⏳ Unified context design (LaunchContext + ParseContext → UnifiedContext)
   - ⏳ Remaining discrepancies: exec_name, global params, params_files, namespace in cmd
   - See [phase-17-context_unification.md](./phase-17-context_unification.md) for detailed roadmap
+
+### In Progress 🔄
+
+- 🔄 Launch Tree IR (Phase 22 - Started 2026-02-22)
+  - ⏳ IR type definitions (Expr, Action, ActionKind, LaunchProgram)
+  - ⏳ Align action parse helpers (ContainerAction, IncludeAction → deferred resolution)
+  - ⏳ XML IR builder (analyze_launch_file)
+  - ⏳ IR evaluator (LaunchProgram::evaluate → RecordJson)
+  - See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md) for detailed roadmap
 
 ### Planned ⏳
 
@@ -254,6 +269,14 @@ This directory contains the implementation roadmap for play_launch, organized by
   - ✅ Phase 21.1: Incremental build recipes in justfile
   - ✅ Phase 21.2: Fix wheel platform tag (replace sed hack)
   - ✅ Phase 21.3: Pre-built CI Docker image
+
+- **Phase 22**: Launch Tree IR - See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md)
+  - Phase 22.0: IR type definitions
+  - Phase 22.1: Align action parse helpers (deferred resolution)
+  - Phase 22.2: XML IR builder (analyze_launch_file)
+  - Phase 22.3: IR evaluator (evaluate → RecordJson)
+  - Phase 22.4: Python launch file IR support
+  - Phase 22.5: Static analysis passes (QoS, dependency graph, reachability)
 
 ## Future Considerations
 
