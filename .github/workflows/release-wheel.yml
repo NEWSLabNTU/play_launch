@@ -9,8 +9,6 @@ on:
 jobs:
   build-wheel:
     runs-on: ubuntu-22.04
-    permissions:
-      packages: read
     strategy:
       matrix:
         arch: [amd64, arm64]
@@ -21,13 +19,6 @@ jobs:
       with:
         fetch-depth: 0
         submodules: recursive
-
-    - name: Log in to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Set up QEMU (for arm64)
       if: matrix.arch == 'arm64'
@@ -46,7 +37,6 @@ jobs:
         echo "Building version $VERSION for ${{ matrix.arch }}"
 
         # Set up architecture-specific variables
-        # Use manylinux_2_35 (Ubuntu 22.04 glibc version) for PyPI compatibility
         if [ "${{ matrix.arch }}" = "arm64" ]; then
           DOCKER_ARCH="linux/arm64"
           DEB_ARCH="arm64"
@@ -57,14 +47,56 @@ jobs:
           WHEEL_PLATFORM="manylinux_2_35_x86_64"
         fi
 
-        # Build in Docker container with correct architecture
-        # Uses pre-built image from .github/workflows/builder-image.yml
+        # Build in a fresh ubuntu:22.04 container to ensure correct
+        # native libraries for each architecture (avoids QEMU/multi-arch
+        # issues with pre-built Docker images).
         docker run --rm --platform=${DOCKER_ARCH} \
           -v $PWD:/workspace \
           -w /workspace \
-          ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/play-launch-builder:humble \
+          ubuntu:22.04 \
           bash -c "
             set -e
+            export DEBIAN_FRONTEND=noninteractive
+
+            apt-get update
+            apt-get install -y software-properties-common curl git build-essential pkg-config ca-certificates
+
+            # Add ROS 2 repository
+            curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+              -o /usr/share/keyrings/ros-archive-keyring.gpg
+            echo \"deb [arch=${DEB_ARCH} signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main\" \
+              > /etc/apt/sources.list.d/ros2.list
+
+            apt-get update
+            apt-get install -y \
+              python3-pip python3-dev python3-venv python3-colcon-common-extensions \
+              ros-humble-ros-core \
+              ros-humble-ament-index-python \
+              ros-humble-launch \
+              ros-humble-rcl \
+              ros-humble-rcutils \
+              ros-humble-rmw \
+              ros-humble-rosidl-typesupport-c \
+              ros-humble-composition-interfaces \
+              ros-humble-rcl-interfaces \
+              ros-humble-builtin-interfaces \
+              ros-humble-action-msgs \
+              ros-humble-unique-identifier-msgs \
+              ros-humble-rosgraph-msgs \
+              ros-humble-example-interfaces \
+              ros-humble-test-msgs \
+              ros-humble-rclcpp-components \
+              ros-humble-class-loader \
+              ros-humble-ament-index-cpp
+
+            # Install Rust
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source ~/.cargo/env
+
+            # Install Python build tools
+            pip3 install colcon-cargo-ros2 build 'wheel>=0.40'
+
+            # Build
             source /opt/ros/humble/setup.bash
             colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release --base-paths src
             scripts/bundle_wheel.sh
