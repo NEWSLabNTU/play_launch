@@ -26,6 +26,7 @@ jobs:
         apt-get update && apt-get install -y --no-install-recommends ros-humble-composition
         rm -rf /var/lib/apt/lists/*
         rustup component add clippy rustfmt
+        rustup toolchain install nightly --profile minimal --component rustfmt
 
     - name: Build workspace
       run: |
