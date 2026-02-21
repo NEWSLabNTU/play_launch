@@ -1,0 +1,362 @@
+# Phase 22: Launch Tree IR (Intermediate Representation)
+
+**Status**: In Progress
+**Priority**: High (foundation for static analysis, QoS annotation, multi-path reasoning)
+**Dependencies**: Phase 13 (Rust parser), Phase 14 (Python execution)
+
+## Overview
+
+Convert the Rust parser from an interpreter (eagerly resolves substitutions, prunes conditional branches, flattens includes) into a compiler with an intermediate representation that preserves the full program structure.
+
+### Motivation
+
+The current parser (`parse_launch_file()`) produces a flat `record.json` for one specific set of inputs. This loses:
+
+- **Conditional branches not taken** — if `use_sim=false`, the simulation nodes are silently dropped with no trace
+- **Substitution expressions** — `$(var robot_name)_driver` becomes `"turtlebot_driver"`, losing the expression
+- **Include hierarchy** — all nodes are flattened into a single list
+- **Variable dependencies** — no way to ask "what changes if I set `a=5`?"
+- **Source provenance** — no record of which file/line defined each node
+
+The IR preserves all of this, enabling:
+
+1. **Evaluation** with concrete inputs → `record.json` (backward compatible, replaces current parser)
+2. **Static analysis** → all possible nodes, variable dependency graphs, reachability analysis
+3. **Annotation** → topic QoS, node relationships, parameter schemas
+
+### Design Informed By
+
+The official ROS 2 `launch` package (`external/launch/`) uses a similar structure: `Action` base class with optional `Condition`, `LaunchDescription` as a container, `Substitution` types as lazy expressions. Our IR mirrors this but in Rust with stronger typing.
+
+## IR Type Design
+
+### Core Principle: Separate Parsing From Evaluation
+
+```
+                           ┌──────────────────┐
+  XML/Python/YAML ────────►│  Parser (Front)   │──────► LaunchProgram (IR)
+                           └──────────────────┘              │
+                                                             │
+                    ┌────────────────────────────────────────┤
+                    │                                        │
+                    ▼                                        ▼
+           ┌───────────────┐                      ┌──────────────────┐
+           │  Evaluator    │                      │  Static Analyzer │
+           │  (inputs →    │                      │  (all-paths      │
+           │   record.json)│                      │   analysis)      │
+           └───────────────┘                      └──────────────────┘
+```
+
+### Key Design Decisions
+
+1. **Reuse existing `Substitution` enum** — our `Vec<Substitution>` already models the expression AST. Wrap in a newtype `Expr` to distinguish unevaluated expressions from resolved strings.
+
+2. **Condition on every action** — matches the official launch `Action.condition: Optional[Condition]`. XML `if=`/`unless=` attributes are stored, not evaluated during IR construction.
+
+3. **Include = sub-program** — `ActionKind::Include` contains `body: Option<Box<LaunchProgram>>`, preserving the tree structure. Flattening happens only during evaluation.
+
+4. **Include arg values as `Expr`** — parsed into substitution AST during IR construction (not raw strings). The evaluator resolves them in order (later args can reference earlier ones). Static analysis can inspect the substitution structure without re-parsing.
+
+5. **Align `ContainerAction` with `NodeAction`** — change `ContainerAction` and `ComposableNodeAction` fields from eagerly-resolved `String` to deferred `Vec<Substitution>`, matching `NodeAction`'s pattern.
+
+6. **Python files deferred to Phase 22.3** — Python launch files use mock execution via PyO3. Phase 22.0-22.2 handles XML/YAML. Python will use annotated execution (capture conditions encountered) in a later sub-phase.
+
+### Type Definitions
+
+New module: `src/play_launch_parser/src/play_launch_parser/src/ir.rs`
+
+```rust
+/// A lazy string expression (unevaluated substitution chain).
+/// Wraps Vec<Substitution>. Evaluate with the IR evaluator.
+pub struct Expr(pub Vec<Substitution>);
+
+/// Source location for an IR node.
+pub struct Span { pub file: PathBuf, pub line: usize }
+
+/// Condition gating an action's execution.
+pub enum Condition {
+    If(Expr),       // execute when truthy
+    Unless(Expr),   // execute when falsy
+}
+
+/// A single action with optional condition and provenance.
+pub struct Action {
+    pub kind: ActionKind,
+    pub condition: Option<Condition>,
+    pub span: Option<Span>,
+}
+
+/// All launch action types.
+pub enum ActionKind {
+    // Arguments & Variables
+    DeclareArgument { name, default: Option<Expr>, description, choices },
+    SetVariable { name, value: Expr },
+
+    // Environment
+    SetEnv { name: Expr, value: Expr },
+    UnsetEnv { name: Expr },
+
+    // Namespace
+    PushNamespace { namespace: Expr },
+
+    // Global Parameters & Remappings
+    SetParameter { name: Expr, value: Expr },
+    SetRemap { from: Expr, to: Expr },
+
+    // Grouping
+    Group { namespace: Option<Expr>, body: Vec<Action> },
+
+    // Include (with resolved sub-program)
+    Include { file: Expr, args: Vec<IncludeArg>, body: Option<Box<LaunchProgram>> },
+
+    // Nodes
+    SpawnNode { package: Expr, executable: Expr, name, namespace, params, ... },
+    SpawnExecutable { cmd: Expr, name, args, env },
+    SpawnContainer { package: Expr, executable: Expr, name: Expr, ..., nodes: Vec<ComposableNodeDecl> },
+    LoadComposableNode { target: Expr, nodes: Vec<ComposableNodeDecl> },
+}
+
+/// A complete launch program (one file's worth of actions).
+pub struct LaunchProgram { pub source: PathBuf, pub body: Vec<Action> }
+
+/// Supporting types
+pub struct IncludeArg { pub name: String, pub value: Expr }
+pub struct ParamDecl { pub name: String, pub value: Expr }
+pub struct RemapDecl { pub from: Expr, pub to: Expr }
+pub struct EnvDecl { pub name: Expr, pub value: Expr }
+pub struct ComposableNodeDecl { package, plugin, name, namespace, params, ..., condition, span }
+```
+
+### Relationship to Existing Types
+
+| Existing type                    | IR equivalent                | Change                                                                                 |
+|----------------------------------|------------------------------|----------------------------------------------------------------------------------------|
+| `Vec<Substitution>`              | `Expr`                       | Newtype wrapper                                                                        |
+| `NodeAction`                     | `ActionKind::SpawnNode`      | Fields already `Vec<Substitution>`                                                     |
+| `ContainerAction`                | `ActionKind::SpawnContainer` | **Fields changed** from `String` to `Vec<Substitution>`                                |
+| `ComposableNodeAction`           | `ComposableNodeDecl`         | **Fields changed** from `String` to `Vec<Substitution>`                                |
+| `IncludeAction`                  | `ActionKind::Include`        | **Args changed** from `(String, String)` to `(String, Vec<Substitution>)`; adds `body` |
+| `should_process_entity()` → bool | `Action.condition`           | Stored, not evaluated                                                                  |
+| (none)                           | `Span`                       | New: source provenance                                                                 |
+
+### New Public API
+
+```rust
+/// Parse a launch file into its IR without evaluating.
+pub fn analyze_launch_file(path: &Path) -> Result<LaunchProgram>;
+
+/// Parse and evaluate (existing, unchanged).
+pub fn parse_launch_file(path: &Path, cli_args: HashMap<String, String>) -> Result<RecordJson>;
+
+impl LaunchProgram {
+    pub fn evaluate(&self, inputs: HashMap<String, String>) -> Result<RecordJson>;
+    pub fn arguments(&self) -> Vec<&DeclareArgument>;
+    pub fn all_nodes(&self) -> Vec<&ActionKind>;
+}
+```
+
+## Implementation Order
+
+```
+22.0 IR type definitions + module                     planned
+22.1 Align action parse helpers (Container, Include)  planned
+22.2 XML IR builder (analyze_launch_file)             planned
+22.3 IR evaluator (LaunchProgram::evaluate)           planned
+22.4 Python launch file IR support                    planned
+22.5 Static analysis passes                           future
+```
+
+---
+
+## Phase 22.0: IR Type Definitions
+
+**Status**: Planned
+
+Define all IR types in a new `ir` module. No functional changes — compilation-only validation.
+
+### Work Items
+
+- [ ] Create `src/play_launch_parser/src/play_launch_parser/src/ir.rs`
+- [ ] Define `Expr`, `Span`, `Condition`, `Action`, `ActionKind`, `LaunchProgram`
+- [ ] Define supporting types: `IncludeArg`, `ParamDecl`, `RemapDecl`, `EnvDecl`, `ComposableNodeDecl`
+- [ ] Add `pub mod ir` to `lib.rs`
+- [ ] Implement `Expr` helper methods (`literal()`, `is_literal()`, `as_literal()`)
+- [ ] Add `From<Vec<Substitution>> for Expr` impl
+
+### Files
+
+| File | Change |
+|---|---|
+| `src/.../ir.rs` | **New** |
+| `src/.../lib.rs` | Add `pub mod ir` |
+
+### Verification
+
+- [ ] `cargo build` compiles
+- [ ] `just test` — all 311+ existing tests pass (no behavior change)
+
+---
+
+## Phase 22.1: Align Action Parse Helpers
+
+**Status**: Planned
+
+Change `ContainerAction`, `ComposableNodeAction`, and `IncludeAction` to store fields as `Vec<Substitution>` (deferred resolution), matching `NodeAction`'s existing pattern.
+
+### Work Items
+
+- [ ] `ContainerAction`: change `name`, `package`, `executable`, `namespace` from `String` to `Vec<Substitution>`
+- [ ] Update `ContainerAction::from_entity()` to call `parse_substitutions()` but NOT `resolve_substitutions()`
+- [ ] Update `ContainerAction::to_container_record()` and `to_node_record()` to resolve at use site
+- [ ] `ComposableNodeAction`: change `package`, `plugin`, `name`, `namespace` to `Vec<Substitution>`
+- [ ] Update `ComposableNodeAction::from_entity()` accordingly
+- [ ] Update `to_load_node_record()` to resolve at use site
+- [ ] `IncludeAction`: change `args` values from `String` to `Vec<Substitution>`
+- [ ] Update `process_include()` to resolve arg values at use site
+- [ ] Add `From` impls: `NodeAction → ActionKind::SpawnNode`, `ContainerAction → ActionKind::SpawnContainer`, etc.
+
+### Files
+
+| File                                      | Change                                              |
+|-------------------------------------------|-----------------------------------------------------|
+| `src/.../actions/container.rs`            | Fields → `Vec<Substitution>`, resolve at use site   |
+| `src/.../actions/load_composable_node.rs` | `ComposableNodeAction` fields → `Vec<Substitution>` |
+| `src/.../actions/include.rs`              | Arg values → `Vec<Substitution>`                    |
+| `src/.../actions/mod.rs`                  | Add `From` impls for `ActionKind`                   |
+| `src/.../traverser/entity.rs`             | Update callers to resolve before use                |
+| `src/.../traverser/include.rs`            | Update include arg resolution                       |
+
+### Verification
+
+- [ ] `just test` — all 311+ parser unit tests pass
+- [ ] `just test-all` — all 353 tests pass (including integration)
+- [ ] Autoware dump backward compat: `test_autoware_dump_rust` produces identical `record.json`
+
+---
+
+## Phase 22.2: XML IR Builder
+
+**Status**: Planned
+
+Add `build_ir_entity()` to the traverser that constructs `LaunchProgram` from XML, preserving all conditional branches and unevaluated expressions. Add `analyze_launch_file()` public API.
+
+### Work Items
+
+- [ ] Add `build_ir_entity()` method on `LaunchTraverser` (parallel to `traverse_entity()`)
+  - Records `if=`/`unless=` as `Condition` instead of evaluating
+  - Groups collect children into `body: Vec<Action>`
+  - Includes recursively call `build_ir_file()` and set `body`
+  - Extracts `Span` from XML entity position
+- [ ] Add `build_ir_file()` dispatching by extension (`.xml`, `.yaml`)
+- [ ] Python files: emit `ActionKind::OpaqueFunction` placeholder (to be filled in 22.4)
+- [ ] Add `analyze_launch_file(path) -> Result<LaunchProgram>` to `lib.rs`
+- [ ] Add CLI subcommand: `play_launch_parser analyze <file>` (outputs IR as JSON or debug format)
+
+### Tests
+
+- [ ] `test_ir_simple_node`: parse a simple XML with one node → IR has one `SpawnNode` action
+- [ ] `test_ir_conditional_branches`: XML with `if=` → IR has both branches (condition stored, not evaluated)
+- [ ] `test_ir_include_tree`: XML with includes → IR has nested `LaunchProgram` in `Include.body`
+- [ ] `test_ir_group_scoping`: XML with `<group>` → IR has `Group` with `body` containing children
+- [ ] `test_ir_variable_expressions`: `$(var name)` in node fields → `Expr` contains `LaunchConfiguration`, not resolved string
+- [ ] `test_ir_let_and_arg`: `<let>` and `<arg>` → `SetVariable` and `DeclareArgument` actions
+- [ ] `test_ir_container_with_composable_nodes`: container XML → `SpawnContainer` with `nodes` list
+
+### Files
+
+| File                           | Change                          |
+|--------------------------------|---------------------------------|
+| `src/.../traverser/entity.rs`  | Add `build_ir_entity()`         |
+| `src/.../traverser/include.rs` | Add `build_ir_include()`        |
+| `src/.../lib.rs`               | Add `analyze_launch_file()`     |
+| `src/.../main.rs`              | Add `analyze` subcommand        |
+| `src/.../tests/ir_tests.rs`    | **New** — IR construction tests |
+
+### Verification
+
+- [ ] `just test` — all existing tests pass + new IR tests pass
+- [ ] `analyze_launch_file()` on `tests/fixtures/simple_test/` produces IR with correct structure
+- [ ] `analyze_launch_file()` on test XML with `if=`/`unless=` preserves both branches
+- [ ] Autoware backward compat: `parse_launch_file()` unchanged, `test_autoware_dump_rust` passes
+
+---
+
+## Phase 22.3: IR Evaluator
+
+**Status**: Planned
+
+Implement `LaunchProgram::evaluate()` that walks the IR, resolves expressions, follows conditional branches, and produces `RecordJson`. Validates round-trip correctness.
+
+### Work Items
+
+- [ ] Implement `evaluate()` that walks `Vec<Action>` in order
+  - Evaluate `Condition` → skip action if false
+  - Resolve `Expr` → `String` using `resolve_substitutions()` with context
+  - Handle scope: `Group` pushes/pops context, `Include` creates child context
+  - Accumulate `NodeRecord`, `ComposableNodeContainerRecord`, `LoadNodeRecord`
+- [ ] Implement `Expr::resolve(&self, context: &LaunchContext) -> Result<String>`
+- [ ] Add query methods: `arguments()`, `all_nodes()`
+- [ ] Optionally: re-implement `parse_launch_file()` as `analyze_launch_file().evaluate()`
+
+### Tests
+
+- [ ] `test_evaluate_simple`: IR from simple XML → evaluate → matches `parse_launch_file()` output
+- [ ] `test_evaluate_conditional`: IR with conditions → evaluate with `use_sim=true` → only truthy branch nodes
+- [ ] `test_evaluate_includes`: IR with includes → evaluate → all included nodes present
+- [ ] **Autoware round-trip**: `analyze_launch_file(autoware).evaluate(args)` == `parse_launch_file(autoware, args)`
+
+### Verification
+
+- [ ] `just test` — all tests pass
+- [ ] `just test-all` — all 353 tests pass
+- [ ] **Critical**: `test_autoware_dump_rust` still passes (exact same `record.json` output)
+- [ ] **Critical**: `test_autoware_smoke_test` still passes (process launch + health check)
+- [ ] **Critical**: `test_autoware_parser_parity` still passes (Rust vs Python match)
+
+---
+
+## Phase 22.4: Python Launch File IR Support
+
+**Status**: Future
+
+Use annotated execution to capture IR from Python launch files. Run the Python file via PyO3, but record condition expressions and action structure rather than eagerly resolving.
+
+### Approach
+
+- Mock `IfCondition`/`UnlessCondition` record their predicate expression before evaluating
+- Mock `Node`, `GroupAction`, etc. emit `Action` IR nodes alongside existing captures
+- Python actions that cannot be statically analyzed (e.g., `OpaqueFunction` with arbitrary Python logic) are represented as `ActionKind::OpaqueFunction { description: String }`
+- Converts Python captures to IR actions with conditions preserved
+
+---
+
+## Phase 22.5: Static Analysis Passes
+
+**Status**: Future
+
+Build analysis passes over the IR.
+
+### Planned Passes
+
+- **Variable dependency graph**: track which variables reference which others
+- **Reachability analysis**: given input constraints (e.g., `use_sim ∈ {true, false}`), enumerate which nodes can possibly be spawned
+- **Topic QoS annotation**: query ROS 2 node descriptions for publisher/subscriber QoS settings
+- **Parameter schema extraction**: collect all parameters per node with types and defaults
+- **Diff analysis**: compare two sets of inputs → show which nodes/params change
+
+---
+
+## Backward Compatibility
+
+The existing `parse_launch_file()` function signature and behavior are **unchanged** throughout all sub-phases. The existing integration tests (`tests/tests/autoware.rs`) serve as the backward compatibility gate:
+
+| Test                               | What it validates                                                     |
+|------------------------------------|-----------------------------------------------------------------------|
+| `test_autoware_dump_rust`          | Entity counts match expected (46 nodes, 15 containers, 54 load_nodes) |
+| `test_autoware_dump_python`        | Python parser still works                                             |
+| `test_autoware_dump_counts_match`  | Rust and Python produce same counts                                   |
+| `test_autoware_parser_parity`      | Rust and Python `record.json` diff passes                             |
+| `test_autoware_process_count_rust` | Launched processes match dump count                                   |
+| `test_autoware_smoke_test`         | Full launch + 15s settle + health analysis passes                     |
+
+Every sub-phase must pass all of these before proceeding.
