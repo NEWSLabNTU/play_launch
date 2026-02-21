@@ -21,16 +21,21 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Install missing test dependencies
+      run: |
+        apt-get update && apt-get install -y --no-install-recommends ros-humble-composition
+        rm -rf /var/lib/apt/lists/*
+
     - name: Build workspace
       run: |
         source /opt/ros/humble/setup.bash
         just build
+        pip3 install --no-deps dist/*.whl
 
     - name: Run tests
       run: |
         source /opt/ros/humble/setup.bash
         source install/setup.bash
-        which dump_launch || echo "Warning: dump_launch not found in PATH"
         just test
 
     - name: Run checks
