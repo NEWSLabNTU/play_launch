@@ -66,6 +66,7 @@ All features enabled by default:
 - **Resource monitoring**: CPU, memory, I/O, GPU (2s interval)
 - **Diagnostic monitoring**: `/diagnostics` and `/diagnostics_agg` topics
 - **Web UI**: Interactive management at `http://127.0.0.1:8080`
+- **Container isolation**: Composable nodes run in isolated processes via fork+exec (default)
 
 ### Disable Features
 
@@ -76,6 +77,21 @@ play_launch launch <package> <launch_file> --disable-monitoring
 play_launch launch <package> <launch_file> --disable-diagnostics
 play_launch launch <package> <launch_file> --disable-web-ui
 play_launch launch <package> <launch_file> --disable-all
+```
+
+### Container Mode
+
+Control how composable nodes are managed (default: `isolated`):
+
+```bash
+# Isolated: fork+exec per-node process isolation (default)
+play_launch launch <pkg> <file> --container-mode isolated
+
+# Observable: ComponentEvent publishing, shared process
+play_launch launch <pkg> <file> --container-mode observable
+
+# Stock: use original container from launch file, no override
+play_launch launch <pkg> <file> --container-mode stock
 ```
 
 ### Adjust Monitoring
@@ -146,7 +162,8 @@ Output saved to `play_log/<timestamp>/plot/`:
 
 - **Node management**: Start/Stop/Restart individual or all nodes
 - **Container controls**: Load/Unload composable nodes
-- **Real-time logs**: Stream stdout/stderr with auto-reconnect
+- **Real-time logs**: Stream stdout/stderr with log level coloring and filtering
+- **Diagnostics panel**: View `/diagnostics` messages with level filtering
 - **Status monitoring**: Color-coded node states
 - **Auto-restart**: Per-node automatic restart configuration
 - **Search & filter**: Find nodes in large deployments
@@ -158,9 +175,13 @@ play_log/<timestamp>/
 ├── node/<node_name>/
 │   ├── metadata.json
 │   ├── metrics.csv       # Resource metrics (when enabled)
-│   ├── stdout/stderr     # Process logs
-│   └── pid/status/cmdline
+│   ├── out/err           # Process logs
+│   ├── pid/status/cmdline
+│   └── params_files/     # ROS parameter files
+├── load_node/<name>/
+│   └── out/err           # Per-composable-node logs (isolated mode)
 ├── system_stats.csv      # System-wide metrics
+├── diagnostics.csv       # Diagnostic messages (when enabled)
 └── plot/                 # Generated visualizations
 ```
 
@@ -179,11 +200,17 @@ play_launch replay [--input-file record.json]
 play_launch launch <pkg> <file> --parser rust     # Default, fast
 play_launch launch <pkg> <file> --parser python   # Maximum compatibility
 
+# Container mode
+play_launch launch <pkg> <file> --container-mode isolated    # Default
+play_launch launch <pkg> <file> --container-mode observable
+play_launch launch <pkg> <file> --container-mode stock
+
 # Disable features
 play_launch launch <pkg> <file> --disable-monitoring
 play_launch launch <pkg> <file> --disable-diagnostics
 play_launch launch <pkg> <file> --disable-web-ui
 play_launch launch <pkg> <file> --disable-all
+play_launch launch <pkg> <file> --disable-respawn
 
 # Enable only specific features
 play_launch launch <pkg> <file> --enable monitoring
@@ -195,7 +222,7 @@ play_launch launch <pkg> <file> --web-addr 0.0.0.0:8080
 play_launch launch <pkg> <file> --config config.yaml
 
 # Logging
-play_launch launch <pkg> <file> --verbose              # INFO level
+play_launch launch <pkg> <file> --verbose              # Enable INFO level
 RUST_LOG=play_launch=debug play_launch launch <pkg> <file>  # DEBUG level
 
 # Visualization
@@ -210,8 +237,8 @@ play_launch plot --list-metrics
 See [CLAUDE.md](CLAUDE.md) for development guidelines and architecture details.
 
 ```bash
-# Lint code
-just lint
+# Run checks (clippy + rustfmt + ruff + cpplint + clang-format)
+just check
 
 # Format code
 just format
