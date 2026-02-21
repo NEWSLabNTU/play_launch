@@ -21,10 +21,11 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install missing test dependencies
+    - name: Install missing dependencies
       run: |
         apt-get update && apt-get install -y --no-install-recommends ros-humble-composition
         rm -rf /var/lib/apt/lists/*
+        rustup component add clippy rustfmt
 
     - name: Build workspace
       run: |
