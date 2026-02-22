@@ -167,6 +167,42 @@ Python ┘                                    └─── (portable, sandboxed)
 
 Full architecture: [`docs/wasm-launch-compiler.md`](../wasm-launch-compiler.md)
 
+### Three-Crate Architecture
+
+```
+                  ┌───────────────────────────┐
+                  │  play_launch_wasm_common   │
+                  │  ABI defs, string protocol │
+                  │  shared types & errors     │
+                  └─────────┬─────────────────┘
+                            │
+                  ┌─────────┴─────────┐
+                  ▼                   ▼
+         ┌────────────────┐  ┌────────────────┐
+         │ wasm_codegen   │  │ wasm_runtime   │
+         │ IR → .wasm     │  │ .wasm → JSON   │
+         │                │  │                │
+         │ wasm-encoder   │  │ wasmtime       │
+         │ wat            │  │                │
+         └────────────────┘  └────────────────┘
+                                    │
+                              dev-dep on codegen
+                              (round-trip tests)
+```
+
+| Crate                      | Location                        | Dependencies                                               | Purpose                                                            |
+|----------------------------|---------------------------------|------------------------------------------------------------|--------------------------------------------------------------------|
+| `play_launch_wasm_common`  | `src/play_launch_wasm_common/`  | `play_launch_parser`, `thiserror`                          | ABI definitions, string protocol, shared types/errors, ABI version |
+| `play_launch_wasm_codegen` | `src/play_launch_wasm_codegen/` | `wasm_common`, `play_launch_parser`, `wasm-encoder`, `wat` | `compile_to_wasm(program) → Vec<u8>`                               |
+| `play_launch_wasm_runtime` | `src/play_launch_wasm_runtime/` | `wasm_common`, `play_launch_parser`, `wasmtime`            | `execute_wasm(bytes, args) → RecordJson`                           |
+
+**Why three crates:**
+- **Common** keeps codegen and runtime ABI-synchronized by construction — both import the same type definitions
+- **Codegen** pulls in `wasm-encoder` (~5 crates) — lightweight, needed at compile time
+- **Runtime** pulls in `wasmtime` (~30+ crates) — heavyweight, needed at execution time
+- Users who only compile (CI) don't need wasmtime; users who only execute (embedded) don't need wasm-encoder
+- `play_launch` binary uses feature gates to optionally depend on codegen, runtime, or both
+
 ## Implementation Order
 
 ```
@@ -174,10 +210,10 @@ Full architecture: [`docs/wasm-launch-compiler.md`](../wasm-launch-compiler.md)
 22.1  Align action parse helpers (Container, Include)  complete
 22.2  XML IR builder (analyze_launch_file)             complete
 22.3  IR evaluator (evaluate_launch_file)              complete
-22.4  Complete YAML IR builder                         planned
-22.5  WASM host import ABI + string protocol           planned
-22.6  IR→WASM codegen + runtime (iterative)            planned
-22.7  CLI integration (compile/exec subcommands)       planned
+22.4  Complete YAML IR builder                         complete
+22.5  play_launch_wasm_common crate (ABI + types)      planned
+22.6  play_launch_wasm_codegen + _runtime (lockstep)   planned
+22.7  CLI integration (feature-gated deps)             planned
 22.8  XML/YAML PoC validation                          planned
 22.9  Python AST compiler                              planned
 22.10 Python integration into pipeline                 planned
@@ -370,14 +406,14 @@ The evaluator is a set of methods on `LaunchTraverser`, reusing existing infrast
 
 ### Files
 
-| File | Change |
-|---|---|
-| `src/.../ir.rs` | Add `Expr::resolve()`, `LaunchProgram::arguments()`, `all_nodes()` |
-| `src/.../condition.rs` | Make `is_truthy()` `pub(crate)` |
-| `src/.../traverser/ir_evaluator.rs` | **New** — evaluator + IR→Action conversion helpers |
-| `src/.../traverser/mod.rs` | Add `mod ir_evaluator` |
-| `src/.../lib.rs` | Add `evaluate_launch_file()` |
-| `tests/ir_eval_tests.rs` | **New** — 18 evaluator tests |
+| File                                | Change                                                             |
+|-------------------------------------|--------------------------------------------------------------------|
+| `src/.../ir.rs`                     | Add `Expr::resolve()`, `LaunchProgram::arguments()`, `all_nodes()` |
+| `src/.../condition.rs`              | Make `is_truthy()` `pub(crate)`                                    |
+| `src/.../traverser/ir_evaluator.rs` | **New** — evaluator + IR→Action conversion helpers                 |
+| `src/.../traverser/mod.rs`          | Add `mod ir_evaluator`                                             |
+| `src/.../lib.rs`                    | Add `evaluate_launch_file()`                                       |
+| `tests/ir_eval_tests.rs`            | **New** — 18 evaluator tests                                       |
 
 ### Verification
 
@@ -391,33 +427,84 @@ The evaluator is a set of methods on `LaunchTraverser`, reusing existing infrast
 
 ## Phase 22.4: Complete YAML IR Builder
 
-**Status**: Planned
+**Status**: Complete
 
-The IR builder (Phase 22.2) emits `ActionKind::OpaqueFunction` placeholders for YAML launch files. Extend it to produce proper IR actions from YAML, matching the XML builder's coverage.
+The IR builder (Phase 22.2) emitted `ActionKind::OpaqueFunction` placeholders for YAML launch files. This phase replaces them with proper `DeclareArgument` IR actions, preserving YAML's parent-scope semantics.
 
-### Scope
+### Key Design Decision: Parent-Scope Semantics
 
-- YAML launch files use the same action semantics as XML (nodes, groups, includes, args, etc.) but in YAML syntax
-- The existing YAML parser (`process_yaml_launch_file()`) already handles evaluation — this phase adds IR construction alongside it
-- YAML preset files (Autoware pattern: parent-scope variable declarations) must preserve correct scoping semantics in the IR
+YAML launch files in ROS 2 are primarily used as preset files (e.g., Autoware's `default_preset.yaml`). Unlike XML includes which use isolated child scope, YAML includes modify the parent scope — variables they declare become visible to subsequent includes. This is critical for Autoware's preset system:
+
+```xml
+<include file=".../preset/default_preset.yaml"/>  <!-- declares velocity_smoother_type -->
+<include file=".../planning.launch.xml">
+  <arg name="param" value="$(var velocity_smoother_type)"/>  <!-- uses it -->
+</include>
+```
+
+The implementation preserves this in both the IR builder and evaluator:
+- **IR builder** (`build_ir_include()`): YAML files are parsed by `self.build_ir_yaml()` (on the parent traverser, not a child), so declarations apply to parent context during IR construction
+- **IR evaluator** (`evaluate_include()`): YAML includes are evaluated in parent scope (no child context created), so `DeclareArgument` actions set parent-scope variables
 
 ### Work Items
 
-- [ ] Add `build_ir_yaml()` to `ir_builder.rs` (parallel to `build_ir_entity()` for XML)
-- [ ] Map YAML action types to `ActionKind` variants
-- [ ] Handle YAML includes: attach `body` via recursive `build_ir_file()`
-- [ ] YAML preset scoping: variables declared in YAML modify parent scope (unlike XML includes which are isolated)
-- [ ] Tests: YAML-specific IR construction tests + round-trip with `evaluate_launch_file()`
+- [x] Add `build_ir_yaml()` to `ir_builder.rs` — parses YAML, produces `DeclareArgument` actions, applies to `self.context`
+- [x] Replace `OpaqueFunction` placeholder in `build_ir_file()` with `build_ir_yaml()` call
+- [x] Update `build_ir_include()` to detect YAML and call `self.build_ir_yaml()` directly (no child traverser)
+- [x] Update `evaluate_include()` in `ir_evaluator.rs` to evaluate YAML in parent scope
+- [x] Tests: 5 IR builder tests + 4 IR evaluator tests
+
+### Tests
+
+**IR builder tests** (in `tests/ir_tests.rs`):
+- [x] `test_ir_yaml_arg_declarations`: YAML with multiple args → `DeclareArgument` actions
+- [x] `test_ir_yaml_with_description`: YAML arg with description field preserved
+- [x] `test_ir_yaml_empty_launch`: YAML without `launch` key → empty body
+- [x] `test_ir_yaml_include_produces_declare_argument`: XML includes YAML → Include body contains `DeclareArgument` (not `OpaqueFunction`)
+- [x] `test_ir_yaml_arg_no_default`: YAML arg without default → `default: None`
+
+**IR evaluator tests** (in `tests/ir_eval_tests.rs`):
+- [x] `test_evaluate_yaml_include_parent_scope`: YAML preset variable used in subsequent node name
+- [x] `test_evaluate_yaml_multiple_args`: Multiple YAML args used in concatenated node name
+- [x] `test_evaluate_yaml_round_trip`: `evaluate_launch_file()` == `parse_launch_file()` for XML+YAML
+- [x] `test_evaluate_yaml_cli_arg_override`: CLI arg overrides YAML default
+
+### Files
+
+| File                                | Change                                                                                                  |
+|-------------------------------------|---------------------------------------------------------------------------------------------------------|
+| `src/.../traverser/ir_builder.rs`   | Add `build_ir_yaml()`, replace YAML `OpaqueFunction`, update `build_ir_include()` for YAML parent-scope |
+| `src/.../traverser/ir_evaluator.rs` | Update `evaluate_include()` for YAML parent-scope                                                       |
+| `tests/ir_tests.rs`                 | 5 new YAML IR builder tests                                                                             |
+| `tests/ir_eval_tests.rs`            | 4 new YAML evaluator tests                                                                              |
+
+### Verification
+
+- [x] `cargo test --all` — 353 parser tests pass (233 unit + 18 edge + 3 perf + 22 IR eval + 20 IR build + 36 python + 21 xml)
+- [x] `just test` — 353 parser + 30 integration = 383 tests pass
+- [x] Zero clippy warnings
+- [x] Code formatted
 
 ---
 
-## Phase 22.5: WASM Host Import ABI
+## Phase 22.5: `play_launch_wasm_common` Crate
 
 **Status**: Planned
 
-Define the contract between compiled WASM modules and the host runtime. This is the sandbox boundary — anything not imported is inaccessible.
+Create the shared foundation crate that defines the ABI contract between compiled WASM modules and the host runtime. Both codegen and runtime import these definitions, ensuring they stay synchronized by construction.
 
-### Design Decisions
+### Crate Setup
+
+```
+src/play_launch_wasm_common/
+├── Cargo.toml
+└── src/
+    └── lib.rs
+```
+
+**Dependencies**: `play_launch_parser` (for IR types), `thiserror`
+
+### ABI Design
 
 **Builder pattern for record-producing calls.** A `spawn_node` with 12+ fields would need 24+ i32 params (each string is offset+length). Instead, use a builder:
 
@@ -439,76 +526,177 @@ Same pattern for containers, composable nodes, executables.
 
 ### Host Import Categories
 
-| Category | Functions |
-|---|---|
-| Context | `declare_arg`, `set_var`, `resolve_var`, `set_env`, `unset_env`, `push_namespace`, `pop_namespace`, `set_global_param`, `set_remap`, `save_scope`, `restore_scope` |
-| Package resolution | `find_package_share`, `resolve_exec_path` |
-| Substitutions | `eval_env_var`, `eval_command`, `eval_python_expr`, `is_truthy` |
-| Node builder | `begin_node`, `set_node_*`, `add_node_*`, `end_node` |
-| Executable builder | `begin_executable`, `set_exec_*`, `end_executable` |
-| Container builder | `begin_container`, `begin_composable_node`, `set_comp_*`, `add_comp_*`, `end_composable_node`, `end_container` |
-| String ops | `concat`, `str_equals` |
+| Category           | Functions                                                                                                                                                          |
+|--------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Context            | `declare_arg`, `set_var`, `resolve_var`, `set_env`, `unset_env`, `push_namespace`, `pop_namespace`, `set_global_param`, `set_remap`, `save_scope`, `restore_scope` |
+| Package resolution | `find_package_share`, `resolve_exec_path`                                                                                                                          |
+| Substitutions      | `eval_env_var`, `eval_command`, `eval_python_expr`, `is_truthy`                                                                                                    |
+| Node builder       | `begin_node`, `set_node_*`, `add_node_*`, `end_node`                                                                                                               |
+| Executable builder | `begin_executable`, `set_exec_*`, `end_executable`                                                                                                                 |
+| Container builder  | `begin_container`, `begin_composable_node`, `set_comp_*`, `add_comp_*`, `end_composable_node`, `end_container`                                                     |
+| String ops         | `concat`, `str_equals`                                                                                                                                             |
+
+### Contents of `wasm_common`
+
+```rust
+/// ABI version — bumped on breaking changes to host imports.
+pub const ABI_VERSION: u32 = 1;
+
+/// Host import module name used in WASM imports.
+pub const HOST_MODULE: &str = "launch";
+
+/// Host import function names (constants shared between codegen and runtime).
+pub mod imports {
+    pub const DECLARE_ARG: &str = "declare_arg";
+    pub const SET_VAR: &str = "set_var";
+    pub const RESOLVE_VAR: &str = "resolve_var";
+    // ... all host function names
+    pub const BEGIN_NODE: &str = "begin_node";
+    pub const SET_NODE_PKG: &str = "set_node_pkg";
+    // ... builder functions
+    pub const END_NODE: &str = "end_node";
+}
+
+/// Function signatures for type-safe linking.
+pub mod signatures {
+    /// (ptr: i32, len: i32) → void
+    pub type StringArg = (i32, i32);
+    /// (ptr: i32, len: i32) → (ptr: i32, len: i32)
+    pub type StringReturn = (i32, i32, i32, i32);
+}
+
+/// WASM guest memory protocol constants.
+pub mod memory {
+    pub const BUMP_BASE: u32 = 0x1_0000; // bump allocator start
+    pub const RETURN_AREA: u32 = 0x0_FF00; // host→guest return area
+}
+
+/// Error types shared between codegen and runtime.
+pub enum WasmError {
+    AbiVersionMismatch { expected: u32, found: u32 },
+    StringDecodingError { offset: u32, len: u32 },
+    MissingExport(String),
+    // ...
+}
+```
 
 ### Work Items
 
-- [ ] Define complete function signatures with WASM types (all `i32` pairs for strings)
-- [ ] Define string passing protocol (bump allocator, return convention)
-- [ ] Define `eval_command` policy (passthrough for PoC, allowlist later)
-- [ ] Document ABI version contract
+- [ ] Create `src/play_launch_wasm_common/` crate with `Cargo.toml`
+- [ ] Add to workspace `members` in root `Cargo.toml`
+- [ ] Define `ABI_VERSION` and `HOST_MODULE` constants
+- [ ] Define all host import function name constants (`imports` module)
+- [ ] Define function signature types (`signatures` module)
+- [ ] Define string passing protocol constants (`memory` module)
+- [ ] Define builder protocol constants (begin/set/add/end patterns)
+- [ ] Define `WasmError` enum with `thiserror` derives
+- [ ] Define `eval_command` policy constant (passthrough for PoC, allowlist later)
+- [ ] Document ABI version contract in module-level doc comments
+
+### Verification
+
+- [ ] `cargo build -p play_launch_wasm_common` compiles
+- [ ] `cargo test -p play_launch_wasm_common` — unit tests for constant consistency
+- [ ] No dependencies on `wasm-encoder` or `wasmtime` (lightweight crate)
+- [ ] `just test` — existing parser tests unaffected
 
 Full design: [`docs/wasm-launch-compiler.md`](../wasm-launch-compiler.md)
 
 ---
 
-## Phase 22.6: IR→WASM Codegen + Runtime
+## Phase 22.6: `play_launch_wasm_codegen` + `play_launch_wasm_runtime` Crates
 
 **Status**: Planned
 
-Implement both the codegen (`LaunchProgram → .wasm`) and runtime (`wasmtime` host) iteratively, one action type at a time. Each action type gets its round-trip test before moving to the next.
+Create both the codegen crate (`LaunchProgram → .wasm`) and runtime crate (`wasmtime` host) and develop them in lockstep, one action type at a time. Each action type gets codegen + runtime + round-trip test before moving to the next.
+
+### Crate Setup
+
+```
+src/play_launch_wasm_codegen/          src/play_launch_wasm_runtime/
+├── Cargo.toml                         ├── Cargo.toml
+└── src/                               └── src/
+    ├── lib.rs                             ├── lib.rs
+    ├── compiler.rs    (main loop)         ├── host.rs     (LaunchHost)
+    ├── data.rs        (string pool)       ├── memory.rs   (guest memory)
+    └── expr.rs        (Expr → calls)      └── linker.rs   (import registration)
+```
+
+**Codegen deps**: `play_launch_wasm_common`, `play_launch_parser`, `wasm-encoder`, `wat`
+**Runtime deps**: `play_launch_wasm_common`, `play_launch_parser`, `wasmtime`
+**Runtime dev-deps**: `play_launch_wasm_codegen` (for round-trip tests)
 
 ### Approach
 
-Develop codegen and runtime in lockstep — they share the ABI contract from Phase 22.5. Start with the thinnest vertical slice (one `<node>` element end-to-end), then widen.
-
 **Prototype with WAT first.** Emit WAT text format (human-readable), convert via the `wat` crate. Switch to `wasm-encoder` for direct binary emission once the ABI is stable. WAT is dramatically easier to debug.
 
-**Separate crate.** `wasmtime` is ~30+ transitive crates. Put WASM support in a separate crate (`play_launch_wasm` or feature-gated) to avoid impacting parser build times.
+**Round-trip tests in `wasm_runtime`.** The runtime crate uses codegen as a dev-dependency, enabling compile→execute round-trip tests: `IR → compile_to_wasm() → execute_wasm() == evaluate_launch_file()`.
+
+### Public APIs
+
+```rust
+// play_launch_wasm_codegen
+pub fn compile_to_wasm(program: &LaunchProgram) -> Result<Vec<u8>, WasmError>;
+
+// play_launch_wasm_runtime
+pub fn execute_wasm(bytes: &[u8], args: HashMap<String, String>) -> Result<RecordJson, WasmError>;
+```
 
 ### Iteration Order
 
-| Step | Codegen | Runtime | Test |
-|---|---|---|---|
-| 1 | `SpawnNode` (basic: pkg, exec, name) | `begin_node`/`set_node_*`/`end_node` + string passing | Single node round-trip |
-| 2 | `DeclareArgument` + `Expr` resolution | `declare_arg`, `resolve_var`, `concat` | Node with `$(var ...)` in name |
-| 3 | `Condition` (if/unless) | `is_truthy` | Conditional nodes |
-| 4 | `Group` + scope | `save_scope`/`restore_scope`, `push_namespace` | Group with namespace |
-| 5 | `SetEnv`/`UnsetEnv`/`SetParameter`/`SetRemap` | Corresponding host functions | Env/param propagation |
-| 6 | `SpawnContainer` + `ComposableNodeDecl` | Container builder functions | Container with composable nodes |
-| 7 | `Include` (pre-linked: inline included body) | (no new host functions) | Include with args |
-| 8 | `SpawnExecutable` | `begin_executable`/`end_executable` | Executable with args |
-| 9 | `LoadComposableNode` | (reuses container builder) | Load into existing container |
+| Step | Codegen (wasm_codegen)                        | Runtime (wasm_runtime)                                | Round-trip test                 |
+|------|-----------------------------------------------|-------------------------------------------------------|---------------------------------|
+| 1    | `SpawnNode` (basic: pkg, exec, name)          | `begin_node`/`set_node_*`/`end_node` + string passing | Single node                     |
+| 2    | `DeclareArgument` + `Expr` resolution         | `declare_arg`, `resolve_var`, `concat`                | Node with `$(var ...)`          |
+| 3    | `Condition` (if/unless)                       | `is_truthy`                                           | Conditional nodes               |
+| 4    | `Group` + scope                               | `save_scope`/`restore_scope`, `push_namespace`        | Group with namespace            |
+| 5    | `SetEnv`/`UnsetEnv`/`SetParameter`/`SetRemap` | Corresponding host functions                          | Env/param propagation           |
+| 6    | `SpawnContainer` + `ComposableNodeDecl`       | Container builder functions                           | Container with composable nodes |
+| 7    | `Include` (pre-linked: inline included body)  | (no new host functions)                               | Include with args               |
+| 8    | `SpawnExecutable`                             | `begin_executable`/`end_executable`                   | Executable with args            |
+| 9    | `LoadComposableNode`                          | (reuses container builder)                            | Load into existing container    |
 
-### Tooling
+### External Dependencies
 
-| Crate | Purpose |
-|---|---|
-| `wasm-encoder` | Emit WASM binary from Rust (production) |
-| `wat` | WAT text → WASM binary (prototyping) |
-| `wasmtime` | Execute WASM with host functions |
-| `wasmprinter` | WASM binary → WAT text (debugging) |
+| Crate          | Used by       | Purpose                                 |
+|----------------|---------------|-----------------------------------------|
+| `wasm-encoder` | codegen       | Emit WASM binary from Rust (production) |
+| `wat`          | codegen       | WAT text → WASM binary (prototyping)    |
+| `wasmtime`     | runtime       | Execute WASM with host functions        |
+| `wasmprinter`  | runtime (dev) | WASM binary → WAT text (debugging)      |
 
-### Work Items
+### Work Items — Codegen
 
-- [ ] Create `play_launch_wasm` crate (or feature gate)
-- [ ] Implement string literal collection and data segment emission
-- [ ] Implement `Expr` compilation (substitution chains → host calls + concat)
-- [ ] Implement `Condition` compilation (if/unless blocks)
-- [ ] Implement action compilation for all `ActionKind` variants
-- [ ] Implement scope management (save/restore for groups and includes)
-- [ ] Implement `LaunchHost` struct with all host import functions
-- [ ] Implement string passing (read/write guest linear memory)
+- [ ] Create `src/play_launch_wasm_codegen/` crate with `Cargo.toml`
+- [ ] Add to workspace `members` in root `Cargo.toml`
+- [ ] Implement `compile_to_wasm()` entry point
+- [ ] Implement string literal collection and data segment emission (`data.rs`)
+- [ ] Implement `Expr` compilation: substitution chains → host calls + concat (`expr.rs`)
+- [ ] Implement `Condition` compilation: if/unless → `is_truthy` call + `br_if` (`compiler.rs`)
+- [ ] Implement action compilation for all `ActionKind` variants (`compiler.rs`)
+- [ ] Implement scope management: save/restore for groups and includes
+- [ ] Emit ABI version global from `wasm_common::ABI_VERSION`
+
+### Work Items — Runtime
+
+- [ ] Create `src/play_launch_wasm_runtime/` crate with `Cargo.toml`
+- [ ] Add to workspace `members` in root `Cargo.toml`
+- [ ] Implement `execute_wasm()` entry point
+- [ ] Implement `LaunchHost` struct with builder state (`host.rs`)
+- [ ] Implement guest memory read/write helpers (`memory.rs`)
+- [ ] Register all host import functions via wasmtime `Linker` (`linker.rs`)
+- [ ] ABI version check on module instantiation
 - [ ] Add fuel metering for CPU bounding
-- [ ] Round-trip test per action type: IR→WASM→execute == `evaluate_launch_file()`
+- [ ] Round-trip test per iteration step (9 tests minimum)
+
+### Verification
+
+- [ ] `cargo build -p play_launch_wasm_codegen` compiles
+- [ ] `cargo build -p play_launch_wasm_runtime` compiles
+- [ ] `cargo test -p play_launch_wasm_runtime` — round-trip tests pass for all 9 action types
+- [ ] IR→WASM→execute produces identical output to `evaluate_launch_file()` for each step
+- [ ] `just test` — existing parser tests unaffected
+- [ ] Zero clippy warnings across all three WASM crates
 
 ---
 
@@ -516,22 +704,53 @@ Develop codegen and runtime in lockstep — they share the ABI contract from Pha
 
 **Status**: Planned
 
-Wire WASM compilation and execution into the `play_launch` CLI.
+Wire WASM compilation and execution into the `play_launch` CLI via feature-gated optional dependencies. Users opt in to WASM support without impacting default build times.
+
+### Feature Gates in `play_launch`
+
+```toml
+# src/play_launch/Cargo.toml
+[features]
+default = []
+wasm = ["wasm-compile", "wasm-exec"]
+wasm-compile = ["play_launch_wasm_codegen"]
+wasm-exec = ["play_launch_wasm_runtime"]
+
+[dependencies]
+play_launch_wasm_codegen = { path = "../play_launch_wasm_codegen", optional = true }
+play_launch_wasm_runtime = { path = "../play_launch_wasm_runtime", optional = true }
+```
+
+- `wasm-compile` — pulls in codegen only (~5 transitive crates via wasm-encoder)
+- `wasm-exec` — pulls in runtime only (~30+ transitive crates via wasmtime)
+- `wasm` — convenience feature enabling both
 
 ### Subcommands
 
 ```
-play_launch compile <pkg> <launch_file> -o out.wasm   # compile to WASM
-play_launch exec out.wasm --args key:=val              # execute pre-compiled WASM
-play_launch dump --wasm <pkg> <launch_file>            # compile + execute, dump record.json
+play_launch compile <pkg> <launch_file> -o out.wasm   # requires wasm-compile
+play_launch exec out.wasm --args key:=val              # requires wasm-exec
+play_launch dump --wasm <pkg> <launch_file>            # requires wasm (both)
 ```
 
 ### Work Items
 
-- [ ] Add `compile` subcommand
-- [ ] Add `exec` subcommand
-- [ ] Add `--wasm` flag to `dump` subcommand
+- [ ] Add feature gates to `src/play_launch/Cargo.toml`
+- [ ] Add `compile` subcommand (gated on `wasm-compile`)
+- [ ] Add `exec` subcommand (gated on `wasm-exec`)
+- [ ] Add `--wasm` flag to `dump` subcommand (gated on `wasm`)
+- [ ] Error messages when subcommand used without required feature
 - [ ] Error messages for unsupported patterns (OpaqueFunction, unresolved includes)
+- [ ] Update `just build` to optionally enable WASM features (e.g. `just build-wasm`)
+
+### Verification
+
+- [ ] `cargo build -p play_launch` — default build unaffected (no WASM deps)
+- [ ] `cargo build -p play_launch --features wasm` — builds with full WASM support
+- [ ] `cargo build -p play_launch --features wasm-compile` — codegen only, no wasmtime
+- [ ] `cargo build -p play_launch --features wasm-exec` — runtime only, no wasm-encoder
+- [ ] `play_launch compile` + `play_launch exec` round-trip produces correct output
+- [ ] `play_launch dump --wasm` matches `play_launch dump` for XML test fixtures
 
 ---
 
@@ -554,6 +773,14 @@ End-to-end validation that the WASM pipeline produces identical output to direct
 - [ ] Test with Autoware XML-only launch files
 - [ ] Benchmark: compilation time + execution time vs direct parsing
 - [ ] Document known limitations (OpaqueFunction placeholders, unresolvable includes)
+- [ ] Verify all three WASM crates pass `cargo clippy` and `cargo test`
+
+### Verification
+
+- [ ] All XML/YAML parser test fixtures produce identical output via WASM pipeline
+- [ ] Autoware XML-only subset compiles and executes correctly
+- [ ] Performance benchmarks documented (compilation time, execution time, module size)
+- [ ] `just test` — all existing tests still pass
 
 ---
 
@@ -584,7 +811,7 @@ Parse Python launch files with `ast.parse()`, pattern-match on the ROS 2 launch 
 
 ### Implementation
 
-Python module (`play_launch_compiler/`) that outputs JSON-serialized IR consumed by the Rust codegen. Requires Python at **compile time** but not at **execution time**.
+Python module (`play_launch_compiler/`) that outputs JSON-serialized IR consumed by the Rust codegen. Requires Python at **compile time** but not at **execution time**. IR types need `Serialize`/`Deserialize` derives (added to `ir.rs`) for JSON interchange.
 
 ### Work Items
 
