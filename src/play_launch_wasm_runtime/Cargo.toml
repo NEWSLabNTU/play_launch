@@ -1,0 +1,15 @@
+[package]
+name = "play_launch_wasm_runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Executes play_launch WASM modules with a host that produces RecordJson"
+license = "Apache-2.0"
+
+[dependencies]
+play_launch_wasm_common = { path = "../play_launch_wasm_common" }
+play_launch_parser = { path = "../play_launch_parser/src/play_launch_parser" }
+wasmtime = "29"
+anyhow = "1.0"
+
+[dev-dependencies]
+play_launch_wasm_codegen = { path = "../play_launch_wasm_codegen" }

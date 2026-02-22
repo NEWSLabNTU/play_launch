@@ -1,0 +1,12 @@
+[package]
+name = "play_launch_wasm_codegen"
+version = "0.1.0"
+edition = "2021"
+description = "Compiles play_launch IR (LaunchProgram) to WASM binaries"
+license = "Apache-2.0"
+
+[dependencies]
+play_launch_wasm_common = { path = "../play_launch_wasm_common" }
+play_launch_parser = { path = "../play_launch_parser/src/play_launch_parser" }
+wasm-encoder = "0.225"
+anyhow = "1.0"
