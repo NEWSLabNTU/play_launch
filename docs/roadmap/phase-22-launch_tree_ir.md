@@ -211,7 +211,7 @@ Full architecture: [`docs/wasm-launch-compiler.md`](../wasm-launch-compiler.md)
 22.2  XML IR builder (analyze_launch_file)             complete
 22.3  IR evaluator (evaluate_launch_file)              complete
 22.4  Complete YAML IR builder                         complete
-22.5  play_launch_wasm_common crate (ABI + types)      planned
+22.5  play_launch_wasm_common crate (ABI + types)      complete
 22.6  play_launch_wasm_codegen + _runtime (lockstep)   planned
 22.7  CLI integration (feature-gated deps)             planned
 22.8  XML/YAML PoC validation                          planned
@@ -489,7 +489,7 @@ The implementation preserves this in both the IR builder and evaluator:
 
 ## Phase 22.5: `play_launch_wasm_common` Crate
 
-**Status**: Planned
+**Status**: Complete
 
 Create the shared foundation crate that defines the ABI contract between compiled WASM modules and the host runtime. Both codegen and runtime import these definitions, ensuring they stay synchronized by construction.
 
@@ -502,7 +502,7 @@ src/play_launch_wasm_common/
     └── lib.rs
 ```
 
-**Dependencies**: `play_launch_parser` (for IR types), `thiserror`
+**Dependencies**: `thiserror` (lightweight — no dependency on `play_launch_parser`, `wasm-encoder`, or `wasmtime`)
 
 ### ABI Design
 
@@ -524,81 +524,58 @@ Same pattern for containers, composable nodes, executables.
 
 **Module versioning.** Compiled modules embed an ABI version (`(global $abi_version i32 (i32.const 1))`) that the runtime checks on instantiation.
 
-### Host Import Categories
+### Host Import Categories (56 functions)
 
 | Category           | Functions                                                                                                                                                          |
 |--------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Context            | `declare_arg`, `set_var`, `resolve_var`, `set_env`, `unset_env`, `push_namespace`, `pop_namespace`, `set_global_param`, `set_remap`, `save_scope`, `restore_scope` |
-| Package resolution | `find_package_share`, `resolve_exec_path`                                                                                                                          |
-| Substitutions      | `eval_env_var`, `eval_command`, `eval_python_expr`, `is_truthy`                                                                                                    |
-| Node builder       | `begin_node`, `set_node_*`, `add_node_*`, `end_node`                                                                                                               |
-| Executable builder | `begin_executable`, `set_exec_*`, `end_executable`                                                                                                                 |
-| Container builder  | `begin_container`, `begin_composable_node`, `set_comp_*`, `add_comp_*`, `end_composable_node`, `end_container`                                                     |
-| String ops         | `concat`, `str_equals`                                                                                                                                             |
-
-### Contents of `wasm_common`
-
-```rust
-/// ABI version — bumped on breaking changes to host imports.
-pub const ABI_VERSION: u32 = 1;
-
-/// Host import module name used in WASM imports.
-pub const HOST_MODULE: &str = "launch";
-
-/// Host import function names (constants shared between codegen and runtime).
-pub mod imports {
-    pub const DECLARE_ARG: &str = "declare_arg";
-    pub const SET_VAR: &str = "set_var";
-    pub const RESOLVE_VAR: &str = "resolve_var";
-    // ... all host function names
-    pub const BEGIN_NODE: &str = "begin_node";
-    pub const SET_NODE_PKG: &str = "set_node_pkg";
-    // ... builder functions
-    pub const END_NODE: &str = "end_node";
-}
-
-/// Function signatures for type-safe linking.
-pub mod signatures {
-    /// (ptr: i32, len: i32) → void
-    pub type StringArg = (i32, i32);
-    /// (ptr: i32, len: i32) → (ptr: i32, len: i32)
-    pub type StringReturn = (i32, i32, i32, i32);
-}
-
-/// WASM guest memory protocol constants.
-pub mod memory {
-    pub const BUMP_BASE: u32 = 0x1_0000; // bump allocator start
-    pub const RETURN_AREA: u32 = 0x0_FF00; // host→guest return area
-}
-
-/// Error types shared between codegen and runtime.
-pub enum WasmError {
-    AbiVersionMismatch { expected: u32, found: u32 },
-    StringDecodingError { offset: u32, len: u32 },
-    MissingExport(String),
-    // ...
-}
-```
+| Context (11)       | `declare_arg`, `set_var`, `resolve_var`, `set_env`, `unset_env`, `push_namespace`, `pop_namespace`, `set_global_param`, `set_remap`, `save_scope`, `restore_scope` |
+| Package resolution (2) | `find_package_share`, `resolve_exec_path`                                                                                                                     |
+| Substitutions (4)  | `eval_env_var`, `eval_command`, `eval_python_expr`, `is_truthy`                                                                                                    |
+| Node builder (12)  | `begin_node`, `set_node_pkg`, `set_node_exec`, `set_node_name`, `set_node_namespace`, `add_node_param`, `add_node_param_file`, `add_node_remap`, `add_node_env`, `set_node_args`, `set_node_respawn`, `set_node_respawn_delay`, `end_node` |
+| Executable builder (6) | `begin_executable`, `set_exec_cmd`, `set_exec_name`, `add_exec_arg`, `add_exec_env`, `end_executable`                                                        |
+| Container builder (13) | `begin_container`, `set_container_pkg`, `set_container_exec`, `set_container_name`, `set_container_namespace`, `set_container_args`, `begin_composable_node`, `set_comp_pkg`, `set_comp_plugin`, `set_comp_name`, `set_comp_namespace`, `add_comp_param`, `add_comp_remap`, `add_comp_extra_arg`, `end_composable_node`, `end_container` |
+| Load node (2)      | `begin_load_node`, `end_load_node`                                                                                                                                 |
+| String ops (2)     | `concat`, `str_equals`                                                                                                                                             |
 
 ### Work Items
 
-- [ ] Create `src/play_launch_wasm_common/` crate with `Cargo.toml`
-- [ ] Add to workspace `members` in root `Cargo.toml`
-- [ ] Define `ABI_VERSION` and `HOST_MODULE` constants
-- [ ] Define all host import function name constants (`imports` module)
-- [ ] Define function signature types (`signatures` module)
-- [ ] Define string passing protocol constants (`memory` module)
-- [ ] Define builder protocol constants (begin/set/add/end patterns)
-- [ ] Define `WasmError` enum with `thiserror` derives
-- [ ] Define `eval_command` policy constant (passthrough for PoC, allowlist later)
-- [ ] Document ABI version contract in module-level doc comments
+- [x] Create `src/play_launch_wasm_common/` crate with `Cargo.toml`
+- [x] Add to workspace `members` in root `Cargo.toml`
+- [x] Define `ABI_VERSION`, `HOST_MODULE`, `ABI_VERSION_GLOBAL`, `ENTRY_POINT`, `MEMORY_EXPORT` constants
+- [x] Define all 56 host import function name constants (`imports` module) with doc comments and signatures
+- [x] Define `imports::ALL` array for enumeration/validation
+- [x] Define string passing protocol constants (`memory` module: `BUMP_BASE`, `RETURN_AREA`, `BUMP_GLOBAL`)
+- [x] Define builder protocol constants (begin/set/add/end patterns for node, executable, container, composable node, load node)
+- [x] Define `WasmError` enum with `thiserror` derives (11 variants)
+- [x] Define `CommandPolicy` enum (Strict, Allowlist, Passthrough)
+- [x] Document ABI version contract in module-level doc comments
+
+### Tests (8 in `lib.rs`)
+
+- [x] `test_abi_version_is_positive`
+- [x] `test_host_module_is_nonempty`
+- [x] `test_all_imports_nonempty`
+- [x] `test_all_imports_unique`
+- [x] `test_all_imports_count` (56 imports)
+- [x] `test_memory_layout_no_overlap`
+- [x] `test_command_policy_default_is_passthrough`
+- [x] `test_error_display`
+
+### Files
+
+| File | Change |
+|---|---|
+| `Cargo.toml` (root) | Add `src/play_launch_wasm_common` to workspace members |
+| `src/play_launch_wasm_common/Cargo.toml` | **New** — deps: `thiserror` only |
+| `src/play_launch_wasm_common/src/lib.rs` | **New** — ABI defs, imports, memory, errors, policy (~560 lines) |
 
 ### Verification
 
-- [ ] `cargo build -p play_launch_wasm_common` compiles
-- [ ] `cargo test -p play_launch_wasm_common` — unit tests for constant consistency
-- [ ] No dependencies on `wasm-encoder` or `wasmtime` (lightweight crate)
-- [ ] `just test` — existing parser tests unaffected
+- [x] `cargo build -p play_launch_wasm_common` compiles
+- [x] `cargo test -p play_launch_wasm_common` — 8 tests pass
+- [x] `cargo clippy -p play_launch_wasm_common -- -D warnings` — zero warnings
+- [x] No dependencies on `wasm-encoder` or `wasmtime` (lightweight crate)
+- [x] `just test` — 353 parser + 30 integration tests pass (existing tests unaffected)
 
 Full design: [`docs/wasm-launch-compiler.md`](../wasm-launch-compiler.md)
 

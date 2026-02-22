@@ -1,0 +1,9 @@
+[package]
+name = "play_launch_wasm_common"
+version = "0.1.0"
+edition = "2021"
+description = "Shared ABI definitions for play_launch WASM compilation and execution"
+license = "Apache-2.0"
+
+[dependencies]
+thiserror = "1.0"
