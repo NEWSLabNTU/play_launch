@@ -583,7 +583,7 @@ Full design: [`docs/wasm-launch-compiler.md`](../wasm-launch-compiler.md)
 
 ## Phase 22.6: `play_launch_wasm_codegen` + `play_launch_wasm_runtime` Crates
 
-**Status**: Planned
+**Status**: Complete
 
 Create both the codegen crate (`LaunchProgram → .wasm`) and runtime crate (`wasmtime` host) and develop them in lockstep, one action type at a time. Each action type gets codegen + runtime + round-trip test before moving to the next.
 
@@ -595,17 +595,17 @@ src/play_launch_wasm_codegen/          src/play_launch_wasm_runtime/
 └── src/                               └── src/
     ├── lib.rs                             ├── lib.rs
     ├── compiler.rs    (main loop)         ├── host.rs     (LaunchHost)
-    ├── data.rs        (string pool)       ├── memory.rs   (guest memory)
+    ├── string_pool.rs (string pool)       ├── memory.rs   (guest memory)
     └── expr.rs        (Expr → calls)      └── linker.rs   (import registration)
 ```
 
-**Codegen deps**: `play_launch_wasm_common`, `play_launch_parser`, `wasm-encoder`, `wat`
-**Runtime deps**: `play_launch_wasm_common`, `play_launch_parser`, `wasmtime`
+**Codegen deps**: `play_launch_wasm_common`, `play_launch_parser`, `wasm-encoder`, `anyhow`
+**Runtime deps**: `play_launch_wasm_common`, `play_launch_parser`, `wasmtime`, `anyhow`
 **Runtime dev-deps**: `play_launch_wasm_codegen` (for round-trip tests)
 
 ### Approach
 
-**Prototype with WAT first.** Emit WAT text format (human-readable), convert via the `wat` crate. Switch to `wasm-encoder` for direct binary emission once the ABI is stable. WAT is dramatically easier to debug.
+**Direct binary emission via `wasm-encoder`.** Skipped WAT prototyping — went straight to `wasm-encoder` for direct binary emission. The ABI from `wasm_common` was stable enough to not need WAT debugging.
 
 **Round-trip tests in `wasm_runtime`.** The runtime crate uses codegen as a dev-dependency, enabling compile→execute round-trip tests: `IR → compile_to_wasm() → execute_wasm() == evaluate_launch_file()`.
 
@@ -635,45 +635,50 @@ pub fn execute_wasm(bytes: &[u8], args: HashMap<String, String>) -> Result<Recor
 
 ### External Dependencies
 
-| Crate          | Used by       | Purpose                                 |
-|----------------|---------------|-----------------------------------------|
-| `wasm-encoder` | codegen       | Emit WASM binary from Rust (production) |
-| `wat`          | codegen       | WAT text → WASM binary (prototyping)    |
-| `wasmtime`     | runtime       | Execute WASM with host functions        |
-| `wasmprinter`  | runtime (dev) | WASM binary → WAT text (debugging)      |
+| Crate          | Used by | Purpose                            |
+|----------------|---------|-------------------------------------|
+| `wasm-encoder` | codegen | Emit WASM binary from Rust          |
+| `wasmtime`     | runtime | Execute WASM with host functions    |
 
 ### Work Items — Codegen
 
-- [ ] Create `src/play_launch_wasm_codegen/` crate with `Cargo.toml`
-- [ ] Add to workspace `members` in root `Cargo.toml`
-- [ ] Implement `compile_to_wasm()` entry point
-- [ ] Implement string literal collection and data segment emission (`data.rs`)
-- [ ] Implement `Expr` compilation: substitution chains → host calls + concat (`expr.rs`)
-- [ ] Implement `Condition` compilation: if/unless → `is_truthy` call + `br_if` (`compiler.rs`)
-- [ ] Implement action compilation for all `ActionKind` variants (`compiler.rs`)
-- [ ] Implement scope management: save/restore for groups and includes
-- [ ] Emit ABI version global from `wasm_common::ABI_VERSION`
+- [x] Create `src/play_launch_wasm_codegen/` crate with `Cargo.toml`
+- [x] Add to workspace `members` in root `Cargo.toml`
+- [x] Implement `compile_to_wasm()` entry point
+- [x] Implement string literal collection and data segment emission (`string_pool.rs`)
+- [x] Implement `Expr` compilation: all 10 substitution variants → host calls + concat (`expr.rs`)
+- [x] Implement `Condition` compilation: if/unless → `is_truthy` call + `if`/`eqz` blocks (`compiler.rs`)
+- [x] Implement action compilation for all `ActionKind` variants (`compiler.rs`)
+- [x] Implement scope management: save/restore for groups and includes
+- [x] Emit ABI version global from `wasm_common::ABI_VERSION`
 
 ### Work Items — Runtime
 
-- [ ] Create `src/play_launch_wasm_runtime/` crate with `Cargo.toml`
-- [ ] Add to workspace `members` in root `Cargo.toml`
-- [ ] Implement `execute_wasm()` entry point
-- [ ] Implement `LaunchHost` struct with builder state (`host.rs`)
-- [ ] Implement guest memory read/write helpers (`memory.rs`)
-- [ ] Register all host import functions via wasmtime `Linker` (`linker.rs`)
-- [ ] ABI version check on module instantiation
-- [ ] Add fuel metering for CPU bounding
-- [ ] Round-trip test per iteration step (9 tests minimum)
+- [x] Create `src/play_launch_wasm_runtime/` crate with `Cargo.toml`
+- [x] Add to workspace `members` in root `Cargo.toml`
+- [x] Implement `execute_wasm()` entry point
+- [x] Implement `LaunchHost` struct with 5 builder types (`host.rs`)
+- [x] Implement guest memory read/write helpers (`memory.rs`)
+- [x] Register all 56 host import functions via wasmtime `Linker` (`linker.rs`)
+- [x] ABI version check on module instantiation
+- [ ] Add fuel metering for CPU bounding (deferred — not needed yet)
+- [x] Round-trip tests: 21 tests covering all 9 action types + edge cases
+
+### Work Items — Parser Visibility
+
+- [x] Make `normalize_param_value`, `resolve_exec_path`, `build_ros_command`, `merge_params_with_global` pub in `record/generator.rs`
+- [x] Make `is_truthy` pub in `condition.rs`
+- [x] Make `find_package_executable` pub in `python/bridge.rs`
+- [x] Add re-exports in `record/mod.rs`
 
 ### Verification
 
-- [ ] `cargo build -p play_launch_wasm_codegen` compiles
-- [ ] `cargo build -p play_launch_wasm_runtime` compiles
-- [ ] `cargo test -p play_launch_wasm_runtime` — round-trip tests pass for all 9 action types
-- [ ] IR→WASM→execute produces identical output to `evaluate_launch_file()` for each step
-- [ ] `just test` — existing parser tests unaffected
-- [ ] Zero clippy warnings across all three WASM crates
+- [x] `cargo build -p play_launch_wasm_codegen` compiles
+- [x] `cargo build -p play_launch_wasm_runtime` compiles
+- [x] `cargo test -p play_launch_wasm_runtime` — 21 round-trip tests pass (all 9 action types + edge cases)
+- [x] `cargo test -p play_launch_wasm_codegen` — 3 string pool unit tests pass
+- [x] `just test` — 353 parser + 30 integration tests pass (no regressions)
+- [x] Zero clippy warnings across all three WASM crates
 
 ---
 
