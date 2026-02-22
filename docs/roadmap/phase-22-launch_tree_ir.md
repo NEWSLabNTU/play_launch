@@ -155,15 +155,33 @@ impl LaunchProgram {
 }
 ```
 
+## WASM Compilation
+
+The IR enables a second goal: compile launch files to portable WebAssembly modules that execute in a sandboxed runtime, producing `record.json` without requiring a ROS 2 installation or Python interpreter.
+
+```
+XML  ──┐                                    ┌─── record.json
+YAML ──┼──► IR (LaunchProgram) ──► .wasm ──►│
+Python ┘                                    └─── (portable, sandboxed)
+```
+
+Full architecture: [`docs/wasm-launch-compiler.md`](../wasm-launch-compiler.md)
+
 ## Implementation Order
 
 ```
-22.0 IR type definitions + module                     complete
-22.1 Align action parse helpers (Container, Include)  complete
-22.2 XML IR builder (analyze_launch_file)             complete
-22.3 IR evaluator (evaluate_launch_file)              complete
-22.4 Python launch file IR support                    planned
-22.5 Static analysis passes                           future
+22.0  IR type definitions + module                     complete
+22.1  Align action parse helpers (Container, Include)  complete
+22.2  XML IR builder (analyze_launch_file)             complete
+22.3  IR evaluator (evaluate_launch_file)              complete
+22.4  Complete YAML IR builder                         planned
+22.5  WASM host import ABI + string protocol           planned
+22.6  IR→WASM codegen + runtime (iterative)            planned
+22.7  CLI integration (compile/exec subcommands)       planned
+22.8  XML/YAML PoC validation                          planned
+22.9  Python AST compiler                              planned
+22.10 Python integration into pipeline                 planned
+22.11 Autoware smoke tests                             planned
 ```
 
 ---
@@ -371,34 +389,268 @@ The evaluator is a set of methods on `LaunchTraverser`, reusing existing infrast
 
 ---
 
-## Phase 22.4: Python Launch File IR Support
+## Phase 22.4: Complete YAML IR Builder
 
-**Status**: Future
+**Status**: Planned
 
-Use annotated execution to capture IR from Python launch files. Run the Python file via PyO3, but record condition expressions and action structure rather than eagerly resolving.
+The IR builder (Phase 22.2) emits `ActionKind::OpaqueFunction` placeholders for YAML launch files. Extend it to produce proper IR actions from YAML, matching the XML builder's coverage.
 
-### Approach
+### Scope
 
-- Mock `IfCondition`/`UnlessCondition` record their predicate expression before evaluating
-- Mock `Node`, `GroupAction`, etc. emit `Action` IR nodes alongside existing captures
-- Python actions that cannot be statically analyzed (e.g., `OpaqueFunction` with arbitrary Python logic) are represented as `ActionKind::OpaqueFunction { description: String }`
-- Converts Python captures to IR actions with conditions preserved
+- YAML launch files use the same action semantics as XML (nodes, groups, includes, args, etc.) but in YAML syntax
+- The existing YAML parser (`process_yaml_launch_file()`) already handles evaluation — this phase adds IR construction alongside it
+- YAML preset files (Autoware pattern: parent-scope variable declarations) must preserve correct scoping semantics in the IR
+
+### Work Items
+
+- [ ] Add `build_ir_yaml()` to `ir_builder.rs` (parallel to `build_ir_entity()` for XML)
+- [ ] Map YAML action types to `ActionKind` variants
+- [ ] Handle YAML includes: attach `body` via recursive `build_ir_file()`
+- [ ] YAML preset scoping: variables declared in YAML modify parent scope (unlike XML includes which are isolated)
+- [ ] Tests: YAML-specific IR construction tests + round-trip with `evaluate_launch_file()`
 
 ---
 
-## Phase 22.5: Static Analysis Passes
+## Phase 22.5: WASM Host Import ABI
 
-**Status**: Future
+**Status**: Planned
 
-Build analysis passes over the IR.
+Define the contract between compiled WASM modules and the host runtime. This is the sandbox boundary — anything not imported is inaccessible.
 
-### Planned Passes
+### Design Decisions
 
-- **Variable dependency graph**: track which variables reference which others
-- **Reachability analysis**: given input constraints (e.g., `use_sim ∈ {true, false}`), enumerate which nodes can possibly be spawned
-- **Topic QoS annotation**: query ROS 2 node descriptions for publisher/subscriber QoS settings
-- **Parameter schema extraction**: collect all parameters per node with types and defaults
-- **Diff analysis**: compare two sets of inputs → show which nodes/params change
+**Builder pattern for record-producing calls.** A `spawn_node` with 12+ fields would need 24+ i32 params (each string is offset+length). Instead, use a builder:
+
+```
+begin_node()
+set_node_pkg(ptr, len)
+set_node_exec(ptr, len)
+set_node_name(ptr, len)
+add_node_param(name_ptr, name_len, val_ptr, val_len)
+add_node_remap(from_ptr, from_len, to_ptr, to_len)
+end_node()   ;; commits the record
+```
+
+Same pattern for containers, composable nodes, executables.
+
+**String passing.** Bump allocator in WASM linear memory. Host reads guest memory for string arguments. Host writes return strings to guest memory via a return protocol. Memory grows monotonically — acceptable for single-execution use case (~100KB for Autoware).
+
+**Module versioning.** Compiled modules embed an ABI version (`(global $abi_version i32 (i32.const 1))`) that the runtime checks on instantiation.
+
+### Host Import Categories
+
+| Category | Functions |
+|---|---|
+| Context | `declare_arg`, `set_var`, `resolve_var`, `set_env`, `unset_env`, `push_namespace`, `pop_namespace`, `set_global_param`, `set_remap`, `save_scope`, `restore_scope` |
+| Package resolution | `find_package_share`, `resolve_exec_path` |
+| Substitutions | `eval_env_var`, `eval_command`, `eval_python_expr`, `is_truthy` |
+| Node builder | `begin_node`, `set_node_*`, `add_node_*`, `end_node` |
+| Executable builder | `begin_executable`, `set_exec_*`, `end_executable` |
+| Container builder | `begin_container`, `begin_composable_node`, `set_comp_*`, `add_comp_*`, `end_composable_node`, `end_container` |
+| String ops | `concat`, `str_equals` |
+
+### Work Items
+
+- [ ] Define complete function signatures with WASM types (all `i32` pairs for strings)
+- [ ] Define string passing protocol (bump allocator, return convention)
+- [ ] Define `eval_command` policy (passthrough for PoC, allowlist later)
+- [ ] Document ABI version contract
+
+Full design: [`docs/wasm-launch-compiler.md`](../wasm-launch-compiler.md)
+
+---
+
+## Phase 22.6: IR→WASM Codegen + Runtime
+
+**Status**: Planned
+
+Implement both the codegen (`LaunchProgram → .wasm`) and runtime (`wasmtime` host) iteratively, one action type at a time. Each action type gets its round-trip test before moving to the next.
+
+### Approach
+
+Develop codegen and runtime in lockstep — they share the ABI contract from Phase 22.5. Start with the thinnest vertical slice (one `<node>` element end-to-end), then widen.
+
+**Prototype with WAT first.** Emit WAT text format (human-readable), convert via the `wat` crate. Switch to `wasm-encoder` for direct binary emission once the ABI is stable. WAT is dramatically easier to debug.
+
+**Separate crate.** `wasmtime` is ~30+ transitive crates. Put WASM support in a separate crate (`play_launch_wasm` or feature-gated) to avoid impacting parser build times.
+
+### Iteration Order
+
+| Step | Codegen | Runtime | Test |
+|---|---|---|---|
+| 1 | `SpawnNode` (basic: pkg, exec, name) | `begin_node`/`set_node_*`/`end_node` + string passing | Single node round-trip |
+| 2 | `DeclareArgument` + `Expr` resolution | `declare_arg`, `resolve_var`, `concat` | Node with `$(var ...)` in name |
+| 3 | `Condition` (if/unless) | `is_truthy` | Conditional nodes |
+| 4 | `Group` + scope | `save_scope`/`restore_scope`, `push_namespace` | Group with namespace |
+| 5 | `SetEnv`/`UnsetEnv`/`SetParameter`/`SetRemap` | Corresponding host functions | Env/param propagation |
+| 6 | `SpawnContainer` + `ComposableNodeDecl` | Container builder functions | Container with composable nodes |
+| 7 | `Include` (pre-linked: inline included body) | (no new host functions) | Include with args |
+| 8 | `SpawnExecutable` | `begin_executable`/`end_executable` | Executable with args |
+| 9 | `LoadComposableNode` | (reuses container builder) | Load into existing container |
+
+### Tooling
+
+| Crate | Purpose |
+|---|---|
+| `wasm-encoder` | Emit WASM binary from Rust (production) |
+| `wat` | WAT text → WASM binary (prototyping) |
+| `wasmtime` | Execute WASM with host functions |
+| `wasmprinter` | WASM binary → WAT text (debugging) |
+
+### Work Items
+
+- [ ] Create `play_launch_wasm` crate (or feature gate)
+- [ ] Implement string literal collection and data segment emission
+- [ ] Implement `Expr` compilation (substitution chains → host calls + concat)
+- [ ] Implement `Condition` compilation (if/unless blocks)
+- [ ] Implement action compilation for all `ActionKind` variants
+- [ ] Implement scope management (save/restore for groups and includes)
+- [ ] Implement `LaunchHost` struct with all host import functions
+- [ ] Implement string passing (read/write guest linear memory)
+- [ ] Add fuel metering for CPU bounding
+- [ ] Round-trip test per action type: IR→WASM→execute == `evaluate_launch_file()`
+
+---
+
+## Phase 22.7: CLI Integration
+
+**Status**: Planned
+
+Wire WASM compilation and execution into the `play_launch` CLI.
+
+### Subcommands
+
+```
+play_launch compile <pkg> <launch_file> -o out.wasm   # compile to WASM
+play_launch exec out.wasm --args key:=val              # execute pre-compiled WASM
+play_launch dump --wasm <pkg> <launch_file>            # compile + execute, dump record.json
+```
+
+### Work Items
+
+- [ ] Add `compile` subcommand
+- [ ] Add `exec` subcommand
+- [ ] Add `--wasm` flag to `dump` subcommand
+- [ ] Error messages for unsupported patterns (OpaqueFunction, unresolved includes)
+
+---
+
+## Phase 22.8: XML/YAML PoC Validation
+
+**Status**: Planned
+
+End-to-end validation that the WASM pipeline produces identical output to direct evaluation for all XML/YAML launch files.
+
+### Validation Criteria
+
+- `parse_launch_file(path, args)` == `compile_then_execute(path, args)` for all XML test fixtures
+- Round-trip tests: simple nodes, conditions, groups, includes, containers, env, params
+- Performance comparison: direct evaluation vs WASM execution
+- Autoware XML subset (the XML-only portion of the launch tree, before Python includes)
+
+### Work Items
+
+- [ ] Automate round-trip comparison for all existing parser test fixtures
+- [ ] Test with Autoware XML-only launch files
+- [ ] Benchmark: compilation time + execution time vs direct parsing
+- [ ] Document known limitations (OpaqueFunction placeholders, unresolvable includes)
+
+---
+
+## Phase 22.9: Python AST Compiler
+
+**Status**: Planned
+
+Parse Python launch files with `ast.parse()`, pattern-match on the ROS 2 launch API, and compile to IR. Runs at compile time only — no Python interpreter needed at plan execution time.
+
+### Supported Pattern Tiers
+
+**Tier 1: Direct declarative** (~70% of launch files)
+- `LaunchDescription([...])` → `LaunchProgram`
+- `DeclareLaunchArgument`, `Node`, `ComposableNodeContainer`, `GroupAction`, `IncludeLaunchDescription`
+- `IfCondition`/`UnlessCondition` → `Condition::If`/`Unless`
+- Substitution types: `LaunchConfiguration`, `FindPackageShare`, `EnvironmentVariable`, `PathJoinSubstitution`, `PythonExpression`
+
+**Tier 2: Simple OpaqueFunction** (~25% more)
+- `context.launch_configurations[key]` → `LaunchConfiguration`
+- `if expr == value:` → conditional groups
+- Variable assignment tracking via simple SSA
+
+**Tier 3: Loops and comprehensions** (~4% more)
+- List comprehensions with literal iterables → unroll
+- Simple `for` loops with literal range/list → unroll
+
+**Rejected** (~1%): external I/O, dynamic imports, generators, `while` loops → clear compile error with source location and help text.
+
+### Implementation
+
+Python module (`play_launch_compiler/`) that outputs JSON-serialized IR consumed by the Rust codegen. Requires Python at **compile time** but not at **execution time**.
+
+### Work Items
+
+- [ ] Implement Tier 1: declarative pattern matching
+- [ ] Implement substitution compilation (LaunchConfiguration, FindPackageShare, etc.)
+- [ ] Implement Tier 2: OpaqueFunction body analysis
+- [ ] Implement Tier 3: loop unrolling
+- [ ] Error reporting with source locations for unsupported patterns
+- [ ] JSON IR output format + Rust deserialization
+- [ ] Tests: Python launch files → IR → round-trip with `parse_launch_file()`
+
+---
+
+## Phase 22.10: Python Integration
+
+**Status**: Planned
+
+Integrate the Python AST compiler into the full WASM pipeline.
+
+### Scope
+
+- Python launch files compile to WASM alongside XML/YAML
+- Cross-format include resolution (XML includes Python, Python includes XML)
+- Fallback path for uncompilable patterns (instrumented execution at compile time, not at plan execution time)
+
+### Work Items
+
+- [ ] Wire Python AST compiler into `compile` subcommand
+- [ ] Handle cross-format includes in the pre-linked model
+- [ ] Implement instrumented execution fallback for Tier-rejected patterns
+- [ ] Tests: mixed XML+Python launch trees
+
+---
+
+## Phase 22.11: Autoware Smoke Tests
+
+**Status**: Planned
+
+Full Autoware validation: compile the entire launch tree (XML + Python) to WASM, execute, and verify output matches the existing parser.
+
+### Validation Criteria
+
+- Compile the full Autoware planning_simulator launch tree to WASM
+- Execute with Autoware's default arguments
+- Verify: 46 nodes, 15 containers, 54 composable nodes (matches existing test)
+- Parser parity: WASM output == `parse_launch_file()` output
+- Measure: compilation time + execution time vs direct parsing
+
+### Work Items
+
+- [ ] Autoware compilation succeeds (all files, including Python)
+- [ ] Entity count parity with existing Autoware tests
+- [ ] Field-by-field comparison of WASM output vs `parse_launch_file()` output
+- [ ] Performance benchmarks documented
+
+---
+
+## Future Work
+
+Phases beyond 22.11, not yet scheduled:
+
+- **Static analysis passes**: variable dependency graphs, reachability analysis, parameter schema extraction, diff analysis
+- **Browser execution**: WASM modules running client-side for web-based launch visualization
+- **Multi-module linking**: lazy include resolution for incremental recompilation
+- **Event handler support**: `OnProcessStart`, `OnProcessExit`, `TimerAction`
+- **Strict sandbox mode**: reject `eval_command` / `eval_python_expr` for fully deterministic execution
 
 ---
 
