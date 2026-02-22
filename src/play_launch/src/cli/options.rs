@@ -81,6 +81,20 @@ pub enum Command {
         play_launch plot --metrics cpu memory")]
     Plot(PlotArgs),
 
+    /// Compile a launch file to WASM
+    #[command(after_help = "Examples:\n  \
+        play_launch compile autoware_launch planning_simulator.launch.xml\n  \
+        play_launch compile /path/to/launch.xml -o plan.wasm\n  \
+        play_launch compile autoware_launch planning_simulator.launch.xml use_sim_time:=true")]
+    Compile(CompileArgs),
+
+    /// Execute a compiled WASM launch module
+    #[command(after_help = "Examples:\n  \
+        play_launch exec plan.wasm\n  \
+        play_launch exec plan.wasm -o record.json\n  \
+        play_launch exec plan.wasm use_sim_time:=true")]
+    Exec(ExecArgs),
+
     /// Set CAP_SYS_PTRACE capability on I/O helper binary (requires sudo)
     #[command(name = "setcap-io-helper")]
     SetcapIoHelper,
@@ -130,6 +144,39 @@ pub struct RunArgs {
     pub common: CommonOptions,
 }
 
+/// Arguments for compiling a launch file to WASM
+#[derive(Args)]
+pub struct CompileArgs {
+    /// Package name or path to launch file
+    pub package_or_path: String,
+
+    /// Launch file name (if package_or_path is a package name)
+    pub launch_file: Option<String>,
+
+    /// Launch arguments in KEY:=VALUE format
+    #[arg(trailing_var_arg = true)]
+    pub launch_arguments: Vec<String>,
+
+    /// Output WASM file path
+    #[arg(long, short = 'o', default_value = "plan.wasm")]
+    pub output: PathBuf,
+}
+
+/// Arguments for executing a compiled WASM launch module
+#[derive(Args)]
+pub struct ExecArgs {
+    /// Path to the compiled WASM file
+    pub wasm_file: PathBuf,
+
+    /// Runtime arguments in KEY:=VALUE format
+    #[arg(trailing_var_arg = true)]
+    pub args: Vec<String>,
+
+    /// Output record.json file path
+    #[arg(long, short = 'o', default_value = "record.json")]
+    pub output: PathBuf,
+}
+
 /// Arguments for dump command
 #[derive(Args)]
 pub struct DumpArgs {
@@ -143,6 +190,10 @@ pub struct DumpArgs {
     /// Enable debug output during dump
     #[arg(long)]
     pub debug: bool,
+
+    /// Use WASM compile+execute pipeline instead of direct evaluation
+    #[arg(long)]
+    pub wasm: bool,
 }
 
 #[derive(Subcommand)]

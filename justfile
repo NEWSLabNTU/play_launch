@@ -59,6 +59,14 @@ build-rust:
     source /opt/ros/{{ros_distro}}/setup.bash
     colcon build {{colcon_flags}} --packages-select play_launch --base-paths src
 
+# Rust with WASM features (assumes C++ install/ exists)
+build-wasm:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    source install/setup.bash
+    cd src/play_launch && cargo build --release --features wasm --config ../../build/ros2_cargo_config.toml
+
 # Bundle colcon artifacts + build wheel (no colcon rebuild)
 build-wheel:
     #!/usr/bin/env bash

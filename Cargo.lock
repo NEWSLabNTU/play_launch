@@ -1948,6 +1948,8 @@ dependencies = [
  "pkg-config",
  "play_launch_msgs",
  "play_launch_parser",
+ "play_launch_wasm_codegen",
+ "play_launch_wasm_runtime",
  "pyo3",
  "rayon",
  "rcl_interfaces",

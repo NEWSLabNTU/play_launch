@@ -60,6 +60,32 @@ fn main() -> eyre::Result<()> {
         cli::options::Command::Plot(args) => {
             commands::handle_plot(args)?;
         }
+        cli::options::Command::Compile(args) => {
+            #[cfg(feature = "wasm-compile")]
+            {
+                commands::handle_compile(args)?;
+            }
+            #[cfg(not(feature = "wasm-compile"))]
+            {
+                let _ = args;
+                return Err(eyre::eyre!(
+                    "WASM compilation support not compiled. Rebuild with: cargo build --features wasm-compile"
+                ));
+            }
+        }
+        cli::options::Command::Exec(args) => {
+            #[cfg(feature = "wasm-exec")]
+            {
+                commands::handle_exec(args)?;
+            }
+            #[cfg(not(feature = "wasm-exec"))]
+            {
+                let _ = args;
+                return Err(eyre::eyre!(
+                    "WASM execution support not compiled. Rebuild with: cargo build --features wasm-exec"
+                ));
+            }
+        }
         cli::options::Command::SetcapIoHelper => {
             commands::handle_setcap_io_helper()?;
         }

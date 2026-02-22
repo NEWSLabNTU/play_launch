@@ -19,7 +19,15 @@ path = "src/main.rs"
 name = "play_launch_io_helper"
 path = "src/bin/play_launch_io_helper/main.rs"
 
+[features]
+default = []
+wasm = ["wasm-compile", "wasm-exec"]
+wasm-compile = ["dep:play_launch_wasm_codegen"]
+wasm-exec = ["dep:play_launch_wasm_runtime"]
+
 [dependencies]
+play_launch_wasm_codegen = { path = "../play_launch_wasm_codegen", optional = true }
+play_launch_wasm_runtime = { path = "../play_launch_wasm_runtime", optional = true }
 chrono = "0.4"
 clap = { version = "4.5.16", features = ["derive"] }
 composition_interfaces = "*"
