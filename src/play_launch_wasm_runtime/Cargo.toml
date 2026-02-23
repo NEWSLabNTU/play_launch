@@ -13,3 +13,4 @@ anyhow = "1.0"
 
 [dev-dependencies]
 play_launch_wasm_codegen = { path = "../play_launch_wasm_codegen" }
+tempfile = "3.8"

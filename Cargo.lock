@@ -2027,6 +2027,7 @@ dependencies = [
  "play_launch_parser",
  "play_launch_wasm_codegen",
  "play_launch_wasm_common",
+ "tempfile",
  "wasmtime",
 ]
 

@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_abi_version_is_positive() {
-        assert!(ABI_VERSION > 0);
+        const { assert!(ABI_VERSION > 0) };
     }
 
     #[test]
@@ -557,7 +557,7 @@ mod tests {
     #[test]
     fn test_memory_layout_no_overlap() {
         // Return area must fit before bump base.
-        assert!(memory::RETURN_AREA + memory::RETURN_AREA_SIZE <= memory::BUMP_BASE);
+        const { assert!(memory::RETURN_AREA + memory::RETURN_AREA_SIZE <= memory::BUMP_BASE) };
     }
 
     #[test]
