@@ -299,13 +299,21 @@ impl LaunchHost {
         let executable = builder.executable.unwrap_or_default();
         let name = builder.name.unwrap_or_default();
 
-        let namespace = builder.namespace.unwrap_or_else(|| {
-            self.context.current_namespace()
-        });
-        let namespace = if namespace == "/" {
-            "/".to_string()
+        let namespace = if let Some(ns) = &builder.namespace {
+            if ns.starts_with('/') {
+                ns.clone()
+            } else if ns.is_empty() {
+                self.context.current_namespace()
+            } else {
+                let current = self.context.current_namespace();
+                if current == "/" {
+                    format!("/{ns}")
+                } else {
+                    format!("{current}/{ns}")
+                }
+            }
         } else {
-            namespace
+            self.context.current_namespace()
         };
 
         let exec_path = resolve_exec_path(&package, &executable);
@@ -428,7 +436,13 @@ fn composable_to_load_record(
     target_container: &str,
     default_namespace: &str,
 ) -> LoadNodeRecord {
-    let namespace = comp.namespace.unwrap_or_else(|| default_namespace.to_string());
+    let namespace = if let Some(ns) = comp.namespace {
+        ns
+    } else {
+        // Extract namespace from target container path (e.g. "/test/my_container" → "/test")
+        extract_namespace_from_target(target_container)
+            .unwrap_or_else(|| default_namespace.to_string())
+    };
     let params: Vec<(String, String)> = comp
         .params
         .into_iter()
@@ -446,5 +460,19 @@ fn composable_to_load_record(
         plugin: comp.plugin.unwrap_or_default(),
         remaps: comp.remaps,
         target_container_name: target_container.to_string(),
+    }
+}
+
+/// Extract the namespace portion from a target container path.
+/// E.g. "/test/my_container" → "/test", "/my_container" → "/".
+fn extract_namespace_from_target(target: &str) -> Option<String> {
+    if let Some(last_slash_idx) = target.rfind('/') {
+        if last_slash_idx == 0 {
+            Some("/".to_string())
+        } else {
+            Some(target[..last_slash_idx].to_string())
+        }
+    } else {
+        None
     }
 }

@@ -214,6 +214,7 @@ impl WasmCompiler {
             ActionKind::PushNamespace { namespace } => {
                 self.collect_strings_expr(namespace);
             }
+            ActionKind::PopNamespace => {}
             ActionKind::SetParameter { name, value } => {
                 self.string_pool.intern(name);
                 self.collect_strings_expr(value);
@@ -454,6 +455,11 @@ impl WasmCompiler {
             ActionKind::PushNamespace { namespace } => {
                 self.compile_expr(namespace, instrs);
                 let func_idx = self.import_func_index(imports::PUSH_NAMESPACE);
+                instrs.push(Instruction::Call(func_idx));
+            }
+
+            ActionKind::PopNamespace => {
+                let func_idx = self.import_func_index(imports::POP_NAMESPACE);
                 instrs.push(Instruction::Call(func_idx));
             }
 
