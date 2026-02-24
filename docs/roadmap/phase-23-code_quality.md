@@ -1,6 +1,6 @@
 # Phase 23: Code Quality
 
-**Status**: In Progress (23.1–23.3 complete)
+**Status**: In Progress (23.1–23.4 complete)
 **Priority**: Medium (technical debt reduction, maintainability)
 **Scope**: Parser, WASM pipeline, and main CLI/runtime crates
 
@@ -131,9 +131,9 @@ All three dereference a thread-local `*mut LaunchContext` for PyO3 interop:
 - `python/api/actions.rs:953` — inline dereference — **route through `with_launch_context()`**
 - `python/api/utils.rs:162` — inline dereference — **route through `with_launch_context()`**
 
-- [ ] Refactor `actions.rs:953` to use `with_launch_context(|ctx| ctx.set_configuration(name_str, value_str))`
-- [ ] Refactor `utils.rs:162` to use `with_launch_context(|ctx| ...)` for immutable context access
-- [ ] Verify no other direct `get_current_launch_context()` + raw pointer dereference patterns exist
+- [x] Refactor `actions.rs:953` to use `try_with_launch_context(|ctx| ctx.set_configuration(...))`
+- [x] Refactor `utils.rs:162` to use `try_with_launch_context(|ctx| ctx.get_configuration(...))`
+- [x] Verify no other direct `get_current_launch_context()` + raw pointer dereference patterns exist
 
 #### Main crate — no action needed
 
@@ -145,9 +145,9 @@ Zero unsafe blocks.
 
 ### Verification
 
-- [ ] `grep -rn 'unsafe' src/play_launch_parser/` — exactly 1 match (in `with_launch_context()`)
-- [ ] `cargo build --workspace --config build/ros2_cargo_config.toml` — compiles cleanly
-- [ ] `just test` — 353 parser tests pass (Python execution paths exercise the refactored code)
+- [x] `grep -rn 'unsafe' src/play_launch_parser/` — exactly 2 matches (both in `bridge.rs`: `with_launch_context()` + `try_with_launch_context()`)
+- [x] `cargo clippy -p play_launch_parser -- -D warnings` — clean
+- [x] `just test` — 353 parser + 30 integration tests pass (Python execution paths exercise the refactored code)
 
 ---
 
@@ -249,7 +249,7 @@ Zero unsafe blocks.
 23.1  Dead code removal                                    complete
 23.2  Code deduplication                                   complete
 23.3  Magic numbers → named constants                      complete
-23.4  Unsafe code consolidation                            planned
+23.4  Unsafe code consolidation                            complete
 23.5  Naming improvements                                  planned
 23.6  Structural issues                                    planned
 23.7  Large file splits                                    planned
