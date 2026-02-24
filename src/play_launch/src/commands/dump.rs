@@ -1,5 +1,6 @@
 //! Dump command - record launch execution without replaying
 
+use super::common::build_tokio_runtime;
 use crate::cli::options::{DumpArgs, DumpSubcommand, ParserBackend};
 use eyre::{Context, Result};
 use std::time::Instant;
@@ -49,15 +50,7 @@ pub fn handle_dump(args: &DumpArgs) -> Result<()> {
             // Run mode only supported by Python (no Rust parser for single nodes)
             info!("Using Python parser (run mode)");
 
-            let worker_threads = std::cmp::min(num_cpus::get(), 8);
-            let max_blocking = worker_threads * 2;
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(worker_threads)
-                .max_blocking_threads(max_blocking)
-                .thread_name("play_launch-worker")
-                .enable_all()
-                .build()?;
-
+            let runtime = build_tokio_runtime()?;
             runtime.block_on(async {
                 use crate::python::dump_launcher::DumpLauncher;
 
@@ -192,15 +185,7 @@ fn dump_launch_python_wrapper(
 
     let start = Instant::now();
 
-    let worker_threads = std::cmp::min(num_cpus::get(), 8);
-    let max_blocking = worker_threads * 2;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(worker_threads)
-        .max_blocking_threads(max_blocking)
-        .thread_name("play_launch-worker")
-        .enable_all()
-        .build()?;
-
+    let runtime = build_tokio_runtime()?;
     runtime.block_on(async {
         let launcher = DumpLauncher::new()
             .wrap_err("Failed to initialize dump_launch. Ensure ROS workspace is sourced.")?;
