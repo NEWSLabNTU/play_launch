@@ -1,12 +1,13 @@
 //! Run command - execute a single ROS node
 
+use super::common::{build_tokio_runtime, forward_state_events_and_wait, CleanupGuard};
 use crate::{
     cli,
     cli::config::load_runtime_config,
     execution::context::prepare_node_contexts,
     member_actor::{ActorConfig, MemberCoordinatorBuilder},
     monitoring::resource_monitor::MonitorConfig,
-    process::{kill_all_descendants, kill_process_group},
+    process::kill_process_group,
     ros::launch_dump::LaunchDump,
     util::{log_dir::create_log_dir, logging::is_verbose},
     web,
@@ -20,37 +21,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tracing::{debug, error, info, warn};
-
-/// Guard that ensures child processes are cleaned up on drop
-struct CleanupGuard {
-    enabled: Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl CleanupGuard {
-    fn new() -> Self {
-        Self {
-            enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        }
-    }
-
-    /// Disable the cleanup guard (call after graceful shutdown completes)
-    fn disable(&self) {
-        self.enabled
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        debug!("CleanupGuard disabled - graceful shutdown completed");
-    }
-}
-
-impl Drop for CleanupGuard {
-    fn drop(&mut self) {
-        if self.enabled.load(std::sync::atomic::Ordering::Relaxed) {
-            debug!("CleanupGuard: Ensuring all child processes are terminated");
-            kill_all_descendants();
-        } else {
-            debug!("CleanupGuard: Skipped (disabled after graceful shutdown)");
-        }
-    }
-}
 
 pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
     use crate::ros::launch_dump::{LaunchDump, NodeRecord};
@@ -94,20 +64,7 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         variables: HashMap::new(),
     };
 
-    // Build the async runtime with adaptive thread pool configuration
-    let worker_threads = std::cmp::min(num_cpus::get(), 8);
-    let max_blocking = worker_threads * 2;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(worker_threads)
-        .max_blocking_threads(max_blocking)
-        .thread_name("play_launch-worker")
-        .enable_all()
-        .build()?;
-    debug!(
-        "Tokio runtime created ({} worker threads, {} max blocking threads)",
-        worker_threads, max_blocking
-    );
-
+    let runtime = build_tokio_runtime()?;
     runtime.block_on(run_direct(&launch_dump, &args.common))
 }
 
@@ -443,7 +400,7 @@ async fn run_direct(
                 _ = tokio::signal::ctrl_c() => {
                     info!("Received Ctrl-C, shutting down...");
                     let _ = shutdown_tx.send(true);
-                    kill_all_descendants();
+                    crate::process::kill_all_descendants();
                     std::process::exit(130);
                 }
 
@@ -496,24 +453,6 @@ async fn run_direct(
     let result = handle_shutdown_simple(None, member_handle, &cleanup_guard).await;
 
     result
-}
-
-/// Forward state events from runner to SSE broadcaster, then wait for all actors to complete
-///
-/// This combines event forwarding with completion waiting in a single task.
-async fn forward_state_events_and_wait(
-    mut runner: crate::member_actor::MemberRunner,
-    broadcaster: Arc<crate::web::StateEventBroadcaster>,
-) -> eyre::Result<()> {
-    tracing::debug!("Starting state event forwarding and completion waiting");
-
-    // Forward events until done
-    while let Some(event) = runner.next_state_event().await {
-        broadcaster.broadcast(event).await;
-    }
-
-    // Join all actor tasks
-    runner.wait_for_completion().await
 }
 
 /// Handle graceful shutdown (runner task already waited for completion)
@@ -576,7 +515,7 @@ async fn handle_shutdown_simple(
     #[cfg(not(unix))]
     {
         info!("All actors completed");
-        kill_all_descendants();
+        crate::process::kill_all_descendants();
         info!("All child processes terminated");
     }
 

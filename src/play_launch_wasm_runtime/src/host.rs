@@ -106,6 +106,33 @@ impl LaunchHost {
         }
     }
 
+    /// Collect global parameters from context, normalizing values.
+    fn collect_global_params(&self) -> Option<Vec<(String, String)>> {
+        let map = self.context.global_parameters();
+        if map.is_empty() {
+            None
+        } else {
+            Some(
+                map.into_iter()
+                    .map(|(k, v)| (k, normalize_param_value(&v)))
+                    .collect(),
+            )
+        }
+    }
+
+    /// Collect context environment merged with builder-specific env vars.
+    fn collect_merged_env(&self, builder_env: &[(String, String)]) -> Option<Vec<(String, String)>> {
+        let mut merged = self.context.environment();
+        for (k, v) in builder_env {
+            merged.insert(k.clone(), v.clone());
+        }
+        if merged.is_empty() {
+            None
+        } else {
+            Some(merged.into_iter().collect())
+        }
+    }
+
     /// Finalize a node builder into a NodeRecord.
     pub fn end_node(&mut self) -> anyhow::Result<()> {
         let builder = self
@@ -143,18 +170,7 @@ impl LaunchHost {
             if current == "/" { None } else { Some(current) }
         };
 
-        // Get global parameters
-        let global_params_map = self.context.global_parameters();
-        let global_params = if global_params_map.is_empty() {
-            None
-        } else {
-            Some(
-                global_params_map
-                    .into_iter()
-                    .map(|(k, v)| (k, normalize_param_value(&v)))
-                    .collect::<Vec<_>>(),
-            )
-        };
+        let global_params = self.collect_global_params();
 
         // Get global remappings + node remaps
         let mut remaps = self.context.remappings();
@@ -167,16 +183,7 @@ impl LaunchHost {
             .map(|(k, v)| (k.clone(), normalize_param_value(v)))
             .collect();
 
-        // Merge context env with node env
-        let mut merged_env = self.context.environment();
-        for (k, v) in &builder.env {
-            merged_env.insert(k.clone(), v.clone());
-        }
-        let env = if merged_env.is_empty() {
-            None
-        } else {
-            Some(merged_env.into_iter().collect::<Vec<_>>())
-        };
+        let env = self.collect_merged_env(&builder.env);
 
         // Parse args
         let args: Option<Vec<String>> = builder.args.as_ref().map(|a| {
@@ -238,27 +245,8 @@ impl LaunchHost {
 
         let name = builder.name.or_else(|| Some(cmd_str.clone()));
 
-        let mut merged_env = self.context.environment();
-        for (k, v) in &builder.env {
-            merged_env.insert(k.clone(), v.clone());
-        }
-        let env = if merged_env.is_empty() {
-            None
-        } else {
-            Some(merged_env.into_iter().collect::<Vec<_>>())
-        };
-
-        let global_params_map = self.context.global_parameters();
-        let global_params = if global_params_map.is_empty() {
-            None
-        } else {
-            Some(
-                global_params_map
-                    .into_iter()
-                    .map(|(k, v)| (k, normalize_param_value(&v)))
-                    .collect::<Vec<_>>(),
-            )
-        };
+        let env = self.collect_merged_env(&builder.env);
+        let global_params = self.collect_global_params();
 
         let args_list = if builder.args.is_empty() {
             None
@@ -318,18 +306,7 @@ impl LaunchHost {
 
         let exec_path = resolve_exec_path(&package, &executable);
 
-        // Global params
-        let global_params_map = self.context.global_parameters();
-        let global_params = if global_params_map.is_empty() {
-            None
-        } else {
-            Some(
-                global_params_map
-                    .into_iter()
-                    .map(|(k, v)| (k, normalize_param_value(&v)))
-                    .collect::<Vec<_>>(),
-            )
-        };
+        let global_params = self.collect_global_params();
 
         // Args
         let args: Option<Vec<String>> = builder.args.as_ref().map(|a| {
@@ -352,12 +329,7 @@ impl LaunchHost {
             arg_list,
         );
 
-        let env_map = self.context.environment();
-        let env = if env_map.is_empty() {
-            None
-        } else {
-            Some(env_map.into_iter().collect::<Vec<_>>())
-        };
+        let env = self.collect_merged_env(&[]);
 
         let container_record = ComposableNodeContainerRecord {
             args,

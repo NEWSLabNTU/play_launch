@@ -1,5 +1,6 @@
 //! Replay command - replay recorded launch execution
 
+use super::common::{build_tokio_runtime, forward_state_events_and_wait, CleanupGuard};
 use crate::{
     cli,
     cli::config::load_runtime_config,
@@ -8,7 +9,7 @@ use crate::{
         ComposableNodeContextSet,
     },
     monitoring::resource_monitor::MonitorConfig,
-    process::{kill_all_descendants, kill_process_group},
+    process::kill_process_group,
     ros::{container_readiness::SERVICE_DISCOVERY_HANDLE, launch_dump::load_launch_dump},
     util::{log_dir::create_log_dir, logging::is_verbose},
     web,
@@ -22,37 +23,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tracing::{debug, error, info, warn};
-
-/// Guard that ensures child processes are cleaned up on drop
-struct CleanupGuard {
-    enabled: Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl CleanupGuard {
-    fn new() -> Self {
-        Self {
-            enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        }
-    }
-
-    /// Disable the cleanup guard (call after graceful shutdown completes)
-    fn disable(&self) {
-        self.enabled
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        debug!("CleanupGuard disabled - graceful shutdown completed");
-    }
-}
-
-impl Drop for CleanupGuard {
-    fn drop(&mut self) {
-        if self.enabled.load(std::sync::atomic::Ordering::Relaxed) {
-            debug!("CleanupGuard: Ensuring all child processes are terminated");
-            kill_all_descendants();
-        } else {
-            debug!("CleanupGuard: Skipped (disabled after graceful shutdown)");
-        }
-    }
-}
 
 pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     let input_file = &args.input_file;
@@ -120,19 +90,7 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
 
     // Note: ROS service discovery and anchor process now started in play() async function (Phase 2, 4)
 
-    // Build the async runtime with adaptive thread pool configuration
-    // Use number of CPUs capped at 8 for efficiency (async workload, mostly idle)
-    // Automatically adapts to platform: 2-core Pi, 4-core laptop, 8-core AGX Orin, 32-core server
-    let worker_threads = std::cmp::min(num_cpus::get(), 8);
-    let max_blocking = worker_threads * 2;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(worker_threads)
-        .max_blocking_threads(max_blocking)
-        .thread_name("play_launch-worker")
-        .enable_all()
-        .build()?;
-
-    // Run the whole playing task in the runtime
+    let runtime = build_tokio_runtime()?;
     runtime.block_on(play(input_file, &args.common))
 }
 
@@ -955,7 +913,7 @@ async fn wait_for_completion_windows<F>(
                 info!("Received Ctrl-C, shutting down...");
                 let _ = ctx.shutdown_tx.send(true);
                 let _ = ctx.member_handle.shutdown();
-                kill_all_descendants();
+                crate::process::kill_all_descendants();
                 std::process::exit(130);
             }
 
@@ -1047,7 +1005,7 @@ async fn wait_for_completion_windows<F>(
                 let remaining = ctx.total_tasks - tasks_completed.len();
                 warn!("Ctrl-C during cleanup - force killing all processes ({}/{} tasks still pending)", remaining, ctx.total_tasks);
                 warn!("Stubborn tasks: {:?}", tasks_pending);
-                kill_all_descendants();
+                crate::process::kill_all_descendants();
                 std::process::exit(130);
             }
 
@@ -1079,39 +1037,6 @@ async fn wait_for_completion_windows<F>(
 
     // Disable CleanupGuard after graceful shutdown completes
     cleanup_guard.disable();
-}
-
-/// Forward state events to SSE broadcaster and wait for all actors to complete
-///
-/// This combines the event forwarding and completion waiting into a single task.
-/// Takes ownership of the runner (no Arc/Mutex needed!).
-async fn forward_state_events_and_wait(
-    mut runner: crate::member_actor::MemberRunner,
-    broadcaster: std::sync::Arc<crate::web::StateEventBroadcaster>,
-) -> eyre::Result<()> {
-    tracing::debug!("Starting state event forwarding and completion waiting");
-
-    // Forward events and wait for completion
-    // IMPORTANT: We must update the state cache for each event so that periodic stats work!
-    loop {
-        match runner.next_state_event().await {
-            Some(event) => {
-                // Actors write directly to shared_state, no need to update from events
-
-                // Broadcast to all SSE subscribers
-                broadcaster.broadcast(event).await;
-            }
-            None => {
-                // No more events, actors are done
-                tracing::debug!("State event forwarding ending (no more events)");
-                break;
-            }
-        }
-    }
-
-    // Now wait for all actor tasks to complete (join them)
-    // This is quick because next_state_event() already waited for them to finish
-    runner.wait_for_completion().await
 }
 
 /// Print periodic startup progress (every 10s while loading, immediate completion message)

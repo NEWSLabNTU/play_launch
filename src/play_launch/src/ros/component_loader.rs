@@ -95,13 +95,19 @@ fn parse_parameter_value(value: &str) -> Result<rcl_interfaces::msg::ParameterVa
     }
 }
 
-// Helper functions to create ParameterValue structs
-// These eliminate repetitive code and match the pattern used by ROS2 CLI
+/// Create a `ParameterValue` with the given type and one active field, all others zeroed.
+macro_rules! create_parameter_value {
+    ($type_const:expr, $field:ident = $value:expr) => {{
+        let mut pv = default_parameter_value($type_const);
+        pv.$field = $value;
+        pv
+    }};
+}
 
-fn create_bool_parameter(value: bool) -> rcl_interfaces::msg::ParameterValue {
+fn default_parameter_value(type_: u8) -> rcl_interfaces::msg::ParameterValue {
     rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_BOOL,
-        bool_value: value,
+        type_,
+        bool_value: false,
         integer_value: 0,
         double_value: 0.0,
         string_value: String::new(),
@@ -111,109 +117,60 @@ fn create_bool_parameter(value: bool) -> rcl_interfaces::msg::ParameterValue {
         double_array_value: Vec::new(),
         string_array_value: Vec::new(),
     }
+}
+
+fn create_bool_parameter(value: bool) -> rcl_interfaces::msg::ParameterValue {
+    create_parameter_value!(
+        rcl_interfaces::msg::ParameterType::PARAMETER_BOOL,
+        bool_value = value
+    )
 }
 
 fn create_integer_parameter(value: i64) -> rcl_interfaces::msg::ParameterValue {
-    rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER,
-        bool_value: false,
-        integer_value: value,
-        double_value: 0.0,
-        string_value: String::new(),
-        byte_array_value: Vec::new(),
-        bool_array_value: Vec::new(),
-        integer_array_value: Vec::new(),
-        double_array_value: Vec::new(),
-        string_array_value: Vec::new(),
-    }
+    create_parameter_value!(
+        rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER,
+        integer_value = value
+    )
 }
 
 fn create_double_parameter(value: f64) -> rcl_interfaces::msg::ParameterValue {
-    rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE,
-        bool_value: false,
-        integer_value: 0,
-        double_value: value,
-        string_value: String::new(),
-        byte_array_value: Vec::new(),
-        bool_array_value: Vec::new(),
-        integer_array_value: Vec::new(),
-        double_array_value: Vec::new(),
-        string_array_value: Vec::new(),
-    }
+    create_parameter_value!(
+        rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE,
+        double_value = value
+    )
 }
 
 fn create_string_parameter(value: &str) -> rcl_interfaces::msg::ParameterValue {
-    rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_STRING,
-        bool_value: false,
-        integer_value: 0,
-        double_value: 0.0,
-        string_value: value.to_string(),
-        byte_array_value: Vec::new(),
-        bool_array_value: Vec::new(),
-        integer_array_value: Vec::new(),
-        double_array_value: Vec::new(),
-        string_array_value: Vec::new(),
-    }
+    create_parameter_value!(
+        rcl_interfaces::msg::ParameterType::PARAMETER_STRING,
+        string_value = value.to_string()
+    )
 }
 
 fn create_bool_array_parameter(values: Vec<bool>) -> rcl_interfaces::msg::ParameterValue {
-    rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_BOOL_ARRAY,
-        bool_value: false,
-        integer_value: 0,
-        double_value: 0.0,
-        string_value: String::new(),
-        byte_array_value: Vec::new(),
-        bool_array_value: values,
-        integer_array_value: Vec::new(),
-        double_array_value: Vec::new(),
-        string_array_value: Vec::new(),
-    }
+    create_parameter_value!(
+        rcl_interfaces::msg::ParameterType::PARAMETER_BOOL_ARRAY,
+        bool_array_value = values
+    )
 }
 
 fn create_integer_array_parameter(values: Vec<i64>) -> rcl_interfaces::msg::ParameterValue {
-    rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER_ARRAY,
-        bool_value: false,
-        integer_value: 0,
-        double_value: 0.0,
-        string_value: String::new(),
-        byte_array_value: Vec::new(),
-        bool_array_value: Vec::new(),
-        integer_array_value: values,
-        double_array_value: Vec::new(),
-        string_array_value: Vec::new(),
-    }
+    create_parameter_value!(
+        rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER_ARRAY,
+        integer_array_value = values
+    )
 }
 
 fn create_double_array_parameter(values: Vec<f64>) -> rcl_interfaces::msg::ParameterValue {
-    rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE_ARRAY,
-        bool_value: false,
-        integer_value: 0,
-        double_value: 0.0,
-        string_value: String::new(),
-        byte_array_value: Vec::new(),
-        bool_array_value: Vec::new(),
-        integer_array_value: Vec::new(),
-        double_array_value: values,
-        string_array_value: Vec::new(),
-    }
+    create_parameter_value!(
+        rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE_ARRAY,
+        double_array_value = values
+    )
 }
 
 fn create_string_array_parameter(values: Vec<String>) -> rcl_interfaces::msg::ParameterValue {
-    rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY,
-        bool_value: false,
-        integer_value: 0,
-        double_value: 0.0,
-        string_value: String::new(),
-        byte_array_value: Vec::new(),
-        bool_array_value: Vec::new(),
-        integer_array_value: Vec::new(),
-        double_array_value: Vec::new(),
-        string_array_value: values,
-    }
+    create_parameter_value!(
+        rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY,
+        string_array_value = values
+    )
 }

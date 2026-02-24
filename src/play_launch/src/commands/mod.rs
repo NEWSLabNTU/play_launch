@@ -1,5 +1,6 @@
 //! Command handlers
 
+pub(crate) mod common;
 pub mod dump;
 pub mod io_helper;
 pub mod launch;

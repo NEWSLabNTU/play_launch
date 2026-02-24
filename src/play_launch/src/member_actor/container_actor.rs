@@ -831,6 +831,14 @@ impl ContainerActor {
         self.pending_loads.clear();
     }
 
+    /// Clear ROS service clients and event subscription so they're recreated on restart.
+    fn clear_ros_clients(&mut self) {
+        self.load_client = None;
+        self.unload_client = None;
+        self.component_event_sub = None;
+        self.component_event_rx = None;
+    }
+
     /// Build the full node name from namespace and name
     fn full_node_name(&self) -> String {
         let namespace = self.context.record.namespace.as_deref().unwrap_or("/");
@@ -1598,11 +1606,7 @@ impl ContainerActor {
                     // Drain load queue (container crashed)
                     self.drain_queue("Container crashed");
 
-                    // Clear service clients and subscription so they're recreated on restart
-                    self.load_client = None;
-                    self.unload_client = None;
-                    self.component_event_sub = None;
-                    self.component_event_rx = None;
+                    self.clear_ros_clients();
 
                     // Phase 12: Transition composable nodes to Blocked
                     self.transition_all_composables_to_blocked(BlockReason::Failed).await;
@@ -1658,11 +1662,7 @@ impl ContainerActor {
                             // Drain load queue
                             self.drain_queue("Container stopped");
 
-                            // Clear service clients and subscription so they're recreated on restart
-                            self.load_client = None;
-                            self.unload_client = None;
-                            self.component_event_sub = None;
-                            self.component_event_rx = None;
+                            self.clear_ros_clients();
 
                             // Phase 12: Transition composable nodes to Blocked
                             debug!("{}: Transitioning {} composable nodes to Blocked state (reason: Stopped)",
@@ -1700,11 +1700,7 @@ impl ContainerActor {
                             // Drain load queue
                             self.drain_queue("Container restarting");
 
-                            // Clear service clients and subscription so they're recreated on restart
-                            self.load_client = None;
-                            self.unload_client = None;
-                            self.component_event_sub = None;
-                            self.component_event_rx = None;
+                            self.clear_ros_clients();
 
                             // Phase 12: Transition composable nodes to Blocked (will be reloaded on restart)
                             self.transition_all_composables_to_blocked(BlockReason::Stopped).await;
@@ -1988,11 +1984,7 @@ impl ContainerActor {
                     ControlEvent::Stop => {
                         debug!("{}: Stop requested during respawn delay", self.name);
 
-                        // Clear service clients and subscription (should already be None, but be explicit)
-                        self.load_client = None;
-                        self.unload_client = None;
-                        self.component_event_sub = None;
-                        self.component_event_rx = None;
+                        self.clear_ros_clients();
 
                         self.state = NodeState::Stopped { exit_code: None };
 
@@ -2090,7 +2082,6 @@ impl ContainerActor {
             }
         }
     }
-
 }
 
 impl MemberActor for ContainerActor {
