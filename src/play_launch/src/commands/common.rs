@@ -4,12 +4,15 @@ use crate::process::kill_all_descendants;
 use std::sync::Arc;
 use tracing::debug;
 
+/// Maximum number of Tokio worker threads (async workload is mostly idle)
+const MAX_WORKER_THREADS: usize = 8;
+
 /// Build a Tokio multi-thread runtime with adaptive thread pool configuration.
 ///
-/// Uses number of CPUs capped at 8 for efficiency (async workload, mostly idle).
+/// Uses number of CPUs capped at `MAX_WORKER_THREADS` for efficiency.
 /// Automatically adapts to platform: 2-core Pi, 4-core laptop, 8-core AGX Orin, 32-core server.
 pub(crate) fn build_tokio_runtime() -> eyre::Result<tokio::runtime::Runtime> {
-    let worker_threads = std::cmp::min(num_cpus::get(), 8);
+    let worker_threads = std::cmp::min(num_cpus::get(), MAX_WORKER_THREADS);
     let max_blocking = worker_threads * 2;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(worker_threads)
