@@ -16,6 +16,15 @@ use tokio::{
 };
 use tracing::{debug, warn};
 
+/// Channel capacity for state events (node status changes → web UI)
+const STATE_EVENT_CHANNEL_SIZE: usize = 100;
+
+/// Channel capacity for control events (commands → individual actors)
+const CONTROL_CHANNEL_SIZE: usize = 10;
+
+/// Threshold for flagging a node as "noisy" (stderr output > 10 KB)
+const NOISY_STDERR_THRESHOLD: u64 = 10 * 1024;
+
 /// Metadata about a member for web UI queries
 #[derive(Clone)]
 pub struct MemberMetadata {
@@ -192,7 +201,7 @@ impl MemberCoordinatorBuilder {
         self,
         shared_ros_node: Option<Arc<rclrs::Node>>,
     ) -> (MemberHandle, MemberRunner) {
-        let (state_tx, state_rx) = mpsc::channel(100);
+        let (state_tx, state_rx) = mpsc::channel(STATE_EVENT_CHANNEL_SIZE);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let mut tasks = HashMap::new();
@@ -207,7 +216,7 @@ impl MemberCoordinatorBuilder {
 
         // Spawn regular nodes
         for def in self.regular_nodes {
-            let (control_tx, control_rx) = mpsc::channel(10);
+            let (control_tx, control_rx) = mpsc::channel(CONTROL_CHANNEL_SIZE);
 
             let actor = super::regular_node_actor::RegularNodeActor::new(
                 def.name.clone(),
@@ -277,7 +286,7 @@ impl MemberCoordinatorBuilder {
                 }
             };
 
-            let (control_tx, control_rx) = mpsc::channel(10);
+            let (control_tx, control_rx) = mpsc::channel(CONTROL_CHANNEL_SIZE);
 
             // Phase 2: Create load control channel for composable nodes
             let (load_control_tx, load_control_rx) =
@@ -733,7 +742,7 @@ impl MemberHandle {
             // Count noisy nodes (stderr > 10KB)
             let stderr_path = meta.output_dir.join("err");
             if let Ok(metadata) = std::fs::metadata(&stderr_path) {
-                if metadata.len() > 10 * 1024 {
+                if metadata.len() > NOISY_STDERR_THRESHOLD {
                     summary.noisy += 1;
                 }
             }

@@ -4,7 +4,7 @@ use crate::string_pool::StringPool;
 use play_launch_parser::ir::{
     Action, ActionKind, ComposableNodeDecl, Condition, LaunchProgram,
 };
-use play_launch_wasm_common::{imports, memory, ABI_VERSION, HOST_MODULE};
+use play_launch_wasm_common::{imports, memory, ABI_VERSION, HOST_MODULE, NO_VALUE_SENTINEL};
 use wasm_encoder::{
     CodeSection, ConstExpr, DataSection, EntityType, ExportKind, ExportSection, Function,
     FunctionSection, GlobalSection, GlobalType, ImportSection, Instruction, MemorySection,
@@ -134,7 +134,8 @@ impl WasmCompiler {
         let mut memories = MemorySection::new();
         // Calculate pages needed: data segment + bump area
         let data_size = self.string_pool.len();
-        let min_pages = std::cmp::max(1, (data_size + memory::BUMP_BASE).div_ceil(0x10000) as u64);
+        let min_pages =
+            std::cmp::max(1, (data_size + memory::BUMP_BASE).div_ceil(memory::WASM_PAGE_SIZE) as u64);
         memories.memory(MemoryType {
             minimum: min_pages,
             maximum: None,
@@ -420,7 +421,7 @@ impl WasmCompiler {
                     self.compile_expr(default_expr, instrs);
                 } else {
                     instrs.push(Instruction::I32Const(0));
-                    instrs.push(Instruction::I32Const(-1));
+                    instrs.push(Instruction::I32Const(NO_VALUE_SENTINEL));
                 }
                 let func_idx = self.import_func_index(imports::DECLARE_ARG);
                 instrs.push(Instruction::Call(func_idx));

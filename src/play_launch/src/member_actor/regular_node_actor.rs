@@ -680,8 +680,6 @@ fn write_pid_file(output_dir: &Path, pid: u32) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_actor_creation() {
         // This is a placeholder test - full integration tests will be added

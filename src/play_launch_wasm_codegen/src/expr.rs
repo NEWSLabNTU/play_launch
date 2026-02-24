@@ -3,7 +3,7 @@
 use crate::compiler::WasmCompiler;
 use play_launch_parser::ir::Expr;
 use play_launch_parser::substitution::Substitution;
-use play_launch_wasm_common::imports;
+use play_launch_wasm_common::{imports, NO_VALUE_SENTINEL};
 use wasm_encoder::Instruction;
 
 impl WasmCompiler {
@@ -63,7 +63,7 @@ impl WasmCompiler {
                     self.compile_substitution_parts(default_parts, instrs);
                 } else {
                     instrs.push(Instruction::I32Const(0));
-                    instrs.push(Instruction::I32Const(-1)); // sentinel: no default
+                    instrs.push(Instruction::I32Const(NO_VALUE_SENTINEL));
                 }
                 let func_idx = self.import_func_index(imports::EVAL_ENV_VAR);
                 instrs.push(Instruction::Call(func_idx));

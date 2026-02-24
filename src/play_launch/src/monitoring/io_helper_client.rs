@@ -22,6 +22,15 @@ use tokio::{
 };
 use tracing::{debug, warn};
 
+/// Delay after spawning helper to let it initialize before first ping
+const HELPER_INIT_DELAY: Duration = Duration::from_millis(100);
+
+/// Timeout for helper to exit gracefully during shutdown
+const HELPER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Maximum IPC response size (1 MB)
+const MAX_IPC_RESPONSE_SIZE: usize = 1_048_576;
+
 /// Client for communicating with the I/O helper daemon
 pub struct IoHelperClient {
     request_writer: tokio::fs::File,  // Parent writes requests here
@@ -91,7 +100,7 @@ impl IoHelperClient {
         };
 
         // Give helper a moment to initialize
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(HELPER_INIT_DELAY).await;
 
         // Verify helper is working
         client.ping().await?;
@@ -178,7 +187,7 @@ impl IoHelperClient {
 
         let msg_len = u32::from_le_bytes(len_buf) as usize;
 
-        if msg_len > 1024 * 1024 {
+        if msg_len > MAX_IPC_RESPONSE_SIZE {
             return Err(eyre::eyre!("Response too large: {} bytes", msg_len));
         }
 
@@ -207,7 +216,7 @@ impl IoHelperClient {
         // Wait for child to exit (with timeout)
         if let Some(mut child) = self.child.take() {
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                _ = tokio::time::sleep(HELPER_SHUTDOWN_TIMEOUT) => {
                     warn!("Helper did not exit gracefully, killing");
                     let _ = child.kill().await;
                 }
@@ -242,7 +251,7 @@ impl Drop for IoHelperClient {
 /// Find the helper binary with fallback chain:
 /// 1. PLAY_LAUNCH_IO_HELPER environment variable (development override)
 /// 2. Same directory as current executable (pip install or colcon)
-/// 3. ROS2 install paths (/opt/ros/humble/lib/play_launch/)
+/// 3. ROS2 install paths (/opt/ros/$ROS_DISTRO/lib/play_launch/)
 /// 4. PATH search (fallback)
 fn find_helper_binary() -> Result<PathBuf> {
     // 1. Check environment variable (development override)
@@ -268,14 +277,15 @@ fn find_helper_binary() -> Result<PathBuf> {
         }
     }
 
-    // 3. Check ROS2 install locations
+    // 3. Check ROS2 install locations (use $ROS_DISTRO if available, fallback to humble)
+    let distro = std::env::var("ROS_DISTRO").unwrap_or_else(|_| "humble".to_string());
     let ros2_paths = [
-        "/opt/ros/humble/lib/play_launch/play_launch_io_helper",
-        "/usr/lib/play_launch/play_launch_io_helper",
+        format!("/opt/ros/{}/lib/play_launch/play_launch_io_helper", distro),
+        "/usr/lib/play_launch/play_launch_io_helper".to_string(),
     ];
 
     for path_str in &ros2_paths {
-        let path = PathBuf::from(path_str);
+        let path = PathBuf::from(path_str.as_str());
         if path.exists() {
             debug!("Using I/O helper from ROS2 path: {}", path_str);
             check_helper_capabilities(&path)?;
@@ -295,13 +305,14 @@ fn find_helper_binary() -> Result<PathBuf> {
          Searched locations:\n\
          - PLAY_LAUNCH_IO_HELPER environment variable\n\
          - Same directory as play_launch binary\n\
-         - /opt/ros/humble/lib/play_launch/\n\
+         - /opt/ros/{distro}/lib/play_launch/\n\
          - /usr/lib/play_launch/\n\
          - PATH\n\
          \n\
          Make sure play_launch_io_helper is installed.\n\
          For pip install: Binary should be in site-packages/play_launch/bin/\n\
-         For colcon: Run 'just build'"
+         For colcon: Run 'just build'",
+        distro = distro
     ))
 }
 

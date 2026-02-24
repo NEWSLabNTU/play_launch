@@ -22,6 +22,12 @@ use std::{
 };
 use tracing::{debug, error, info, warn};
 
+/// Time to wait for processes to exit gracefully before SIGKILL
+const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Interval for polling child process status during shutdown
+const SHUTDOWN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
 pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
     use crate::ros::launch_dump::{LaunchDump, NodeRecord};
 
@@ -476,7 +482,7 @@ async fn handle_shutdown_simple(
             let start = std::time::Instant::now();
             let mut all_exited_gracefully = false;
 
-            while start.elapsed() < std::time::Duration::from_secs(5) {
+            while start.elapsed() < GRACEFUL_SHUTDOWN_TIMEOUT {
                 // Check if any processes are still running
                 let has_running = nix::sys::wait::waitpid(
                     nix::unistd::Pid::from_raw(-pgid),
@@ -486,7 +492,7 @@ async fn handle_shutdown_simple(
                     Ok(nix::sys::wait::WaitStatus::Exited(_, _))
                     | Ok(nix::sys::wait::WaitStatus::Signaled(_, _, _)) => {
                         // A child exited, keep waiting for others
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        tokio::time::sleep(SHUTDOWN_POLL_INTERVAL).await;
                     }
                     Err(nix::errno::Errno::ECHILD) => {
                         // No more children
@@ -497,13 +503,13 @@ async fn handle_shutdown_simple(
                     }
                     _ => {
                         // Still have children, wait a bit
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        tokio::time::sleep(SHUTDOWN_POLL_INTERVAL).await;
                     }
                 }
             }
 
             // If still running after grace period, force kill
-            if !all_exited_gracefully && start.elapsed() >= std::time::Duration::from_secs(5) {
+            if !all_exited_gracefully && start.elapsed() >= GRACEFUL_SHUTDOWN_TIMEOUT {
                 info!("Grace period expired, sending SIGKILL to remaining processes");
                 kill_process_group(pgid, Signal::SIGKILL);
             }

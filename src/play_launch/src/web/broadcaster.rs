@@ -4,6 +4,9 @@ use crate::member_actor::StateEvent;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex as TokioMutex};
 
+/// Channel capacity per SSE subscriber
+const SSE_SUBSCRIBER_CHANNEL_SIZE: usize = 100;
+
 /// Broadcaster for StateEvents to SSE clients
 pub struct StateEventBroadcaster {
     /// Subscribers (each is a channel sender to SSE connection)
@@ -22,7 +25,7 @@ impl StateEventBroadcaster {
     ///
     /// Returns a receiver that will receive all StateEvents broadcast after subscription
     pub async fn subscribe(&self) -> mpsc::Receiver<StateEvent> {
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = mpsc::channel(SSE_SUBSCRIBER_CHANNEL_SIZE);
         let mut subs = self.subscribers.lock().await;
         subs.push(tx);
         tracing::debug!("New SSE subscriber added (total: {})", subs.len());

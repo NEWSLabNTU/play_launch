@@ -2,6 +2,7 @@
 
 use crate::host::LaunchHost;
 use anyhow::{bail, Result};
+use play_launch_wasm_common::NO_VALUE_SENTINEL;
 use wasmtime::{AsContext, AsContextMut, Caller, Memory};
 
 /// Get the guest memory from a Caller.
@@ -38,14 +39,14 @@ pub fn read_guest_string(
     Ok(std::str::from_utf8(bytes)?.to_string())
 }
 
-/// Read a string if len >= 0, otherwise return None (sentinel for "no value").
+/// Read a string if len >= 0, otherwise return None (`NO_VALUE_SENTINEL` means absent).
 pub fn read_optional_string(
     memory: &Memory,
     caller: &Caller<'_, LaunchHost>,
     ptr: i32,
     len: i32,
 ) -> Result<Option<String>> {
-    if len < 0 {
+    if len == NO_VALUE_SENTINEL {
         return Ok(None);
     }
     Ok(Some(read_guest_string(memory, caller, ptr, len)?))

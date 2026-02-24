@@ -420,11 +420,20 @@ pub mod imports {
 /// Guest memory layout constants.
 ///
 /// The compiled WASM module uses a bump allocator for string data.
+/// Sentinel value for "no value" / optional-absent in the WASM ABI.
+///
+/// Used as the `len` parameter when an optional string is not provided.
+/// Both codegen (emits `i32.const -1`) and runtime (checks `len < 0`) use this.
+pub const NO_VALUE_SENTINEL: i32 = -1;
+
 pub mod memory {
+    /// Size of a single WASM linear memory page (64 KB, per spec).
+    pub const WASM_PAGE_SIZE: u32 = 0x1_0000;
+
     /// Start offset of the bump allocator region in guest linear memory.
     ///
     /// Offsets 0..BUMP_BASE are reserved for the data segment (string literals).
-    pub const BUMP_BASE: u32 = 0x1_0000; // 64 KB
+    pub const BUMP_BASE: u32 = WASM_PAGE_SIZE; // 64 KB
 
     /// Name of the bump pointer global in compiled modules.
     ///

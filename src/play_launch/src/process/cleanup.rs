@@ -3,6 +3,9 @@
 use std::sync::atomic::AtomicBool;
 use tracing::debug;
 
+/// Grace period between SIGTERM and SIGKILL when killing descendant processes
+const TERMINATION_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// Kill all descendant processes of the current process recursively
 #[cfg(unix)]
 pub fn kill_all_descendants() {
@@ -70,7 +73,7 @@ pub fn kill_all_descendants() {
         }
 
         // Give processes time to terminate gracefully
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(TERMINATION_GRACE_PERIOD);
 
         // Force kill any remaining processes with SIGKILL
         for &pid in descendants.iter().rev() {

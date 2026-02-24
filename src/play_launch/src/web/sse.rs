@@ -27,6 +27,9 @@ const INITIAL_LINES: usize = 100;
 /// Poll interval for file changes (milliseconds)
 const POLL_INTERVAL_MS: u64 = 500;
 
+/// SSE keepalive/heartbeat interval
+const SSE_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(3);
+
 /// Stream stdout logs for a node
 pub async fn stream_stdout(
     State(state): State<Arc<WebState>>,
@@ -73,7 +76,7 @@ async fn stream_log_file(state: Arc<WebState>, node_name: &str, file_name: &str)
     Sse::new(stream)
         .keep_alive(
             axum::response::sse::KeepAlive::new()
-                .interval(Duration::from_secs(3))
+                .interval(SSE_KEEPALIVE_INTERVAL)
                 .text("keep-alive"),
         )
         .into_response()
@@ -199,7 +202,7 @@ pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Respons
     // We send heartbeats as `data: keep-alive` (not SSE comments) because
     // JavaScript's EventSource.onmessage only fires for data events.
     let stream = async_stream::stream! {
-        let mut heartbeat = tokio::time::interval(Duration::from_secs(3));
+        let mut heartbeat = tokio::time::interval(SSE_KEEPALIVE_INTERVAL);
         // First tick fires immediately — skip it since the client just connected.
         heartbeat.tick().await;
 

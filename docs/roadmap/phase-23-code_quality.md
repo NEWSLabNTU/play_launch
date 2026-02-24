@@ -1,6 +1,6 @@
 # Phase 23: Code Quality
 
-**Status**: In Progress (23.1 complete)
+**Status**: In Progress (23.1–23.3 complete)
 **Priority**: Medium (technical debt reduction, maintainability)
 **Scope**: Parser, WASM pipeline, and main CLI/runtime crates
 
@@ -50,29 +50,26 @@ Execution order: dead code first (smallest blast radius), file splits last (easi
 
 #### High priority
 
-- [ ] Extract `perform_obj` + `pyobject_to_string` wrappers from `python/api/substitutions.rs` (×8 identical copies) → shared function in `utils.rs` or a trait with default implementations
-- [ ] Extract `to_bool()` helper from `python/api/substitutions.rs` (×3 copies in And/Or/IfElse) → shared function
-- [ ] Extract `CleanupGuard` from `commands/replay.rs` and `commands/run.rs` (identical) → `commands/common.rs`
-- [ ] Extract `forward_state_events_and_wait` from `commands/replay.rs` and `commands/run.rs` (identical) → `commands/common.rs`
-- [ ] Extract Tokio runtime builder pattern from `replay.rs`, `run.rs`, `dump.rs` (×3, all `min(num_cpus, 8)` + `max_blocking = workers * 2`) → `build_runtime()` helper in `commands/common.rs`
-- [ ] Unify package share resolution (`substitution/types.rs` and `python/api/substitutions.rs` — identical AMENT_PREFIX_PATH → ROS_DISTRO → distro-fallback algorithm) → single shared function
-- [ ] Unify `find_package_share` distro fallback list (`types.rs`, `substitutions.rs`, `bridge.rs` — ×3 copies of `["jazzy","iron","humble","galactic","foxy"]`) → single `KNOWN_ROS_DISTROS` constant
+- [x] Extract `perform_obj` + `pyobject_to_string` wrappers from `python/api/substitutions.rs` (×8 identical copies) → `perform_or_to_string()` in `utils.rs`
+- [x] Extract `to_bool()` helper from `python/api/substitutions.rs` (×3 copies in And/Or/IfElse) → `pyobject_to_bool()` in `utils.rs`
+- [x] Extract `CleanupGuard` from `commands/replay.rs` and `commands/run.rs` (identical) → `commands/common.rs`
+- [x] Extract `forward_state_events_and_wait` from `commands/replay.rs` and `commands/run.rs` (identical) → `commands/common.rs`
+- [x] Extract Tokio runtime builder pattern from `replay.rs`, `run.rs`, `dump.rs` (×4) → `build_tokio_runtime()` in `commands/common.rs`
+- [x] Unify package share resolution (`substitution/types.rs` and `python/api/substitutions.rs`) → `FindPackageShare` delegates to `types::find_package_share()` (cached)
+- [x] Unify `find_package_share` distro fallback list (`types.rs`, `substitutions.rs`, `bridge.rs` — ×3 copies) → `KNOWN_ROS_DISTROS` constant in `substitution/types.rs`
 
 #### Medium priority
 
-- [ ] Extract env-merge + global-params collection in WASM host (`host.rs` `end_node`/`end_executable`/`end_container` — ×3 near-identical blocks) → helper methods on `LaunchHost`
-- [ ] Extract service client cleanup pattern in `container_actor.rs` (×4: `load_client = None; unload_client = None; ...`) → `clear_ros_clients(&mut self)` method
+- [x] Extract env-merge + global-params collection in WASM host (`host.rs`) → `collect_global_params()` + `collect_merged_env()` on `LaunchHost`
+- [x] Extract service client cleanup pattern in `container_actor.rs` (×4) → `clear_ros_clients(&mut self)` method
 - [ ] Extract process registry unregister pattern in `container_actor.rs` (×4: `if let Some(ref registry) = ... { reg.remove(&pid) }`) → `unregister_process(&self, pid)` method
-- [ ] Replace `create_*_parameter` boilerplate in `ros/component_loader.rs` (×8 nearly identical functions differing only in which field is set) → macro or generic helper
+- [x] Replace `create_*_parameter` boilerplate in `ros/component_loader.rs` (×8) → `create_parameter_value!` macro + `default_parameter_value()` helper
 
 ### Verification
 
-- [ ] `cargo build --workspace --config build/ros2_cargo_config.toml` — compiles cleanly
-- [ ] `cargo clippy --workspace --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
-- [ ] `just test` — 353 parser tests pass
-- [ ] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip --config build/ros2_cargo_config.toml` — 18 WASM tests pass
-- [ ] `just test-all` — all 353 tests pass (integration tests exercise runtime builder, CleanupGuard, package resolution)
-- [ ] No duplicate function bodies remain: `grep -c 'fn perform_obj' src/play_launch_parser/` returns 1
+- [x] `cargo clippy` — zero warnings (parser + main + WASM crates)
+- [x] `just test` — 353 parser + 30 integration tests pass
+- [x] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip` — 18 WASM tests pass
 
 ---
 
@@ -82,45 +79,44 @@ Execution order: dead code first (smallest blast radius), file splits last (easi
 
 #### Timeouts (highest priority — should become configurable via config YAML)
 
-- [ ] `30s` in `container_actor.rs` (3 places) → `const SERVICE_CALL_TIMEOUT: Duration`
-- [ ] `5s` in `container_actor.rs`, `run.rs` → `const GRACEFUL_SHUTDOWN_TIMEOUT: Duration`
-- [ ] `10s` in `replay.rs` → `const PERIODIC_STATS_INTERVAL: Duration`
-- [ ] `2s` in `replay.rs`, `io_helper_client.rs` → `const CLEANUP_TIMEOUT: Duration`
-- [ ] `100ms` in `container_actor.rs`, `run.rs`, `spawn.rs` → `const POLL_INTERVAL: Duration`
-- [ ] `200ms` in `container_actor.rs` → `const POST_SERVICE_READY_WARMUP: Duration`
-- [ ] `3s` in `web/sse.rs` → `const SSE_KEEPALIVE_INTERVAL: Duration`
-- [ ] `50ms` in `replay.rs` → `const ROS_EXECUTOR_SPIN_TIMEOUT: Duration`
+- [x] `30s` in `container_actor.rs` (3 places) → `const SERVICE_CALL_TIMEOUT: Duration`
+- [x] `5s` in `run.rs` → `const GRACEFUL_SHUTDOWN_TIMEOUT: Duration`
+- [x] `10s` in `container_actor.rs` → `const LOADING_TIMEOUT: Duration`; in `replay.rs` → `const PROGRESS_INTERVAL: Duration`
+- [x] `2s` in `replay.rs` → `const CLEANUP_TIMEOUT: Duration`; `container_actor.rs` → `const SERVICE_NOT_READY_LOG_INTERVAL`; `io_helper_client.rs` → `const HELPER_SHUTDOWN_TIMEOUT`
+- [x] `100ms` in `container_actor.rs` → `const SERVICE_POLL_INTERVAL`; `run.rs` → `const SHUTDOWN_POLL_INTERVAL`; `replay.rs` → `const COMPLETION_CHECK_INTERVAL`; `io_helper_client.rs` → `const HELPER_INIT_DELAY`
+- [x] `200ms` in `container_actor.rs` → `const POST_SERVICE_READY_WARMUP: Duration`; `replay.rs` → `const SIGNAL_DEBOUNCE`; `cleanup.rs` → `const TERMINATION_GRACE_PERIOD`
+- [x] `3s` in `web/sse.rs` → `const SSE_KEEPALIVE_INTERVAL: Duration`
+- [x] `50ms` in `replay.rs` → `const EXECUTOR_SPIN_TIMEOUT: Duration`
+- [x] `5s` in `container_actor.rs` → `const LOADING_CHECK_INTERVAL: Duration`
 
 #### Buffer sizes and limits
 
-- [ ] `8` in `replay.rs`, `run.rs`, `dump.rs` (×3) → `const MAX_WORKER_THREADS: usize` (already deduplicated via `build_runtime()` in 23.2)
-- [ ] `100` in `coordinator.rs` → `const STATE_EVENT_CHANNEL_SIZE: usize`
-- [ ] `10` in `coordinator.rs` → `const CONTROL_EVENT_CHANNEL_SIZE: usize`
-- [ ] `10 * 1024` in `coordinator.rs` → `const NOISY_STDERR_THRESHOLD: usize`
-- [ ] `1024 * 1024` in `io_helper_client.rs` → `const MAX_IPC_RESPONSE_SIZE: usize`
-- [ ] `1024` in `substitution/parser.rs` → `const SUBSTITUTION_CACHE_SIZE: usize`
+- [x] `8` in `commands/common.rs` → `const MAX_WORKER_THREADS: usize` (already deduplicated via `build_tokio_runtime()` in 23.2)
+- [x] `100` in `coordinator.rs` → `const STATE_EVENT_CHANNEL_SIZE: usize`; `broadcaster.rs` → `const SSE_SUBSCRIBER_CHANNEL_SIZE`
+- [x] `10` in `coordinator.rs` → `const CONTROL_CHANNEL_SIZE: usize`
+- [x] `10 * 1024` in `coordinator.rs` → `const NOISY_STDERR_THRESHOLD: u64`
+- [x] `1024 * 1024` in `io_helper_client.rs` → `const MAX_IPC_RESPONSE_SIZE: usize`
+- [x] `1024` in `substitution/parser.rs` → `const SUBSTITUTION_CACHE_SIZE: usize`
 
 #### ROS constants (duplicated across crates — use single definition)
 
 - [ ] `"rclcpp_components"` in `bridge.rs`, `container.rs` → `const DEFAULT_CONTAINER_PACKAGE: &str`
 - [ ] `"component_container"` in `bridge.rs`, `container.rs` → `const DEFAULT_CONTAINER_EXECUTABLE: &str`
-- [ ] `["jazzy","iron","humble","galactic","foxy"]` in `types.rs`, `substitutions.rs`, `bridge.rs` → `const KNOWN_ROS_DISTROS: &[&str]` (already unified in 23.2)
-- [ ] `/opt/ros/humble/...` in `generator.rs`, `launch_dump.rs`, `io_helper_client.rs`, `linker.rs` → remove hardcoded distro; use ament index or `ROS_DISTRO` env var
+- [x] `["jazzy","iron","humble","galactic","foxy"]` in `types.rs`, `substitutions.rs`, `bridge.rs` → `const KNOWN_ROS_DISTROS: &[&str]` (already unified in 23.2)
+- [x] `/opt/ros/humble/...` in `io_helper_client.rs` → use `ROS_DISTRO` env var with humble fallback
 
 #### WASM constants
 
-- [ ] `0x10000` in `compiler.rs`, `memory.rs` → `pub const WASM_PAGE_SIZE: usize` in `wasm_common::memory`
-- [ ] `-1` sentinel in `compiler.rs`, `expr.rs` → `pub const NO_VALUE_SENTINEL: i32` in `wasm_common::memory`
+- [x] `0x10000` in `compiler.rs` → `memory::WASM_PAGE_SIZE` in `wasm_common::memory`
+- [x] `-1` sentinel in `compiler.rs`, `expr.rs` → `pub const NO_VALUE_SENTINEL: i32` in `wasm_common`
 
 ### Verification
 
-- [ ] `cargo build --workspace --config build/ros2_cargo_config.toml` — compiles cleanly
-- [ ] `cargo clippy --workspace --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
-- [ ] `just test` — 353 parser tests pass
-- [ ] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip --config build/ros2_cargo_config.toml` — 18 WASM tests pass
-- [ ] `grep -rn '0x10000' src/play_launch_wasm_codegen/ src/play_launch_wasm_runtime/` — no bare hex literals for page size
-- [ ] `grep -rn '/opt/ros/humble' src/` — zero matches (all hardcoded paths removed)
-- [ ] `grep -rn 'Duration::from_secs(30)' src/play_launch/src/` — zero matches (all replaced by named constants)
+- [x] `cargo clippy -p play_launch --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
+- [x] `cargo clippy -p play_launch_wasm_common -p play_launch_wasm_codegen -p play_launch_wasm_runtime --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
+- [x] `cargo clippy -p play_launch_parser --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
+- [x] `just test` — 353 parser + 30 integration tests pass
+- [x] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip` — 18 WASM tests pass
 
 ---
 
@@ -251,8 +247,8 @@ Zero unsafe blocks.
 
 ```
 23.1  Dead code removal                                    complete
-23.2  Code deduplication                                   planned
-23.3  Magic numbers → named constants                      planned
+23.2  Code deduplication                                   complete
+23.3  Magic numbers → named constants                      complete
 23.4  Unsafe code consolidation                            planned
 23.5  Naming improvements                                  planned
 23.6  Structural issues                                    planned

@@ -24,6 +24,21 @@ use std::{
 };
 use tracing::{debug, error, info, warn};
 
+/// ROS executor spin timeout — how long to wait for work before checking shutdown signal
+const EXECUTOR_SPIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Signal debounce window — ignore signals within this time after sending our own kill
+const SIGNAL_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Timeout for draining background tasks during cleanup
+const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Interval for printing startup progress statistics
+const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Interval for checking if all nodes have finished loading
+const COMPLETION_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
 pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     let input_file = &args.input_file;
 
@@ -253,8 +268,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 
                 // Spin with timeout (waits up to 50ms for work, processes it, then returns)
                 // This allows ROS to process messages during the wait, unlike sleep()
-                executor
-                    .spin(rclrs::SpinOptions::new().timeout(std::time::Duration::from_millis(50)));
+                executor.spin(rclrs::SpinOptions::new().timeout(EXECUTOR_SPIN_TIMEOUT));
             }
 
             debug!("ROS executor thread shutting down");
@@ -672,7 +686,7 @@ async fn wait_for_completion_unix<F>(
     tokio::pin!(termination_signals);
 
     let mut kill_level = 0u8;
-    let mut last_signal_sent = std::time::Instant::now() - std::time::Duration::from_secs(10); // Initialize to past time
+    let mut last_signal_sent = std::time::Instant::now() - PROGRESS_INTERVAL; // Initialize to past time
 
     // Track background task completion during main loop
     let mut background_tasks_completed = 0;
@@ -699,7 +713,7 @@ async fn wait_for_completion_unix<F>(
                 // This prevents feedback loops while still allowing future user Ctrl-C presses
                 let now = std::time::Instant::now();
                 let time_since_last = now.duration_since(last_signal_sent);
-                if time_since_last < std::time::Duration::from_millis(200) {
+                if time_since_last < SIGNAL_DEBOUNCE {
                     debug!("Ignoring signal feedback ({}ms since last signal sent)", time_since_last.as_millis());
                     continue;
                 }
@@ -794,7 +808,7 @@ async fn wait_for_completion_unix<F>(
 
     // Set a shorter timeout for background task cleanup (2 seconds)
     // After that, we'll just exit - the tasks will be aborted
-    let cleanup_timeout = tokio::time::sleep(tokio::time::Duration::from_secs(2));
+    let cleanup_timeout = tokio::time::sleep(CLEANUP_TIMEOUT);
     tokio::pin!(cleanup_timeout);
 
     // Track which tasks complete during cleanup
@@ -821,7 +835,7 @@ async fn wait_for_completion_unix<F>(
                 // Ignore feedback signals within 200ms
                 let now = std::time::Instant::now();
                 let time_since_last = now.duration_since(last_signal_sent);
-                if time_since_last < std::time::Duration::from_millis(200) {
+                if time_since_last < SIGNAL_DEBOUNCE {
                     debug!("Ignoring signal feedback during cleanup ({}ms since last)", time_since_last.as_millis());
                     continue;
                 }
@@ -978,7 +992,7 @@ async fn wait_for_completion_windows<F>(
 
     // Set a shorter timeout for background task cleanup (2 seconds)
     // After that, we'll just exit - the tasks will be aborted
-    let cleanup_timeout = tokio::time::sleep(tokio::time::Duration::from_secs(2));
+    let cleanup_timeout = tokio::time::sleep(CLEANUP_TIMEOUT);
     tokio::pin!(cleanup_timeout);
 
     // Track which tasks complete during cleanup
@@ -1045,11 +1059,11 @@ async fn print_periodic_statistics(
     mut shutdown_signal: tokio::sync::watch::Receiver<bool>,
 ) {
     // Print progress every 10 seconds while loading
-    let mut progress_interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
+    let mut progress_interval = tokio::time::interval(PROGRESS_INTERVAL);
     progress_interval.tick().await; // Consume the immediate first tick
 
     // Check completion every 100ms for immediate detection
-    let mut completion_check = tokio::time::interval(tokio::time::Duration::from_millis(100));
+    let mut completion_check = tokio::time::interval(COMPLETION_CHECK_INTERVAL);
     completion_check.tick().await; // Consume the immediate first tick
 
     loop {

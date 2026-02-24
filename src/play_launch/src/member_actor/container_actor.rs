@@ -33,6 +33,25 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+/// Timeout for LoadNode/UnloadNode service calls.
+const SERVICE_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Interval for checking whether nodes stuck in Loading state should be
+/// promoted to Loaded (handles DDS event loss).
+const LOADING_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Interval for checking composable node loading timeouts.
+const LOADING_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Brief warmup delay after service readiness before issuing LoadNode calls.
+const POST_SERVICE_READY_WARMUP: Duration = Duration::from_millis(200);
+
+/// Interval for logging service-not-ready status during service discovery.
+const SERVICE_NOT_READY_LOG_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Poll interval while waiting for a container's LoadNode service to appear.
+const SERVICE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 /// Metadata for a composable node (Phase 12)
 #[derive(Debug, Clone)]
 pub struct ComposableNodeMetadata {
@@ -466,8 +485,6 @@ impl ContainerActor {
     /// Loaded if the LoadNode service succeeded more than 10 seconds ago.
     /// This handles DDS event loss where ComponentEvent LOADED never arrives.
     async fn check_loading_timeouts(&mut self) {
-        const LOADING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
         let mut promoted = Vec::new();
         for (name, entry) in &self.composable_nodes {
             if let ComposableState::Loading { started_at } = &entry.state {
@@ -585,7 +602,7 @@ impl ContainerActor {
         );
 
         let service_wait_start = std::time::Instant::now();
-        let service_timeout = std::time::Duration::from_secs(30);
+        let service_timeout = SERVICE_CALL_TIMEOUT;
         let mut last_log_time = service_wait_start;
 
         loop {
@@ -593,7 +610,7 @@ impl ContainerActor {
                 Ok(true) => break,
                 Ok(false) => {
                     // Service not ready yet, log periodically
-                    if last_log_time.elapsed() > std::time::Duration::from_secs(2) {
+                    if last_log_time.elapsed() > SERVICE_NOT_READY_LOG_INTERVAL {
                         debug!(
                             "{}: Still waiting for LoadNode service for {} ({}s elapsed)",
                             container_name,
@@ -619,7 +636,7 @@ impl ContainerActor {
             }
 
             // Sleep briefly before checking again
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(SERVICE_POLL_INTERVAL).await;
         }
 
         debug!(
@@ -642,7 +659,7 @@ impl ContainerActor {
             "{}: Waiting 200ms for container executor to start processing requests",
             container_name
         );
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(POST_SERVICE_READY_WARMUP).await;
 
         // Phase 19.5b: Call service with 30s timeout (safety net — ComponentEvent should arrive first)
         debug!(
@@ -660,7 +677,7 @@ impl ContainerActor {
             container_name, params.composable_name
         );
 
-        let service_timeout = std::time::Duration::from_secs(30);
+        let service_timeout = SERVICE_CALL_TIMEOUT;
         match tokio::time::timeout(service_timeout, response_future).await {
             Ok(Ok(response)) => {
                 // Calculate timing metrics
@@ -750,7 +767,7 @@ impl ContainerActor {
                 .call(&ros_request)
                 .context("Failed to initiate UnloadNode service call")?;
 
-        let service_timeout = std::time::Duration::from_secs(30);
+        let service_timeout = SERVICE_CALL_TIMEOUT;
         match tokio::time::timeout(service_timeout, response_future).await {
             Ok(Ok(response)) => {
                 debug!(
@@ -1584,7 +1601,7 @@ impl ContainerActor {
     async fn handle_running(&mut self, mut child: tokio::process::Child, pid: u32) -> Result<bool> {
         debug!("{}: Container running with PID {}", self.name, pid);
 
-        let mut loading_timeout_interval = tokio::time::interval(Duration::from_secs(5));
+        let mut loading_timeout_interval = tokio::time::interval(LOADING_CHECK_INTERVAL);
         loading_timeout_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // Skip the first immediate tick
         loading_timeout_interval.tick().await;
