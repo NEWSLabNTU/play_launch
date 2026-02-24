@@ -271,12 +271,19 @@ This directory contains the implementation roadmap for play_launch, organized by
   - ✅ Phase 21.3: Pre-built CI Docker image
 
 - **Phase 22**: Launch Tree IR - See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md)
-  - Phase 22.0: IR type definitions
-  - Phase 22.1: Align action parse helpers (deferred resolution)
-  - Phase 22.2: XML IR builder (analyze_launch_file)
-  - Phase 22.3: IR evaluator (evaluate → RecordJson)
-  - Phase 22.4: Python launch file IR support
-  - Phase 22.5: Static analysis passes (QoS, dependency graph, reachability)
+  - ✅ Phase 22.1–22.8: IR types, builder, evaluator, WASM codegen/runtime, CLI, round-trip validation
+  - Phase 22.9: Python AST compiler
+  - Phase 22.10: Python integration into WASM pipeline
+  - Phase 22.11: Autoware smoke tests
+
+- **Phase 23**: Code Quality - See [phase-23-code_quality.md](./phase-23-code_quality.md)
+  - Phase 23.1: Large file splits (7 files over 1000 lines)
+  - Phase 23.2: Magic numbers → named constants (30+ hardcoded values)
+  - Phase 23.3: Naming improvements
+  - Phase 23.4: Unsafe code consolidation (3 → 1 in parser)
+  - Phase 23.5: Dead code removal
+  - Phase 23.6: Code deduplication (11+ duplicated patterns)
+  - Phase 23.7: Structural issues
 
 ## Future Considerations
 

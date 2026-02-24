@@ -772,13 +772,13 @@ End-to-end validation that the WASM pipeline produces identical output to direct
 
 ### Bugs Found and Fixed
 
-| Bug | Root Cause | Fix |
-|---|---|---|
-| IR builder `push-ros-namespace` didn't accept `ns=` attribute | `get_attr_str("namespace", false)` propagated error before `ns` fallback | Changed to `optional=true` in `ir_builder.rs` |
-| `pop-ros-namespace` not emitted to IR | IR builder handled it at build time only, no `ActionKind` variant | Added `PopNamespace` to IR, emitted from builder, handled in codegen and evaluator |
-| WASM host container namespace ignored `push-ros-namespace` context | `end_container()` took literal empty string instead of inheriting | Match `end_node()` pattern: empty string → `current_namespace()` |
-| `load_composable_node` namespace wrong in WASM | Host used `current_namespace()` instead of extracting from target container path | Added `extract_namespace_from_target()` matching direct parser behavior |
-| Clippy `assertions_on_constants` in wasm_common tests | `assert!` on const values | Wrapped in `const { }` blocks |
+| Bug                                                                | Root Cause                                                                       | Fix                                                                                |
+|--------------------------------------------------------------------|----------------------------------------------------------------------------------|------------------------------------------------------------------------------------|
+| IR builder `push-ros-namespace` didn't accept `ns=` attribute      | `get_attr_str("namespace", false)` propagated error before `ns` fallback         | Changed to `optional=true` in `ir_builder.rs`                                      |
+| `pop-ros-namespace` not emitted to IR                              | IR builder handled it at build time only, no `ActionKind` variant                | Added `PopNamespace` to IR, emitted from builder, handled in codegen and evaluator |
+| WASM host container namespace ignored `push-ros-namespace` context | `end_container()` took literal empty string instead of inheriting                | Match `end_node()` pattern: empty string → `current_namespace()`                   |
+| `load_composable_node` namespace wrong in WASM                     | Host used `current_namespace()` instead of extracting from target container path | Added `extract_namespace_from_target()` matching direct parser behavior            |
+| Clippy `assertions_on_constants` in wasm_common tests              | `assert!` on const values                                                        | Wrapped in `const { }` blocks                                                      |
 
 ### Benchmark Results
 
@@ -803,15 +803,15 @@ WASM execution is dominated by wasmtime module instantiation overhead. For repea
 
 ### Files
 
-| File | Change |
-|---|---|
-| `play_launch_wasm_runtime/tests/fixture_round_trip.rs` | New — 18 round-trip + benchmark tests |
-| `play_launch_parser/.../ir.rs` | Added `PopNamespace` variant |
-| `play_launch_parser/.../ir_builder.rs` | Fixed `push-ros-namespace` `ns` fallback, emit `PopNamespace` |
-| `play_launch_parser/.../ir_evaluator.rs` | Handle `PopNamespace` |
-| `play_launch_wasm_codegen/src/compiler.rs` | Emit `pop_namespace` call for `PopNamespace` |
-| `play_launch_wasm_runtime/src/host.rs` | Fix container namespace resolution, load_node namespace from target |
-| `play_launch_wasm_common/src/lib.rs` | Fix clippy const assertions |
+| File                                                   | Change                                                              |
+|--------------------------------------------------------|---------------------------------------------------------------------|
+| `play_launch_wasm_runtime/tests/fixture_round_trip.rs` | New — 18 round-trip + benchmark tests                               |
+| `play_launch_parser/.../ir.rs`                         | Added `PopNamespace` variant                                        |
+| `play_launch_parser/.../ir_builder.rs`                 | Fixed `push-ros-namespace` `ns` fallback, emit `PopNamespace`       |
+| `play_launch_parser/.../ir_evaluator.rs`               | Handle `PopNamespace`                                               |
+| `play_launch_wasm_codegen/src/compiler.rs`             | Emit `pop_namespace` call for `PopNamespace`                        |
+| `play_launch_wasm_runtime/src/host.rs`                 | Fix container namespace resolution, load_node namespace from target |
+| `play_launch_wasm_common/src/lib.rs`                   | Fix clippy const assertions                                         |
 
 ---
 
