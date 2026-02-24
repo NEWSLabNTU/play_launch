@@ -420,98 +420,17 @@ pub mod imports {
 /// Guest memory layout constants.
 ///
 /// The compiled WASM module uses a bump allocator for string data.
-/// The host writes return values to a fixed return area.
 pub mod memory {
     /// Start offset of the bump allocator region in guest linear memory.
     ///
-    /// Offsets 0..BUMP_BASE are reserved for the data segment (string literals)
-    /// and the return area.
+    /// Offsets 0..BUMP_BASE are reserved for the data segment (string literals).
     pub const BUMP_BASE: u32 = 0x1_0000; // 64 KB
-
-    /// Fixed offset where the host writes return strings (host -> guest).
-    ///
-    /// The host writes `(ptr: u32, len: u32)` at this address. The guest reads
-    /// the return value from here after a host call that returns a string.
-    ///
-    /// Layout at RETURN_AREA: `[result_ptr: u32, result_len: u32]`
-    pub const RETURN_AREA: u32 = 0x0_FF00;
-
-    /// Size of the return area in bytes.
-    pub const RETURN_AREA_SIZE: u32 = 8; // two u32 values
 
     /// Name of the bump pointer global in compiled modules.
     ///
     /// The codegen emits `(global $bump (mut i32) (i32.const <BUMP_BASE>))`.
     /// The guest increments this when allocating string data at runtime.
     pub const BUMP_GLOBAL: &str = "bump";
-}
-
-/// Error types shared between codegen and runtime.
-#[derive(Debug, thiserror::Error)]
-pub enum WasmError {
-    /// The compiled module's ABI version doesn't match the runtime's expected version.
-    #[error("ABI version mismatch: module has v{found}, runtime expects v{expected}")]
-    AbiVersionMismatch { expected: u32, found: u32 },
-
-    /// Failed to decode a string from guest memory.
-    #[error("failed to read string from guest memory at offset {offset}, length {len}")]
-    StringDecodingError { offset: u32, len: u32 },
-
-    /// A required WASM export is missing from the module.
-    #[error("missing required export: {0}")]
-    MissingExport(String),
-
-    /// A host import was called in an invalid state (e.g., `end_node` without `begin_node`).
-    #[error("invalid builder state: {0}")]
-    InvalidBuilderState(String),
-
-    /// The guest module ran out of fuel (CPU budget exceeded).
-    #[error("execution fuel exhausted (infinite loop?)")]
-    FuelExhausted,
-
-    /// The guest module's linear memory exceeded the configured limit.
-    #[error("memory limit exceeded: {0} bytes")]
-    MemoryLimitExceeded(u64),
-
-    /// An `eval_command` call was rejected by the host policy.
-    #[error("command execution blocked by policy: {0}")]
-    CommandBlocked(String),
-
-    /// Variable resolution failed (undefined variable, no default).
-    #[error("undefined variable: {0}")]
-    UndefinedVariable(String),
-
-    /// Package resolution failed.
-    #[error("package not found: {0}")]
-    PackageNotFound(String),
-
-    /// A compilation error in the codegen phase.
-    #[error("compilation error: {0}")]
-    CompilationError(String),
-
-    /// A generic runtime error.
-    #[error("runtime error: {0}")]
-    RuntimeError(String),
-}
-
-/// Result type alias using [`WasmError`].
-pub type Result<T> = std::result::Result<T, WasmError>;
-
-/// Command execution policy for `$(command ...)` substitutions.
-///
-/// Controls how the runtime handles `eval_command` host calls.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum CommandPolicy {
-    /// Reject all command substitutions. Produces [`WasmError::CommandBlocked`].
-    Strict,
-
-    /// Allow only commands matching the allowlist patterns.
-    Allowlist(Vec<String>),
-
-    /// Execute commands on the host without restriction.
-    /// Breaks sandboxing but matches current `parse_launch_file()` behavior.
-    #[default]
-    Passthrough,
 }
 
 #[cfg(test)]
@@ -554,24 +473,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_memory_layout_no_overlap() {
-        // Return area must fit before bump base.
-        const { assert!(memory::RETURN_AREA + memory::RETURN_AREA_SIZE <= memory::BUMP_BASE) };
-    }
-
-    #[test]
-    fn test_command_policy_default_is_passthrough() {
-        assert_eq!(CommandPolicy::default(), CommandPolicy::Passthrough);
-    }
-
-    #[test]
-    fn test_error_display() {
-        let err = WasmError::AbiVersionMismatch {
-            expected: 1,
-            found: 2,
-        };
-        assert!(err.to_string().contains("v2"));
-        assert!(err.to_string().contains("v1"));
-    }
 }

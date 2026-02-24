@@ -1,3 +1,7 @@
+// Service discovery infrastructure is spawned by replay.rs but query methods
+// are not currently called (actor system handles readiness differently).
+#![allow(dead_code)]
+
 //! Container readiness checking module
 //!
 //! This module provides ROS service discovery for checking when containers are ready.

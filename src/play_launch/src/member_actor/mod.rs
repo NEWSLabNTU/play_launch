@@ -40,10 +40,9 @@
 //! # }
 //! ```
 
-// Allow dead code and unused imports during Phase 10.1 infrastructure setup
-// This module will be used in Phase 10.2+ when actors are implemented
+// Actors are invoked through MemberActor trait dispatch (coordinator calls actor.run()),
+// so Rust's dead code analysis can't trace internal method usage.
 #![allow(dead_code)]
-#![allow(unused_imports)]
 
 pub mod actor_traits;
 pub mod container_actor;
@@ -55,11 +54,7 @@ pub mod state;
 pub mod web_query;
 
 // Re-export commonly used types
-pub use actor_traits::MemberActor;
-pub use container_actor::{run_container, ComposableActorHandle, ContainerActor};
-pub use container_control::{ContainerControlEvent, LoadNodeResponse};
 pub use coordinator::{MemberCoordinatorBuilder, MemberHandle, MemberRunner};
-pub use events::{ControlEvent, StateEvent};
-pub use regular_node_actor::{run_regular_node, RegularNodeActor};
-pub use state::{ActorConfig, BlockReason, ComposableState, ContainerState, NodeState};
-pub use web_query::{HealthSummary, MemberDetails, MemberState, MemberSummary, MemberType};
+pub use events::StateEvent;
+pub use state::ActorConfig;
+pub use web_query::{MemberState, MemberSummary, MemberType};

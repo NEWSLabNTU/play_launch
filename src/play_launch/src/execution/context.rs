@@ -14,7 +14,6 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
 };
-use tokio::process::Command;
 
 /// Metadata for a regular ROS node
 #[derive(Debug, Serialize)]
@@ -33,24 +32,6 @@ struct NodeMetadata {
     duplicate_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     note: Option<String>,
-}
-
-/// Metadata for a composable node
-/// Phase 12: No longer used - composable node metadata is now in container metadata
-#[allow(dead_code)]
-#[derive(Debug, Serialize)]
-struct ComposableNodeMetadata {
-    #[serde(rename = "type")]
-    node_type: String,
-    package: String,
-    plugin: String,
-    node_name: String,
-    namespace: String,
-    target_container_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    target_container_node_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    duplicate_index: Option<usize>,
 }
 
 /// Helper to deduplicate names and assign numeric suffixes
@@ -87,99 +68,6 @@ pub struct ComposableNodeContext {
     pub log_name: String,
     pub output_dir: PathBuf,
     pub record: ComposableNodeRecord,
-}
-
-#[allow(dead_code)] // Kept for potential future standalone loading
-impl ComposableNodeContext {
-    pub fn to_load_node_command(&self, round: usize) -> eyre::Result<Command> {
-        let ComposableNodeContext {
-            output_dir, record, ..
-        } = self;
-
-        let command = record.to_command(false);
-        let stdout_path = output_dir.join(format!("out.{round}"));
-        let stderr_path = output_dir.join(format!("err.{round}"));
-        let cmdline_path = output_dir.join(format!("cmdline.{round}"));
-
-        fs::create_dir_all(output_dir)?;
-
-        {
-            let mut cmdline_file = File::create(cmdline_path)?;
-            cmdline_file.write_all(&record.to_shell(false))?;
-        }
-
-        let stdout_file = File::create(stdout_path)?;
-        let stderr_file = File::create(&stderr_path)?;
-
-        let mut command: Command = command.into();
-
-        // Create a new process group to ensure all child processes are killed together
-        #[cfg(unix)]
-        unsafe {
-            command.pre_exec(|| {
-                libc::setpgid(0, 0);
-                Ok(())
-            });
-        }
-
-        command.kill_on_drop(true);
-        command.stdin(Stdio::null());
-        command.stdout(stdout_file);
-        command.stderr(stderr_file);
-
-        Ok(command)
-    }
-
-    pub fn to_standalone_node_command(&self, pgid: Option<i32>) -> eyre::Result<Command> {
-        let ComposableNodeContext {
-            output_dir, record, ..
-        } = self;
-
-        let command = record.to_command(true);
-        let stdout_path = output_dir.join("out");
-        let stderr_path = output_dir.join("err");
-        let cmdline_path = output_dir.join("cmdline");
-
-        fs::create_dir_all(output_dir)?;
-
-        {
-            let mut cmdline_file = File::create(cmdline_path)?;
-            cmdline_file.write_all(&record.to_shell(true))?;
-        }
-
-        let stdout_file = File::create(stdout_path)?;
-        let stderr_file = File::create(&stderr_path)?;
-
-        let mut command: Command = command.into();
-
-        // Set process group: join shared PGID if provided, otherwise create new process group
-        #[cfg(unix)]
-        {
-            #[allow(unused_imports)]
-            use std::os::unix::process::CommandExt;
-            if let Some(pgid) = pgid {
-                command.process_group(pgid);
-            } else {
-                command.process_group(0);
-            }
-
-            // Set parent death signal to prevent orphan processes
-            // When play_launch dies (even with SIGKILL), kernel sends SIGKILL to all children
-            unsafe {
-                command.pre_exec(|| {
-                    nix::sys::prctl::set_pdeathsig(nix::sys::signal::Signal::SIGKILL)
-                        .map_err(std::io::Error::other)
-                });
-            }
-        }
-
-        command.kill_on_drop(true);
-        command.stdin(Stdio::null());
-        command.stdout(stdout_file);
-        command.stderr(stderr_file);
-
-        Ok(command)
-    }
 }
 
 /// The context contains all essential data to execute a ROS node.
@@ -242,7 +130,6 @@ impl NodeContext {
 /// The context contains all essential data to execute a node
 /// container.
 pub struct NodeContainerContext {
-    pub node_container_name: String,
     pub node_context: NodeContext,
 }
 
@@ -490,7 +377,7 @@ pub fn prepare_container_contexts(
                 name: Some(container_record.name.clone()),
                 namespace: Some(container_record.namespace.clone()),
                 is_container: true,
-                container_full_name: Some(full_container_name.clone()),
+                container_full_name: Some(full_container_name),
                 duplicate_index,
                 note: None,
             };
@@ -507,10 +394,7 @@ pub fn prepare_container_contexts(
                 output_dir,
             };
 
-            eyre::Ok(NodeContainerContext {
-                node_container_name: full_container_name,
-                node_context,
-            })
+            eyre::Ok(NodeContainerContext { node_context })
         })
         .collect();
 

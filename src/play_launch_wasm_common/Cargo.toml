@@ -6,4 +6,3 @@ description = "Shared ABI definitions for play_launch WASM compilation and execu
 license = "Apache-2.0"
 
 [dependencies]
-thiserror = "1.0"

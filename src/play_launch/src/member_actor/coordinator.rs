@@ -11,7 +11,7 @@ use super::{
 use eyre::{Context, Result};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::{
-    sync::{mpsc, watch, Mutex},
+    sync::{mpsc, watch},
     task::JoinHandle,
 };
 use tracing::{debug, warn};

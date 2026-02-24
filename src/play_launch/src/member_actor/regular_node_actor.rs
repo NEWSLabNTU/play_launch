@@ -21,10 +21,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::{
-    process::Child,
-    sync::{mpsc, watch},
-};
+use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
 
 /// Standalone async function for running a regular node (Phase 5)

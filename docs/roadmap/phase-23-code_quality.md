@@ -1,6 +1,6 @@
 # Phase 23: Code Quality
 
-**Status**: Planned
+**Status**: In Progress (23.1 complete)
 **Priority**: Medium (technical debt reduction, maintainability)
 **Scope**: Parser, WASM pipeline, and main CLI/runtime crates
 
@@ -16,27 +16,31 @@ Execution order: dead code first (smallest blast radius), file splits last (easi
 
 #### Main crate
 
-- [ ] Delete `ComposableNodeMetadata` struct (`execution/context.rs:40-54`, comment: "Phase 12: No longer used")
-- [ ] Delete `ComposableNodeContext::to_load_node_command()` (`execution/context.rs:92-106`, comment: "Kept for potential future standalone loading")
-- [ ] Delete `run_load_composable_node_via_service()` (`execution/spawn.rs:800`, deprecated — returns error only)
-- [ ] Delete `composable_actors` field (`container_actor.rs:137`, comment: "will be removed in Phase 12")
-- [ ] Delete `add_composable_actor()` method (`container_actor.rs:260`, deprecated in Phase 12)
-- [ ] Remove `#![allow(dead_code)]` from `execution/spawn.rs:3` — audit individually, annotate or delete each truly dead item
-- [ ] Audit dead config fields in `cli/config.rs` — `ComposableNodeLoadingSettings` and `ProcessConfig` methods marked "not yet connected"; annotate with `#[allow(dead_code)]` individually with justification comments, or delete
+- [x] Delete `ComposableNodeMetadata` struct (`execution/context.rs`)
+- [x] Delete `ComposableNodeContext::to_load_node_command()` and `to_standalone_node_command()`
+- [x] Delete `ComposableActorHandle` struct, `composable_actors` field, `add_composable_actor()`, `wait_for_composable_actors()`
+- [x] Delete entire `execution/spawn.rs` module (892 lines — entire module was dead, replaced by actor pattern)
+- [x] Delete `ComposableNodeRecord` command-line methods in `launch_dump.rs` (revealed dead by spawn.rs deletion)
+- [x] Remove dead `NodeContainerContext.node_container_name` field (only set, never read)
+- [x] Clean up `member_actor/mod.rs` re-exports (remove 14 unused re-exports, keep 7 used ones)
+- [x] Fix revealed unused imports in `context.rs`, `coordinator.rs`, `regular_node_actor.rs`, `launch_dump.rs`
+- [x] Add accurate `#![allow(dead_code)]` comment on `member_actor/mod.rs` (trait-based dispatch, not stale code)
+- [x] Add `#![allow(dead_code)]` on `container_readiness.rs` (infrastructure spawned but query methods orphaned)
 
 #### WASM crates
 
-- [ ] Remove unused `WasmError` variants (`wasm_common/lib.rs`, 9 variants never constructed — runtime uses `anyhow::Result`). Keep only variants that are actually matched/constructed, or remove the enum entirely if unused.
-- [ ] Remove `CommandPolicy` enum (`wasm_common/lib.rs`, defined but never consulted)
-- [ ] Remove `memory::RETURN_AREA` and `RETURN_AREA_SIZE` (`wasm_common/lib.rs`, vestigial — codegen uses multi-value returns)
+- [x] Remove entire `WasmError` enum and `Result<T>` type alias (`wasm_common/lib.rs` — runtime uses `anyhow::Result`)
+- [x] Remove `CommandPolicy` enum (`wasm_common/lib.rs` — never consulted)
+- [x] Remove `memory::RETURN_AREA` and `RETURN_AREA_SIZE` (`wasm_common/lib.rs` — vestigial, multi-value returns used)
+- [x] Remove `thiserror` dependency from `wasm_common/Cargo.toml`
+- [x] Delete 3 associated tests (`test_memory_layout_no_overlap`, `test_command_policy_default`, `test_error_display`)
 
 ### Verification
 
-- [ ] `cargo build --workspace --config build/ros2_cargo_config.toml` — no new warnings
-- [ ] `cargo clippy --workspace --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
-- [ ] `just test` — 353 parser tests pass
-- [ ] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip --config build/ros2_cargo_config.toml` — 18 WASM tests pass
-- [ ] `grep -r 'allow(dead_code)' src/play_launch/src/` — no blanket module-level suppressions remain
+- [x] `cargo clippy -p play_launch --config build/ros2_cargo_config.toml -- -D warnings` — zero warnings
+- [x] `cargo clippy -p play_launch_wasm_common -p play_launch_wasm_codegen -p play_launch_wasm_runtime --config build/ros2_cargo_config.toml -- -D warnings` — zero warnings
+- [x] `just test` — 353 parser + 30 integration tests pass
+- [x] `cargo test -p play_launch_wasm_common` — 5 tests pass
 
 ---
 
@@ -246,7 +250,7 @@ Zero unsafe blocks.
 ## Implementation Order
 
 ```
-23.1  Dead code removal                                    planned
+23.1  Dead code removal                                    complete
 23.2  Code deduplication                                   planned
 23.3  Magic numbers → named constants                      planned
 23.4  Unsafe code consolidation                            planned

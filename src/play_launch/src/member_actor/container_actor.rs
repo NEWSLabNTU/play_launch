@@ -105,14 +105,6 @@ pub async fn run_container(
     actor.run().await
 }
 
-/// Handle to a composable node actor
-pub struct ComposableActorHandle {
-    /// Name of the composable node
-    pub name: String,
-    /// Task handle
-    pub task: tokio::task::JoinHandle<Result<()>>,
-}
-
 /// Container actor that supervises composable nodes
 pub struct ContainerActor {
     /// Unique name for this actor
@@ -133,10 +125,6 @@ pub struct ContainerActor {
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     /// Container state broadcast to composable nodes (Phase 10)
     container_state_tx: watch::Sender<ContainerState>,
-    /// Composable node actor handles (Phase 10, will be removed in Phase 12)
-    #[allow(dead_code)]
-    composable_actors: Vec<ComposableActorHandle>,
-
     // Phase 12: Container-managed composable nodes
     /// Composable nodes managed by this container (name -> entry)
     composable_nodes: HashMap<String, ComposableNodeEntry>,
@@ -235,7 +223,6 @@ impl ContainerActor {
             shutdown_rx,
             process_registry,
             container_state_tx,
-            composable_actors: Vec::new(),
             composable_nodes: HashMap::new(),
             load_control_rx,
             ros_node,
@@ -255,12 +242,6 @@ impl ContainerActor {
     /// Get a receiver for container state (for composable nodes)
     pub fn container_state_rx(&self) -> watch::Receiver<ContainerState> {
         self.container_state_tx.subscribe()
-    }
-
-    /// Add a composable node actor handle (Phase 10, deprecated in Phase 12)
-    #[allow(dead_code)]
-    pub fn add_composable_actor(&mut self, handle: ComposableActorHandle) {
-        self.composable_actors.push(handle);
     }
 
     /// Add a composable node to be managed by this container (Phase 12)
@@ -2110,39 +2091,6 @@ impl ContainerActor {
         }
     }
 
-    /// Wait for all composable node actors to finish
-    async fn wait_for_composable_actors(&mut self) {
-        debug!(
-            "{}: Waiting for {} composable node actors to finish",
-            self.name,
-            self.composable_actors.len()
-        );
-
-        // Take all handles and wait for them
-        let handles = std::mem::take(&mut self.composable_actors);
-        for handle in handles {
-            match handle.task.await {
-                Ok(Ok(())) => {
-                    debug!("{}: Composable actor {} completed", self.name, handle.name);
-                }
-                Ok(Err(e)) => {
-                    warn!(
-                        "{}: Composable actor {} failed: {:#}",
-                        self.name, handle.name, e
-                    );
-                }
-                Err(e) if e.is_cancelled() => {
-                    debug!("{}: Composable actor {} cancelled", self.name, handle.name);
-                }
-                Err(e) => {
-                    error!(
-                        "{}: Composable actor {} panicked: {:#}",
-                        self.name, handle.name, e
-                    );
-                }
-            }
-        }
-    }
 }
 
 impl MemberActor for ContainerActor {
@@ -2177,9 +2125,6 @@ impl MemberActor for ContainerActor {
                 break;
             }
         }
-
-        // Wait for all composable nodes to finish
-        self.wait_for_composable_actors().await;
 
         debug!("{}: Container actor finished", self.name);
         Ok(())
