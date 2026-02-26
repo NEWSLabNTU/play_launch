@@ -271,12 +271,6 @@ Given the constraints above, we chose `clone(CLONE_VM)` without `CLONE_THREAD`:
 each composable node gets its own Linux PID while sharing the container's virtual
 memory. This is a middle ground between threads and full processes.
 
-See [clone-vm-container-design.md](clone-vm-container-design.md) for the
-detailed implementation design.
-
-See [roadmap/phase-19-isolated_container.md](roadmap/phase-19-isolated_container.md)
-for the implementation roadmap.
-
 ### What clone(CLONE_VM) Gives Us
 
 | Property | std::thread | clone(CLONE_VM) | Separate process |

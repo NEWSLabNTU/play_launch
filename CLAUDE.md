@@ -86,7 +86,7 @@ rclcpp_components::ComponentManager           (upstream)
   - Ready pipe protocol: child writes `"OK name\n"` or `"ERR msg\n"`, 30s timeout
   - YAML type preservation: double values always include decimal point (`0.0` not `0`) to prevent integer_array/double_array mismatch
 - **Two binaries**: `component_container [--use_multi_threaded_executor] [--isolated]` and `component_node` (standalone single-node loader)
-- **Design docs**: `docs/container-isolation-design.md`, `docs/clone-vm-container-design.md`
+- **Design docs**: `docs/design/container-isolation.md`, `docs/archive/clone-vm-container-design.md`
 - **Roadmap**: `docs/roadmap/phase-19-isolated_container.md`
 
 ## Configuration
@@ -174,12 +174,12 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 ## Documentation
 
 - **Roadmap**: `docs/roadmap/README.md` — all phases and progress
-- **Container Design**: `docs/container-isolation-design.md` — why containers, Linux isolation, RMW consequences
-- **Clone VM Design**: `docs/clone-vm-container-design.md` — clone(CLONE_VM) implementation spec
+- **Container Design**: `docs/design/container-isolation.md` — why containers, Linux isolation, RMW consequences
+- **Clone VM Design**: `docs/archive/clone-vm-container-design.md` — clone(CLONE_VM) implementation spec (archived)
 - **Web UI Modernization**: `docs/roadmap/phase-20-web_ui_modernization.md` — Preact + SSE migration plan
 - **Build Optimization**: `docs/roadmap/phase-21-build_optimization.md` — bundle script, incremental builds
 - **Launch Tree IR**: `docs/roadmap/phase-22-launch_tree_ir.md` — IR design, WASM pipeline, validation
-- **Migration Guide**: `docs/parser-migration-guide.md` — Rust parser migration (v0.6.0+)
+- **Migration Guide**: `docs/guide/parser-migration.md` — Rust parser migration (v0.6.0+)
 
 ## Parser Parity Status
 

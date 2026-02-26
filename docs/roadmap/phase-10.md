@@ -679,9 +679,6 @@ The event_driven module is retained exclusively for web UI compatibility:
 
 ## References
 
-- [Async/Await Transformation Recommendations](../async-transformation-recommendations.md)
-- [Actor Pattern Proof-of-Concept](../actor-pattern-poc.rs)
-- [Event-Driven Architecture Documentation](../event-driven-architecture-refactoring.md)
 - [Tokio Documentation - Actors](https://tokio.rs/tokio/tutorial/channels#sending-and-receiving)
 
 ---

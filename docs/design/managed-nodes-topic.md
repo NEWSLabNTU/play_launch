@@ -7,8 +7,7 @@ custom message package and a CLI tool for users.
 
 When play_launch starts a large deployment (e.g., Autoware with ~61 processes),
 `ros2 node list` returns stale or incomplete results because the ros2 daemon's
-DDS discovery cannot keep up with the graph churn. See
-[ros2-daemon-analysis.md](ros2-daemon-analysis.md) for root cause analysis.
+DDS discovery cannot keep up with the graph churn.
 
 play_launch already knows the authoritative state of every node it manages
 (name, namespace, PID, loaded status) with zero DDS discovery lag -- but this

@@ -13,7 +13,7 @@
 
 Migrate from Python-based `dump_launch` to the Rust `play_launch_parser` submodule as the default launch file parser, with Python as an optional fallback. The Rust parser provides 5-10x performance improvement while maintaining 100% compatibility with existing record.json format.
 
-**Migration Document**: [../../tmp/MIGRATION_PLAN_RUST_PARSER.md](../../tmp/MIGRATION_PLAN_RUST_PARSER.md)
+**Migration Document**: (archived — was tmp/MIGRATION_PLAN_RUST_PARSER.md)
 
 ---
 
@@ -890,10 +890,7 @@ if args.use_python_parser {
 
 ## References
 
-- [Migration Plan Document](../../tmp/MIGRATION_PLAN_RUST_PARSER.md)
 - [play_launch_parser Repository](https://github.com/jerry73204/play_launch_parser)
-- [Parser Documentation](../../src/play_launch_parser/README.md)
-- [Parser Test Suite](../../src/play_launch_parser/tests/)
 
 ---
 

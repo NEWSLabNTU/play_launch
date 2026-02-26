@@ -162,4 +162,3 @@ Phase 14.5 is complete. The next major phase is:
 
 - [Phase 14: Python Launch File Execution](./phase-14-python_execution.md)
 - [Phase 15: Python API Type Safety](./phase-15-python_api_type_safety.md)
-- [Autoware Integration Tests](../../test/autoware_planning_simulation/)

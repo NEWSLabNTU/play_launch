@@ -263,8 +263,3 @@ If you see warnings about orphan composable nodes:
 - Check that container names in launch files match actual container node names
 - Review namespace resolution (relative vs absolute names)
 
-## See Also
-
-- [Resource Monitoring Design](resource-monitoring-design.md)
-- [Implementation Roadmap](roadmap.md)
-- [CLAUDE.md](../CLAUDE.md) - Complete project documentation

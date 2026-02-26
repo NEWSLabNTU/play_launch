@@ -238,8 +238,6 @@ Open browser to `http://localhost:8080` to access the interface.
 
 ## Future Enhancements
 
-See [Phase 9: Web UI Status Refactoring](./phase-9.md) for planned improvements.
-
 Optional future features:
 - [ ] Add filtering by status (show only failed, show only running, etc.)
 - [ ] Show sample error lines in node details

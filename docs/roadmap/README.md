@@ -15,7 +15,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Current Status
 
-**Overall Progress**: ~95% complete (17 of 18 phases complete, Phase 17 in progress, Phase 20 planned)
+**Overall Progress**: 20 of 23 phases complete (Phases 3-5 partial/planned, Phase 20 planned)
 
 **Timeline**: Started October 2025, ongoing development
 
@@ -23,28 +23,14 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Development Phases
 
-### Core Functionality
+### Core Functionality (Phases 1–7)
+
+Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logging) are complete. No separate doc files were created for these early phases.
+
+### Web UI
 
 | Phase | Status | Completion | Documentation |
 |-------|--------|------------|---------------|
-| **Phase 1**: Core Subcommand Structure | ✅ Complete | 2025-10-20 | [phase-1.md](./phase-1.md) |
-| **Phase 2**: dump_launch Integration | ✅ Complete | 2025-10-29 | [phase-2.md](./phase-2.md) |
-| **Phase 2.5**: CLI Simplification | ✅ Complete | 2025-10-29 | [phase-2.5.md](./phase-2.5.md) |
-
-### Documentation & Testing
-
-| Phase | Status | Completion | Documentation |
-|-------|--------|------------|---------------|
-| **Phase 3**: Documentation & Polish | 🔄 Partial | - | [phase-3.md](./phase-3.md) |
-| **Phase 4**: Testing & Validation | 🔄 Partial | - | [phase-4.md](./phase-4.md) |
-| **Phase 5**: Optional Enhancements | ⏳ Planned | - | [phase-5.md](./phase-5.md) |
-
-### Advanced Features
-
-| Phase | Status | Completion | Documentation |
-|-------|--------|------------|---------------|
-| **Phase 6**: I/O Helper Integration | ✅ Complete | 2025-11-02 | [phase-6.md](./phase-6.md) |
-| **Phase 7**: Logging Improvements | ✅ Complete | 2025-11-04 | [phase-7.md](./phase-7.md) |
 | **Phase 8**: Web UI | ✅ Complete | 2025-12-18 | [phase-8.md](./phase-8.md) |
 | **Phase 9**: Web UI Status Refactoring | ✅ Complete | 2026-01-17 | [phase-9.md](./phase-9.md) |
 
@@ -90,7 +76,8 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 | Phase | Status | Completion | Documentation |
 |-------|--------|------------|---------------|
-| **Phase 22**: Launch Tree IR | 🔄 In Progress | - | [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md) |
+| **Phase 22**: Launch Tree IR | ✅ Complete (22.1–22.8) | 2026-02-24 | [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md) |
+| **Phase 23**: Code Quality | ✅ Complete | 2026-02-25 | [phase-23-code_quality.md](./phase-23-code_quality.md) |
 
 ---
 
@@ -120,24 +107,21 @@ This directory contains the implementation roadmap for play_launch, organized by
   - ⏳ Remaining discrepancies: exec_name, global params, params_files, namespace in cmd
   - See [phase-17-context_unification.md](./phase-17-context_unification.md) for detailed roadmap
 
-### In Progress 🔄
-
-- 🔄 Launch Tree IR (Phase 22 - Started 2026-02-22)
-  - ⏳ IR type definitions (Expr, Action, ActionKind, LaunchProgram)
-  - ⏳ Align action parse helpers (ContainerAction, IncludeAction → deferred resolution)
-  - ⏳ XML IR builder (analyze_launch_file)
-  - ⏳ IR evaluator (LaunchProgram::evaluate → RecordJson)
-  - See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md) for detailed roadmap
-
 ### Planned ⏳
 
 - ⏳ Web UI Modernization (Phase 20) - Replace htmx + vanilla JS with Preact + htm + SSE-driven state
 - ⏳ Web UI Actor Integration (Phase 11) - Remove bridging layer, implement direct actor control
-- ⏳ Complete documentation (Phase 3)
-- ⏳ Comprehensive testing (Phase 4)
-- ⏳ Optional enhancements (Phase 5)
 
 ### Recently Completed 🎉
+
+- ✅ Code Quality (Phase 23 - Complete 2026-02-25)
+  - ✅ Large file splits, naming improvements, dead code removal, deduplication
+
+- ✅ Launch Tree IR (Phase 22.1–22.8 - Complete 2026-02-24)
+  - ✅ IR types, builder, evaluator, WASM codegen/runtime, CLI, round-trip validation (18 tests)
+
+- ✅ Build System Optimization (Phase 21 - Complete 2026-02-18)
+  - ✅ Bundle script, incremental builds, wheel platform tag, CI Docker image
 
 - ✅ Isolated Component Manager (Phase 19 - Complete 2026-02-17)
   - ✅ Consolidated ST/MT into single `component_container` binary (19.0)
@@ -245,16 +229,6 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ---
 
-## Quick Links
-
-- [Main README](../../README.md)
-- [CLAUDE.md - Development Guide](../../CLAUDE.md)
-- [CLI Interface Documentation](../cli-interface.md)
-- [Resource Monitoring Design](../resource-monitoring-design.md)
-- [I/O Helper Design](../io-helper-design.md)
-
----
-
 ## Future Phases
 
 - **Phase 20**: Web UI Modernization - See [phase-20-web_ui_modernization.md](./phase-20-web_ui_modernization.md)
@@ -264,26 +238,10 @@ This directory contains the implementation roadmap for play_launch, organized by
   - Phase 20.3: Right panel + log viewer components (RightPanel, InfoTab, LogTab)
   - Phase 20.4: Diagnostics view + cleanup (remove legacy JS, htmx)
 
-- **Phase 21**: Build System Optimization - See [phase-21-build_optimization.md](./phase-21-build_optimization.md)
-  - ✅ Phase 21.0: Extract bundle script + artifact manifest (deduplicate copy logic)
-  - ✅ Phase 21.1: Incremental build recipes in justfile
-  - ✅ Phase 21.2: Fix wheel platform tag (replace sed hack)
-  - ✅ Phase 21.3: Pre-built CI Docker image
-
-- **Phase 22**: Launch Tree IR - See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md)
-  - ✅ Phase 22.1–22.8: IR types, builder, evaluator, WASM codegen/runtime, CLI, round-trip validation
+- **Phase 22**: Launch Tree IR (remaining) - See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md)
   - Phase 22.9: Python AST compiler
   - Phase 22.10: Python integration into WASM pipeline
   - Phase 22.11: Autoware smoke tests
-
-- **Phase 23**: Code Quality - See [phase-23-code_quality.md](./phase-23-code_quality.md)
-  - Phase 23.1: Large file splits (7 files over 1000 lines)
-  - Phase 23.2: Magic numbers → named constants (30+ hardcoded values)
-  - Phase 23.3: Naming improvements
-  - Phase 23.4: Unsafe code consolidation (3 → 1 in parser)
-  - Phase 23.5: Dead code removal
-  - Phase 23.6: Code deduplication (11+ duplicated patterns)
-  - Phase 23.7: Structural issues
 
 ## Future Considerations
 

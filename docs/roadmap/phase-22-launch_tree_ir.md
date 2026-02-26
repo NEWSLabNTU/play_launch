@@ -165,8 +165,6 @@ YAML ──┼──► IR (LaunchProgram) ──► .wasm ──►│
 Python ┘                                    └─── (portable, sandboxed)
 ```
 
-Full architecture: [`docs/wasm-launch-compiler.md`](../wasm-launch-compiler.md)
-
 ### Three-Crate Architecture
 
 ```
@@ -576,8 +574,6 @@ Same pattern for containers, composable nodes, executables.
 - [x] `cargo clippy -p play_launch_wasm_common -- -D warnings` — zero warnings
 - [x] No dependencies on `wasm-encoder` or `wasmtime` (lightweight crate)
 - [x] `just test` — 353 parser + 30 integration tests pass (existing tests unaffected)
-
-Full design: [`docs/wasm-launch-compiler.md`](../wasm-launch-compiler.md)
 
 ---
 

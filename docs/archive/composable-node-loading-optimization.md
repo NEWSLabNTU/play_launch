@@ -1,3 +1,6 @@
+> **Archived**: Early composable node loading design (Phases 1-3), superseded by the
+> actor pattern (Phase 10) and fork+exec isolation (Phase 19). Kept for historical reference.
+
 # Composable Node Loading Optimization Analysis
 
 ## Status Update (2025-10-13)

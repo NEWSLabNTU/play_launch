@@ -524,9 +524,6 @@ Diff: (see compare_records.py output below)
 ## References
 
 - [Phase 13: Rust Parser Migration](./phase-13.md)
-- [Migration Plan](../../tmp/MIGRATION_PLAN_RUST_PARSER.md)
-- [play_launch_parser Documentation](../../src/play_launch_parser/README.md)
-- [Parser Test Suite](../../src/play_launch_parser/tests/)
 
 ---
 

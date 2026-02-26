@@ -315,8 +315,6 @@ Current implementation preserves these as strings. Runtime resolution in play_la
 
 - [Phase 15: Python API Type Safety](./phase-15-python_api_type_safety.md)
 - [Phase 14: Python Launch File Execution](./phase-14-python_execution.md)
-- [Python Parser as Ground Truth](../../CLAUDE.md#python-parser-as-ground-truth)
-- [Parameter File Substitution Resolution](../../CLAUDE.md#yaml-parameter-file-substitution-resolution)
 
 ---
 

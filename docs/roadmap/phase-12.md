@@ -26,7 +26,7 @@ Phase 12 has been successfully completed on 2026-01-13. All composable nodes are
 
 Refactor the architecture to merge composable node actors into container actors. Composable nodes will become "virtual members" managed entirely by their parent containers, eliminating actor coordination complexity and aligning with the actual ROS architecture where composable nodes cannot exist independently of containers.
 
-**Design Document**: [container-managed-composable-nodes-design.md](../container-managed-composable-nodes-design.md)
+**Design Document**: (archived — was container-managed-composable-nodes-design.md)
 
 ---
 
@@ -592,7 +592,4 @@ After Phase 12 completion, consider:
 
 ## References
 
-- [Design Document](../container-managed-composable-nodes-design.md)
 - [Phase 10: Actor Pattern](./phase-10.md) (prerequisite)
-- [ListNodes Verification Design](../list-nodes-verification-design.md)
-- [CLAUDE.md](../../CLAUDE.md)

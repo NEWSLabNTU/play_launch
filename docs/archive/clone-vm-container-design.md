@@ -1,14 +1,11 @@
+> **Archived**: This describes the clone(CLONE_VM) approach, replaced by fork()+exec()
+> in Phase 19. Kept for historical reference.
+
 # Design: clone(CLONE_VM) Container with Process-Level Node Isolation
 
 Custom container that spawns each composable node as a separate Linux process
 (own PID, own signal disposition) while sharing the address space for zero-copy
 intra-process communication.
-
-For background on why this approach was chosen, see
-[container-isolation-design.md](container-isolation-design.md).
-
-For implementation roadmap, see
-[roadmap/phase-19-isolated_container.md](roadmap/phase-19-isolated_container.md).
 
 ## The Idea
 
