@@ -100,8 +100,8 @@ Execution order: dead code first (smallest blast radius), file splits last (easi
 
 #### ROS constants (duplicated across crates — use single definition)
 
-- [ ] `"rclcpp_components"` in `bridge.rs`, `container.rs` → `const DEFAULT_CONTAINER_PACKAGE: &str`
-- [ ] `"component_container"` in `bridge.rs`, `container.rs` → `const DEFAULT_CONTAINER_EXECUTABLE: &str`
+- [x] `"rclcpp_components"` in `bridge.rs`, `container.rs` → `const DEFAULT_CONTAINER_PACKAGE: &str` in `actions/container.rs`
+- [x] `"component_container"` in `bridge.rs`, `container.rs` → `const DEFAULT_CONTAINER_EXECUTABLE: &str` in `actions/container.rs`
 - [x] `["jazzy","iron","humble","galactic","foxy"]` in `types.rs`, `substitutions.rs`, `bridge.rs` → `const KNOWN_ROS_DISTROS: &[&str]` (already unified in 23.2)
 - [x] `/opt/ros/humble/...` in `io_helper_client.rs` → use `ROS_DISTRO` env var with humble fallback
 
