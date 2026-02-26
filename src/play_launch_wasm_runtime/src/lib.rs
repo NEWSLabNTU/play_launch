@@ -60,11 +60,11 @@ mod tests {
     }
 
     fn expr(parts: Vec<Substitution>) -> Expr {
-        Expr(parts)
+        Expr::new(parts)
     }
 
     fn lit(s: &str) -> Expr {
-        Expr(vec![text(s)])
+        Expr::new(vec![text(s)])
     }
 
     fn action(kind: ActionKind) -> Action {

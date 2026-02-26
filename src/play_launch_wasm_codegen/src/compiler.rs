@@ -339,7 +339,7 @@ impl WasmCompiler {
     }
 
     fn collect_strings_expr(&mut self, expr: &play_launch_parser::ir::Expr) {
-        for sub in &expr.0 {
+        for sub in &expr.parts {
             self.collect_strings_substitution(sub);
         }
     }
@@ -743,20 +743,20 @@ impl WasmCompiler {
         instrs.push(Instruction::Call(begin_idx));
 
         self.compile_expr(&node.package, instrs);
-        let set_pkg_idx = self.import_func_index(imports::SET_COMP_PKG);
+        let set_pkg_idx = self.import_func_index(imports::SET_COMP_NODE_PKG);
         instrs.push(Instruction::Call(set_pkg_idx));
 
         self.compile_expr(&node.plugin, instrs);
-        let set_plugin_idx = self.import_func_index(imports::SET_COMP_PLUGIN);
+        let set_plugin_idx = self.import_func_index(imports::SET_COMP_NODE_PLUGIN);
         instrs.push(Instruction::Call(set_plugin_idx));
 
         self.compile_expr(&node.name, instrs);
-        let set_name_idx = self.import_func_index(imports::SET_COMP_NAME);
+        let set_name_idx = self.import_func_index(imports::SET_COMP_NODE_NAME);
         instrs.push(Instruction::Call(set_name_idx));
 
         if let Some(ns_expr) = &node.namespace {
             self.compile_expr(ns_expr, instrs);
-            let set_ns_idx = self.import_func_index(imports::SET_COMP_NAMESPACE);
+            let set_ns_idx = self.import_func_index(imports::SET_COMP_NODE_NAMESPACE);
             instrs.push(Instruction::Call(set_ns_idx));
         }
 
@@ -765,14 +765,14 @@ impl WasmCompiler {
             instrs.push(Instruction::I32Const(pname_off as i32));
             instrs.push(Instruction::I32Const(pname_len as i32));
             self.compile_expr(&param.value, instrs);
-            let add_param_idx = self.import_func_index(imports::ADD_COMP_PARAM);
+            let add_param_idx = self.import_func_index(imports::ADD_COMP_NODE_PARAM);
             instrs.push(Instruction::Call(add_param_idx));
         }
 
         for remap in &node.remaps {
             self.compile_expr(&remap.from, instrs);
             self.compile_expr(&remap.to, instrs);
-            let add_remap_idx = self.import_func_index(imports::ADD_COMP_REMAP);
+            let add_remap_idx = self.import_func_index(imports::ADD_COMP_NODE_REMAP);
             instrs.push(Instruction::Call(add_remap_idx));
         }
 
@@ -783,7 +783,7 @@ impl WasmCompiler {
             instrs.push(Instruction::I32Const(k_len as i32));
             instrs.push(Instruction::I32Const(v_off as i32));
             instrs.push(Instruction::I32Const(v_len as i32));
-            let add_extra_idx = self.import_func_index(imports::ADD_COMP_EXTRA_ARG);
+            let add_extra_idx = self.import_func_index(imports::ADD_COMP_NODE_EXTRA_ARG);
             instrs.push(Instruction::Call(add_extra_idx));
         }
 
@@ -853,13 +853,13 @@ fn import_signature(name: &str) -> (Vec<ValType>, Vec<ValType>) {
         imports::SET_CONTAINER_NAMESPACE => (vec![ValType::I32; 2], vec![]),
         imports::SET_CONTAINER_ARGS => (vec![ValType::I32; 2], vec![]),
         imports::BEGIN_COMPOSABLE_NODE => (vec![], vec![]),
-        imports::SET_COMP_PKG => (vec![ValType::I32; 2], vec![]),
-        imports::SET_COMP_PLUGIN => (vec![ValType::I32; 2], vec![]),
-        imports::SET_COMP_NAME => (vec![ValType::I32; 2], vec![]),
-        imports::SET_COMP_NAMESPACE => (vec![ValType::I32; 2], vec![]),
-        imports::ADD_COMP_PARAM => (vec![ValType::I32; 4], vec![]),
-        imports::ADD_COMP_REMAP => (vec![ValType::I32; 4], vec![]),
-        imports::ADD_COMP_EXTRA_ARG => (vec![ValType::I32; 4], vec![]),
+        imports::SET_COMP_NODE_PKG => (vec![ValType::I32; 2], vec![]),
+        imports::SET_COMP_NODE_PLUGIN => (vec![ValType::I32; 2], vec![]),
+        imports::SET_COMP_NODE_NAME => (vec![ValType::I32; 2], vec![]),
+        imports::SET_COMP_NODE_NAMESPACE => (vec![ValType::I32; 2], vec![]),
+        imports::ADD_COMP_NODE_PARAM => (vec![ValType::I32; 4], vec![]),
+        imports::ADD_COMP_NODE_REMAP => (vec![ValType::I32; 4], vec![]),
+        imports::ADD_COMP_NODE_EXTRA_ARG => (vec![ValType::I32; 4], vec![]),
         imports::END_COMPOSABLE_NODE => (vec![], vec![]),
         imports::END_CONTAINER => (vec![], vec![]),
 

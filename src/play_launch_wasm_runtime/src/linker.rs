@@ -1,8 +1,8 @@
 //! Host import registration: all 56 host functions on wasmtime::Linker.
 
 use crate::host::{
-    CompNodeBuilder, ContainerBuilder, ExecBuilder, LaunchHost, LoadNodeBuilder, NodeBuilder,
-    ScopeSnapshot,
+    ComposableNodeBuilder, ContainerBuilder, ExecutableBuilder, LaunchHost, LoadNodeBuilder,
+    NodeBuilder, ScopeSnapshot,
 };
 use crate::memory::{get_memory, read_guest_string, read_optional_string, write_guest_string};
 use anyhow::Result;
@@ -267,7 +267,7 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<(i32, i32)> {
             let mem = get_memory(&mut caller)?;
             let expr = read_guest_string(&mem, &caller, ptr, len)?;
-            let result = eval_simple_expr(&expr);
+            let result = eval_python_expr_simple(&expr);
             write_guest_string(&mem, &mut caller, &result)
         },
     )?;
@@ -498,7 +498,7 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
         HOST_MODULE,
         imports::BEGIN_EXECUTABLE,
         |mut caller: Caller<'_, LaunchHost>| {
-            caller.data_mut().exec_builder = Some(ExecBuilder::default());
+            caller.data_mut().exec_builder = Some(ExecutableBuilder::default());
         },
     )?;
 
@@ -649,13 +649,13 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
         HOST_MODULE,
         imports::BEGIN_COMPOSABLE_NODE,
         |mut caller: Caller<'_, LaunchHost>| {
-            caller.data_mut().comp_node_builder = Some(CompNodeBuilder::default());
+            caller.data_mut().comp_node_builder = Some(ComposableNodeBuilder::default());
         },
     )?;
 
     linker.func_wrap(
         HOST_MODULE,
-        imports::SET_COMP_PKG,
+        imports::SET_COMP_NODE_PKG,
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
@@ -668,7 +668,7 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
 
     linker.func_wrap(
         HOST_MODULE,
-        imports::SET_COMP_PLUGIN,
+        imports::SET_COMP_NODE_PLUGIN,
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
@@ -681,7 +681,7 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
 
     linker.func_wrap(
         HOST_MODULE,
-        imports::SET_COMP_NAME,
+        imports::SET_COMP_NODE_NAME,
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
@@ -694,7 +694,7 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
 
     linker.func_wrap(
         HOST_MODULE,
-        imports::SET_COMP_NAMESPACE,
+        imports::SET_COMP_NODE_NAMESPACE,
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
@@ -707,7 +707,7 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
 
     linker.func_wrap(
         HOST_MODULE,
-        imports::ADD_COMP_PARAM,
+        imports::ADD_COMP_NODE_PARAM,
         |mut caller: Caller<'_, LaunchHost>,
          name_ptr: i32,
          name_len: i32,
@@ -726,7 +726,7 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
 
     linker.func_wrap(
         HOST_MODULE,
-        imports::ADD_COMP_REMAP,
+        imports::ADD_COMP_NODE_REMAP,
         |mut caller: Caller<'_, LaunchHost>,
          from_ptr: i32,
          from_len: i32,
@@ -745,7 +745,7 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
 
     linker.func_wrap(
         HOST_MODULE,
-        imports::ADD_COMP_EXTRA_ARG,
+        imports::ADD_COMP_NODE_EXTRA_ARG,
         |mut caller: Caller<'_, LaunchHost>,
          key_ptr: i32,
          key_len: i32,
@@ -814,7 +814,7 @@ fn find_package_share_dir(package: &str) -> String {
     format!("/opt/ros/humble/share/{package}")
 }
 
-fn eval_simple_expr(expr: &str) -> String {
+fn eval_python_expr_simple(expr: &str) -> String {
     let trimmed = expr.trim();
     if let Ok(v) = trimmed.parse::<i64>() {
         return v.to_string();

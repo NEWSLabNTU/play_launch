@@ -33,7 +33,7 @@ pub struct NodeBuilder {
 
 /// Builder for executable records (SpawnExecutable).
 #[derive(Default)]
-pub struct ExecBuilder {
+pub struct ExecutableBuilder {
     pub cmd: Option<String>,
     pub name: Option<String>,
     pub args: Vec<String>,
@@ -52,7 +52,7 @@ pub struct ContainerBuilder {
 
 /// Builder for composable node declarations.
 #[derive(Default)]
-pub struct CompNodeBuilder {
+pub struct ComposableNodeBuilder {
     pub package: Option<String>,
     pub plugin: Option<String>,
     pub name: Option<String>,
@@ -71,17 +71,17 @@ pub struct LoadNodeBuilder {
 pub struct LaunchHost {
     pub context: LaunchContext,
     pub node_builder: Option<NodeBuilder>,
-    pub exec_builder: Option<ExecBuilder>,
+    pub exec_builder: Option<ExecutableBuilder>,
     pub container_builder: Option<ContainerBuilder>,
     pub load_node_builder: Option<LoadNodeBuilder>,
-    pub comp_node_builder: Option<CompNodeBuilder>,
-    pub records: Vec<NodeRecord>,
+    pub comp_node_builder: Option<ComposableNodeBuilder>,
+    pub nodes: Vec<NodeRecord>,
     pub containers: Vec<ComposableNodeContainerRecord>,
     pub load_nodes: Vec<LoadNodeRecord>,
     pub bump_offset: u32,
     pub scope_stack: Vec<ScopeSnapshot>,
     /// Composable nodes accumulated during container/load_node building
-    pub pending_comp_nodes: Vec<CompNodeBuilder>,
+    pub pending_comp_nodes: Vec<ComposableNodeBuilder>,
 }
 
 impl LaunchHost {
@@ -97,7 +97,7 @@ impl LaunchHost {
             container_builder: None,
             load_node_builder: None,
             comp_node_builder: None,
-            records: Vec::new(),
+            nodes: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),
             bump_offset: BUMP_BASE,
@@ -225,7 +225,7 @@ impl LaunchHost {
             ros_args: None,
         };
 
-        self.records.push(record);
+        self.nodes.push(record);
         Ok(())
     }
 
@@ -272,7 +272,7 @@ impl LaunchHost {
             ros_args: None,
         };
 
-        self.records.push(record);
+        self.nodes.push(record);
         Ok(())
     }
 
@@ -396,15 +396,15 @@ impl LaunchHost {
             file_data: HashMap::new(),
             lifecycle_node: Vec::new(),
             load_node: self.load_nodes,
-            node: self.records,
+            node: self.nodes,
             variables: self.context.configurations(),
         }
     }
 }
 
-/// Convert a completed CompNodeBuilder into a LoadNodeRecord.
+/// Convert a completed ComposableNodeBuilder into a LoadNodeRecord.
 fn composable_to_load_record(
-    comp: CompNodeBuilder,
+    comp: ComposableNodeBuilder,
     target_container: &str,
     default_namespace: &str,
 ) -> LoadNodeRecord {

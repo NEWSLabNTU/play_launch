@@ -296,16 +296,18 @@ impl MemberCoordinatorBuilder {
             // IMPORTANT: Pass unique_member_name so actor reports state with it
             let actor = super::container_actor::ContainerActor::new(
                 unique_member_name.clone(),
-                def.context,
-                def.config,
+                super::container_actor::ContainerActorParams {
+                    context: def.context,
+                    config: def.config,
+                    process_registry: def.process_registry,
+                    ros_node: shared_ros_node.clone(),
+                    shared_state: shared_state.clone(),
+                    use_component_events: def.use_component_events,
+                },
                 control_rx,
                 state_tx.clone(),
                 shutdown_rx.clone(),
-                def.process_registry,
                 load_control_rx,
-                shared_ros_node.clone(),
-                shared_state.clone(),
-                def.use_component_events,
             );
 
             // Get container state receiver before spawning
@@ -359,36 +361,38 @@ impl MemberCoordinatorBuilder {
                 // Get mutable reference to container actor
                 if let Some(container_actor) = container_actors.get_mut(&container_member_name) {
                     // Convert parameters and extra_args
-                    let parameters = match crate::ros::component_loader::convert_parameters_to_ros(
-                        &def.context.record.params,
-                    ) {
-                        Ok(params) => params,
-                        Err(e) => {
-                            warn!(
-                                "Failed to convert parameters for composable node '{}': {:#}",
-                                def.name, e
-                            );
-                            Vec::new()
-                        }
-                    };
+                    let parameters =
+                        match crate::ros::parameter_conversion::convert_parameters_to_ros(
+                            &def.context.record.params,
+                        ) {
+                            Ok(params) => params,
+                            Err(e) => {
+                                warn!(
+                                    "Failed to convert parameters for composable node '{}': {:#}",
+                                    def.name, e
+                                );
+                                Vec::new()
+                            }
+                        };
 
-                    let extra_args = match crate::ros::component_loader::convert_parameters_to_ros(
-                        &def.context
-                            .record
-                            .extra_args
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect::<Vec<_>>(),
-                    ) {
-                        Ok(args) => args,
-                        Err(e) => {
-                            warn!(
-                                "Failed to convert extra_args for composable node '{}': {:#}",
-                                def.name, e
-                            );
-                            Vec::new()
-                        }
-                    };
+                    let extra_args =
+                        match crate::ros::parameter_conversion::convert_parameters_to_ros(
+                            &def.context
+                                .record
+                                .extra_args
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect::<Vec<_>>(),
+                        ) {
+                            Ok(args) => args,
+                            Err(e) => {
+                                warn!(
+                                    "Failed to convert extra_args for composable node '{}': {:#}",
+                                    def.name, e
+                                );
+                                Vec::new()
+                            }
+                        };
 
                     // Convert ComposableNodeContext to ComposableNodeMetadata
                     let metadata = super::container_actor::ComposableNodeMetadata {

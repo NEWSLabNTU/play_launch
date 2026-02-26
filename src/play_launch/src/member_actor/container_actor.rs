@@ -88,38 +88,40 @@ struct ComposableNodeEntry {
     load_started_at: Option<Instant>,
 }
 
+/// Bundled configuration for constructing a [`ContainerActor`].
+///
+/// Groups the non-channel parameters that configure a container actor,
+/// reducing argument count on [`ContainerActor::new`] and [`run_container`].
+pub struct ContainerActorParams {
+    pub context: NodeContext,
+    pub config: ActorConfig,
+    pub process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
+    pub ros_node: Option<Arc<rclrs::Node>>,
+    pub shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
+    pub use_component_events: bool,
+}
+
 /// Standalone async function for running a container (Phase 5)
 ///
 /// This is the standalone function version that will be used with FuturesUnordered.
 /// Note: For containers that need composable node supervision, use ContainerActor directly
 /// to obtain container_state_rx before spawning.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_container(
     name: String,
-    context: NodeContext,
-    config: ActorConfig,
+    params: ContainerActorParams,
     control_rx: mpsc::Receiver<ControlEvent>,
     state_tx: mpsc::Sender<StateEvent>,
     shutdown_rx: watch::Receiver<bool>,
-    process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     load_control_rx: mpsc::Receiver<ContainerControlEvent>,
-    ros_node: Option<Arc<rclrs::Node>>,
-    shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
-    use_component_events: bool,
 ) -> Result<()> {
     // Create the actor and run it (wrapper approach for Phase 5)
     let actor = ContainerActor::new(
         name,
-        context,
-        config,
+        params,
         control_rx,
         state_tx,
         shutdown_rx,
-        process_registry,
         load_control_rx,
-        ros_node,
-        shared_state,
-        use_component_events,
     );
     actor.run().await
 }
@@ -215,36 +217,30 @@ impl ContainerActor {
     }
 
     /// Create a new container actor
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
-        context: NodeContext,
-        config: ActorConfig,
+        params: ContainerActorParams,
         control_rx: mpsc::Receiver<ControlEvent>,
         state_tx: mpsc::Sender<StateEvent>,
         shutdown_rx: watch::Receiver<bool>,
-        process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
         load_control_rx: mpsc::Receiver<ContainerControlEvent>,
-        ros_node: Option<Arc<rclrs::Node>>,
-        shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
-        use_component_events: bool,
     ) -> Self {
         let (container_state_tx, _container_state_rx) = watch::channel(ContainerState::Pending);
         let (load_completion_tx, load_completion_rx) = mpsc::unbounded_channel();
 
         Self {
             name,
-            context,
-            config,
+            context: params.context,
+            config: params.config,
             state: NodeState::Pending,
             control_rx,
             state_tx,
             shutdown_rx,
-            process_registry,
+            process_registry: params.process_registry,
             container_state_tx,
             composable_nodes: HashMap::new(),
             load_control_rx,
-            ros_node,
+            ros_node: params.ros_node,
             load_client: None,
             unload_client: None,
             component_event_sub: None,
@@ -253,8 +249,8 @@ impl ContainerActor {
             load_completion_tx,
             load_completion_rx,
             current_unload: None,
-            shared_state,
-            use_component_events,
+            shared_state: params.shared_state,
+            use_component_events: params.use_component_events,
         }
     }
 
@@ -560,7 +556,7 @@ impl ContainerActor {
 
         // Build LoadNode request
         let mut extra_arguments =
-            crate::ros::component_loader::convert_parameters_to_ros(&params.extra_args)?;
+            crate::ros::parameter_conversion::convert_parameters_to_ros(&params.extra_args)?;
 
         // Inject log_dir so the isolated container can redirect stdout/stderr
         if !output_dir.as_os_str().is_empty() {
@@ -588,7 +584,7 @@ impl ContainerActor {
             node_namespace: params.node_namespace.clone(),
             log_level: 0, // Default log level
             remap_rules: params.remap_rules,
-            parameters: crate::ros::component_loader::convert_parameters_to_ros(
+            parameters: crate::ros::parameter_conversion::convert_parameters_to_ros(
                 &params.parameters,
             )?,
             extra_arguments,
@@ -1100,7 +1096,7 @@ impl ContainerActor {
         }
     }
 
-    /// Handle UnloadAllComposables control event
+    /// Handle ToggleComposableAutoLoad control event
     async fn handle_toggle_composable_auto_load(&mut self, name: &str, enabled: bool) {
         debug!(
             "{}: Handling ToggleComposableAutoLoad for '{}' (enabled: {})",

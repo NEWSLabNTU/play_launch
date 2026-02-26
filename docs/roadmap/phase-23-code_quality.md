@@ -1,6 +1,6 @@
 # Phase 23: Code Quality
 
-**Status**: In Progress (23.1–23.4 complete)
+**Status**: In Progress (23.1–23.5 complete)
 **Priority**: Medium (technical debt reduction, maintainability)
 **Scope**: Parser, WASM pipeline, and main CLI/runtime crates
 
@@ -157,33 +157,29 @@ Zero unsafe blocks.
 
 #### Parser crate
 
-- [ ] `Expr(pub Vec<Substitution>)` in `ir.rs:13` — tuple struct accessed as `.0` everywhere → add named field `pub subs: Vec<Substitution>` or accessor method `fn subs(&self) -> &[Substitution]`; update all `.0` call sites
-- [ ] `get_attr("name", false)` in `xml/entity.rs` — boolean param unclear at call sites → split into `get_required_attr(name)` / `get_optional_attr(name)`; update all call sites
-- [ ] `params_remaps_to_action` in `ir_evaluator.rs:432` — name says "params_remaps" but only converts remaps → rename to `remaps_to_action`
+- [x] `Expr(pub Vec<Substitution>)` in `ir.rs` — tuple struct → named struct `Expr { pub parts: Vec<Substitution> }` with `Expr::new()` constructor; all `.0` → `.parts`
+- [x] `get_attr("name", false/true)` in `xml/entity.rs` — boolean param → `required_attr(name)` / `optional_attr(name)` + `required_attr_str` / `optional_attr_str`; 72 call sites updated
+- [x] `params_remaps_to_action` in `ir_evaluator.rs` → `remaps_to_action`
 
 #### WASM crates
 
-- [ ] `CompNodeBuilder` in `host.rs:55` — abbreviated unlike siblings (`NodeBuilder`, `ContainerBuilder`) → rename to `ComposableNodeBuilder`
-- [ ] `SET_COMP_*` constants in `wasm_common/lib.rs` — `COMP` inconsistent with full-word siblings → rename to `COMP_NODE_*` or `COMPOSABLE_NODE_*`
-- [ ] `records: Vec<NodeRecord>` in `host.rs:78` — generic name; siblings are `containers`, `load_nodes` → rename to `nodes`
-- [ ] `ExecBuilder` in `host.rs:36` — ambiguous ("exec" = executable? execution?) → rename to `ExecutableBuilder`
-- [ ] `eval_simple_expr` in `linker.rs:817` — undersells what it does (Python-style expression eval) → rename to `eval_python_expr_simple`
+- [x] `CompNodeBuilder` in `host.rs` → `ComposableNodeBuilder`
+- [x] `SET_COMP_*` / `ADD_COMP_*` constants → `SET_COMP_NODE_*` / `ADD_COMP_NODE_*` (string ABI values unchanged)
+- [x] `records: Vec<NodeRecord>` in `host.rs` → `nodes`
+- [x] `ExecBuilder` in `host.rs` → `ExecutableBuilder`
+- [x] `eval_simple_expr` in `linker.rs` → `eval_python_expr_simple`
 
 #### Main crate
 
-- [ ] `component_loader.rs` module in `ros/` — only contains parameter conversion, not loading → rename to `parameter_conversion.rs`
-- [ ] `handle_toggle_composable_auto_load` doc in `container_actor.rs:1098` — says "Handle UnloadAllComposables" (copy-paste error) → fix doc comment
-- [ ] `ContainerActor::new()` in `container_actor.rs:211` — 11 parameters, `#[allow(too_many_arguments)]` → introduce `ContainerActorConfig` struct
+- [x] `component_loader.rs` module in `ros/` → renamed to `parameter_conversion.rs`
+- [x] `handle_toggle_composable_auto_load` doc in `container_actor.rs` — fixed copy-paste error ("UnloadAllComposables" → "ToggleComposableAutoLoad")
+- [x] `ContainerActor::new()` — 11 parameters → `ContainerActorParams` struct (6 params remaining, under clippy threshold); `#[allow(too_many_arguments)]` removed from both `new()` and `run_container()`
 
 ### Verification
 
-- [ ] `cargo build --workspace --config build/ros2_cargo_config.toml` — compiles cleanly
-- [ ] `cargo clippy --workspace --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
-- [ ] `just test` — 353 parser tests pass
-- [ ] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip --config build/ros2_cargo_config.toml` — 18 WASM tests pass
-- [ ] `grep -rn '\.0\b' src/play_launch_parser/.../ir_evaluator.rs` — no bare `.0` tuple access on `Expr`
-- [ ] `grep -rn 'CompNodeBuilder' src/play_launch_wasm_runtime/` — zero matches
-- [ ] `grep -rn 'too_many_arguments' src/play_launch/src/member_actor/container_actor.rs` — zero matches
+- [x] `cargo clippy --workspace --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
+- [x] `just test` — 353 parser + 30 integration tests pass
+- [x] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip --config build/ros2_cargo_config.toml` — 18 WASM tests pass
 
 ---
 
@@ -250,7 +246,7 @@ Zero unsafe blocks.
 23.2  Code deduplication                                   complete
 23.3  Magic numbers → named constants                      complete
 23.4  Unsafe code consolidation                            complete
-23.5  Naming improvements                                  planned
+23.5  Naming improvements                                  complete
 23.6  Structural issues                                    planned
 23.7  Large file splits                                    planned
 ```

@@ -289,37 +289,37 @@ pub mod imports {
     /// Set the composable node's ROS package.
     ///
     /// Signature: `(ptr, len) -> void`
-    pub const SET_COMP_PKG: &str = "set_comp_pkg";
+    pub const SET_COMP_NODE_PKG: &str = "set_comp_pkg";
 
     /// Set the composable node's plugin class name.
     ///
     /// Signature: `(ptr, len) -> void`
-    pub const SET_COMP_PLUGIN: &str = "set_comp_plugin";
+    pub const SET_COMP_NODE_PLUGIN: &str = "set_comp_plugin";
 
     /// Set the composable node's name.
     ///
     /// Signature: `(ptr, len) -> void`
-    pub const SET_COMP_NAME: &str = "set_comp_name";
+    pub const SET_COMP_NODE_NAME: &str = "set_comp_name";
 
     /// Set the composable node's namespace.
     ///
     /// Signature: `(ptr, len) -> void`
-    pub const SET_COMP_NAMESPACE: &str = "set_comp_namespace";
+    pub const SET_COMP_NODE_NAMESPACE: &str = "set_comp_namespace";
 
     /// Add a parameter to the composable node being built.
     ///
     /// Signature: `(name_ptr, name_len, value_ptr, value_len) -> void`
-    pub const ADD_COMP_PARAM: &str = "add_comp_param";
+    pub const ADD_COMP_NODE_PARAM: &str = "add_comp_param";
 
     /// Add a topic remapping to the composable node being built.
     ///
     /// Signature: `(from_ptr, from_len, to_ptr, to_len) -> void`
-    pub const ADD_COMP_REMAP: &str = "add_comp_remap";
+    pub const ADD_COMP_NODE_REMAP: &str = "add_comp_remap";
 
     /// Add an extra argument to the composable node being built.
     ///
     /// Signature: `(name_ptr, name_len, value_ptr, value_len) -> void`
-    pub const ADD_COMP_EXTRA_ARG: &str = "add_comp_extra_arg";
+    pub const ADD_COMP_NODE_EXTRA_ARG: &str = "add_comp_extra_arg";
 
     /// Finalize the composable node being built.
     ///
@@ -401,13 +401,13 @@ pub mod imports {
         SET_CONTAINER_NAMESPACE,
         SET_CONTAINER_ARGS,
         BEGIN_COMPOSABLE_NODE,
-        SET_COMP_PKG,
-        SET_COMP_PLUGIN,
-        SET_COMP_NAME,
-        SET_COMP_NAMESPACE,
-        ADD_COMP_PARAM,
-        ADD_COMP_REMAP,
-        ADD_COMP_EXTRA_ARG,
+        SET_COMP_NODE_PKG,
+        SET_COMP_NODE_PLUGIN,
+        SET_COMP_NODE_NAME,
+        SET_COMP_NODE_NAMESPACE,
+        ADD_COMP_NODE_PARAM,
+        ADD_COMP_NODE_REMAP,
+        ADD_COMP_NODE_EXTRA_ARG,
         END_COMPOSABLE_NODE,
         END_CONTAINER,
         BEGIN_LOAD_NODE,

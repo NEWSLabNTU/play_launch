@@ -9,7 +9,7 @@ use wasm_encoder::Instruction;
 impl WasmCompiler {
     /// Compile an Expr into instructions that leave (ptr: i32, len: i32) on the stack.
     pub(crate) fn compile_expr(&mut self, expr: &Expr, instrs: &mut Vec<Instruction<'static>>) {
-        let parts = &expr.0;
+        let parts = &expr.parts;
         if parts.is_empty() {
             // Empty expression: push empty string (ptr=0, len=0)
             instrs.push(Instruction::I32Const(0));
