@@ -274,8 +274,9 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             debug!("ROS executor thread shutting down");
         });
 
-        // The executor thread will run until shutdown signal is received
-        std::mem::forget(executor_thread); // Don't block on join
+        // Detach the executor thread — dropping a JoinHandle does not join.
+        // The thread will run until the shutdown signal is received.
+        drop(executor_thread);
 
         // Wait for the node to be created
         match node_rx.recv() {

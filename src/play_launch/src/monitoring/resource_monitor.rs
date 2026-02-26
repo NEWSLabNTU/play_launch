@@ -15,6 +15,10 @@ use sysinfo::{Networks, Pid, System};
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
+/// Clock ticks per second for CPU time conversion from `/proc/[pid]/stat`.
+/// On Linux this is typically 100 (verified via `getconf CLK_TCK`).
+const CLK_TCK: f64 = 100.0;
+
 /// GPU metrics tuple: (memory_bytes, gpu_util%, mem_util%, temp_celsius, power_mw, graphics_clock_mhz, memory_clock_mhz)
 type GpuMetricsTuple = (
     Option<u64>,
@@ -428,9 +432,7 @@ impl ResourceMonitor {
 
                 // Calculate CPU percentage using /proc/[pid]/stat data (utime + stime)
                 // utime and stime are in clock ticks (jiffies)
-                // CLK_TCK on Linux is typically 100 (confirmed on this system via `getconf CLK_TCK`)
                 // Formula: ((delta_utime + delta_stime) / CLK_TCK / delta_wall_time) * 100
-                const CLK_TCK: f64 = 100.0;
                 let cpu_ticks_delta =
                     (utime.saturating_sub(prev.utime) + stime.saturating_sub(prev.stime)) as f64;
                 let cpu_time_seconds = cpu_ticks_delta / CLK_TCK;
@@ -458,7 +460,6 @@ impl ResourceMonitor {
         );
 
         // Convert total CPU time from clock ticks to seconds
-        const CLK_TCK: f64 = 100.0;
         let cpu_user_time = ((utime + stime) as f64 / CLK_TCK) as u64;
 
         Ok(ResourceMetrics {

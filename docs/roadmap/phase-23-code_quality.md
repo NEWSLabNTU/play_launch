@@ -1,6 +1,6 @@
 # Phase 23: Code Quality
 
-**Status**: In Progress (23.1–23.5 complete)
+**Status**: In Progress (23.1–23.6 complete)
 **Priority**: Medium (technical debt reduction, maintainability)
 **Scope**: Parser, WASM pipeline, and main CLI/runtime crates
 
@@ -187,21 +187,20 @@ Zero unsafe blocks.
 
 ### Work items
 
-- [ ] `import_signature()` in `compiler.rs:869` panics on unknown imports → return `Result` or use an enum for compile-time exhaustiveness
-- [ ] Builder setters in `linker.rs` (all `SET_*` handlers) silently no-op when no active builder → `anyhow::bail!` instead of silent `if let Some(...)`
-- [ ] `save_scope` doc in `wasm_common/lib.rs:108` says returns `scope_id: i32` but ABI returns nothing → fix doc comment to match actual ABI
-- [ ] `EntityExt::children()` blanket impl in parser `xml/entity.rs` returns empty Vec, conflicts with `XmlEntity::children()` inherent method → document the shadowing risk or refactor trait hierarchy
-- [ ] `mem::forget(executor_thread)` in `replay.rs:306` to avoid blocking on join → drop the `JoinHandle` instead (dropping a `std::thread::JoinHandle` does not join)
-- [ ] `CLK_TCK` hardcoded as `100.0` in `resource_monitor.rs` (×2 duplicated in same file) → single module-level `const CLK_TCK: f64` or query `sysconf(_SC_CLK_TCK)` at startup
+- [x] `import_signature()` in `compiler.rs` — panic on unknown imports → returns `anyhow::Result`; all compile methods (`compile_action`, `compile_expr`, etc.) now return `Result<()>` with `?` propagation
+- [x] Builder setters in `linker.rs` (27 `SET_*`/`ADD_*` handlers) — silent `if let Some(...)` no-op → `.context("... called without active builder")?` via `anyhow::Context`
+- [x] `save_scope`/`restore_scope` docs in `wasm_common/lib.rs` — fixed: both are stack-based `() -> void`, not scope_id-based
+- [x] `EntityExt::children()` blanket impl in `xml/entity.rs` — removed dead trait method entirely (never called through trait; `XmlEntity::children()` inherent method is the sole call target)
+- [x] `mem::forget(executor_thread)` in `replay.rs` → `drop(executor_thread)` (dropping a `JoinHandle` detaches without joining)
+- [x] `CLK_TCK` in `resource_monitor.rs` — 2 local consts → single module-level `const CLK_TCK: f64 = 100.0`
 
 ### Verification
 
-- [ ] `cargo build --workspace --config build/ros2_cargo_config.toml` — compiles cleanly
-- [ ] `cargo clippy --workspace --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
-- [ ] `just test` — 353 parser tests pass
-- [ ] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip --config build/ros2_cargo_config.toml` — 18 WASM tests pass
-- [ ] `grep -rn 'mem::forget' src/play_launch/src/` — zero matches
-- [ ] `grep -rn 'panic!' src/play_launch_wasm_codegen/` — zero matches in non-test code
+- [x] `cargo clippy --workspace --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
+- [x] `just test` — 353 parser + 30 integration tests pass
+- [x] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip --config build/ros2_cargo_config.toml` — 18 WASM tests pass
+- [x] `grep -rn 'mem::forget' src/play_launch/src/` — zero matches
+- [x] `grep -rn 'panic!' src/play_launch_wasm_codegen/` — zero matches in non-test code
 
 ---
 
@@ -247,6 +246,6 @@ Zero unsafe blocks.
 23.3  Magic numbers → named constants                      complete
 23.4  Unsafe code consolidation                            complete
 23.5  Naming improvements                                  complete
-23.6  Structural issues                                    planned
+23.6  Structural issues                                    complete
 23.7  Large file splits                                    planned
 ```

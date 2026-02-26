@@ -77,16 +77,16 @@ impl WasmCompiler {
     }
 
     /// Get the function index for an import by name, registering it if needed.
-    pub(crate) fn import_func_index(&mut self, name: &'static str) -> u32 {
+    pub(crate) fn import_func_index(&mut self, name: &'static str) -> anyhow::Result<u32> {
         // Check if already registered
         for entry in &self.imports {
             if entry.name == name {
-                return entry.func_idx;
+                return Ok(entry.func_idx);
             }
         }
         // Register with appropriate signature
-        let (params, results) = import_signature(name);
-        self.register_import(name, params, results)
+        let (params, results) = import_signature(name)?;
+        Ok(self.register_import(name, params, results))
     }
 
     /// Compile the entire IR program into a WASM module binary.
@@ -97,7 +97,7 @@ impl WasmCompiler {
         // Phase 2: Compile actions into instructions (this also registers needed imports)
         let mut instrs = Vec::new();
         for action in &program.body {
-            self.compile_action(action, &mut instrs);
+            self.compile_action(action, &mut instrs)?;
         }
         instrs.push(Instruction::End);
 
@@ -377,40 +377,42 @@ impl WasmCompiler {
 
     // --- Action compilation ---
 
-    fn compile_action(&mut self, action: &Action, instrs: &mut Vec<Instruction<'static>>) {
+    fn compile_action(&mut self, action: &Action, instrs: &mut Vec<Instruction<'static>>) -> anyhow::Result<()> {
         // Handle condition wrapping
         if let Some(ref condition) = action.condition {
-            self.compile_condition_start(condition, instrs);
-            self.compile_action_kind(&action.kind, instrs);
+            self.compile_condition_start(condition, instrs)?;
+            self.compile_action_kind(&action.kind, instrs)?;
             instrs.push(Instruction::End);
         } else {
-            self.compile_action_kind(&action.kind, instrs);
+            self.compile_action_kind(&action.kind, instrs)?;
         }
+        Ok(())
     }
 
     fn compile_condition_start(
         &mut self,
         condition: &Condition,
         instrs: &mut Vec<Instruction<'static>>,
-    ) {
+    ) -> anyhow::Result<()> {
         match condition {
             Condition::If(expr) => {
-                self.compile_expr(expr, instrs);
-                let func_idx = self.import_func_index(imports::IS_TRUTHY);
+                self.compile_expr(expr, instrs)?;
+                let func_idx = self.import_func_index(imports::IS_TRUTHY)?;
                 instrs.push(Instruction::Call(func_idx));
                 instrs.push(Instruction::If(wasm_encoder::BlockType::Empty));
             }
             Condition::Unless(expr) => {
-                self.compile_expr(expr, instrs);
-                let func_idx = self.import_func_index(imports::IS_TRUTHY);
+                self.compile_expr(expr, instrs)?;
+                let func_idx = self.import_func_index(imports::IS_TRUTHY)?;
                 instrs.push(Instruction::Call(func_idx));
                 instrs.push(Instruction::I32Eqz);
                 instrs.push(Instruction::If(wasm_encoder::BlockType::Empty));
             }
         }
+        Ok(())
     }
 
-    fn compile_action_kind(&mut self, kind: &ActionKind, instrs: &mut Vec<Instruction<'static>>) {
+    fn compile_action_kind(&mut self, kind: &ActionKind, instrs: &mut Vec<Instruction<'static>>) -> anyhow::Result<()> {
         match kind {
             ActionKind::DeclareArgument { name, default, .. } => {
                 let (name_off, name_len) = self.string_pool.intern(name);
@@ -418,12 +420,12 @@ impl WasmCompiler {
                 instrs.push(Instruction::I32Const(name_len as i32));
                 // Default value: if present compile expr, else push sentinel (0, -1)
                 if let Some(default_expr) = default {
-                    self.compile_expr(default_expr, instrs);
+                    self.compile_expr(default_expr, instrs)?;
                 } else {
                     instrs.push(Instruction::I32Const(0));
                     instrs.push(Instruction::I32Const(NO_VALUE_SENTINEL));
                 }
-                let func_idx = self.import_func_index(imports::DECLARE_ARG);
+                let func_idx = self.import_func_index(imports::DECLARE_ARG)?;
                 instrs.push(Instruction::Call(func_idx));
             }
 
@@ -431,8 +433,8 @@ impl WasmCompiler {
                 let (name_off, name_len) = self.string_pool.intern(name);
                 instrs.push(Instruction::I32Const(name_off as i32));
                 instrs.push(Instruction::I32Const(name_len as i32));
-                self.compile_expr(value, instrs);
-                let func_idx = self.import_func_index(imports::SET_VAR);
+                self.compile_expr(value, instrs)?;
+                let func_idx = self.import_func_index(imports::SET_VAR)?;
                 instrs.push(Instruction::Call(func_idx));
             }
 
@@ -440,8 +442,8 @@ impl WasmCompiler {
                 let (name_off, name_len) = self.string_pool.intern(name);
                 instrs.push(Instruction::I32Const(name_off as i32));
                 instrs.push(Instruction::I32Const(name_len as i32));
-                self.compile_expr(value, instrs);
-                let func_idx = self.import_func_index(imports::SET_ENV);
+                self.compile_expr(value, instrs)?;
+                let func_idx = self.import_func_index(imports::SET_ENV)?;
                 instrs.push(Instruction::Call(func_idx));
             }
 
@@ -449,18 +451,18 @@ impl WasmCompiler {
                 let (name_off, name_len) = self.string_pool.intern(name);
                 instrs.push(Instruction::I32Const(name_off as i32));
                 instrs.push(Instruction::I32Const(name_len as i32));
-                let func_idx = self.import_func_index(imports::UNSET_ENV);
+                let func_idx = self.import_func_index(imports::UNSET_ENV)?;
                 instrs.push(Instruction::Call(func_idx));
             }
 
             ActionKind::PushNamespace { namespace } => {
-                self.compile_expr(namespace, instrs);
-                let func_idx = self.import_func_index(imports::PUSH_NAMESPACE);
+                self.compile_expr(namespace, instrs)?;
+                let func_idx = self.import_func_index(imports::PUSH_NAMESPACE)?;
                 instrs.push(Instruction::Call(func_idx));
             }
 
             ActionKind::PopNamespace => {
-                let func_idx = self.import_func_index(imports::POP_NAMESPACE);
+                let func_idx = self.import_func_index(imports::POP_NAMESPACE)?;
                 instrs.push(Instruction::Call(func_idx));
             }
 
@@ -468,39 +470,39 @@ impl WasmCompiler {
                 let (name_off, name_len) = self.string_pool.intern(name);
                 instrs.push(Instruction::I32Const(name_off as i32));
                 instrs.push(Instruction::I32Const(name_len as i32));
-                self.compile_expr(value, instrs);
-                let func_idx = self.import_func_index(imports::SET_GLOBAL_PARAM);
+                self.compile_expr(value, instrs)?;
+                let func_idx = self.import_func_index(imports::SET_GLOBAL_PARAM)?;
                 instrs.push(Instruction::Call(func_idx));
             }
 
             ActionKind::SetRemap { from, to } => {
-                self.compile_expr(from, instrs);
-                self.compile_expr(to, instrs);
-                let func_idx = self.import_func_index(imports::SET_REMAP);
+                self.compile_expr(from, instrs)?;
+                self.compile_expr(to, instrs)?;
+                let func_idx = self.import_func_index(imports::SET_REMAP)?;
                 instrs.push(Instruction::Call(func_idx));
             }
 
             ActionKind::Group { namespace, body } => {
-                let save_idx = self.import_func_index(imports::SAVE_SCOPE);
+                let save_idx = self.import_func_index(imports::SAVE_SCOPE)?;
                 instrs.push(Instruction::Call(save_idx));
 
                 if let Some(ns_expr) = namespace {
-                    self.compile_expr(ns_expr, instrs);
-                    let push_idx = self.import_func_index(imports::PUSH_NAMESPACE);
+                    self.compile_expr(ns_expr, instrs)?;
+                    let push_idx = self.import_func_index(imports::PUSH_NAMESPACE)?;
                     instrs.push(Instruction::Call(push_idx));
                 }
 
                 for action in body {
-                    self.compile_action(action, instrs);
+                    self.compile_action(action, instrs)?;
                 }
 
-                let restore_idx = self.import_func_index(imports::RESTORE_SCOPE);
+                let restore_idx = self.import_func_index(imports::RESTORE_SCOPE)?;
                 instrs.push(Instruction::Call(restore_idx));
             }
 
             ActionKind::Include { args, body, .. } => {
                 if let Some(body) = body {
-                    let save_idx = self.import_func_index(imports::SAVE_SCOPE);
+                    let save_idx = self.import_func_index(imports::SAVE_SCOPE)?;
                     instrs.push(Instruction::Call(save_idx));
 
                     // Set include args
@@ -508,17 +510,17 @@ impl WasmCompiler {
                         let (name_off, name_len) = self.string_pool.intern(&arg.name);
                         instrs.push(Instruction::I32Const(name_off as i32));
                         instrs.push(Instruction::I32Const(name_len as i32));
-                        self.compile_expr(&arg.value, instrs);
-                        let set_var_idx = self.import_func_index(imports::SET_VAR);
+                        self.compile_expr(&arg.value, instrs)?;
+                        let set_var_idx = self.import_func_index(imports::SET_VAR)?;
                         instrs.push(Instruction::Call(set_var_idx));
                     }
 
                     // Compile included body
                     for action in &body.body {
-                        self.compile_action(action, instrs);
+                        self.compile_action(action, instrs)?;
                     }
 
-                    let restore_idx = self.import_func_index(imports::RESTORE_SCOPE);
+                    let restore_idx = self.import_func_index(imports::RESTORE_SCOPE)?;
                     instrs.push(Instruction::Call(restore_idx));
                 }
                 // If body is None (Python include), skip — same as OpaqueFunction
@@ -537,30 +539,30 @@ impl WasmCompiler {
                 respawn,
                 respawn_delay,
             } => {
-                let begin_idx = self.import_func_index(imports::BEGIN_NODE);
+                let begin_idx = self.import_func_index(imports::BEGIN_NODE)?;
                 instrs.push(Instruction::Call(begin_idx));
 
                 // Package
-                self.compile_expr(package, instrs);
-                let set_pkg_idx = self.import_func_index(imports::SET_NODE_PKG);
+                self.compile_expr(package, instrs)?;
+                let set_pkg_idx = self.import_func_index(imports::SET_NODE_PKG)?;
                 instrs.push(Instruction::Call(set_pkg_idx));
 
                 // Executable
-                self.compile_expr(executable, instrs);
-                let set_exec_idx = self.import_func_index(imports::SET_NODE_EXEC);
+                self.compile_expr(executable, instrs)?;
+                let set_exec_idx = self.import_func_index(imports::SET_NODE_EXEC)?;
                 instrs.push(Instruction::Call(set_exec_idx));
 
                 // Name (optional)
                 if let Some(name_expr) = name {
-                    self.compile_expr(name_expr, instrs);
-                    let set_name_idx = self.import_func_index(imports::SET_NODE_NAME);
+                    self.compile_expr(name_expr, instrs)?;
+                    let set_name_idx = self.import_func_index(imports::SET_NODE_NAME)?;
                     instrs.push(Instruction::Call(set_name_idx));
                 }
 
                 // Namespace (optional)
                 if let Some(ns_expr) = namespace {
-                    self.compile_expr(ns_expr, instrs);
-                    let set_ns_idx = self.import_func_index(imports::SET_NODE_NAMESPACE);
+                    self.compile_expr(ns_expr, instrs)?;
+                    let set_ns_idx = self.import_func_index(imports::SET_NODE_NAMESPACE)?;
                     instrs.push(Instruction::Call(set_ns_idx));
                 }
 
@@ -569,91 +571,91 @@ impl WasmCompiler {
                     let (pname_off, pname_len) = self.string_pool.intern(&param.name);
                     instrs.push(Instruction::I32Const(pname_off as i32));
                     instrs.push(Instruction::I32Const(pname_len as i32));
-                    self.compile_expr(&param.value, instrs);
-                    let add_param_idx = self.import_func_index(imports::ADD_NODE_PARAM);
+                    self.compile_expr(&param.value, instrs)?;
+                    let add_param_idx = self.import_func_index(imports::ADD_NODE_PARAM)?;
                     instrs.push(Instruction::Call(add_param_idx));
                 }
 
                 // Param files
                 for pf in param_files {
-                    self.compile_expr(pf, instrs);
-                    let add_pf_idx = self.import_func_index(imports::ADD_NODE_PARAM_FILE);
+                    self.compile_expr(pf, instrs)?;
+                    let add_pf_idx = self.import_func_index(imports::ADD_NODE_PARAM_FILE)?;
                     instrs.push(Instruction::Call(add_pf_idx));
                 }
 
                 // Remaps
                 for remap in remaps {
-                    self.compile_expr(&remap.from, instrs);
-                    self.compile_expr(&remap.to, instrs);
-                    let add_remap_idx = self.import_func_index(imports::ADD_NODE_REMAP);
+                    self.compile_expr(&remap.from, instrs)?;
+                    self.compile_expr(&remap.to, instrs)?;
+                    let add_remap_idx = self.import_func_index(imports::ADD_NODE_REMAP)?;
                     instrs.push(Instruction::Call(add_remap_idx));
                 }
 
                 // Environment
                 for env_decl in env {
-                    self.compile_expr(&env_decl.name, instrs);
-                    self.compile_expr(&env_decl.value, instrs);
-                    let add_env_idx = self.import_func_index(imports::ADD_NODE_ENV);
+                    self.compile_expr(&env_decl.name, instrs)?;
+                    self.compile_expr(&env_decl.value, instrs)?;
+                    let add_env_idx = self.import_func_index(imports::ADD_NODE_ENV)?;
                     instrs.push(Instruction::Call(add_env_idx));
                 }
 
                 // Args
                 if let Some(args_expr) = args {
-                    self.compile_expr(args_expr, instrs);
-                    let set_args_idx = self.import_func_index(imports::SET_NODE_ARGS);
+                    self.compile_expr(args_expr, instrs)?;
+                    let set_args_idx = self.import_func_index(imports::SET_NODE_ARGS)?;
                     instrs.push(Instruction::Call(set_args_idx));
                 }
 
                 // Respawn
                 if let Some(respawn_expr) = respawn {
-                    self.compile_expr(respawn_expr, instrs);
-                    let set_respawn_idx = self.import_func_index(imports::SET_NODE_RESPAWN);
+                    self.compile_expr(respawn_expr, instrs)?;
+                    let set_respawn_idx = self.import_func_index(imports::SET_NODE_RESPAWN)?;
                     instrs.push(Instruction::Call(set_respawn_idx));
                 }
 
                 // Respawn delay
                 if let Some(delay_expr) = respawn_delay {
-                    self.compile_expr(delay_expr, instrs);
-                    let set_delay_idx = self.import_func_index(imports::SET_NODE_RESPAWN_DELAY);
+                    self.compile_expr(delay_expr, instrs)?;
+                    let set_delay_idx = self.import_func_index(imports::SET_NODE_RESPAWN_DELAY)?;
                     instrs.push(Instruction::Call(set_delay_idx));
                 }
 
-                let end_idx = self.import_func_index(imports::END_NODE);
+                let end_idx = self.import_func_index(imports::END_NODE)?;
                 instrs.push(Instruction::Call(end_idx));
             }
 
             ActionKind::SpawnExecutable { cmd, name, args, env } => {
-                let begin_idx = self.import_func_index(imports::BEGIN_EXECUTABLE);
+                let begin_idx = self.import_func_index(imports::BEGIN_EXECUTABLE)?;
                 instrs.push(Instruction::Call(begin_idx));
 
                 // Cmd
-                self.compile_expr(cmd, instrs);
-                let set_cmd_idx = self.import_func_index(imports::SET_EXEC_CMD);
+                self.compile_expr(cmd, instrs)?;
+                let set_cmd_idx = self.import_func_index(imports::SET_EXEC_CMD)?;
                 instrs.push(Instruction::Call(set_cmd_idx));
 
                 // Name (optional)
                 if let Some(name_expr) = name {
-                    self.compile_expr(name_expr, instrs);
-                    let set_name_idx = self.import_func_index(imports::SET_EXEC_NAME);
+                    self.compile_expr(name_expr, instrs)?;
+                    let set_name_idx = self.import_func_index(imports::SET_EXEC_NAME)?;
                     instrs.push(Instruction::Call(set_name_idx));
                 }
 
                 // Args
                 for arg in args {
-                    self.compile_expr(arg, instrs);
-                    let add_arg_idx = self.import_func_index(imports::ADD_EXEC_ARG);
+                    self.compile_expr(arg, instrs)?;
+                    let add_arg_idx = self.import_func_index(imports::ADD_EXEC_ARG)?;
                     instrs.push(Instruction::Call(add_arg_idx));
                 }
 
                 // Environment
                 for env_decl in env {
-                    self.compile_expr(&env_decl.name, instrs);
-                    self.compile_expr(&env_decl.value, instrs);
-                    let add_env_idx = self.import_func_index(imports::ADD_EXEC_ENV);
+                    self.compile_expr(&env_decl.name, instrs)?;
+                    self.compile_expr(&env_decl.value, instrs)?;
+                    let add_env_idx = self.import_func_index(imports::ADD_EXEC_ENV)?;
                     instrs.push(Instruction::Call(add_env_idx));
                 }
 
-                let end_idx = self.import_func_index(imports::END_EXECUTABLE);
+                let end_idx = self.import_func_index(imports::END_EXECUTABLE)?;
                 instrs.push(Instruction::Call(end_idx));
             }
 
@@ -665,51 +667,51 @@ impl WasmCompiler {
                 args,
                 nodes,
             } => {
-                let begin_idx = self.import_func_index(imports::BEGIN_CONTAINER);
+                let begin_idx = self.import_func_index(imports::BEGIN_CONTAINER)?;
                 instrs.push(Instruction::Call(begin_idx));
 
-                self.compile_expr(package, instrs);
-                let set_pkg_idx = self.import_func_index(imports::SET_CONTAINER_PKG);
+                self.compile_expr(package, instrs)?;
+                let set_pkg_idx = self.import_func_index(imports::SET_CONTAINER_PKG)?;
                 instrs.push(Instruction::Call(set_pkg_idx));
 
-                self.compile_expr(executable, instrs);
-                let set_exec_idx = self.import_func_index(imports::SET_CONTAINER_EXEC);
+                self.compile_expr(executable, instrs)?;
+                let set_exec_idx = self.import_func_index(imports::SET_CONTAINER_EXEC)?;
                 instrs.push(Instruction::Call(set_exec_idx));
 
-                self.compile_expr(name, instrs);
-                let set_name_idx = self.import_func_index(imports::SET_CONTAINER_NAME);
+                self.compile_expr(name, instrs)?;
+                let set_name_idx = self.import_func_index(imports::SET_CONTAINER_NAME)?;
                 instrs.push(Instruction::Call(set_name_idx));
 
                 if let Some(ns_expr) = namespace {
-                    self.compile_expr(ns_expr, instrs);
-                    let set_ns_idx = self.import_func_index(imports::SET_CONTAINER_NAMESPACE);
+                    self.compile_expr(ns_expr, instrs)?;
+                    let set_ns_idx = self.import_func_index(imports::SET_CONTAINER_NAMESPACE)?;
                     instrs.push(Instruction::Call(set_ns_idx));
                 }
 
                 if let Some(args_expr) = args {
-                    self.compile_expr(args_expr, instrs);
-                    let set_args_idx = self.import_func_index(imports::SET_CONTAINER_ARGS);
+                    self.compile_expr(args_expr, instrs)?;
+                    let set_args_idx = self.import_func_index(imports::SET_CONTAINER_ARGS)?;
                     instrs.push(Instruction::Call(set_args_idx));
                 }
 
                 for node in nodes {
-                    self.compile_composable_node(node, instrs);
+                    self.compile_composable_node(node, instrs)?;
                 }
 
-                let end_idx = self.import_func_index(imports::END_CONTAINER);
+                let end_idx = self.import_func_index(imports::END_CONTAINER)?;
                 instrs.push(Instruction::Call(end_idx));
             }
 
             ActionKind::LoadComposableNode { target, nodes } => {
-                self.compile_expr(target, instrs);
-                let begin_idx = self.import_func_index(imports::BEGIN_LOAD_NODE);
+                self.compile_expr(target, instrs)?;
+                let begin_idx = self.import_func_index(imports::BEGIN_LOAD_NODE)?;
                 instrs.push(Instruction::Call(begin_idx));
 
                 for node in nodes {
-                    self.compile_composable_node(node, instrs);
+                    self.compile_composable_node(node, instrs)?;
                 }
 
-                let end_idx = self.import_func_index(imports::END_LOAD_NODE);
+                let end_idx = self.import_func_index(imports::END_LOAD_NODE)?;
                 instrs.push(Instruction::Call(end_idx));
             }
 
@@ -717,46 +719,48 @@ impl WasmCompiler {
                 // Skip — nothing to compile
             }
         }
+        Ok(())
     }
 
     fn compile_composable_node(
         &mut self,
         node: &ComposableNodeDecl,
         instrs: &mut Vec<Instruction<'static>>,
-    ) {
+    ) -> anyhow::Result<()> {
         // Handle condition on composable node
         if let Some(ref condition) = node.condition {
-            self.compile_condition_start(condition, instrs);
-            self.compile_composable_node_body(node, instrs);
+            self.compile_condition_start(condition, instrs)?;
+            self.compile_composable_node_body(node, instrs)?;
             instrs.push(Instruction::End);
         } else {
-            self.compile_composable_node_body(node, instrs);
+            self.compile_composable_node_body(node, instrs)?;
         }
+        Ok(())
     }
 
     fn compile_composable_node_body(
         &mut self,
         node: &ComposableNodeDecl,
         instrs: &mut Vec<Instruction<'static>>,
-    ) {
-        let begin_idx = self.import_func_index(imports::BEGIN_COMPOSABLE_NODE);
+    ) -> anyhow::Result<()> {
+        let begin_idx = self.import_func_index(imports::BEGIN_COMPOSABLE_NODE)?;
         instrs.push(Instruction::Call(begin_idx));
 
-        self.compile_expr(&node.package, instrs);
-        let set_pkg_idx = self.import_func_index(imports::SET_COMP_NODE_PKG);
+        self.compile_expr(&node.package, instrs)?;
+        let set_pkg_idx = self.import_func_index(imports::SET_COMP_NODE_PKG)?;
         instrs.push(Instruction::Call(set_pkg_idx));
 
-        self.compile_expr(&node.plugin, instrs);
-        let set_plugin_idx = self.import_func_index(imports::SET_COMP_NODE_PLUGIN);
+        self.compile_expr(&node.plugin, instrs)?;
+        let set_plugin_idx = self.import_func_index(imports::SET_COMP_NODE_PLUGIN)?;
         instrs.push(Instruction::Call(set_plugin_idx));
 
-        self.compile_expr(&node.name, instrs);
-        let set_name_idx = self.import_func_index(imports::SET_COMP_NODE_NAME);
+        self.compile_expr(&node.name, instrs)?;
+        let set_name_idx = self.import_func_index(imports::SET_COMP_NODE_NAME)?;
         instrs.push(Instruction::Call(set_name_idx));
 
         if let Some(ns_expr) = &node.namespace {
-            self.compile_expr(ns_expr, instrs);
-            let set_ns_idx = self.import_func_index(imports::SET_COMP_NODE_NAMESPACE);
+            self.compile_expr(ns_expr, instrs)?;
+            let set_ns_idx = self.import_func_index(imports::SET_COMP_NODE_NAMESPACE)?;
             instrs.push(Instruction::Call(set_ns_idx));
         }
 
@@ -764,15 +768,15 @@ impl WasmCompiler {
             let (pname_off, pname_len) = self.string_pool.intern(&param.name);
             instrs.push(Instruction::I32Const(pname_off as i32));
             instrs.push(Instruction::I32Const(pname_len as i32));
-            self.compile_expr(&param.value, instrs);
-            let add_param_idx = self.import_func_index(imports::ADD_COMP_NODE_PARAM);
+            self.compile_expr(&param.value, instrs)?;
+            let add_param_idx = self.import_func_index(imports::ADD_COMP_NODE_PARAM)?;
             instrs.push(Instruction::Call(add_param_idx));
         }
 
         for remap in &node.remaps {
-            self.compile_expr(&remap.from, instrs);
-            self.compile_expr(&remap.to, instrs);
-            let add_remap_idx = self.import_func_index(imports::ADD_COMP_NODE_REMAP);
+            self.compile_expr(&remap.from, instrs)?;
+            self.compile_expr(&remap.to, instrs)?;
+            let add_remap_idx = self.import_func_index(imports::ADD_COMP_NODE_REMAP)?;
             instrs.push(Instruction::Call(add_remap_idx));
         }
 
@@ -783,20 +787,21 @@ impl WasmCompiler {
             instrs.push(Instruction::I32Const(k_len as i32));
             instrs.push(Instruction::I32Const(v_off as i32));
             instrs.push(Instruction::I32Const(v_len as i32));
-            let add_extra_idx = self.import_func_index(imports::ADD_COMP_NODE_EXTRA_ARG);
+            let add_extra_idx = self.import_func_index(imports::ADD_COMP_NODE_EXTRA_ARG)?;
             instrs.push(Instruction::Call(add_extra_idx));
         }
 
-        let end_idx = self.import_func_index(imports::END_COMPOSABLE_NODE);
+        let end_idx = self.import_func_index(imports::END_COMPOSABLE_NODE)?;
         instrs.push(Instruction::Call(end_idx));
+        Ok(())
     }
 }
 
 use play_launch_parser::substitution::Substitution;
 
 /// Return the (params, results) signature for a given host import name.
-fn import_signature(name: &str) -> (Vec<ValType>, Vec<ValType>) {
-    match name {
+fn import_signature(name: &str) -> anyhow::Result<(Vec<ValType>, Vec<ValType>)> {
+    Ok(match name {
         // Context operations — no return
         imports::DECLARE_ARG => (vec![ValType::I32; 4], vec![]),       // name_ptr, name_len, default_ptr, default_len
         imports::SET_VAR => (vec![ValType::I32; 4], vec![]),           // name_ptr, name_len, val_ptr, val_len
@@ -867,6 +872,6 @@ fn import_signature(name: &str) -> (Vec<ValType>, Vec<ValType>) {
         imports::BEGIN_LOAD_NODE => (vec![ValType::I32; 2], vec![]),
         imports::END_LOAD_NODE => (vec![], vec![]),
 
-        _ => panic!("Unknown import: {name}"),
-    }
+        _ => anyhow::bail!("Unknown import: {name}"),
+    })
 }

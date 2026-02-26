@@ -103,14 +103,14 @@ pub mod imports {
     /// Signature: `(from_ptr, from_len, to_ptr, to_len) -> void`
     pub const SET_REMAP: &str = "set_remap";
 
-    /// Save the current scope state. Returns a scope ID for later restoration.
+    /// Save the current scope state (pushes onto internal stack).
     ///
-    /// Signature: `() -> scope_id: i32`
+    /// Signature: `() -> void`
     pub const SAVE_SCOPE: &str = "save_scope";
 
-    /// Restore a previously saved scope state.
+    /// Restore the most recently saved scope state (pops from internal stack).
     ///
-    /// Signature: `(scope_id: i32) -> void`
+    /// Signature: `() -> void`
     pub const RESTORE_SCOPE: &str = "restore_scope";
 
     // --- Package resolution ---
