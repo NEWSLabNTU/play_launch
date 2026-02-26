@@ -115,10 +115,19 @@ verify-io-helper:
         exit 1
     fi
 
-# Clean all build artifacts
+# Clean build artifacts
 clean:
     rm -rf build install log dist target
+    rm -rf tests/target
+    rm -rf src/play_launch_parser/target src/play_launch_parser/build src/play_launch_parser/install src/play_launch_parser/log
+    rm -rf .cargo/config.toml
+    rm -rf play_log tmp *.egg-info
     scripts/bundle_wheel.sh --clean
+
+# Deep clean (clean + node_modules, __pycache__, etc.)
+clean-all: clean
+    rm -rf node_modules __pycache__ python/**/__pycache__
+    rm -f record.json junit.xml .tmp-extracted.js .tmp-extracted.css
 
 # Build source distribution
 build-sdist:
