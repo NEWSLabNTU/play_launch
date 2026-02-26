@@ -7,6 +7,7 @@ pub mod launch;
 pub mod plot;
 pub mod replay;
 pub mod run;
+pub(crate) mod signal_handler;
 
 #[cfg(feature = "wasm-compile")]
 pub mod compile;

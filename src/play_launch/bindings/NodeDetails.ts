@@ -29,4 +29,8 @@ respawn_delay?: number | null,
 /**
  * Auto-load when container starts (for composable nodes)
  */
-auto_load?: boolean | null, };
+auto_load?: boolean | null, 
+/**
+ * Whether this composable node has its own log files (isolated mode)
+ */
+has_own_logs: boolean, };

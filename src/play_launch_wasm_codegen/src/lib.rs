@@ -2,6 +2,7 @@
 
 mod compiler;
 mod expr;
+mod signatures;
 mod string_pool;
 
 pub use compiler::WasmCompiler;

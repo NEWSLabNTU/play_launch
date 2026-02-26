@@ -1,4 +1,7 @@
 //! Host import registration: all 56 host functions on wasmtime::Linker.
+//!
+//! Organized by domain: context ops, resolution ops, node builder,
+//! executable builder, container builder, composable node builder.
 
 use crate::host::{
     ComposableNodeBuilder, ContainerBuilder, ExecutableBuilder, LaunchHost, LoadNodeBuilder,
@@ -11,8 +14,19 @@ use play_launch_wasm_common::{imports, HOST_MODULE};
 use wasmtime::{Caller, Linker};
 
 pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
-    // --- Context operations ---
+    register_context_ops(linker)?;
+    register_resolution_ops(linker)?;
+    register_node_builder(linker)?;
+    register_exec_builder(linker)?;
+    register_container_builder(linker)?;
+    register_composable_node_builder(linker)?;
+    register_load_node(linker)?;
+    Ok(())
+}
 
+/// Context operations: declare_arg, set_var, resolve_var, set_env, unset_env,
+/// push/pop namespace, set_global_param, set_remap, save/restore scope.
+fn register_context_ops(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(
         HOST_MODULE,
         imports::DECLARE_ARG,
@@ -197,8 +211,12 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
         },
     )?;
 
-    // --- Package resolution ---
+    Ok(())
+}
 
+/// Resolution operations: package share lookup, exec path resolution,
+/// env var evaluation, command evaluation, python expr, truthiness, concat, equals.
+fn register_resolution_ops(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(
         HOST_MODULE,
         imports::FIND_PACKAGE_SHARE,
@@ -226,8 +244,6 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
             write_guest_string(&mem, &mut caller, &path)
         },
     )?;
-
-    // --- Substitution evaluation ---
 
     linker.func_wrap(
         HOST_MODULE,
@@ -282,8 +298,6 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
         },
     )?;
 
-    // --- String operations ---
-
     linker.func_wrap(
         HOST_MODULE,
         imports::CONCAT,
@@ -317,8 +331,11 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
         },
     )?;
 
-    // --- Node builder ---
+    Ok(())
+}
 
+/// Node builder operations: begin_node, set_node_*, add_node_*, end_node.
+fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(HOST_MODULE, imports::BEGIN_NODE, |mut caller: Caller<'_, LaunchHost>| {
         caller.data_mut().node_builder = Some(NodeBuilder::default());
     })?;
@@ -492,8 +509,11 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
         },
     )?;
 
-    // --- Executable builder ---
+    Ok(())
+}
 
+/// Executable builder operations: begin_executable, set_exec_*, add_exec_*, end_executable.
+fn register_exec_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(
         HOST_MODULE,
         imports::BEGIN_EXECUTABLE,
@@ -568,8 +588,11 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
         },
     )?;
 
-    // --- Container builder ---
+    Ok(())
+}
 
+/// Container builder operations: begin_container, set_container_*, end_container.
+fn register_container_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(
         HOST_MODULE,
         imports::BEGIN_CONTAINER,
@@ -643,8 +666,19 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
         },
     )?;
 
-    // --- Composable node builder ---
+    linker.func_wrap(
+        HOST_MODULE,
+        imports::END_CONTAINER,
+        |mut caller: Caller<'_, LaunchHost>| -> Result<()> {
+            caller.data_mut().end_container()
+        },
+    )?;
 
+    Ok(())
+}
+
+/// Composable node builder operations: begin/set/add/end composable node.
+fn register_composable_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(
         HOST_MODULE,
         imports::BEGIN_COMPOSABLE_NODE,
@@ -770,16 +804,11 @@ pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
         },
     )?;
 
-    linker.func_wrap(
-        HOST_MODULE,
-        imports::END_CONTAINER,
-        |mut caller: Caller<'_, LaunchHost>| -> Result<()> {
-            caller.data_mut().end_container()
-        },
-    )?;
+    Ok(())
+}
 
-    // --- Load composable node ---
-
+/// Load composable node operations: begin_load_node, end_load_node.
+fn register_load_node(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(
         HOST_MODULE,
         imports::BEGIN_LOAD_NODE,

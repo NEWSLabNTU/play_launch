@@ -1,6 +1,6 @@
 # Phase 23: Code Quality
 
-**Status**: In Progress (23.1–23.6 complete)
+**Status**: Complete (23.1–23.7)
 **Priority**: Medium (technical debt reduction, maintainability)
 **Scope**: Parser, WASM pipeline, and main CLI/runtime crates
 
@@ -210,31 +210,30 @@ Zero unsafe blocks.
 
 #### Parser crate (`play_launch_parser`)
 
-- [ ] `python/api/launch_ros.rs` (2607 lines) → split into `python/api/launch_ros/{node,lifecycle_node,container,load_composable,push_namespace}.rs` with `mod.rs` re-exporting
-- [ ] `python/api/substitutions.rs` (1549 lines) → split into `python/api/substitutions/{conditional,lookup,package}.rs` with `mod.rs` re-exporting
-- [ ] `python/api/actions.rs` (1350 lines) → split into `python/api/actions/{declare_argument,group,include,opaque_function,...}.rs` with `mod.rs` re-exporting
-- [ ] `substitution/types.rs` (1358 lines) → extract expression evaluator (~250 lines) to `substitution/eval.rs`
+- [x] `python/api/launch_ros.rs` (2607 lines) → `launch_ros/` directory: `mod.rs` (292), `node.rs` (537), `container.rs` (304), `composable_node.rs` (370), `lifecycle_node.rs` (431), `load_composable.rs` (508), `push_namespace.rs` (85), `helpers.rs` (150)
+- [x] `python/api/substitutions.rs` (1221 lines) → `substitutions/` directory: `mod.rs` (177), `conditional.rs` (296), `lookup.rs` (254), `package.rs` (543)
+- [x] `python/api/actions.rs` (1348 lines) → `actions/` directory: `mod.rs` (24), `declare_argument.rs` (86), `opaque_function.rs` (168), `group.rs` (101), `include.rs` (204), `simple_actions.rs` (353), `configuration.rs` (453)
+- [x] `substitution/types.rs` (1361→991 lines) → extracted expression evaluator (378 lines) to `substitution/eval.rs`
 
 #### Main crate (`play_launch`)
 
-- [ ] `member_actor/container_actor.rs` (2187 lines) → extract `service_calls.rs` (LoadNode/UnloadNode, ~260 lines), `component_events.rs` (event handling, ~200 lines); refactor `handle_running` (345-line `tokio::select!` with 7 branches) into per-branch methods
-- [ ] `monitoring/resource_monitor.rs` (1344 lines) → extract `/proc` parsing to `proc_parser.rs`, CSV writing to `csv_writer.rs`, system stats to `system_stats.rs`
-- [ ] `commands/replay.rs` (1197 lines) → extract signal handling to `signal_handler.rs` (shared code already in `common.rs` from 23.2)
-- [ ] `member_actor/coordinator.rs` (1161 lines) → consider splitting builder/handle/runner into submodules
+- [x] `member_actor/container_actor.rs` (2136→619 lines) → `container_actor/` directory: `mod.rs` (619), `service_calls.rs` (303), `component_events.rs` (294), `composable_nodes.rs` (593), `process_lifecycle.rs` (461)
+- [x] `monitoring/resource_monitor.rs` (1345→600 lines) → extracted `proc_parser.rs` (172), `csv_writer.rs` (387), `system_stats.rs` (273)
+- [x] `commands/replay.rs` (1137→631 lines) → extracted `signal_handler.rs` (519)
+- [x] `member_actor/coordinator.rs` (1174 lines) → `coordinator/` directory: `mod.rs` (59), `builder.rs` (486), `handle.rs` (568), `runner.rs` (121)
 
 #### WASM crates
 
-- [ ] `wasm_codegen/compiler.rs` (871 lines) → extract `import_signature()` lookup table; consider splitting string collection from action compilation
-- [ ] `wasm_runtime/linker.rs` (836 lines) → split `register_imports()` by domain (context ops, node builder, container builder, composable node builder)
+- [x] `wasm_codegen/compiler.rs` (877→801 lines) → extracted `signatures.rs` (81 lines) with `import_signature()` lookup table
+- [x] `wasm_runtime/linker.rs` (836→865 lines) → split `register_imports()` into 7 domain-specific sub-functions (context ops, resolution, node/exec/container/composable-node/load-node builders)
 
 ### Verification
 
-- [ ] `cargo build --workspace --config build/ros2_cargo_config.toml` — compiles cleanly
-- [ ] `cargo clippy --workspace --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
-- [ ] `just test` — 353 parser tests pass
-- [ ] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip --config build/ros2_cargo_config.toml` — 18 WASM tests pass
-- [ ] No source file in `src/play_launch/src/` exceeds 800 lines: `wc -l src/play_launch/src/**/*.rs | sort -rn | head -5`
-- [ ] No source file in parser crate exceeds 1000 lines (non-test): `wc -l src/play_launch_parser/.../**/*.rs | sort -rn | head -5`
+- [x] `cargo clippy --workspace --all-targets --config build/ros2_cargo_config.toml -- -D warnings` — clean
+- [x] `just test` — 353 parser + 30 integration tests pass
+- [x] `cargo test -p play_launch_wasm_runtime --test fixture_round_trip --config build/ros2_cargo_config.toml` — 18 WASM tests pass
+- [x] All main crate files ≤800 lines (largest: `replay.rs` 631, `container_actor/mod.rs` 619, `resource_monitor.rs` 600)
+- [x] All parser crate files ≤1000 lines (largest: `types.rs` 991)
 
 ---
 
@@ -247,5 +246,5 @@ Zero unsafe blocks.
 23.4  Unsafe code consolidation                            complete
 23.5  Naming improvements                                  complete
 23.6  Structural issues                                    complete
-23.7  Large file splits                                    planned
+23.7  Large file splits                                    complete
 ```

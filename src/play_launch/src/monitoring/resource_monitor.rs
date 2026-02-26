@@ -1,13 +1,8 @@
-use csv::Writer;
 use eyre::{Result, WrapErr};
-use nvml_wrapper::{
-    enum_wrappers::device::{Clock, TemperatureSensor},
-    Nvml,
-};
+use nvml_wrapper::Nvml;
 use std::{
     collections::HashMap,
-    fs::{self, File},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
@@ -15,20 +10,14 @@ use sysinfo::{Networks, Pid, System};
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
-/// Clock ticks per second for CPU time conversion from `/proc/[pid]/stat`.
-/// On Linux this is typically 100 (verified via `getconf CLK_TCK`).
-const CLK_TCK: f64 = 100.0;
+use super::{
+    csv_writer::CsvState,
+    proc_parser::{self, CLK_TCK},
+    system_stats,
+};
 
-/// GPU metrics tuple: (memory_bytes, gpu_util%, mem_util%, temp_celsius, power_mw, graphics_clock_mhz, memory_clock_mhz)
-type GpuMetricsTuple = (
-    Option<u64>,
-    Option<u32>,
-    Option<u32>,
-    Option<u32>,
-    Option<u32>,
-    Option<u32>,
-    Option<u32>,
-);
+// Re-export types that external code references via `resource_monitor::`.
+pub use super::{csv_writer::initialize_metrics_csv, system_stats::SystemStats};
 
 /// Resource metrics for a single process at a point in time
 #[derive(Debug, Clone)]
@@ -95,7 +84,7 @@ pub enum ProcessState {
 }
 
 impl ProcessState {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             ProcessState::Running => "Running",
             ProcessState::Sleeping => "Sleeping",
@@ -123,129 +112,27 @@ struct PreviousSample {
     stime: u64, // System CPU time in clock ticks
 }
 
-/// System-wide resource metrics at a point in time
-#[derive(Debug, Clone)]
-pub struct SystemStats {
-    pub timestamp: SystemTime,
-
-    // CPU metrics
-    pub cpu_percent: f64, // Global CPU usage (all cores avg)
-    pub cpu_count: usize, // Number of CPU cores
-
-    // Memory metrics
-    pub total_memory_bytes: u64,
-    pub used_memory_bytes: u64,
-    pub available_memory_bytes: u64,
-    pub total_swap_bytes: u64,
-    pub used_swap_bytes: u64,
-
-    // Network metrics (aggregate all interfaces)
-    pub network_rx_bytes: u64,            // Total received (cumulative)
-    pub network_tx_bytes: u64,            // Total transmitted (cumulative)
-    pub network_rx_rate_bps: Option<f64>, // Receive rate (bytes/sec)
-    pub network_tx_rate_bps: Option<f64>, // Transmit rate (bytes/sec)
-
-    // Disk I/O metrics (system-wide from /proc/diskstats)
-    pub disk_read_bytes: u64,             // Cumulative
-    pub disk_write_bytes: u64,            // Cumulative
-    pub disk_read_rate_bps: Option<f64>,  // Bytes/sec
-    pub disk_write_rate_bps: Option<f64>, // Bytes/sec
-
-    // Jetson GPU metrics (from jtop)
-    pub gpu_utilization_percent: Option<f64>,
-    pub gpu_memory_used_bytes: Option<u64>,
-    pub gpu_memory_total_bytes: Option<u64>,
-    pub gpu_frequency_mhz: Option<u32>,
-    pub gpu_power_milliwatts: Option<u32>,
-    pub gpu_temperature_celsius: Option<i32>,
-}
-
-/// Previous system sample for rate calculation
-#[derive(Debug, Clone)]
-struct PreviousSystemSample {
-    timestamp: SystemTime,
-    network_rx_bytes: u64,
-    network_tx_bytes: u64,
-    disk_read_bytes: u64,
-    disk_write_bytes: u64,
-}
-
 /// Resource monitor with sysinfo and NVML integration
 pub struct ResourceMonitor {
     system: System,
-    networks: Networks,                      // Network interface monitor
-    csv_writers: HashMap<u32, Writer<File>>, // PID -> CSV writer
-    system_csv_writer: Option<Writer<File>>, // System-wide stats CSV writer
+    networks: Networks, // Network interface monitor
+    csv_state: CsvState,
     nvml: Option<Nvml>,
     gpu_device_count: u32,
     previous_samples: HashMap<u32, PreviousSample>, // PID -> previous I/O sample
-    previous_system_sample: Option<PreviousSystemSample>, // Previous system sample for rate calculation
+    previous_system_sample: Option<system_stats::PreviousSystemSample>,
 
     // I/O helper daemon for reading /proc/[pid]/io with CAP_SYS_PTRACE
     io_helper: Option<super::io_helper_client::IoHelperClient>,
     io_helper_unavailable: bool, // Track if helper failed to spawn (warn once)
-    io_stats_cache: std::collections::HashMap<u32, play_launch::ipc::ProcIoStats>, // Cache for batch I/O reads
+    io_stats_cache: HashMap<u32, play_launch::ipc::ProcIoStats>, // Cache for batch I/O reads
 
     // Network connection counts cached once per tick (/proc/net/* is namespace-wide)
-    net_connections_cache: Option<(u32, u32)>, // (tcp, udp) — same for all processes in namespace
+    net_connections_cache: Option<(u32, u32)>, // (tcp, udp) -- same for all processes in namespace
 
-    // Subprocess PID cache — refreshed by time interval (process trees are stable in steady-state)
+    // Subprocess PID cache -- refreshed by time interval (process trees are stable in steady-state)
     subprocess_cache: HashMap<u32, Vec<u32>>, // parent PID -> child PIDs
     subprocess_cache_last_refresh: std::time::Instant,
-}
-
-/// Count newlines in a file using a stack buffer (no heap allocation).
-/// Returns line count minus 1 (to skip the header line in /proc/net/* files).
-#[cfg(target_os = "linux")]
-fn count_lines_in_file(path: &str) -> u32 {
-    use std::io::Read;
-    let mut file = match std::fs::File::open(path) {
-        Ok(f) => f,
-        Err(_) => return 0,
-    };
-    let mut buf = [0u8; 8192];
-    let mut newlines: u32 = 0;
-    loop {
-        match file.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                newlines += buf[..n].iter().filter(|&&b| b == b'\n').count() as u32;
-            }
-            Err(_) => break,
-        }
-    }
-    newlines.saturating_sub(1) // subtract header line
-}
-
-/// Find all subprocess PIDs recursively (Linux only)
-#[cfg(target_os = "linux")]
-fn find_subprocess_pids(parent_pid: u32) -> Vec<u32> {
-    let mut pids = Vec::new();
-
-    // Read /proc/<pid>/task/<tid>/children for each thread
-    let task_dir = format!("/proc/{}/task", parent_pid);
-    if let Ok(entries) = std::fs::read_dir(task_dir) {
-        for entry in entries.flatten() {
-            let children_path = entry.path().join("children");
-            if let Ok(content) = std::fs::read_to_string(&children_path) {
-                for pid_str in content.split_whitespace() {
-                    if let Ok(child_pid) = pid_str.parse::<u32>() {
-                        pids.push(child_pid);
-                        // Recursively find grandchildren
-                        let mut grandchildren = find_subprocess_pids(child_pid);
-                        pids.append(&mut grandchildren);
-                    }
-                }
-            }
-        }
-    }
-
-    pids
-}
-
-#[cfg(not(target_os = "linux"))]
-fn find_subprocess_pids(_parent_pid: u32) -> Vec<u32> {
-    Vec::new()
 }
 
 impl ResourceMonitor {
@@ -300,8 +187,7 @@ impl ResourceMonitor {
         Ok(Self {
             system,
             networks: Networks::new_with_refreshed_list(),
-            csv_writers: HashMap::new(),
-            system_csv_writer: None,
+            csv_state: CsvState::new(),
             nvml,
             gpu_device_count,
             previous_samples: HashMap::new(),
@@ -329,7 +215,7 @@ impl ResourceMonitor {
 
         // Parse /proc/[pid]/stat for accurate CPU times (in clock ticks)
         // Aggregate from parent + all children
-        let (mut utime, mut stime) = self.parse_proc_stat(pid)?;
+        let (mut utime, mut stime) = proc_parser::parse_proc_stat(pid)?;
         let mut rss_bytes = process.memory();
         let mut vms_bytes = process.virtual_memory();
         let disk_usage = process.disk_usage();
@@ -340,7 +226,7 @@ impl ResourceMonitor {
         // Aggregate from subprocesses
         for child_pid in &subprocess_pids {
             // Get CPU times from /proc/[child_pid]/stat
-            if let Ok((child_utime, child_stime)) = self.parse_proc_stat(*child_pid) {
+            if let Ok((child_utime, child_stime)) = proc_parser::parse_proc_stat(*child_pid) {
                 utime += child_utime;
                 stime += child_stime;
             }
@@ -386,7 +272,7 @@ impl ResourceMonitor {
             gpu_power_milliwatts,
             gpu_graphics_clock_mhz,
             gpu_memory_clock_mhz,
-        ) = self.collect_gpu_metrics(pid)?;
+        ) = system_stats::collect_gpu_metrics(self.nvml.as_ref(), self.gpu_device_count, pid)?;
 
         // Collect network connection counts
         let (tcp_connections, udp_connections) = self.collect_network_connections(pid);
@@ -496,199 +382,8 @@ impl ResourceMonitor {
         })
     }
 
-    /// Collect system-wide resource metrics (CPU, memory, network, disk I/O, GPU)
-    /// This method collects overall system statistics rather than per-process metrics.
-    fn collect_system_stats(&mut self) -> Result<SystemStats> {
-        let current_time = SystemTime::now();
-
-        // Refresh system-wide information
-        // Note: refresh_cpu_all() is already called at the start of the tick
-        // (before process refresh), so we only need memory and network here.
-        self.system.refresh_memory();
-        self.networks.refresh();
-
-        // Collect CPU metrics
-        let cpu_percent = self.system.global_cpu_usage() as f64;
-        let cpu_count = self.system.cpus().len();
-
-        // Collect memory metrics
-        let total_memory_bytes = self.system.total_memory();
-        let used_memory_bytes = self.system.used_memory();
-        let available_memory_bytes = self.system.available_memory();
-        let total_swap_bytes = self.system.total_swap();
-        let used_swap_bytes = self.system.used_swap();
-
-        // Collect network metrics (aggregate all interfaces)
-        let mut network_rx_bytes: u64 = 0;
-        let mut network_tx_bytes: u64 = 0;
-        for (_, network) in &self.networks {
-            network_rx_bytes += network.total_received();
-            network_tx_bytes += network.total_transmitted();
-        }
-
-        // Calculate network rates from previous sample
-        let (network_rx_rate_bps, network_tx_rate_bps) =
-            if let Some(ref prev) = self.previous_system_sample {
-                let time_diff = current_time
-                    .duration_since(prev.timestamp)
-                    .unwrap_or(Duration::from_secs(0))
-                    .as_secs_f64();
-
-                if time_diff > 0.0 {
-                    let rx_rate =
-                        (network_rx_bytes.saturating_sub(prev.network_rx_bytes)) as f64 / time_diff;
-                    let tx_rate =
-                        (network_tx_bytes.saturating_sub(prev.network_tx_bytes)) as f64 / time_diff;
-                    (Some(rx_rate), Some(tx_rate))
-                } else {
-                    (None, None)
-                }
-            } else {
-                // No previous sample, can't calculate rate
-                (None, None)
-            };
-
-        // Parse /proc/diskstats for disk I/O
-        let (disk_read_bytes, disk_write_bytes) = self.parse_diskstats().unwrap_or((0, 0));
-
-        // Calculate disk I/O rates from previous sample
-        let (disk_read_rate_bps, disk_write_rate_bps) =
-            if let Some(ref prev) = self.previous_system_sample {
-                let time_diff = current_time
-                    .duration_since(prev.timestamp)
-                    .unwrap_or(Duration::from_secs(0))
-                    .as_secs_f64();
-
-                if time_diff > 0.0 {
-                    let read_rate =
-                        (disk_read_bytes.saturating_sub(prev.disk_read_bytes)) as f64 / time_diff;
-                    let write_rate =
-                        (disk_write_bytes.saturating_sub(prev.disk_write_bytes)) as f64 / time_diff;
-                    (Some(read_rate), Some(write_rate))
-                } else {
-                    (None, None)
-                }
-            } else {
-                // No previous sample, can't calculate rate
-                (None, None)
-            };
-
-        // Collect GPU metrics (will be implemented via jtop in later task)
-        let gpu_utilization_percent = None;
-        let gpu_memory_used_bytes = None;
-        let gpu_memory_total_bytes = None;
-        let gpu_frequency_mhz = None;
-        let gpu_power_milliwatts = None;
-        let gpu_temperature_celsius = None;
-
-        // Store current sample for next iteration
-        self.previous_system_sample = Some(PreviousSystemSample {
-            timestamp: current_time,
-            network_rx_bytes,
-            network_tx_bytes,
-            disk_read_bytes,
-            disk_write_bytes,
-        });
-
-        Ok(SystemStats {
-            timestamp: current_time,
-            cpu_percent,
-            cpu_count,
-            total_memory_bytes,
-            used_memory_bytes,
-            available_memory_bytes,
-            total_swap_bytes,
-            used_swap_bytes,
-            network_rx_bytes,
-            network_tx_bytes,
-            network_rx_rate_bps,
-            network_tx_rate_bps,
-            disk_read_bytes,
-            disk_write_bytes,
-            disk_read_rate_bps,
-            disk_write_rate_bps,
-            gpu_utilization_percent,
-            gpu_memory_used_bytes,
-            gpu_memory_total_bytes,
-            gpu_frequency_mhz,
-            gpu_power_milliwatts,
-            gpu_temperature_celsius,
-        })
-    }
-
-    fn collect_gpu_metrics(&self, pid: u32) -> Result<GpuMetricsTuple> {
-        let nvml = match &self.nvml {
-            Some(nvml) => nvml,
-            None => {
-                // No NVML, return all None
-                return Ok((None, None, None, None, None, None, None));
-            }
-        };
-
-        // Search all GPU devices for this process
-        for device_index in 0..self.gpu_device_count {
-            // Get GPU device - if this fails, log warning and skip this GPU
-            let device = match nvml.device_by_index(device_index) {
-                Ok(dev) => dev,
-                Err(e) => {
-                    // Only warn once per monitoring session (avoid log spam)
-                    debug!(
-                        "Failed to get GPU device {} for PID {}: {}",
-                        device_index, pid, e
-                    );
-                    continue;
-                }
-            };
-
-            // Get running compute processes - if this fails, log warning and skip this GPU
-            let processes = match device.running_compute_processes() {
-                Ok(procs) => procs,
-                Err(e) => {
-                    // This can fail on some GPU architectures or driver configurations
-                    // Log as debug to avoid spamming logs
-                    debug!(
-                        "Failed to get running processes for GPU {} (PID {}): {}",
-                        device_index, pid, e
-                    );
-                    continue;
-                }
-            };
-
-            // Check if our PID is using this GPU
-            for proc in processes {
-                if proc.pid == pid {
-                    // Found process on this GPU - collect metrics
-                    let utilization = device.utilization_rates().ok();
-                    let temperature = device.temperature(TemperatureSensor::Gpu).ok();
-                    let power = device.power_usage().ok();
-                    let graphics_clock = device.clock_info(Clock::Graphics).ok();
-                    let memory_clock = device.clock_info(Clock::Memory).ok();
-
-                    // Extract GPU memory as u64 from UsedGpuMemory enum
-                    let gpu_mem_bytes = match proc.used_gpu_memory {
-                        nvml_wrapper::enums::device::UsedGpuMemory::Used(bytes) => Some(bytes),
-                        nvml_wrapper::enums::device::UsedGpuMemory::Unavailable => None,
-                    };
-
-                    return Ok((
-                        gpu_mem_bytes,
-                        utilization.as_ref().map(|u| u.gpu),
-                        utilization.as_ref().map(|u| u.memory),
-                        temperature,
-                        power,
-                        graphics_clock,
-                        memory_clock,
-                    ));
-                }
-            }
-        }
-
-        // Process not found on any GPU (this is normal for most processes)
-        Ok((None, None, None, None, None, None, None))
-    }
-
     /// Count TCP and UDP connections (Linux-specific).
-    /// /proc/<pid>/net/* is namespace-wide — all processes in the same network
+    /// /proc/<pid>/net/* is namespace-wide -- all processes in the same network
     /// namespace return identical data. We cache the result once per tick and
     /// reuse it for every process, turning ~400 reads into 4.
     #[cfg(target_os = "linux")]
@@ -696,435 +391,15 @@ impl ResourceMonitor {
         if let Some(cached) = self.net_connections_cache {
             return cached;
         }
-        let tcp_count = count_lines_in_file(&format!("/proc/{}/net/tcp", pid))
-            + count_lines_in_file(&format!("/proc/{}/net/tcp6", pid));
-        let udp_count = count_lines_in_file(&format!("/proc/{}/net/udp", pid))
-            + count_lines_in_file(&format!("/proc/{}/net/udp6", pid));
-        self.net_connections_cache = Some((tcp_count, udp_count));
-        (tcp_count, udp_count)
+        let result = proc_parser::count_network_connections(pid);
+        self.net_connections_cache = Some(result);
+        result
     }
 
     #[cfg(not(target_os = "linux"))]
     fn collect_network_connections(&self, _pid: u32) -> (u32, u32) {
         (0, 0)
     }
-
-    /// Parse /proc/[pid]/stat for CPU times (utime and stime)
-    /// Returns (utime, stime) in clock ticks
-    /// These values are cumulative and need to be differenced between samples
-    #[cfg(target_os = "linux")]
-    fn parse_proc_stat(&self, pid: u32) -> Result<(u64, u64)> {
-        let stat_path = format!("/proc/{}/stat", pid);
-        let content = std::fs::read_to_string(&stat_path)
-            .wrap_err_with(|| format!("Failed to read {}", stat_path))?;
-
-        // Format: pid (comm) state ppid pgrp ... utime stime cutime cstime ...
-        // We need to split on ')' because comm can contain spaces and parentheses
-        let parts: Vec<&str> = content.split(')').collect();
-        if parts.len() < 2 {
-            return Err(eyre::eyre!("Invalid /proc/{}/stat format", pid));
-        }
-
-        // After ')', fields are space-separated
-        // Field indices (0-based after splitting on ')'):
-        // 11 = utime (user mode jiffies)
-        // 12 = stime (kernel mode jiffies)
-        let fields: Vec<&str> = parts[1].split_whitespace().collect();
-        if fields.len() < 14 {
-            return Err(eyre::eyre!(
-                "Insufficient fields in /proc/{}/stat (got {}, need 14)",
-                pid,
-                fields.len()
-            ));
-        }
-
-        let utime: u64 = fields[11]
-            .parse()
-            .wrap_err_with(|| format!("Failed to parse utime from {}", stat_path))?;
-        let stime: u64 = fields[12]
-            .parse()
-            .wrap_err_with(|| format!("Failed to parse stime from {}", stat_path))?;
-
-        Ok((utime, stime))
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn parse_proc_stat(&self, _pid: u32) -> Result<(u64, u64)> {
-        // CPU time parsing not implemented for non-Linux platforms
-        Ok((0, 0))
-    }
-
-    /// Parse /proc/diskstats for system-wide disk I/O statistics
-    /// Returns (total_read_bytes, total_write_bytes) aggregated across all disks
-    /// Format: major minor name reads ... sectors_read ... writes ... sectors_written ...
-    /// Sectors are typically 512 bytes
-    #[cfg(target_os = "linux")]
-    fn parse_diskstats(&self) -> Result<(u64, u64)> {
-        let content = std::fs::read_to_string("/proc/diskstats")
-            .wrap_err("Failed to read /proc/diskstats")?;
-
-        let mut total_read_bytes = 0u64;
-        let mut total_write_bytes = 0u64;
-        const SECTOR_SIZE: u64 = 512;
-
-        for line in content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 14 {
-                continue; // Skip malformed lines
-            }
-
-            // Skip partition entries (e.g., sda1, nvme0n1p1) and only count whole disks
-            // Whole disk names: sda, sdb, nvme0n1, mmcblk0, etc.
-            let device_name = parts[2];
-
-            // Filter out partitions by checking if name ends with a digit after a letter
-            // Examples: sda1, nvme0n1p1, mmcblk0p1 (partitions) vs sda, nvme0n1, mmcblk0 (whole disks)
-            // For simplicity, we'll include all devices and let aggregation handle duplicates
-            // But we should skip loop devices and ram devices
-            if device_name.starts_with("loop") || device_name.starts_with("ram") {
-                continue;
-            }
-
-            // Field 5: sectors read (0-indexed)
-            let sectors_read = parts[5].parse::<u64>().unwrap_or(0);
-            // Field 9: sectors written (0-indexed)
-            let sectors_written = parts[9].parse::<u64>().unwrap_or(0);
-
-            total_read_bytes += sectors_read * SECTOR_SIZE;
-            total_write_bytes += sectors_written * SECTOR_SIZE;
-        }
-
-        Ok((total_read_bytes, total_write_bytes))
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn parse_diskstats(&self) -> Result<(u64, u64)> {
-        Ok((0, 0))
-    }
-
-    fn write_csv(&mut self, output_dir: &Path, metrics: &ResourceMetrics) -> Result<()> {
-        let pid = metrics.pid;
-
-        // Get or create CSV writer for this PID
-        if !self.csv_writers.contains_key(&pid) {
-            let csv_path = self.get_csv_path(output_dir)?;
-
-            // Create parent directories
-            if let Some(parent) = csv_path.parent() {
-                fs::create_dir_all(parent).wrap_err_with(|| {
-                    format!("Failed to create directory: {}", parent.display())
-                })?;
-            }
-
-            let file = File::create(&csv_path)
-                .wrap_err_with(|| format!("Failed to create CSV file: {}", csv_path.display()))?;
-            let mut writer = Writer::from_writer(file);
-
-            // Write header
-            writer
-                .write_record([
-                    "timestamp",
-                    "pid",
-                    "cpu_percent",
-                    "cpu_user_secs",
-                    "rss_bytes",
-                    "vms_bytes",
-                    "io_read_bytes",
-                    "io_write_bytes",
-                    "total_read_bytes",
-                    "total_write_bytes",
-                    "io_syscr",
-                    "io_syscw",
-                    "io_storage_read_bytes",
-                    "io_storage_write_bytes",
-                    "io_cancelled_write_bytes",
-                    "total_read_rate_bps",
-                    "total_write_rate_bps",
-                    "state",
-                    "num_threads",
-                    "num_fds",
-                    "num_processes",
-                    "gpu_memory_bytes",
-                    "gpu_utilization_percent",
-                    "gpu_memory_utilization_percent",
-                    "gpu_temperature_celsius",
-                    "gpu_power_milliwatts",
-                    "gpu_graphics_clock_mhz",
-                    "gpu_memory_clock_mhz",
-                    "tcp_connections",
-                    "udp_connections",
-                ])
-                .wrap_err("Failed to write CSV header")?;
-
-            writer.flush().wrap_err("Failed to flush CSV header")?;
-            self.csv_writers.insert(pid, writer);
-        }
-
-        let writer = self
-            .csv_writers
-            .get_mut(&pid)
-            .ok_or_else(|| eyre::eyre!("CSV writer not found for PID {}", pid))?;
-
-        // Format timestamp
-        let timestamp_str = format_timestamp(metrics.timestamp);
-
-        // Write data row
-        writer
-            .write_record(&[
-                timestamp_str,
-                metrics.pid.to_string(),
-                format!("{:.2}", metrics.cpu_percent),
-                metrics.cpu_user_time.to_string(),
-                metrics.rss_bytes.to_string(),
-                metrics.vms_bytes.to_string(),
-                metrics.io_read_bytes.to_string(),
-                metrics.io_write_bytes.to_string(),
-                metrics.total_read_bytes.to_string(),
-                metrics.total_write_bytes.to_string(),
-                metrics.io_syscr.to_string(),
-                metrics.io_syscw.to_string(),
-                metrics.io_storage_read_bytes.to_string(),
-                metrics.io_storage_write_bytes.to_string(),
-                metrics.io_cancelled_write_bytes.to_string(),
-                metrics
-                    .total_read_rate_bps
-                    .map(|v| format!("{:.2}", v))
-                    .unwrap_or_default(),
-                metrics
-                    .total_write_rate_bps
-                    .map(|v| format!("{:.2}", v))
-                    .unwrap_or_default(),
-                metrics.state.as_str().to_string(),
-                metrics.num_threads.to_string(),
-                metrics.num_fds.to_string(),
-                metrics.num_processes.to_string(),
-                metrics
-                    .gpu_memory_bytes
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                metrics
-                    .gpu_utilization_percent
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                metrics
-                    .gpu_memory_utilization_percent
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                metrics
-                    .gpu_temperature_celsius
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                metrics
-                    .gpu_power_milliwatts
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                metrics
-                    .gpu_graphics_clock_mhz
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                metrics
-                    .gpu_memory_clock_mhz
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                metrics.tcp_connections.to_string(),
-                metrics.udp_connections.to_string(),
-            ])
-            .wrap_err_with(|| format!("Failed to write CSV row for PID {}", pid))?;
-
-        writer
-            .flush()
-            .wrap_err_with(|| format!("Failed to flush CSV for PID {}", pid))?;
-
-        Ok(())
-    }
-
-    /// Write system-wide statistics to CSV file
-    /// Creates system_stats.csv at the log directory root level
-    fn write_system_csv(&mut self, log_dir: &Path, stats: &SystemStats) -> Result<()> {
-        // Initialize CSV writer on first call
-        if self.system_csv_writer.is_none() {
-            let csv_path = log_dir.join("system_stats.csv");
-
-            // Create parent directories if needed
-            if let Some(parent) = csv_path.parent() {
-                fs::create_dir_all(parent).wrap_err_with(|| {
-                    format!("Failed to create directory: {}", parent.display())
-                })?;
-            }
-
-            let file = File::create(&csv_path).wrap_err_with(|| {
-                format!(
-                    "Failed to create system stats CSV file: {}",
-                    csv_path.display()
-                )
-            })?;
-            let mut writer = Writer::from_writer(file);
-
-            // Write header
-            writer
-                .write_record([
-                    "timestamp",
-                    "cpu_percent",
-                    "cpu_count",
-                    "total_memory_bytes",
-                    "used_memory_bytes",
-                    "available_memory_bytes",
-                    "total_swap_bytes",
-                    "used_swap_bytes",
-                    "network_rx_bytes",
-                    "network_tx_bytes",
-                    "network_rx_rate_bps",
-                    "network_tx_rate_bps",
-                    "disk_read_bytes",
-                    "disk_write_bytes",
-                    "disk_read_rate_bps",
-                    "disk_write_rate_bps",
-                    "gpu_utilization_percent",
-                    "gpu_memory_used_bytes",
-                    "gpu_memory_total_bytes",
-                    "gpu_frequency_mhz",
-                    "gpu_power_milliwatts",
-                    "gpu_temperature_celsius",
-                ])
-                .wrap_err("Failed to write system stats CSV header")?;
-
-            writer
-                .flush()
-                .wrap_err("Failed to flush system stats CSV header")?;
-            self.system_csv_writer = Some(writer);
-        }
-
-        let writer = self
-            .system_csv_writer
-            .as_mut()
-            .ok_or_else(|| eyre::eyre!("System CSV writer not initialized"))?;
-
-        // Format timestamp
-        let timestamp_str = format_timestamp(stats.timestamp);
-
-        // Write data row
-        writer
-            .write_record(&[
-                timestamp_str,
-                format!("{:.2}", stats.cpu_percent),
-                stats.cpu_count.to_string(),
-                stats.total_memory_bytes.to_string(),
-                stats.used_memory_bytes.to_string(),
-                stats.available_memory_bytes.to_string(),
-                stats.total_swap_bytes.to_string(),
-                stats.used_swap_bytes.to_string(),
-                stats.network_rx_bytes.to_string(),
-                stats.network_tx_bytes.to_string(),
-                stats
-                    .network_rx_rate_bps
-                    .map(|v| format!("{:.2}", v))
-                    .unwrap_or_default(),
-                stats
-                    .network_tx_rate_bps
-                    .map(|v| format!("{:.2}", v))
-                    .unwrap_or_default(),
-                stats.disk_read_bytes.to_string(),
-                stats.disk_write_bytes.to_string(),
-                stats
-                    .disk_read_rate_bps
-                    .map(|v| format!("{:.2}", v))
-                    .unwrap_or_default(),
-                stats
-                    .disk_write_rate_bps
-                    .map(|v| format!("{:.2}", v))
-                    .unwrap_or_default(),
-                stats
-                    .gpu_utilization_percent
-                    .map(|v| format!("{:.2}", v))
-                    .unwrap_or_default(),
-                stats
-                    .gpu_memory_used_bytes
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                stats
-                    .gpu_memory_total_bytes
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                stats
-                    .gpu_frequency_mhz
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                stats
-                    .gpu_power_milliwatts
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                stats
-                    .gpu_temperature_celsius
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-            ])
-            .wrap_err("Failed to write system stats CSV row")?;
-
-        writer
-            .flush()
-            .wrap_err("Failed to flush system stats CSV")?;
-
-        Ok(())
-    }
-
-    fn get_csv_path(&self, output_dir: &Path) -> Result<PathBuf> {
-        // Create path: <output_dir>/metrics.csv
-        let csv_path = output_dir.join("metrics.csv");
-        Ok(csv_path)
-    }
-}
-
-/// Initialize CSV file with headers for a given output directory
-/// This should be called as soon as monitoring is enabled to ensure CSV files
-/// exist even if the node dies before metrics are collected
-pub fn initialize_metrics_csv(output_dir: &Path) -> Result<()> {
-    let csv_path = output_dir.join("metrics.csv");
-
-    // Create parent directories if needed
-    if let Some(parent) = csv_path.parent() {
-        fs::create_dir_all(parent)
-            .wrap_err_with(|| format!("Failed to create directory: {}", parent.display()))?;
-    }
-
-    let file = File::create(&csv_path)
-        .wrap_err_with(|| format!("Failed to create CSV file: {}", csv_path.display()))?;
-    let mut writer = Writer::from_writer(file);
-
-    // Write header
-    writer
-        .write_record([
-            "timestamp",
-            "pid",
-            "cpu_percent",
-            "cpu_user_secs",
-            "rss_bytes",
-            "vms_bytes",
-            "io_read_bytes",
-            "io_write_bytes",
-            "total_read_bytes",
-            "total_write_bytes",
-            "total_read_rate_bps",
-            "total_write_rate_bps",
-            "state",
-            "num_threads",
-            "num_fds",
-            "num_processes",
-            "gpu_memory_bytes",
-            "gpu_utilization_percent",
-            "gpu_memory_utilization_percent",
-            "gpu_temperature_celsius",
-            "gpu_power_milliwatts",
-            "gpu_graphics_clock_mhz",
-            "gpu_memory_clock_mhz",
-            "tcp_connections",
-            "udp_connections",
-        ])
-        .wrap_err("Failed to write CSV header")?;
-
-    writer.flush().wrap_err("Failed to flush CSV header")?;
-
-    debug!("Initialized metrics CSV at: {}", csv_path.display());
-    Ok(())
 }
 
 /// Async monitoring task (tokio-based replacement for old thread-based monitoring)
@@ -1210,7 +485,7 @@ pub async fn run_monitoring_task(
                 monitor.io_stats_cache.clear();
                 monitor.net_connections_cache = None;
 
-                // Refresh subprocess tree cache every 10 seconds,
+                // Refresh subprocess tree cache every 1 second,
                 // OR immediately when the monitored PID set changes (new process registered).
                 // Process trees are stable in steady-state; no need to walk /proc every tick.
                 const SUBPROCESS_CACHE_INTERVAL: Duration = Duration::from_secs(1);
@@ -1219,7 +494,7 @@ pub async fn run_monitoring_task(
                 if pids_changed || monitor.subprocess_cache_last_refresh.elapsed() >= SUBPROCESS_CACHE_INTERVAL {
                     monitor.subprocess_cache.clear();
                     for &pid in processes.keys() {
-                        let children = find_subprocess_pids(pid);
+                        let children = proc_parser::find_subprocess_pids(pid);
                         monitor.subprocess_cache.insert(pid, children);
                     }
                     monitor.subprocess_cache_last_refresh = std::time::Instant::now();
@@ -1257,10 +532,10 @@ pub async fn run_monitoring_task(
                 }
 
                 // Collect and write per-process metrics
-                for (pid, output_dir) in processes {
-                    match monitor.collect_metrics(pid) {
+                for (pid, output_dir) in &processes {
+                    match monitor.collect_metrics(*pid) {
                         Ok(metrics) => {
-                            match monitor.write_csv(&output_dir, &metrics) {
+                            match monitor.csv_state.write_csv(output_dir, &metrics) {
                                 Ok(_) => {
                                     // Success - no logging to avoid noise
                                 }
@@ -1286,9 +561,13 @@ pub async fn run_monitoring_task(
                 }
 
                 // Collect and write system-wide statistics
-                match monitor.collect_system_stats() {
+                match system_stats::collect_system_stats(
+                    &mut monitor.system,
+                    &mut monitor.networks,
+                    &mut monitor.previous_system_sample,
+                ) {
                     Ok(stats) => {
-                        match monitor.write_system_csv(&log_dir, &stats) {
+                        match monitor.csv_state.write_system_csv(&log_dir, &stats) {
                             Ok(_) => {
                                 // Success - no logging to avoid noise
                             }
@@ -1309,32 +588,9 @@ pub async fn run_monitoring_task(
     Ok(())
 }
 
-/// Format SystemTime as ISO 8601 string
-fn format_timestamp(time: SystemTime) -> String {
-    match time.duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(duration) => {
-            let secs = duration.as_secs();
-            let millis = duration.subsec_millis();
-            // Format as YYYY-MM-DDTHH:MM:SS.mmmZ
-            let datetime =
-                chrono::DateTime::<chrono::Utc>::from_timestamp(secs as i64, millis * 1_000_000)
-                    .unwrap_or_default();
-            datetime.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-        }
-        Err(_) => String::from("1970-01-01T00:00:00.000Z"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_format_timestamp() {
-        let time = SystemTime::UNIX_EPOCH + Duration::from_secs(1234567890);
-        let formatted = format_timestamp(time);
-        assert!(formatted.starts_with("2009-02-13"));
-    }
 
     #[test]
     fn test_process_state_as_str() {
