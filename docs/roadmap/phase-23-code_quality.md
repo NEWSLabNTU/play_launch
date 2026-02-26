@@ -62,7 +62,7 @@ Execution order: dead code first (smallest blast radius), file splits last (easi
 
 - [x] Extract env-merge + global-params collection in WASM host (`host.rs`) → `collect_global_params()` + `collect_merged_env()` on `LaunchHost`
 - [x] Extract service client cleanup pattern in `container_actor.rs` (×4) → `clear_ros_clients(&mut self)` method
-- [ ] Extract process registry unregister pattern in `container_actor.rs` (×4: `if let Some(ref registry) = ... { reg.remove(&pid) }`) → `unregister_process(&self, pid)` method
+- [x] Extract process registry register/unregister pattern in `container_actor.rs` (×5: 1 register + 4 unregister) → `register_process(&self, pid)` + `unregister_process(&self, pid)` methods
 - [x] Replace `create_*_parameter` boilerplate in `ros/component_loader.rs` (×8) → `create_parameter_value!` macro + `default_parameter_value()` helper
 
 ### Verification

@@ -237,6 +237,24 @@ impl ContainerActor {
         self.composable_nodes.insert(name, entry);
     }
 
+    /// Register a process PID in the shared process registry for I/O monitoring.
+    fn register_process(&self, pid: u32) {
+        if let Some(ref registry) = self.process_registry {
+            if let Ok(mut reg) = registry.lock() {
+                reg.insert(pid, self.config.output_dir.clone());
+            }
+        }
+    }
+
+    /// Unregister a process PID from the shared process registry.
+    fn unregister_process(&self, pid: u32) {
+        if let Some(ref registry) = self.process_registry {
+            if let Ok(mut reg) = registry.lock() {
+                reg.remove(&pid);
+            }
+        }
+    }
+
     // State machine handlers (handle_pending, handle_running) and the
     // MemberActor::run() implementation form the core of this module.
     // Process lifecycle methods are in process_lifecycle.rs.
@@ -267,11 +285,7 @@ impl ContainerActor {
                 debug!("{}: Container process started with PID {}", self.name, pid);
 
                 // Register process for I/O monitoring
-                if let Some(ref registry) = self.process_registry {
-                    if let Ok(mut reg) = registry.lock() {
-                        reg.insert(pid, self.config.output_dir.clone());
-                    }
-                }
+                self.register_process(pid);
 
                 // Broadcast running state to composable nodes
                 let _ = self

@@ -121,11 +121,7 @@ impl ContainerActor {
         info!("{}: Container exited with code {:?}", self.name, exit_code);
 
         // Unregister from process registry
-        if let Some(ref registry) = self.process_registry {
-            if let Ok(mut reg) = registry.lock() {
-                reg.remove(&pid);
-            }
-        }
+        self.unregister_process(pid);
 
         // Drain load queue (container crashed)
         self.drain_queue("Container crashed");
@@ -190,11 +186,7 @@ impl ContainerActor {
         info!("{}: Container process terminated", self.name);
 
         // Unregister from process registry
-        if let Some(ref registry) = self.process_registry {
-            if let Ok(mut reg) = registry.lock() {
-                reg.remove(&pid);
-            }
-        }
+        self.unregister_process(pid);
 
         // Drain load queue
         self.drain_queue("Container stopped");
@@ -246,11 +238,7 @@ impl ContainerActor {
         let _ = child.wait().await;
 
         // Unregister from process registry
-        if let Some(ref registry) = self.process_registry {
-            if let Ok(mut reg) = registry.lock() {
-                reg.remove(&pid);
-            }
-        }
+        self.unregister_process(pid);
 
         // Drain load queue
         self.drain_queue("Container restarting");
@@ -299,11 +287,7 @@ impl ContainerActor {
         }
 
         // Unregister from process registry
-        if let Some(ref registry) = self.process_registry {
-            if let Ok(mut reg) = registry.lock() {
-                reg.remove(&pid);
-            }
-        }
+        self.unregister_process(pid);
 
         // Broadcast stopped state
         let _ = self.container_state_tx.send(ContainerState::Stopped);
