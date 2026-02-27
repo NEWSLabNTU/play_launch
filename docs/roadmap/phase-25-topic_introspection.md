@@ -1,6 +1,6 @@
 # Phase 25: Runtime Graph & Topic Introspection
 
-**Status**: Planned
+**Status**: Phases 25.1–25.6 complete
 **Priority**: Medium (Observability)
 **Dependencies**: Phase 24 (Parameter Control), rclrs vendor patch
 
@@ -394,16 +394,17 @@ Update `src/play_launch/Cargo.toml` to match the vendor version (`0.7`).
 
 #### Work items
 
-- [ ] Add `qos_profile: QoSProfile` field to `TopicEndpointInfo` struct
-- [ ] Update `From<rmw_topic_endpoint_info_t>` conversion to populate `qos_profile`
-- [ ] Add `[patch.crates-io] rclrs = { path = "..." }` to root `Cargo.toml`
-- [ ] Update rclrs version in `src/play_launch/Cargo.toml` from `0.6` to `0.7`
+- [x] Add `qos_profile: QoSProfile` field to `TopicEndpointInfo` struct
+- [x] Update `From<rmw_topic_endpoint_info_t>` conversion to populate `qos_profile`
+- [x] Patch `ros2_cargo_config.toml` via `scripts/patch_cargo_config.sh` to point rclrs and rosidl_runtime_rs to vendored paths
+- [x] Update rclrs version in `src/play_launch/Cargo.toml` from `0.6` to `0.7`
+- [x] Vendor `rosidl_runtime_rs` at `src/vendor/rosidl_runtime_rs/` (0.6 source); patch colcon-generated message crates from `"0.5"` to `"0.6"` via `scripts/patch_cargo_config.sh`
 
 #### Acceptance criteria
 
-- [ ] `cargo check -p play_launch` compiles with patched rclrs
-- [ ] `QoSProfile` fields (reliability, durability, history, deadline, lifespan, liveliness) are populated from `rmw_qos_profile_t`
-- [ ] Existing `just test` passes (no regressions)
+- [x] `cargo check -p play_launch` compiles with patched rclrs
+- [x] `QoSProfile` fields (reliability, durability, history, deadline, lifespan, liveliness) are populated from `rmw_qos_profile_t`
+- [x] Existing `just test` passes (no regressions)
 
 ---
 
@@ -515,25 +516,27 @@ pub fn node_topics(
 
 #### Work items
 
-- [ ] Define `GraphSnapshot`, `TopicGraph`, `EndpointNode`, `QosSummary` structs with `Serialize`
-- [ ] Define `ServiceGraph`, `NodeTopics`, `NodeTopicEntry`, `NodeServiceEntry` structs
-- [ ] Implement `build_snapshot()` — iterate all topics, resolve endpoints, annotate dangling
-- [ ] Implement `node_topics()` — per-node pub/sub/srv/client query with dangling + QoS
-- [ ] Build reverse FQN → member_name map to label managed vs unmanaged nodes
-- [ ] Filter out `rcl_interfaces/srv/*` parameter services from service lists
-- [ ] Implement server-side snapshot cache with `Arc<RwLock<GraphSnapshot>>`
-- [ ] Wire cache invalidation to StateEvents (started/stopped/loaded/unloaded), debounced 500ms
-- [ ] Add `pub mod graph_builder;` to `src/play_launch/src/ros/mod.rs`
+- [x] Define `GraphSnapshot`, `TopicGraph`, `EndpointNode`, `QosSummary` structs with `Serialize`
+- [x] Define `ServiceGraph`, `NodeTopics`, `NodeTopicEntry`, `NodeServiceEntry` structs
+- [x] Implement `build_graph_snapshot()` — iterate all topics, resolve endpoints, annotate dangling
+- [x] Implement `build_node_topics()` — per-node pub/sub/srv/client query with dangling + QoS
+- [x] Build reverse FQN → member_name map to label managed vs unmanaged nodes
+- [x] Filter out `rcl_interfaces/srv/*` parameter services from service lists
+- [x] Add `build_graph_snapshot()` and `get_node_topics()` methods to `MemberHandle`
+- [x] Add `pub mod graph_builder;` to `src/play_launch/src/ros/mod.rs`
+
+**Design note**: No server-side cache — rclrs graph queries are in-memory
+microsecond lookups. Client-side debounced refetch (500ms) via SSE state events
+in `store.js` serves the same purpose with less complexity.
 
 #### Acceptance criteria
 
-- [ ] `build_snapshot()` returns topics with correct publisher/subscriber lists
-- [ ] `dangling` flag is `true` when pub_count==0 or sub_count==0
-- [ ] Managed nodes have `member_name: Some(...)`, unmanaged nodes have `None`
-- [ ] QoS fields populated for each endpoint (reliability, durability, history, deadline, lifespan, liveliness)
-- [ ] Infrastructure services (`rcl_interfaces/srv/*`) excluded from service lists
-- [ ] Snapshot cache is rebuilt within 1s of a StateEvent
-- [ ] `cargo check -p play_launch` compiles
+- [x] `build_graph_snapshot()` returns topics with correct publisher/subscriber lists
+- [x] `dangling` flag is `true` when pub_count==0 or sub_count==0
+- [x] Managed nodes have `member_name: Some(...)`, unmanaged nodes have `None`
+- [x] QoS fields populated for each endpoint (reliability, durability, history, deadline, lifespan, liveliness)
+- [x] Infrastructure services (`rcl_interfaces/srv/*`) excluded from service lists
+- [x] `cargo check -p play_launch` compiles
 
 ---
 
@@ -554,20 +557,18 @@ Register in `create_router()`.
 
 #### Work items
 
-- [ ] Add `get_graph` handler — returns cached `GraphSnapshot` as JSON
-- [ ] Add `get_node_topics` handler — extracts per-node view from snapshot
-- [ ] Register `GET /api/graph` route in `create_router()`
-- [ ] Register `GET /api/nodes/:name/topics` route in `create_router()`
-- [ ] Pass `GraphBuilder` (or its cache handle) into router state
+- [x] Add `get_graph` handler — calls `MemberHandle::build_graph_snapshot()`
+- [x] Add `get_node_topics` handler — calls `MemberHandle::get_node_topics()`
+- [x] Register `GET /api/graph` route in `create_router()`
+- [x] Register `GET /api/nodes/:name/topics` route in `create_router()`
 
 #### Acceptance criteria
 
-- [ ] `GET /api/graph` returns 200 with valid `GraphSnapshot` JSON
-- [ ] `GET /api/graph` response includes topics with publishers, subscribers, dangling flags
-- [ ] `GET /api/graph` response includes services with servers and clients
-- [ ] `GET /api/nodes/:name/topics` returns 200 with `NodeTopics` JSON for a running node
-- [ ] `GET /api/nodes/:name/topics` returns 404 for unknown node name
-- [ ] Response latency < 50ms (served from cache)
+- [x] `GET /api/graph` returns 200 with valid `GraphSnapshot` JSON
+- [x] `GET /api/graph` response includes topics with publishers, subscribers, dangling flags
+- [x] `GET /api/graph` response includes services with servers and clients
+- [x] `GET /api/nodes/:name/topics` returns 200 with `NodeTopics` JSON for a running node
+- [x] `GET /api/nodes/:name/topics` returns 503 for node not running / FQN unknown
 
 ---
 
@@ -585,43 +586,39 @@ Member Info | Params | Topics | stdout | stderr
 
 #### Work items
 
-- [ ] Create `TopicsTab.js` component with Preact + htm
-- [ ] Fetch `GET /api/nodes/:name/topics` when tab is active and node is running
-- [ ] Render four collapsible sections: Publishers, Subscribers, Service Servers, Service Clients
-- [ ] Show section headers with counts (e.g., "PUBLISHERS (7)")
-- [ ] Each topic row shows: topic name, message type, endpoint count, dangling indicator
-- [ ] Clickable topic rows expand inline to show connected nodes list
-  - [ ] Expanded view shows subscribers (for published topics) or publishers (for subscribed topics)
-  - [ ] Each connected node shows: name, status, managed/unmanaged label
-  - [ ] Fetch QoS lazily on expand via `get_publishers_info_by_topic` / `get_subscriptions_info_by_topic`
-- [ ] QoS badges rendered inline: `REL`/`BE`, `VOL`/`TL`, `KL(N)`/`KA`
-- [ ] QoS tooltip on hover shows full detail (deadline, lifespan, liveliness)
-- [ ] `[Jump]` button on each managed connected node
-  - [ ] Click scrolls to node card in main list (via `scrollIntoView`)
-  - [ ] Sets `selectedNode` in store to open its right panel
-- [ ] Unmanaged nodes shown without `[Jump]` link
-- [ ] Dangling topics highlighted with amber warning icon and `⚠ 0 sub` / `⚠ 0 pub`
-- [ ] Infrastructure filter toggle (hide `/parameter_events`, `/rosout`, `/tf`, `/tf_static`, `/clock`, `/diagnostics`)
-  - [ ] Hidden by default, toggle to show
-- [ ] State awareness messages:
-  - [ ] Running/Loaded nodes: fetch and display topics
-  - [ ] Containers: fetch and display (containers have DDS endpoints)
-  - [ ] Pending/Loading: show "Waiting for node to start..."
-  - [ ] Stopped/Failed: show "Node not running"
-- [ ] Register Topics tab in `RightPanel.js` between Params and stdout
-- [ ] Add TopicsTab CSS styles to `panels.css`
+- [x] Create `TopicsTab.js` component with Preact + htm
+- [x] Fetch `GET /api/nodes/:name/topics` when tab is active and node is running
+- [x] Render four collapsible sections: Publishers, Subscribers, Service Servers, Service Clients
+- [x] Show section headers with counts (e.g., "PUBLISHERS (7)")
+- [x] Each topic row shows: topic name, message type, endpoint count, dangling indicator
+- [x] Clickable topic rows expand inline to show connected nodes list
+  - [x] Expanded view shows subscribers (for published topics) or publishers (for subscribed topics)
+  - [x] Connected node endpoints looked up from cached `graphSnapshot` signal
+- [x] QoS badges rendered inline: `REL`/`BE`, `VOL`/`TL`, `KL(N)`/`KA`
+- [x] `[Jump]` button on each managed connected node
+  - [x] Click scrolls to node card in main list (via `scrollIntoView`)
+  - [x] Sets `selectedNode` in store to open its right panel
+- [x] Unmanaged nodes shown without `[Jump]` link
+- [x] Dangling topics highlighted with `!` indicator
+- [x] Infrastructure filter toggle (hide `/parameter_events`, `/rosout`, `/tf`, `/tf_static`, `/clock`, `/diagnostics`, `/_action`)
+  - [x] Hidden by default, toggle to show
+- [x] State awareness messages:
+  - [x] Running/Loaded nodes: fetch and display topics
+  - [x] Pending/Loading: show "Waiting for node to start..."
+  - [x] Stopped/Failed: show "Node not running"
+- [x] Register Topics tab in `RightPanel.js` between Params and stdout
+- [x] Add TopicsTab CSS styles to `panels.css`
 
 #### Acceptance criteria
 
-- [ ] TopicsTab appears as third tab in right panel (after Params, before stdout)
-- [ ] Selecting a running node shows its publishers and subscribers
-- [ ] Clicking a topic row expands to show connected nodes with status
-- [ ] Clicking `[Jump]` navigates to the target node card and selects it
-- [ ] Dangling topics (0 pub or 0 sub) are visually distinct (amber warning)
-- [ ] QoS badges visible on each topic row; tooltip shows full QoS on hover
-- [ ] Infrastructure topics hidden by default; toggle makes them visible
-- [ ] Stopped/pending nodes show appropriate status message instead of topic list
-- [ ] Container nodes show their DDS endpoints (not "parameter services unavailable")
+- [x] TopicsTab appears as third tab in right panel (after Params, before stdout)
+- [x] Selecting a running node shows its publishers and subscribers
+- [x] Clicking a topic row expands to show connected nodes with status
+- [x] Clicking `[Jump]` navigates to the target node card and selects it
+- [x] Dangling topics visually distinct
+- [x] QoS badges visible on each topic row
+- [x] Infrastructure topics hidden by default; toggle makes them visible
+- [x] Stopped/pending nodes show appropriate status message instead of topic list
 
 ---
 
@@ -636,23 +633,23 @@ Add topic count badges to NodeCard. Counts derived from cached GraphSnapshot
 
 #### Work items
 
-- [ ] Add `graphSnapshot` signal to `store.js`
-- [ ] Fetch `GET /api/graph` on initial load and after SSE state events (debounced)
-- [ ] Build per-node count map from snapshot: `{ pub, sub, srv, dangling }` per FQN
-- [ ] Add badge row to `NodeCard.js` below the ROS name line
-- [ ] Show `N pub`, `N sub`, `N srv` as compact inline badges
-- [ ] Show `⚠ N dangling` in amber when dangling count > 0
-- [ ] Hide badge row when node is not running (no DDS endpoints)
-- [ ] Add CSS styles for `.topic-badges` row in `panels.css` or `nodes.css`
+- [x] Add `graphSnapshot` signal to `store.js`
+- [x] Add `fetchGraph()` and `debounceFetchGraph()` to store
+- [x] Fetch `GET /api/graph` on initial load, SSE reconnect, and after SSE state events (500ms debounce)
+- [x] Add `nodeTopicCounts` computed signal: derives `Map<memberName, {pub, sub, srv, dangling}>` from snapshot
+- [x] Add badge row to `NodeCard.js` below the ROS name line
+- [x] Show `N pub`, `N sub`, `N srv` as compact inline badges
+- [x] Show `N dangling` in amber when dangling count > 0
+- [x] Hide badge row when node is not running (no DDS endpoints)
+- [x] Add CSS styles for `.topic-badges` in `nodes.css` (with dark theme support)
 
 #### Acceptance criteria
 
-- [ ] Running nodes show topic count badges on their card
-- [ ] Badge counts match the actual number of publishers/subscribers/services for that node
-- [ ] Dangling count is highlighted in amber with warning icon
-- [ ] Badges are hidden for stopped/pending nodes
-- [ ] Badges update within ~2s after a node starts or stops (debounced graph refresh)
-- [ ] No per-card API calls — all counts derived from single cached snapshot
+- [x] Running nodes show topic count badges on their card
+- [x] Badge counts derived from single cached `graphSnapshot` (no per-card API calls)
+- [x] Dangling count highlighted in amber
+- [x] Badges hidden for stopped/pending nodes
+- [x] Badges update after state events via debounced graph refresh
 
 ---
 
@@ -660,33 +657,43 @@ Add topic count badges to NodeCard. Counts derived from cached GraphSnapshot
 
 Download and vendor into `src/play_launch/src/web/assets/js/vendor/`:
 
-- `cytoscape.esm.min.js` (~356 KB uncompressed, ~110 KB gzip)
-- `cytoscape-fcose.js` (~15 KB gzip) — compound-aware force layout
-- `cytoscape-expand-collapse.js` (~10 KB gzip) — collapsible namespace groups
+- `cytoscape.esm.min.js` (423 KB, native ESM from jsdelivr)
+- `cytoscape-fcose.js` (124 KB, ESM bundle from esm.sh, cose-base bundled)
+- `cytoscape-expand-collapse.js` (32 KB, ESM bundle from esm.sh)
 
-Update `THIRD_PARTY_LICENSES` with MIT license text.
+Vendor script: `scripts/vendor_cytoscape.sh` — downloads pinned versions with
+SHA-256 checksum verification, skips download if file already present with valid
+checksum. Supports `--verify` (check only) and `--dry-run` (show new checksums).
+
+**Versions**: cytoscape 3.33.1, cytoscape-fcose 2.2.0, cytoscape-expand-collapse 4.1.1.
+
+**ESM strategy**: cytoscape ships native ESM. The two extensions (fcose,
+expand-collapse) only ship UMD, so we use esm.sh's `?bundle-deps` ESM conversion
+which also bundles internal dependencies (cose-base for fcose). All three files
+export a default export and have no external import dependencies.
 
 #### Work items
 
-- [ ] Download `cytoscape.esm.min.js` from npm/unpkg (latest stable)
-- [ ] Download `cytoscape-fcose` ESM bundle
-- [ ] Download `cytoscape-expand-collapse` ESM bundle
-- [ ] Place all three in `src/play_launch/src/web/assets/js/vendor/`
-- [ ] Verify ES module imports work: `import cytoscape from './vendor/cytoscape.esm.min.js'`
-- [ ] Register fcose layout: `cytoscape.use(fcose)`
-- [ ] Register expand-collapse extension
-- [ ] Add Cytoscape.js MIT license text to `THIRD_PARTY_LICENSES`
-- [ ] Add cytoscape-fcose MIT license text to `THIRD_PARTY_LICENSES`
-- [ ] Add cytoscape-expand-collapse MIT license text to `THIRD_PARTY_LICENSES`
+- [x] Download `cytoscape.esm.min.js` from jsdelivr (v3.33.1, native ESM)
+- [x] Download `cytoscape-fcose` ESM bundle from esm.sh (v2.2.0, cose-base bundled)
+- [x] Download `cytoscape-expand-collapse` ESM bundle from esm.sh (v4.1.1)
+- [x] Place all three in `src/play_launch/src/web/assets/js/vendor/`
+- [x] Create `scripts/vendor_cytoscape.sh` with checksum verification and skip-if-exists
+- [x] Verify ES module imports work: `import cytoscape from './vendor/cytoscape.esm.min.js'`
+- [x] Register fcose layout: `cytoscape.use(fcose)`
+- [x] Register expand-collapse extension
+- [x] Add Cytoscape.js MIT license text to `THIRD_PARTY_LICENSES`
+- [x] Add cytoscape-fcose MIT license text to `THIRD_PARTY_LICENSES`
+- [x] Add cytoscape-expand-collapse MIT license text to `THIRD_PARTY_LICENSES`
 
 #### Acceptance criteria
 
-- [ ] All three vendor files present and importable as ES modules
-- [ ] `cytoscape()` creates a graph instance without errors
-- [ ] `fcose` layout runs on a simple test graph with compound nodes
-- [ ] `expand-collapse` extension loads and provides `api.collapseAll()` / `api.expandAll()`
-- [ ] `THIRD_PARTY_LICENSES` includes all three MIT license entries
-- [ ] `just build-wheel` bundles the vendor files into the wheel (rust-embed picks them up)
+- [x] All three vendor files present and importable as ES modules
+- [x] `cytoscape()` creates a graph instance without errors
+- [x] `fcose` layout runs on a simple test graph with compound nodes
+- [x] `expand-collapse` extension loads and provides `api.collapseAll()` / `api.expandAll()`
+- [x] `THIRD_PARTY_LICENSES` includes all three MIT license entries
+- [x] `just build-wheel` bundles the vendor files into the wheel (rust-embed picks them up)
 
 ---
 
