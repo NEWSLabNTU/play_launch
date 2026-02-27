@@ -635,4 +635,48 @@ impl MemberHandle {
 
         proxy.set(name, value).await
     }
+
+    // --- Graph introspection (Phase 25) ---
+
+    /// Build a full graph snapshot of all topics and services.
+    pub async fn build_graph_snapshot(
+        &self,
+    ) -> Result<crate::ros::graph_builder::GraphSnapshot> {
+        let ros_node = self
+            .shared_ros_node
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("ROS node not available"))?;
+
+        // Build reverse map: FQN → member_name
+        let fqn_map = self.node_fqn_map.read().await;
+        let fqn_to_member: std::collections::HashMap<String, String> = fqn_map
+            .iter()
+            .map(|(member, fqn)| (fqn.clone(), member.clone()))
+            .collect();
+        drop(fqn_map);
+
+        crate::ros::graph_builder::build_graph_snapshot(ros_node, &fqn_to_member)
+    }
+
+    /// Get topics and services for a single node.
+    pub async fn get_node_topics(
+        &self,
+        member_name: &str,
+    ) -> Result<crate::ros::graph_builder::NodeTopics> {
+        let ros_node = self
+            .shared_ros_node
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("ROS node not available"))?;
+
+        let fqn_map = self.node_fqn_map.read().await;
+        let fqn = fqn_map
+            .get(member_name)
+            .ok_or_else(|| eyre::eyre!("Node '{}' not running or FQN unknown", member_name))?
+            .clone();
+        drop(fqn_map);
+
+        debug!("Getting topics for {} (FQN: {})", member_name, fqn);
+
+        crate::ros::graph_builder::build_node_topics(ros_node, &fqn)
+    }
 }

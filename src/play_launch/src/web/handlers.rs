@@ -604,3 +604,48 @@ pub async fn get_diagnostic_counts(
     let counts = state.diagnostic_registry.get_counts();
     Ok(Json(counts))
 }
+
+// ===== Graph API (Phase 25) =====
+
+/// Get the full communication graph snapshot (all topics + services).
+pub async fn get_graph(State(state): State<Arc<WebState>>) -> Response {
+    let coordinator = &state.member_handle;
+    match coordinator.build_graph_snapshot().await {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => {
+            let msg = e.to_string();
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": msg })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Get topics and services for a single node.
+pub async fn get_node_topics(
+    State(state): State<Arc<WebState>>,
+    Path(name): Path<String>,
+) -> Response {
+    let coordinator = &state.member_handle;
+    match coordinator.get_node_topics(&name).await {
+        Ok(topics) => Json(topics).into_response(),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("not running") || msg.contains("FQN unknown") {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({ "error": msg })),
+                )
+                    .into_response()
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": msg })),
+                )
+                    .into_response()
+            }
+        }
+    }
+}

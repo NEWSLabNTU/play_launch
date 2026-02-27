@@ -42,11 +42,61 @@ export const healthSummary = signal(/** @type {any} */ ({
     composable_total: 0,
 }));
 
+// --- Graph state (Phase 25) ---
+
+/** @type {{ value: object|null }} Full graph snapshot from GET /api/graph */
+export const graphSnapshot = signal(null);
+
+/** Debounce timer for graph refetch on state changes. */
+let _graphDebounceTimer = null;
+
 // --- Computed values ---
 
 export const nodeList = computed(() => Array.from(nodes.value.values()));
 
 export const nodeCount = computed(() => nodes.value.size);
+
+/** Derive per-node topic counts from the graph snapshot.
+ * @returns {Map<string, {pub: number, sub: number, srv: number, dangling: number}>}
+ */
+export const nodeTopicCounts = computed(() => {
+    const snap = graphSnapshot.value;
+    if (!snap || !snap.topics) return new Map();
+
+    const counts = new Map();
+
+    const ensure = (name) => {
+        if (!counts.has(name)) counts.set(name, { pub: 0, sub: 0, srv: 0, dangling: 0 });
+        return counts.get(name);
+    };
+
+    for (const topic of snap.topics) {
+        for (const ep of topic.publishers) {
+            if (ep.member_name) {
+                const c = ensure(ep.member_name);
+                c.pub++;
+                if (topic.dangling) c.dangling++;
+            }
+        }
+        for (const ep of topic.subscribers) {
+            if (ep.member_name) {
+                const c = ensure(ep.member_name);
+                c.sub++;
+                if (topic.dangling) c.dangling++;
+            }
+        }
+    }
+
+    if (snap.services) {
+        for (const svc of snap.services) {
+            for (const server of svc.servers) {
+                // servers are FQN strings — need reverse lookup, skip for now
+            }
+        }
+    }
+
+    return counts;
+});
 
 // --- Helpers ---
 
@@ -172,6 +222,9 @@ export function applyStateEvent(event) {
 
     map.set(name, updated);
     nodes.value = map;
+
+    // Phase 25: Debounce graph refresh on state-changing events
+    debounceFetchGraph();
 }
 
 /** Fetch full node list from the API and update the store. */
@@ -195,4 +248,24 @@ export async function fetchHealth() {
     } catch (e) {
         console.warn('[store] Failed to fetch health:', e);
     }
+}
+
+/** Fetch the full communication graph snapshot (Phase 25). */
+export async function fetchGraph() {
+    try {
+        const resp = await fetch('/api/graph');
+        if (!resp.ok) return;
+        graphSnapshot.value = await resp.json();
+    } catch (e) {
+        console.warn('[store] Failed to fetch graph:', e);
+    }
+}
+
+/** Debounced graph refetch — called on state-changing events. */
+export function debounceFetchGraph() {
+    if (_graphDebounceTimer) clearTimeout(_graphDebounceTimer);
+    _graphDebounceTimer = setTimeout(() => {
+        _graphDebounceTimer = null;
+        fetchGraph();
+    }, 500);
 }

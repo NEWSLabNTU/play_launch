@@ -3,7 +3,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useState, useCallback, useEffect } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { selectedNode, fetchNodes, fetchHealth, getStatusString } from '../store.js';
+import { selectedNode, fetchNodes, fetchHealth, getStatusString, nodeTopicCounts } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -214,6 +214,8 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
     const isComposable = node.node_type === 'composable_node';
     const isContainer = node.node_type === 'container';
     const isSelected = selectedNode.value === name;
+    const isRunning = statusStr === 'running' || statusStr === 'loaded';
+    const topicCounts = nodeTopicCounts.value.get(name);
 
     const [pendingAction, setPendingAction] = useState(null);
 
@@ -243,6 +245,14 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
                 <div class="node-meta">
                     <${RosName} namespace=${node.namespace} nodeName=${node.node_name} onFilterNamespace=${onFilterNamespace} />
                 </div>
+                ${isRunning && topicCounts && html`
+                    <div class="topic-badges">
+                        ${topicCounts.pub > 0 && html`<span class="topic-badge topic-badge-pub">${topicCounts.pub} pub</span>`}
+                        ${topicCounts.sub > 0 && html`<span class="topic-badge topic-badge-sub">${topicCounts.sub} sub</span>`}
+                        ${topicCounts.srv > 0 && html`<span class="topic-badge topic-badge-srv">${topicCounts.srv} srv</span>`}
+                        ${topicCounts.dangling > 0 && html`<span class="topic-badge topic-badge-dangling">${topicCounts.dangling} dangling</span>`}
+                    </div>
+                `}
             </div>
             <div class="node-controls">
                 ${isProcess && node.respawn_enabled !== undefined && html`

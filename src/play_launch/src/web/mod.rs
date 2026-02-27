@@ -130,6 +130,8 @@ pub fn create_router(state: Arc<WebState>) -> Router {
             "/api/nodes/:name/parameters",
             get(handlers::get_node_parameters).post(handlers::set_node_parameter),
         )
+        .route("/api/nodes/:name/topics", get(handlers::get_node_topics))
+        .route("/api/graph", get(handlers::get_graph))
         .route("/api/health", get(handlers::health_summary))
         // Bulk operations
         .route("/api/nodes/start-all", post(handlers::start_all))

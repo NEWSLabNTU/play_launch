@@ -421,3 +421,219 @@
     0% { background-color: rgba(72, 187, 120, 0.25); }
     100% { background-color: transparent; }
 }
+
+/* ===== Topics Tab (Phase 25) ===== */
+
+.topics-tab {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.topics-toolbar {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.topics-infra-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.topics-infra-toggle input {
+    cursor: pointer;
+}
+
+.topics-sections {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+.topics-section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+}
+
+.topics-section-header:hover {
+    background: var(--border-color);
+}
+
+.topics-section-arrow {
+    font-size: 0.6rem;
+    width: 10px;
+    text-align: center;
+}
+
+.topics-section-count {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+.topic-row {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.topic-row-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    transition: background 0.15s;
+}
+
+.topic-row-header:hover {
+    background: var(--bg-tertiary);
+}
+
+.topic-expand {
+    font-size: 0.6rem;
+    width: 10px;
+    text-align: center;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.topic-name {
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+}
+
+.topic-type {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.topic-counts {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.topic-dangling {
+    color: #b45309;
+    font-weight: 700;
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+
+/* QoS badges */
+.qos-badges {
+    display: flex;
+    gap: 3px;
+    flex-shrink: 0;
+}
+
+.qos-badge {
+    padding: 1px 4px;
+    border-radius: 2px;
+    font-size: 0.55rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.qos-reliable { background: #dbeafe; color: #1d4ed8; }
+.qos-besteffort { background: #fef3c7; color: #b45309; }
+.qos-transient { background: #f3e8ff; color: #7c3aed; }
+.qos-volatile { background: #e5e7eb; color: #6b7280; }
+.qos-history { background: #dcfce7; color: #15803d; }
+
+[data-theme="dark"] .qos-reliable { background: #1e3a5f; color: #93c5fd; }
+[data-theme="dark"] .qos-besteffort { background: #78350f; color: #fcd34d; }
+[data-theme="dark"] .qos-transient { background: #3b0764; color: #c4b5fd; }
+[data-theme="dark"] .qos-volatile { background: #374151; color: #9ca3af; }
+[data-theme="dark"] .qos-history { background: #14532d; color: #86efac; }
+
+/* Expanded topic detail */
+.topic-row-detail {
+    padding: 4px 12px 8px 28px;
+    background: var(--bg-tertiary);
+    border-top: 1px solid var(--border-color);
+}
+
+.topic-detail-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.topic-endpoint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    font-size: 0.7rem;
+}
+
+.endpoint-fqn {
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 0.65rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.topic-endpoint-none {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.btn-jump {
+    padding: 1px 6px;
+    font-size: 0.6rem;
+    background: #7c3aed;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.btn-jump:hover {
+    opacity: 0.85;
+}
+
+.topics-tab-message {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.topics-tab-error {
+    color: var(--failed-border);
+}
