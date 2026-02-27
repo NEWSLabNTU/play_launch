@@ -1,14 +1,17 @@
 //! External handle for controlling and querying members
 
 use super::{read_last_n_lines, MemberMetadata, NOISY_STDERR_THRESHOLD};
-use crate::member_actor::{
-    events::ControlEvent,
-    web_query::{HealthSummary, MemberState, MemberSummary, MemberType},
+use crate::{
+    member_actor::{
+        events::ControlEvent,
+        web_query::{HealthSummary, MemberState, MemberSummary, MemberType},
+    },
+    ros::parameter_types::{ParamEntry, ParamValue, SetParamResult},
 };
 use eyre::{Context, Result};
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, watch};
-use tracing::warn;
+use tokio::sync::{mpsc, watch, RwLock};
+use tracing::{debug, warn};
 
 /// External handle for controlling and querying members
 /// Wrap in Arc<MemberHandle> for sharing (not Clone-able itself)
@@ -16,23 +19,29 @@ pub struct MemberHandle {
     /// Control channels for sending commands to actors
     control_channels: HashMap<String, mpsc::Sender<ControlEvent>>,
     /// Member metadata (mutable for dynamic config updates like respawn_enabled)
-    metadata: Arc<tokio::sync::RwLock<HashMap<String, MemberMetadata>>>,
+    metadata: Arc<RwLock<HashMap<String, MemberMetadata>>>,
     /// Shared state map (actors write directly, Web UI reads)
     shared_state: Arc<dashmap::DashMap<String, MemberState>>,
     /// Shutdown signal broadcaster
     shutdown_tx: watch::Sender<bool>,
     /// Virtual member routing: maps composable node names to parent container names (Phase 12)
     virtual_member_routing: HashMap<String, String>,
+    /// Shared ROS node for parameter service calls (Phase 24)
+    shared_ros_node: Option<Arc<rclrs::Node>>,
+    /// Member name → fully-qualified ROS node name (Phase 24)
+    node_fqn_map: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl MemberHandle {
     /// Create a new MemberHandle (called from builder)
     pub(super) fn new(
         control_channels: HashMap<String, mpsc::Sender<ControlEvent>>,
-        metadata: Arc<tokio::sync::RwLock<HashMap<String, MemberMetadata>>>,
+        metadata: Arc<RwLock<HashMap<String, MemberMetadata>>>,
         shared_state: Arc<dashmap::DashMap<String, MemberState>>,
         shutdown_tx: watch::Sender<bool>,
         virtual_member_routing: HashMap<String, String>,
+        shared_ros_node: Option<Arc<rclrs::Node>>,
+        node_fqn_map: Arc<RwLock<HashMap<String, String>>>,
     ) -> Self {
         Self {
             control_channels,
@@ -40,6 +49,8 @@ impl MemberHandle {
             shared_state,
             shutdown_tx,
             virtual_member_routing,
+            shared_ros_node,
+            node_fqn_map,
         }
     }
 
@@ -564,5 +575,64 @@ impl MemberHandle {
     /// Get reference to the shared state map
     pub fn shared_state(&self) -> &Arc<dashmap::DashMap<String, MemberState>> {
         &self.shared_state
+    }
+
+    /// Get reference to the node FQN map (Phase 24)
+    pub fn node_fqn_map(&self) -> &Arc<RwLock<HashMap<String, String>>> {
+        &self.node_fqn_map
+    }
+
+    // --- Parameter operations (Phase 24) ---
+
+    /// Get all parameters for a node. Creates a temporary ParameterProxy.
+    pub async fn get_parameters(&self, member_name: &str) -> Result<Vec<ParamEntry>> {
+        let ros_node = self
+            .shared_ros_node
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("ROS node not available"))?;
+
+        let fqn_map = self.node_fqn_map.read().await;
+        let fqn = fqn_map
+            .get(member_name)
+            .ok_or_else(|| eyre::eyre!("Node '{}' not running or FQN unknown", member_name))?
+            .clone();
+        drop(fqn_map);
+
+        debug!("Getting parameters for {} (FQN: {})", member_name, fqn);
+
+        let proxy = crate::ros::parameter_proxy::ParameterProxy::new(ros_node, &fqn)
+            .context("Failed to create parameter proxy")?;
+
+        proxy.list_all().await
+    }
+
+    /// Set a single parameter on a node.
+    pub async fn set_parameter(
+        &self,
+        member_name: &str,
+        name: &str,
+        value: ParamValue,
+    ) -> Result<SetParamResult> {
+        let ros_node = self
+            .shared_ros_node
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("ROS node not available"))?;
+
+        let fqn_map = self.node_fqn_map.read().await;
+        let fqn = fqn_map
+            .get(member_name)
+            .ok_or_else(|| eyre::eyre!("Node '{}' not running or FQN unknown", member_name))?
+            .clone();
+        drop(fqn_map);
+
+        debug!(
+            "Setting parameter '{}' on {} (FQN: {})",
+            name, member_name, fqn
+        );
+
+        let proxy = crate::ros::parameter_proxy::ParameterProxy::new(ros_node, &fqn)
+            .context("Failed to create parameter proxy")?;
+
+        proxy.set(name, value).await
     }
 }

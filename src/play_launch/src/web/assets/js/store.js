@@ -8,6 +8,11 @@ import { signal, computed } from './vendor/signals.module.js';
 /** @type {{ value: Map<string, import('./types').NodeSummary> }} */
 export const nodes = signal(new Map());
 
+// --- Parameter cache (Phase 24) ---
+
+/** Incremented when parameters change for a node, so the Params tab can re-fetch. */
+export const parameterVersion = signal(new Map());
+
 // --- UI state ---
 
 export const selectedNode = signal(null);
@@ -152,6 +157,14 @@ export function applyStateEvent(event) {
                 value: { status: 'blocked', reason: /** @type {any} */ (event.reason) },
             };
             break;
+
+        case 'parameter_changed': {
+            // Phase 24: bump parameter version so ParametersTab re-fetches
+            const pmap = new Map(parameterVersion.value);
+            pmap.set(name, (pmap.get(name) || 0) + 1);
+            parameterVersion.value = pmap;
+            return; // no node status update needed
+        }
 
         default:
             return; // unknown event type — ignore

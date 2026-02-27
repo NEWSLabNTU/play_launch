@@ -64,14 +64,29 @@ impl Drop for CleanupGuard {
 ///
 /// Combines event forwarding with completion waiting in a single task.
 /// Takes ownership of the runner (no Arc/Mutex needed).
+///
+/// Phase 24: Also updates the node FQN map when LoadSucceeded events arrive,
+/// so the parameter proxy can construct service names for composable nodes.
 pub(crate) async fn forward_state_events_and_wait(
     mut runner: crate::member_actor::MemberRunner,
     broadcaster: Arc<crate::web::StateEventBroadcaster>,
+    node_fqn_map: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
 ) -> eyre::Result<()> {
     debug!("Starting state event forwarding and completion waiting");
 
     // Forward events until done
     while let Some(event) = runner.next_state_event().await {
+        // Phase 24: Update FQN map for composable nodes when they load
+        if let crate::member_actor::events::StateEvent::LoadSucceeded {
+            ref name,
+            ref full_node_name,
+            ..
+        } = event
+        {
+            let mut fqn_map = node_fqn_map.write().await;
+            fqn_map.insert(name.clone(), full_node_name.clone());
+            debug!("Updated FQN map: {} -> {}", name, full_node_name);
+        }
         broadcaster.broadcast(event).await;
     }
 

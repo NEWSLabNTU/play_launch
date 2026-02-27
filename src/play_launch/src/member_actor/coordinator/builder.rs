@@ -465,12 +465,35 @@ impl MemberCoordinatorBuilder {
         // Populated during composable node registration above
         let virtual_member_routing = virtual_member_routing;
 
+        // Phase 24: Build node FQN map for parameter service calls
+        // Regular nodes and containers: namespace + node_name
+        // Composable nodes: populated later when LoadSucceeded arrives
+        let mut node_fqn_map = HashMap::new();
+        for (member_name, meta) in metadata_map.iter() {
+            if meta.member_type == MemberType::Node || meta.member_type == MemberType::Container {
+                if let Some(node_name) = &meta.node_name {
+                    let namespace = meta.namespace.as_deref().unwrap_or("/");
+                    let fqn = if namespace == "/" {
+                        format!("/{}", node_name)
+                    } else if namespace.ends_with('/') {
+                        format!("{}{}", namespace, node_name)
+                    } else {
+                        format!("{}/{}", namespace, node_name)
+                    };
+                    node_fqn_map.insert(member_name.clone(), fqn);
+                }
+            }
+        }
+        let node_fqn_map = Arc::new(tokio::sync::RwLock::new(node_fqn_map));
+
         let handle = MemberHandle::new(
             control_channels,
             Arc::new(tokio::sync::RwLock::new(metadata_map)),
             shared_state.clone(),
             shutdown_tx,
             virtual_member_routing,
+            shared_ros_node,
+            node_fqn_map,
         );
 
         let runner = MemberRunner::new(tasks, state_rx, shared_state);

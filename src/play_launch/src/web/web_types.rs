@@ -236,6 +236,13 @@ pub struct NodeDetails {
     pub cmdline: Option<String>,
 }
 
+/// Request body for setting a parameter (Phase 24).
+#[derive(Debug, Deserialize)]
+pub struct SetParamRequest {
+    pub name: String,
+    pub value: crate::ros::parameter_types::ParamValue,
+}
+
 /// Boolean path parameter for toggle endpoints (e.g. `/respawn/true`).
 ///
 /// Replaces manual `match enabled_str { "true" => ..., "false" => ... }` parsing.

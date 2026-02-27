@@ -126,6 +126,10 @@ pub fn create_router(state: Arc<WebState>) -> Router {
             "/api/nodes/:name/auto-load/:enabled",
             post(handlers::toggle_auto_load),
         )
+        .route(
+            "/api/nodes/:name/parameters",
+            get(handlers::get_node_parameters).post(handlers::set_node_parameter),
+        )
         .route("/api/health", get(handlers::health_summary))
         // Bulk operations
         .route("/api/nodes/start-all", post(handlers::start_all))

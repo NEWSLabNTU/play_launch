@@ -263,8 +263,9 @@ async fn run_direct(
         });
 
         // Runner task forwards state events and waits for completion
+        let node_fqn_map = member_handle.node_fqn_map().clone();
         let runner_task = tokio::spawn(async move {
-            forward_state_events_and_wait(member_runner, state_broadcaster).await
+            forward_state_events_and_wait(member_runner, state_broadcaster, node_fqn_map).await
         });
 
         (Some(runner_task), Some(web_server_task))

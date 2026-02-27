@@ -15,7 +15,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Current Status
 
-**Overall Progress**: 20 of 23 phases complete (Phases 3-5 partial/planned, Phase 20 planned)
+**Overall Progress**: 21 of 24 phases complete (Phases 3-5 partial/planned, Phase 20 planned)
 
 **Timeline**: Started October 2025, ongoing development
 
@@ -83,7 +83,7 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
 
 | Phase | Status | Completion | Documentation |
 |-------|--------|------------|---------------|
-| **Phase 24**: Web UI Parameter Control | ⏳ Planned | - | [phase-24-parameter_control.md](./phase-24-parameter_control.md) |
+| **Phase 24**: Web UI Parameter Control | ✅ Complete | 2026-02-27 | [phase-24-parameter_control.md](./phase-24-parameter_control.md) |
 
 ---
 
@@ -119,6 +119,15 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
 - ⏳ Web UI Actor Integration (Phase 11) - Remove bridging layer, implement direct actor control
 
 ### Recently Completed 🎉
+
+- ✅ Web UI Parameter Control (Phase 24 - Complete 2026-02-27)
+  - ✅ ParameterProxy service client wrapper (24.1)
+  - ✅ Parameter types with bidirectional ROS conversion (24.2)
+  - ✅ MemberHandle integration with FQN map (24.3)
+  - ✅ GET/POST `/api/nodes/:name/parameters` endpoints (24.4)
+  - ✅ SSE `/parameter_events` subscription + broadcast (24.5)
+  - ✅ ParametersTab frontend with type-aware inputs (24.6)
+  - ✅ Params tab registered in RightPanel (24.7)
 
 - ✅ Code Quality (Phase 23 - Complete 2026-02-25)
   - ✅ Large file splits, naming improvements, dead code removal, deduplication
@@ -248,15 +257,6 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
   - Phase 22.9: Python AST compiler
   - Phase 22.10: Python integration into WASM pipeline
   - Phase 22.11: Autoware smoke tests
-
-- **Phase 24**: Web UI Parameter Control - See [phase-24-parameter_control.md](./phase-24-parameter_control.md)
-  - Phase 24.1: ParameterProxy (Rust service client wrapper)
-  - Phase 24.2: Parameter types (ParamValue, ParamEntry, ranges)
-  - Phase 24.3: MemberHandle integration (FQN map, get/set methods)
-  - Phase 24.4: Web API endpoints (GET/POST `/api/nodes/:name/parameters`)
-  - Phase 24.5: SSE parameter change events (`/parameter_events` subscription)
-  - Phase 24.6: ParametersTab frontend component (type-aware inputs)
-  - Phase 24.7: Register tab in RightPanel
 
 ## Future Considerations
 

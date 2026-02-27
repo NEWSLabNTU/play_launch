@@ -6,6 +6,7 @@ import htm from '../vendor/htm.module.js';
 import { selectedNode, panelOpen, activeTab, nodes, getStatusString } from '../store.js';
 import { InfoTab } from './InfoTab.js';
 import { LogTab } from './LogTab.js';
+import { ParametersTab } from './ParametersTab.js';
 
 const html = htm.bind(h);
 
@@ -74,6 +75,8 @@ export function RightPanel() {
             <div class="right-panel-tabs">
                 <button class="tab-btn ${tab === 'info' ? 'active' : ''}"
                     onClick=${() => switchTab('info')}>Member Info</button>
+                <button class="tab-btn ${tab === 'params' ? 'active' : ''}"
+                    onClick=${() => switchTab('params')}>Params</button>
                 <button class="tab-btn ${tab === 'stdout' ? 'active' : ''}"
                     onClick=${() => switchTab('stdout')}>stdout</button>
                 <button class="tab-btn ${tab === 'stderr' ? 'active' : ''}"
@@ -88,6 +91,9 @@ export function RightPanel() {
                 </div>
                 <div class="tab-content" style=${{ display: tab === 'stderr' ? 'flex' : 'none' }}>
                     ${(tab === 'stderr' || true) && html`<${LogTab} nodeName=${name} logType="stderr" containerName=${containerName} />`}
+                </div>
+                <div class="tab-content" style=${{ display: tab === 'params' ? 'flex' : 'none' }}>
+                    ${tab === 'params' && html`<${ParametersTab} nodeName=${name} />`}
                 </div>
             </div>
         </div>

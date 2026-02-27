@@ -18,6 +18,7 @@ use crate::{
 };
 use eyre::Context;
 use futures::stream::FuturesUnordered;
+use rclrs::IntoPrimitiveOptions;
 use std::{
     collections::HashMap,
     fs,
@@ -478,6 +479,8 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 
     // Now spawn all actors at once and get handle + runner
     // Pass the shared ROS node for container actors to use
+    // Clone before spawning — we need it for parameter_events subscription (Phase 24)
+    let shared_ros_node_for_params = shared_ros_node.clone();
     debug!("Spawning all {} actors...", builder.member_count());
     let (member_handle, member_runner) = builder.spawn(shared_ros_node).await;
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
@@ -494,7 +497,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     };
 
     // Setup web UI if requested (direct StateEvent streaming)
-    let (runner_task, web_ui_task) = if common.is_web_ui_enabled() {
+    let (runner_task, web_ui_task, param_events_task) = if common.is_web_ui_enabled() {
         debug!("Setting up web UI with direct StateEvent streaming...");
 
         // Parse web address
@@ -523,12 +526,82 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             Ok(())
         });
 
+        // Phase 24: Spawn /parameter_events subscriber task
+        let param_task = if let Some(ref ros_node) = shared_ros_node_for_params {
+            let (param_event_tx, mut param_event_rx) =
+                tokio::sync::mpsc::unbounded_channel::<rcl_interfaces::msg::ParameterEvent>();
+
+            // Create subscription on the shared ROS node (callback runs on executor thread)
+            match ros_node.create_subscription(
+                "/parameter_events".reliable().keep_last(1000),
+                move |msg: rcl_interfaces::msg::ParameterEvent| {
+                    let _ = param_event_tx.send(msg);
+                },
+            ) {
+                Ok(param_sub) => {
+                    let param_shutdown = shutdown_signal.clone();
+                    let param_fqn_map = member_handle.node_fqn_map().clone();
+                    let param_broadcaster = state_broadcaster.clone();
+
+                    Some(tokio::spawn(async move {
+                        let _sub = param_sub;
+                        loop {
+                            tokio::select! {
+                                Some(event) = param_event_rx.recv() => {
+                                    let fqn_map = param_fqn_map.read().await;
+                                    let member_name = fqn_map
+                                        .iter()
+                                        .find(|(_, fqn)| *fqn == &event.node)
+                                        .map(|(name, _)| name.clone());
+                                    drop(fqn_map);
+
+                                    if let Some(name) = member_name {
+                                        let mut updates = Vec::new();
+                                        for p in event.new_parameters.iter().chain(event.changed_parameters.iter()) {
+                                            updates.push(crate::ros::parameter_types::ParamUpdate {
+                                                param_name: p.name.clone(),
+                                                value: crate::ros::parameter_types::ParamValue::from_ros(&p.value),
+                                            });
+                                        }
+                                        if !updates.is_empty() {
+                                            param_broadcaster.broadcast(
+                                                crate::member_actor::events::StateEvent::ParameterChanged {
+                                                    name,
+                                                    parameters: updates,
+                                                },
+                                            ).await;
+                                        }
+                                    }
+                                }
+                                _ = async {
+                                    let mut rx = param_shutdown.clone();
+                                    loop {
+                                        if *rx.borrow() { break; }
+                                        if rx.changed().await.is_err() { break; }
+                                    }
+                                } => break,
+                                else => break,
+                            }
+                        }
+                        Ok(())
+                    }))
+                }
+                Err(e) => {
+                    warn!("Failed to create /parameter_events subscription: {:#}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         // Runner task forwards state events and waits for completion
+        let node_fqn_map = member_handle.node_fqn_map().clone();
         let runner_task = tokio::spawn(async move {
-            forward_state_events_and_wait(member_runner, state_broadcaster).await
+            forward_state_events_and_wait(member_runner, state_broadcaster, node_fqn_map).await
         });
 
-        (Some(runner_task), Some(web_server_task))
+        (Some(runner_task), Some(web_server_task), param_task)
     } else {
         // Runner task just waits for completion (no forwarding)
         let runner_task = tokio::spawn(async move {
@@ -538,7 +611,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             result
         });
 
-        (Some(runner_task), None)
+        (Some(runner_task), None, None)
     };
 
     // Phase 6: Collect background tasks (NOT including runner task) into FuturesUnordered
@@ -581,6 +654,12 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     if let Some(task) = web_ui_task {
         named_tasks.push(NamedTask {
             name: "web_ui",
+            task,
+        });
+    }
+    if let Some(task) = param_events_task {
+        named_tasks.push(NamedTask {
+            name: "parameter_events",
             task,
         });
     }

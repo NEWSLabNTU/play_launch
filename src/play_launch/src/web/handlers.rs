@@ -527,6 +527,68 @@ pub async fn restart_all(State(state): State<Arc<WebState>>) -> Response {
 
 // ===== Diagnostics API =====
 
+// ===== Parameter API (Phase 24) =====
+
+/// Get all parameters for a node
+pub async fn get_node_parameters(
+    State(state): State<Arc<WebState>>,
+    Path(name): Path<String>,
+) -> Response {
+    let coordinator = &state.member_handle;
+    match coordinator.get_parameters(&name).await {
+        Ok(params) => Json(params).into_response(),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("not running") || msg.contains("FQN unknown") {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({ "error": msg })),
+                )
+                    .into_response()
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": msg })),
+                )
+                    .into_response()
+            }
+        }
+    }
+}
+
+/// Set a single parameter on a node
+pub async fn set_node_parameter(
+    State(state): State<Arc<WebState>>,
+    Path(name): Path<String>,
+    Json(body): Json<super::web_types::SetParamRequest>,
+) -> Response {
+    let coordinator = &state.member_handle;
+    match coordinator
+        .set_parameter(&name, &body.name, body.value)
+        .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("not running") || msg.contains("FQN unknown") {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({ "error": msg })),
+                )
+                    .into_response()
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": msg })),
+                )
+                    .into_response()
+            }
+        }
+    }
+}
+
+// ===== Diagnostics API =====
+
 /// List all current diagnostics (latest status for each hardware_id/name)
 pub async fn list_diagnostics(
     State(state): State<Arc<WebState>>,

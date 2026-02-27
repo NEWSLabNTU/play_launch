@@ -4,6 +4,7 @@
 //! - Control events: Commands sent TO actors
 //! - State events: Status updates sent FROM actors
 
+use crate::ros::parameter_types::ParamUpdate;
 use serde::Serialize;
 #[cfg(test)]
 use ts_rs::TS;
@@ -132,6 +133,13 @@ pub enum StateEvent {
         /// Reason for blocking
         reason: super::state::BlockReason,
     },
+    /// Parameter(s) changed on a managed node (Phase 24)
+    ParameterChanged {
+        /// Member name (not FQN)
+        name: String,
+        /// Changed parameters
+        parameters: Vec<ParamUpdate>,
+    },
 }
 
 impl StateEvent {
@@ -147,7 +155,8 @@ impl StateEvent {
             | StateEvent::LoadSucceeded { name, .. }
             | StateEvent::LoadFailed { name, .. }
             | StateEvent::Unloaded { name }
-            | StateEvent::Blocked { name, .. } => name,
+            | StateEvent::Blocked { name, .. }
+            | StateEvent::ParameterChanged { name, .. } => name,
         }
     }
 
