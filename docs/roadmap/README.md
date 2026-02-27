@@ -79,11 +79,12 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
 | **Phase 22**: Launch Tree IR | ✅ Complete (22.1–22.8) | 2026-02-24 | [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md) |
 | **Phase 23**: Code Quality | ✅ Complete | 2026-02-25 | [phase-23-code_quality.md](./phase-23-code_quality.md) |
 
-### Runtime Parameter Management
+### Runtime Introspection
 
 | Phase | Status | Completion | Documentation |
 |-------|--------|------------|---------------|
 | **Phase 24**: Web UI Parameter Control | ✅ Complete | 2026-02-27 | [phase-24-parameter_control.md](./phase-24-parameter_control.md) |
+| **Phase 25**: Runtime Graph & Topic Introspection | ⏳ Planned | - | [phase-25-topic_introspection.md](./phase-25-topic_introspection.md) |
 
 ---
 
@@ -257,6 +258,15 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
   - Phase 22.9: Python AST compiler
   - Phase 22.10: Python integration into WASM pipeline
   - Phase 22.11: Autoware smoke tests
+
+- **Phase 25**: Runtime Graph & Topic Introspection - See [phase-25-topic_introspection.md](./phase-25-topic_introspection.md)
+  - Phase 25.1: Patch rclrs to expose QoS in TopicEndpointInfo
+  - Phase 25.2: GraphBuilder (Rust — cached graph snapshot, per-node topics, dangling detection)
+  - Phase 25.3: Web API endpoints (`GET /api/graph`, `GET /api/nodes/:name/topics`)
+  - Phase 25.4: TopicsTab frontend (click-to-expand topics, jump-to-node, QoS badges)
+  - Phase 25.5: Node card topic badges (pub/sub/srv/dangling counts)
+  - Phase 25.6: Vendor Cytoscape.js + fcose + expand-collapse
+  - Phase 25.7: GraphView — namespace-grouped interactive visualization with drill-down
 
 ## Future Considerations
 
