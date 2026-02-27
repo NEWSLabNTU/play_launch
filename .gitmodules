@@ -4,3 +4,6 @@
 [submodule "src/vendor/ros2_rust"]
 	path = src/vendor/ros2_rust
 	url = https://github.com/jerry73204/ros2_rust.git
+[submodule "src/vendor/rosidl_runtime_rs"]
+	path = src/vendor/rosidl_runtime_rs
+	url = https://github.com/jerry73204/rosidl_runtime_rs.git
