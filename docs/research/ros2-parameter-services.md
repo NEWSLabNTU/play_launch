@@ -30,12 +30,12 @@ of parameters a node *declares* internally.
 
 ### What cannot be extracted statically
 
-| Source | Why not |
-|--------|---------|
+| Source                                     | Why not                                                   |
+|--------------------------------------------|-----------------------------------------------------------|
 | `declare_parameter()` in C++/Python source | Names can be dynamic (loops, concatenation, conditionals) |
-| Compiled binaries (ELF/DWARF) | Parameters are runtime data, not embedded metadata |
-| Ament resource index | No `parameters` resource type exists |
-| `package.xml` (REP-149) | No fields for parameter declarations |
+| Compiled binaries (ELF/DWARF)              | Parameters are runtime data, not embedded metadata        |
+| Ament resource index                       | No `parameters` resource type exists                      |
+| `package.xml` (REP-149)                    | No fields for parameter declarations                      |
 
 ### Partial sources (source-tree only, never installed)
 
@@ -76,14 +76,14 @@ defaults, ranges). Used for VS Code YAML validation and CI checks. Also not inst
 
 Every ROS 2 node creates six parameter services at startup:
 
-| Service suffix | Service type | Purpose |
-|----------------|-------------|---------|
-| `/list_parameters` | `rcl_interfaces/srv/ListParameters` | Names with prefix/depth filter |
-| `/get_parameters` | `rcl_interfaces/srv/GetParameters` | Read values by name |
-| `/set_parameters` | `rcl_interfaces/srv/SetParameters` | Set values (non-atomic) |
-| `/set_parameters_atomically` | `rcl_interfaces/srv/SetParametersAtomically` | All-or-nothing set |
-| `/describe_parameters` | `rcl_interfaces/srv/DescribeParameters` | Type, description, ranges, read_only |
-| `/get_parameter_types` | `rcl_interfaces/srv/GetParameterTypes` | Lightweight type-only query |
+| Service suffix               | Service type                                 | Purpose                              |
+|------------------------------|----------------------------------------------|--------------------------------------|
+| `/list_parameters`           | `rcl_interfaces/srv/ListParameters`          | Names with prefix/depth filter       |
+| `/get_parameters`            | `rcl_interfaces/srv/GetParameters`           | Read values by name                  |
+| `/set_parameters`            | `rcl_interfaces/srv/SetParameters`           | Set values (non-atomic)              |
+| `/set_parameters_atomically` | `rcl_interfaces/srv/SetParametersAtomically` | All-or-nothing set                   |
+| `/describe_parameters`       | `rcl_interfaces/srv/DescribeParameters`      | Type, description, ranges, read_only |
+| `/get_parameter_types`       | `rcl_interfaces/srv/GetParameterTypes`       | Lightweight type-only query          |
 
 QoS: default services profile (KEEP_LAST, depth 10, RELIABLE, VOLATILE).
 
@@ -383,12 +383,12 @@ Provides autocomplete, type checking, bound validation, and description tooltips
 
 ### Coverage
 
-| Metric | Count |
-|--------|-------|
-| Total packages in autoware_universe | 244 |
-| Packages with schema files | 106 (43%) |
-| Total schema.json files | 178 |
-| Total param.yaml files | 316 |
+| Metric                              | Count     |
+|-------------------------------------|-----------|
+| Total packages in autoware_universe | 244       |
+| Packages with schema files          | 106 (43%) |
+| Total schema.json files             | 178       |
+| Total param.yaml files              | 316       |
 
 Schemas are optional. CI only validates param files that have a matching schema.
 Some packages have many schemas (e.g. `autoware_pointcloud_preprocessor` has 17,
@@ -400,11 +400,11 @@ one per node).
 specs. ~5 of those also have `schema.json` files. The two systems are independent
 and maintained separately — there is no automatic derivation of one from the other.
 
-| File | Purpose |
-|------|---------|
+| File                           | Purpose                                       |
+|--------------------------------|-----------------------------------------------|
 | `param/<name>_parameters.yaml` | generate_parameter_library spec (C++ codegen) |
-| `schema/<name>.schema.json` | JSON Schema (CI validation + VS Code) |
-| `config/<name>.param.yaml` | Runtime parameter values |
+| `schema/<name>.schema.json`    | JSON Schema (CI validation + VS Code)         |
+| `config/<name>.param.yaml`     | Runtime parameter values                      |
 
 ### Relevance to play_launch
 

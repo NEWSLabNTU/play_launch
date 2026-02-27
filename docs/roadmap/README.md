@@ -79,6 +79,12 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
 | **Phase 22**: Launch Tree IR | ✅ Complete (22.1–22.8) | 2026-02-24 | [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md) |
 | **Phase 23**: Code Quality | ✅ Complete | 2026-02-25 | [phase-23-code_quality.md](./phase-23-code_quality.md) |
 
+### Runtime Parameter Management
+
+| Phase | Status | Completion | Documentation |
+|-------|--------|------------|---------------|
+| **Phase 24**: Web UI Parameter Control | ⏳ Planned | - | [phase-24-parameter_control.md](./phase-24-parameter_control.md) |
+
 ---
 
 ## Progress Summary
@@ -242,6 +248,15 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
   - Phase 22.9: Python AST compiler
   - Phase 22.10: Python integration into WASM pipeline
   - Phase 22.11: Autoware smoke tests
+
+- **Phase 24**: Web UI Parameter Control - See [phase-24-parameter_control.md](./phase-24-parameter_control.md)
+  - Phase 24.1: ParameterProxy (Rust service client wrapper)
+  - Phase 24.2: Parameter types (ParamValue, ParamEntry, ranges)
+  - Phase 24.3: MemberHandle integration (FQN map, get/set methods)
+  - Phase 24.4: Web API endpoints (GET/POST `/api/nodes/:name/parameters`)
+  - Phase 24.5: SSE parameter change events (`/parameter_events` subscription)
+  - Phase 24.6: ParametersTab frontend component (type-aware inputs)
+  - Phase 24.7: Register tab in RightPanel
 
 ## Future Considerations
 
