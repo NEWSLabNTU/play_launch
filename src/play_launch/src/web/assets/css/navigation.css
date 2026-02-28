@@ -79,6 +79,11 @@
 .badge-processes { background: #6b7280; color: #fff; }
 .badge-noisy { background: #f59e0b; color: #fff; }
 
+/* System metrics badges (Phase 26) */
+.metrics-badge-ok { background: var(--running-bg); color: var(--running-text); }
+.metrics-badge-warning { background: var(--pending-bg); color: var(--pending-text); }
+.metrics-badge-critical { background: var(--failed-bg); color: var(--failed-text); }
+
 .theme-toggle {
     padding: 6px 12px;
     background: var(--bg-tertiary);

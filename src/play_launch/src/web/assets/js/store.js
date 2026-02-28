@@ -26,6 +26,11 @@ export const currentView = signal('nodes');
 /** SSE connection state: null = initial (never connected), true = connected, false = lost. */
 export const connected = signal(null);
 
+// --- System metrics (Phase 26) ---
+
+/** @type {{ value: import('./types').SystemStatsSnapshot|null }} */
+export const systemMetrics = signal(null);
+
 // --- Diagnostics ---
 
 export const diagnostics = signal([]);

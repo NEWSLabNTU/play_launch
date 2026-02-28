@@ -286,6 +286,15 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // Initialize monitoring if enabled (now using async tokio task!)
     debug!("Initializing monitoring and process registry...");
     let process_registry = Arc::new(Mutex::new(HashMap::<u32, PathBuf>::new()));
+
+    // Create metrics broadcaster (shared between monitoring task and web UI)
+    let metrics_broadcaster: Option<Arc<web::SystemMetricsBroadcaster>> =
+        if runtime_config.monitoring.enabled {
+            Some(Arc::new(web::SystemMetricsBroadcaster::new()))
+        } else {
+            None
+        };
+
     let monitor_task = if runtime_config.monitoring.enabled {
         let monitor_config = MonitorConfig {
             sample_interval_ms: runtime_config.monitoring.sample_interval_ms,
@@ -310,6 +319,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             process_registry.clone(),
             nvml,
             shutdown_signal.clone(),
+            metrics_broadcaster.clone(),
         ));
 
         Some(task)
@@ -512,6 +522,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             log_dir.clone(),
             state_broadcaster.clone(),
             diagnostic_registry.clone(),
+            metrics_broadcaster.clone(),
         ));
         let web_shutdown = shutdown_signal.clone();
 

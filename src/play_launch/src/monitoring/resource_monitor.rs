@@ -409,6 +409,7 @@ pub async fn run_monitoring_task(
     process_registry: Arc<Mutex<HashMap<u32, PathBuf>>>,
     nvml: Option<Nvml>,
     mut shutdown_rx: watch::Receiver<bool>,
+    metrics_broadcaster: Option<Arc<crate::web::SystemMetricsBroadcaster>>,
 ) -> Result<()> {
     debug!("Starting async monitoring task...");
 
@@ -574,6 +575,11 @@ pub async fn run_monitoring_task(
                             Err(e) => {
                                 warn!("Failed to write system stats: {}", e);
                             }
+                        }
+                        // Broadcast to SSE clients
+                        if let Some(ref broadcaster) = metrics_broadcaster {
+                            let snapshot = crate::web::SystemStatsSnapshot::from(&stats);
+                            broadcaster.broadcast(snapshot).await;
                         }
                     }
                     Err(e) => {

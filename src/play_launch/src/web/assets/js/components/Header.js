@@ -3,7 +3,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { currentView, theme, healthSummary, diagnostics } from '../store.js';
+import { currentView, theme, healthSummary, diagnostics, systemMetrics } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -51,6 +51,36 @@ function DiagnosticBadges() {
     `;
 }
 
+/** Color class for a percentage value: green < 60%, yellow 60-85%, red >= 85%. */
+function metricColor(pct) {
+    if (pct >= 85) return 'metrics-badge-critical';
+    if (pct >= 60) return 'metrics-badge-warning';
+    return 'metrics-badge-ok';
+}
+
+function MetricsBadges() {
+    const m = systemMetrics.value;
+    if (!m) return null;
+
+    const cpuPct = m.cpu_percent.toFixed(0);
+    const memPct = m.memory_total_bytes > 0
+        ? ((m.memory_used_bytes / m.memory_total_bytes) * 100).toFixed(0)
+        : 0;
+
+    return html`
+        <div class="badge-group">
+            <span class="badge-label">System:</span>
+            <div class="health-summary">
+                <span class="badge metrics-badge ${metricColor(m.cpu_percent)}">CPU ${cpuPct}%</span>
+                <span class="badge metrics-badge ${metricColor(Number(memPct))}">Mem ${memPct}%</span>
+                ${m.gpu_utilization_percent != null && html`
+                    <span class="badge metrics-badge ${metricColor(m.gpu_utilization_percent)}">GPU ${m.gpu_utilization_percent.toFixed(0)}%</span>
+                `}
+            </div>
+        </div>
+    `;
+}
+
 function ThemeToggle() {
     const toggleTheme = useCallback(() => {
         const next = theme.value === 'dark' ? 'light' : 'dark';
@@ -89,6 +119,7 @@ export function Header() {
             <div class="header-controls">
                 <${HealthBar} />
                 <${DiagnosticBadges} />
+                <${MetricsBadges} />
                 <${ThemeToggle} />
             </div>
         </header>

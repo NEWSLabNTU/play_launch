@@ -15,7 +15,7 @@ This directory contains the implementation roadmap for play_launch, organized by
 
 ## Current Status
 
-**Overall Progress**: 21 of 24 phases complete (Phases 3-5 partial/planned, Phase 20 planned)
+**Overall Progress**: 22 of 25 phases complete (Phases 3-5 partial/planned, Phase 20 planned)
 
 **Timeline**: Started October 2025, ongoing development
 
@@ -85,6 +85,7 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
 |-------|--------|------------|---------------|
 | **Phase 24**: Web UI Parameter Control | ✅ Complete | 2026-02-27 | [phase-24-parameter_control.md](./phase-24-parameter_control.md) |
 | **Phase 25**: Runtime Graph & Topic Introspection | ⏳ Planned | - | [phase-25-topic_introspection.md](./phase-25-topic_introspection.md) |
+| **Phase 26**: Web UI Metrics Dashboard | ✅ Complete | 2026-03-01 | [phase-26-metrics_dashboard.md](./phase-26-metrics_dashboard.md) |
 
 ---
 
@@ -120,6 +121,14 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
 - ⏳ Web UI Actor Integration (Phase 11) - Remove bridging layer, implement direct actor control
 
 ### Recently Completed 🎉
+
+- ✅ Web UI Metrics Dashboard (Phase 26 - Complete 2026-03-01)
+  - ✅ SystemMetricsBroadcaster with pub/sub for system stats (26.1)
+  - ✅ Broadcaster wired into monitoring loop (26.2)
+  - ✅ SSE endpoints `/api/metrics/system` and `/api/metrics/node/:name` (26.3)
+  - ✅ Header badges with CPU%, Mem%, GPU% and color-coded thresholds (26.4)
+  - ✅ MetricsTab with charts (CPU, RSS, I/O), grid lines, relative time axis, time range selector (26.5)
+  - ✅ Metrics tab registered in RightPanel with lazy rendering (26.6)
 
 - ✅ Web UI Parameter Control (Phase 24 - Complete 2026-02-27)
   - ✅ ParameterProxy service client wrapper (24.1)

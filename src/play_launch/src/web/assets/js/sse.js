@@ -2,7 +2,7 @@
 // Connects to /api/state/updates and applies events to the store.
 // Side-effect module — import to activate.
 
-import { applyStateEvent, fetchNodes, fetchHealth, fetchGraph, connected } from './store.js';
+import { applyStateEvent, fetchNodes, fetchHealth, fetchGraph, connected, systemMetrics } from './store.js';
 
 /** How long to wait without any SSE message before declaring disconnect (ms). */
 const KEEPALIVE_TIMEOUT_MS = 8000;
@@ -91,8 +91,47 @@ function startReconnectLoop() {
     }, RECONNECT_INTERVAL_MS);
 }
 
+// --- System metrics SSE (Phase 26) ---
+
+let metricsSource = null;
+let metricsReconnectTimer = null;
+
+function connectMetrics() {
+    if (metricsSource) {
+        metricsSource.close();
+        metricsSource = null;
+    }
+    clearInterval(metricsReconnectTimer);
+    metricsReconnectTimer = null;
+
+    metricsSource = new EventSource('/api/metrics/system');
+
+    metricsSource.onmessage = (e) => {
+        if (e.data === 'keep-alive') return;
+        try {
+            systemMetrics.value = JSON.parse(e.data);
+        } catch (err) {
+            console.warn('[sse] Failed to parse metrics:', err);
+        }
+    };
+
+    metricsSource.onerror = () => {
+        if (metricsSource) {
+            metricsSource.close();
+            metricsSource = null;
+        }
+        // Reconnect after delay
+        if (!metricsReconnectTimer) {
+            metricsReconnectTimer = setInterval(() => {
+                connectMetrics();
+            }, RECONNECT_INTERVAL_MS);
+        }
+    };
+}
+
 // Initial load
 fetchNodes();
 fetchHealth();
 fetchGraph();
 connect();
+connectMetrics();

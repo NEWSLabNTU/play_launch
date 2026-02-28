@@ -8,6 +8,7 @@ import { InfoTab } from './InfoTab.js';
 import { LogTab } from './LogTab.js';
 import { ParametersTab } from './ParametersTab.js';
 import { TopicsTab } from './TopicsTab.js';
+import { MetricsTab } from './MetricsTab.js';
 
 const html = htm.bind(h);
 
@@ -75,11 +76,13 @@ export function RightPanel() {
             </div>
             <div class="right-panel-tabs">
                 <button class="tab-btn ${tab === 'info' ? 'active' : ''}"
-                    onClick=${() => switchTab('info')}>Member Info</button>
+                    onClick=${() => switchTab('info')}>Info</button>
                 <button class="tab-btn ${tab === 'params' ? 'active' : ''}"
                     onClick=${() => switchTab('params')}>Params</button>
                 <button class="tab-btn ${tab === 'topics' ? 'active' : ''}"
                     onClick=${() => switchTab('topics')}>Topics</button>
+                <button class="tab-btn ${tab === 'metrics' ? 'active' : ''}"
+                    onClick=${() => switchTab('metrics')}>Metrics</button>
                 <button class="tab-btn ${tab === 'stdout' ? 'active' : ''}"
                     onClick=${() => switchTab('stdout')}>stdout</button>
                 <button class="tab-btn ${tab === 'stderr' ? 'active' : ''}"
@@ -89,17 +92,20 @@ export function RightPanel() {
                 <div class="tab-content" style=${{ display: tab === 'info' ? 'flex' : 'none' }}>
                     <${InfoTab} nodeData=${nodeData} />
                 </div>
-                <div class="tab-content" style=${{ display: tab === 'stdout' ? 'flex' : 'none' }}>
-                    ${tab === 'stdout' && html`<${LogTab} nodeName=${name} logType="stdout" containerName=${containerName} />`}
-                </div>
-                <div class="tab-content" style=${{ display: tab === 'stderr' ? 'flex' : 'none' }}>
-                    ${(tab === 'stderr' || true) && html`<${LogTab} nodeName=${name} logType="stderr" containerName=${containerName} />`}
-                </div>
                 <div class="tab-content" style=${{ display: tab === 'params' ? 'flex' : 'none' }}>
                     ${tab === 'params' && html`<${ParametersTab} nodeName=${name} />`}
                 </div>
                 <div class="tab-content" style=${{ display: tab === 'topics' ? 'flex' : 'none' }}>
                     ${tab === 'topics' && html`<${TopicsTab} nodeName=${name} />`}
+                </div>
+                <div class="tab-content" style=${{ display: tab === 'metrics' ? 'flex' : 'none' }}>
+                    ${tab === 'metrics' && html`<${MetricsTab} nodeName=${name} />`}
+                </div>
+                <div class="tab-content" style=${{ display: tab === 'stdout' ? 'flex' : 'none' }}>
+                    ${tab === 'stdout' && html`<${LogTab} nodeName=${name} logType="stdout" containerName=${containerName} />`}
+                </div>
+                <div class="tab-content" style=${{ display: tab === 'stderr' ? 'flex' : 'none' }}>
+                    ${(tab === 'stderr' || true) && html`<${LogTab} nodeName=${name} logType="stderr" containerName=${containerName} />`}
                 </div>
             </div>
         </div>

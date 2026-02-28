@@ -17,10 +17,12 @@ use tracing::{info, warn};
 
 mod broadcaster;
 mod handlers;
+mod metrics_broadcaster;
 mod sse;
 pub mod web_types;
 
 pub use broadcaster::StateEventBroadcaster;
+pub use metrics_broadcaster::{SystemMetricsBroadcaster, SystemStatsSnapshot};
 
 /// Embedded static assets for the web UI
 #[derive(Embed)]
@@ -40,6 +42,8 @@ pub struct WebState {
     pub state_broadcaster: Arc<StateEventBroadcaster>,
     /// Diagnostic registry for storing diagnostic data
     pub diagnostic_registry: Arc<DiagnosticRegistry>,
+    /// Broadcaster for system metrics to SSE clients (None when monitoring disabled)
+    pub metrics_broadcaster: Option<Arc<SystemMetricsBroadcaster>>,
 }
 
 impl WebState {
@@ -49,6 +53,7 @@ impl WebState {
         log_dir: PathBuf,
         state_broadcaster: Arc<StateEventBroadcaster>,
         diagnostic_registry: Arc<DiagnosticRegistry>,
+        metrics_broadcaster: Option<Arc<SystemMetricsBroadcaster>>,
     ) -> Self {
         Self {
             member_handle,
@@ -56,6 +61,7 @@ impl WebState {
             operations_in_progress: TokioMutex::new(HashSet::new()),
             state_broadcaster,
             diagnostic_registry,
+            metrics_broadcaster,
         }
     }
 }
@@ -148,6 +154,9 @@ pub fn create_router(state: Arc<WebState>) -> Router {
         .route("/api/nodes/:name/logs/stderr", get(sse::stream_stderr))
         // SSE endpoint for state updates
         .route("/api/state/updates", get(sse::stream_state_updates))
+        // SSE endpoints for metrics streaming
+        .route("/api/metrics/system", get(sse::stream_system_metrics))
+        .route("/api/metrics/node/:name", get(sse::stream_node_metrics))
         .layer(cors)
         .with_state(state)
 }

@@ -233,3 +233,174 @@ pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Respons
 
     Sse::new(stream).into_response()
 }
+
+/// Stream system-wide metrics (CPU, memory, network, disk) via SSE.
+///
+/// Subscribes to the `SystemMetricsBroadcaster` and forwards each snapshot
+/// as a JSON SSE event. Returns 503 if monitoring is disabled.
+pub async fn stream_system_metrics(State(state): State<Arc<WebState>>) -> Response {
+    let broadcaster = match &state.metrics_broadcaster {
+        Some(b) => b.clone(),
+        None => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "Monitoring is disabled").into_response();
+        }
+    };
+
+    debug!("New SSE client connected for system metrics");
+    let mut rx = broadcaster.subscribe().await;
+
+    let stream = async_stream::stream! {
+        let mut heartbeat = tokio::time::interval(SSE_KEEPALIVE_INTERVAL);
+        heartbeat.tick().await;
+
+        loop {
+            tokio::select! {
+                snapshot = rx.recv() => {
+                    match snapshot {
+                        Some(snap) => {
+                            match serde_json::to_string(&snap) {
+                                Ok(json) => {
+                                    yield Ok::<_, Infallible>(Event::default().data(json));
+                                }
+                                Err(e) => {
+                                    error!("Failed to serialize SystemStatsSnapshot: {}", e);
+                                }
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                _ = heartbeat.tick() => {
+                    yield Ok::<_, Infallible>(Event::default().data("keep-alive"));
+                }
+            }
+        }
+        debug!("SSE system metrics stream ended");
+    };
+
+    Sse::new(stream).into_response()
+}
+
+/// Number of initial CSV lines to send for node metrics (2min of history at 2s interval)
+const INITIAL_METRICS_LINES: usize = 60;
+
+/// Stream per-node metrics CSV via SSE.
+///
+/// Tails the node's `metrics.csv` file, sending the last 60 lines on connect
+/// then streaming new lines as they appear. Returns 404 if the node is unknown.
+pub async fn stream_node_metrics(
+    State(state): State<Arc<WebState>>,
+    Path(name): Path<String>,
+) -> Response {
+    let metrics_path = {
+        match state.member_handle.get_member_state(&name).await {
+            Some(member) => member.output_dir.join("metrics.csv"),
+            None => {
+                return (StatusCode::NOT_FOUND, format!("Node '{}' not found", name))
+                    .into_response();
+            }
+        }
+    };
+
+    let stream = create_file_stream_with_initial(metrics_path, INITIAL_METRICS_LINES);
+
+    Sse::new(stream)
+        .keep_alive(
+            axum::response::sse::KeepAlive::new()
+                .interval(SSE_KEEPALIVE_INTERVAL)
+                .text("keep-alive"),
+        )
+        .into_response()
+}
+
+/// Create a file-tailing stream with a configurable number of initial lines.
+fn create_file_stream_with_initial(
+    path: PathBuf,
+    initial_lines: usize,
+) -> impl Stream<Item = Result<Event, Infallible>> + Send + 'static {
+    let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(100);
+
+    tokio::spawn(async move {
+        if let Err(e) = stream_file_to_channel_with_initial(&path, tx.clone(), initial_lines).await
+        {
+            error!("Error streaming file {:?}: {}", path, e);
+            let _ = tx
+                .send(Ok(Event::default().data(format!("Error: {}", e))))
+                .await;
+        }
+    });
+
+    ReceiverStream::new(rx)
+}
+
+/// Stream file contents to a channel with a configurable initial line count.
+async fn stream_file_to_channel_with_initial(
+    path: &PathBuf,
+    tx: mpsc::Sender<Result<Event, Infallible>>,
+    initial_lines: usize,
+) -> eyre::Result<()> {
+    let _ = tx.send(Ok(Event::default().comment("connected"))).await;
+
+    // Wait for file to exist
+    let mut attempts = 0;
+    while !path.exists() && attempts < 10 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        attempts += 1;
+    }
+
+    if !path.exists() {
+        let _ = tx
+            .send(Ok(Event::default().data("Metrics file not yet created")))
+            .await;
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if path.exists() {
+                break;
+            }
+            if tx.is_closed() {
+                return Ok(());
+            }
+        }
+    }
+
+    let file = std::fs::File::open(path)?;
+    let mut reader = BufReader::new(file);
+
+    // Send initial lines (last N lines)
+    let last_lines = read_last_n_lines(path, initial_lines)?;
+    for line in last_lines {
+        if tx.is_closed() {
+            return Ok(());
+        }
+        let _ = tx.send(Ok(Event::default().data(line))).await;
+    }
+
+    // Seek to end and poll for new content
+    reader.seek(SeekFrom::End(0))?;
+    let mut line_buf = String::new();
+
+    loop {
+        if tx.is_closed() {
+            debug!("SSE channel closed, stopping metrics file stream");
+            return Ok(());
+        }
+
+        line_buf.clear();
+        match reader.read_line(&mut line_buf) {
+            Ok(0) => {
+                tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
+            }
+            Ok(_) => {
+                let line = line_buf.trim_end().to_string();
+                if !line.is_empty() {
+                    let _ = tx.send(Ok(Event::default().data(line))).await;
+                }
+            }
+            Err(e) => {
+                warn!("Error reading metrics file: {}", e);
+                tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
+            }
+        }
+    }
+}

@@ -179,6 +179,7 @@ async fn run_direct(
             process_registry.clone(),
             nvml,
             shutdown_rx.clone(),
+            None, // No metrics broadcaster in run mode
         ));
 
         debug!("Monitoring task spawned successfully");
@@ -244,6 +245,7 @@ async fn run_direct(
             log_dir.clone(),
             state_broadcaster.clone(),
             diagnostic_registry.clone(),
+            None, // No metrics broadcaster in run mode
         ));
 
         // Parse web address
