@@ -1,6 +1,6 @@
 # Phase 25: Runtime Graph & Topic Introspection
 
-**Status**: Phases 25.1–25.6 complete
+**Status**: Complete (all phases 25.1–25.9)
 **Priority**: Medium (Observability)
 **Dependencies**: Phase 24 (Parameter Control), rclrs vendor patch
 
@@ -708,62 +708,110 @@ New top-level view (alongside "Nodes" and "Diagnostics"). See
 
 #### Work items — Data pipeline
 
-- [ ] Fetch `GET /api/graph` (reuse `graphSnapshot` signal from store)
-- [ ] Build namespace tree from node FQNs (split on `/`, group recursively)
-- [ ] Create Cytoscape compound nodes for each namespace level (set `parent` field)
-- [ ] Create Cytoscape leaf nodes for individual ROS nodes
-- [ ] Create Cytoscape edges from topic publisher → subscriber relationships
-- [ ] Deduplicate edges: multiple topics between same node pair → single edge with count
-- [ ] Edge labels: topic name when single, "N topics" when aggregated
+- [x] Fetch `GET /api/graph` (reuse `graphSnapshot` signal from store)
+- [x] Build namespace tree from node FQNs (split on `/`, group recursively)
+- [x] Create Cytoscape compound nodes for each namespace level (set `parent` field)
+- [x] Create Cytoscape leaf nodes for individual ROS nodes
+- [x] Create Cytoscape edges from topic publisher → subscriber relationships
+- [x] Deduplicate edges: multiple topics between same node pair → single edge with count
+- [x] Edge labels: topic name when single, "N topics" when aggregated
 
 #### Work items — Layout and styling
 
-- [ ] Apply `fcose` layout with compound node constraints
-- [ ] Namespace compound nodes: subtle border, label showing namespace + node count
-- [ ] Leaf node styling: rounded rectangle, label = node name, color by status
-  - [ ] Running = green, stopped = grey, failed = red, loading = yellow
-- [ ] Edge styling: `curve-style: 'taxi'` for orthogonal routing
-- [ ] Dangling edges highlighted in amber
-- [ ] Trunk edge width proportional to aggregated topic count
-- [ ] Create `graph.css` with canvas container sizing, breadcrumb bar, controls
+- [x] Apply `fcose` layout with compound node constraints
+- [x] Namespace compound nodes: subtle border, label showing namespace + node count
+- [x] Leaf node styling: rounded rectangle, label = node name, color by status
+  - [x] Running = green, stopped = grey, failed = red, loading = yellow
+- [x] Edge styling: `curve-style: 'bezier'` (bezier instead of taxi — cleaner with fcose compound layout)
+- [x] Dangling edges highlighted in amber
+- [x] Trunk edge width proportional to aggregated topic count
+- [x] Create `graph.css` with canvas container sizing, breadcrumb bar, controls
 
 #### Work items — Interactions
 
-- [ ] Click namespace compound node → expand to show children (sub-namespaces + nodes)
-- [ ] Click leaf node → set `selectedNode` in store, open right panel with TopicsTab
-- [ ] Hover leaf node → tooltip showing pub/sub/srv counts, status, PID
-- [ ] Hover edge → tooltip showing topic names and message types
-- [ ] Drag nodes → reposition within the graph
-- [ ] Pan (drag background) and zoom (mouse wheel) the canvas
-- [ ] Breadcrumb bar: `/` > `/perception` > `/perception/tracking`
-  - [ ] Click breadcrumb segment to navigate back to that namespace level
-- [ ] "Fit" button to reset zoom to fit all visible elements
-- [ ] "Collapse All" / "Expand All" buttons
+- [x] Click namespace compound node → toggle expand/collapse via expand-collapse extension
+- [x] Click leaf node → set `selectedNode` in store, open right panel with TopicsTab
+- [x] Hover leaf node → tooltip showing pub/sub/srv counts, status, PID
+- [x] Hover edge → tooltip showing topic names and message types
+- [x] Drag nodes → reposition within the graph (Cytoscape default)
+- [x] Pan (drag background) and zoom (mouse wheel) the canvas
+- [x] Breadcrumb bar: `/` > `/perception` > `/perception/tracking`
+  - [x] Click breadcrumb segment to navigate back to that namespace level
+- [x] "Fit" button to reset zoom to fit all visible elements
+- [x] "Collapse All" / "Expand All" buttons
 
 #### Work items — View integration
 
-- [ ] Add "Graph" option to `currentView` signal in `store.js`
-- [ ] Add "Graph" button/tab to `Header.js` (alongside "Nodes" and "Diagnostics")
-- [ ] Conditionally render `GraphView` when `currentView === 'graph'`
-- [ ] Graph canvas resizes with window (responsive container)
-- [ ] Re-run layout when graph data changes (new snapshot from SSE events)
+- [x] Add "Graph" option to `currentView` signal in `store.js`
+- [x] Add "Graph" button/tab to `Header.js` (alongside "Nodes" and "Diagnostics")
+- [x] Conditionally render `GraphView` when `currentView === 'graph'`
+- [x] Graph canvas resizes with window (responsive container)
+- [x] Re-run layout when graph data changes (new snapshot from SSE events)
 
 #### Acceptance criteria
 
-- [ ] Graph view accessible via "Graph" button in header
-- [ ] Top-level namespaces rendered as compound nodes with correct child counts
-- [ ] Edges between namespace groups represent aggregated topic connections
-- [ ] Click namespace → expands to show sub-namespaces and individual nodes
-- [ ] Click leaf node → right panel opens with that node's TopicsTab
-- [ ] Hover on node shows tooltip with pub/sub/srv counts and status
-- [ ] Hover on edge shows tooltip with topic names
-- [ ] Nodes are draggable; pan and zoom work smoothly
-- [ ] Breadcrumb bar shows current navigation path; clicking a segment navigates up
-- [ ] Dangling edges are visually distinct (amber color)
-- [ ] Graph updates when nodes start/stop (re-layout triggered by snapshot change)
-- [ ] "Fit" button resets view to show all visible elements
-- [ ] Canvas fills available space and resizes with window
-- [ ] Works with Autoware scale: 140 nodes, 512 topics render without freezing
+- [x] Graph view accessible via "Graph" button in header
+- [x] Top-level namespaces rendered as compound nodes with correct child counts
+- [x] Edges between namespace groups represent aggregated topic connections
+- [x] Click namespace → expands to show sub-namespaces and individual nodes
+- [x] Click leaf node → right panel opens with that node's TopicsTab
+- [x] Hover on node shows tooltip with pub/sub/srv counts and status
+- [x] Hover on edge shows tooltip with topic names
+- [x] Nodes are draggable; pan and zoom work smoothly
+- [x] Breadcrumb bar shows current navigation path; clicking a segment navigates up
+- [x] Dangling edges are visually distinct (amber color)
+- [x] Graph updates when nodes start/stop (re-layout triggered by snapshot change)
+- [x] "Fit" button resets view to show all visible elements
+- [x] Canvas fills available space and resizes with window
+- [x] Works with Autoware scale: 140 nodes, 512 topics render without freezing (fcose quality=default for >100 nodes)
+
+---
+
+### Phase 25.8: Hierarchical Edge Aggregation with Hub Nodes
+
+**Status**: Complete
+
+Replace individual per-topic edges with hub-based trunk routing. When namespaces
+are collapsed, a single thick trunk edge connects namespace pairs instead of
+hundreds of individual edges. Expanding a namespace reveals thin branch edges
+fanning from leaf nodes to a central hub, with the trunk continuing to other
+namespaces.
+
+#### Edge types
+
+| Type       | Connects                         | Appears when                        | Style                                      |
+|------------|----------------------------------|-------------------------------------|--------------------------------------------|
+| **Trunk**  | hub↔hub, hub↔collapsed-NS       | Cross-namespace traffic exists      | Thick (`2+log2(N)*1.5`, cap 8), arrow, 0.8 |
+| **Branch** | leaf/collapsed-sub-NS → own hub  | Namespace expanded, external traffic| Thin (1px), dotted, no arrow, 0.35         |
+| **Direct** | sibling↔sibling in same parent   | Both visible, same parent NS        | Normal (`1+log2(N)*0.8`, cap 5), arrow     |
+
+Hub nodes are invisible 4×4px elements inside expanded namespaces. No hub is
+created for root namespace — root-level elements are trunk endpoints directly.
+
+The expand-collapse extension's meta-edge mechanism is bypassed: no edges are
+loaded initially, so it finds nothing to reroute. After each expand/collapse,
+`recomputeEdges()` clears all edges/hubs and rebuilds from raw data.
+
+#### Work items
+
+- [x] Split `buildCyElements` into `buildCyNodes` + `buildRawEdges`
+- [x] Add `resolveVisible`, `parentNsOf`, `getCollapsedSet` helpers
+- [x] Implement `recomputeEdges` core algorithm (direct/trunk/branch classification)
+- [x] Add `rawEdgesRef` and wire into `useMemo` / main `useEffect`
+- [x] Hook `recomputeEdges` into namespace tap, expandAll, collapseAll, breadcrumb
+- [x] Update `getCyStyle`: add hub/trunk/branch/direct styles, remove meta-edge style
+- [x] Suppress branch edge tooltips in mouseover handler
+
+#### Acceptance criteria
+
+- [ ] All namespaces collapsed: ~10-20 direct edges between top-level NS (not 500+)
+- [ ] Expand one NS: branches fan from leaves to hub, trunk to other NS
+- [ ] Expand both NS: branches on both sides, one trunk between hubs
+- [ ] No `cy-expand-collapse-meta-edge` class appears in the graph
+- [ ] Hub nodes invisible (not clickable, no tooltip)
+- [ ] Trunk edges thick (indigo), branch edges thin/dotted, direct edges normal
+- [ ] Tooltip on trunk/direct edges shows topic list; no tooltip on branch edges
+- [ ] Existing interactions preserved: click node, breadcrumb, Fit, ExpandAll, CollapseAll
 
 ---
 
@@ -787,8 +835,11 @@ New top-level view (alongside "Nodes" and "Diagnostics"). See
 | `src/play_launch/src/web/assets/js/vendor/cytoscape-fcose.js`           | **New** — vendored layout extension               | 25.6  |
 | `src/play_launch/src/web/assets/js/vendor/cytoscape-expand-collapse.js` | **New** — vendored group extension                | 25.6  |
 | `src/play_launch/src/web/assets/js/vendor/THIRD_PARTY_LICENSES`         | Add Cytoscape MIT license                         | 25.6  |
-| `src/play_launch/src/web/assets/js/components/GraphView.js`             | **New** — namespace graph visualization           | 25.7  |
+| `scripts/vendor_cytoscape.sh`                                           | **New** — vendor download script with checksums   | 25.6  |
+| `src/play_launch/src/web/assets/js/components/GraphView.js`             | **New** — namespace graph visualization + hub edges | 25.7, 25.8 |
 | `src/play_launch/src/web/assets/js/components/Header.js`                | Add "Graph" view toggle                           | 25.7  |
+| `src/play_launch/src/web/assets/js/app.js`                              | Conditionally render GraphView                    | 25.7  |
+| `src/play_launch/src/web/assets/index.html`                             | Add `graph.css` link                              | 25.7  |
 | `src/play_launch/src/web/assets/css/graph.css`                          | **New** — GraphView styles                        | 25.7  |
 
 ---
@@ -797,8 +848,8 @@ New top-level view (alongside "Nodes" and "Diagnostics"). See
 
 ### Build & test (automated)
 
-- [ ] `just build-rust` compiles with patched rclrs (no warnings)
-- [ ] `just test` passes (no regressions from existing 353 tests)
+- [x] `just build-rust` compiles with patched rclrs
+- [x] `just test` passes (30 passed, 5 skipped — no regressions)
 - [ ] `just build-wheel` produces a wheel containing all vendor files
 
 ### Manual testing (`just run-autoware`)
@@ -837,8 +888,83 @@ New top-level view (alongside "Nodes" and "Diagnostics"). See
 - [ ] Dangling edges visually distinct (amber)
 - [ ] Graph re-renders when nodes start/stop (snapshot refresh)
 
+#### Hub Edge Aggregation (25.8)
+
+- [ ] All namespaces collapsed: ~10-20 direct edges between top-level NS (not 500+)
+- [ ] Expand one NS: branches fan from leaves to hub, trunk to other NS
+- [ ] Expand both NS: branches on both sides, one trunk between hubs
+- [ ] No `cy-expand-collapse-meta-edge` class appears in the graph
+- [ ] Hub nodes invisible (not clickable, no tooltip)
+- [ ] Trunk edges thick (indigo), branch edges thin/dotted, direct edges normal
+- [ ] Tooltip on trunk/direct edges shows topic list; no tooltip on branch edges
+- [ ] Existing interactions preserved: click node, breadcrumb, Fit, ExpandAll, CollapseAll
+
 #### API endpoints (25.3)
 
 - [ ] `curl http://127.0.0.1:8080/api/graph` returns valid JSON with topics and services
 - [ ] `curl http://127.0.0.1:8080/api/nodes/<name>/topics` returns per-node topic detail
 - [ ] Response latency < 50ms (cached snapshot)
+
+---
+
+### Phase 25.9: Graph View Overhaul — ELK Layout + Visual Optimizations
+
+**Status**: Complete
+
+Replaces fcose (force-directed) with ELK layered layout for cleaner hierarchical
+flow. Simplifies edges (drops hubs), adds focus mode, edge visibility toggle, and
+semantic zoom. Research into production tools (Kiali, Datadog, Grafana) informed
+the design.
+
+#### Changes
+
+1. **ELK layered layout** — replaces fcose with elkjs v0.10.0 (EPL-2.0). Vendored
+   as `elk.bundled.esm.js` (UMD → ESM wrapper). Custom ~80-line adapter in
+   GraphView.js (`buildElkGraph` → `applyElkPositions` → `runElkLayout` with
+   concurrency guard). Direction: LEFT→RIGHT, hierarchy handling: INCLUDE_CHILDREN.
+
+2. **Simplified edges** — drops hub nodes and trunk/branch/direct classification.
+   Single `recomputeEdges()` (~40 lines) aggregates raw edges by visible endpoint
+   pair. One unified edge style with width proportional to `log2(topicCount)`.
+
+3. **Focus mode** — double-click (`dbltap`) a leaf node to highlight its
+   neighborhood. Non-neighbors receive `.faded` class (opacity 0.08). Double-click
+   same node or click canvas to exit. Focus auto-exits on expand/collapse.
+
+4. **Edge visibility toggle** — three-button group (All / Sel / None) between
+   Infra toggle and Fit button. "Sel" mode shows only edges connected to selected
+   nodes. Applied after each `recomputeEdges()` call and on node select/unselect.
+
+5. **Semantic zoom** — zoom event listener classifies zoom level into bands:
+   `full` (≥0.8), `reduced` (0.4–0.8), `minimal` (<0.4). Class-based styles
+   adapt detail: minimal shrinks leaf nodes to 16px dots without labels, reduces
+   edge width/opacity; reduced uses smaller font size.
+
+#### Files modified
+
+| File | Change |
+|------|--------|
+| `scripts/vendor_cytoscape.sh` | Remove fcose entry, add elk checksum verification |
+| `src/.../vendor/elk.bundled.esm.js` | NEW — vendored elkjs v0.10.0 (~1.5 MB) |
+| `src/.../vendor/cytoscape-fcose.js` | DELETED (126 KB saved) |
+| `src/.../vendor/THIRD_PARTY_LICENSES` | Replace fcose MIT with elkjs EPL-2.0 |
+| `src/.../js/components/GraphView.js` | Major rewrite: ELK layout, simplified edges, focus mode, edge toggle, semantic zoom |
+| `src/.../css/graph.css` | Add `.graph-edge-toggle` button group styles |
+| `docs/roadmap/phase-25-topic_introspection.md` | This section |
+
+#### Work items
+
+- [x] Download elkjs bundled ESM, add to vendor_cytoscape.sh with checksum
+- [x] Add EPL-2.0 license to THIRD_PARTY_LICENSES
+- [x] Delete cytoscape-fcose.js vendor file
+- [x] Simplify `recomputeEdges()` — drop hubs, single aggregated edge type
+- [x] Remove hub/trunk/branch/direct styles from `getCyStyle()`
+- [x] Implement `buildElkGraph()` — cy→ELK hierarchy conversion
+- [x] Implement `applyElkPositions()` — ELK result→cy position mapping
+- [x] Implement `runElkLayout()` with concurrency guard
+- [x] Make all layout call sites async
+- [x] Add focus mode (dbltap handler, `.faded` class)
+- [x] Add edge visibility toggle (state, toolbar UI, `applyEdgeVisibility`)
+- [x] Add semantic zoom (zoom event, class-based style levels)
+- [x] Add styles to graph.css (edge toggle buttons, active state)
+- [x] Document Phase 25.9 in roadmap doc

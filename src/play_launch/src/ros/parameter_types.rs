@@ -214,15 +214,15 @@ mod tests {
 
     #[test]
     fn test_param_value_roundtrip_double() {
-        let pv = ParamValue::Double(3.14);
+        let pv = ParamValue::Double(1.234);
         let ros = pv.to_ros();
         assert_eq!(
             ros.type_,
             rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE
         );
-        assert!((ros.double_value - 3.14).abs() < f64::EPSILON);
+        assert!((ros.double_value - 1.234).abs() < f64::EPSILON);
         let back = ParamValue::from_ros(&ros);
-        assert!(matches!(back, ParamValue::Double(v) if (v - 3.14).abs() < f64::EPSILON));
+        assert!(matches!(back, ParamValue::Double(v) if (v - 1.234).abs() < f64::EPSILON));
     }
 
     #[test]

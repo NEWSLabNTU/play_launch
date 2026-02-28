@@ -1,0 +1,191 @@
+/* GraphView styles (Phase 25.7, 25.9) */
+
+/* Container in the main layout — override left-panel defaults */
+.graph-container {
+    height: calc(100vh - 45px);
+    overflow: hidden;
+    padding: 0;
+}
+
+.graph-view {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+/* Toolbar */
+.graph-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.graph-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.graph-stats {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.graph-btn {
+    padding: 4px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+
+.graph-btn:hover {
+    background: var(--border-color);
+    opacity: 1;
+}
+
+.graph-infra-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.graph-infra-toggle input {
+    cursor: pointer;
+}
+
+/* Breadcrumb */
+.graph-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    font-size: 0.8rem;
+    overflow-x: auto;
+    white-space: nowrap;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.breadcrumb-sep {
+    color: var(--text-muted);
+    margin: 0 2px;
+}
+
+.breadcrumb-btn {
+    padding: 2px 6px;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.breadcrumb-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    opacity: 1;
+}
+
+.breadcrumb-btn.current {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+/* Canvas wrapper (holds canvas + overlay tooltip) */
+.graph-canvas-wrapper {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* Cytoscape container (must be empty — library manages children) */
+.graph-canvas {
+    width: 100%;
+    height: 100%;
+}
+
+/* Tooltip */
+.graph-tooltip {
+    position: absolute;
+    z-index: 50;
+    padding: 6px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.7rem;
+    color: var(--text-primary);
+    pointer-events: none;
+    max-width: 400px;
+    box-shadow: 0 2px 8px var(--shadow);
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* Empty / loading state */
+.graph-message {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 8px;
+    color: var(--text-muted);
+}
+
+.graph-message-text {
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+.graph-message-sub {
+    font-size: 0.85rem;
+}
+
+/* Edge visibility toggle button group (Phase 25.9) */
+.graph-edge-toggle {
+    display: inline-flex;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.graph-edge-toggle .graph-btn {
+    border-radius: 0;
+    border-right-width: 0;
+    padding: 4px 8px;
+}
+
+.graph-edge-toggle .graph-btn:first-child {
+    border-radius: 4px 0 0 4px;
+}
+
+.graph-edge-toggle .graph-btn:last-child {
+    border-radius: 0 4px 4px 0;
+    border-right-width: 1px;
+}
+
+.graph-edge-toggle .graph-btn.active {
+    background: var(--accent, #3b82f6);
+    color: #fff;
+    border-color: var(--accent, #3b82f6);
+}

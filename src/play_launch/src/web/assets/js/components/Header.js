@@ -81,6 +81,8 @@ export function Header() {
             <div class="nav-tabs">
                 <button class="nav-tab ${view === 'nodes' ? 'active' : ''}"
                     onClick=${() => switchView('nodes')}>Nodes</button>
+                <button class="nav-tab ${view === 'graph' ? 'active' : ''}"
+                    onClick=${() => switchView('graph')}>Graph</button>
                 <button class="nav-tab ${view === 'diagnostics' ? 'active' : ''}"
                     onClick=${() => switchView('diagnostics')}>Diagnostics</button>
             </div>

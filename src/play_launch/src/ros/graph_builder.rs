@@ -4,8 +4,8 @@
 //! for the web UI.
 
 use rclrs::{
-    Node, QoSDurabilityPolicy, QoSDuration, QoSHistoryPolicy, QoSLivelinessPolicy,
-    QoSProfile, QoSReliabilityPolicy,
+    Node, QoSDurabilityPolicy, QoSDuration, QoSHistoryPolicy, QoSLivelinessPolicy, QoSProfile,
+    QoSReliabilityPolicy,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -210,10 +210,7 @@ pub fn build_graph_snapshot(
 ///
 /// `member_name` is the play_launch member name; `fqn` is the fully-qualified
 /// ROS node name; we split it into (name, namespace) for rclrs queries.
-pub fn build_node_topics(
-    ros_node: &Node,
-    fqn: &str,
-) -> eyre::Result<NodeTopics> {
+pub fn build_node_topics(ros_node: &Node, fqn: &str) -> eyre::Result<NodeTopics> {
     let (node_name, namespace) = split_fqn(fqn);
 
     // Publishers
@@ -341,14 +338,8 @@ mod tests {
     #[test]
     fn test_split_fqn() {
         assert_eq!(split_fqn("/node"), ("node".into(), "/".into()));
-        assert_eq!(
-            split_fqn("/ns/node"),
-            ("node".into(), "/ns".into())
-        );
-        assert_eq!(
-            split_fqn("/a/b/c"),
-            ("c".into(), "/a/b".into())
-        );
+        assert_eq!(split_fqn("/ns/node"), ("node".into(), "/ns".into()));
+        assert_eq!(split_fqn("/a/b/c"), ("c".into(), "/a/b".into()));
     }
 
     #[test]

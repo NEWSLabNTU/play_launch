@@ -639,9 +639,7 @@ impl MemberHandle {
     // --- Graph introspection (Phase 25) ---
 
     /// Build a full graph snapshot of all topics and services.
-    pub async fn build_graph_snapshot(
-        &self,
-    ) -> Result<crate::ros::graph_builder::GraphSnapshot> {
+    pub async fn build_graph_snapshot(&self) -> Result<crate::ros::graph_builder::GraphSnapshot> {
         let ros_node = self
             .shared_ros_node
             .as_ref()
