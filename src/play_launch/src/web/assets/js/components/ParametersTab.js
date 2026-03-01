@@ -210,13 +210,26 @@ export function ParametersTab({ nodeName }) {
         }
         setLoading(true);
         setError(null);
-        fetch('/api/nodes/' + encodeURIComponent(nodeName) + '/parameters')
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        fetch('/api/nodes/' + encodeURIComponent(nodeName) + '/parameters', {
+            signal: controller.signal,
+        })
             .then(res => {
                 if (!res.ok) return res.json().then(e => Promise.reject(e.error || res.statusText));
                 return res.json();
             })
             .then(data => { setParams(data); setLoading(false); })
-            .catch(err => { setError(String(err)); setLoading(false); });
+            .catch(err => {
+                if (err.name === 'AbortError') {
+                    setError('Request timed out');
+                } else {
+                    setError(String(err));
+                }
+                setLoading(false);
+            })
+            .finally(() => clearTimeout(timeout));
+        return () => { controller.abort(); clearTimeout(timeout); };
     }, [nodeName, statusStr, isContainer, version]);
 
     const handleSet = useCallback((paramName, newValue) => {

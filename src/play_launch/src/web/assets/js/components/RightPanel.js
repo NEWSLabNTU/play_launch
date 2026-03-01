@@ -24,13 +24,19 @@ export function RightPanel() {
             setNodeData(null);
             return;
         }
-        fetch('/api/nodes/' + encodeURIComponent(name))
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        fetch('/api/nodes/' + encodeURIComponent(name), { signal: controller.signal })
             .then(res => res.json())
             .then(data => setNodeData(data))
             .catch(err => {
-                console.warn('[panel] Failed to fetch node details:', err);
+                if (err.name !== 'AbortError') {
+                    console.warn('[panel] Failed to fetch node details:', err);
+                }
                 setNodeData(null);
-            });
+            })
+            .finally(() => clearTimeout(timeout));
+        return () => { controller.abort(); clearTimeout(timeout); };
     }, [name]);
 
     // Close on Escape
@@ -90,7 +96,7 @@ export function RightPanel() {
             </div>
             <div class="right-panel-content">
                 <div class="tab-content" style=${{ display: tab === 'info' ? 'flex' : 'none' }}>
-                    <${InfoTab} nodeData=${nodeData} />
+                    <${InfoTab} nodeData=${nodeData || storeNode} />
                 </div>
                 <div class="tab-content" style=${{ display: tab === 'params' ? 'flex' : 'none' }}>
                     ${tab === 'params' && html`<${ParametersTab} nodeName=${name} />`}

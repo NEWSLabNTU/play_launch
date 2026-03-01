@@ -3,7 +3,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { currentView, theme, healthSummary, diagnostics, systemMetrics } from '../store.js';
+import { currentView, theme, healthSummary, diagnostics, systemMetrics, panelOpen, graphSelectedElement } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -100,6 +100,10 @@ function ThemeToggle() {
 
 export function Header() {
     const switchView = useCallback((view) => {
+        // Clear graph selection when leaving graph view
+        if (view !== 'graph') {
+            graphSelectedElement.value = null;
+        }
         currentView.value = view;
     }, []);
 

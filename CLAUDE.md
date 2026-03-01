@@ -161,6 +161,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-03-01**: Phase 25 (Topic Introspection) — graph view animated ELK layout transitions, overlap fix, and SSE rebuild stability. `applyElkPositions` supports `animate` param (300ms slide via `ele.animation()`); initial load instant, subsequent layouts animated. `buildElkGraph` computes leaf/port dimensions from style formula (not stale `layoutDimensions()`). Branch edges use `haystack` curve-style to avoid invalid-endpoint warnings when port nodes overlap leaf nodes. SSE rebuild defers collapse via `setTimeout(0)` after `cy.json()` so expand-collapse extension can register new elements. `[GraphView]` console logs at all lifecycle points (init, update, rebuild, expand/collapse, layout, edges). New file: `GraphPanel.js`.
 - **2026-02-27**: Phase 24 (Web UI Parameter Control) complete. ParameterProxy service client wrapper, ParamValue types with bidirectional ROS conversion, MemberHandle integration with FQN map, GET/POST `/api/nodes/:name/parameters` endpoints, SSE `/parameter_events` subscription, ParametersTab frontend with type-aware inputs (bool toggle, number/string inputs, range constraints), search/filter. New files: `ros/parameter_types.rs`, `ros/parameter_proxy.rs`, `web/assets/js/components/ParametersTab.js`.
 - **2026-02-24**: Phase 22 (Launch Tree IR) phases 22.1–22.8 complete. IR preserves full launch structure (conditions, expressions, groups, includes). WASM pipeline: analyze → compile → execute produces identical output to direct parsing (18 round-trip tests). CLI integration behind `--features wasm`. Bugs fixed: `push-ros-namespace` `ns=` attribute in IR builder, `PopNamespace` added to IR, container namespace resolution in WASM host, load_node namespace extraction from target path.
 - **2026-02-18**: Phase 21 (build optimization) mostly complete: `scripts/bundle_wheel.sh` with artifact manifest, incremental build recipes (`build-cpp`, `build-rust`, `build-wheel`), proper wheel platform tag via `wheel tags`. Phase 20 (web UI modernization) planned: Preact + htm + SSE-driven state, vendored locally (no CDN), zero polling.
@@ -180,6 +181,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 - **Web UI Modernization**: `docs/roadmap/phase-20-web_ui_modernization.md` — Preact + SSE migration plan
 - **Build Optimization**: `docs/roadmap/phase-21-build_optimization.md` — bundle script, incremental builds
 - **Launch Tree IR**: `docs/roadmap/phase-22-launch_tree_ir.md` — IR design, WASM pipeline, validation
+- **Topic Introspection**: `docs/roadmap/phase-25-topic_introspection.md` — graph view, namespace grouping, ELK layout, edge bundling
 - **Migration Guide**: `docs/guide/parser-migration.md` — Rust parser migration (v0.6.0+)
 
 ## Parser Parity Status

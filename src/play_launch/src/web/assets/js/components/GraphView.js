@@ -13,8 +13,8 @@ import cytoscape from '../vendor/cytoscape.esm.min.js';
 import ELK from '../vendor/elk.bundled.esm.js';
 import expandCollapse from '../vendor/cytoscape-expand-collapse.js';
 import {
-    graphSnapshot, nodes, selectedNode, panelOpen, activeTab,
-    getStatusString, currentView,
+    graphSnapshot, nodes, panelOpen,
+    getStatusString, currentView, graphSelectedElement,
 } from '../store.js';
 
 const html = htm.bind(h);
@@ -254,16 +254,35 @@ function buildRawEdges(snapshot, allFqns, showInfra) {
     return edgeMap;
 }
 
-// ─── Edge aggregation (direct, no hubs) ──────────────────────────────────
+// ─── Edge aggregation with port-based bundling ───────────────────────────
 
 /**
- * Recompute edges as direct aggregated connections between visible endpoints.
- * No hubs, no trunk/branch distinction — just one edge per visible pair.
+ * Get the immediate Cytoscape parent id of a visible element.
+ * Returns null for root-level elements.
+ */
+function getVisibleParent(cy, eleId) {
+    const ele = cy.getElementById(eleId);
+    if (!ele || ele.length === 0) return null;
+    const parent = ele.parent();
+    if (!parent || parent.length === 0) return null;
+    return parent.id();
+}
+
+/**
+ * Recompute edges with port-based bundling for cross-namespace traffic.
+ *
+ * Internal edges (both endpoints share the same immediate parent NS) are
+ * drawn as direct lines. Cross-NS edges are routed through port nodes:
+ * one outbound port per expanded NS that has external traffic.
+ *
+ * Branch edges: internal-node → port (thin, dotted, no arrow)
+ * Trunk edges: port → external target/port (thick, arrow, aggregated count)
  */
 function recomputeEdges(cy, rawEdges) {
     const collapsedSet = getCollapsedSet(cy);
-    const aggEdges = new Map(); // "srcVis\0tgtVis" → { topics, dangling }
 
+    // Step 1: Aggregate raw edges to visible endpoints
+    const aggEdges = new Map(); // "srcVis\0tgtVis" → { topics, dangling }
     for (const [key, data] of rawEdges) {
         const [srcFqn, tgtFqn] = key.split('\0');
         const srcVisId = resolveVisible(srcFqn, collapsedSet);
@@ -278,27 +297,170 @@ function recomputeEdges(cy, rawEdges) {
         if (data.dangling) agg.dangling = true;
     }
 
-    cy.remove(cy.edges());
-    const els = [];
+    // Step 2: Classify edges as internal vs cross-NS
+    const internalEdges = [];   // direct: same parent NS
+    const crossNsEdges = [];    // need port bundling
+
     for (const [key, data] of aggEdges) {
         const [src, tgt] = key.split('\0');
-        const count = data.topics.size;
+        const srcParent = getVisibleParent(cy, src);
+        const tgtParent = getVisibleParent(cy, tgt);
+
+        if (srcParent && srcParent === tgtParent) {
+            internalEdges.push({ src, tgt, data });
+        } else {
+            crossNsEdges.push({ src, tgt, srcParent, tgtParent, data });
+        }
+    }
+
+    // Step 3: Build port nodes and trunk/branch edges for cross-NS traffic
+    // Group cross-NS edges by (srcParent, tgtParent) to aggregate trunks
+    const trunkKey = (sp, tp) => (sp || 'root') + '\0' + (tp || 'root');
+    const trunkMap = new Map(); // trunkKey → { topics, dangling, srcs: Set, tgts: Set }
+    const portNeeded = new Set(); // parent NS ids that need a port node
+
+    for (const e of crossNsEdges) {
+        const tk = trunkKey(e.srcParent, e.tgtParent);
+        if (!trunkMap.has(tk)) {
+            trunkMap.set(tk, {
+                topics: new Set(), dangling: false,
+                srcs: new Set(), tgts: new Set(),
+                srcParent: e.srcParent, tgtParent: e.tgtParent,
+            });
+        }
+        const t = trunkMap.get(tk);
+        for (const topic of e.data.topics) t.topics.add(topic);
+        if (e.data.dangling) t.dangling = true;
+        t.srcs.add(e.src);
+        t.tgts.add(e.tgt);
+
+        // Mark which expanded NS need port nodes (only leaf nodes inside
+        // expanded NS get ports — collapsed NS nodes ARE their own port)
+        if (e.srcParent && !e.src.startsWith('ns:')) portNeeded.add(e.srcParent);
+        if (e.tgtParent && !e.tgt.startsWith('ns:')) portNeeded.add(e.tgtParent);
+    }
+
+    // Remove old edges and port nodes
+    cy.remove(cy.edges());
+    cy.remove(cy.nodes('.port-node'));
+
+    const els = [];
+
+    // Create port nodes for expanded NS with cross-NS traffic
+    const portIds = new Map(); // parent NS id → port node id
+    for (const parentId of portNeeded) {
+        const portId = 'port:' + parentId;
+        portIds.set(parentId, portId);
+        const parentNode = cy.getElementById(parentId);
+        const parentNs = parentNode.length ? parentNode.data('fullNs') : parentId;
+
+        // Collect all topics going through this port for tooltip
+        const portTopics = new Set();
+        for (const [, t] of trunkMap) {
+            if (t.srcParent === parentId || t.tgtParent === parentId) {
+                for (const topic of t.topics) portTopics.add(topic);
+            }
+        }
+
+        els.push({
+            group: 'nodes',
+            data: {
+                id: portId,
+                label: '',
+                parent: parentId,
+                parentNs: parentNs,
+                isPort: true,
+                topicList: Array.from(portTopics).join('\n'),
+            },
+            classes: 'port-node',
+        });
+    }
+
+    // Create internal edges (direct, no port)
+    for (const e of internalEdges) {
+        const count = e.data.topics.size;
         els.push({
             group: 'edges',
             data: {
-                id: 'edge:' + src + '->' + tgt,
-                source: src, target: tgt,
+                id: 'edge:' + e.src + '->' + e.tgt,
+                source: e.src, target: e.tgt,
                 topicCount: count,
                 label: count === 1
-                    ? Array.from(data.topics)[0].split(' (')[0]
+                    ? Array.from(e.data.topics)[0].split(' (')[0]
                     : count + ' topics',
-                topicList: Array.from(data.topics).join('\n'),
-                dangling: data.dangling,
+                topicList: Array.from(e.data.topics).join('\n'),
+                dangling: e.data.dangling,
             },
-            classes: data.dangling ? 'dangling-edge' : '',
+            classes: e.data.dangling ? 'dangling-edge' : '',
         });
     }
+
+    // Create trunk and branch edges for cross-NS traffic
+    for (const [, t] of trunkMap) {
+        const srcPort = portIds.get(t.srcParent);
+        const tgtPort = portIds.get(t.tgtParent);
+        // Trunk source: port node if src side has leaf nodes, else collapsed NS
+        const trunkSrc = srcPort || [...t.srcs][0];
+        const trunkTgt = tgtPort || [...t.tgts][0];
+        const count = t.topics.size;
+
+        // Trunk edge (port-to-port or port-to-collapsed-NS)
+        els.push({
+            group: 'edges',
+            data: {
+                id: 'trunk:' + trunkSrc + '->' + trunkTgt,
+                source: trunkSrc, target: trunkTgt,
+                topicCount: count,
+                label: count === 1
+                    ? Array.from(t.topics)[0].split(' (')[0]
+                    : count + ' topics',
+                topicList: Array.from(t.topics).join('\n'),
+                dangling: t.dangling,
+            },
+            classes: 'trunk-edge' + (t.dangling ? ' dangling-edge' : ''),
+        });
+
+        // Branch edges: leaf nodes → their port (within the NS)
+        if (srcPort) {
+            for (const src of t.srcs) {
+                if (src === srcPort) continue; // skip self
+                const branchId = 'branch:' + src + '->' + srcPort;
+                // Deduplicate: only add if not already present
+                if (!els.some(e => e.data && e.data.id === branchId)) {
+                    els.push({
+                        group: 'edges',
+                        data: {
+                            id: branchId,
+                            source: src, target: srcPort,
+                        },
+                        classes: 'branch-edge',
+                    });
+                }
+            }
+        }
+        if (tgtPort) {
+            for (const tgt of t.tgts) {
+                if (tgt === tgtPort) continue;
+                const branchId = 'branch:' + tgtPort + '->' + tgt;
+                if (!els.some(e => e.data && e.data.id === branchId)) {
+                    els.push({
+                        group: 'edges',
+                        data: {
+                            id: branchId,
+                            source: tgtPort, target: tgt,
+                        },
+                        classes: 'branch-edge',
+                    });
+                }
+            }
+        }
+    }
+
     cy.add(els);
+    console.log('[GraphView] edges: %d internal, %d cross-NS (%d ports, %d trunk, %d branch)',
+        internalEdges.length, crossNsEdges.length,
+        portNeeded.size, trunkMap.size,
+        els.filter(e => e.classes && e.classes.includes('branch-edge')).length);
 }
 
 // ─── ELK layout engine ───────────────────────────────────────────────────
@@ -322,7 +484,7 @@ function buildElkGraph(cy) {
             'hierarchyHandling': 'INCLUDE_CHILDREN',
             'crossingMinimization.strategy': 'LAYER_SWEEP',
             'nodePlacement.strategy': 'NETWORK_SIMPLEX',
-            'spacing.nodeNode': '30',
+            'spacing.nodeNode': '40',
             'spacing.nodeNodeBetweenLayers': '50',
             'spacing.edgeNode': '20',
             'spacing.edgeEdge': '15',
@@ -339,13 +501,24 @@ function buildElkGraph(cy) {
         const id = cyNode.id();
         const isNs = cyNode.hasClass('namespace');
         const isCollapsed = cyNode.hasClass('cy-expand-collapse-collapsed-node');
-        const dims = cyNode.layoutDimensions({ nodeDimensionsIncludeLabels: true });
 
-        const elkNode = {
-            id: id,
-            width: Math.max(dims.w || 80, 40),
-            height: Math.max(dims.h || 30, 20),
-        };
+        let w, h;
+        if (cyNode.hasClass('leaf-node')) {
+            // Match the style function exactly to avoid stale layoutDimensions
+            const label = cyNode.data('label') || '';
+            w = Math.max(label.length * 7 + 12, 40);
+            h = 28;
+        } else if (cyNode.hasClass('port-node')) {
+            w = 8;
+            h = 8;
+        } else {
+            // Namespace / collapsed — use layoutDimensions
+            const dims = cyNode.layoutDimensions({ nodeDimensionsIncludeLabels: true });
+            w = Math.max(dims.w || 80, 40);
+            h = Math.max(dims.h || 30, 20);
+        }
+
+        const elkNode = { id, width: w, height: h };
 
         // Compound (expanded) namespace nodes have children
         if (isNs && !isCollapsed) {
@@ -392,7 +565,7 @@ function buildElkGraph(cy) {
  * Apply ELK layout result positions to Cytoscape.
  * ELK uses top-left coordinates with cumulative offsets for nested children.
  */
-function applyElkPositions(cy, elkResult) {
+function applyElkPositions(cy, elkResult, animate = true) {
     const posMap = new Map();
 
     function walk(node, offX, offY) {
@@ -409,14 +582,31 @@ function applyElkPositions(cy, elkResult) {
         elkResult.children.forEach(c => walk(c, 0, 0));
     }
 
-    cy.startBatch();
+    if (!animate) {
+        // Instant mode: used for initial load
+        cy.startBatch();
+        posMap.forEach((pos, id) => {
+            const ele = cy.getElementById(id);
+            if (ele && ele.length > 0) ele.position(pos);
+        });
+        cy.endBatch();
+        return Promise.resolve();
+    }
+
+    // Animated mode: each element slides to new position
+    const duration = 300;
+    const promises = [];
     posMap.forEach((pos, id) => {
         const ele = cy.getElementById(id);
         if (ele && ele.length > 0) {
-            ele.position(pos);
+            promises.push(ele.animation({
+                position: pos,
+                duration: duration,
+                easing: 'ease-in-out-cubic',
+            }).play().promise());
         }
     });
-    cy.endBatch();
+    return Promise.all(promises);
 }
 
 /**
@@ -429,16 +619,24 @@ async function runElkLayout(cy, fit) {
     if (layoutRunning.current) {
         layoutRunning.pending = true;
         if (fit) layoutRunning.pendingFit = true;
+        console.log('[GraphView] layout: queued (fit=%s)', fit);
         return;
     }
     layoutRunning.current = true;
+    const animate = !fit;
+    console.log('[GraphView] layout: starting (fit=%s, animate=%s)', fit, animate);
     try {
         const elkGraph = buildElkGraph(cy);
         // Only run layout if there are nodes to lay out
         if (elkGraph.children.length === 0) return;
         const result = await elk.layout(elkGraph);
-        applyElkPositions(cy, result);
-        if (fit) cy.fit(undefined, 40);
+        await applyElkPositions(cy, result, animate);
+        if (fit) {
+            cy.fit(undefined, 40);           // instant fit on initial load
+        } else {
+            cy.animate({ fit: { eles: cy.elements(), padding: 40 }, duration: 300 });
+        }
+        console.log('[GraphView] layout: complete (%d nodes positioned)', cy.nodes(':visible').length);
     } catch (e) {
         // ELK layout can fail on degenerate graphs — fall back to preset
         console.warn('ELK layout failed, using current positions:', e.message);
@@ -526,11 +724,15 @@ export function GraphView() {
     const rawEdgesRef = useRef(new Map());
     const focusedNodeRef = useRef(null);
     const edgeModeRef = useRef('all');
+    const initializedRef = useRef(false);
+    const loadedLeafIdsRef = useRef(new Set()); // tracks loaded leaf IDs (collapse removes nodes from cy)
+    const batchRef = useRef(false); // true during collapseAll/expandAll to suppress per-node events
     const [showInfra, setShowInfra] = useState(false);
     const [edgeMode, setEdgeMode] = useState('all');
     const [tooltip, setTooltip] = useState(null);
     const [breadcrumb, setBreadcrumb] = useState([{ label: '/', ns: '/' }]);
     const [statsText, setStatsText] = useState('');
+    const [initDoneCounter, setInitDoneCounter] = useState(0);
     const snap = graphSnapshot.value;
     const nodesMap = nodes.value;
     const view = currentView.value;
@@ -538,12 +740,14 @@ export function GraphView() {
     // Keep edgeModeRef in sync for event handler closures
     edgeModeRef.current = edgeMode;
 
-    // Memoize node elements and raw edges separately
+    // Memoize structural graph data — depends only on snapshot, NOT nodesMap.
+    // Status colors are handled by a separate lightweight effect below.
+    // This prevents every SSE state event from triggering a structural rebuild.
     const { nodeElements, nodeIndex, rawEdges } = useMemo(() => {
-        const { nodeElements, nodeIndex, allFqns } = buildCyNodes(snap, nodesMap, showInfra);
+        const { nodeElements, nodeIndex, allFqns } = buildCyNodes(snap, new Map(), showInfra);
         const rawEdges = buildRawEdges(snap, allFqns, showInfra);
         return { nodeElements, nodeIndex, rawEdges };
-    }, [snap, nodesMap, showInfra]);
+    }, [snap, showInfra]);
 
     // Keep refs in sync for event handler closures
     nodeIndexRef.current = nodeIndex;
@@ -567,6 +771,7 @@ export function GraphView() {
                 cyRef.current.destroy();
                 cyRef.current = null;
                 ecApiRef.current = null;
+                initializedRef.current = false;
             }
             return;
         }
@@ -582,94 +787,98 @@ export function GraphView() {
                 elements: [],
                 style: getCyStyle(isDark),
                 layout: { name: 'preset' },
-                wheelSensitivity: 0.3,
                 minZoom: 0.1,
                 maxZoom: 4,
             });
 
-            // Register expand-collapse (no edges loaded, so extension has
-            // nothing to reroute — we handle edges ourselves)
+            // Register expand-collapse with cue buttons for [+]/[−] toggle
             const ecApi = cy.expandCollapse({
                 layoutBy: null,        // we handle layout ourselves
                 fisheye: false,
                 animate: false,
                 undoable: false,
-                cueEnabled: false,
+                cueEnabled: true,
+                expandCollapseCuePosition: 'top-left',
+                expandCollapseCueSize: 14,
+                expandCollapseCueSensitivity: 1,
             });
 
-            // Interactions — click any node to highlight it + connected edges
-            cy.on('tap', 'node', (evt) => {
-                const node = evt.target;
+            // Interactions — click any node or edge to highlight and select
+            // it in the graph panel. Single click drives the panel.
+            cy.on('tap', 'node, edge', (evt) => {
                 cy.elements().removeClass('highlighted');
-                node.addClass('highlighted');
-                node.connectedEdges().addClass('highlighted');
-                node.connectedEdges().connectedNodes().addClass('highlighted');
-            });
+                const target = evt.target;
+                if (target.isNode()) {
+                    target.addClass('highlighted');
+                    target.connectedEdges().addClass('highlighted');
+                    target.connectedEdges().connectedNodes().addClass('highlighted');
 
-            // Click leaf node — also open right panel
-            cy.on('tap', 'node.leaf-node', (evt) => {
-                const data = evt.target.data();
-                if (data.memberName) {
-                    selectedNode.value = data.memberName;
+                    if (target.hasClass('leaf-node')) {
+                        graphSelectedElement.value = {
+                            type: 'node', id: target.id(), data: target.data(),
+                        };
+                    } else if (target.hasClass('port-node')) {
+                        // Port nodes → treat as parent namespace
+                        const parentNs = target.data('parentNs') || '/';
+                        const parentEle = cy.getElementById('ns:' + parentNs);
+                        const pData = parentEle.length ? parentEle.data() : { fullNs: parentNs, label: parentNs };
+                        graphSelectedElement.value = {
+                            type: 'namespace', id: 'ns:' + parentNs, data: pData,
+                        };
+                    } else if (target.hasClass('namespace')) {
+                        graphSelectedElement.value = {
+                            type: 'namespace', id: target.id(), data: target.data(),
+                        };
+                    }
                     panelOpen.value = true;
-                    activeTab.value = 'topics';
+                } else {
+                    // Edge: highlight edge + its two endpoints
+                    target.addClass('highlighted');
+                    target.connectedNodes().addClass('highlighted');
+                    graphSelectedElement.value = {
+                        type: 'edge', id: target.id(),
+                        data: {
+                            ...target.data(),
+                            source: target.source().id(),
+                            target: target.target().id(),
+                        },
+                    };
+                    panelOpen.value = true;
                 }
             });
 
-            // Namespace double-click — toggle expand/collapse
-            // (single-click kept free for drag; avoids accidental collapse)
-            cy.on('dbltap', 'node.namespace', async (evt) => {
-                const node = evt.target;
-                const data = node.data();
-                const ns = data.fullNs;
-
-                // Exit focus mode on expand/collapse
-                if (focusedNodeRef.current) {
-                    exitFocusMode(cy);
-                    focusedNodeRef.current = null;
+            // Post-expand/collapse via cue button — recompute edges + layout.
+            // Skipped during batch operations (collapseAll/expandAll) which
+            // handle edges and layout themselves after the batch completes.
+            cy.on('expandcollapse.afterExpand expandcollapse.afterCollapse', async (evt) => {
+                if (batchRef.current) return;
+                const evtType = evt.type.includes('Expand') ? 'expand' : 'collapse';
+                const ns = evt.target.data('fullNs') || evt.target.id();
+                console.log('[GraphView] %s: %s', evtType, ns);
+                // Protect root namespace from being collapsed
+                const rootNode = cy.getElementById('ns:/');
+                if (rootNode.hasClass('cy-expand-collapse-collapsed-node') && ecApiRef.current) {
+                    try { ecApiRef.current.expand(rootNode); } catch (_) { /* */ }
                 }
-
-                // Toggle expand/collapse (root namespace always stays expanded)
-                if (ecApiRef.current && ns !== '/') {
-                    try {
-                        if (node.hasClass('cy-expand-collapse-collapsed-node')) {
-                            ecApiRef.current.expand(node);
-                        } else {
-                            ecApiRef.current.collapse(node);
-                        }
-                    } catch (_e) { /* ignore */ }
-                }
-
-                // Recompute edges after expand/collapse state change
                 recomputeEdges(cy, rawEdgesRef.current);
                 applyEdgeVisibility(cy, edgeModeRef.current);
                 await runElkLayout(cy);
-
-                // Update breadcrumb
-                const levels = namespaceLevels(ns);
-                const crumbs = levels.map(l => ({
-                    label: l === '/' ? '/' : l.split('/').filter(Boolean).pop(),
-                    ns: l,
-                }));
-                setBreadcrumb(crumbs);
-            });
-
-            // Focus mode — double-click leaf node
-            cy.on('dbltap', 'node.leaf-node', (evt) => {
-                const nodeId = evt.target.id();
-                if (focusedNodeRef.current === nodeId) {
-                    exitFocusMode(cy);
-                    focusedNodeRef.current = null;
-                } else {
-                    enterFocusMode(cy, evt.target);
-                    focusedNodeRef.current = nodeId;
+                // Update breadcrumb to the expanded/collapsed node
+                if (ns) {
+                    const levels = namespaceLevels(ns);
+                    setBreadcrumb(levels.map(l => ({
+                        label: l === '/' ? '/' : l.split('/').filter(Boolean).pop(),
+                        ns: l,
+                    })));
                 }
             });
 
-            // Click canvas background — clear highlight and exit focus
+            // Click canvas background — clear highlight, exit focus, close panel
             cy.on('tap', (evt) => {
                 if (evt.target === cy) {
                     cy.elements().removeClass('highlighted');
+                    graphSelectedElement.value = null;
+                    panelOpen.value = false;
                     if (focusedNodeRef.current) {
                         exitFocusMode(cy);
                         focusedNodeRef.current = null;
@@ -708,7 +917,24 @@ export function GraphView() {
                 lines.push('Status: ' + data.statusStr);
                 if (info) {
                     lines.push(info.pub + ' pub, ' + info.sub + ' sub, ' + info.srv + ' srv');
-                    if (info.pid) lines.push('PID: ' + info.pid);
+                }
+                if (data.memberName) {
+                    const storeNode = nodes.value.get(data.memberName);
+                    if (storeNode?.pid) lines.push('PID: ' + storeNode.pid);
+                }
+                setTooltip({ text: lines.join('\n'), x: pos.x + 15, y: pos.y + 15 });
+            });
+
+            // Hover tooltips — port nodes (aggregated topic list)
+            cy.on('mouseover', 'node.port-node', (evt) => {
+                const data = evt.target.data();
+                const pos = evt.renderedPosition;
+                const lines = ['Port: ' + (data.parentNs || '')];
+                if (data.topicList) {
+                    const topics = data.topicList.split('\n').slice(0, 10);
+                    lines.push(...topics);
+                    const total = data.topicList.split('\n').length;
+                    if (total > 10) lines.push('... and ' + (total - 10) + ' more');
                 }
                 setTooltip({ text: lines.join('\n'), x: pos.x + 15, y: pos.y + 15 });
             });
@@ -739,39 +965,157 @@ export function GraphView() {
         // Update theme
         cy.style(getCyStyle(isDark));
 
-        // Update node elements only (no edges — recomputeEdges handles those)
-        cy.json({ elements: nodeElements });
-        cy.elements().forEach(ele => {
-            // Update leaf node colors based on current status
-            if (ele.hasClass('leaf-node')) {
+        // State machine: false → 'pending' → true
+        //   false:   first run — load elements, schedule deferred collapse
+        //   pending: collapse/layout in progress — skip SSE-triggered re-runs
+        //   true:    ready for incremental updates
+        if (initializedRef.current === 'pending') {
+            // Setup in progress — ignore SSE updates until collapse/layout completes
+            console.log('[GraphView] skipping SSE update (init pending)');
+            return;
+        }
+
+        if (!initializedRef.current) {
+            // ── First run: full element load → collapse → edges → layout ──
+            // Mark 'pending' immediately so SSE-triggered re-runs are skipped
+            // while the deferred collapse/layout is in progress.
+            initializedRef.current = 'pending';
+            cy.json({ elements: nodeElements });
+            loadedLeafIdsRef.current = new Set(
+                nodeElements.filter(e => e.classes && e.classes.includes('leaf-node')).map(e => e.data.id)
+            );
+            const leafCount = loadedLeafIdsRef.current.size;
+            const nsCount = cy.nodes('.namespace').length;
+            console.log('[GraphView] init: loaded %d leaf nodes, %d namespaces', leafCount, nsCount);
+            cy.nodes('.leaf-node').forEach(ele => {
                 const info = nodeIndex.get(ele.data('fqn'));
                 if (info) {
                     ele.data('statusStr', info.status);
                     ele.style('background-color', statusToColor(info.status, isDark));
                 }
+            });
+
+            // Collapse top-level namespaces by default (root always expanded).
+            // Deferred so the expand-collapse extension can process the elements.
+            setTimeout(async () => {
+                let collapsed = 0;
+                if (ecApiRef.current) {
+                    batchRef.current = true;
+                    try {
+                        const rootChildren = cy.nodes('.namespace').filter(n => {
+                            return n.data('parent') === 'ns:/';
+                        });
+                        if (rootChildren.length > 3) {
+                            rootChildren.forEach(n => {
+                                try { ecApiRef.current.collapse(n); collapsed++; } catch (_e) { /* */ }
+                            });
+                        }
+                    } catch (_e) { /* ignore */ }
+                    batchRef.current = false;
+                }
+                console.log('[GraphView] init: collapsed %d top-level namespaces', collapsed);
+                recomputeEdges(cy, rawEdgesRef.current);
+                applyEdgeVisibility(cy, edgeModeRef.current);
+                await runElkLayout(cy, true); // fit on initial load
+                initializedRef.current = true;
+                console.log('[GraphView] init: complete');
+                // Force re-render so any updates that arrived during 'pending'
+                // (and were skipped by the early-return) get processed.
+                setInitDoneCounter(c => c + 1);
+            }, 100);
+        } else {
+            // ── Subsequent SSE updates: in-place update or rebuild ──
+            // Compare against loadedLeafIdsRef (not cy.nodes) because the
+            // expand-collapse extension removes child elements from cy on
+            // collapse, making cy.nodes('.leaf-node') return fewer than loaded.
+            const prevIds = loadedLeafIdsRef.current;
+            const newIds = new Set(
+                nodeElements
+                    .filter(e => e.classes && e.classes.includes('leaf-node'))
+                    .map(e => e.data.id)
+            );
+            const changed = prevIds.size !== newIds.size
+                || [...prevIds].some(id => !newIds.has(id));
+
+            if (changed) {
+                console.log('[GraphView] update: node set changed (%d → %d leaves), rebuilding',
+                    prevIds.size, newIds.size);
+                // Node set changed — save EXPANDED set, rebuild, collapse rest.
+                // New namespaces (not previously known) default to collapsed.
+                const expandedSet = new Set();
+                cy.nodes('.namespace').forEach(n => {
+                    if (!n.hasClass('cy-expand-collapse-collapsed-node')) {
+                        expandedSet.add(n.data('fullNs'));
+                    }
+                });
+                expandedSet.add('/'); // root always expanded
+                console.log('[GraphView] rebuild: saving expanded set:', [...expandedSet]);
+
+                cy.json({ elements: nodeElements });
+                loadedLeafIdsRef.current = newIds;
+
+                // Deferred collapse — the expand-collapse extension needs a
+                // tick after cy.json() to register new elements, matching the
+                // initial-load pattern (setTimeout).
+                setTimeout(async () => {
+                    batchRef.current = true;
+                    // Collapse all namespaces not in expandedSet (deepest first
+                    // so children are collapsed before parents)
+                    let collapsed = 0;
+                    if (ecApiRef.current) {
+                        const nsNodes = [];
+                        cy.nodes('.namespace').forEach(n => nsNodes.push(n));
+                        nsNodes.sort((a, b) => {
+                            const aDepth = (a.data('fullNs') || '').split('/').length;
+                            const bDepth = (b.data('fullNs') || '').split('/').length;
+                            return bDepth - aDepth;
+                        });
+                        for (const n of nsNodes) {
+                            if (!expandedSet.has(n.data('fullNs'))) {
+                                try {
+                                    ecApiRef.current.collapse(n);
+                                    collapsed++;
+                                } catch (e) {
+                                    console.warn('[GraphView] collapse failed for', n.data('fullNs'), e.message);
+                                }
+                            }
+                        }
+                    }
+                    batchRef.current = false;
+                    console.log('[GraphView] rebuild: collapsed', collapsed, 'namespaces');
+                    recomputeEdges(cy, rawEdgesRef.current);
+                    applyEdgeVisibility(cy, edgeModeRef.current);
+                    await runElkLayout(cy);
+                }, 0);
+            } else {
+                // Same node set — recompute edges in case topic connections changed
+                console.log('[GraphView] update: node set unchanged, updating edges only');
+                recomputeEdges(cy, rawEdgesRef.current);
+                applyEdgeVisibility(cy, edgeModeRef.current);
+            }
+        }
+
+    }, [nodeElements, rawEdges, view, initDoneCounter]);
+
+    // Status-only updates — lightweight color sync on every nodesMap change.
+    // Decoupled from the structural effect so SSE state events don't trigger
+    // expensive graph rebuilds. Also fires after structural changes and init.
+    useEffect(() => {
+        if (view !== 'graph' || !cyRef.current) return;
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const cy = cyRef.current;
+        cy.startBatch();
+        cy.nodes('.leaf-node').forEach(ele => {
+            const memberName = ele.data('memberName');
+            if (memberName) {
+                const storeNode = nodesMap.get(memberName);
+                const statusStr = storeNode ? getStatusString(storeNode.status) : 'unknown';
+                ele.data('statusStr', statusStr);
+                ele.style('background-color', statusToColor(statusStr, isDark));
             }
         });
-
-        // Collapse top-level namespaces by default (root always expanded)
-        setTimeout(async () => {
-            if (ecApiRef.current) {
-                try {
-                    const rootChildren = cy.nodes('.namespace').filter(n => {
-                        return n.data('parent') === 'ns:/';
-                    });
-                    if (rootChildren.length > 3) {
-                        rootChildren.forEach(n => {
-                            try { ecApiRef.current.collapse(n); } catch (_e) { /* */ }
-                        });
-                    }
-                } catch (_e) { /* ignore */ }
-            }
-            recomputeEdges(cy, rawEdgesRef.current);
-            applyEdgeVisibility(cy, edgeModeRef.current);
-            await runElkLayout(cy, true); // fit on initial load
-        }, 100);
-
-    }, [nodeElements, rawEdges, view]);
+        cy.endBatch();
+    }, [nodesMap, nodeElements, view, initDoneCounter]);
 
     // Handle resize
     useEffect(() => {
@@ -795,6 +1139,7 @@ export function GraphView() {
                 cyRef.current.destroy();
                 cyRef.current = null;
                 ecApiRef.current = null;
+                initializedRef.current = false;
             }
         };
     }, []);
@@ -813,13 +1158,17 @@ export function GraphView() {
                     exitFocusMode(cyRef.current);
                     focusedNodeRef.current = null;
                 }
+                batchRef.current = true;
                 ecApiRef.current.expandAll();
+                batchRef.current = false;
                 if (cyRef.current) {
                     recomputeEdges(cyRef.current, rawEdgesRef.current);
                     applyEdgeVisibility(cyRef.current, edgeModeRef.current);
                     await runElkLayout(cyRef.current);
                 }
-            } catch (_e) { /* ignore */ }
+            } catch (_e) {
+                batchRef.current = false;
+            }
         }
     }, []);
 
@@ -831,18 +1180,22 @@ export function GraphView() {
                     exitFocusMode(cyRef.current);
                     focusedNodeRef.current = null;
                 }
+                batchRef.current = true;
                 ecApiRef.current.collapseAll();
                 // Re-expand root — root namespace always stays expanded
                 const rootNode = cyRef.current && cyRef.current.getElementById('ns:/');
                 if (rootNode && rootNode.hasClass('cy-expand-collapse-collapsed-node')) {
                     try { ecApiRef.current.expand(rootNode); } catch (_e) { /* */ }
                 }
+                batchRef.current = false;
                 if (cyRef.current) {
                     recomputeEdges(cyRef.current, rawEdgesRef.current);
                     applyEdgeVisibility(cyRef.current, edgeModeRef.current);
                     await runElkLayout(cyRef.current);
                 }
-            } catch (_e) { /* ignore */ }
+            } catch (_e) {
+                batchRef.current = false;
+            }
         }
     }, []);
 
@@ -870,9 +1223,9 @@ export function GraphView() {
             recomputeEdges(cy, rawEdgesRef.current);
             applyEdgeVisibility(cy, edgeModeRef.current);
             // Fit to the compound node (includes all descendants)
-            cy.fit(nsNode, 40);
+            cy.animate({ fit: { eles: nsNode, padding: 40 }, duration: 300 });
         } else if (ns === '/') {
-            cy.fit(undefined, 40);
+            cy.animate({ fit: { eles: cy.elements(), padding: 40 }, duration: 300 });
         }
         // Update breadcrumb
         const levels = namespaceLevels(ns);
@@ -916,8 +1269,8 @@ export function GraphView() {
                             onClick=${() => handleEdgeMode('none')} title="Hide all edges">None</button>
                     </div>
                     <button class="graph-btn" onClick=${handleFit} title="Fit to screen">Fit</button>
-                    <button class="graph-btn" onClick=${handleExpandAll} title="Expand all groups">Expand</button>
-                    <button class="graph-btn" onClick=${handleCollapseAll} title="Collapse all groups">Collapse</button>
+                    <button class="graph-btn" onClick=${handleExpandAll} title="Expand all groups">Expand All</button>
+                    <button class="graph-btn" onClick=${handleCollapseAll} title="Collapse all groups">Collapse All</button>
                 </div>
             </div>
             <div class="graph-canvas-wrapper">
@@ -1009,7 +1362,10 @@ function getCyStyle(isDark) {
                 'text-halign': 'center',
                 'font-size': '10px',
                 'color': '#fff',
-                'width': 'label',
+                'width': function(ele) {
+                    const label = ele.data('label') || '';
+                    return Math.max(label.length * 7 + 12, 40);
+                },
                 'height': 28,
                 'padding': '6px',
                 'text-max-width': '100px',
@@ -1046,6 +1402,22 @@ function getCyStyle(isDark) {
                 'overlay-opacity': 0.1,
             },
         },
+        // Port nodes (small circles on NS border for edge bundling)
+        {
+            selector: 'node.port-node',
+            style: {
+                'width': 8,
+                'height': 8,
+                'shape': 'ellipse',
+                'background-color': isDark ? '#6b7280' : '#9ca3af',
+                'border-width': 0,
+                'label': '',
+                'opacity': 0.6,
+                'min-width': '0px',
+                'min-height': '0px',
+                'padding': '0px',
+            },
+        },
         // Unified edge style
         {
             selector: 'edge',
@@ -1066,6 +1438,30 @@ function getCyStyle(isDark) {
                 'text-background-color': bg,
                 'text-background-opacity': 0.85,
                 'text-background-padding': '2px',
+            },
+        },
+        // Branch edges: internal node → port (thin, dotted, no arrow).
+        // Haystack avoids "invalid endpoints" warnings when port overlaps leaf.
+        {
+            selector: 'edge.branch-edge',
+            style: {
+                'curve-style': 'haystack',
+                'haystack-radius': 0.5,
+                'line-style': 'dotted',
+                'width': 1,
+                'opacity': 0.3,
+                'target-arrow-shape': 'none',
+            },
+        },
+        // Trunk edges: port → external (thicker, aggregated)
+        {
+            selector: 'edge.trunk-edge',
+            style: {
+                'width': function(ele) {
+                    const c = ele.data('topicCount') || 1;
+                    return Math.min(2 + Math.log2(c) * 1.5, 8);
+                },
+                'opacity': 0.8,
             },
         },
         // Edge labels on selection

@@ -1,7 +1,7 @@
 // TopicsTab component — shows topics/services for the selected node (Phase 25).
 
 import { h } from '../vendor/preact.module.js';
-import { useState, useEffect, useRef, useCallback } from '../vendor/hooks.module.js';
+import { useState, useCallback, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import { nodes, getStatusString, selectedNode, panelOpen, graphSnapshot } from '../store.js';
 
@@ -141,35 +141,73 @@ function SectionHeader({ title, count, collapsed, onToggle }) {
     `;
 }
 
+/**
+ * Derive topic/service data for a node from the graph snapshot.
+ * Returns the same shape as the /api/nodes/{name}/topics response.
+ */
+function deriveTopicsFromSnapshot(snap, nodeName) {
+    if (!snap || !snap.topics) return null;
+
+    const publishers = [];
+    const subscribers = [];
+
+    // Collect all FQNs for this member so we can match services
+    const memberFqns = new Set();
+
+    for (const topic of snap.topics) {
+        for (const ep of topic.publishers) {
+            if (ep.member_name === nodeName) {
+                memberFqns.add(ep.fqn);
+                publishers.push({
+                    name: topic.name,
+                    msg_type: topic.msg_type,
+                    qos: ep.qos || null,
+                    publisher_count: topic.publishers.length,
+                    subscriber_count: topic.subscribers.length,
+                    dangling: topic.dangling || false,
+                });
+            }
+        }
+        for (const ep of topic.subscribers) {
+            if (ep.member_name === nodeName) {
+                memberFqns.add(ep.fqn);
+                subscribers.push({
+                    name: topic.name,
+                    msg_type: topic.msg_type,
+                    qos: ep.qos || null,
+                    publisher_count: topic.publishers.length,
+                    subscriber_count: topic.subscribers.length,
+                    dangling: topic.dangling || false,
+                });
+            }
+        }
+    }
+
+    const servers = [];
+    const clients = [];
+    if (snap.services) {
+        for (const svc of snap.services) {
+            if (svc.servers && svc.servers.some(s => memberFqns.has(s))) {
+                servers.push({ name: svc.name, srv_type: svc.srv_type });
+            }
+            if (svc.clients && svc.clients.some(c => memberFqns.has(c))) {
+                clients.push({ name: svc.name, srv_type: svc.srv_type });
+            }
+        }
+    }
+
+    return { publishers, subscribers, servers, clients };
+}
+
 /** Main TopicsTab component. */
 export function TopicsTab({ nodeName }) {
-    const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(null);
     const [showInfra, setShowInfra] = useState(false);
     const [collapsedSections, setCollapsedSections] = useState(new Set());
 
+    const snap = graphSnapshot.value;
     const storeNode = nodes.value.get(nodeName);
     const statusStr = getStatusString(storeNode?.status);
     const isRunning = statusStr === 'running' || statusStr === 'loaded';
-
-    // Fetch node topics when node changes or becomes running
-    useEffect(() => {
-        if (!nodeName || !isRunning) {
-            setData(null);
-            return;
-        }
-        setLoading(true);
-        setError(null);
-
-        fetch('/api/nodes/' + encodeURIComponent(nodeName) + '/topics')
-            .then(res => {
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return res.json();
-            })
-            .then(d => { setData(d); setLoading(false); })
-            .catch(e => { setError(e.message); setLoading(false); });
-    }, [nodeName, isRunning]);
 
     const toggleSection = useCallback((section) => {
         setCollapsedSections(prev => {
@@ -186,6 +224,12 @@ export function TopicsTab({ nodeName }) {
         return (entries || []).filter(e => !isInfra(e.name));
     };
 
+    // Derive data from graph snapshot (reactive — updates on snapshot change)
+    const data = useMemo(
+        () => deriveTopicsFromSnapshot(snap, nodeName),
+        [snap, nodeName],
+    );
+
     if (!isRunning) {
         const msg = statusStr === 'pending' || statusStr === 'loading'
             ? 'Waiting for node to start...'
@@ -193,16 +237,8 @@ export function TopicsTab({ nodeName }) {
         return html`<div class="topics-tab-message">${msg}</div>`;
     }
 
-    if (loading) {
-        return html`<div class="topics-tab-message">Loading topics...</div>`;
-    }
-
-    if (error) {
-        return html`<div class="topics-tab-message topics-tab-error">Error: ${error}</div>`;
-    }
-
     if (!data) {
-        return html`<div class="topics-tab-message">No data</div>`;
+        return html`<div class="topics-tab-message">No topic data available</div>`;
     }
 
     const pubs = filterEntries(data.publishers);

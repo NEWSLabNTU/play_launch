@@ -637,3 +637,120 @@
 .topics-tab-error {
     color: var(--failed-border);
 }
+
+/* ===== Graph Panel (Phase 25) ===== */
+
+.graph-panel-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    padding: 24px;
+    text-align: center;
+}
+
+.graph-panel-message {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.graph-panel-ns-path {
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 0.9rem;
+}
+
+.graph-panel-count {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+.graph-panel-section {
+    padding: 8px 0;
+}
+
+.graph-panel-section-title {
+    padding: 6px 16px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+}
+
+.graph-panel-node-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 16px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.15s;
+}
+
+.graph-panel-node-row:hover {
+    background: var(--bg-tertiary);
+}
+
+.graph-panel-node-name {
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.graph-panel-ns-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 16px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.15s;
+}
+
+.graph-panel-ns-row:hover {
+    background: var(--bg-tertiary);
+}
+
+.graph-panel-ns-label {
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.graph-panel-empty {
+    padding: 12px 16px;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-style: italic;
+}
+
+.graph-panel-edge-title {
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 0.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.graph-panel-arrow {
+    color: var(--text-muted);
+    margin: 0 4px;
+}
+
+.graph-panel-member {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    padding: 1px 4px;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    flex-shrink: 0;
+}

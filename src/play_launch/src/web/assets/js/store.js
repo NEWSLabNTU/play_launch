@@ -52,6 +52,11 @@ export const healthSummary = signal(/** @type {any} */ ({
 /** @type {{ value: object|null }} Full graph snapshot from GET /api/graph */
 export const graphSnapshot = signal(null);
 
+/** Currently focused graph element, or null.
+ *  Shape: { type: 'node'|'namespace'|'edge', id: string, data: object }
+ */
+export const graphSelectedElement = signal(null);
+
 /** Debounce timer for graph refetch on state changes. */
 let _graphDebounceTimer = null;
 

@@ -1,6 +1,6 @@
 # Phase 25: Runtime Graph & Topic Introspection
 
-**Status**: Complete (all phases 25.1–25.9)
+**Status**: 25.1–25.9 complete, 25.10 in progress
 **Priority**: Medium (Observability)
 **Dependencies**: Phase 24 (Parameter Control), rclrs vendor patch
 
@@ -968,3 +968,69 @@ the design.
 - [x] Add semantic zoom (zoom event, class-based style levels)
 - [x] Add styles to graph.css (edge toggle buttons, active state)
 - [x] Document Phase 25.9 in roadmap doc
+
+---
+
+### Phase 25.10: Graph View UX Fixes — Stability, Focus, Cue Buttons, Port Edges
+
+**Status**: In progress
+
+Four UX issues discovered during manual testing at Autoware scale.
+
+#### Problem 1: Auto-expand on SSE updates
+
+The main `useEffect` depends on `[nodeElements, rawEdges, view]`. When SSE snapshot
+updates arrive, `nodeElements` changes → effect re-runs → `cy.json({ elements })`
+replaces all elements → expand-collapse internal state destroyed → namespaces randomly
+expand while the user does nothing.
+
+**Fix**: Track initialization via `initializedRef`. First run does full element load +
+collapse + layout. Subsequent SSE updates only update leaf node status/colors in-place.
+If the node set changes (nodes appear/disappear), save collapsed set before `cy.json()`,
+restore it after.
+
+#### Problem 2: Clicking edge doesn't clear node highlight
+
+The `tap` handler for highlight only listens on `'node'`. Clicking an edge doesn't
+clear the previous node highlight.
+
+**Fix**: Widen handler to `'node, edge'`. Clicking any element clears previous highlight
+and highlights the clicked element + its connected neighborhood. Clicking canvas clears.
+
+#### Problem 3: Accidental collapse on expanded namespace
+
+Double-click anywhere on a large expanded namespace collapses it — easy to trigger
+accidentally when trying to interact with nodes inside.
+
+**Fix**: Remove `dbltap` handler on `node.namespace`. Enable expand-collapse extension's
+built-in cue buttons (`cueEnabled: true`) — renders [+]/[−] icons in namespace corner.
+Wire `expandcollapse.afterExpand/afterCollapse` events for edge recomputation and layout.
+Root namespace protected from collapse.
+
+#### Problem 4: Edge hairball when namespace expanded
+
+Individual cross-namespace edges from 30+ nodes create a messy tangle that passes
+through namespace backgrounds, making the graph unreadable.
+
+**Fix**: Port-based edge bundling. When a namespace is expanded, cross-namespace edges
+from internal nodes merge through a port node (small visible dot) inside the namespace.
+One aggregated trunk edge per external target exits from the port. Internal edges
+(both endpoints in the same NS) stay as direct lines. Rewrite `recomputeEdges()` to
+classify internal vs cross-NS edges and create port/branch/trunk infrastructure.
+
+#### Work items
+
+- [ ] Add `initializedRef` to prevent SSE updates from replacing elements
+- [ ] In-place status color updates for leaf nodes on subsequent SSE runs
+- [ ] Save/restore collapsed set when node set changes
+- [ ] Widen tap highlight handler to `'node, edge'` for unified focus
+- [ ] Edge click: highlight edge + its two endpoints
+- [ ] Remove `dbltap` handler on `node.namespace`
+- [ ] Enable expand-collapse extension cue buttons (`cueEnabled: true`)
+- [ ] Wire `afterExpand`/`afterCollapse` events for edge recompute + layout
+- [ ] Protect root namespace from collapse in extension events
+- [ ] Rewrite `recomputeEdges()` with port-based edge bundling
+- [ ] Add port node creation for expanded namespaces with cross-NS traffic
+- [ ] Add branch edges (internal node → port) and trunk edges (port → external)
+- [ ] Add `node.port-node`, `edge.branch-edge`, `edge.trunk-edge` styles
+- [ ] Double-click leaf node opens right panel (not single-click)

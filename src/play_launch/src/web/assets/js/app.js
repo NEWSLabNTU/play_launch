@@ -7,6 +7,7 @@ import './sse.js'; // side-effect: connects SSE, populates store
 import { Header } from './components/Header.js';
 import { NodeList } from './components/NodeList.js';
 import { RightPanel } from './components/RightPanel.js';
+import { GraphPanel } from './components/GraphPanel.js';
 import { PanelResizer } from './components/PanelResizer.js';
 import { DiagnosticsView } from './components/DiagnosticsView.js';
 import { GraphView } from './components/GraphView.js';
@@ -68,10 +69,13 @@ function App() {
                     <${GraphView} />
                 </div>
             `}
-            ${(view === 'nodes' || view === 'graph') && html`
+            ${view === 'graph' ? html`
+                <${PanelResizer} />
+                <${GraphPanel} />
+            ` : view === 'nodes' ? html`
                 <${PanelResizer} />
                 <${RightPanel} />
-            `}
+            ` : null}
         </div>
         <${ConnectionOverlay} />
     `;
