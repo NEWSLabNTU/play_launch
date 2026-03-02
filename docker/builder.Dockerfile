@@ -74,7 +74,7 @@ RUN cargo install cargo-nextest --locked
 # ---------------------------------------------------------------------------
 # Python build/lint tools
 # ---------------------------------------------------------------------------
-RUN pip3 install --no-cache-dir colcon-cargo-ros2 build 'wheel>=0.40' ruff
+RUN pip3 install --no-cache-dir 'colcon-cargo-ros2>=0.4.0' build 'wheel>=0.40' ruff
 
 # ---------------------------------------------------------------------------
 # just (command runner)

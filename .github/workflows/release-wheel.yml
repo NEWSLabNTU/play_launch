@@ -94,7 +94,7 @@ jobs:
             source ~/.cargo/env
 
             # Install Python build tools
-            pip3 install colcon-cargo-ros2 build 'wheel>=0.40'
+            pip3 install 'colcon-cargo-ros2>=0.4.0' build 'wheel>=0.40'
 
             # Build
             source /opt/ros/humble/setup.bash

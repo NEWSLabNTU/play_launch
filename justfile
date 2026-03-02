@@ -27,7 +27,7 @@ install-deps:
     fi
 
     # Install colcon-cargo-ros2
-    pip install colcon-cargo-ros2
+    pip install 'colcon-cargo-ros2>=0.4.0'
 
     source /opt/ros/{{ros_distro}}/setup.bash
     rosdep update
