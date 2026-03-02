@@ -390,6 +390,7 @@ CloneIsolatedComponentManager::ChildInfo CloneIsolatedComponentManager::spawn_ch
   }
   c_argv.push_back(nullptr);
 
+  pid_t parent_pid = getpid();
   pid_t child_pid = fork();
   if (child_pid < 0) {
     int err = errno;
@@ -405,15 +406,20 @@ CloneIsolatedComponentManager::ChildInfo CloneIsolatedComponentManager::spawn_ch
     // ── Child process ──
     close(pipefd[0]);  // close read end
 
-    // Ask the kernel to send SIGTERM to this child if the parent (container)
+    // Ask the kernel to send SIGKILL to this child if the parent (container)
     // dies for any reason (including SIGKILL).  This prevents orphans.
     // Must be called after fork() but before exec() — PR_SET_PDEATHSIG is
     // reset across setuid exec but preserved across normal exec.
-    prctl(PR_SET_PDEATHSIG, SIGTERM);
+    // Uses SIGKILL (not SIGTERM) because ROS nodes stuck in blocking calls
+    // may not exit on SIGTERM, leaving orphan processes.
+    prctl(PR_SET_PDEATHSIG, SIGKILL);
 
     // Guard against a race: if the parent already died between fork() and
-    // the prctl() above, getppid() returns 1 (init adopted us).
-    if (getppid() == 1) {
+    // the prctl() above, the child has been reparented.  Compare against
+    // the saved parent PID rather than checking for init (PID 1), because
+    // play_launch sets PR_SET_CHILD_SUBREAPER which causes reparenting to
+    // play_launch instead of init.
+    if (getppid() != parent_pid) {
       _exit(1);
     }
 
