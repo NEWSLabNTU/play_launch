@@ -38,8 +38,6 @@ build:
     #!/usr/bin/env bash
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
-    colcon build {{colcon_flags}} --base-paths src --packages-skip play_launch
-    scripts/patch_cargo_config.sh
     colcon build {{colcon_flags}} --base-paths src
     scripts/bundle_wheel.sh
     uv build --wheel
@@ -59,7 +57,6 @@ build-rust:
     #!/usr/bin/env bash
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
-    scripts/patch_cargo_config.sh
     colcon build {{colcon_flags}} --packages-select play_launch --base-paths src
 
 # Rust with WASM features (assumes C++ install/ exists)
@@ -68,8 +65,7 @@ build-wasm:
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
     source install/setup.bash
-    scripts/patch_cargo_config.sh
-    cd src/play_launch && cargo build --release --features wasm --config ../../build/ros2_cargo_config.toml
+    cd src/play_launch && cargo build --release --features wasm
 
 # Bundle colcon artifacts + build wheel (no colcon rebuild)
 build-wheel:
@@ -271,7 +267,7 @@ check:
     echo "=== play_launch (clippy) ==="
     (
     cd src/play_launch &&
-    cargo clippy --config ../../build/ros2_cargo_config.toml --all-targets --all-features -- -D warnings
+    cargo clippy --all-targets --all-features -- -D warnings
     )
 
     echo ""
@@ -297,7 +293,7 @@ generate-bindings:
     source /opt/ros/{{ros_distro}}/setup.bash
     source install/setup.bash
     echo "Generating TypeScript bindings..."
-    (cd src/play_launch && cargo test --config ../../build/ros2_cargo_config.toml -- export_bindings)
+    (cd src/play_launch && cargo test -- export_bindings)
     echo "Generated $(ls src/play_launch/bindings/*.ts | wc -l) type files in src/play_launch/bindings/"
 
 # Check Web UI (HTML, CSS, JavaScript, TypeScript types)

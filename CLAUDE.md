@@ -150,7 +150,7 @@ just test              # Parser unit (311) + fast integration (6), ~3s
 just test-all          # Parser unit (311) + all integration (42), ~70s
 just test-unit         # Parser unit tests only
 just test-integration  # All integration tests (simple + Autoware)
-cargo test -p play_launch_wasm_runtime --test fixture_round_trip --config build/ros2_cargo_config.toml  # WASM round-trip (18 tests)
+cargo test -p play_launch_wasm_runtime --test fixture_round_trip  # WASM round-trip (18 tests)
 ```
 
 Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests (`tests/`, excluded from workspace). Integration tests use `ManagedProcess` RAII guard (`tests/src/process.rs`) for guaranteed cleanup via `setsid()` + `PR_SET_PDEATHSIG` + PGID kill on Drop.
@@ -161,6 +161,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-03-03**: colcon-cargo-ros2 0.4.0 migration — config now generated at `.cargo/config.toml` (auto-discovered by cargo) instead of `build/ros2_cargo_config.toml`. Removed `--config` flags from justfile (`check`, `generate-bindings`). Deleted `scripts/patch_cargo_config.sh` (colcon 0.4.0 generates `rosidl_runtime_rs = "0.6"` and patches `.cargo/config.toml` directly).
 - **2026-03-02**: Split `GraphView.js` (~2300 lines) into 6 modules in `web/assets/js/components/`: `graph-utils.js` (pure helpers), `graph-builders.js` (snapshot→Cytoscape elements), `graph-edges.js` (edge routing + port bundling), `graph-layout.js` (ELK integration + scrollbars), `graph-styles.js` (Cytoscape stylesheet), `GraphView.js` (component + event handlers). Public API unchanged (`export function GraphView`).
 - **2026-03-01**: Phase 25 (Topic Introspection) — graph view animated ELK layout transitions, overlap fix, and SSE rebuild stability. `applyElkPositions` supports `animate` param (300ms slide via `ele.animation()`); initial load instant, subsequent layouts animated. `buildElkGraph` computes leaf/port dimensions from style formula (not stale `layoutDimensions()`). Branch edges use `haystack` curve-style to avoid invalid-endpoint warnings when port nodes overlap leaf nodes. SSE rebuild defers collapse via `setTimeout(0)` after `cy.json()` so expand-collapse extension can register new elements. `[GraphView]` console logs at all lifecycle points (init, update, rebuild, expand/collapse, layout, edges). New file: `GraphPanel.js`.
 - **2026-02-27**: Phase 24 (Web UI Parameter Control) complete. ParameterProxy service client wrapper, ParamValue types with bidirectional ROS conversion, MemberHandle integration with FQN map, GET/POST `/api/nodes/:name/parameters` endpoints, SSE `/parameter_events` subscription, ParametersTab frontend with type-aware inputs (bool toggle, number/string inputs, range constraints), search/filter. New files: `ros/parameter_types.rs`, `ros/parameter_proxy.rs`, `web/assets/js/components/ParametersTab.js`.
