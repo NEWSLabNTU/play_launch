@@ -117,6 +117,17 @@
     color: var(--text-primary);
 }
 
+.panel-close-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+.panel-close-btn:hover { color: var(--text-primary); }
+
 .right-panel-tabs {
     display: flex;
     border-bottom: 1px solid var(--border-color);
@@ -753,4 +764,31 @@
     background: var(--bg-tertiary);
     border-radius: 2px;
     flex-shrink: 0;
+}
+
+/* Endpoint direction dots for edge panel */
+.endpoint-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    flex-shrink: 0;
+    vertical-align: middle;
+}
+
+.endpoint-dot-input {
+    background: #d97706;
+}
+
+.endpoint-dot-output {
+    background: #9333ea;
+}
+
+[data-theme="dark"] .endpoint-dot-input {
+    background: #fbbf24;
+}
+
+[data-theme="dark"] .endpoint-dot-output {
+    background: #c084fc;
 }

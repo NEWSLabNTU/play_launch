@@ -13,6 +13,11 @@ import {
     graphSelectedElement, panelOpen, nodes, graphSnapshot,
     getStatusString,
 } from '../store.js';
+
+/** Dispatch a jump event to navigate the graph to a specific element. */
+function graphJumpTo(elementId) {
+    document.dispatchEvent(new CustomEvent('graph-jump', { detail: elementId }));
+}
 import { TopicsTab } from './TopicsTab.js';
 import { ParametersTab } from './ParametersTab.js';
 import { LogTab } from './LogTab.js';
@@ -44,6 +49,10 @@ function GraphNodeDetail({ data }) {
                 <span title=${data.fqn}>${memberName}</span>
                 ${status && html`<span class="state-badge ${statusStr}">${statusStr}</span>`}
             </span>
+            <button class="panel-close-btn" onClick=${() => {
+                graphSelectedElement.value = null;
+                panelOpen.value = false;
+            }}>\u00d7</button>
         </div>
         <div class="right-panel-tabs">
             <button class="tab-btn ${tab === 'topics' ? 'active' : ''}"
@@ -142,31 +151,50 @@ function GraphNsDetail({ data }) {
         [snap, nodesMap, fullNs],
     );
 
-    const handleNodeClick = useCallback((memberName) => {
-        if (!memberName) return;
-        // Find FQN for this member so we can build element data
-        const node = childNodes.find(n => n.memberName === memberName);
-        if (node) {
-            graphSelectedElement.value = {
-                type: 'node',
-                id: 'node:' + node.fqn,
-                data: {
-                    fqn: node.fqn,
-                    memberName: node.memberName,
-                    statusStr: node.status,
-                    label: node.shortName,
-                },
-            };
-        }
-    }, [childNodes]);
+    const handleNodeClick = useCallback((fqn) => {
+        if (!fqn) return;
+        graphJumpTo('node:' + fqn);
+    }, []);
 
     const handleNsClick = useCallback((ns) => {
-        graphSelectedElement.value = {
-            type: 'namespace',
-            id: 'ns:' + ns,
-            data: { fullNs: ns, label: ns.split('/').filter(Boolean).pop() || '/' },
-        };
+        graphJumpTo('ns:' + ns);
     }, []);
+
+    // Input/output endpoints (present when collapsed NS is focused)
+    const inputEndpoints = data.inputEndpoints || [];
+    const outputEndpoints = data.outputEndpoints || [];
+    const hasEndpoints = inputEndpoints.length > 0 || outputEndpoints.length > 0;
+
+    // For namespace endpoints, resolve inner nodes from topic data
+    const topicNameSet = useMemo(() => {
+        if (!snap || !snap.topics) return new Set();
+        // Collect all topic names involving this NS's descendant nodes
+        const names = new Set();
+        const prefix = fullNs === '/' ? '/' : fullNs + '/';
+        for (const topic of snap.topics) {
+            for (const ep of [...topic.publishers, ...topic.subscribers]) {
+                if (ep.fqn && (ep.fqn.startsWith(prefix) || (fullNs === '/' && ep.fqn.startsWith('/')))) {
+                    names.add(topic.name);
+                    break;
+                }
+            }
+        }
+        return names;
+    }, [snap, fullNs]);
+
+    const inputDetails = useMemo(() => {
+        return inputEndpoints.map(ep => ({
+            ...ep,
+            innerNodes: ep.isNs ? resolveNsInnerNodes(snap, ep.fullNs, topicNameSet, 'pub') : [],
+        }));
+    }, [inputEndpoints, snap, topicNameSet]);
+
+    const outputDetails = useMemo(() => {
+        return outputEndpoints.map(ep => ({
+            ...ep,
+            innerNodes: ep.isNs ? resolveNsInnerNodes(snap, ep.fullNs, topicNameSet, 'sub') : [],
+        }));
+    }, [outputEndpoints, snap, topicNameSet]);
 
     return html`
         <div class="right-panel-header">
@@ -174,8 +202,34 @@ function GraphNsDetail({ data }) {
                 <span class="graph-panel-ns-path">${fullNs}</span>
                 <span class="graph-panel-count">${childNodes.length} nodes</span>
             </span>
+            <button class="panel-close-btn" onClick=${() => {
+                graphSelectedElement.value = null;
+                panelOpen.value = false;
+            }}>\u00d7</button>
         </div>
         <div class="right-panel-content" style=${{ overflow: 'auto' }}>
+            ${hasEndpoints && html`
+                ${inputDetails.length > 0 && html`
+                    <div class="graph-panel-section">
+                        <div class="graph-panel-section-title">
+                            <span class="endpoint-dot endpoint-dot-input"></span> Sources
+                        </div>
+                        ${inputDetails.map(ep => html`
+                            <${EndpointRow} key=${ep.id} endpoint=${ep} />
+                        `)}
+                    </div>
+                `}
+                ${outputDetails.length > 0 && html`
+                    <div class="graph-panel-section">
+                        <div class="graph-panel-section-title">
+                            <span class="endpoint-dot endpoint-dot-output"></span> Targets
+                        </div>
+                        ${outputDetails.map(ep => html`
+                            <${EndpointRow} key=${ep.id} endpoint=${ep} />
+                        `)}
+                    </div>
+                `}
+            `}
             ${childNamespaces.length > 0 && html`
                 <div class="graph-panel-section">
                     <div class="graph-panel-section-title">Sub-namespaces</div>
@@ -193,7 +247,7 @@ function GraphNsDetail({ data }) {
                     ? html`<div class="graph-panel-empty">No direct child nodes</div>`
                     : childNodes.map(n => html`
                         <div key=${n.fqn} class="graph-panel-node-row"
-                            onClick=${() => handleNodeClick(n.memberName)}>
+                            onClick=${() => handleNodeClick(n.fqn)}>
                             <span class="graph-panel-node-name">${n.shortName}</span>
                             <span class="state-badge ${n.status}">${n.status}</span>
                         </div>
@@ -205,6 +259,23 @@ function GraphNsDetail({ data }) {
 }
 
 // ─── Edge detail view ─────────────────────────────────────────────────────
+
+/** Resolve inner FQNs that live inside a namespace, based on topic snapshot data. */
+function resolveNsInnerNodes(snap, fullNs, topicNames, role) {
+    if (!snap || !snap.topics || !fullNs) return [];
+    const prefix = fullNs === '/' ? '/' : fullNs + '/';
+    const fqns = new Set();
+    for (const topic of snap.topics) {
+        if (topicNames && !topicNames.has(topic.name)) continue;
+        const endpoints = role === 'pub' ? topic.publishers : topic.subscribers;
+        for (const ep of endpoints) {
+            if (ep.fqn && (ep.fqn.startsWith(prefix) || (fullNs === '/' && ep.fqn.startsWith('/')))) {
+                fqns.add(ep.fqn);
+            }
+        }
+    }
+    return Array.from(fqns).sort();
+}
 
 function GraphEdgeDetail({ data }) {
     const snap = graphSnapshot.value;
@@ -220,9 +291,30 @@ function GraphEdgeDetail({ data }) {
         });
     }, [data.topicList]);
 
+    const topicNameSet = useMemo(() => new Set(topics.map(t => t.name)), [topics]);
+
     // Resolve source/target labels from cy IDs
-    const sourceLabel = data.source?.replace(/^(node:|ns:|port:ns:)/, '') || '?';
-    const targetLabel = data.target?.replace(/^(node:|ns:|port:ns:)/, '') || '?';
+    const sourceLabel = data.source?.replace(/^(node:|ns:|(?:out|in)port:ns:)/, '') || '?';
+    const targetLabel = data.target?.replace(/^(node:|ns:|(?:out|in)port:ns:)/, '') || '?';
+
+    // Input/output endpoints from the tap handler
+    const inputEndpoints = data.inputEndpoints || [];
+    const outputEndpoints = data.outputEndpoints || [];
+
+    // For namespace endpoints, resolve inner nodes
+    const inputDetails = useMemo(() => {
+        return inputEndpoints.map(ep => ({
+            ...ep,
+            innerNodes: ep.isNs ? resolveNsInnerNodes(snap, ep.fullNs, topicNameSet, 'pub') : [],
+        }));
+    }, [inputEndpoints, snap, topicNameSet]);
+
+    const outputDetails = useMemo(() => {
+        return outputEndpoints.map(ep => ({
+            ...ep,
+            innerNodes: ep.isNs ? resolveNsInnerNodes(snap, ep.fullNs, topicNameSet, 'sub') : [],
+        }));
+    }, [outputEndpoints, snap, topicNameSet]);
 
     // For each topic, look up publisher/subscriber details from snapshot
     const topicDetails = useMemo(() => {
@@ -245,14 +337,70 @@ function GraphEdgeDetail({ data }) {
                 </span>
                 <span class="graph-panel-count">${topics.length} topics</span>
             </span>
+            <button class="panel-close-btn" onClick=${() => {
+                graphSelectedElement.value = null;
+                panelOpen.value = false;
+            }}>\u00d7</button>
         </div>
         <div class="right-panel-content" style=${{ overflow: 'auto' }}>
+            ${inputDetails.length > 0 && html`
+                <div class="graph-panel-section">
+                    <div class="graph-panel-section-title">
+                        <span class="endpoint-dot endpoint-dot-input"></span> Sources
+                    </div>
+                    ${inputDetails.map(ep => html`
+                        <${EndpointRow} key=${ep.id} endpoint=${ep} />
+                    `)}
+                </div>
+            `}
+            ${outputDetails.length > 0 && html`
+                <div class="graph-panel-section">
+                    <div class="graph-panel-section-title">
+                        <span class="endpoint-dot endpoint-dot-output"></span> Targets
+                    </div>
+                    ${outputDetails.map(ep => html`
+                        <${EndpointRow} key=${ep.id} endpoint=${ep} />
+                    `)}
+                </div>
+            `}
             <div class="graph-panel-section">
                 <div class="graph-panel-section-title">Topics</div>
                 ${topicDetails.map(t => html`
                     <${EdgeTopicRow} key=${t.name} topic=${t} />
                 `)}
             </div>
+        </div>
+    `;
+}
+
+function EndpointRow({ endpoint }) {
+    const [expanded, setExpanded] = useState(false);
+    const hasInner = endpoint.innerNodes && endpoint.innerNodes.length > 0;
+
+    const handleJump = useCallback((e) => {
+        e.stopPropagation();
+        graphJumpTo(endpoint.id);
+    }, [endpoint.id]);
+
+    return html`
+        <div class="graph-panel-node-row" style=${{ flexDirection: 'column', alignItems: 'stretch' }}>
+            <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', cursor: hasInner ? 'pointer' : 'default' }}
+                onClick=${() => hasInner && setExpanded(!expanded)}>
+                ${hasInner && html`<span class="topic-expand">${expanded ? '\u25BC' : '\u25B6'}</span>`}
+                <span class="graph-panel-node-name" style=${{ flex: 1 }}>${endpoint.label}</span>
+                ${endpoint.isNs && html`<span class="graph-panel-count">namespace</span>`}
+                ${hasInner && html`<span class="graph-panel-count">${endpoint.innerNodes.length} nodes</span>`}
+                <button class="btn-jump" onClick=${handleJump}>Jump</button>
+            </div>
+            ${expanded && hasInner && html`
+                <div style=${{ paddingLeft: '20px', paddingTop: '4px' }}>
+                    ${endpoint.innerNodes.map(fqn => html`
+                        <div key=${fqn} class="topic-endpoint">
+                            <span class="endpoint-fqn">${fqn}</span>
+                        </div>
+                    `)}
+                </div>
+            `}
         </div>
     `;
 }

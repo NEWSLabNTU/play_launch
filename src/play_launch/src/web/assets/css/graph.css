@@ -189,3 +189,57 @@
     color: #fff;
     border-color: var(--accent, #3b82f6);
 }
+
+/* Scrollbar overlay (canvas-based — no native scrollbars) */
+.graph-scrollbar {
+    position: absolute;
+    opacity: 0;
+    transition: opacity 0.25s;
+    z-index: 40;
+    pointer-events: none;
+}
+
+.graph-canvas-wrapper:hover .graph-scrollbar,
+.graph-scrollbar.dragging {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.graph-scrollbar-h {
+    left: 0;
+    right: 14px;
+    bottom: 0;
+    height: 10px;
+}
+
+.graph-scrollbar-v {
+    top: 0;
+    right: 0;
+    bottom: 14px;
+    width: 10px;
+}
+
+.graph-scrollbar-thumb {
+    position: absolute;
+    border-radius: 5px;
+    background: var(--text-muted, #6c757d);
+    opacity: 0.45;
+    cursor: grab;
+    transition: opacity 0.15s;
+}
+
+.graph-scrollbar-thumb:hover,
+.graph-scrollbar-thumb:active {
+    opacity: 0.7;
+    cursor: grabbing;
+}
+
+.graph-scrollbar-h .graph-scrollbar-thumb {
+    height: 100%;
+    min-width: 20px;
+}
+
+.graph-scrollbar-v .graph-scrollbar-thumb {
+    width: 100%;
+    min-height: 20px;
+}

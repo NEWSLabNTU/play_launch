@@ -130,11 +130,12 @@ function ServiceRow({ entry }) {
     `;
 }
 
-/** Collapsible section header. */
-function SectionHeader({ title, count, collapsed, onToggle }) {
+/** Collapsible section header. Optional dot class for direction color. */
+function SectionHeader({ title, count, collapsed, onToggle, dotClass }) {
     return html`
         <div class="topics-section-header" onClick=${onToggle}>
             <span class="topics-section-arrow">${collapsed ? '\u25B6' : '\u25BC'}</span>
+            ${dotClass && html`<span class="endpoint-dot ${dotClass}"></span>`}
             <span class="topics-section-title">${title}</span>
             <span class="topics-section-count">(${count})</span>
         </div>
@@ -258,14 +259,16 @@ export function TopicsTab({ nodeName }) {
             <div class="topics-sections">
                 <${SectionHeader} title="PUBLISHERS" count=${pubs.length}
                     collapsed=${collapsedSections.has('pub')}
-                    onToggle=${() => toggleSection('pub')} />
+                    onToggle=${() => toggleSection('pub')}
+                    dotClass="endpoint-dot-output" />
                 ${!collapsedSections.has('pub') && pubs.map(e =>
                     html`<${TopicRow} key=${e.name} entry=${e} direction="pub" />`
                 )}
 
                 <${SectionHeader} title="SUBSCRIBERS" count=${subs.length}
                     collapsed=${collapsedSections.has('sub')}
-                    onToggle=${() => toggleSection('sub')} />
+                    onToggle=${() => toggleSection('sub')}
+                    dotClass="endpoint-dot-input" />
                 ${!collapsedSections.has('sub') && subs.map(e =>
                     html`<${TopicRow} key=${e.name} entry=${e} direction="sub" />`
                 )}
