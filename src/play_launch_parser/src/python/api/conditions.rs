@@ -3,7 +3,10 @@
 #![allow(non_local_definitions)] // pyo3 macros generate non-local impls
 
 use crate::python::bridge::with_launch_context;
-use pyo3::prelude::*;
+use pyo3::{
+    prelude::*,
+    types::{PyDict, PyTuple},
+};
 
 /// Mock IfCondition class
 ///
@@ -31,8 +34,16 @@ impl IfCondition {
 
     /// Evaluate the condition
     ///
-    /// Called by Python to check if the condition is true
-    pub fn evaluate(&self, py: Python) -> PyResult<bool> {
+    /// Called by Python to check if the condition is true.
+    /// The real ROS 2 IfCondition.evaluate(context) accepts a LaunchContext,
+    /// but we resolve from thread-local state so we just ignore it.
+    #[pyo3(signature = (*_args, **_kwargs))]
+    pub fn evaluate(
+        &self,
+        py: Python,
+        _args: &PyTuple,
+        _kwargs: Option<&PyDict>,
+    ) -> PyResult<bool> {
         // Convert predicate to string and evaluate as boolean
         let value = self.predicate_to_string(py)?;
         Ok(Self::is_truthy(&value))
@@ -139,7 +150,13 @@ impl UnlessCondition {
     }
 
     /// Evaluate the condition (inverted)
-    pub fn evaluate(&self, py: Python) -> PyResult<bool> {
+    #[pyo3(signature = (*_args, **_kwargs))]
+    pub fn evaluate(
+        &self,
+        py: Python,
+        _args: &PyTuple,
+        _kwargs: Option<&PyDict>,
+    ) -> PyResult<bool> {
         // Convert predicate to string and evaluate as boolean (inverted)
         let value = self.predicate_to_string(py)?;
         Ok(!IfCondition::is_truthy(&value))
@@ -211,7 +228,13 @@ impl LaunchConfigurationEquals {
         }
     }
 
-    pub fn evaluate(&self, _py: Python) -> PyResult<bool> {
+    #[pyo3(signature = (*_args, **_kwargs))]
+    pub fn evaluate(
+        &self,
+        _py: Python,
+        _args: &PyTuple,
+        _kwargs: Option<&PyDict>,
+    ) -> PyResult<bool> {
         let actual = with_launch_context(|ctx| ctx.get_configuration(&self.variable_name));
         Ok(actual.as_deref() == Some(self.expected_value.as_str()))
     }
@@ -249,7 +272,13 @@ impl LaunchConfigurationNotEquals {
         }
     }
 
-    pub fn evaluate(&self, _py: Python) -> PyResult<bool> {
+    #[pyo3(signature = (*_args, **_kwargs))]
+    pub fn evaluate(
+        &self,
+        _py: Python,
+        _args: &PyTuple,
+        _kwargs: Option<&PyDict>,
+    ) -> PyResult<bool> {
         let actual = with_launch_context(|ctx| ctx.get_configuration(&self.variable_name));
         Ok(actual.as_deref() != Some(self.expected_value.as_str()))
     }
