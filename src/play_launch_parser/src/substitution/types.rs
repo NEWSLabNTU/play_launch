@@ -815,7 +815,14 @@ mod tests {
 
     #[test]
     fn test_eval_invalid_expression() {
+        // "1 + + 2" is valid Python (unary +), so with the Python fallback it evaluates to 3
         let sub = Substitution::Eval(vec![Substitution::Text("1 + + 2".to_string())]);
+        let context = LaunchContext::new();
+        let result = sub.resolve(&context).unwrap();
+        assert_eq!(result, "3");
+
+        // Truly invalid expression
+        let sub = Substitution::Eval(vec![Substitution::Text("@@@".to_string())]);
         let context = LaunchContext::new();
         let result = sub.resolve(&context);
         assert!(result.is_err());

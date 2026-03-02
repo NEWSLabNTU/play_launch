@@ -2,6 +2,9 @@
 //!
 //! Supports arithmetic (+, -, *, /, %, parentheses, integers, floats),
 //! string comparison (==, !=), and string concatenation ('a' + 'b').
+//!
+//! For complex Python expressions (e.g. `in` operator, `len()`, `.split()`,
+//! boolean `or`/`and`), falls back to Python's `eval()` via PyO3.
 
 use crate::error::SubstitutionError;
 
@@ -10,7 +13,7 @@ use crate::error::SubstitutionError;
 pub(crate) fn evaluate_expression(expr: &str) -> Result<String, SubstitutionError> {
     let expr = expr.trim();
 
-    // Strip outer double-quote wrapping from XML $(eval "'...' + '...'") pattern.
+    // Strip outer double-quote wrapping from XML $(eval &quot;...&quot;) pattern.
     // In XML, $(eval &quot;'str1' + 'str2'&quot;) produces outer double quotes around
     // single-quoted operands. Only strip when inner content uses single quotes,
     // to avoid breaking expressions like "foo" == "foo" or "" + 'x' + "".
@@ -21,9 +24,21 @@ pub(crate) fn evaluate_expression(expr: &str) -> Result<String, SubstitutionErro
         && expr[..expr.len() - 1].trim_end().ends_with('\'')
     {
         &expr[1..expr.len() - 1]
+    } else if expr.len() >= 2
+        && expr.starts_with('"')
+        && expr.ends_with('"')
+        && needs_python_eval(&expr[1..expr.len() - 1])
+    {
+        // Also strip for complex Python expressions (e.g., "'x' in list or false")
+        &expr[1..expr.len() - 1]
     } else {
         expr
     };
+
+    // Complex Python expressions — delegate to Python eval immediately
+    if needs_python_eval(expr) {
+        return python_eval_fallback(expr);
+    }
 
     // Check for string comparison operators BEFORE stripping outer quotes
     // If the expression contains comparison operators, the quotes are part of the string literals
@@ -60,11 +75,123 @@ pub(crate) fn evaluate_expression(expr: &str) -> Result<String, SubstitutionErro
                 Ok(format!("{}", value))
             }
         }
-        Err(e) => Err(SubstitutionError::InvalidSubstitution(format!(
-            "Failed to evaluate expression '{}': {}",
-            expr, e
-        ))),
+        Err(_) => {
+            // Fall back to Python eval() for complex expressions
+            // (e.g. `in` operator, `len()`, `.split()`, `or`/`and`)
+            python_eval_fallback(expr)
+        }
     }
+}
+
+/// Replace standalone ROS-style boolean literals (true/false) with Python-style (True/False).
+/// Avoids replacing inside quoted strings.
+fn replace_ros_booleans(expr: &str) -> String {
+    let mut result = String::with_capacity(expr.len());
+    let mut in_single = false;
+    let mut in_double = false;
+    let chars: Vec<char> = expr.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        match chars[i] {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                result.push('\'');
+                i += 1;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                result.push('"');
+                i += 1;
+            }
+            _ if in_single || in_double => {
+                result.push(chars[i]);
+                i += 1;
+            }
+            _ => {
+                // Check for word boundary before "true" or "false"
+                let at_word_start = i == 0 || !chars[i - 1].is_alphanumeric();
+                if at_word_start {
+                    if expr[i..].starts_with("true") {
+                        let end = i + 4;
+                        let at_word_end = end >= chars.len() || !chars[end].is_alphanumeric();
+                        if at_word_end {
+                            result.push_str("True");
+                            i += 4;
+                            continue;
+                        }
+                    }
+                    if expr[i..].starts_with("false") {
+                        let end = i + 5;
+                        let at_word_end = end >= chars.len() || !chars[end].is_alphanumeric();
+                        if at_word_end {
+                            result.push_str("False");
+                            i += 5;
+                            continue;
+                        }
+                    }
+                }
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+    }
+    result
+}
+
+/// Check if an expression needs Python eval (contains Python-specific syntax).
+fn needs_python_eval(expr: &str) -> bool {
+    // Check for Python keywords/operators not supported by the Rust evaluator
+    let keywords = [
+        " in ", " or ", " and ", " not ", "len(", ".split(", ".strip(", ".join(",
+    ];
+    keywords.iter().any(|kw| expr.contains(kw))
+}
+
+/// Fall back to Python's eval() for expressions the Rust evaluator can't handle.
+fn python_eval_fallback(expr: &str) -> Result<String, SubstitutionError> {
+    use pyo3::prelude::*;
+
+    // Unescape XML-style backslash-quotes (\' → ') that come from launch file
+    // attribute values like value="[\'ndt\',\'yabloc\']"
+    let expr = expr.replace("\\'", "'");
+
+    // Convert ROS-style boolean literals to Python-style before eval.
+    // ROS uses lowercase true/false, Python uses True/False.
+    // Only replace standalone words (not inside quotes).
+    let expr = replace_ros_booleans(&expr);
+    let expr = expr.as_str();
+
+    log::debug!("Falling back to Python eval for: {}", expr);
+
+    Python::with_gil(|py| {
+        let result = py.eval(expr, None, None).map_err(|e| {
+            SubstitutionError::InvalidSubstitution(format!(
+                "Failed to evaluate expression '{}': {}",
+                expr, e
+            ))
+        })?;
+
+        // Convert Python result to string
+        let s = result.str().map_err(|e| {
+            SubstitutionError::InvalidSubstitution(format!(
+                "Failed to convert eval result to string: {}",
+                e
+            ))
+        })?;
+        let value = s.to_str().map_err(|e| {
+            SubstitutionError::InvalidSubstitution(format!("Failed to extract string: {}", e))
+        })?;
+
+        // Normalize Python booleans to lowercase for ROS compatibility
+        let normalized = match value {
+            "True" => "true".to_string(),
+            "False" => "false".to_string(),
+            other => other.to_string(),
+        };
+
+        Ok(normalized)
+    })
 }
 
 /// Check if outer quotes truly wrap the entire expression
