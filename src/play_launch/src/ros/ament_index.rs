@@ -1,5 +1,6 @@
 use eyre::{bail, Context};
 use std::{env, fs, path::PathBuf};
+use tracing::error;
 
 /// Get the prefix path for a ROS package by searching AMENT_PREFIX_PATH.
 ///
@@ -101,6 +102,57 @@ fn find_executable_in_dir(dir: &PathBuf, executable_name: &str) -> eyre::Result<
         "Executable '{}' not found in {}",
         executable_name,
         dir.display()
+    )
+}
+
+/// ROS 2 packages required at runtime by play_launch and play_launch_container.
+///
+/// These are linked via shared libraries (NEEDED in ELF). Most are transitive from
+/// ros-humble-ros-base, but diagnostic_msgs requires explicit install.
+const REQUIRED_PACKAGES: &[&str] = &[
+    "rcl_interfaces",
+    "composition_interfaces",
+    "diagnostic_msgs",
+    "rosgraph_msgs",
+    "rclcpp",
+    "rclcpp_components",
+    "class_loader",
+    "ament_index_cpp",
+];
+
+/// Check that all required ROS 2 system packages are available.
+///
+/// Returns Ok(()) if all packages are found, or prints a consolidated error
+/// message with install instructions and returns Err.
+pub fn check_system_deps() -> eyre::Result<()> {
+    let missing: Vec<&str> = REQUIRED_PACKAGES
+        .iter()
+        .filter(|pkg| get_package_prefix(pkg).is_err())
+        .copied()
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let distro = env::var("ROS_DISTRO").unwrap_or_else(|_| "humble".to_string());
+    let apt_packages: Vec<String> = missing
+        .iter()
+        .map(|pkg| format!("ros-{}-{}", distro, pkg.replace('_', "-")))
+        .collect();
+
+    error!("Missing ROS 2 system dependencies:");
+    for pkg in &missing {
+        error!("  - {}", pkg);
+    }
+    error!("");
+    error!("Install with:");
+    error!("  sudo apt install {}", apt_packages.join(" "));
+
+    bail!(
+        "Missing {} required ROS 2 package(s): {}",
+        missing.len(),
+        missing.join(", ")
     )
 }
 
@@ -216,5 +268,16 @@ mod tests {
         if let Err(e) = test_result {
             std::panic::resume_unwind(e);
         }
+    }
+
+    #[test]
+    fn test_check_system_deps_passes() {
+        // All required packages should be present in a properly configured ROS environment
+        let result = check_system_deps();
+        assert!(
+            result.is_ok(),
+            "check_system_deps should pass when all packages are installed: {:?}",
+            result.unwrap_err()
+        );
     }
 }

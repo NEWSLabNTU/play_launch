@@ -33,6 +33,9 @@ const EXECUTOR_SPIN_TIMEOUT: std::time::Duration = std::time::Duration::from_mil
 pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     let input_file = &args.input_file;
 
+    // Verify all required ROS 2 system packages are installed
+    crate::ros::ament_index::check_system_deps()?;
+
     // Become a child subreaper so orphaned grandchildren get reparented to us
     // instead of PID 1. This ensures waitpid() catches exits of any descendant
     // even if the intermediate parent dies first.
