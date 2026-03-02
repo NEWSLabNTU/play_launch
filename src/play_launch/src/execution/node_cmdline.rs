@@ -57,6 +57,11 @@ impl NodeCommandLine {
         params_files_dir: &Path,
         variables: &HashMap<String, String>,
     ) -> eyre::Result<Self> {
+        // Raw executables (no package) — use cmd directly
+        if record.package.is_none() {
+            return Self::from_raw_executable(record);
+        }
+
         let NodeRecord {
             executable,
             package,
@@ -160,6 +165,46 @@ impl NodeCommandLine {
             remaps,
             params,
             params_files,
+            log_level: None,
+            log_config_file: None,
+            rosout_logs: None,
+            stdout_logs: None,
+            enclave: None,
+            env,
+        })
+    }
+
+    /// Construct from a raw executable record (no ROS package — uses cmd directly).
+    fn from_raw_executable(record: &NodeRecord) -> eyre::Result<Self> {
+        let cmd = &record.cmd;
+
+        // cmd[0] is the full command string, remaining elements are extra args
+        let command: Vec<String> = if cmd.is_empty() {
+            bail!("raw executable record has empty cmd");
+        } else {
+            // Split the first element by whitespace to handle "script.py --arg val" as one string
+            cmd[0].split_whitespace().map(|s| s.to_string()).collect()
+        };
+
+        // Extra args from cmd (beyond the first element, which is the command itself)
+        let user_args: Vec<String> = cmd[1..].to_vec();
+
+        let env: HashMap<_, _> = record
+            .env
+            .as_ref()
+            .map(|vec| {
+                vec.iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(Self {
+            command,
+            user_args,
+            remaps: HashMap::new(),
+            params: HashMap::new(),
+            params_files: HashSet::new(),
             log_level: None,
             log_config_file: None,
             rosout_logs: None,

@@ -184,9 +184,6 @@ pub fn prepare_node_contexts(
             let Some(exec_name) = &record.exec_name else {
                 bail!(r#"expect the "exec_name" field but not found"#);
             };
-            let Some(_package) = &record.package else {
-                bail!(r#"expect the "package" field but not found"#);
-            };
 
             let base_name = record
                 .name
