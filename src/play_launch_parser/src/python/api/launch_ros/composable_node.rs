@@ -279,42 +279,42 @@ impl ComposableNode {
             // ParameterFile object — load YAML and expand inline
             let type_name = param_any.get_type().name().unwrap_or("");
             if type_name.contains("ParameterFile") {
-                if let Ok(str_val) = param_any.call_method0("__str__") {
-                    if let Ok(path) = str_val.extract::<String>() {
-                        if is_yaml_file(&path) {
-                            match load_yaml_params(&path) {
-                                Ok(yaml_params) => {
-                                    log::debug!(
-                                        "Loaded {} parameters from ParameterFile {}",
-                                        yaml_params.len(),
-                                        path
-                                    );
-                                    parsed_params.extend(yaml_params);
-                                }
-                                Err(e) => {
-                                    log::warn!("Failed to load ParameterFile {}: {}", path, e);
-                                    parsed_params.push(("__param_file".to_string(), path));
-                                }
+                if let Ok(str_val) = param_any.call_method0("__str__")
+                    && let Ok(path) = str_val.extract::<String>()
+                {
+                    if is_yaml_file(&path) {
+                        match load_yaml_params(&path) {
+                            Ok(yaml_params) => {
+                                log::debug!(
+                                    "Loaded {} parameters from ParameterFile {}",
+                                    yaml_params.len(),
+                                    path
+                                );
+                                parsed_params.extend(yaml_params);
                             }
-                        } else {
-                            parsed_params.push(("__param_file".to_string(), path));
+                            Err(e) => {
+                                log::warn!("Failed to load ParameterFile {}: {}", path, e);
+                                parsed_params.push(("__param_file".to_string(), path));
+                            }
                         }
+                    } else {
+                        parsed_params.push(("__param_file".to_string(), path));
                     }
                 }
                 continue;
             }
 
             // Try calling __str__ on the object (for substitutions)
-            if let Ok(str_val) = param_any.call_method0("__str__") {
-                if let Ok(s) = str_val.extract::<String>() {
-                    if is_yaml_file(&s) {
-                        match load_yaml_params(&s) {
-                            Ok(yaml_params) => parsed_params.extend(yaml_params),
-                            Err(_) => parsed_params.push(("substitution".to_string(), s)),
-                        }
-                    } else {
-                        parsed_params.push(("substitution".to_string(), s));
+            if let Ok(str_val) = param_any.call_method0("__str__")
+                && let Ok(s) = str_val.extract::<String>()
+            {
+                if is_yaml_file(&s) {
+                    match load_yaml_params(&s) {
+                        Ok(yaml_params) => parsed_params.extend(yaml_params),
+                        Err(_) => parsed_params.push(("substitution".to_string(), s)),
                     }
+                } else {
+                    parsed_params.push(("substitution".to_string(), s));
                 }
             }
         }
@@ -335,32 +335,32 @@ impl ComposableNode {
             let remap_any = remap_obj.as_ref(py);
 
             // Remappings should be tuples of (from, to)
-            if let Ok(remap_tuple) = remap_any.downcast::<pyo3::types::PyTuple>() {
-                if remap_tuple.len() == 2 {
-                    // Extract both elements and convert to strings
-                    // This handles both plain strings and LaunchConfiguration objects
-                    let from_obj = remap_tuple.get_item(0)?;
-                    let to_obj = remap_tuple.get_item(1)?;
+            if let Ok(remap_tuple) = remap_any.downcast::<pyo3::types::PyTuple>()
+                && remap_tuple.len() == 2
+            {
+                // Extract both elements and convert to strings
+                // This handles both plain strings and LaunchConfiguration objects
+                let from_obj = remap_tuple.get_item(0)?;
+                let to_obj = remap_tuple.get_item(1)?;
 
-                    // Convert to strings (handles LaunchConfiguration via __str__)
-                    let from = if let Ok(s) = from_obj.extract::<String>() {
-                        s
-                    } else if let Ok(str_result) = from_obj.call_method0("__str__") {
-                        str_result.extract::<String>()?
-                    } else {
-                        from_obj.to_string()
-                    };
+                // Convert to strings (handles LaunchConfiguration via __str__)
+                let from = if let Ok(s) = from_obj.extract::<String>() {
+                    s
+                } else if let Ok(str_result) = from_obj.call_method0("__str__") {
+                    str_result.extract::<String>()?
+                } else {
+                    from_obj.to_string()
+                };
 
-                    let to = if let Ok(s) = to_obj.extract::<String>() {
-                        s
-                    } else if let Ok(str_result) = to_obj.call_method0("__str__") {
-                        str_result.extract::<String>()?
-                    } else {
-                        to_obj.to_string()
-                    };
+                let to = if let Ok(s) = to_obj.extract::<String>() {
+                    s
+                } else if let Ok(str_result) = to_obj.call_method0("__str__") {
+                    str_result.extract::<String>()?
+                } else {
+                    to_obj.to_string()
+                };
 
-                    parsed_remaps.push((from, to));
-                }
+                parsed_remaps.push((from, to));
             }
         }
 

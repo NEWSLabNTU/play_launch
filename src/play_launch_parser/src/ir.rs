@@ -35,10 +35,10 @@ impl Expr {
 
     /// If this expression is a literal, return its value.
     pub fn as_literal(&self) -> Option<&str> {
-        if self.parts.len() == 1 {
-            if let Substitution::Text(s) = &self.parts[0] {
-                return Some(s.as_str());
-            }
+        if self.parts.len() == 1
+            && let Substitution::Text(s) = &self.parts[0]
+        {
+            return Some(s.as_str());
         }
         None
     }

@@ -24,11 +24,11 @@ pub(crate) fn read_file_cached(path: &Path) -> Result<String> {
     let modified = metadata.modified()?;
 
     // Check cache with modification time validation
-    if let Some(entry) = FILE_CACHE.get(path) {
-        if entry.modified == modified {
-            log::trace!("File cache hit: {}", path.display());
-            return Ok(entry.content.clone());
-        }
+    if let Some(entry) = FILE_CACHE.get(path)
+        && entry.modified == modified
+    {
+        log::trace!("File cache hit: {}", path.display());
+        return Ok(entry.content.clone());
     }
 
     log::debug!("File cache miss: {}", path.display());

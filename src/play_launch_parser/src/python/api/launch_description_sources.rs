@@ -83,17 +83,17 @@ fn resolve_path(py: Python, path_obj: &PyObject) -> PyResult<String> {
     }
 
     // Try calling perform() for substitutions (PathJoinSubstitution, FindPackageShare, etc.)
-    if let Ok(result) = path_obj.call_method1(py, "perform", (context_obj.as_ref(py),)) {
-        if let Ok(s) = result.extract::<String>(py) {
-            return Ok(s);
-        }
+    if let Ok(result) = path_obj.call_method1(py, "perform", (context_obj.as_ref(py),))
+        && let Ok(s) = result.extract::<String>(py)
+    {
+        return Ok(s);
     }
 
     // Fallback to __str__ method
-    if let Ok(str_result) = path_obj.call_method0(py, "__str__") {
-        if let Ok(s) = str_result.extract::<String>(py) {
-            return Ok(s);
-        }
+    if let Ok(str_result) = path_obj.call_method0(py, "__str__")
+        && let Ok(s) = str_result.extract::<String>(py)
+    {
+        return Ok(s);
     }
 
     // Last resort

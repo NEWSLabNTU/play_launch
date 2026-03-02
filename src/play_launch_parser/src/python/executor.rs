@@ -136,10 +136,10 @@ if not _ok:
             if let Err(e) = py.run(&code, Some(globals), None) {
                 log::error!("Python execution failed: {}", e);
                 // Log the Python traceback if available
-                if let Some(traceback) = e.traceback(py) {
-                    if let Ok(tb_str) = traceback.format() {
-                        log::error!("Python traceback:\n{}", tb_str);
-                    }
+                if let Some(traceback) = e.traceback(py)
+                    && let Ok(tb_str) = traceback.format()
+                {
+                    log::error!("Python traceback:\n{}", tb_str);
                 }
                 return Err(e.into());
             }
@@ -197,11 +197,11 @@ fn process_launch_arguments(_py: Python, _launch_desc: &PyObject) -> PyResult<()
                     "Re-resolving container name '{}' with updated context",
                     container.name
                 );
-                if let Ok(subs) = parse_substitutions(&container.name) {
-                    if let Ok(resolved) = resolve_substitutions(&subs, &ctx) {
-                        log::debug!("Container name '{}' -> '{}'", container.name, resolved);
-                        container.name = resolved;
-                    }
+                if let Ok(subs) = parse_substitutions(&container.name)
+                    && let Ok(resolved) = resolve_substitutions(&subs, &ctx)
+                {
+                    log::debug!("Container name '{}' -> '{}'", container.name, resolved);
+                    container.name = resolved;
                 }
             }
         }
@@ -216,15 +216,15 @@ fn process_launch_arguments(_py: Python, _launch_desc: &PyObject) -> PyResult<()
                     "Re-resolving composable node name '{}' with updated context",
                     load_node.node_name
                 );
-                if let Ok(subs) = parse_substitutions(&load_node.node_name) {
-                    if let Ok(resolved) = resolve_substitutions(&subs, &ctx) {
-                        log::debug!(
-                            "Composable node name '{}' -> '{}'",
-                            load_node.node_name,
-                            resolved
-                        );
-                        load_node.node_name = resolved;
-                    }
+                if let Ok(subs) = parse_substitutions(&load_node.node_name)
+                    && let Ok(resolved) = resolve_substitutions(&subs, &ctx)
+                {
+                    log::debug!(
+                        "Composable node name '{}' -> '{}'",
+                        load_node.node_name,
+                        resolved
+                    );
+                    load_node.node_name = resolved;
                 }
             }
 
@@ -235,33 +235,32 @@ fn process_launch_arguments(_py: Python, _launch_desc: &PyObject) -> PyResult<()
                     load_node.target_container_name,
                     load_node.node_name
                 );
-                if let Ok(subs) = parse_substitutions(&load_node.target_container_name) {
-                    if let Ok(resolved) = resolve_substitutions(&subs, &ctx) {
-                        log::debug!(
-                            "Target container '{}' -> '{}' for node '{}'",
-                            load_node.target_container_name,
-                            resolved,
-                            load_node.node_name
-                        );
-                        load_node.target_container_name = resolved;
-                    }
+                if let Ok(subs) = parse_substitutions(&load_node.target_container_name)
+                    && let Ok(resolved) = resolve_substitutions(&subs, &ctx)
+                {
+                    log::debug!(
+                        "Target container '{}' -> '{}' for node '{}'",
+                        load_node.target_container_name,
+                        resolved,
+                        load_node.node_name
+                    );
+                    load_node.target_container_name = resolved;
                 }
             }
 
             // Re-resolve remappings
             for remap in load_node.remappings.iter_mut() {
-                if remap.1.contains("$(") {
-                    if let Ok(subs) = parse_substitutions(&remap.1) {
-                        if let Ok(resolved) = resolve_substitutions(&subs, &ctx) {
-                            log::debug!(
-                                "Remap '{}' -> '{}' for node '{}'",
-                                remap.1,
-                                resolved,
-                                load_node.node_name
-                            );
-                            remap.1 = resolved;
-                        }
-                    }
+                if remap.1.contains("$(")
+                    && let Ok(subs) = parse_substitutions(&remap.1)
+                    && let Ok(resolved) = resolve_substitutions(&subs, &ctx)
+                {
+                    log::debug!(
+                        "Remap '{}' -> '{}' for node '{}'",
+                        remap.1,
+                        resolved,
+                        load_node.node_name
+                    );
+                    remap.1 = resolved;
                 }
             }
 
@@ -272,18 +271,17 @@ fn process_launch_arguments(_py: Python, _launch_desc: &PyObject) -> PyResult<()
                 let mut value = param.1.clone();
 
                 // Resolve substitutions in values
-                if value.contains("$(") {
-                    if let Ok(subs) = parse_substitutions(&value) {
-                        if let Ok(resolved) = resolve_substitutions(&subs, &ctx) {
-                            log::debug!(
-                                "Param '{}' -> '{}' for node '{}'",
-                                value,
-                                resolved,
-                                load_node.node_name
-                            );
-                            value = resolved;
-                        }
-                    }
+                if value.contains("$(")
+                    && let Ok(subs) = parse_substitutions(&value)
+                    && let Ok(resolved) = resolve_substitutions(&subs, &ctx)
+                {
+                    log::debug!(
+                        "Param '{}' -> '{}' for node '{}'",
+                        value,
+                        resolved,
+                        load_node.node_name
+                    );
+                    value = resolved;
                 }
 
                 // Expand __param_file entries: load YAML and inline parameters
@@ -321,39 +319,37 @@ fn process_launch_arguments(_py: Python, _launch_desc: &PyObject) -> PyResult<()
     update_captured_nodes(|nodes| {
         for node in nodes.iter_mut() {
             // Re-resolve node name
-            if let Some(ref name) = node.name {
-                if name.contains("$(") {
-                    log::debug!("Re-resolving node name '{}' with updated context", name);
-                    if let Ok(subs) = parse_substitutions(name) {
-                        if let Ok(resolved) = resolve_substitutions(&subs, &ctx) {
-                            log::debug!("Node name '{}' -> '{}'", name, resolved);
-                            node.name = Some(resolved);
-                        }
-                    }
+            if let Some(ref name) = node.name
+                && name.contains("$(")
+            {
+                log::debug!("Re-resolving node name '{}' with updated context", name);
+                if let Ok(subs) = parse_substitutions(name)
+                    && let Ok(resolved) = resolve_substitutions(&subs, &ctx)
+                {
+                    log::debug!("Node name '{}' -> '{}'", name, resolved);
+                    node.name = Some(resolved);
                 }
             }
 
             // Re-resolve remappings
             for remap in node.remappings.iter_mut() {
-                if remap.1.contains("$(") {
-                    if let Ok(subs) = parse_substitutions(&remap.1) {
-                        if let Ok(resolved) = resolve_substitutions(&subs, &ctx) {
-                            log::debug!("Node remap '{}' -> '{}'", remap.1, resolved);
-                            remap.1 = resolved;
-                        }
-                    }
+                if remap.1.contains("$(")
+                    && let Ok(subs) = parse_substitutions(&remap.1)
+                    && let Ok(resolved) = resolve_substitutions(&subs, &ctx)
+                {
+                    log::debug!("Node remap '{}' -> '{}'", remap.1, resolved);
+                    remap.1 = resolved;
                 }
             }
 
             // Re-resolve parameters
             for param in node.parameters.iter_mut() {
-                if param.1.contains("$(") {
-                    if let Ok(subs) = parse_substitutions(&param.1) {
-                        if let Ok(resolved) = resolve_substitutions(&subs, &ctx) {
-                            log::debug!("Node param '{}' -> '{}'", param.1, resolved);
-                            param.1 = resolved;
-                        }
-                    }
+                if param.1.contains("$(")
+                    && let Ok(subs) = parse_substitutions(&param.1)
+                    && let Ok(resolved) = resolve_substitutions(&subs, &ctx)
+                {
+                    log::debug!("Node param '{}' -> '{}'", param.1, resolved);
+                    param.1 = resolved;
                 }
             }
         }
@@ -403,11 +399,11 @@ fn visit_entity(py: Python, entity: &PyObject) -> PyResult<()> {
             let result = entity.call_method0(py, "execute")?;
 
             // Result should be a list of entities or None
-            if !result.is_none(py) {
-                if let Ok(entities) = result.extract::<Vec<PyObject>>(py) {
-                    for entity in entities {
-                        visit_entity(py, &entity)?;
-                    }
+            if !result.is_none(py)
+                && let Ok(entities) = result.extract::<Vec<PyObject>>(py)
+            {
+                for entity in entities {
+                    visit_entity(py, &entity)?;
                 }
             }
         }

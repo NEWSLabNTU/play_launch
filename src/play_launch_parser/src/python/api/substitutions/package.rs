@@ -140,10 +140,10 @@ impl FindPackageShare {
                     result.push_str(&s);
                 }
                 // Try calling __str__
-                else if let Ok(str_result) = item.call_method0("__str__") {
-                    if let Ok(s) = str_result.extract::<String>() {
-                        result.push_str(&s);
-                    }
+                else if let Ok(str_result) = item.call_method0("__str__")
+                    && let Ok(s) = str_result.extract::<String>()
+                {
+                    result.push_str(&s);
                 }
             }
             result
@@ -180,24 +180,24 @@ impl FindPackageShare {
                 }
                 // Try calling perform() if it exists (for LaunchConfiguration, etc.)
                 else if item.hasattr("perform")? {
-                    if let Ok(performed) = item.call_method1("perform", (_context,)) {
-                        if let Ok(s) = performed.extract::<String>() {
-                            result.push_str(&s);
-                            continue;
-                        }
+                    if let Ok(performed) = item.call_method1("perform", (_context,))
+                        && let Ok(s) = performed.extract::<String>()
+                    {
+                        result.push_str(&s);
+                        continue;
                     }
                     // Fallback to __str__ if perform fails
-                    if let Ok(str_result) = item.call_method0("__str__") {
-                        if let Ok(s) = str_result.extract::<String>() {
-                            result.push_str(&s);
-                        }
+                    if let Ok(str_result) = item.call_method0("__str__")
+                        && let Ok(s) = str_result.extract::<String>()
+                    {
+                        result.push_str(&s);
                     }
                 }
                 // Try calling __str__
-                else if let Ok(str_result) = item.call_method0("__str__") {
-                    if let Ok(s) = str_result.extract::<String>() {
-                        result.push_str(&s);
-                    }
+                else if let Ok(str_result) = item.call_method0("__str__")
+                    && let Ok(s) = str_result.extract::<String>()
+                {
+                    result.push_str(&s);
                 }
             }
             result

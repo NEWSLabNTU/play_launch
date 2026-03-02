@@ -66,24 +66,23 @@ impl IfCondition {
 
         // Try calling perform() method first (for LaunchConfiguration substitutions)
         // This resolves the substitution to its actual value
-        if let Ok(has_perform) = pred_ref.hasattr("perform") {
-            if has_perform {
-                // Create a dummy context (not used by our LaunchConfiguration.perform())
-                if let Ok(context) = py.eval("type('Context', (), {})()", None, None) {
-                    if let Ok(result) = pred_ref.call_method1("perform", (context,)) {
-                        if let Ok(s) = result.extract::<String>() {
-                            return Ok(s);
-                        }
-                    }
-                }
+        if let Ok(has_perform) = pred_ref.hasattr("perform")
+            && has_perform
+        {
+            // Create a dummy context (not used by our LaunchConfiguration.perform())
+            if let Ok(context) = py.eval("type('Context', (), {})()", None, None)
+                && let Ok(result) = pred_ref.call_method1("perform", (context,))
+                && let Ok(s) = result.extract::<String>()
+            {
+                return Ok(s);
             }
         }
 
         // Try calling __str__ method (for other substitutions)
-        if let Ok(str_result) = pred_ref.call_method0("__str__") {
-            if let Ok(s) = str_result.extract::<String>() {
-                return Ok(s);
-            }
+        if let Ok(str_result) = pred_ref.call_method0("__str__")
+            && let Ok(s) = str_result.extract::<String>()
+        {
+            return Ok(s);
         }
 
         // Fallback to repr
@@ -179,24 +178,23 @@ impl UnlessCondition {
 
         // Try calling perform() method first (for LaunchConfiguration substitutions)
         // This resolves the substitution to its actual value
-        if let Ok(has_perform) = pred_ref.hasattr("perform") {
-            if has_perform {
-                // Create a dummy context (not used by our LaunchConfiguration.perform())
-                if let Ok(context) = py.eval("type('Context', (), {})()", None, None) {
-                    if let Ok(result) = pred_ref.call_method1("perform", (context,)) {
-                        if let Ok(s) = result.extract::<String>() {
-                            return Ok(s);
-                        }
-                    }
-                }
+        if let Ok(has_perform) = pred_ref.hasattr("perform")
+            && has_perform
+        {
+            // Create a dummy context (not used by our LaunchConfiguration.perform())
+            if let Ok(context) = py.eval("type('Context', (), {})()", None, None)
+                && let Ok(result) = pred_ref.call_method1("perform", (context,))
+                && let Ok(s) = result.extract::<String>()
+            {
+                return Ok(s);
             }
         }
 
         // Try calling __str__ method (for other substitutions)
-        if let Ok(str_result) = pred_ref.call_method0("__str__") {
-            if let Ok(s) = str_result.extract::<String>() {
-                return Ok(s);
-            }
+        if let Ok(str_result) = pred_ref.call_method0("__str__")
+            && let Ok(s) = str_result.extract::<String>()
+        {
+            return Ok(s);
         }
 
         Ok(pred_ref.to_string())

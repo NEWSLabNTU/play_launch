@@ -89,15 +89,13 @@ impl SetParameter {
         let obj_ref = obj.as_ref(py);
 
         // If it has a perform() method, try to resolve it with a real context
-        if obj_ref.hasattr("perform")? {
-            if let Ok(context) = create_launch_context(py) {
-                if let Ok(result) = obj_ref.call_method1("perform", (context,)) {
-                    if let Ok(resolved) = result.extract::<String>() {
-                        log::debug!("Resolved SetParameter value via perform(): '{}'", resolved);
-                        return Ok(resolved);
-                    }
-                }
-            }
+        if obj_ref.hasattr("perform")?
+            && let Ok(context) = create_launch_context(py)
+            && let Ok(result) = obj_ref.call_method1("perform", (context,))
+            && let Ok(resolved) = result.extract::<String>()
+        {
+            log::debug!("Resolved SetParameter value via perform(): '{}'", resolved);
+            return Ok(resolved);
         }
 
         // Fallback to regular string conversion

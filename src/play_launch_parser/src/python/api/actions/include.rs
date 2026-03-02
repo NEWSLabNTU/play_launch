@@ -32,25 +32,24 @@ fn pyobject_to_string_for_include_args(py: Python, obj: &PyAny) -> PyResult<Stri
         use crate::python::bridge::with_launch_context;
 
         // Try to get the variable name
-        if let Ok(name_obj) = obj.getattr("variable_name") {
-            if let Ok(var_name) = name_obj.extract::<Vec<String>>() {
-                if var_name.len() == 1 {
-                    // Look up the value in LaunchContext
-                    let resolved = with_launch_context(|ctx| ctx.get_configuration(&var_name[0]));
-                    if let Some(value) = resolved {
-                        log::debug!(
-                            "Resolving LaunchConfiguration('{}') for include arg: '{}'",
-                            var_name[0],
-                            value
-                        );
-                        return Ok(value);
-                    } else {
-                        log::warn!(
-                            "LaunchConfiguration('{}') not found in context for include arg",
-                            var_name[0]
-                        );
-                    }
-                }
+        if let Ok(name_obj) = obj.getattr("variable_name")
+            && let Ok(var_name) = name_obj.extract::<Vec<String>>()
+            && var_name.len() == 1
+        {
+            // Look up the value in LaunchContext
+            let resolved = with_launch_context(|ctx| ctx.get_configuration(&var_name[0]));
+            if let Some(value) = resolved {
+                log::debug!(
+                    "Resolving LaunchConfiguration('{}') for include arg: '{}'",
+                    var_name[0],
+                    value
+                );
+                return Ok(value);
+            } else {
+                log::warn!(
+                    "LaunchConfiguration('{}') not found in context for include arg",
+                    var_name[0]
+                );
             }
         }
     }
@@ -58,18 +57,18 @@ fn pyobject_to_string_for_include_args(py: Python, obj: &PyAny) -> PyResult<Stri
     // For other substitutions, try calling perform() with context
     if let Ok(perform_method) = obj.getattr("perform") {
         let context = crate::python::api::utils::create_launch_context(py)?;
-        if let Ok(result) = perform_method.call1((context,)) {
-            if let Ok(s) = result.extract::<String>() {
-                return Ok(s);
-            }
+        if let Ok(result) = perform_method.call1((context,))
+            && let Ok(s) = result.extract::<String>()
+        {
+            return Ok(s);
         }
     }
 
     // Fallback: use __str__()
-    if let Ok(str_result) = obj.call_method0("__str__") {
-        if let Ok(s) = str_result.extract::<String>() {
-            return Ok(s);
-        }
+    if let Ok(str_result) = obj.call_method0("__str__")
+        && let Ok(s) = str_result.extract::<String>()
+    {
+        return Ok(s);
     }
 
     Ok(obj.to_string())
@@ -124,14 +123,14 @@ impl IncludeLaunchDescription {
             else if let Ok(iter) = launch_args_obj.as_ref(py).iter() {
                 for item in iter {
                     let item = item?;
-                    if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
-                        if tuple.len() == 2 {
-                            let key = tuple.get_item(0)?.extract::<String>()?;
-                            let value_obj = tuple.get_item(1)?;
-                            // Try to extract value as string, list, or substitution
-                            let value = pyobject_to_string_for_include_args(py, value_obj)?;
-                            args.push((key, value));
-                        }
+                    if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>()
+                        && tuple.len() == 2
+                    {
+                        let key = tuple.get_item(0)?.extract::<String>()?;
+                        let value_obj = tuple.get_item(1)?;
+                        // Try to extract value as string, list, or substitution
+                        let value = pyobject_to_string_for_include_args(py, value_obj)?;
+                        args.push((key, value));
                     }
                 }
             }

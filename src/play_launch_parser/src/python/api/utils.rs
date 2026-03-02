@@ -150,10 +150,10 @@ pub fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
 
     // Handle booleans explicitly (convert to lowercase "true"/"false" for ROS2 compatibility)
     // Must check BEFORE integer extraction since Python bool is subclass of int
-    if obj_ref.is_instance_of::<PyBool>() {
-        if let Ok(b) = obj_ref.extract::<bool>() {
-            return Ok(if b { "true" } else { "false" }.to_string());
-        }
+    if obj_ref.is_instance_of::<PyBool>()
+        && let Ok(b) = obj_ref.extract::<bool>()
+    {
+        return Ok(if b { "true" } else { "false" }.to_string());
     }
 
     // Handle lists (concatenate elements recursively)
@@ -173,10 +173,10 @@ pub fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
         let context = create_launch_context(py)?;
 
         // Call perform() to evaluate the condition
-        if let Ok(result) = obj_ref.call_method1("perform", (context,)) {
-            if let Ok(s) = result.extract::<String>() {
-                return Ok(s);
-            }
+        if let Ok(result) = obj_ref.call_method1("perform", (context,))
+            && let Ok(s) = result.extract::<String>()
+        {
+            return Ok(s);
         }
     }
 
@@ -185,35 +185,31 @@ pub fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
     // and should be resolved at parse time rather than preserved as $(var name)
     {
         let type_name = obj_ref.get_type().name().unwrap_or("");
-        if type_name == "LaunchConfiguration" {
-            if let Ok(str_result) = obj_ref.call_method0("__str__") {
-                if let Ok(s) = str_result.extract::<String>() {
-                    // s is "$(var name)" — extract 'name' and look up in context
-                    if let Some(var_name) =
-                        s.strip_prefix("$(var ").and_then(|s| s.strip_suffix(')'))
-                    {
-                        if let Some(value) = crate::python::bridge::try_with_launch_context(|ctx| {
-                            ctx.get_configuration(var_name)
-                        })
-                        .flatten()
-                        {
-                            return Ok(value);
-                        }
-                    }
-                    // Not in context — preserve as $(var name) for runtime resolution
-                    return Ok(s);
-                }
+        if type_name == "LaunchConfiguration"
+            && let Ok(str_result) = obj_ref.call_method0("__str__")
+            && let Ok(s) = str_result.extract::<String>()
+        {
+            // s is "$(var name)" — extract 'name' and look up in context
+            if let Some(var_name) = s.strip_prefix("$(var ").and_then(|s| s.strip_suffix(')'))
+                && let Some(value) = crate::python::bridge::try_with_launch_context(|ctx| {
+                    ctx.get_configuration(var_name)
+                })
+                .flatten()
+            {
+                return Ok(value);
             }
+            // Not in context — preserve as $(var name) for runtime resolution
+            return Ok(s);
         }
     }
 
     // For other substitution objects, use __str__()
     // This preserves substitutions in the record.json output
     // The substitutions will be resolved later during actual launch execution
-    if let Ok(str_result) = obj_ref.call_method0("__str__") {
-        if let Ok(s) = str_result.extract::<String>() {
-            return Ok(s);
-        }
+    if let Ok(str_result) = obj_ref.call_method0("__str__")
+        && let Ok(s) = str_result.extract::<String>()
+    {
+        return Ok(s);
     }
 
     // Fallback to Python repr
@@ -264,12 +260,11 @@ pub fn perform_or_to_string(obj: &PyObject, py: Python, context: &PyAny) -> PyRe
     let obj_ref = obj.as_ref(py);
 
     // Try perform() first (resolves nested substitutions)
-    if obj_ref.hasattr("perform")? {
-        if let Ok(result) = obj_ref.call_method1("perform", (context,)) {
-            if let Ok(s) = result.extract::<String>() {
-                return Ok(s);
-            }
-        }
+    if obj_ref.hasattr("perform")?
+        && let Ok(result) = obj_ref.call_method1("perform", (context,))
+        && let Ok(s) = result.extract::<String>()
+    {
+        return Ok(s);
     }
 
     // Fallback to general string conversion
@@ -289,10 +284,10 @@ pub fn pyobject_to_bool(obj: &PyObject, py: Python) -> PyResult<bool> {
         return Ok(matches!(s.to_lowercase().as_str(), "true" | "1" | "yes"));
     }
 
-    if let Ok(str_result) = obj.call_method0(py, "__str__") {
-        if let Ok(s) = str_result.extract::<String>(py) {
-            return Ok(matches!(s.to_lowercase().as_str(), "true" | "1" | "yes"));
-        }
+    if let Ok(str_result) = obj.call_method0(py, "__str__")
+        && let Ok(s) = str_result.extract::<String>(py)
+    {
+        return Ok(matches!(s.to_lowercase().as_str(), "true" | "1" | "yes"));
     }
 
     Ok(false)

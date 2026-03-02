@@ -213,11 +213,11 @@ impl LoadComposableNodes {
         let cond_ref = condition.as_ref(py);
 
         // Try calling evaluate() method on the condition object
-        if let Ok(result) = cond_ref.call_method0("evaluate") {
-            if let Ok(bool_val) = result.extract::<bool>() {
-                log::debug!("LoadComposableNodes condition evaluated to: {}", bool_val);
-                return Ok(bool_val);
-            }
+        if let Ok(result) = cond_ref.call_method0("evaluate")
+            && let Ok(bool_val) = result.extract::<bool>()
+        {
+            log::debug!("LoadComposableNodes condition evaluated to: {}", bool_val);
+            return Ok(bool_val);
         }
 
         // Fallback: treat as truthy if we can't evaluate
@@ -372,35 +372,31 @@ impl LoadComposableNodes {
                     );
 
                     // Check if this dict represents a parameter file
-                    if param_dict.len() == 1 {
-                        if let Some((key, value)) = param_dict.iter().next() {
-                            let key_str = key.extract::<String>().unwrap_or_default();
+                    if param_dict.len() == 1
+                        && let Some((key, value)) = param_dict.iter().next()
+                    {
+                        let key_str = key.extract::<String>().unwrap_or_default();
 
-                            // Check if the value is a file path
-                            if let Ok(path_str) = value.extract::<String>() {
-                                if is_yaml_file(&path_str) {
-                                    match load_yaml_params(&path_str) {
-                                        Ok(yaml_params) => {
-                                            log::trace!(
-                                                "Loaded {} parameters from YAML {}",
-                                                yaml_params.len(),
-                                                path_str
-                                            );
-                                            parsed_params.extend(yaml_params);
-                                            continue; // Skip normal dict processing
-                                        }
-                                        Err(e) => {
-                                            log::warn!(
-                                                "Failed to load YAML file {}: {}",
-                                                path_str,
-                                                e
-                                            );
-                                        }
-                                    }
+                        // Check if the value is a file path
+                        if let Ok(path_str) = value.extract::<String>()
+                            && is_yaml_file(&path_str)
+                        {
+                            match load_yaml_params(&path_str) {
+                                Ok(yaml_params) => {
+                                    log::trace!(
+                                        "Loaded {} parameters from YAML {}",
+                                        yaml_params.len(),
+                                        path_str
+                                    );
+                                    parsed_params.extend(yaml_params);
+                                    continue; // Skip normal dict processing
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to load YAML file {}: {}", path_str, e);
                                 }
                             }
-                            let _ = key_str; // used for debugging if needed
                         }
+                        let _ = key_str; // used for debugging if needed
                     }
 
                     // Normal dict processing (recursively flatten nested dicts)
@@ -414,35 +410,34 @@ impl LoadComposableNodes {
                         || type_name.contains("parameter_descriptions")
                     {
                         // Call __str__() to get the file path
-                        if let Ok(str_method) = param_item.call_method0("__str__") {
-                            if let Ok(path_str) = str_method.extract::<String>() {
-                                // Check if it's a YAML parameter file
-                                if is_yaml_file(&path_str) {
-                                    // Load and expand YAML parameter file
-                                    match load_yaml_params(&path_str) {
-                                        Ok(yaml_params) => {
-                                            log::trace!(
-                                                "Loaded {} parameters from ParameterFile {}",
-                                                yaml_params.len(),
-                                                path_str
-                                            );
-                                            parsed_params.extend(yaml_params);
-                                        }
-                                        Err(e) => {
-                                            log::warn!(
-                                                "Failed to load parameter file {}: {}",
-                                                path_str,
-                                                e
-                                            );
-                                            // Fallback: store as __param_file for backward compatibility
-                                            parsed_params
-                                                .push(("__param_file".to_string(), path_str));
-                                        }
+                        if let Ok(str_method) = param_item.call_method0("__str__")
+                            && let Ok(path_str) = str_method.extract::<String>()
+                        {
+                            // Check if it's a YAML parameter file
+                            if is_yaml_file(&path_str) {
+                                // Load and expand YAML parameter file
+                                match load_yaml_params(&path_str) {
+                                    Ok(yaml_params) => {
+                                        log::trace!(
+                                            "Loaded {} parameters from ParameterFile {}",
+                                            yaml_params.len(),
+                                            path_str
+                                        );
+                                        parsed_params.extend(yaml_params);
                                     }
-                                } else {
-                                    // Non-YAML file path - store as reference
-                                    parsed_params.push(("__param_file".to_string(), path_str));
+                                    Err(e) => {
+                                        log::warn!(
+                                            "Failed to load parameter file {}: {}",
+                                            path_str,
+                                            e
+                                        );
+                                        // Fallback: store as __param_file for backward compatibility
+                                        parsed_params.push(("__param_file".to_string(), path_str));
+                                    }
                                 }
+                            } else {
+                                // Non-YAML file path - store as reference
+                                parsed_params.push(("__param_file".to_string(), path_str));
                             }
                         }
                     }
@@ -484,13 +479,13 @@ impl LoadComposableNodes {
 
         if let Ok(remaps_list) = remaps_obj.downcast::<pyo3::types::PyList>() {
             for remap_item in remaps_list.iter() {
-                if let Ok(remap_tuple) = remap_item.downcast::<pyo3::types::PyTuple>() {
-                    if remap_tuple.len() == 2 {
-                        // Use pyobject_to_string to handle LaunchConfiguration objects
-                        let from = Self::pyobject_to_string(remap_tuple.get_item(0)?)?;
-                        let to = Self::pyobject_to_string(remap_tuple.get_item(1)?)?;
-                        parsed_remaps.push((from, to));
-                    }
+                if let Ok(remap_tuple) = remap_item.downcast::<pyo3::types::PyTuple>()
+                    && remap_tuple.len() == 2
+                {
+                    // Use pyobject_to_string to handle LaunchConfiguration objects
+                    let from = Self::pyobject_to_string(remap_tuple.get_item(0)?)?;
+                    let to = Self::pyobject_to_string(remap_tuple.get_item(1)?)?;
+                    parsed_remaps.push((from, to));
                 }
             }
         }

@@ -161,11 +161,11 @@ impl Node {
         // Try calling evaluate() method on the condition object
         // Note: The py: Python parameter is automatically injected by pyo3,
         // so we call with no arguments from Python's perspective
-        if let Ok(result) = cond_ref.call_method0("evaluate") {
-            if let Ok(bool_val) = result.extract::<bool>() {
-                log::debug!("Condition evaluated to: {}", bool_val);
-                return Ok(bool_val);
-            }
+        if let Ok(result) = cond_ref.call_method0("evaluate")
+            && let Ok(bool_val) = result.extract::<bool>()
+        {
+            log::debug!("Condition evaluated to: {}", bool_val);
+            return Ok(bool_val);
         }
 
         // Fallback: treat as truthy if we can't evaluate
@@ -322,42 +322,42 @@ impl Node {
             // Case 4: ParameterFile object -- load YAML and expand inline
             let type_name = param_any.get_type().name().unwrap_or("");
             if type_name.contains("ParameterFile") {
-                if let Ok(str_val) = param_any.call_method0("__str__") {
-                    if let Ok(path) = str_val.extract::<String>() {
-                        if is_yaml_file(&path) {
-                            match load_yaml_params(&path) {
-                                Ok(yaml_params) => {
-                                    log::debug!(
-                                        "Loaded {} parameters from ParameterFile {}",
-                                        yaml_params.len(),
-                                        path
-                                    );
-                                    parsed_params.extend(yaml_params);
-                                }
-                                Err(e) => {
-                                    log::warn!("Failed to load ParameterFile {}: {}", path, e);
-                                    parsed_params.push(("__param_file".to_string(), path));
-                                }
+                if let Ok(str_val) = param_any.call_method0("__str__")
+                    && let Ok(path) = str_val.extract::<String>()
+                {
+                    if is_yaml_file(&path) {
+                        match load_yaml_params(&path) {
+                            Ok(yaml_params) => {
+                                log::debug!(
+                                    "Loaded {} parameters from ParameterFile {}",
+                                    yaml_params.len(),
+                                    path
+                                );
+                                parsed_params.extend(yaml_params);
                             }
-                        } else {
-                            parsed_params.push(("__param_file".to_string(), path));
+                            Err(e) => {
+                                log::warn!("Failed to load ParameterFile {}: {}", path, e);
+                                parsed_params.push(("__param_file".to_string(), path));
+                            }
                         }
+                    } else {
+                        parsed_params.push(("__param_file".to_string(), path));
                     }
                 }
                 continue;
             }
 
             // Case 5: Try calling __str__ on the object (for substitutions)
-            if let Ok(str_val) = param_any.call_method0("__str__") {
-                if let Ok(s) = str_val.extract::<String>() {
-                    if is_yaml_file(&s) {
-                        match load_yaml_params(&s) {
-                            Ok(yaml_params) => parsed_params.extend(yaml_params),
-                            Err(_) => parsed_params.push(("substitution".to_string(), s)),
-                        }
-                    } else {
-                        parsed_params.push(("substitution".to_string(), s));
+            if let Ok(str_val) = param_any.call_method0("__str__")
+                && let Ok(s) = str_val.extract::<String>()
+            {
+                if is_yaml_file(&s) {
+                    match load_yaml_params(&s) {
+                        Ok(yaml_params) => parsed_params.extend(yaml_params),
+                        Err(_) => parsed_params.push(("substitution".to_string(), s)),
                     }
+                } else {
+                    parsed_params.push(("substitution".to_string(), s));
                 }
             }
         }
@@ -394,31 +394,31 @@ impl Node {
                         "parse_dict_params: '{}' has dict type but downcast failed, using items()",
                         full_key
                     );
-                    if let Ok(items) = value.call_method0("items") {
-                        if let Ok(iter) = items.iter() {
-                            for item in iter.flatten() {
-                                if let Ok((k, v)) = item.extract::<(String, &PyAny)>() {
-                                    let sub_key = if full_key.is_empty() {
-                                        k.clone()
-                                    } else {
-                                        format!("{}.{}", full_key, k)
-                                    };
-                                    // Recurse if the sub-value is also a dict
-                                    if v.get_type().name().unwrap_or("") == "dict" {
-                                        if let Ok(sub_dict) = v.downcast::<PyDict>() {
-                                            Self::parse_dict_params(sub_dict, &sub_key, params)?;
-                                        } else {
-                                            let val = Self::extract_param_value(v)?;
-                                            params.push((sub_key, val));
-                                        }
+                    if let Ok(items) = value.call_method0("items")
+                        && let Ok(iter) = items.iter()
+                    {
+                        for item in iter.flatten() {
+                            if let Ok((k, v)) = item.extract::<(String, &PyAny)>() {
+                                let sub_key = if full_key.is_empty() {
+                                    k.clone()
+                                } else {
+                                    format!("{}.{}", full_key, k)
+                                };
+                                // Recurse if the sub-value is also a dict
+                                if v.get_type().name().unwrap_or("") == "dict" {
+                                    if let Ok(sub_dict) = v.downcast::<PyDict>() {
+                                        Self::parse_dict_params(sub_dict, &sub_key, params)?;
                                     } else {
                                         let val = Self::extract_param_value(v)?;
                                         params.push((sub_key, val));
                                     }
+                                } else {
+                                    let val = Self::extract_param_value(v)?;
+                                    params.push((sub_key, val));
                                 }
                             }
-                            continue;
                         }
+                        continue;
                     }
                 }
                 // Extract value as string (handles various Python types)
@@ -442,10 +442,10 @@ impl Node {
         }
 
         // Try boolean BEFORE integer (Python bools are subclass of int)
-        if value.is_instance_of::<PyBool>() {
-            if let Ok(b) = value.extract::<bool>() {
-                return Ok(if b { "true" } else { "false" }.to_string());
-            }
+        if value.is_instance_of::<PyBool>()
+            && let Ok(b) = value.extract::<bool>()
+        {
+            return Ok(if b { "true" } else { "false" }.to_string());
         }
 
         // Try integer
@@ -503,32 +503,32 @@ impl Node {
             let remap_any = remap_obj.as_ref(py);
 
             // Remappings should be tuples of (from, to)
-            if let Ok(remap_tuple) = remap_any.downcast::<pyo3::types::PyTuple>() {
-                if remap_tuple.len() == 2 {
-                    // Extract both elements and convert to strings
-                    // This handles both plain strings and LaunchConfiguration objects
-                    let from_obj = remap_tuple.get_item(0)?;
-                    let to_obj = remap_tuple.get_item(1)?;
+            if let Ok(remap_tuple) = remap_any.downcast::<pyo3::types::PyTuple>()
+                && remap_tuple.len() == 2
+            {
+                // Extract both elements and convert to strings
+                // This handles both plain strings and LaunchConfiguration objects
+                let from_obj = remap_tuple.get_item(0)?;
+                let to_obj = remap_tuple.get_item(1)?;
 
-                    // Convert to strings (handles LaunchConfiguration via __str__)
-                    let from = if let Ok(s) = from_obj.extract::<String>() {
-                        s
-                    } else if let Ok(str_result) = from_obj.call_method0("__str__") {
-                        str_result.extract::<String>()?
-                    } else {
-                        from_obj.to_string()
-                    };
+                // Convert to strings (handles LaunchConfiguration via __str__)
+                let from = if let Ok(s) = from_obj.extract::<String>() {
+                    s
+                } else if let Ok(str_result) = from_obj.call_method0("__str__") {
+                    str_result.extract::<String>()?
+                } else {
+                    from_obj.to_string()
+                };
 
-                    let to = if let Ok(s) = to_obj.extract::<String>() {
-                        s
-                    } else if let Ok(str_result) = to_obj.call_method0("__str__") {
-                        str_result.extract::<String>()?
-                    } else {
-                        to_obj.to_string()
-                    };
+                let to = if let Ok(s) = to_obj.extract::<String>() {
+                    s
+                } else if let Ok(str_result) = to_obj.call_method0("__str__") {
+                    str_result.extract::<String>()?
+                } else {
+                    to_obj.to_string()
+                };
 
-                    parsed_remaps.push((from, to));
-                }
+                parsed_remaps.push((from, to));
             }
         }
 

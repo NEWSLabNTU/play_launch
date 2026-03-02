@@ -99,82 +99,82 @@ impl LaunchTraverser {
         // variables should not leak to the parent.
 
         // Apply ROS namespace if provided (for includes from Python OpaqueFunction)
-        if let Some(ref ns) = ros_namespace {
-            if !ns.is_empty() && ns != "/" {
-                log::debug!(
-                    "Applying ROS namespace '{}' to {} nodes, {} containers, {} load_nodes from XML include",
-                    ns,
-                    included_traverser.records.len(),
-                    included_traverser.containers.len(),
-                    included_traverser.load_nodes.len()
-                );
+        if let Some(ref ns) = ros_namespace
+            && !ns.is_empty()
+            && ns != "/"
+        {
+            log::debug!(
+                "Applying ROS namespace '{}' to {} nodes, {} containers, {} load_nodes from XML include",
+                ns,
+                included_traverser.records.len(),
+                included_traverser.containers.len(),
+                included_traverser.load_nodes.len()
+            );
 
-                // Apply namespace to regular nodes
-                for node in &mut included_traverser.records {
-                    if let Some(ref node_ns) = node.namespace {
-                        node.namespace = Some(Self::apply_namespace_prefix(ns, node_ns));
+            // Apply namespace to regular nodes
+            for node in &mut included_traverser.records {
+                if let Some(ref node_ns) = node.namespace {
+                    node.namespace = Some(Self::apply_namespace_prefix(ns, node_ns));
+                } else {
+                    node.namespace = Some(ns.clone());
+                }
+            }
+
+            // Apply namespace to containers and build a mapping
+            let mut container_name_map = std::collections::HashMap::new();
+            for container in &mut included_traverser.containers {
+                // Build old full name
+                let old_full_name = if container.namespace.starts_with('/') {
+                    if container.namespace == "/" {
+                        format!("/{}", container.name)
                     } else {
-                        node.namespace = Some(ns.clone());
+                        format!("{}/{}", container.namespace, container.name)
                     }
-                }
+                } else {
+                    format!("/{}/{}", container.namespace, container.name)
+                };
 
-                // Apply namespace to containers and build a mapping
-                let mut container_name_map = std::collections::HashMap::new();
-                for container in &mut included_traverser.containers {
-                    // Build old full name
-                    let old_full_name = if container.namespace.starts_with('/') {
-                        if container.namespace == "/" {
-                            format!("/{}", container.name)
-                        } else {
-                            format!("{}/{}", container.namespace, container.name)
-                        }
+                // Apply namespace prefix
+                container.namespace = Self::apply_namespace_prefix(ns, &container.namespace);
+
+                // Build new full name
+                let new_full_name = if container.namespace.starts_with('/') {
+                    if container.namespace == "/" {
+                        format!("/{}", container.name)
                     } else {
-                        format!("/{}/{}", container.namespace, container.name)
-                    };
+                        format!("{}/{}", container.namespace, container.name)
+                    }
+                } else {
+                    format!("/{}/{}", container.namespace, container.name)
+                };
 
-                    // Apply namespace prefix
-                    container.namespace = Self::apply_namespace_prefix(ns, &container.namespace);
+                container_name_map.insert(old_full_name, new_full_name);
+            }
 
-                    // Build new full name
-                    let new_full_name = if container.namespace.starts_with('/') {
-                        if container.namespace == "/" {
-                            format!("/{}", container.name)
-                        } else {
-                            format!("{}/{}", container.namespace, container.name)
-                        }
-                    } else {
-                        format!("/{}/{}", container.namespace, container.name)
-                    };
+            // Apply namespace to load_nodes and update target containers
+            for load_node in &mut included_traverser.load_nodes {
+                load_node.namespace = Self::apply_namespace_prefix(ns, &load_node.namespace);
 
-                    container_name_map.insert(old_full_name, new_full_name);
-                }
-
-                // Apply namespace to load_nodes and update target containers
-                for load_node in &mut included_traverser.load_nodes {
-                    load_node.namespace = Self::apply_namespace_prefix(ns, &load_node.namespace);
-
-                    // Update target_container_name if it matches a renamed container
-                    if let Some(new_name) = container_name_map.get(&load_node.target_container_name)
-                    {
-                        log::debug!(
-                            "Updating target_container_name from '{}' to '{}'",
-                            load_node.target_container_name,
-                            new_name
-                        );
-                        load_node.target_container_name = new_name.clone();
-                    } else {
-                        // If not in map, still apply namespace prefix for external containers
-                        if load_node.target_container_name.starts_with('/') {
-                            let prefixed =
-                                Self::apply_namespace_prefix(ns, &load_node.target_container_name);
-                            if prefixed != load_node.target_container_name {
-                                log::debug!(
-                                    "Applying namespace prefix to target_container_name: '{}' -> '{}'",
-                                    load_node.target_container_name,
-                                    prefixed
-                                );
-                                load_node.target_container_name = prefixed;
-                            }
+                // Update target_container_name if it matches a renamed container
+                if let Some(new_name) = container_name_map.get(&load_node.target_container_name) {
+                    log::debug!(
+                        "Updating target_container_name from '{}' to '{}'",
+                        load_node.target_container_name,
+                        new_name
+                    );
+                    load_node.target_container_name = new_name.clone();
+                } else {
+                    // If not in map, still apply namespace prefix for external containers
+                    if load_node.target_container_name.starts_with('/') {
+                        let prefixed =
+                            Self::apply_namespace_prefix(ns, &load_node.target_container_name);
+                        if prefixed != load_node.target_container_name {
+                            log::debug!(
+                                "Applying namespace prefix to target_container_name: '{}' -> '{}'",
+                                load_node.target_container_name,
+                                prefixed
+                            );
+                            load_node.target_container_name = prefixed;
                         }
                     }
                 }
@@ -190,13 +190,14 @@ impl LaunchTraverser {
         // Apply namespace to captures as well
         for node in included_traverser.context.captured_nodes() {
             let mut node_copy = node.clone();
-            if let Some(ref ns) = ros_namespace {
-                if !ns.is_empty() && ns != "/" {
-                    if let Some(ref node_ns) = node_copy.namespace {
-                        node_copy.namespace = Some(Self::apply_namespace_prefix(ns, node_ns));
-                    } else {
-                        node_copy.namespace = Some(ns.clone());
-                    }
+            if let Some(ref ns) = ros_namespace
+                && !ns.is_empty()
+                && ns != "/"
+            {
+                if let Some(ref node_ns) = node_copy.namespace {
+                    node_copy.namespace = Some(Self::apply_namespace_prefix(ns, node_ns));
+                } else {
+                    node_copy.namespace = Some(ns.clone());
                 }
             }
             self.context.capture_node(node_copy);
@@ -204,12 +205,13 @@ impl LaunchTraverser {
 
         for container in included_traverser.context.captured_containers() {
             let mut container_copy = container.clone();
-            if let Some(ref ns) = ros_namespace {
-                if !ns.is_empty() && ns != "/" {
-                    container_copy.namespace =
-                        Self::apply_namespace_prefix(ns, &container_copy.namespace);
-                    container_copy.name = Self::apply_namespace_prefix(ns, &container_copy.name);
-                }
+            if let Some(ref ns) = ros_namespace
+                && !ns.is_empty()
+                && ns != "/"
+            {
+                container_copy.namespace =
+                    Self::apply_namespace_prefix(ns, &container_copy.namespace);
+                container_copy.name = Self::apply_namespace_prefix(ns, &container_copy.name);
             }
             self.context.capture_container(container_copy);
         }
@@ -221,20 +223,21 @@ impl LaunchTraverser {
                 load_node_copy.target_container_name,
                 ros_namespace
             );
-            if let Some(ref ns) = ros_namespace {
-                if !ns.is_empty() && ns != "/" {
-                    load_node_copy.namespace =
-                        Self::apply_namespace_prefix(ns, &load_node_copy.namespace);
-                    if load_node_copy.target_container_name.starts_with('/') {
-                        let old_target = load_node_copy.target_container_name.clone();
-                        load_node_copy.target_container_name =
-                            Self::apply_namespace_prefix(ns, &load_node_copy.target_container_name);
-                        log::debug!(
-                            "Applied namespace to target: '{}' -> '{}'",
-                            old_target,
-                            load_node_copy.target_container_name
-                        );
-                    }
+            if let Some(ref ns) = ros_namespace
+                && !ns.is_empty()
+                && ns != "/"
+            {
+                load_node_copy.namespace =
+                    Self::apply_namespace_prefix(ns, &load_node_copy.namespace);
+                if load_node_copy.target_container_name.starts_with('/') {
+                    let old_target = load_node_copy.target_container_name.clone();
+                    load_node_copy.target_container_name =
+                        Self::apply_namespace_prefix(ns, &load_node_copy.target_container_name);
+                    log::debug!(
+                        "Applied namespace to target: '{}' -> '{}'",
+                        old_target,
+                        load_node_copy.target_container_name
+                    );
                 }
             }
             self.context.capture_load_node(load_node_copy);

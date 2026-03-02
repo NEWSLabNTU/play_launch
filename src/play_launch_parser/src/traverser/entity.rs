@@ -60,18 +60,18 @@ impl LaunchTraverser {
                 self.context.declare_argument(metadata);
 
                 // If a default value is provided and the argument is not yet set, apply it
-                if let Some(default_val) = &declare_arg.default {
-                    if self.context.get_configuration(&declare_arg.name).is_none() {
-                        let resolved_default = resolve_substitutions(default_val, &self.context)
-                            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                        log::debug!(
-                            "[RUST] Setting default value for {}: {}",
-                            declare_arg.name,
-                            resolved_default
-                        );
-                        self.context
-                            .set_configuration(declare_arg.name, resolved_default);
-                    }
+                if let Some(default_val) = &declare_arg.default
+                    && self.context.get_configuration(&declare_arg.name).is_none()
+                {
+                    let resolved_default = resolve_substitutions(default_val, &self.context)
+                        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                    log::debug!(
+                        "[RUST] Setting default value for {}: {}",
+                        declare_arg.name,
+                        resolved_default
+                    );
+                    self.context
+                        .set_configuration(declare_arg.name, resolved_default);
                 }
             }
             "node" => {

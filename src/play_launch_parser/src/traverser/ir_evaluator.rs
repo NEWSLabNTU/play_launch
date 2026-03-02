@@ -25,10 +25,10 @@ impl LaunchTraverser {
 
     fn evaluate_action(&mut self, action: &Action) -> Result<()> {
         // Check condition
-        if let Some(ref condition) = action.condition {
-            if !self.evaluate_condition_expr(condition)? {
-                return Ok(());
-            }
+        if let Some(ref condition) = action.condition
+            && !self.evaluate_condition_expr(condition)?
+        {
+            return Ok(());
         }
 
         match &action.kind {
@@ -59,13 +59,13 @@ impl LaunchTraverser {
                 self.context.declare_argument(metadata);
 
                 // If default present and arg not yet set, apply it
-                if let Some(default_expr) = default {
-                    if self.context.get_configuration(name).is_none() {
-                        let resolved = default_expr
-                            .resolve(&self.context)
-                            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                        self.context.set_configuration(name.clone(), resolved);
-                    }
+                if let Some(default_expr) = default
+                    && self.context.get_configuration(name).is_none()
+                {
+                    let resolved = default_expr
+                        .resolve(&self.context)
+                        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                    self.context.set_configuration(name.clone(), resolved);
                 }
             }
 

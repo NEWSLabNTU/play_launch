@@ -75,51 +75,50 @@ impl LaunchTraverser {
 
         if let Some(launch_list) = yaml.get("launch").and_then(|v| v.as_sequence()) {
             for item in launch_list {
-                if let Some(arg_map) = item.get("arg").and_then(|v| v.as_mapping()) {
-                    if let Some(name) = arg_map
+                if let Some(arg_map) = item.get("arg").and_then(|v| v.as_mapping())
+                    && let Some(name) = arg_map
                         .get(Value::String("name".to_string()))
                         .and_then(|v| v.as_str())
-                    {
-                        let default_value = arg_map
-                            .get(Value::String("default".to_string()))
-                            .and_then(|v| v.as_str());
-                        let description = arg_map
-                            .get(Value::String("description".to_string()))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                {
+                    let default_value = arg_map
+                        .get(Value::String("default".to_string()))
+                        .and_then(|v| v.as_str());
+                    let description = arg_map
+                        .get(Value::String("description".to_string()))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
 
-                        let default_expr = default_value
-                            .map(|d| parse_substitutions(d).map(Expr::new))
-                            .transpose()?;
+                    let default_expr = default_value
+                        .map(|d| parse_substitutions(d).map(Expr::new))
+                        .transpose()?;
 
-                        body.push(Action {
-                            kind: ActionKind::DeclareArgument {
-                                name: name.to_string(),
-                                default: default_expr,
-                                description,
-                                choices: None,
-                            },
-                            condition: None,
-                            span: Some(Span {
-                                file: source.clone(),
-                                line: 1,
-                            }),
-                        });
-
-                        // Apply to context — YAML presets modify parent scope so
-                        // later substitutions (e.g. in include file paths) can resolve.
-                        self.context.declare_argument(ArgumentMetadata {
+                    body.push(Action {
+                        kind: ActionKind::DeclareArgument {
                             name: name.to_string(),
-                            default: default_value.map(|s| s.to_string()),
-                            description: None,
+                            default: default_expr,
+                            description,
                             choices: None,
-                        });
-                        if let Some(default) = default_value {
-                            if self.context.get_configuration(name).is_none() {
-                                self.context
-                                    .set_configuration(name.to_string(), default.to_string());
-                            }
-                        }
+                        },
+                        condition: None,
+                        span: Some(Span {
+                            file: source.clone(),
+                            line: 1,
+                        }),
+                    });
+
+                    // Apply to context — YAML presets modify parent scope so
+                    // later substitutions (e.g. in include file paths) can resolve.
+                    self.context.declare_argument(ArgumentMetadata {
+                        name: name.to_string(),
+                        default: default_value.map(|s| s.to_string()),
+                        description: None,
+                        choices: None,
+                    });
+                    if let Some(default) = default_value
+                        && self.context.get_configuration(name).is_none()
+                    {
+                        self.context
+                            .set_configuration(name.to_string(), default.to_string());
                     }
                 }
             }
@@ -175,13 +174,12 @@ impl LaunchTraverser {
                 let declare_arg = DeclareArgumentAction::from_entity(entity)?;
 
                 // Apply to context so include paths can resolve
-                if let Some(ref default_subs) = declare_arg.default {
-                    if self.context.get_configuration(&declare_arg.name).is_none() {
-                        if let Ok(resolved) = resolve_substitutions(default_subs, &self.context) {
-                            self.context
-                                .set_configuration(declare_arg.name.clone(), resolved);
-                        }
-                    }
+                if let Some(ref default_subs) = declare_arg.default
+                    && self.context.get_configuration(&declare_arg.name).is_none()
+                    && let Ok(resolved) = resolve_substitutions(default_subs, &self.context)
+                {
+                    self.context
+                        .set_configuration(declare_arg.name.clone(), resolved);
                 }
                 // Also record metadata
                 let metadata = ArgumentMetadata {
@@ -213,11 +211,11 @@ impl LaunchTraverser {
                 let let_action = LetAction::from_entity(entity)?;
 
                 // Apply to context so include paths can resolve
-                if let Ok(value_subs) = parse_substitutions(&let_action.value) {
-                    if let Ok(resolved) = resolve_substitutions(&value_subs, &self.context) {
-                        self.context
-                            .set_configuration(let_action.name.clone(), resolved);
-                    }
+                if let Ok(value_subs) = parse_substitutions(&let_action.value)
+                    && let Ok(resolved) = resolve_substitutions(&value_subs, &self.context)
+                {
+                    self.context
+                        .set_configuration(let_action.name.clone(), resolved);
                 }
 
                 let condition = extract_condition(entity)?;
@@ -285,10 +283,10 @@ impl LaunchTraverser {
 
                 // Save scope, push namespace, build children, restore scope
                 let scope = self.context.save_scope();
-                if let Some(ref ns_subs) = group.namespace {
-                    if let Ok(namespace) = resolve_substitutions(ns_subs, &self.context) {
-                        self.context.push_namespace(namespace);
-                    }
+                if let Some(ref ns_subs) = group.namespace
+                    && let Ok(namespace) = resolve_substitutions(ns_subs, &self.context)
+                {
+                    self.context.push_namespace(namespace);
                 }
                 let mut body = Vec::new();
                 for child in entity.children() {

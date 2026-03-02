@@ -43,11 +43,11 @@ impl NotSubstitution {
         }
 
         // Fallback: call __str__ and negate
-        if let Ok(str_result) = self.condition.call_method0(py, "__str__") {
-            if let Ok(s) = str_result.extract::<String>(py) {
-                let is_true = matches!(s.to_lowercase().as_str(), "true" | "1" | "yes");
-                return Ok(if is_true { "false" } else { "true" }.to_string());
-            }
+        if let Ok(str_result) = self.condition.call_method0(py, "__str__")
+            && let Ok(s) = str_result.extract::<String>(py)
+        {
+            let is_true = matches!(s.to_lowercase().as_str(), "true" | "1" | "yes");
+            return Ok(if is_true { "false" } else { "true" }.to_string());
         }
 
         Ok("true".to_string())

@@ -99,11 +99,12 @@ impl NodeCapture {
                 cmd.push("-r".to_string());
                 cmd.push(format!("__node:={}", name));
             }
-            if let Some(ref ns) = self.namespace {
-                if !ns.is_empty() && ns != "/" {
-                    cmd.push("-r".to_string());
-                    cmd.push(format!("__ns:={}", ns));
-                }
+            if let Some(ref ns) = self.namespace
+                && !ns.is_empty()
+                && ns != "/"
+            {
+                cmd.push("-r".to_string());
+                cmd.push(format!("__ns:={}", ns));
             }
             return cmd;
         };

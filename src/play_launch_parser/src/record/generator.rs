@@ -65,11 +65,12 @@ pub fn build_ros_command(
     }
 
     // 5. Namespace (only if non-root)
-    if let Some(ns) = namespace {
-        if !ns.is_empty() && ns != "/" {
-            cmd.push("-r".to_string());
-            cmd.push(format!("__ns:={}", ns));
-        }
+    if let Some(ns) = namespace
+        && !ns.is_empty()
+        && ns != "/"
+    {
+        cmd.push("-r".to_string());
+        cmd.push(format!("__ns:={}", ns));
     }
 
     // 6. Global parameters (normalized)

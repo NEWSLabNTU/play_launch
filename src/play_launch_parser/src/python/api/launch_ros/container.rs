@@ -178,15 +178,13 @@ impl ComposableNodeContainer {
         }
 
         // Try to resolve using perform() with real context
-        if obj_ref.hasattr("perform")? {
-            if let Ok(context) = create_launch_context(py) {
-                if let Ok(result) = obj_ref.call_method1("perform", (context,)) {
-                    if let Ok(resolved) = result.extract::<String>() {
-                        log::debug!("Resolved substitution via perform(): '{}'", resolved);
-                        return Ok(resolved);
-                    }
-                }
-            }
+        if obj_ref.hasattr("perform")?
+            && let Ok(context) = create_launch_context(py)
+            && let Ok(result) = obj_ref.call_method1("perform", (context,))
+            && let Ok(resolved) = result.extract::<String>()
+        {
+            log::debug!("Resolved substitution via perform(): '{}'", resolved);
+            return Ok(resolved);
         }
 
         // Fallback to regular conversion
@@ -282,11 +280,11 @@ impl ComposableNodeContainer {
         );
 
         // Try calling evaluate() method on the condition object
-        if let Ok(result) = cond_ref.call_method0("evaluate") {
-            if let Ok(bool_val) = result.extract::<bool>() {
-                log::debug!("Container condition evaluated to: {}", bool_val);
-                return Ok(bool_val);
-            }
+        if let Ok(result) = cond_ref.call_method0("evaluate")
+            && let Ok(bool_val) = result.extract::<bool>()
+        {
+            log::debug!("Container condition evaluated to: {}", bool_val);
+            return Ok(bool_val);
         }
 
         // Fallback: treat as truthy if we can't evaluate

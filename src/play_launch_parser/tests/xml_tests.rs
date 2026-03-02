@@ -203,15 +203,15 @@ fn test_find_pkg_share_substitution() {
     for node in nodes {
         if let Some(params) = node["params"].as_array() {
             for param in params {
-                if let Some(param_arr) = param.as_array() {
-                    if param_arr.len() >= 2 {
-                        let value = param_arr[1].as_str().unwrap_or("");
-                        assert!(
-                            !value.contains("$(find-pkg-share"),
-                            "find-pkg-share should be resolved, got: {}",
-                            value
-                        );
-                    }
+                if let Some(param_arr) = param.as_array()
+                    && param_arr.len() >= 2
+                {
+                    let value = param_arr[1].as_str().unwrap_or("");
+                    assert!(
+                        !value.contains("$(find-pkg-share"),
+                        "find-pkg-share should be resolved, got: {}",
+                        value
+                    );
                 }
             }
         }
@@ -237,16 +237,16 @@ fn test_argument_override() {
     for node in nodes {
         if let Some(remaps) = node["remaps"].as_array() {
             for remap in remaps {
-                if let Some(remap_arr) = remap.as_array() {
-                    if remap_arr.len() >= 2 {
-                        let from = remap_arr[0].as_str().unwrap_or("");
-                        let to = remap_arr[1].as_str().unwrap_or("");
-                        if from == "chatter" {
-                            // The fixture might use the arg for remapping
-                            // This depends on the fixture structure
-                            // Just verify remaps exist and are strings
-                            assert!(!to.is_empty(), "Remap target should not be empty");
-                        }
+                if let Some(remap_arr) = remap.as_array()
+                    && remap_arr.len() >= 2
+                {
+                    let from = remap_arr[0].as_str().unwrap_or("");
+                    let to = remap_arr[1].as_str().unwrap_or("");
+                    if from == "chatter" {
+                        // The fixture might use the arg for remapping
+                        // This depends on the fixture structure
+                        // Just verify remaps exist and are strings
+                        assert!(!to.is_empty(), "Remap target should not be empty");
                     }
                 }
             }

@@ -759,9 +759,8 @@ fn normalize_namespace(ns: &str) -> String {
     }
 
     // Remove trailing slashes
-    let normalized = trimmed.trim_end_matches('/').to_string();
 
-    normalized
+    trimmed.trim_end_matches('/').to_string()
 }
 
 impl Default for LaunchContext {

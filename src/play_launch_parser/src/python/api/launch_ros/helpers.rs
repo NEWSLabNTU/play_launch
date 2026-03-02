@@ -33,18 +33,18 @@ pub(crate) fn load_yaml_params(path: &str) -> PyResult<Vec<(String, String)>> {
     if let Value::Mapping(top_map) = &yaml {
         let mut found_node_keys = false;
         for (k, v) in top_map {
-            if let Value::String(key) = k {
-                if key == "/**" || key.starts_with('/') {
-                    found_node_keys = true;
-                    // Found a node matcher, look for ros__parameters
-                    if let Value::Mapping(node_map) = v {
-                        let params_value = node_map
-                            .get(Value::String("ros__parameters".to_string()))
-                            .unwrap_or(v);
-                        flatten_yaml(params_value, "", &mut params);
-                    } else {
-                        flatten_yaml(v, "", &mut params);
-                    }
+            if let Value::String(key) = k
+                && (key == "/**" || key.starts_with('/'))
+            {
+                found_node_keys = true;
+                // Found a node matcher, look for ros__parameters
+                if let Value::Mapping(node_map) = v {
+                    let params_value = node_map
+                        .get(Value::String("ros__parameters".to_string()))
+                        .unwrap_or(v);
+                    flatten_yaml(params_value, "", &mut params);
+                } else {
+                    flatten_yaml(v, "", &mut params);
                 }
             }
         }

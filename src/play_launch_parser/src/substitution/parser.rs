@@ -60,52 +60,52 @@ fn parse_substitutions_recursive(input: &str) -> Result<Vec<Substitution>> {
     let mut last_pos = 0;
 
     while let Some((i, ch)) = chars.next() {
-        if ch == '$' {
-            if let Some((_, '(')) = chars.peek() {
-                // Found start of substitution
-                // Add any text before this substitution
-                if i > last_pos {
-                    let text = &input[last_pos..i];
-                    if !text.is_empty() {
-                        result.push(Substitution::Text(text.to_string()));
-                    }
+        if ch == '$'
+            && let Some((_, '(')) = chars.peek()
+        {
+            // Found start of substitution
+            // Add any text before this substitution
+            if i > last_pos {
+                let text = &input[last_pos..i];
+                if !text.is_empty() {
+                    result.push(Substitution::Text(text.to_string()));
                 }
-
-                // Skip the '('
-                chars.next();
-
-                // Find matching ')' by counting parentheses
-                let sub_start = i + 2; // Position after "$("
-                let mut depth = 1;
-                let mut sub_end = sub_start;
-
-                for (pos, c) in chars.by_ref() {
-                    if c == '(' {
-                        depth += 1;
-                    } else if c == ')' {
-                        depth -= 1;
-                        if depth == 0 {
-                            sub_end = pos;
-                            break;
-                        }
-                    }
-                }
-
-                if depth != 0 {
-                    return Err(ParseError::InvalidSubstitution(
-                        "Unmatched parentheses in substitution".to_string(),
-                    ));
-                }
-
-                // Extract the content inside $()
-                let content = &input[sub_start..sub_end];
-
-                // Parse the substitution (which may contain nested substitutions)
-                let substitution = parse_substitution_content(content)?;
-                result.push(substitution);
-
-                last_pos = sub_end + 1;
             }
+
+            // Skip the '('
+            chars.next();
+
+            // Find matching ')' by counting parentheses
+            let sub_start = i + 2; // Position after "$("
+            let mut depth = 1;
+            let mut sub_end = sub_start;
+
+            for (pos, c) in chars.by_ref() {
+                if c == '(' {
+                    depth += 1;
+                } else if c == ')' {
+                    depth -= 1;
+                    if depth == 0 {
+                        sub_end = pos;
+                        break;
+                    }
+                }
+            }
+
+            if depth != 0 {
+                return Err(ParseError::InvalidSubstitution(
+                    "Unmatched parentheses in substitution".to_string(),
+                ));
+            }
+
+            // Extract the content inside $()
+            let content = &input[sub_start..sub_end];
+
+            // Parse the substitution (which may contain nested substitutions)
+            let substitution = parse_substitution_content(content)?;
+            result.push(substitution);
+
+            last_pos = sub_end + 1;
         }
     }
 
@@ -133,22 +133,22 @@ fn extract_first_quoted_arg(input: &str) -> &str {
     let trimmed = input.trim();
 
     // Check for single or double quotes at the start
-    if let Some(quote) = trimmed.chars().next() {
-        if quote == '\'' || quote == '"' {
-            // Find the matching closing quote
-            if let Some(end_idx) = trimmed[1..].find(quote) {
-                let first_quoted_content = &trimmed[1..end_idx + 1];
+    if let Some(quote) = trimmed.chars().next()
+        && (quote == '\'' || quote == '"')
+    {
+        // Find the matching closing quote
+        if let Some(end_idx) = trimmed[1..].find(quote) {
+            let first_quoted_content = &trimmed[1..end_idx + 1];
 
-                // Check if there's a second quoted string after this one
-                let after_first = &trimmed[end_idx + 2..].trim_start();
-                if !after_first.is_empty()
-                    && (after_first.starts_with('\'') || after_first.starts_with('"'))
-                {
-                    // There's a second quoted argument, so only return the first
-                    return first_quoted_content;
-                }
-                // Otherwise return the full input (handles single quoted arg)
+            // Check if there's a second quoted string after this one
+            let after_first = &trimmed[end_idx + 2..].trim_start();
+            if !after_first.is_empty()
+                && (after_first.starts_with('\'') || after_first.starts_with('"'))
+            {
+                // There's a second quoted argument, so only return the first
+                return first_quoted_content;
             }
+            // Otherwise return the full input (handles single quoted arg)
         }
     }
 
@@ -163,20 +163,20 @@ fn extract_second_quoted_arg(input: &str) -> Option<&str> {
     let trimmed = input.trim();
 
     // Check for single or double quotes at the start
-    if let Some(quote) = trimmed.chars().next() {
-        if quote == '\'' || quote == '"' {
-            // Find the matching closing quote for the first arg
-            if let Some(end_idx) = trimmed[1..].find(quote) {
-                // Look for the second quoted string after the first
-                let after_first = trimmed[end_idx + 2..].trim_start();
+    if let Some(quote) = trimmed.chars().next()
+        && (quote == '\'' || quote == '"')
+    {
+        // Find the matching closing quote for the first arg
+        if let Some(end_idx) = trimmed[1..].find(quote) {
+            // Look for the second quoted string after the first
+            let after_first = trimmed[end_idx + 2..].trim_start();
 
-                if let Some(quote2) = after_first.chars().next() {
-                    if quote2 == '\'' || quote2 == '"' {
-                        // Find the matching closing quote for the second arg
-                        if let Some(end_idx2) = after_first[1..].find(quote2) {
-                            return Some(&after_first[1..end_idx2 + 1]);
-                        }
-                    }
+            if let Some(quote2) = after_first.chars().next()
+                && (quote2 == '\'' || quote2 == '"')
+            {
+                // Find the matching closing quote for the second arg
+                if let Some(end_idx2) = after_first[1..].find(quote2) {
+                    return Some(&after_first[1..end_idx2 + 1]);
                 }
             }
         }

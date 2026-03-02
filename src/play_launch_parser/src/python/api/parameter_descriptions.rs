@@ -127,10 +127,10 @@ impl ParameterValue {
         }
 
         // Try calling __str__ on the object (for substitutions)
-        if let Ok(str_result) = obj_ref.call_method0("__str__") {
-            if let Ok(s) = str_result.extract::<String>() {
-                return Ok(s);
-            }
+        if let Ok(str_result) = obj_ref.call_method0("__str__")
+            && let Ok(s) = str_result.extract::<String>()
+        {
+            return Ok(s);
         }
 
         // Fallback
