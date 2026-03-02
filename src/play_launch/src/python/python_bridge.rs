@@ -3,7 +3,7 @@
 //! This module provides functions to call the dump_launch and play_launch_analyzer
 //! Python modules directly without spawning subprocesses.
 
-use eyre::{bail, Context, Result};
+use eyre::{Context, Result, bail};
 use pyo3::{prelude::*, types::PyList};
 use std::path::Path;
 use tracing::{debug, info};
