@@ -97,7 +97,10 @@ impl ComposableNodeContainer {
 
         log::debug!(
             "ComposableNodeContainer::new: name='{}', namespace={:?}, package='{}', executable='{}'",
-            name_str, namespace_str, package_str, executable_str
+            name_str,
+            namespace_str,
+            package_str,
+            executable_str
         );
 
         let container = Self {

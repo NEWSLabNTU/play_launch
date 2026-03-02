@@ -17,7 +17,9 @@ pub enum ParseError {
         file: String,
     },
 
-    #[error("Type coercion failed for attribute '{attribute}' with value '{value}' (expected {expected_type})")]
+    #[error(
+        "Type coercion failed for attribute '{attribute}' with value '{value}' (expected {expected_type})"
+    )]
     TypeCoercion {
         attribute: String,
         value: String,

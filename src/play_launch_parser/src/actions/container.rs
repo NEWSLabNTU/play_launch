@@ -4,7 +4,7 @@ use crate::{
     error::{ParseError, Result},
     params::extract_params_from_yaml,
     record::{ComposableNodeContainerRecord, LoadNodeRecord},
-    substitution::{parse_substitutions, resolve_substitutions, LaunchContext, Substitution},
+    substitution::{LaunchContext, Substitution, parse_substitutions, resolve_substitutions},
     xml::{Entity, XmlEntity},
 };
 use std::{collections::HashMap, path::Path};
@@ -219,8 +219,8 @@ impl ContainerAction {
 
     pub fn to_node_record(&self, context: &LaunchContext) -> Result<crate::record::NodeRecord> {
         use crate::record::{
-            generator::{build_ros_command, resolve_exec_path},
             NodeRecord,
+            generator::{build_ros_command, resolve_exec_path},
         };
 
         // Resolve deferred fields

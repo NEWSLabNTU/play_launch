@@ -7,7 +7,7 @@ use crate::{
     captures::{ContainerCapture, IncludeCapture, LoadNodeCapture, NodeCapture},
     substitution::{
         parser::parse_substitutions,
-        types::{resolve_substitutions, Substitution},
+        types::{Substitution, resolve_substitutions},
     },
 };
 use indexmap::IndexMap;

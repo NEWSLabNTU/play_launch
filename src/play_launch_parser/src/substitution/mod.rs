@@ -7,4 +7,4 @@ pub mod types;
 
 pub use context::{ArgumentMetadata, LaunchContext};
 pub use parser::parse_substitutions;
-pub use types::{resolve_substitutions, Substitution};
+pub use types::{Substitution, resolve_substitutions};

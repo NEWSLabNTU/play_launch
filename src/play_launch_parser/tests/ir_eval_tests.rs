@@ -151,9 +151,11 @@ fn test_evaluate_set_parameter() {
     let record = evaluate_launch_file(file.path(), HashMap::new()).unwrap();
     assert_eq!(record.node.len(), 1);
     let global_params = record.node[0].global_params.as_ref().unwrap();
-    assert!(global_params
-        .iter()
-        .any(|(k, v)| k == "use_sim_time" && v == "True"));
+    assert!(
+        global_params
+            .iter()
+            .any(|(k, v)| k == "use_sim_time" && v == "True")
+    );
 }
 
 #[test]

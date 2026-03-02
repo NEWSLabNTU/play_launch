@@ -5,7 +5,7 @@ use crate::{
     error::GenerationError,
     params::load_and_resolve_param_file,
     record::types::NodeRecord,
-    substitution::{resolve_substitutions, LaunchContext},
+    substitution::{LaunchContext, resolve_substitutions},
 };
 use std::path::Path;
 

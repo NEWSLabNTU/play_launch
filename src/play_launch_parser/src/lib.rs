@@ -1,5 +1,10 @@
 //! play_launch_parser library
 
+// PyO3 0.20 macros generate unsafe calls inside unsafe fn without explicit
+// unsafe blocks. This lint became warn-by-default in edition 2024.
+// Remove this once PyO3 is upgraded to 0.23+.
+#![allow(unsafe_op_in_unsafe_fn)]
+
 pub mod actions;
 pub mod captures;
 pub mod condition;
@@ -506,9 +511,10 @@ test_node:
         let env = record.node[0].env.as_ref().unwrap();
         // Both global and node-specific environment should be present
         assert!(env.iter().any(|(k, v)| k == "GLOBAL_VAR" && v == "global"));
-        assert!(env
-            .iter()
-            .any(|(k, v)| k == "NODE_VAR" && v == "node_specific"));
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == "NODE_VAR" && v == "node_specific")
+        );
     }
 
     #[test]
@@ -546,9 +552,10 @@ test_node:
         assert_eq!(record.node.len(), 1);
 
         let env = record.node[0].env.as_ref().unwrap();
-        assert!(env
-            .iter()
-            .any(|(k, v)| k == "EXEC_VAR" && v == "exec_value"));
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == "EXEC_VAR" && v == "exec_value")
+        );
     }
 
     #[test]
@@ -652,9 +659,11 @@ test_node:
 
         // Check that global parameter was set
         let global_params = record.node[0].global_params.as_ref().unwrap();
-        assert!(global_params
-            .iter()
-            .any(|(k, v)| k == "use_sim_time" && v == "True"));
+        assert!(
+            global_params
+                .iter()
+                .any(|(k, v)| k == "use_sim_time" && v == "True")
+        );
     }
 
     #[test]
@@ -672,9 +681,11 @@ test_node:
         assert_eq!(record.node.len(), 1);
 
         let global_params = record.node[0].global_params.as_ref().unwrap();
-        assert!(global_params
-            .iter()
-            .any(|(k, v)| k == "use_sim_time" && v == "True"));
+        assert!(
+            global_params
+                .iter()
+                .any(|(k, v)| k == "use_sim_time" && v == "True")
+        );
     }
 
     #[test]
@@ -693,12 +704,16 @@ test_node:
 
         let global_params = record.node[0].global_params.as_ref().unwrap();
         assert_eq!(global_params.len(), 2);
-        assert!(global_params
-            .iter()
-            .any(|(k, v)| k == "use_sim_time" && v == "True"));
-        assert!(global_params
-            .iter()
-            .any(|(k, v)| k == "log_level" && v == "debug"));
+        assert!(
+            global_params
+                .iter()
+                .any(|(k, v)| k == "use_sim_time" && v == "True")
+        );
+        assert!(
+            global_params
+                .iter()
+                .any(|(k, v)| k == "log_level" && v == "debug")
+        );
     }
 
     #[test]
@@ -718,15 +733,17 @@ test_node:
         // Both nodes should have the global parameter
         for node_record in &record.node {
             let global_params = node_record.global_params.as_ref().unwrap();
-            assert!(global_params
-                .iter()
-                .any(|(k, v)| k == "use_sim_time" && v == "True"));
+            assert!(
+                global_params
+                    .iter()
+                    .any(|(k, v)| k == "use_sim_time" && v == "True")
+            );
         }
     }
 
     #[test]
     fn test_optenv_with_existing_var() {
-        std::env::set_var("TEST_OPTENV_LAUNCH", "from_env");
+        unsafe { std::env::set_var("TEST_OPTENV_LAUNCH", "from_env") };
         let xml = r#"<launch>
             <node pkg="demo_nodes_cpp" exec="talker" name="$(optenv TEST_OPTENV_LAUNCH)" />
         </launch>"#;
@@ -741,7 +758,7 @@ test_node:
 
     #[test]
     fn test_optenv_with_missing_var_no_default() {
-        std::env::remove_var("NONEXISTENT_OPTENV_LAUNCH");
+        unsafe { std::env::remove_var("NONEXISTENT_OPTENV_LAUNCH") };
         let xml = r#"<launch>
             <node pkg="demo_nodes_cpp" exec="talker" name="node_$(optenv NONEXISTENT_OPTENV_LAUNCH)_end" />
         </launch>"#;
@@ -757,7 +774,7 @@ test_node:
 
     #[test]
     fn test_optenv_with_missing_var_with_default() {
-        std::env::remove_var("NONEXISTENT_OPTENV_LAUNCH2");
+        unsafe { std::env::remove_var("NONEXISTENT_OPTENV_LAUNCH2") };
         let xml = r#"<launch>
             <node pkg="demo_nodes_cpp" exec="talker" name="$(optenv NONEXISTENT_OPTENV_LAUNCH2 default_name)" />
         </launch>"#;
@@ -773,7 +790,7 @@ test_node:
 
     #[test]
     fn test_optenv_vs_env_missing_var() {
-        std::env::remove_var("MISSING_TEST_VAR");
+        unsafe { std::env::remove_var("MISSING_TEST_VAR") };
 
         // optenv should work with missing variable
         let xml_optenv = r#"<launch>

@@ -8,7 +8,7 @@ use crate::{
     condition::should_process_entity,
     error::{ParseError, Result},
     record::CommandGenerator,
-    substitution::{parse_substitutions, resolve_substitutions, ArgumentMetadata},
+    substitution::{ArgumentMetadata, parse_substitutions, resolve_substitutions},
     xml::{Entity, XmlEntity},
 };
 use std::collections::HashMap;

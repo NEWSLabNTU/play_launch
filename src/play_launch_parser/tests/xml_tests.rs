@@ -767,7 +767,7 @@ fn test_set_env_hyphenated() {
 #[test]
 fn test_unset_env_hyphenated() {
     // Set an environment variable first
-    std::env::set_var("TEST_UNSET_VAR", "initial_value");
+    unsafe { std::env::set_var("TEST_UNSET_VAR", "initial_value") };
 
     // Create temporary launch file with unset-env (hyphenated)
     let mut temp_file = NamedTempFile::new().unwrap();

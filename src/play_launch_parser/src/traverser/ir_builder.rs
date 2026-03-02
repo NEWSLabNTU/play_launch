@@ -10,7 +10,7 @@ use crate::{
     error::{ParseError, Result},
     file_cache::read_file_cached,
     ir::{Action, ActionKind, Condition, Expr, LaunchProgram, Span},
-    substitution::{parse_substitutions, resolve_substitutions, ArgumentMetadata},
+    substitution::{ArgumentMetadata, parse_substitutions, resolve_substitutions},
     xml::{Entity, XmlEntity},
 };
 use std::path::Path;

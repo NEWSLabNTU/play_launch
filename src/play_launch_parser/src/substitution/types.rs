@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_env_var() {
-        std::env::set_var("TEST_VAR", "test_value");
+        unsafe { std::env::set_var("TEST_VAR", "test_value") };
         let sub = Substitution::EnvironmentVariable {
             name: vec![Substitution::Text("TEST_VAR".to_string())],
             default: None,
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_optenv_with_existing_var() {
-        std::env::set_var("TEST_OPTENV_VAR", "test_value");
+        unsafe { std::env::set_var("TEST_OPTENV_VAR", "test_value") };
         let sub = Substitution::OptionalEnvironmentVariable {
             name: vec![Substitution::Text("TEST_OPTENV_VAR".to_string())],
             default: None,
@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn test_optenv_with_missing_var_no_default() {
         // Make sure the variable doesn't exist
-        std::env::remove_var("NONEXISTENT_OPTENV_VAR");
+        unsafe { std::env::remove_var("NONEXISTENT_OPTENV_VAR") };
         let sub = Substitution::OptionalEnvironmentVariable {
             name: vec![Substitution::Text("NONEXISTENT_OPTENV_VAR".to_string())],
             default: None,
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_optenv_with_missing_var_with_default() {
-        std::env::remove_var("NONEXISTENT_OPTENV_VAR2");
+        unsafe { std::env::remove_var("NONEXISTENT_OPTENV_VAR2") };
         let sub = Substitution::OptionalEnvironmentVariable {
             name: vec![Substitution::Text("NONEXISTENT_OPTENV_VAR2".to_string())],
             default: Some(vec![Substitution::Text("default_value".to_string())]),
@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_optenv_vs_env_behavior() {
-        std::env::remove_var("MISSING_VAR_TEST");
+        unsafe { std::env::remove_var("MISSING_VAR_TEST") };
 
         // optenv should not error
         let optenv = Substitution::OptionalEnvironmentVariable {
@@ -509,7 +509,7 @@ mod tests {
 
     #[test]
     fn test_command_env_access() {
-        std::env::set_var("TEST_CMD_VAR", "test_value");
+        unsafe { std::env::set_var("TEST_CMD_VAR", "test_value") };
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("echo $TEST_CMD_VAR".to_string())],
             error_mode: CommandErrorMode::Strict,
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn test_resolve_nested_env_in_var() {
         // $(var $(env ROBOT_NAME)_config) where ROBOT_NAME=turtlebot, turtlebot_config=tb3.yaml
-        std::env::set_var("TEST_ROBOT_NAME", "turtlebot");
+        unsafe { std::env::set_var("TEST_ROBOT_NAME", "turtlebot") };
 
         let sub = Substitution::LaunchConfiguration(vec![
             Substitution::EnvironmentVariable {
@@ -569,7 +569,7 @@ mod tests {
         let mut context = LaunchContext::new();
         context.set_configuration("my_default".to_string(), "fallback_value".to_string());
 
-        std::env::remove_var("NONEXISTENT_NESTED_VAR");
+        unsafe { std::env::remove_var("NONEXISTENT_NESTED_VAR") };
         let result = sub.resolve(&context).unwrap();
         assert_eq!(result, "fallback_value");
     }
@@ -596,7 +596,7 @@ mod tests {
     fn test_resolve_triple_nested() {
         // $(var $(env $(var prefix)_NAME)_suffix)
         // prefix=ROBOT, ROBOT_NAME=turtlebot, turtlebot_suffix=final_value
-        std::env::set_var("TEST_ROBOT_NAME_TRIPLE", "turtlebot");
+        unsafe { std::env::set_var("TEST_ROBOT_NAME_TRIPLE", "turtlebot") };
 
         let sub = Substitution::LaunchConfiguration(vec![
             Substitution::EnvironmentVariable {
@@ -632,7 +632,7 @@ mod tests {
         let mut context = LaunchContext::new();
         context.set_configuration("backup".to_string(), "default_val".to_string());
 
-        std::env::remove_var("MISSING_OPTENV_NESTED");
+        unsafe { std::env::remove_var("MISSING_OPTENV_NESTED") };
         let result = sub.resolve(&context).unwrap();
         assert_eq!(result, "default_val");
     }
@@ -640,7 +640,7 @@ mod tests {
     #[test]
     fn test_resolve_complex_nested_string() {
         // "prefix_$(var $(env TYPE)_name)_suffix" where TYPE=robot, robot_name=turtlebot
-        std::env::set_var("TEST_TYPE_NESTED", "robot");
+        unsafe { std::env::set_var("TEST_TYPE_NESTED", "robot") };
 
         let subs = vec![
             Substitution::Text("prefix_".to_string()),
@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn test_resolve_nested_command_with_env() {
         // $(command echo $(env USER))
-        std::env::set_var("TEST_USER_NESTED", "testuser");
+        unsafe { std::env::set_var("TEST_USER_NESTED", "testuser") };
 
         let sub = Substitution::Command {
             cmd: vec![

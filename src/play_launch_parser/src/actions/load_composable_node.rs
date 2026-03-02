@@ -5,7 +5,7 @@ use crate::{
     captures::LoadNodeCapture,
     error::{ParseError, Result},
     record::LoadNodeRecord,
-    substitution::{parse_substitutions, resolve_substitutions, LaunchContext, Substitution},
+    substitution::{LaunchContext, Substitution, parse_substitutions, resolve_substitutions},
     xml::{Entity, XmlEntity},
 };
 

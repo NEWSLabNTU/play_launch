@@ -181,7 +181,7 @@ fn test_undefined_env_var_in_substitution() {
     file.write_all(xml.as_bytes()).unwrap();
     file.flush().unwrap();
 
-    std::env::remove_var("NONEXISTENT_VAR_XYZ_123");
+    unsafe { std::env::remove_var("NONEXISTENT_VAR_XYZ_123") };
 
     let result = parse_launch_file(file.path(), HashMap::new());
     assert!(result.is_err(), "Undefined env var should produce an error");

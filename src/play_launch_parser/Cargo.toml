@@ -1,7 +1,7 @@
 [package]
 name = "play_launch_parser"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["play_launch_parser contributors"]
 description = "High-performance ROS 2 launch file parser in Rust"
 license = "Apache-2.0"

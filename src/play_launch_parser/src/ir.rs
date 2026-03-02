@@ -4,7 +4,7 @@
 //! Preserves conditional branches, substitution expressions, and include hierarchy
 //! for static analysis, evaluation, and annotation.
 
-use crate::substitution::{resolve_substitutions, LaunchContext, Substitution};
+use crate::substitution::{LaunchContext, Substitution, resolve_substitutions};
 use std::path::PathBuf;
 
 /// A lazy string expression (unevaluated substitution chain).
@@ -210,7 +210,7 @@ fn collect_arguments<'a>(actions: &'a [Action], out: &mut Vec<&'a str>) {
                 collect_arguments(body, out);
             }
             ActionKind::Include {
-                body: Some(ref program),
+                body: Some(program),
                 ..
             } => {
                 collect_arguments(&program.body, out);
@@ -232,7 +232,7 @@ fn collect_nodes<'a>(actions: &'a [Action], out: &mut Vec<&'a Action>) {
                 collect_nodes(body, out);
             }
             ActionKind::Include {
-                body: Some(ref program),
+                body: Some(program),
                 ..
             } => {
                 collect_nodes(&program.body, out);

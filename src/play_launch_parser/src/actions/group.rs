@@ -2,7 +2,7 @@
 
 use crate::{
     error::Result,
-    substitution::{parse_substitutions, Substitution},
+    substitution::{Substitution, parse_substitutions},
     xml::{Entity, XmlEntity},
 };
 

@@ -2,7 +2,7 @@
 
 use crate::{
     error::ParseError,
-    substitution::{resolve_substitutions, LaunchContext},
+    substitution::{LaunchContext, resolve_substitutions},
 };
 use serde_yaml::Value;
 use std::{fs, path::Path};
