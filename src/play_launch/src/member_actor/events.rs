@@ -187,15 +187,19 @@ mod tests {
 
     #[test]
     fn test_state_event_terminal() {
-        assert!(StateEvent::Terminated {
-            name: "test".to_string()
-        }
-        .is_terminal());
-        assert!(!StateEvent::Started {
-            name: "test".to_string(),
-            pid: 123
-        }
-        .is_terminal());
+        assert!(
+            StateEvent::Terminated {
+                name: "test".to_string()
+            }
+            .is_terminal()
+        );
+        assert!(
+            !StateEvent::Started {
+                name: "test".to_string(),
+                pid: 123
+            }
+            .is_terminal()
+        );
     }
 
     #[test]

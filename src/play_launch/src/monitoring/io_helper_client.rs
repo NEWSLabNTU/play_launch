@@ -8,7 +8,7 @@
 
 use eyre::{Context, Result};
 use play_launch::ipc::{
-    decode_message, encode_message, ProcIoError, ProcIoResult, Request, Response,
+    ProcIoError, ProcIoResult, Request, Response, decode_message, encode_message,
 };
 use std::{
     os::unix::io::FromRawFd,

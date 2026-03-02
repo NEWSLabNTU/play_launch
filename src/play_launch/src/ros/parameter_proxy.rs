@@ -4,7 +4,7 @@
 //! Constructed on-demand per request (service clients are cheap to create in rclrs).
 
 use super::parameter_types::{
-    type_name_from_ros, FloatRange, IntegerRange, ParamEntry, ParamValue, SetParamResult,
+    FloatRange, IntegerRange, ParamEntry, ParamValue, SetParamResult, type_name_from_ros,
 };
 use eyre::{Context as _, Result};
 use std::{sync::Arc, time::Duration};

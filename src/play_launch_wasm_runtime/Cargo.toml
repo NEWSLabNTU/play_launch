@@ -1,7 +1,7 @@
 [package]
 name = "play_launch_wasm_runtime"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Executes play_launch WASM modules with a host that produces RecordJson"
 license = "Apache-2.0"
 

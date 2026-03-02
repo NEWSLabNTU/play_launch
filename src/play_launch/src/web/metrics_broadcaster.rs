@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex as TokioMutex};
+use tokio::sync::{Mutex as TokioMutex, mpsc};
 
 use crate::monitoring::system_stats::SystemStats;
 

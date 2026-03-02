@@ -195,26 +195,32 @@ mod tests {
     #[test]
     fn test_node_state_terminal() {
         assert!(NodeState::Stopped { exit_code: Some(0) }.is_terminal());
-        assert!(NodeState::Failed {
-            error: "test".to_string()
-        }
-        .is_terminal());
+        assert!(
+            NodeState::Failed {
+                error: "test".to_string()
+            }
+            .is_terminal()
+        );
         assert!(!NodeState::Pending.is_terminal());
-        assert!(!NodeState::Respawning {
-            exit_code: Some(1),
-            attempt: 0
-        }
-        .is_terminal());
+        assert!(
+            !NodeState::Respawning {
+                exit_code: Some(1),
+                attempt: 0
+            }
+            .is_terminal()
+        );
     }
 
     #[test]
     fn test_composable_state_loaded() {
         assert!(ComposableState::Loaded { unique_id: 123 }.is_loaded());
         assert!(!ComposableState::Unloaded.is_loaded());
-        assert!(!ComposableState::Loading {
-            started_at: std::time::Instant::now()
-        }
-        .is_loaded());
+        assert!(
+            !ComposableState::Loading {
+                started_at: std::time::Instant::now()
+            }
+            .is_loaded()
+        );
     }
 
     #[test]

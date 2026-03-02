@@ -7,7 +7,7 @@
 //! length-prefixed bincode messages.
 
 use eyre::{Context, Result};
-use play_launch::ipc::{decode_message, encode_message, ProcIoResult, Request, Response};
+use play_launch::ipc::{ProcIoResult, Request, Response, decode_message, encode_message};
 use std::os::unix::io::{FromRawFd, RawFd};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info};
@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
     // If play_launch (parent) crashes, helper receives SIGTERM and exits
     #[cfg(target_os = "linux")]
     unsafe {
-        use libc::{prctl, PR_SET_PDEATHSIG, SIGTERM};
+        use libc::{PR_SET_PDEATHSIG, SIGTERM, prctl};
         if prctl(PR_SET_PDEATHSIG, SIGTERM) != 0 {
             eprintln!("Warning: Failed to set parent death signal");
         }

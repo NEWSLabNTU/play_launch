@@ -2,8 +2,8 @@
 
 use eyre::Result;
 use nvml_wrapper::{
-    enum_wrappers::device::{Clock, TemperatureSensor},
     Nvml,
+    enum_wrappers::device::{Clock, TemperatureSensor},
 };
 use std::time::{Duration, SystemTime};
 use sysinfo::{Networks, System};

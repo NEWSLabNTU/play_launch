@@ -4,10 +4,10 @@
 
 use crate::{diagnostics::DiagnosticRegistry, member_actor::MemberHandle};
 use axum::{
-    http::{header, StatusCode},
+    Router,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Router,
 };
 use rust_embed::Embed;
 use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc};

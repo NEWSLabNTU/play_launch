@@ -2,7 +2,7 @@
 
 use crate::member_actor::StateEvent;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex as TokioMutex};
+use tokio::sync::{Mutex as TokioMutex, mpsc};
 
 /// Channel capacity per SSE subscriber
 const SSE_SUBSCRIBER_CHANNEL_SIZE: usize = 100;

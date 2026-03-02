@@ -1,4 +1,4 @@
-use eyre::{bail, Context};
+use eyre::{Context, bail};
 use std::{env, fs, path::PathBuf};
 use tracing::error;
 

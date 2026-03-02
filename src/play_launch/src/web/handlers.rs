@@ -6,10 +6,10 @@ use crate::{
     member_actor::web_query::HealthSummary,
 };
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};

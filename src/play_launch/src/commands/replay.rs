@@ -1,15 +1,15 @@
 //! Replay command - replay recorded launch execution
 
 use super::{
-    common::{build_tokio_runtime, forward_state_events_and_wait, CleanupGuard},
+    common::{CleanupGuard, build_tokio_runtime, forward_state_events_and_wait},
     signal_handler::{self, CompletionContext},
 };
 use crate::{
     cli,
     cli::config::load_runtime_config,
     execution::context::{
-        prepare_composable_node_contexts, prepare_container_contexts, prepare_node_contexts,
-        ComposableNodeContextSet,
+        ComposableNodeContextSet, prepare_composable_node_contexts, prepare_container_contexts,
+        prepare_node_contexts,
     },
     monitoring::resource_monitor::MonitorConfig,
     ros::{container_readiness::SERVICE_DISCOVERY_HANDLE, launch_dump::load_launch_dump},
@@ -41,7 +41,7 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     // even if the intermediate parent dies first.
     #[cfg(target_os = "linux")]
     {
-        use libc::{prctl, PR_SET_CHILD_SUBREAPER};
+        use libc::{PR_SET_CHILD_SUBREAPER, prctl};
         if unsafe { prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0 {
             warn!(
                 "Failed to set PR_SET_CHILD_SUBREAPER: {}",
@@ -387,7 +387,9 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         debug!("ROS service discovery task started successfully");
         Some(task)
     } else {
-        info!("Service readiness checking disabled (set container_readiness.wait_for_service_ready: true in config to enable)");
+        info!(
+            "Service readiness checking disabled (set container_readiness.wait_for_service_ready: true in config to enable)"
+        );
         None
     };
 

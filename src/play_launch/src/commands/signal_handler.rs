@@ -42,11 +42,11 @@ pub(crate) async fn wait_for_completion_unix<F>(
     cleanup_guard: &CleanupGuard,
 ) where
     F: std::future::Future<
-        Output = (
-            &'static str,
-            Result<eyre::Result<()>, tokio::task::JoinError>,
-        ),
-    >,
+            Output = (
+                &'static str,
+                Result<eyre::Result<()>, tokio::task::JoinError>,
+            ),
+        >,
 {
     use crate::process::kill_process_group;
     use futures::stream::StreamExt;
@@ -280,11 +280,11 @@ pub(crate) async fn wait_for_completion_windows<F>(
     cleanup_guard: &CleanupGuard,
 ) where
     F: std::future::Future<
-        Output = (
-            &'static str,
-            Result<eyre::Result<()>, tokio::task::JoinError>,
-        ),
-    >,
+            Output = (
+                &'static str,
+                Result<eyre::Result<()>, tokio::task::JoinError>,
+            ),
+        >,
 {
     use futures::stream::StreamExt;
 

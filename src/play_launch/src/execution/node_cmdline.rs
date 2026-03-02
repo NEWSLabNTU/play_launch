@@ -1,6 +1,6 @@
 use crate::ros::launch_dump::NodeRecord;
-use eyre::{bail, Context};
-use itertools::{chain, Itertools};
+use eyre::{Context, bail};
+use itertools::{Itertools, chain};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, Cow},
@@ -97,10 +97,12 @@ impl NodeCommandLine {
                 )
             })?;
 
-        let command: Vec<_> = vec![exe_path
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("Executable path contains invalid UTF-8"))?
-            .to_string()];
+        let command: Vec<_> = vec![
+            exe_path
+                .to_str()
+                .ok_or_else(|| eyre::eyre!("Executable path contains invalid UTF-8"))?
+                .to_string(),
+        ];
 
         let user_args: Vec<_> = {
             let user_nonros_args = user_nonros_args.iter().flatten().map(|s| s.as_str());

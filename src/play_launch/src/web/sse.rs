@@ -5,8 +5,8 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{
-        sse::{Event, Sse},
         IntoResponse, Response,
+        sse::{Event, Sse},
     },
 };
 use futures::stream::Stream;

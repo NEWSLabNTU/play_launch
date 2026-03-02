@@ -1,6 +1,6 @@
 //! External handle for controlling and querying members
 
-use super::{read_last_n_lines, MemberMetadata, NOISY_STDERR_THRESHOLD};
+use super::{MemberMetadata, NOISY_STDERR_THRESHOLD, read_last_n_lines};
 use crate::{
     member_actor::{
         events::ControlEvent,
@@ -10,7 +10,7 @@ use crate::{
 };
 use eyre::{Context, Result};
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, watch, RwLock};
+use tokio::sync::{RwLock, mpsc, watch};
 use tracing::{debug, warn};
 
 /// External handle for controlling and querying members

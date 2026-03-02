@@ -12,7 +12,7 @@ use crate::member_actor::{
 use eyre::{Context as _, Result};
 use tokio::{
     process::Command,
-    time::{sleep, Duration},
+    time::{Duration, sleep},
 };
 use tracing::{debug, error, info, warn};
 

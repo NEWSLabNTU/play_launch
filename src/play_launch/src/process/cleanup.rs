@@ -66,7 +66,7 @@ pub fn kill_all_descendants() {
         for &pid in descendants.iter().rev() {
             debug!("Sending SIGTERM to PID {}", pid);
             use nix::{
-                sys::signal::{kill, Signal},
+                sys::signal::{Signal, kill},
                 unistd::Pid,
             };
             let _ = kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
@@ -79,7 +79,7 @@ pub fn kill_all_descendants() {
         for &pid in descendants.iter().rev() {
             debug!("Sending SIGKILL to PID {}", pid);
             use nix::{
-                sys::signal::{kill, Signal},
+                sys::signal::{Signal, kill},
                 unistd::Pid,
             };
             let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);

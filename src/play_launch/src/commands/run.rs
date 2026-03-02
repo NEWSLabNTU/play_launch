@@ -1,6 +1,6 @@
 //! Run command - execute a single ROS node
 
-use super::common::{build_tokio_runtime, forward_state_events_and_wait, CleanupGuard};
+use super::common::{CleanupGuard, build_tokio_runtime, forward_state_events_and_wait};
 use crate::{
     cli,
     cli::config::load_runtime_config,

@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use play_launch::member_actor::{events::StateEvent, MemberCoordinator};
+//! use play_launch::member_actor::{MemberCoordinator, events::StateEvent};
 //!
 //! # async fn example() -> eyre::Result<()> {
 //! let mut coordinator = MemberCoordinator::new();

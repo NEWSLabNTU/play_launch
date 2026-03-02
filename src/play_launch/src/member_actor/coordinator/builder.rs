@@ -1,8 +1,8 @@
 //! Builder for collecting member definitions before spawning
 
 use super::{
-    handle::MemberHandle, runner::MemberRunner, MemberMetadata, CONTROL_CHANNEL_SIZE,
-    STATE_EVENT_CHANNEL_SIZE,
+    CONTROL_CHANNEL_SIZE, MemberMetadata, STATE_EVENT_CHANNEL_SIZE, handle::MemberHandle,
+    runner::MemberRunner,
 };
 use crate::member_actor::web_query::{MemberState, MemberType};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};

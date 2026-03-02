@@ -163,11 +163,11 @@ impl ResourceMonitor {
                         }
                         Err(e) => {
                             warn!(
-                                    "GPU process enumeration not supported on this system: {}. \
+                                "GPU process enumeration not supported on this system: {}. \
                                      GPU metrics will not be collected. This is common on some GPU architectures \
                                      (e.g., Jetson/Tegra GPUs). CPU, memory, and I/O monitoring will work normally.",
-                                    e
-                                );
+                                e
+                            );
                         }
                     },
                     Err(e) => {

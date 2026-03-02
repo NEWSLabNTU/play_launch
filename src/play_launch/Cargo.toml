@@ -1,7 +1,7 @@
 [package]
 name = "play_launch"
 version = "0.6.0"
-edition = "2021"
+edition = "2024"
 authors = ["Lin, Hsiang-Jui <jerry73204@gmail.com>"]
 description = "ROS launch record player"
 homepage = "https://github.com/NEWSLabNTU/play_launch"
