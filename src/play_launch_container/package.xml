@@ -12,6 +12,8 @@
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
   <depend>composition_interfaces</depend>
+  <depend>class_loader</depend>
+  <depend>ament_index_cpp</depend>
   <depend>play_launch_msgs</depend>
 
   <export>

@@ -87,6 +87,12 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
 | **Phase 25**: Runtime Graph & Topic Introspection | ⏳ Planned | - | [phase-25-topic_introspection.md](./phase-25-topic_introspection.md) |
 | **Phase 26**: Web UI Metrics Dashboard | ✅ Complete | 2026-03-01 | [phase-26-metrics_dashboard.md](./phase-26-metrics_dashboard.md) |
 
+### Distribution
+
+| Phase | Status | Completion | Documentation |
+|-------|--------|------------|---------------|
+| **Phase 27**: Runtime Dependency Check | ✅ Complete | 2026-03-03 | [phase-27-dependency_check.md](./phase-27-dependency_check.md) |
+
 ---
 
 ## Progress Summary
