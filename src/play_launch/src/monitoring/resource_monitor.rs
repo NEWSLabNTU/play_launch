@@ -154,25 +154,25 @@ impl ResourceMonitor {
         );
 
         // Test GPU process enumeration compatibility (one-time check at startup)
-        if let Some(ref nvml) = nvml {
-            if gpu_device_count > 0 {
-                match nvml.device_by_index(0) {
-                    Ok(device) => match device.running_compute_processes() {
-                        Ok(_) => {
-                            debug!("GPU process enumeration test: OK");
-                        }
-                        Err(e) => {
-                            warn!(
-                                "GPU process enumeration not supported on this system: {}. \
+        if let Some(ref nvml) = nvml
+            && gpu_device_count > 0
+        {
+            match nvml.device_by_index(0) {
+                Ok(device) => match device.running_compute_processes() {
+                    Ok(_) => {
+                        debug!("GPU process enumeration test: OK");
+                    }
+                    Err(e) => {
+                        warn!(
+                            "GPU process enumeration not supported on this system: {}. \
                                      GPU metrics will not be collected. This is common on some GPU architectures \
                                      (e.g., Jetson/Tegra GPUs). CPU, memory, and I/O monitoring will work normally.",
-                                e
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Failed to access GPU device 0: {}", e);
+                            e
+                        );
                     }
+                },
+                Err(e) => {
+                    warn!("Failed to access GPU device 0: {}", e);
                 }
             }
         }

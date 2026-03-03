@@ -470,18 +470,18 @@ impl MemberCoordinatorBuilder {
         // Composable nodes: populated later when LoadSucceeded arrives
         let mut node_fqn_map = HashMap::new();
         for (member_name, meta) in metadata_map.iter() {
-            if meta.member_type == MemberType::Node || meta.member_type == MemberType::Container {
-                if let Some(node_name) = &meta.node_name {
-                    let namespace = meta.namespace.as_deref().unwrap_or("/");
-                    let fqn = if namespace == "/" {
-                        format!("/{}", node_name)
-                    } else if namespace.ends_with('/') {
-                        format!("{}{}", namespace, node_name)
-                    } else {
-                        format!("{}/{}", namespace, node_name)
-                    };
-                    node_fqn_map.insert(member_name.clone(), fqn);
-                }
+            if (meta.member_type == MemberType::Node || meta.member_type == MemberType::Container)
+                && let Some(node_name) = &meta.node_name
+            {
+                let namespace = meta.namespace.as_deref().unwrap_or("/");
+                let fqn = if namespace == "/" {
+                    format!("/{}", node_name)
+                } else if namespace.ends_with('/') {
+                    format!("{}{}", namespace, node_name)
+                } else {
+                    format!("{}/{}", namespace, node_name)
+                };
+                node_fqn_map.insert(member_name.clone(), fqn);
             }
         }
         let node_fqn_map = Arc::new(tokio::sync::RwLock::new(node_fqn_map));

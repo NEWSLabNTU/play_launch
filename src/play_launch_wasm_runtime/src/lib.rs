@@ -32,14 +32,11 @@ pub fn execute_wasm(
         .ok_or_else(|| anyhow::anyhow!("Missing abi_version export"))?;
     let abi_val = abi_global.get(&mut store).i32().unwrap_or(0) as u32;
     if abi_val != ABI_VERSION {
-        anyhow::bail!(
-            "ABI version mismatch: expected {ABI_VERSION}, got {abi_val}"
-        );
+        anyhow::bail!("ABI version mismatch: expected {ABI_VERSION}, got {abi_val}");
     }
 
     // Call the plan function
-    let plan = instance
-        .get_typed_func::<(), ()>(&mut store, ENTRY_POINT)?;
+    let plan = instance.get_typed_func::<(), ()>(&mut store, ENTRY_POINT)?;
     plan.call(&mut store, ())?;
 
     // Extract results
@@ -50,8 +47,7 @@ pub fn execute_wasm(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use play_launch_parser::ir::*;
-    use play_launch_parser::substitution::Substitution;
+    use play_launch_parser::{ir::*, substitution::Substitution};
     use play_launch_wasm_codegen::compile_to_wasm;
     use std::path::PathBuf;
 
@@ -135,7 +131,10 @@ mod tests {
         })]);
 
         let result = round_trip(&prog, HashMap::new());
-        assert_eq!(result.node[0].params, vec![("rate".to_string(), "10.0".to_string())]);
+        assert_eq!(
+            result.node[0].params,
+            vec![("rate".to_string(), "10.0".to_string())]
+        );
         assert!(result.node[0].cmd.contains(&"rate:=10.0".to_string()));
     }
 
@@ -159,7 +158,10 @@ mod tests {
         })]);
 
         let result = round_trip(&prog, HashMap::new());
-        assert_eq!(result.node[0].remaps, vec![("chatter".to_string(), "/chat".to_string())]);
+        assert_eq!(
+            result.node[0].remaps,
+            vec![("chatter".to_string(), "/chat".to_string())]
+        );
     }
 
     // --- Step 2: DeclareArgument + Expr resolution ---
@@ -207,7 +209,9 @@ mod tests {
             action(ActionKind::SpawnNode {
                 package: lit("demo_nodes_cpp"),
                 executable: lit("talker"),
-                name: Some(expr(vec![Substitution::LaunchConfiguration(vec![text("robot")])])),
+                name: Some(expr(vec![Substitution::LaunchConfiguration(vec![text(
+                    "robot",
+                )])])),
                 namespace: None,
                 params: vec![],
                 param_files: vec![],
@@ -443,7 +447,12 @@ mod tests {
         ]);
 
         let result = round_trip(&prog, HashMap::new());
-        assert!(result.node[0].remaps.iter().any(|(f, t)| f == "/input" && t == "/output"));
+        assert!(
+            result.node[0]
+                .remaps
+                .iter()
+                .any(|(f, t)| f == "/input" && t == "/output")
+        );
     }
 
     // --- Step 6: SpawnContainer + composable nodes ---
@@ -506,7 +515,9 @@ mod tests {
                 action(ActionKind::SpawnNode {
                     package: lit("demo_nodes_cpp"),
                     executable: lit("talker"),
-                    name: Some(expr(vec![Substitution::LaunchConfiguration(vec![text("inc_name")])])),
+                    name: Some(expr(vec![Substitution::LaunchConfiguration(vec![text(
+                        "inc_name",
+                    )])])),
                     namespace: None,
                     params: vec![],
                     param_files: vec![],
@@ -576,9 +587,14 @@ mod tests {
         assert_eq!(result.load_node.len(), 1);
         assert_eq!(result.load_node[0].node_name, "loaded_talker");
         assert_eq!(result.load_node[0].target_container_name, "/my_container");
-        assert_eq!(result.load_node[0].params, vec![("rate".to_string(), "5.0".to_string())]);
         assert_eq!(
-            result.load_node[0].extra_args.get("use_intra_process_comms"),
+            result.load_node[0].params,
+            vec![("rate".to_string(), "5.0".to_string())]
+        );
+        assert_eq!(
+            result.load_node[0]
+                .extra_args
+                .get("use_intra_process_comms"),
             Some(&"true".to_string())
         );
     }
@@ -634,7 +650,9 @@ mod tests {
             action(ActionKind::SpawnNode {
                 package: lit("demo_nodes_cpp"),
                 executable: lit("talker"),
-                name: Some(expr(vec![Substitution::LaunchConfiguration(vec![text("my_var")])])),
+                name: Some(expr(vec![Substitution::LaunchConfiguration(vec![text(
+                    "my_var",
+                )])])),
                 namespace: None,
                 params: vec![],
                 param_files: vec![],

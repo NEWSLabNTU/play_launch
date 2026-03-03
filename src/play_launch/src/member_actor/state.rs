@@ -45,11 +45,13 @@ pub enum NodeState {
     /// Stopped cleanly (no respawn)
     Stopped {
         /// Final exit code
+        #[allow(dead_code)] // Semantic field — used for logging/debugging
         exit_code: Option<i32>,
     },
     /// Failed permanently (max attempts reached or fatal error)
     Failed {
         /// Error description
+        #[allow(dead_code)] // Semantic field — used for logging/debugging
         error: String,
     },
 }
@@ -128,21 +130,15 @@ pub enum ContainerState {
 
 impl NodeState {
     /// Check if the state is terminal (no further transitions)
+    #[allow(dead_code)] // Used in tests, semantic API for state machines
     pub fn is_terminal(&self) -> bool {
         matches!(self, NodeState::Stopped { .. } | NodeState::Failed { .. })
-    }
-
-    /// Get the PID if running
-    pub fn pid(&self) -> Option<u32> {
-        match self {
-            NodeState::Running { pid, .. } => Some(*pid),
-            _ => None,
-        }
     }
 }
 
 impl ComposableState {
     /// Check if the state is terminal (actor should stop)
+    #[allow(dead_code)] // Used in tests, semantic API for state machines
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
@@ -153,38 +149,17 @@ impl ComposableState {
     }
 
     /// Check if loaded successfully
+    #[allow(dead_code)] // Used in tests, semantic API for state machines
     pub fn is_loaded(&self) -> bool {
         matches!(self, ComposableState::Loaded { .. })
-    }
-
-    /// Check if failed
-    pub fn is_failed(&self) -> bool {
-        matches!(self, ComposableState::Failed { .. })
-    }
-
-    /// Check if blocked
-    pub fn is_blocked(&self) -> bool {
-        matches!(self, ComposableState::Blocked { .. })
     }
 }
 
 impl ContainerState {
     /// Check if container is ready for composable nodes
+    #[allow(dead_code)] // Used in tests, semantic API for state machines
     pub fn is_ready(&self) -> bool {
         matches!(self, ContainerState::Running { .. })
-    }
-
-    /// Check if container is running (same as is_ready, but more explicit)
-    pub fn is_running(&self) -> bool {
-        matches!(self, ContainerState::Running { .. })
-    }
-
-    /// Get the PID if running
-    pub fn pid(&self) -> Option<u32> {
-        match self {
-            ContainerState::Running { pid } => Some(*pid),
-            _ => None,
-        }
     }
 }
 

@@ -1,7 +1,7 @@
 //! Guest memory helpers: read/write strings from/to WASM linear memory.
 
 use crate::host::LaunchHost;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use play_launch_wasm_common::NO_VALUE_SENTINEL;
 use wasmtime::{AsContext, AsContextMut, Caller, Memory};
 

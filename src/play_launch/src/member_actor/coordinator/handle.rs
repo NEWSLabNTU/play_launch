@@ -262,10 +262,10 @@ impl MemberHandle {
 
             // Count noisy nodes (stderr > 10KB)
             let stderr_path = meta.output_dir.join("err");
-            if let Ok(metadata) = std::fs::metadata(&stderr_path) {
-                if metadata.len() > NOISY_STDERR_THRESHOLD {
-                    summary.noisy += 1;
-                }
+            if let Ok(metadata) = std::fs::metadata(&stderr_path)
+                && metadata.len() > NOISY_STDERR_THRESHOLD
+            {
+                summary.noisy += 1;
             }
         }
 
@@ -485,10 +485,10 @@ impl MemberHandle {
         for (composable_name, parent_container) in self.virtual_member_routing.iter() {
             if parent_container == container_name {
                 // Check if this node is in Loaded state
-                if let Some(entry) = self.shared_state.get(composable_name.as_str()) {
-                    if let MemberState::Loaded { .. } = entry.value() {
-                        nodes_to_unload_count += 1;
-                    }
+                if let Some(entry) = self.shared_state.get(composable_name.as_str())
+                    && let MemberState::Loaded { .. } = entry.value()
+                {
+                    nodes_to_unload_count += 1;
                 }
             }
         }
@@ -508,11 +508,11 @@ impl MemberHandle {
 
         for (name, meta) in metadata_guard.iter() {
             // Only send to regular nodes and containers
-            if meta.member_type == MemberType::Node || meta.member_type == MemberType::Container {
-                if let Some(tx) = self.control_channels.get(name) {
-                    let _ = tx.send(ControlEvent::Start).await;
-                    count += 1;
-                }
+            if (meta.member_type == MemberType::Node || meta.member_type == MemberType::Container)
+                && let Some(tx) = self.control_channels.get(name)
+            {
+                let _ = tx.send(ControlEvent::Start).await;
+                count += 1;
             }
         }
 
@@ -526,11 +526,11 @@ impl MemberHandle {
 
         for (name, meta) in metadata_guard.iter() {
             // Only send to regular nodes and containers
-            if meta.member_type == MemberType::Node || meta.member_type == MemberType::Container {
-                if let Some(tx) = self.control_channels.get(name) {
-                    let _ = tx.send(ControlEvent::Stop).await;
-                    count += 1;
-                }
+            if (meta.member_type == MemberType::Node || meta.member_type == MemberType::Container)
+                && let Some(tx) = self.control_channels.get(name)
+            {
+                let _ = tx.send(ControlEvent::Stop).await;
+                count += 1;
             }
         }
 
@@ -544,11 +544,11 @@ impl MemberHandle {
 
         for (name, meta) in metadata_guard.iter() {
             // Only send to regular nodes and containers
-            if meta.member_type == MemberType::Node || meta.member_type == MemberType::Container {
-                if let Some(tx) = self.control_channels.get(name) {
-                    let _ = tx.send(ControlEvent::Restart).await;
-                    count += 1;
-                }
+            if (meta.member_type == MemberType::Node || meta.member_type == MemberType::Container)
+                && let Some(tx) = self.control_channels.get(name)
+            {
+                let _ = tx.send(ControlEvent::Restart).await;
+                count += 1;
             }
         }
 
@@ -560,21 +560,6 @@ impl MemberHandle {
         self.shutdown_tx
             .send(true)
             .context("Failed to send shutdown signal")
-    }
-
-    /// Get the number of registered members
-    pub async fn member_count(&self) -> usize {
-        self.metadata.read().await.len()
-    }
-
-    /// Check if a specific member is registered
-    pub async fn has_member(&self, name: &str) -> bool {
-        self.metadata.read().await.contains_key(name)
-    }
-
-    /// Get reference to the shared state map
-    pub fn shared_state(&self) -> &Arc<dashmap::DashMap<String, MemberState>> {
-        &self.shared_state
     }
 
     /// Get reference to the node FQN map (Phase 24)

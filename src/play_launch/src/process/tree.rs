@@ -9,13 +9,12 @@ fn is_thread(pid: u32) -> bool {
     // Read /proc/[pid]/status to get TGID
     if let Ok(status) = std::fs::read_to_string(format!("/proc/{}/status", pid)) {
         for line in status.lines() {
-            if line.starts_with("Tgid:") {
-                if let Some(tgid_str) = line.split_whitespace().nth(1) {
-                    if let Ok(tgid) = tgid_str.parse::<u32>() {
-                        // If PID != TGID, it's a thread
-                        return pid != tgid;
-                    }
-                }
+            if line.starts_with("Tgid:")
+                && let Some(tgid_str) = line.split_whitespace().nth(1)
+                && let Ok(tgid) = tgid_str.parse::<u32>()
+            {
+                // If PID != TGID, it's a thread
+                return pid != tgid;
             }
         }
     }
@@ -53,17 +52,17 @@ pub fn find_all_descendants(parent_pid: u32, cancel: &AtomicBool) -> Vec<u32> {
             continue;
         }
 
-        if let Some(parent) = process.parent() {
-            if parent.as_u32() == parent_pid {
-                // Add this child
-                result.push(child_pid);
-                // Recursively find this child's descendants (grandchildren, etc.)
-                result.extend(find_all_descendants(child_pid, cancel));
+        if let Some(parent) = process.parent()
+            && parent.as_u32() == parent_pid
+        {
+            // Add this child
+            result.push(child_pid);
+            // Recursively find this child's descendants (grandchildren, etc.)
+            result.extend(find_all_descendants(child_pid, cancel));
 
-                // Check cancellation after recursive call
-                if cancel.load(Ordering::Relaxed) {
-                    return result;
-                }
+            // Check cancellation after recursive call
+            if cancel.load(Ordering::Relaxed) {
+                return result;
             }
         }
     }

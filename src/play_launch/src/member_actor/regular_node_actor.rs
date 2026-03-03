@@ -3,7 +3,7 @@
 //! This module implements actors for regular ROS nodes and containers.
 //! Each actor is a self-contained task that manages its own lifecycle.
 //!
-//! Phase 5: Provides both standalone function (run_regular_node) and trait-based actor (RegularNodeActor).
+//! Phase 5: Provides trait-based actor (RegularNodeActor).
 
 use super::{
     actor_traits::MemberActor,
@@ -12,46 +12,9 @@ use super::{
 };
 use crate::{execution::context::NodeContext, util::logging::is_verbose};
 use eyre::{Context as _, Result};
-use std::{
-    collections::HashMap,
-    fs::File,
-    io::Write,
-    path::{Path, PathBuf},
-    process::ExitStatus,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{fs::File, io::Write, path::Path, process::ExitStatus, time::Duration};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
-
-/// Standalone async function for running a regular node (Phase 5)
-///
-/// This is the standalone function version that will be used with FuturesUnordered.
-/// It contains the same logic as RegularNodeActor::run() but without the trait.
-#[allow(clippy::too_many_arguments)]
-pub async fn run_regular_node(
-    name: String,
-    context: NodeContext,
-    config: ActorConfig,
-    control_rx: mpsc::Receiver<ControlEvent>,
-    state_tx: mpsc::Sender<StateEvent>,
-    shutdown_rx: watch::Receiver<bool>,
-    process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
-    shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
-) -> Result<()> {
-    // Create the actor and run it (wrapper approach for Phase 5)
-    let actor = RegularNodeActor::new(
-        name,
-        context,
-        config,
-        control_rx,
-        state_tx,
-        shutdown_rx,
-        process_registry,
-        shared_state,
-    );
-    actor.run().await
-}
 
 /// Actor for regular ROS nodes and containers
 ///
@@ -212,12 +175,11 @@ impl RegularNodeActor {
             // Process exited
             result = child.wait() => {
                 // Unregister PID
-                if let Some(ref registry) = self.process_registry {
-                    if let Ok(mut reg) = registry.lock() {
+                if let Some(ref registry) = self.process_registry
+                    && let Ok(mut reg) = registry.lock() {
                         reg.remove(&pid);
                         debug!("[{}] Unregistered PID {}", self.name, pid);
                     }
-                }
 
                 let exit_code = match result {
                     Ok(status) => {
@@ -282,11 +244,10 @@ impl RegularNodeActor {
                     }
 
                     // Unregister PID
-                    if let Some(ref registry) = self.process_registry {
-                        if let Ok(mut reg) = registry.lock() {
+                    if let Some(ref registry) = self.process_registry
+                        && let Ok(mut reg) = registry.lock() {
                             reg.remove(&pid);
                         }
-                    }
 
                     self.transition_to_stopped(None).await?;
                     Ok(false) // Terminate
@@ -309,19 +270,16 @@ impl RegularNodeActor {
         };
 
         // Check if we've exceeded max attempts
-        if let Some(max_attempts) = self.config.max_respawn_attempts {
-            if attempt >= max_attempts {
-                error!(
-                    "[{}] Max respawn attempts ({}) reached",
-                    self.name, max_attempts
-                );
-                self.transition_to_failed(format!(
-                    "Max respawn attempts ({}) reached",
-                    max_attempts
-                ))
+        if let Some(max_attempts) = self.config.max_respawn_attempts
+            && attempt >= max_attempts
+        {
+            error!(
+                "[{}] Max respawn attempts ({}) reached",
+                self.name, max_attempts
+            );
+            self.transition_to_failed(format!("Max respawn attempts ({}) reached", max_attempts))
                 .await?;
-                return Ok(false);
-            }
+            return Ok(false);
         }
 
         let delay = Duration::from_secs_f64(self.config.respawn_delay);
@@ -437,10 +395,10 @@ impl RegularNodeActor {
                     child.kill().await.ok();
 
                     // Unregister PID
-                    if let Some(ref registry) = self.process_registry {
-                        if let Ok(mut reg) = registry.lock() {
-                            reg.remove(&pid);
-                        }
+                    if let Some(ref registry) = self.process_registry
+                        && let Ok(mut reg) = registry.lock()
+                    {
+                        reg.remove(&pid);
                     }
                 }
 
@@ -458,10 +416,10 @@ impl RegularNodeActor {
                     child.kill().await.ok();
 
                     // Unregister PID
-                    if let Some(ref registry) = self.process_registry {
-                        if let Ok(mut reg) = registry.lock() {
-                            reg.remove(&pid);
-                        }
+                    if let Some(ref registry) = self.process_registry
+                        && let Ok(mut reg) = registry.lock()
+                    {
+                        reg.remove(&pid);
                     }
                 }
 
@@ -663,10 +621,6 @@ impl MemberActor for RegularNodeActor {
         }
 
         Ok(())
-    }
-
-    fn name(&self) -> &str {
-        &self.name
     }
 }
 

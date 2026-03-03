@@ -1,7 +1,3 @@
-// Service discovery infrastructure is spawned by replay.rs but query methods
-// are not currently called (actor system handles readiness differently).
-#![allow(dead_code)]
-
 //! Container readiness checking module
 //!
 //! This module provides ROS service discovery for checking when containers are ready.
@@ -376,15 +372,15 @@ async fn wait_for_single_container(
         }
 
         // Check timeout (if set)
-        if let Some(deadline) = deadline {
-            if tokio::time::Instant::now() >= deadline {
-                warn!(
-                    "Timeout waiting for container '{}' after {:?}, proceeding anyway",
-                    container_name,
-                    config.max_wait.unwrap()
-                );
-                return Ok(());
-            }
+        if let Some(deadline) = deadline
+            && tokio::time::Instant::now() >= deadline
+        {
+            warn!(
+                "Timeout waiting for container '{}' after {:?}, proceeding anyway",
+                container_name,
+                config.max_wait.unwrap()
+            );
+            return Ok(());
         }
 
         tokio::time::sleep(config.poll_interval).await;

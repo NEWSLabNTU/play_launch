@@ -369,7 +369,6 @@ impl ContainerActor {
                 // Track the unload operation (will be polled in select! loop)
                 self.current_unload = Some(super::super::container_control::CurrentUnload {
                     composable_name: name.to_string(),
-                    start_time: started_at,
                     task,
                 });
             }

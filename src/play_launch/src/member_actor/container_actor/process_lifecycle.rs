@@ -334,36 +334,36 @@ impl ContainerActor {
         );
 
         // Check if max attempts reached
-        if let Some(max_attempts) = self.config.max_respawn_attempts {
-            if attempt >= max_attempts {
-                error!(
-                    "{}: Max respawn attempts ({}) reached",
-                    self.name, max_attempts
-                );
-                let error_msg = format!("Max respawn attempts ({}) reached", max_attempts);
-                self.state = NodeState::Failed {
+        if let Some(max_attempts) = self.config.max_respawn_attempts
+            && attempt >= max_attempts
+        {
+            error!(
+                "{}: Max respawn attempts ({}) reached",
+                self.name, max_attempts
+            );
+            let error_msg = format!("Max respawn attempts ({}) reached", max_attempts);
+            self.state = NodeState::Failed {
+                error: error_msg.clone(),
+            };
+
+            // Broadcast failed state
+            let _ = self.container_state_tx.send(ContainerState::Failed);
+
+            let _ = self
+                .state_tx
+                .send(StateEvent::Failed {
+                    name: self.name.clone(),
                     error: error_msg.clone(),
-                };
+                })
+                .await;
 
-                // Broadcast failed state
-                let _ = self.container_state_tx.send(ContainerState::Failed);
+            // Update shared state directly
+            self.shared_state.insert(
+                self.name.clone(),
+                super::super::web_query::MemberState::Failed { error: error_msg },
+            );
 
-                let _ = self
-                    .state_tx
-                    .send(StateEvent::Failed {
-                        name: self.name.clone(),
-                        error: error_msg.clone(),
-                    })
-                    .await;
-
-                // Update shared state directly
-                self.shared_state.insert(
-                    self.name.clone(),
-                    super::super::web_query::MemberState::Failed { error: error_msg },
-                );
-
-                return Ok(false); // Stop actor
-            }
+            return Ok(false); // Stop actor
         }
 
         // Wait for delay or control event or shutdown

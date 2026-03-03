@@ -256,10 +256,10 @@ impl ContainerActor {
             if let ComposableState::Loading { started_at } = &entry.state {
                 // Only promote if LoadNode succeeded (we have a unique_id)
                 // and the timeout has elapsed
-                if let Some(uid) = entry.unique_id {
-                    if started_at.elapsed() > LOADING_TIMEOUT {
-                        promoted.push((name.clone(), uid));
-                    }
+                if let Some(uid) = entry.unique_id
+                    && started_at.elapsed() > LOADING_TIMEOUT
+                {
+                    promoted.push((name.clone(), uid));
                 }
             }
         }

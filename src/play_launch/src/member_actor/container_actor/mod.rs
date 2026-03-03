@@ -5,7 +5,7 @@
 //! composable nodes. When the container stops or fails, composable nodes are
 //! automatically blocked.
 //!
-//! Phase 5: Provides both standalone function (run_container) and trait-based actor (ContainerActor).
+//! Phase 5: Provides trait-based actor (ContainerActor).
 //! Note: Containers have special spawning requirements (container_state_rx must be obtained before
 //! spawning), so the coordinator still creates the actor directly to get the state receiver.
 
@@ -101,31 +101,6 @@ pub struct ContainerActorParams {
     pub ros_node: Option<Arc<rclrs::Node>>,
     pub shared_state: Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
     pub use_component_events: bool,
-}
-
-/// Standalone async function for running a container (Phase 5)
-///
-/// This is the standalone function version that will be used with FuturesUnordered.
-/// Note: For containers that need composable node supervision, use ContainerActor directly
-/// to obtain container_state_rx before spawning.
-pub async fn run_container(
-    name: String,
-    params: ContainerActorParams,
-    control_rx: mpsc::Receiver<ControlEvent>,
-    state_tx: mpsc::Sender<StateEvent>,
-    shutdown_rx: watch::Receiver<bool>,
-    load_control_rx: mpsc::Receiver<ContainerControlEvent>,
-) -> Result<()> {
-    // Create the actor and run it (wrapper approach for Phase 5)
-    let actor = ContainerActor::new(
-        name,
-        params,
-        control_rx,
-        state_tx,
-        shutdown_rx,
-        load_control_rx,
-    );
-    actor.run().await
 }
 
 /// Container actor that supervises composable nodes
@@ -239,19 +214,19 @@ impl ContainerActor {
 
     /// Register a process PID in the shared process registry for I/O monitoring.
     fn register_process(&self, pid: u32) {
-        if let Some(ref registry) = self.process_registry {
-            if let Ok(mut reg) = registry.lock() {
-                reg.insert(pid, self.config.output_dir.clone());
-            }
+        if let Some(ref registry) = self.process_registry
+            && let Ok(mut reg) = registry.lock()
+        {
+            reg.insert(pid, self.config.output_dir.clone());
         }
     }
 
     /// Unregister a process PID from the shared process registry.
     fn unregister_process(&self, pid: u32) {
-        if let Some(ref registry) = self.process_registry {
-            if let Ok(mut reg) = registry.lock() {
-                reg.remove(&pid);
-            }
+        if let Some(ref registry) = self.process_registry
+            && let Ok(mut reg) = registry.lock()
+        {
+            reg.remove(&pid);
         }
     }
 
@@ -593,10 +568,6 @@ impl ContainerActor {
 }
 
 impl MemberActor for ContainerActor {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
     async fn run(mut self) -> Result<()> {
         debug!("{}: Container actor started", self.name);
 

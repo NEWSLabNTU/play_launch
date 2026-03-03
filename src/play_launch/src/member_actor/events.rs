@@ -23,6 +23,7 @@ pub enum ControlEvent {
     /// Toggle auto-load on/off (composable nodes only)
     ToggleAutoLoad(bool),
     /// Send specific signal to process (Unix only)
+    #[allow(dead_code)] // Semantic completeness — Web UI signal sending planned
     #[cfg(unix)]
     Kill(nix::sys::signal::Signal),
     /// Load a composable node (container actors only)
@@ -144,6 +145,7 @@ pub enum StateEvent {
 
 impl StateEvent {
     /// Get the member name from this event
+    #[allow(dead_code)] // Used in tests, useful for event routing
     pub fn member_name(&self) -> &str {
         match self {
             StateEvent::Started { name, .. }
@@ -161,6 +163,7 @@ impl StateEvent {
     }
 
     /// Check if this is a terminal event (actor won't send more events)
+    #[allow(dead_code)] // Used in tests, useful for event routing
     pub fn is_terminal(&self) -> bool {
         matches!(self, StateEvent::Terminated { .. })
     }

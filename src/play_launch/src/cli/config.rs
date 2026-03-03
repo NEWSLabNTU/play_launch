@@ -350,10 +350,10 @@ impl ResolvedMonitoringConfig {
 
         // Check process-specific config first
         for config in &self.process_configs {
-            if config.matches(node_name) {
-                if let Some(monitor) = config.monitor {
-                    return monitor;
-                }
+            if config.matches(node_name)
+                && let Some(monitor) = config.monitor
+            {
+                return monitor;
             }
         }
 
@@ -429,13 +429,13 @@ pub fn load_runtime_config(
         }
 
         // Validate nice value
-        if let Some(nice) = process_config.nice {
-            if !(-20..=19).contains(&nice) {
-                return Err(eyre::eyre!(
-                    "Invalid nice value: {} (must be between -20 and 19)",
-                    nice
-                ));
-            }
+        if let Some(nice) = process_config.nice
+            && !(-20..=19).contains(&nice)
+        {
+            return Err(eyre::eyre!(
+                "Invalid nice value: {} (must be between -20 and 19)",
+                nice
+            ));
         }
     }
 

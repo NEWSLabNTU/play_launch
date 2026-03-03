@@ -1,14 +1,17 @@
 //! Expression compilation: Expr -> WASM instruction sequence leaving (ptr, len) on stack.
 
 use crate::compiler::WasmCompiler;
-use play_launch_parser::ir::Expr;
-use play_launch_parser::substitution::Substitution;
-use play_launch_wasm_common::{imports, NO_VALUE_SENTINEL};
+use play_launch_parser::{ir::Expr, substitution::Substitution};
+use play_launch_wasm_common::{NO_VALUE_SENTINEL, imports};
 use wasm_encoder::Instruction;
 
 impl WasmCompiler {
     /// Compile an Expr into instructions that leave (ptr: i32, len: i32) on the stack.
-    pub(crate) fn compile_expr(&mut self, expr: &Expr, instrs: &mut Vec<Instruction<'static>>) -> anyhow::Result<()> {
+    pub(crate) fn compile_expr(
+        &mut self,
+        expr: &Expr,
+        instrs: &mut Vec<Instruction<'static>>,
+    ) -> anyhow::Result<()> {
         let parts = &expr.parts;
         if parts.is_empty() {
             // Empty expression: push empty string (ptr=0, len=0)

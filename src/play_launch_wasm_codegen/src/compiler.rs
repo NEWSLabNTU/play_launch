@@ -1,11 +1,8 @@
 //! WasmCompiler: walks IR tree, emits WASM module sections + instructions.
 
-use crate::signatures::import_signature;
-use crate::string_pool::StringPool;
-use play_launch_parser::ir::{
-    Action, ActionKind, ComposableNodeDecl, Condition, LaunchProgram,
-};
-use play_launch_wasm_common::{imports, memory, ABI_VERSION, HOST_MODULE, NO_VALUE_SENTINEL};
+use crate::{signatures::import_signature, string_pool::StringPool};
+use play_launch_parser::ir::{Action, ActionKind, ComposableNodeDecl, Condition, LaunchProgram};
+use play_launch_wasm_common::{ABI_VERSION, HOST_MODULE, NO_VALUE_SENTINEL, imports, memory};
 use wasm_encoder::{
     CodeSection, ConstExpr, DataSection, EntityType, ExportKind, ExportSection, Function,
     FunctionSection, GlobalSection, GlobalType, ImportSection, Instruction, MemorySection,
@@ -109,7 +106,9 @@ impl WasmCompiler {
         let plan_type_idx = self.intern_type(vec![], vec![]);
         let mut types = TypeSection::new();
         for (params, results) in &self.type_signatures {
-            types.ty().function(params.iter().copied(), results.iter().copied());
+            types
+                .ty()
+                .function(params.iter().copied(), results.iter().copied());
         }
         module.section(&types);
 
@@ -135,8 +134,10 @@ impl WasmCompiler {
         let mut memories = MemorySection::new();
         // Calculate pages needed: data segment + bump area
         let data_size = self.string_pool.len();
-        let min_pages =
-            std::cmp::max(1, (data_size + memory::BUMP_BASE).div_ceil(memory::WASM_PAGE_SIZE) as u64);
+        let min_pages = std::cmp::max(
+            1,
+            (data_size + memory::BUMP_BASE).div_ceil(memory::WASM_PAGE_SIZE) as u64,
+        );
         memories.memory(MemoryType {
             minimum: min_pages,
             maximum: None,
@@ -177,7 +178,11 @@ impl WasmCompiler {
         // Data section: string pool at offset 0
         let mut data = DataSection::new();
         if !self.string_pool.is_empty() {
-            data.active(0, &ConstExpr::i32_const(0), self.string_pool.data().to_vec());
+            data.active(
+                0,
+                &ConstExpr::i32_const(0),
+                self.string_pool.data().to_vec(),
+            );
         }
         module.section(&data);
 
@@ -259,13 +264,19 @@ impl WasmCompiler {
             } => {
                 self.collect_strings_expr(package);
                 self.collect_strings_expr(executable);
-                if let Some(n) = name { self.collect_strings_expr(n); }
-                if let Some(ns) = namespace { self.collect_strings_expr(ns); }
+                if let Some(n) = name {
+                    self.collect_strings_expr(n);
+                }
+                if let Some(ns) = namespace {
+                    self.collect_strings_expr(ns);
+                }
                 for p in params {
                     self.string_pool.intern(&p.name);
                     self.collect_strings_expr(&p.value);
                 }
-                for pf in param_files { self.collect_strings_expr(pf); }
+                for pf in param_files {
+                    self.collect_strings_expr(pf);
+                }
                 for r in remaps {
                     self.collect_strings_expr(&r.from);
                     self.collect_strings_expr(&r.to);
@@ -274,25 +285,51 @@ impl WasmCompiler {
                     self.collect_strings_expr(&e.name);
                     self.collect_strings_expr(&e.value);
                 }
-                if let Some(a) = args { self.collect_strings_expr(a); }
-                if let Some(r) = respawn { self.collect_strings_expr(r); }
-                if let Some(rd) = respawn_delay { self.collect_strings_expr(rd); }
+                if let Some(a) = args {
+                    self.collect_strings_expr(a);
+                }
+                if let Some(r) = respawn {
+                    self.collect_strings_expr(r);
+                }
+                if let Some(rd) = respawn_delay {
+                    self.collect_strings_expr(rd);
+                }
             }
-            ActionKind::SpawnExecutable { cmd, name, args, env } => {
+            ActionKind::SpawnExecutable {
+                cmd,
+                name,
+                args,
+                env,
+            } => {
                 self.collect_strings_expr(cmd);
-                if let Some(n) = name { self.collect_strings_expr(n); }
-                for a in args { self.collect_strings_expr(a); }
+                if let Some(n) = name {
+                    self.collect_strings_expr(n);
+                }
+                for a in args {
+                    self.collect_strings_expr(a);
+                }
                 for e in env {
                     self.collect_strings_expr(&e.name);
                     self.collect_strings_expr(&e.value);
                 }
             }
-            ActionKind::SpawnContainer { package, executable, name, namespace, args, nodes } => {
+            ActionKind::SpawnContainer {
+                package,
+                executable,
+                name,
+                namespace,
+                args,
+                nodes,
+            } => {
                 self.collect_strings_expr(package);
                 self.collect_strings_expr(executable);
                 self.collect_strings_expr(name);
-                if let Some(ns) = namespace { self.collect_strings_expr(ns); }
-                if let Some(a) = args { self.collect_strings_expr(a); }
+                if let Some(ns) = namespace {
+                    self.collect_strings_expr(ns);
+                }
+                if let Some(a) = args {
+                    self.collect_strings_expr(a);
+                }
                 for node in nodes {
                     self.collect_strings_composable_node(node);
                 }
@@ -345,40 +382,67 @@ impl WasmCompiler {
         }
     }
 
-    fn collect_strings_substitution(&mut self, sub: &play_launch_parser::substitution::Substitution) {
+    fn collect_strings_substitution(
+        &mut self,
+        sub: &play_launch_parser::substitution::Substitution,
+    ) {
         match sub {
-            Substitution::Text(s) => { self.string_pool.intern(s); }
-            Substitution::LaunchConfiguration(parts) => {
-                for p in parts { self.collect_strings_substitution(p); }
+            Substitution::Text(s) => {
+                self.string_pool.intern(s);
             }
-            Substitution::EnvironmentVariable { name, default } |
-            Substitution::OptionalEnvironmentVariable { name, default } => {
-                for p in name { self.collect_strings_substitution(p); }
+            Substitution::LaunchConfiguration(parts) => {
+                for p in parts {
+                    self.collect_strings_substitution(p);
+                }
+            }
+            Substitution::EnvironmentVariable { name, default }
+            | Substitution::OptionalEnvironmentVariable { name, default } => {
+                for p in name {
+                    self.collect_strings_substitution(p);
+                }
                 if let Some(d) = default {
-                    for p in d { self.collect_strings_substitution(p); }
+                    for p in d {
+                        self.collect_strings_substitution(p);
+                    }
                 }
             }
             Substitution::Command { cmd, .. } => {
-                for p in cmd { self.collect_strings_substitution(p); }
+                for p in cmd {
+                    self.collect_strings_substitution(p);
+                }
             }
             Substitution::FindPackageShare(parts) => {
-                for p in parts { self.collect_strings_substitution(p); }
+                for p in parts {
+                    self.collect_strings_substitution(p);
+                }
             }
-            Substitution::Dirname => { self.string_pool.intern("__dirname"); }
-            Substitution::Filename => { self.string_pool.intern("__filename"); }
+            Substitution::Dirname => {
+                self.string_pool.intern("__dirname");
+            }
+            Substitution::Filename => {
+                self.string_pool.intern("__filename");
+            }
             Substitution::Anon(parts) => {
                 self.string_pool.intern("__anon_");
-                for p in parts { self.collect_strings_substitution(p); }
+                for p in parts {
+                    self.collect_strings_substitution(p);
+                }
             }
             Substitution::Eval(parts) => {
-                for p in parts { self.collect_strings_substitution(p); }
+                for p in parts {
+                    self.collect_strings_substitution(p);
+                }
             }
         }
     }
 
     // --- Action compilation ---
 
-    fn compile_action(&mut self, action: &Action, instrs: &mut Vec<Instruction<'static>>) -> anyhow::Result<()> {
+    fn compile_action(
+        &mut self,
+        action: &Action,
+        instrs: &mut Vec<Instruction<'static>>,
+    ) -> anyhow::Result<()> {
         // Handle condition wrapping
         if let Some(ref condition) = action.condition {
             self.compile_condition_start(condition, instrs)?;
@@ -413,7 +477,11 @@ impl WasmCompiler {
         Ok(())
     }
 
-    fn compile_action_kind(&mut self, kind: &ActionKind, instrs: &mut Vec<Instruction<'static>>) -> anyhow::Result<()> {
+    fn compile_action_kind(
+        &mut self,
+        kind: &ActionKind,
+        instrs: &mut Vec<Instruction<'static>>,
+    ) -> anyhow::Result<()> {
         match kind {
             ActionKind::DeclareArgument { name, default, .. } => {
                 let (name_off, name_len) = self.string_pool.intern(name);
@@ -625,7 +693,12 @@ impl WasmCompiler {
                 instrs.push(Instruction::Call(end_idx));
             }
 
-            ActionKind::SpawnExecutable { cmd, name, args, env } => {
+            ActionKind::SpawnExecutable {
+                cmd,
+                name,
+                args,
+                env,
+            } => {
                 let begin_idx = self.import_func_index(imports::BEGIN_EXECUTABLE)?;
                 instrs.push(Instruction::Call(begin_idx));
 

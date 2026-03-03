@@ -102,15 +102,6 @@ pub struct MemberSummary {
     pub output_dir: PathBuf,
 }
 
-/// Detailed information about a member (for API responses)
-#[derive(Debug, Clone, Serialize)]
-pub struct MemberDetails {
-    #[serde(flatten)]
-    pub summary: MemberSummary,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cmdline: Option<String>,
-}
-
 /// Health summary statistics for all members
 #[derive(Debug, Clone, Default, Serialize)]
 #[cfg_attr(test, derive(TS))]

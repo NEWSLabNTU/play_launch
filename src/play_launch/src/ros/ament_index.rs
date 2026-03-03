@@ -72,22 +72,22 @@ fn find_executable_in_dir(dir: &PathBuf, executable_name: &str) -> eyre::Result<
         let path = entry.path();
 
         if path.is_file() {
-            if let Some(file_name) = path.file_name() {
-                if file_name == executable_name {
-                    // Verify it's actually executable
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let metadata = fs::metadata(&path)?;
-                        let permissions = metadata.permissions();
-                        if permissions.mode() & 0o111 != 0 {
-                            return Ok(path);
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    {
+            if let Some(file_name) = path.file_name()
+                && file_name == executable_name
+            {
+                // Verify it's actually executable
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let metadata = fs::metadata(&path)?;
+                    let permissions = metadata.permissions();
+                    if permissions.mode() & 0o111 != 0 {
                         return Ok(path);
                     }
+                }
+                #[cfg(not(unix))]
+                {
+                    return Ok(path);
                 }
             }
         } else if path.is_dir() {
@@ -243,7 +243,7 @@ mod tests {
         // Use a closure to ensure restoration even on panic
         let test_result = std::panic::catch_unwind(|| {
             // Temporarily unset it
-            env::remove_var("AMENT_PREFIX_PATH");
+            unsafe { env::remove_var("AMENT_PREFIX_PATH") };
 
             let result = get_package_prefix("std_msgs");
             assert!(
@@ -261,7 +261,7 @@ mod tests {
 
         // Always restore original value, even if test panicked
         if let Some(path) = original {
-            env::set_var("AMENT_PREFIX_PATH", path);
+            unsafe { env::set_var("AMENT_PREFIX_PATH", path) };
         }
 
         // Re-panic if test failed

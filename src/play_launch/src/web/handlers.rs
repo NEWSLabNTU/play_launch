@@ -80,20 +80,20 @@ pub async fn list_nodes(
         .map(|member| {
             let mut summary = super::web_types::NodeSummary::from_member_summary(member);
             // Populate container_name for composable nodes
-            if summary.node_type == super::web_types::NodeType::ComposableNode {
-                if let Some(ref target) = summary.target_container {
-                    // Normalize: target_container may lack leading "/" while
-                    // container_lookup keys always start with "/"
-                    let normalized = if target.starts_with('/') {
-                        target.clone()
-                    } else {
-                        format!("/{}", target)
-                    };
-                    summary.container_name = container_lookup
-                        .get(&normalized)
-                        .or_else(|| container_lookup.get(target))
-                        .cloned();
-                }
+            if summary.node_type == super::web_types::NodeType::ComposableNode
+                && let Some(ref target) = summary.target_container
+            {
+                // Normalize: target_container may lack leading "/" while
+                // container_lookup keys always start with "/"
+                let normalized = if target.starts_with('/') {
+                    target.clone()
+                } else {
+                    format!("/{}", target)
+                };
+                summary.container_name = container_lookup
+                    .get(&normalized)
+                    .or_else(|| container_lookup.get(target))
+                    .cloned();
             }
             summary
         })

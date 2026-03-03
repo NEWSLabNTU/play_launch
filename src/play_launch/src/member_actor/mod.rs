@@ -40,10 +40,6 @@
 //! # }
 //! ```
 
-// Actors are invoked through MemberActor trait dispatch (coordinator calls actor.run()),
-// so Rust's dead code analysis can't trace internal method usage.
-#![allow(dead_code)]
-
 pub mod actor_traits;
 pub mod container_actor;
 pub mod container_control;

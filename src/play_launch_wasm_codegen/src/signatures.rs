@@ -7,10 +7,10 @@ use wasm_encoder::ValType;
 pub(crate) fn import_signature(name: &str) -> anyhow::Result<(Vec<ValType>, Vec<ValType>)> {
     Ok(match name {
         // Context operations — no return
-        imports::DECLARE_ARG => (vec![ValType::I32; 4], vec![]),       // name_ptr, name_len, default_ptr, default_len
-        imports::SET_VAR => (vec![ValType::I32; 4], vec![]),           // name_ptr, name_len, val_ptr, val_len
+        imports::DECLARE_ARG => (vec![ValType::I32; 4], vec![]), // name_ptr, name_len, default_ptr, default_len
+        imports::SET_VAR => (vec![ValType::I32; 4], vec![]), // name_ptr, name_len, val_ptr, val_len
         imports::SET_ENV => (vec![ValType::I32; 4], vec![]),
-        imports::UNSET_ENV => (vec![ValType::I32; 2], vec![]),         // name_ptr, name_len
+        imports::UNSET_ENV => (vec![ValType::I32; 2], vec![]), // name_ptr, name_len
         imports::PUSH_NAMESPACE => (vec![ValType::I32; 2], vec![]),
         imports::POP_NAMESPACE => (vec![], vec![]),
         imports::SET_GLOBAL_PARAM => (vec![ValType::I32; 4], vec![]),

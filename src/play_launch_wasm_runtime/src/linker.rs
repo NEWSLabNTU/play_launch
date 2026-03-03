@@ -3,14 +3,16 @@
 //! Organized by domain: context ops, resolution ops, node builder,
 //! executable builder, container builder, composable node builder.
 
-use crate::host::{
-    ComposableNodeBuilder, ContainerBuilder, ExecutableBuilder, LaunchHost, LoadNodeBuilder,
-    NodeBuilder, ScopeSnapshot,
+use crate::{
+    host::{
+        ComposableNodeBuilder, ContainerBuilder, ExecutableBuilder, LaunchHost, LoadNodeBuilder,
+        NodeBuilder, ScopeSnapshot,
+    },
+    memory::{get_memory, read_guest_string, read_optional_string, write_guest_string},
 };
-use crate::memory::{get_memory, read_guest_string, read_optional_string, write_guest_string};
 use anyhow::{Context, Result};
 use play_launch_parser::condition::is_truthy;
-use play_launch_wasm_common::{imports, HOST_MODULE};
+use play_launch_wasm_common::{HOST_MODULE, imports};
 use wasmtime::{Caller, Linker};
 
 pub fn register_imports(linker: &mut Linker<LaunchHost>) -> Result<()> {
@@ -40,10 +42,10 @@ fn register_context_ops(linker: &mut Linker<LaunchHost>) -> Result<()> {
             let name = read_guest_string(&mem, &caller, name_ptr, name_len)?;
             let default = read_optional_string(&mem, &caller, default_ptr, default_len)?;
             let host = caller.data_mut();
-            if host.context.get_configuration(&name).is_none() {
-                if let Some(d) = default {
-                    host.context.set_configuration(name, d);
-                }
+            if host.context.get_configuration(&name).is_none()
+                && let Some(d) = default
+            {
+                host.context.set_configuration(name, d);
             }
             Ok(())
         },
@@ -81,14 +83,12 @@ fn register_context_ops(linker: &mut Linker<LaunchHost>) -> Result<()> {
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default()
             } else if name == "__filename" {
-                caller
-                    .data()
-                    .context
-                    .current_filename()
-                    .unwrap_or_default()
+                caller.data().context.current_filename().unwrap_or_default()
             } else if let Some(stripped) = name.strip_prefix("__anon_") {
-                use std::collections::hash_map::DefaultHasher;
-                use std::hash::{Hash, Hasher};
+                use std::{
+                    collections::hash_map::DefaultHasher,
+                    hash::{Hash, Hasher},
+                };
                 let mut hasher = DefaultHasher::new();
                 stripped.hash(&mut hasher);
                 format!("{stripped}_{:016x}", hasher.finish())
@@ -146,9 +146,13 @@ fn register_context_ops(linker: &mut Linker<LaunchHost>) -> Result<()> {
         },
     )?;
 
-    linker.func_wrap(HOST_MODULE, imports::POP_NAMESPACE, |mut caller: Caller<'_, LaunchHost>| {
-        caller.data_mut().context.pop_namespace();
-    })?;
+    linker.func_wrap(
+        HOST_MODULE,
+        imports::POP_NAMESPACE,
+        |mut caller: Caller<'_, LaunchHost>| {
+            caller.data_mut().context.pop_namespace();
+        },
+    )?;
 
     linker.func_wrap(
         HOST_MODULE,
@@ -336,9 +340,13 @@ fn register_resolution_ops(linker: &mut Linker<LaunchHost>) -> Result<()> {
 
 /// Node builder operations: begin_node, set_node_*, add_node_*, end_node.
 fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
-    linker.func_wrap(HOST_MODULE, imports::BEGIN_NODE, |mut caller: Caller<'_, LaunchHost>| {
-        caller.data_mut().node_builder = Some(NodeBuilder::default());
-    })?;
+    linker.func_wrap(
+        HOST_MODULE,
+        imports::BEGIN_NODE,
+        |mut caller: Caller<'_, LaunchHost>| {
+            caller.data_mut().node_builder = Some(NodeBuilder::default());
+        },
+    )?;
 
     linker.func_wrap(
         HOST_MODULE,
@@ -346,7 +354,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("SET_NODE_PKG called without active node builder")?;
             b.package = Some(value);
             Ok(())
@@ -359,7 +370,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("SET_NODE_EXEC called without active node builder")?;
             b.executable = Some(value);
             Ok(())
@@ -372,7 +386,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("SET_NODE_NAME called without active node builder")?;
             b.name = Some(value);
             Ok(())
@@ -385,7 +402,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("SET_NODE_NAMESPACE called without active node builder")?;
             b.namespace = Some(value);
             Ok(())
@@ -404,7 +424,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let name = read_guest_string(&mem, &caller, name_ptr, name_len)?;
             let value = read_guest_string(&mem, &caller, val_ptr, val_len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("ADD_NODE_PARAM called without active node builder")?;
             b.params.push((name, value));
             Ok(())
@@ -417,7 +440,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("ADD_NODE_PARAM_FILE called without active node builder")?;
             b.param_files.push(value);
             Ok(())
@@ -436,7 +462,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let from = read_guest_string(&mem, &caller, from_ptr, from_len)?;
             let to = read_guest_string(&mem, &caller, to_ptr, to_len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("ADD_NODE_REMAP called without active node builder")?;
             b.remaps.push((from, to));
             Ok(())
@@ -455,7 +484,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let name = read_guest_string(&mem, &caller, name_ptr, name_len)?;
             let value = read_guest_string(&mem, &caller, val_ptr, val_len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("ADD_NODE_ENV called without active node builder")?;
             b.env.push((name, value));
             Ok(())
@@ -468,7 +500,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("SET_NODE_ARGS called without active node builder")?;
             b.args = Some(value);
             Ok(())
@@ -481,7 +516,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("SET_NODE_RESPAWN called without active node builder")?;
             b.respawn = Some(value);
             Ok(())
@@ -494,7 +532,10 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .node_builder
+                .as_mut()
                 .context("SET_NODE_RESPAWN_DELAY called without active node builder")?;
             b.respawn_delay = Some(value);
             Ok(())
@@ -504,9 +545,7 @@ fn register_node_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(
         HOST_MODULE,
         imports::END_NODE,
-        |mut caller: Caller<'_, LaunchHost>| -> Result<()> {
-            caller.data_mut().end_node()
-        },
+        |mut caller: Caller<'_, LaunchHost>| -> Result<()> { caller.data_mut().end_node() },
     )?;
 
     Ok(())
@@ -528,7 +567,10 @@ fn register_exec_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().exec_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .exec_builder
+                .as_mut()
                 .context("SET_EXEC_CMD called without active executable builder")?;
             b.cmd = Some(value);
             Ok(())
@@ -541,7 +583,10 @@ fn register_exec_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().exec_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .exec_builder
+                .as_mut()
                 .context("SET_EXEC_NAME called without active executable builder")?;
             b.name = Some(value);
             Ok(())
@@ -554,7 +599,10 @@ fn register_exec_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().exec_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .exec_builder
+                .as_mut()
                 .context("ADD_EXEC_ARG called without active executable builder")?;
             b.args.push(value);
             Ok(())
@@ -573,7 +621,10 @@ fn register_exec_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let name = read_guest_string(&mem, &caller, name_ptr, name_len)?;
             let value = read_guest_string(&mem, &caller, val_ptr, val_len)?;
-            let b = caller.data_mut().exec_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .exec_builder
+                .as_mut()
                 .context("ADD_EXEC_ENV called without active executable builder")?;
             b.env.push((name, value));
             Ok(())
@@ -583,9 +634,7 @@ fn register_exec_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(
         HOST_MODULE,
         imports::END_EXECUTABLE,
-        |mut caller: Caller<'_, LaunchHost>| -> Result<()> {
-            caller.data_mut().end_executable()
-        },
+        |mut caller: Caller<'_, LaunchHost>| -> Result<()> { caller.data_mut().end_executable() },
     )?;
 
     Ok(())
@@ -607,7 +656,10 @@ fn register_container_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().container_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .container_builder
+                .as_mut()
                 .context("SET_CONTAINER_PKG called without active container builder")?;
             b.package = Some(value);
             Ok(())
@@ -620,7 +672,10 @@ fn register_container_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().container_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .container_builder
+                .as_mut()
                 .context("SET_CONTAINER_EXEC called without active container builder")?;
             b.executable = Some(value);
             Ok(())
@@ -633,7 +688,10 @@ fn register_container_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().container_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .container_builder
+                .as_mut()
                 .context("SET_CONTAINER_NAME called without active container builder")?;
             b.name = Some(value);
             Ok(())
@@ -646,7 +704,10 @@ fn register_container_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().container_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .container_builder
+                .as_mut()
                 .context("SET_CONTAINER_NAMESPACE called without active container builder")?;
             b.namespace = Some(value);
             Ok(())
@@ -659,7 +720,10 @@ fn register_container_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().container_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .container_builder
+                .as_mut()
                 .context("SET_CONTAINER_ARGS called without active container builder")?;
             b.args = Some(value);
             Ok(())
@@ -669,9 +733,7 @@ fn register_container_builder(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(
         HOST_MODULE,
         imports::END_CONTAINER,
-        |mut caller: Caller<'_, LaunchHost>| -> Result<()> {
-            caller.data_mut().end_container()
-        },
+        |mut caller: Caller<'_, LaunchHost>| -> Result<()> { caller.data_mut().end_container() },
     )?;
 
     Ok(())
@@ -693,7 +755,10 @@ fn register_composable_node_builder(linker: &mut Linker<LaunchHost>) -> Result<(
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().comp_node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .comp_node_builder
+                .as_mut()
                 .context("SET_COMP_NODE_PKG called without active composable node builder")?;
             b.package = Some(value);
             Ok(())
@@ -706,8 +771,10 @@ fn register_composable_node_builder(linker: &mut Linker<LaunchHost>) -> Result<(
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().comp_node_builder.as_mut()
-                .context("SET_COMP_NODE_PLUGIN called without active composable node builder")?;
+            let b =
+                caller.data_mut().comp_node_builder.as_mut().context(
+                    "SET_COMP_NODE_PLUGIN called without active composable node builder",
+                )?;
             b.plugin = Some(value);
             Ok(())
         },
@@ -719,7 +786,10 @@ fn register_composable_node_builder(linker: &mut Linker<LaunchHost>) -> Result<(
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().comp_node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .comp_node_builder
+                .as_mut()
                 .context("SET_COMP_NODE_NAME called without active composable node builder")?;
             b.name = Some(value);
             Ok(())
@@ -732,8 +802,10 @@ fn register_composable_node_builder(linker: &mut Linker<LaunchHost>) -> Result<(
         |mut caller: Caller<'_, LaunchHost>, ptr: i32, len: i32| -> Result<()> {
             let mem = get_memory(&mut caller)?;
             let value = read_guest_string(&mem, &caller, ptr, len)?;
-            let b = caller.data_mut().comp_node_builder.as_mut()
-                .context("SET_COMP_NODE_NAMESPACE called without active composable node builder")?;
+            let b =
+                caller.data_mut().comp_node_builder.as_mut().context(
+                    "SET_COMP_NODE_NAMESPACE called without active composable node builder",
+                )?;
             b.namespace = Some(value);
             Ok(())
         },
@@ -751,7 +823,10 @@ fn register_composable_node_builder(linker: &mut Linker<LaunchHost>) -> Result<(
             let mem = get_memory(&mut caller)?;
             let name = read_guest_string(&mem, &caller, name_ptr, name_len)?;
             let value = read_guest_string(&mem, &caller, val_ptr, val_len)?;
-            let b = caller.data_mut().comp_node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .comp_node_builder
+                .as_mut()
                 .context("ADD_COMP_NODE_PARAM called without active composable node builder")?;
             b.params.push((name, value));
             Ok(())
@@ -770,7 +845,10 @@ fn register_composable_node_builder(linker: &mut Linker<LaunchHost>) -> Result<(
             let mem = get_memory(&mut caller)?;
             let from = read_guest_string(&mem, &caller, from_ptr, from_len)?;
             let to = read_guest_string(&mem, &caller, to_ptr, to_len)?;
-            let b = caller.data_mut().comp_node_builder.as_mut()
+            let b = caller
+                .data_mut()
+                .comp_node_builder
+                .as_mut()
                 .context("ADD_COMP_NODE_REMAP called without active composable node builder")?;
             b.remaps.push((from, to));
             Ok(())
@@ -789,8 +867,10 @@ fn register_composable_node_builder(linker: &mut Linker<LaunchHost>) -> Result<(
             let mem = get_memory(&mut caller)?;
             let key = read_guest_string(&mem, &caller, key_ptr, key_len)?;
             let value = read_guest_string(&mem, &caller, val_ptr, val_len)?;
-            let b = caller.data_mut().comp_node_builder.as_mut()
-                .context("ADD_COMP_NODE_EXTRA_ARG called without active composable node builder")?;
+            let b =
+                caller.data_mut().comp_node_builder.as_mut().context(
+                    "ADD_COMP_NODE_EXTRA_ARG called without active composable node builder",
+                )?;
             b.extra_args.push((key, value));
             Ok(())
         },
@@ -823,9 +903,7 @@ fn register_load_node(linker: &mut Linker<LaunchHost>) -> Result<()> {
     linker.func_wrap(
         HOST_MODULE,
         imports::END_LOAD_NODE,
-        |mut caller: Caller<'_, LaunchHost>| -> Result<()> {
-            caller.data_mut().end_load_node()
-        },
+        |mut caller: Caller<'_, LaunchHost>| -> Result<()> { caller.data_mut().end_load_node() },
     )?;
 
     Ok(())

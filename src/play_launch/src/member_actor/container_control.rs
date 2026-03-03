@@ -39,6 +39,7 @@ pub struct LoadTimingMetrics {
 
 /// Control events that can be sent to a container actor
 #[derive(Debug)]
+#[allow(dead_code)] // Variants constructed via channel messages from other modules
 pub enum ContainerControlEvent {
     /// Request to load a composable node into this container
     LoadNode {
@@ -122,8 +123,6 @@ pub(super) struct LoadCompletion {
 pub(super) struct CurrentUnload {
     /// Name of the composable node being unloaded
     pub composable_name: String,
-    /// When the unload started
-    pub start_time: Instant,
     /// Task handle for the UnloadNode service call
     pub task: tokio::task::JoinHandle<eyre::Result<UnloadNodeResponse>>,
 }

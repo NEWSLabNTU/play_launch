@@ -17,7 +17,4 @@ pub trait MemberActor: Send + 'static {
     /// - A shutdown signal is received
     /// - An unrecoverable error occurs
     async fn run(self) -> Result<()>;
-
-    /// Get the member name
-    fn name(&self) -> &str;
 }

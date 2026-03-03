@@ -1,10 +1,12 @@
 //! LaunchHost: runtime state for WASM execution, with builder pattern for records.
 
-use play_launch_parser::record::{
-    build_ros_command, normalize_param_value, resolve_exec_path, ComposableNodeContainerRecord,
-    LoadNodeRecord, NodeRecord, RecordJson,
+use play_launch_parser::{
+    record::{
+        ComposableNodeContainerRecord, LoadNodeRecord, NodeRecord, RecordJson, build_ros_command,
+        normalize_param_value, resolve_exec_path,
+    },
+    substitution::LaunchContext,
 };
-use play_launch_parser::substitution::LaunchContext;
 use play_launch_wasm_common::memory::BUMP_BASE;
 use std::collections::HashMap;
 
@@ -121,7 +123,10 @@ impl LaunchHost {
     }
 
     /// Collect context environment merged with builder-specific env vars.
-    fn collect_merged_env(&self, builder_env: &[(String, String)]) -> Option<Vec<(String, String)>> {
+    fn collect_merged_env(
+        &self,
+        builder_env: &[(String, String)],
+    ) -> Option<Vec<(String, String)>> {
         let mut merged = self.context.environment();
         for (k, v) in builder_env {
             merged.insert(k.clone(), v.clone());
@@ -186,9 +191,11 @@ impl LaunchHost {
         let env = self.collect_merged_env(&builder.env);
 
         // Parse args
-        let args: Option<Vec<String>> = builder.args.as_ref().map(|a| {
-            a.split_whitespace().map(|s| s.to_string()).collect()
-        }).filter(|v: &Vec<String>| !v.is_empty());
+        let args: Option<Vec<String>> = builder
+            .args
+            .as_ref()
+            .map(|a| a.split_whitespace().map(|s| s.to_string()).collect())
+            .filter(|v: &Vec<String>| !v.is_empty());
 
         // Build command
         let empty_gp = Vec::new();
@@ -220,8 +227,14 @@ impl LaunchHost {
             params,
             params_files: builder.param_files,
             remaps,
-            respawn: builder.respawn.as_ref().and_then(|s| s.parse::<bool>().ok()),
-            respawn_delay: builder.respawn_delay.as_ref().and_then(|s| s.parse::<f64>().ok()),
+            respawn: builder
+                .respawn
+                .as_ref()
+                .and_then(|s| s.parse::<bool>().ok()),
+            respawn_delay: builder
+                .respawn_delay
+                .as_ref()
+                .and_then(|s| s.parse::<f64>().ok()),
             ros_args: None,
         };
 
@@ -309,9 +322,11 @@ impl LaunchHost {
         let global_params = self.collect_global_params();
 
         // Args
-        let args: Option<Vec<String>> = builder.args.as_ref().map(|a| {
-            a.split_whitespace().map(|s| s.to_string()).collect()
-        }).filter(|v: &Vec<String>| !v.is_empty());
+        let args: Option<Vec<String>> = builder
+            .args
+            .as_ref()
+            .map(|a| a.split_whitespace().map(|s| s.to_string()).collect())
+            .filter(|v: &Vec<String>| !v.is_empty());
 
         let empty_gp = Vec::new();
         let gp = global_params.as_deref().unwrap_or(&empty_gp);

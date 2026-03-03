@@ -31,13 +31,13 @@ impl ContainerActor {
 
         // Create per-node output directory for isolated container logging
         let output_dir = params.output_dir.clone();
-        if !output_dir.as_os_str().is_empty() {
-            if let Err(e) = std::fs::create_dir_all(&output_dir) {
-                warn!(
-                    "{}: Failed to create output dir for {}: {}",
-                    container_name, params.composable_name, e
-                );
-            }
+        if !output_dir.as_os_str().is_empty()
+            && let Err(e) = std::fs::create_dir_all(&output_dir)
+        {
+            warn!(
+                "{}: Failed to create output dir for {}: {}",
+                container_name, params.composable_name, e
+            );
         }
 
         // Build LoadNode request

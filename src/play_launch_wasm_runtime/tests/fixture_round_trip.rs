@@ -6,8 +6,7 @@
 use play_launch_parser::record::{LoadNodeRecord, NodeRecord, RecordJson};
 use play_launch_wasm_codegen::compile_to_wasm;
 use play_launch_wasm_runtime::execute_wasm;
-use std::collections::HashMap;
-use std::io::Write;
+use std::{collections::HashMap, io::Write};
 use tempfile::NamedTempFile;
 
 // ---------------------------------------------------------------------------
@@ -67,14 +66,26 @@ fn assert_nodes_eq(label: &str, direct: &[NodeRecord], wasm: &[NodeRecord]) {
         assert_eq!(d.package, w.package, "{ctx}: package");
         assert_eq!(d.namespace, w.namespace, "{ctx}: namespace");
         assert_eq!(d.cmd, w.cmd, "{ctx}: cmd");
-        assert_eq!(sorted_pairs(&d.params), sorted_pairs(&w.params), "{ctx}: params");
+        assert_eq!(
+            sorted_pairs(&d.params),
+            sorted_pairs(&w.params),
+            "{ctx}: params"
+        );
         assert_eq!(
             sorted_opt_pairs(&d.global_params),
             sorted_opt_pairs(&w.global_params),
             "{ctx}: global_params"
         );
-        assert_eq!(sorted_pairs(&d.remaps), sorted_pairs(&w.remaps), "{ctx}: remaps");
-        assert_eq!(sorted_opt_pairs(&d.env), sorted_opt_pairs(&w.env), "{ctx}: env");
+        assert_eq!(
+            sorted_pairs(&d.remaps),
+            sorted_pairs(&w.remaps),
+            "{ctx}: remaps"
+        );
+        assert_eq!(
+            sorted_opt_pairs(&d.env),
+            sorted_opt_pairs(&w.env),
+            "{ctx}: env"
+        );
         assert_eq!(d.respawn, w.respawn, "{ctx}: respawn");
         assert_eq!(d.respawn_delay, w.respawn_delay, "{ctx}: respawn_delay");
     }
@@ -391,7 +402,11 @@ fn test_round_trip_container_with_namespace() {
         assert_eq!(d.cmd, w.cmd, "container cmd");
     }
 
-    assert_load_nodes_eq("container_with_namespace", &direct.load_node, &wasm.load_node);
+    assert_load_nodes_eq(
+        "container_with_namespace",
+        &direct.load_node,
+        &wasm.load_node,
+    );
 }
 
 /// Load composable node into existing container.

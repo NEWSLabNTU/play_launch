@@ -266,14 +266,14 @@ fn find_helper_binary() -> Result<PathBuf> {
     }
 
     // 2. Check same directory as current executable (pip install or colcon layout)
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            let helper_path = exe_dir.join("play_launch_io_helper");
-            if helper_path.exists() {
-                debug!("Using I/O helper from exe dir: {:?}", helper_path);
-                check_helper_capabilities(&helper_path)?;
-                return Ok(helper_path);
-            }
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(exe_dir) = exe_path.parent()
+    {
+        let helper_path = exe_dir.join("play_launch_io_helper");
+        if helper_path.exists() {
+            debug!("Using I/O helper from exe dir: {:?}", helper_path);
+            check_helper_capabilities(&helper_path)?;
+            return Ok(helper_path);
         }
     }
 
