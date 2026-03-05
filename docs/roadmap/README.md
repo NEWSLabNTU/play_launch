@@ -93,6 +93,12 @@ Phases 1–7 (Core CLI, dump_launch integration, docs, testing, I/O helper, logg
 |-------|--------|------------|---------------|
 | **Phase 27**: Runtime Dependency Check | ✅ Complete | 2026-03-03 | [phase-27-dependency_check.md](./phase-27-dependency_check.md) |
 
+### Testing
+
+| Phase | Status | Completion | Documentation |
+|-------|--------|------------|---------------|
+| **Phase 28**: Parser Integration Test Coverage | ⏳ Planned | - | [phase-28-parser_test_coverage.md](./phase-28-parser_test_coverage.md) |
+
 ---
 
 ## Progress Summary
