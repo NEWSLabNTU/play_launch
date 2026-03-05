@@ -19,8 +19,8 @@ All YAML action types below are supported by the official ROS 2 YAML frontend vi
 | `unset_env`            | `<unset_env>` T     | `UnsetEnvVar` T    | `- unset_env:` T            | T U       |
 | `push-ros-namespace`   | `<push-ros-ns>` T U | `PushROSNs` T      | `- push-ros-ns:` T          | T U       |
 | `set_parameter`        | `<set_param>` T U   | `SetParameter` T   | `- set_parameter:` T        | T U       |
-| `set_remap`            | `<set_remap>` U     | `SetRemap` T       | `- set_remap:` T            | T U       |
-| `executable`           | `<executable>` U    | `ExecuteProcess` T | `- executable:` T           | T U       |
+| `set_remap`            | `<set_remap>` T U   | `SetRemap` T       | `- set_remap:` T            | T U       |
+| `executable`           | `<executable>` T U  | `ExecuteProcess` T | `- executable:` T           | T U       |
 | `node_container`       | `<node_cont>` T U   | `ComposableNC` T   | `- node_container:` T       | T U       |
 | `load_composable_node` | `<load_cn>` T U     | `LoadCN` T         | `- load_composable_node:` T | T U       |
 | `if`/`unless`          | attrs T U           | `condition=` T     | keys T                      | T         |

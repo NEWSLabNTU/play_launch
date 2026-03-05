@@ -17,7 +17,7 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for pe
 
 ## Launch File Parsing
 
-**Default**: Rust parser (`play_launch_parser`, 3-12x faster, 353 tests, 100% Autoware)
+**Default**: Rust parser (`play_launch_parser`, 3-12x faster, 413 tests, 100% Autoware)
 **Alternative**: `play_launch launch <pkg> <file> --parser python`
 
 **CRITICAL RULE**: When Rust and Python parser behaviors differ, **Python's behavior is always correct**. Fix Rust, not Python. Validate with `just compare-dumps` in test workspaces.
@@ -146,8 +146,8 @@ Composable nodes don't have separate directories — metadata in parent containe
 ## Testing
 
 ```bash
-just test              # Parser unit (311) + fast integration (6), ~3s
-just test-all          # Parser unit (311) + all integration (42), ~70s
+just test              # Parser unit (413) + fast integration (6), ~3s
+just test-all          # Parser unit (413) + all integration (42), ~70s
 just test-unit         # Parser unit tests only
 just test-integration  # All integration tests (simple + Autoware)
 cargo test -p play_launch_wasm_runtime --test fixture_round_trip  # WASM round-trip (18 tests)
