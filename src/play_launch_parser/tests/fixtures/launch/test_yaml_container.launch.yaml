@@ -1,0 +1,19 @@
+launch:
+- node_container:
+    name: test_container
+    namespace: /container_ns
+    pkg: rclcpp_components
+    exec: component_container
+    composable_node:
+    - pkg: demo_nodes_cpp
+      plugin: "demo_nodes_cpp::Talker"
+      name: comp_talker
+      param:
+      - name: frequency
+        value: "5.0"
+      remap:
+      - from: chatter
+        to: /remapped_chatter
+    - pkg: demo_nodes_cpp
+      plugin: "demo_nodes_cpp::Listener"
+      name: comp_listener

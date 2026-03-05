@@ -1,0 +1,34 @@
+launch:
+- arg:
+    name: robot_ns
+    default: my_robot
+- let:
+    name: exec_name
+    value: talker
+- set_env:
+    name: YAML_ALL_TEST
+    value: active
+- unset_env:
+    name: NONEXISTENT_VAR_YAML_ALL
+- push-ros-namespace:
+    namespace: "/$(var robot_ns)"
+- set_parameter:
+    name: use_sim_time
+    value: "true"
+- set_remap:
+    from: /input_topic
+    to: /remapped_topic
+- group:
+    ns: sensors
+    children:
+    - node:
+        pkg: demo_nodes_cpp
+        exec: "$(var exec_name)"
+        name: sensor_node
+        param:
+        - name: rate
+          value: "10.0"
+- node:
+    pkg: demo_nodes_cpp
+    exec: listener
+    name: main_node

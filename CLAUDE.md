@@ -22,7 +22,7 @@ This runs:
 2. Fix ALL warnings and errors (no exceptions)
 3. Check formatting: `cargo fmt -- --check`
 4. Run all tests: `cargo test --all`
-5. Verify all tests pass (260 tests expected)
+5. Verify all tests pass (413 tests expected)
 
 **Never**:
 - Mark a task complete with failing tests
@@ -118,7 +118,7 @@ Write tests covering:
    - Phase 7.2 required before Phase 7.3 (parallelization)
    - Run benchmarks after each phase
 
-4. **Test After Each Change**: All 260 tests must pass
+4. **Test After Each Change**: All 413 tests must pass
    - Optimizations should not change behavior
    - Use regression tests to validate output matches
 
@@ -180,8 +180,11 @@ Test files are organized by category in `src/play_launch_parser/tests/`:
 ```
 src/play_launch_parser/tests/
 ├── edge_cases.rs           # Edge case tests (18 tests)
-├── xml_tests.rs            # XML parsing tests (20 tests)
-├── python_tests.rs         # Python launch tests (15 tests)
+├── xml_tests.rs            # XML parsing tests (25 tests)
+├── yaml_tests.rs           # YAML launch file tests (50 tests)
+├── python_tests.rs         # Python launch tests (38 tests)
+├── ir_tests.rs             # IR builder tests (22 tests)
+├── ir_eval_tests.rs        # IR evaluation tests (20 tests)
 ├── integration_tests.rs    # Performance tests (3 tests)
 └── fixtures/
     ├── launch/             # Main test launch files
@@ -192,7 +195,7 @@ src/play_launch_parser/tests/
 - Helper functions use `env!("CARGO_MANIFEST_DIR")/tests/fixtures/launch`
 - Fixtures are self-contained within the crate
 
-**Total Test Count**: 260 tests (218 unit + 18 edge + 20 XML + 15 Python + 3 performance + 6 integration base)
+**Total Test Count**: 413 tests (237 unit + 18 edge + 25 XML + 50 YAML + 38 Python + 22 IR + 20 IR-eval + 3 performance)
 
 ### Python Test Requirements
 
@@ -230,7 +233,7 @@ See `src/play_launch_parser/tests/python_tests.rs` for examples.
 # Run ALL tests (Rust + comparison + Autoware if available)
 just test
 
-# Run only Rust unit tests (260 tests)
+# Run only Rust unit tests (413 tests)
 just test-rust
 
 # Run comparison tests (Rust vs Python parser)
@@ -296,7 +299,7 @@ After creating/modifying `.envrc`, run `direnv allow` to enable it.
 **Goal**: Fast Rust implementation of ROS 2 launch file parser to replace slow Python `dump_launch`
 
 **Current Status**: ✅ **PRODUCTION READY** - Autoware Compatibility Complete
-- **Test Coverage**: 260 tests passing (~95% code coverage)
+- **Test Coverage**: 413 tests passing (~95% code coverage)
 - **Feature Completion**: 95% (Phase 5 complete, Phase 6 planned, **Phase 7 roadmap ready**)
 - **Autoware Compatibility**: ✅ **100%** - Full planning_simulator test passes (46 nodes, 15 containers, 54 composable nodes)
 - **Performance**: ~5s to parse full Autoware launch tree (vs ~10-15s with Python)
@@ -373,7 +376,7 @@ For detailed information, see:
 
 ### Quick Reference
 
-**Test Count Baseline**: 260 tests (218 unit + 18 edge + 20 XML + 15 Python + 3 performance + 6 integration base)
+**Test Count Baseline**: 413 tests (237 unit + 18 edge + 25 XML + 50 YAML + 38 Python + 22 IR + 20 IR-eval + 3 performance)
 
 **Key Architectural Notes**:
 - Substitution system uses recursive `Vec<Substitution>` for nesting
@@ -432,7 +435,7 @@ See implementation docs for detailed architecture and design decisions.
 - Edge case test fixtures validating Autoware patterns
 
 **Validation**:
-- ✅ 260 tests passing (218 unit + 18 edge + 20 XML + 15 Python + 3 performance + 6 base)
+- ✅ 413 tests passing (218 unit + 18 edge + 20 XML + 15 Python + 3 performance + 6 base)
 - ✅ 100% Autoware compatibility maintained (46 nodes, 15 containers, 54 composable nodes)
 - ✅ Zero clippy warnings
 - ✅ All quality checks passing

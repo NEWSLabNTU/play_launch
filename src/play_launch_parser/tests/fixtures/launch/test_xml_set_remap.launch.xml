@@ -1,0 +1,4 @@
+<launch>
+    <set_remap from="/input" to="/remapped_input" />
+    <node pkg="demo_nodes_cpp" exec="talker" name="remap_node" />
+</launch>

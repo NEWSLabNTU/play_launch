@@ -2646,3 +2646,82 @@ def generate_launch_description():
     assert_eq!(node["name"].as_str().unwrap(), "comprehensive_test_node");
     assert!(node["args"].is_array(), "Node should have args");
 }
+
+// =============================================================================
+// Python fixture-based test: SetRemap global (28.4)
+// =============================================================================
+
+#[test]
+fn test_python_set_remap_global() {
+    let _guard = python_test_guard();
+
+    let fixture = get_fixture_path("test_python_set_remap_global.launch.py");
+    assert!(fixture.exists(), "Fixture should exist: {:?}", fixture);
+
+    let result = parse_launch_file(&fixture, HashMap::new());
+    assert!(
+        result.is_ok(),
+        "Python remappings should parse: {:?}",
+        result.err()
+    );
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "remap_node");
+
+    // Check remappings are captured
+    let remaps = nodes[0]["remaps"].as_array().unwrap();
+    let has_remap = remaps
+        .iter()
+        .any(|r| r[0].as_str() == Some("/input") && r[1].as_str() == Some("/remapped_input"));
+    assert!(
+        has_remap,
+        "Should have /input -> /remapped_input remap, got: {:?}",
+        remaps
+    );
+}
+
+// =============================================================================
+// Cross-format test: Python includes YAML (28.5)
+// =============================================================================
+
+#[test]
+fn test_python_include_yaml() {
+    let _guard = python_test_guard();
+
+    let fixture = get_fixture_path("test_python_include_yaml.launch.py");
+    assert!(fixture.exists(), "Fixture should exist: {:?}", fixture);
+
+    let result = parse_launch_file(&fixture, HashMap::new());
+    assert!(
+        result.is_ok(),
+        "Python including YAML should parse: {:?}",
+        result.err()
+    );
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert!(
+        !nodes.is_empty(),
+        "Should have at least one node from Python file"
+    );
+
+    let has_after = nodes
+        .iter()
+        .any(|n| n["name"].as_str() == Some("after_yaml_include"));
+    assert!(
+        has_after,
+        "Should have after_yaml_include node from Python file"
+    );
+
+    // Check that YAML preset variables were processed
+    let variables = json["variables"].as_object();
+    if let Some(vars) = variables {
+        let has_yaml_var = vars.contains_key("yaml_var");
+        assert!(
+            has_yaml_var,
+            "YAML preset variable should be visible after include"
+        );
+    }
+}

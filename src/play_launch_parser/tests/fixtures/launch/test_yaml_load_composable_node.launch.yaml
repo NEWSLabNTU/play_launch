@@ -1,0 +1,13 @@
+launch:
+- node_container:
+    name: my_container
+    namespace: /test
+- load_composable_node:
+    target: /test/my_container
+    composable_node:
+    - pkg: demo_nodes_cpp
+      plugin: "demo_nodes_cpp::Talker"
+      name: lazy_talker
+      param:
+      - name: frequency
+        value: "2.0"
