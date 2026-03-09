@@ -163,41 +163,45 @@ Opaque handle types and function pointer aliases are hand-written (shared across
 
 ### 29.2: Introspection — `find_stamp_offset()`
 
-- [ ] `introspection.rs` — `find_stamp_offset(type_support: *const rosidl_message_type_support_t) → Option<usize>`
-- [ ] Resolve introspection typesupport via `func` pointer
-- [ ] Walk `MessageMembers` → find "header" member with `type_id_ == 18`
-- [ ] Return `header.offset_` (stamp is at offset 0 within Header)
-- [ ] Return `None` for messages without `header` field
-- [ ] Unit test with a mock `MessageMembers` struct
+- [x] `introspection.rs` — `find_stamp_offset(type_support: *const rosidl_message_type_support_t) → Option<usize>`
+- [x] Resolve introspection typesupport via `func` pointer
+- [x] Walk `MessageMembers` → find "header" member with `type_id_ == 18`
+- [x] Return `header.offset_` (stamp is at offset 0 within Header)
+- [x] Return `None` for messages without `header` field
+- [x] Unit tests with mock `MessageMembers` structs (3 tests: header found, no header, empty members)
 
 ### 29.3: Registry
 
-- [ ] `registry.rs` — `RwLock<HashMap<usize, TopicInfo>>` for publishers and subscribers
-- [ ] `TopicInfo`: topic name, topic hash (FNV-1a), stamp offset (`Option<usize>`)
-- [ ] `register_publisher(ptr, topic, type_support)` / `register_subscription(...)`
-- [ ] `lookup_publisher(ptr) → Option<&TopicInfo>` / `lookup_subscription(...)`
+- [x] `registry.rs` — separate `PUB_REGISTRY` / `SUB_REGISTRY` (`LazyLock<RwLock<HashMap<usize, Record>>>`)
+- [x] `PubEntry` / `SubEntry`: topic hash (FNV-1a), stamp offset; PubEntry also holds `&'static AtomicU64` frontier ref
+- [x] `register_publisher(ptr, topic, stamp_offset)` / `register_subscription(ptr, topic, stamp_offset)`
+- [x] `lookup_publisher(ptr) → Option<PubEntry>` / `lookup_subscription(ptr) → Option<SubEntry>` — returns `None` for messages without stamp
+- [x] Unit tests (4 tests: FNV-1a determinism, pub round-trip, pub-without-stamp, sub round-trip)
 
 ### 29.4: Frontier state
 
-- [ ] `frontier.rs` — `AtomicU64` per-topic frontier with `pack(sec, nanosec) → u64`
-- [ ] `update_frontier(current: &AtomicU64, sec: i32, nanosec: u32) → bool` — CAS max-update, returns true if frontier advanced
-- [ ] Global frontier map: `RwLock<HashMap<u64, AtomicU64>>` keyed by topic hash
+- [x] `frontier.rs` — `pack(sec, nanosec) → u64`, `update(frontier, sec, nanosec) → bool` CAS max-update
+- [x] Global frontier map: `LazyLock<RwLock<HashMap<u64, &'static AtomicU64>>>` with `Box::leak` for process-lifetime entries
+- [x] `get_or_create(topic_hash) → &'static AtomicU64` — read-lock fast path, write-lock slow path
+- [x] Unit tests (3 tests: pack ordering, update advances, get_or_create identity)
 
 ### 29.5: Channel — Unix datagram sender
 
-- [ ] `channel.rs` — open socket from `PLAY_LAUNCH_INTERCEPTION_SOCKET` env var
-- [ ] `FrontierEvent` struct (17 bytes, `#[repr(C, packed)]`)
-- [ ] `send_event(event: &FrontierEvent)` — non-blocking `sendto()`, silently drop on EAGAIN/ENOBUFS
-- [ ] Inert sender (no-op) when env var absent
+- [x] `channel.rs` — `init()` opens unbound socket, `connect()`s to `PLAY_LAUNCH_INTERCEPTION_SOCKET` path, sets non-blocking
+- [x] `FrontierEvent` struct (17 bytes, `#[repr(C, packed)]`)
+- [x] `send(event: &FrontierEvent)` — non-blocking `send()`, silently drops on error (best-effort)
+- [x] No-op when channel not initialized
+- [x] Unit test (1 test: event size is 17 bytes)
 
 ### 29.6: Hooks
 
-- [ ] `hooks.rs` — 4 `#[no_mangle] pub unsafe extern "C" fn` matching exact rcl signatures
-- [ ] `rcl_publisher_init`: call original → on success, resolve introspection → register in registry
-- [ ] `rcl_publish`: lookup registry → if stamp_offset present, read stamp, update frontier, send event → call original
-- [ ] `rcl_subscription_init`: call original → on success, resolve introspection → register
-- [ ] `rcl_take`: call original → on success and stamp_offset present, read stamp, send event
-- [ ] All hooks pass through directly when `INERT` flag is set
+- [x] 4 `#[no_mangle] pub unsafe extern "C" fn` in `lib.rs` matching exact rcl signatures
+- [x] `rcl_publisher_init`: call original → on success, resolve introspection → register in registry
+- [x] `rcl_publish`: lookup registry → if stamp_offset present, read stamp, update frontier, send event → call original
+- [x] `rcl_subscription_init`: call original → on success, resolve introspection → register
+- [x] `rcl_take`: call original → on success and stamp_offset present, read stamp, send event
+- [x] All hooks pass through directly when `INERT` flag is set
+- [x] `#[ctor] init()` calls `channel::init()` to determine INERT state
 
 ### 29.7: Manual validation
 

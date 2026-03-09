@@ -10,11 +10,18 @@
 //! - `PLAY_LAUNCH_INTERCEPTION_SOCKET` is not set, OR
 //! - the process doesn't link rcl (dlsym can't find the originals)
 
-use std::ffi::{c_char, c_void};
+mod channel;
+mod frontier;
+mod introspection;
+mod registry;
+
+use std::ffi::{CStr, c_char, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use rcl_interception_sys::*;
+
+use channel::{EVENT_PUBLISH, EVENT_TAKE, FrontierEvent};
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -82,10 +89,9 @@ fn init() {
     // If dlsym failed, ORIGINALS stays empty. Hooks return error (1), which
     // is fine — this only happens in non-ROS processes that don't call rcl.
 
-    // 2. Activate frontier tracking only if the socket env var is set AND
+    // 2. Activate frontier tracking only if the socket channel is ready AND
     //    we successfully resolved the originals.
-    if std::env::var_os("PLAY_LAUNCH_INTERCEPTION_SOCKET").is_some() && ORIGINALS.get().is_some()
-    {
+    if channel::init() && ORIGINALS.get().is_some() {
         INERT.store(false, Ordering::Release);
         eprintln!("[play_launch_interception] active — socket configured");
     }
@@ -109,8 +115,6 @@ pub unsafe extern "C" fn rcl_publisher_init(
     options: *const rcl_publisher_options_t,
 ) -> rcl_ret_t {
     let Some(orig) = originals() else {
-        // No originals resolved — this shouldn't happen in a ROS process,
-        // but be defensive. Return error (RCL_RET_ERROR = 1).
         return 1;
     };
 
@@ -118,8 +122,11 @@ pub unsafe extern "C" fn rcl_publisher_init(
         unsafe { (orig.publisher_init)(publisher, node, type_support, topic_name, options) };
 
     if ret == 0 && !INERT.load(Ordering::Acquire) {
-        // TODO (29.2+): resolve stamp offset via introspection, register in registry
-        let _ = (publisher, type_support, topic_name);
+        let topic = unsafe { CStr::from_ptr(topic_name) }
+            .to_string_lossy()
+            .into_owned();
+        let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
+        registry::register_publisher(publisher as usize, &topic, stamp_offset);
     }
 
     ret
@@ -138,9 +145,21 @@ pub unsafe extern "C" fn rcl_publish(
         return 1;
     };
 
-    if !INERT.load(Ordering::Acquire) {
-        // TODO (29.2+): read stamp, update frontier, send event
-        let _ = (publisher, ros_message);
+    if !INERT.load(Ordering::Acquire)
+        && let Some(info) = registry::lookup_publisher(publisher as usize)
+    {
+        let stamp_ptr =
+            unsafe { (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime };
+        let stamp = unsafe { &*stamp_ptr };
+
+        if frontier::update(info.frontier, stamp.sec, stamp.nanosec) {
+            channel::send(&FrontierEvent {
+                topic_hash: info.topic_hash,
+                stamp_sec: stamp.sec,
+                stamp_nanosec: stamp.nanosec,
+                event_type: EVENT_PUBLISH,
+            });
+        }
     }
 
     unsafe { (orig.publish)(publisher, ros_message, allocation) }
@@ -166,8 +185,11 @@ pub unsafe extern "C" fn rcl_subscription_init(
     };
 
     if ret == 0 && !INERT.load(Ordering::Acquire) {
-        // TODO (29.2+): resolve stamp offset, register in registry
-        let _ = (subscription, type_support, topic_name);
+        let topic = unsafe { CStr::from_ptr(topic_name) }
+            .to_string_lossy()
+            .into_owned();
+        let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
+        registry::register_subscription(subscription as usize, &topic, stamp_offset);
     }
 
     ret
@@ -189,9 +211,21 @@ pub unsafe extern "C" fn rcl_take(
 
     let ret = unsafe { (orig.take)(subscription, ros_message, message_info, allocation) };
 
-    if ret == 0 && !INERT.load(Ordering::Acquire) {
-        // TODO (29.2+): read stamp, send event
-        let _ = (subscription, ros_message);
+    if ret == 0
+        && !INERT.load(Ordering::Acquire)
+        && let Some(info) = registry::lookup_subscription(subscription as usize)
+    {
+        let stamp_ptr = unsafe {
+            (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime
+        };
+        let stamp = unsafe { &*stamp_ptr };
+
+        channel::send(&FrontierEvent {
+            topic_hash: info.topic_hash,
+            stamp_sec: stamp.sec,
+            stamp_nanosec: stamp.nanosec,
+            event_type: EVENT_TAKE,
+        });
     }
 
     ret
