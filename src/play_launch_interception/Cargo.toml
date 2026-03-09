@@ -1,0 +1,22 @@
+[package]
+name = "play_launch_interception"
+version = "0.1.0"
+edition = "2024"
+description = "LD_PRELOAD interceptor for ROS 2 rcl functions — frontier tracking for play_launch"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+# Not part of the main workspace — built standalone (no colcon deps).
+[workspace]
+
+[features]
+humble = ["rcl_interception_sys/humble"]
+jazzy = ["rcl_interception_sys/jazzy"]
+
+[dependencies]
+rcl_interception_sys = { path = "../vendor/rcl_interception_sys" }
+libc = "0.2"
+parking_lot = "0.12"
+ctor = "0.4"
