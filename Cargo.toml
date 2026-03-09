@@ -9,6 +9,7 @@ members = [
 ]
 exclude = [
     "tests",
+    "src/vendor/rcl_interception_sys",
 ]
 
 [patch.crates-io]
