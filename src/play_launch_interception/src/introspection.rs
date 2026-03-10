@@ -49,20 +49,37 @@ unsafe fn find_header_offset(members: *const MessageMembers) -> Option<usize> {
 pub unsafe fn find_stamp_offset(
     type_support: *const rosidl_message_type_support_t,
 ) -> Option<usize> {
+    // Try both C and C++ introspection identifiers. C++ nodes typically
+    // register with the C++ typesupport, so the C identifier alone won't
+    // resolve. The MessageMembers/MessageMember structs have identical
+    // memory layout across both.
+    unsafe {
+        try_introspection(type_support, TYPESUPPORT_INTROSPECTION_C_IDENTIFIER)
+            .or_else(|| {
+                try_introspection(type_support, TYPESUPPORT_INTROSPECTION_CPP_IDENTIFIER)
+            })
+    }
+}
+
+/// Attempt to obtain `MessageMembers` via a specific introspection identifier,
+/// then find the header offset.
+///
+/// # Safety
+///
+/// `type_support` must be a valid, non-null pointer.
+unsafe fn try_introspection(
+    type_support: *const rosidl_message_type_support_t,
+    identifier: &[u8],
+) -> Option<usize> {
     let ts = unsafe { &*type_support };
     let func = ts.func?;
 
-    let introspection_handle = unsafe {
-        func(
-            type_support,
-            TYPESUPPORT_INTROSPECTION_C_IDENTIFIER.as_ptr() as *const c_char,
-        )
-    };
-    if introspection_handle.is_null() {
+    let handle = unsafe { func(type_support, identifier.as_ptr() as *const c_char) };
+    if handle.is_null() {
         return None;
     }
 
-    let data = unsafe { (*introspection_handle).data };
+    let data = unsafe { (*handle).data };
     if data.is_null() {
         return None;
     }

@@ -203,13 +203,16 @@ Opaque handle types and function pointer aliases are hand-written (shared across
 - [x] All hooks pass through directly when `INERT` flag is set
 - [x] `#[ctor] init()` calls `channel::init()` to determine INERT state
 
-### 29.7: Manual validation
+### 29.7: Manual validation ✅
 
-- [ ] Build: `cd src/play_launch_interception && cargo build --release`
-- [ ] Test with talker: `PLAY_LAUNCH_INTERCEPTION_SOCKET=/tmp/frontier.sock LD_PRELOAD=...so ros2 run demo_nodes_cpp talker`
-- [ ] Write a small Python script to read and print events from the socket
-- [ ] Verify events arrive with correct topic hash and advancing timestamps
-- [ ] Test inert mode: `LD_PRELOAD=...so ros2 run demo_nodes_cpp talker` (no env var → no events, no crash)
+- [x] Build: `cd src/play_launch_interception && cargo build --release --features humble`
+- [x] Test with talker: `LD_PRELOAD=...so ros2 run demo_nodes_cpp talker` — hooks activate, String messages correctly skipped (no header.stamp)
+- [x] Test with cam2image: `LD_PRELOAD=...so ros2 run image_tools cam2image --ros-args -p burger_mode:=true` — 24+ PUB events received with monotonically advancing timestamps
+- [x] Write `scripts/frontier_listener.py` — reads and prints 17-byte FrontierEvent datagrams from Unix socket
+- [x] Verify events arrive with correct topic hash and advancing timestamps — confirmed: all events from `/image` topic, stamps match wall-clock time
+- [x] Test inert mode: `LD_PRELOAD=...so ros2 run demo_nodes_cpp talker` (no env var) — no "active" message, no events, no crash
+- [x] **Bug fix**: added C++ introspection fallback (`rosidl_typesupport_introspection_cpp`) in `find_stamp_offset()` — C++ nodes use `rosidl_typesupport_cpp` type support, so `rosidl_typesupport_introspection_c` identifier alone returns NULL. Now tries C first, falls back to C++.
+- **Known limitation**: LD_PRELOAD + Python/rclpy nodes fails with "error creating node" — dlsym(RTLD_NEXT) can't find rcl symbols because librcl.so is loaded lazily by rclpy's `_rclpy_pybind11.so`. Works correctly with C++ nodes (librcl.so is a direct dependency). This is acceptable since Autoware nodes are C++.
 
 ### 29.8: play_launch config & CLI
 
