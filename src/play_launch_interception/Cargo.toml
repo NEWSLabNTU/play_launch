@@ -19,4 +19,3 @@ jazzy = ["rcl_interception_sys/jazzy"]
 rcl_interception_sys = { path = "../vendor/rcl_interception_sys" }
 libc = "0.2"
 parking_lot = "0.12"
-ctor = "0.4"

@@ -1,14 +1,19 @@
 //! LD_PRELOAD interceptor for ROS 2 `rcl_publish` / `rcl_take`.
 //!
 //! When loaded via `LD_PRELOAD`, this library hooks four rcl functions to
-//! extract `header.stamp` from published/received messages and report
-//! per-topic timestamp frontiers to play_launch over a Unix datagram socket.
+//! extract `header.stamp` from published/received messages and dispatch events
+//! to compiled-in plugins.
+//!
+//! # Compiled-in plugins
+//!
+//! All plugins are compiled into the interception `.so`. Currently:
+//! - **FrontierPlugin** — activated when `PLAY_LAUNCH_INTERCEPTION_SOCKET` is set
 //!
 //! # Inert mode
 //!
 //! The library is inert (all hooks pass through with zero extra work) when:
-//! - `PLAY_LAUNCH_INTERCEPTION_SOCKET` is not set, OR
-//! - the process doesn't link rcl (dlsym can't find the originals)
+//! - the process doesn't link rcl (dlsym can't find the originals), OR
+//! - originals found but no plugins activated (no relevant env vars set)
 //!
 //! # Python / rclpy support
 //!
@@ -18,28 +23,21 @@
 //! then fall back to `dlopen("librcl.so", RTLD_NOLOAD)` + `dlsym(handle)`
 //! to find the already-loaded library in its local scope.
 
-mod channel;
-mod frontier;
 mod introspection;
+mod plugin;
+mod plugin_dispatch;
+mod plugins;
 mod registry;
 
 use std::ffi::{CStr, c_char, c_void};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
+use plugin::{InterceptionPlugin, Stamp};
 use rcl_interception_sys::*;
 
-use channel::{EVENT_PUBLISH, EVENT_TAKE, FrontierEvent};
-
 // ---------------------------------------------------------------------------
-// Global state
+// Runtime — replaces the old global state
 // ---------------------------------------------------------------------------
-
-/// When true, frontier tracking is disabled (no socket, no registry).
-/// Set to false in `#[ctor]` if `PLAY_LAUNCH_INTERCEPTION_SOCKET` is set.
-/// The hooks still call through to originals regardless — INERT only
-/// controls whether we inspect messages and send events.
-static CHANNEL_READY: AtomicBool = AtomicBool::new(false);
 
 struct Originals {
     publisher_init: FnRclPublisherInit,
@@ -48,10 +46,14 @@ struct Originals {
     take: FnRclTake,
 }
 
-/// Lazily resolved original function pointers. Initialized on first hook
-/// invocation, not in `#[ctor]`, because Python nodes load `librcl.so`
-/// after the constructor runs.
-static ORIGINALS: OnceLock<Option<Originals>> = OnceLock::new();
+struct Runtime {
+    originals: Originals,
+    /// Compiled-in plugins. Empty if no plugins activated (inert mode).
+    plugins: Vec<Box<dyn InterceptionPlugin>>,
+}
+
+/// Lazily initialized on first hook invocation.
+static RUNTIME: OnceLock<Option<Runtime>> = OnceLock::new();
 
 /// Resolve all 4 rcl symbols from `source`, returning `None` if any are
 /// missing.
@@ -103,7 +105,8 @@ fn try_resolve_originals() -> Option<Originals> {
     }
 
     // Strategy 2: dlopen RTLD_NOLOAD (local scope — Python/rclpy nodes).
-    let handle = unsafe { libc::dlopen(c"librcl.so".as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
+    let handle =
+        unsafe { libc::dlopen(c"librcl.so".as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
     if handle.is_null() {
         return None;
     }
@@ -111,36 +114,40 @@ fn try_resolve_originals() -> Option<Originals> {
     unsafe { resolve_from(handle) }
 }
 
-/// Get resolved originals, initializing lazily on first call.
+/// Build the list of compiled-in plugins, activating each based on its env var.
+fn build_plugins() -> Vec<Box<dyn InterceptionPlugin>> {
+    let mut plugins: Vec<Box<dyn InterceptionPlugin>> = Vec::new();
+
+    if let Some(frontier) = plugins::frontier::FrontierPlugin::new() {
+        plugins.push(Box::new(frontier));
+    }
+
+    plugins
+}
+
+/// Get the runtime, initializing lazily on first call.
 ///
 /// Returns `None` if `librcl.so` was not found via either strategy.
 #[inline(always)]
-fn originals() -> Option<&'static Originals> {
-    ORIGINALS
+fn runtime() -> Option<&'static Runtime> {
+    RUNTIME
         .get_or_init(|| {
-            let result = try_resolve_originals();
-            if result.is_some() && CHANNEL_READY.load(Ordering::Acquire) {
-                eprintln!("[play_launch_interception] active — socket configured");
+            let originals = try_resolve_originals()?;
+            let plugins = build_plugins();
+
+            if !plugins.is_empty() {
+                eprintln!(
+                    "[play_launch_interception] active — {} plugin(s)",
+                    plugins.len()
+                );
             }
-            result
+
+            Some(Runtime {
+                originals,
+                plugins,
+            })
         })
         .as_ref()
-}
-
-// ---------------------------------------------------------------------------
-// Constructor — runs when the .so is loaded
-// ---------------------------------------------------------------------------
-
-#[ctor::ctor]
-fn init() {
-    // Initialize the socket channel early. This only checks the env var and
-    // opens a socket — no dependency on librcl.so.
-    //
-    // Originals resolution is deferred to the first hook invocation because
-    // Python nodes haven't loaded librcl.so yet at ctor time.
-    if channel::init() {
-        CHANNEL_READY.store(true, Ordering::Release);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -160,19 +167,30 @@ pub unsafe extern "C" fn rcl_publisher_init(
     topic_name: *const c_char,
     options: *const rcl_publisher_options_t,
 ) -> rcl_ret_t {
-    let Some(orig) = originals() else {
+    let Some(rt) = runtime() else {
         return 1;
     };
 
     let ret =
-        unsafe { (orig.publisher_init)(publisher, node, type_support, topic_name, options) };
+        unsafe { (rt.originals.publisher_init)(publisher, node, type_support, topic_name, options) };
 
-    if ret == 0 && CHANNEL_READY.load(Ordering::Acquire) {
+    if ret == 0 && !rt.plugins.is_empty() {
         let topic = unsafe { CStr::from_ptr(topic_name) }
             .to_string_lossy()
             .into_owned();
         let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
+
+        // Register in the shared registry (used for hot-path lookups).
         registry::register_publisher(publisher as usize, &topic, stamp_offset);
+
+        let topic_hash = registry::fnv1a(topic.as_bytes());
+        plugin_dispatch::dispatch_publisher_init(
+            &rt.plugins,
+            publisher as usize,
+            &topic,
+            topic_hash,
+            stamp_offset,
+        );
     }
 
     ret
@@ -187,28 +205,29 @@ pub unsafe extern "C" fn rcl_publish(
     ros_message: *const c_void,
     allocation: *mut rmw_publisher_allocation_t,
 ) -> rcl_ret_t {
-    let Some(orig) = originals() else {
+    let Some(rt) = runtime() else {
         return 1;
     };
 
-    if CHANNEL_READY.load(Ordering::Acquire)
-        && let Some(info) = registry::lookup_publisher(publisher as usize)
-    {
-        let stamp_ptr =
-            unsafe { (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime };
-        let stamp = unsafe { &*stamp_ptr };
-
-        if frontier::update(info.frontier, stamp.sec, stamp.nanosec) {
-            channel::send(&FrontierEvent {
-                topic_hash: info.topic_hash,
-                stamp_sec: stamp.sec,
-                stamp_nanosec: stamp.nanosec,
-                event_type: EVENT_PUBLISH,
-            });
+    if !rt.plugins.is_empty() {
+        if let Some(info) = registry::lookup_publisher(publisher as usize) {
+            let stamp_ptr = unsafe {
+                (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime
+            };
+            let stamp = unsafe { &*stamp_ptr };
+            plugin_dispatch::dispatch_publish(
+                &rt.plugins,
+                publisher as usize,
+                info.topic_hash,
+                Some(Stamp {
+                    sec: stamp.sec,
+                    nanosec: stamp.nanosec,
+                }),
+            );
         }
     }
 
-    unsafe { (orig.publish)(publisher, ros_message, allocation) }
+    unsafe { (rt.originals.publish)(publisher, ros_message, allocation) }
 }
 
 /// # Safety
@@ -222,20 +241,31 @@ pub unsafe extern "C" fn rcl_subscription_init(
     topic_name: *const c_char,
     options: *const rcl_subscription_options_t,
 ) -> rcl_ret_t {
-    let Some(orig) = originals() else {
+    let Some(rt) = runtime() else {
         return 1;
     };
 
     let ret = unsafe {
-        (orig.subscription_init)(subscription, node, type_support, topic_name, options)
+        (rt.originals.subscription_init)(subscription, node, type_support, topic_name, options)
     };
 
-    if ret == 0 && CHANNEL_READY.load(Ordering::Acquire) {
+    if ret == 0 && !rt.plugins.is_empty() {
         let topic = unsafe { CStr::from_ptr(topic_name) }
             .to_string_lossy()
             .into_owned();
         let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
+
+        // Register in the shared registry.
         registry::register_subscription(subscription as usize, &topic, stamp_offset);
+
+        let topic_hash = registry::fnv1a(topic.as_bytes());
+        plugin_dispatch::dispatch_subscription_init(
+            &rt.plugins,
+            subscription as usize,
+            &topic,
+            topic_hash,
+            stamp_offset,
+        );
     }
 
     ret
@@ -251,27 +281,28 @@ pub unsafe extern "C" fn rcl_take(
     message_info: *mut rmw_message_info_t,
     allocation: *mut rmw_subscription_allocation_t,
 ) -> rcl_ret_t {
-    let Some(orig) = originals() else {
+    let Some(rt) = runtime() else {
         return 1;
     };
 
-    let ret = unsafe { (orig.take)(subscription, ros_message, message_info, allocation) };
+    let ret = unsafe { (rt.originals.take)(subscription, ros_message, message_info, allocation) };
 
-    if ret == 0
-        && CHANNEL_READY.load(Ordering::Acquire)
-        && let Some(info) = registry::lookup_subscription(subscription as usize)
-    {
-        let stamp_ptr = unsafe {
-            (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime
-        };
-        let stamp = unsafe { &*stamp_ptr };
-
-        channel::send(&FrontierEvent {
-            topic_hash: info.topic_hash,
-            stamp_sec: stamp.sec,
-            stamp_nanosec: stamp.nanosec,
-            event_type: EVENT_TAKE,
-        });
+    if ret == 0 && !rt.plugins.is_empty() {
+        if let Some(info) = registry::lookup_subscription(subscription as usize) {
+            let stamp_ptr = unsafe {
+                (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime
+            };
+            let stamp = unsafe { &*stamp_ptr };
+            plugin_dispatch::dispatch_take(
+                &rt.plugins,
+                subscription as usize,
+                info.topic_hash,
+                Some(Stamp {
+                    sec: stamp.sec,
+                    nanosec: stamp.nanosec,
+                }),
+            );
+        }
     }
 
     ret

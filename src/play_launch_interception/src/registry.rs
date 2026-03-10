@@ -1,16 +1,13 @@
 //! Publisher / subscription registry.
 //!
 //! Maps opaque `rcl_publisher_t*` / `rcl_subscription_t*` pointer values to
-//! the metadata needed on the hot path: topic hash, stamp offset, and (for
-//! publishers) a frontier reference.
+//! the metadata needed on the hot path: topic hash and stamp offset.
+//! Frontier tracking is now handled by plugins, not the registry.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use std::sync::atomic::AtomicU64;
 
 use parking_lot::RwLock;
-
-use crate::frontier;
 
 // ---------------------------------------------------------------------------
 // FNV-1a hash (64-bit)
@@ -19,7 +16,7 @@ use crate::frontier;
 const FNV_OFFSET: u64 = 14695981039346656037;
 const FNV_PRIME: u64 = 1099511628211;
 
-fn fnv1a(bytes: &[u8]) -> u64 {
+pub fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash = FNV_OFFSET;
     for &b in bytes {
         hash ^= b as u64;
@@ -37,13 +34,11 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 pub struct PubEntry {
     pub topic_hash: u64,
     pub stamp_offset: usize,
-    pub frontier: &'static AtomicU64,
 }
 
 struct PubRecord {
     topic_hash: u64,
     stamp_offset: Option<usize>,
-    frontier: &'static AtomicU64,
 }
 
 static PUB_REGISTRY: LazyLock<RwLock<HashMap<usize, PubRecord>>> =
@@ -52,14 +47,12 @@ static PUB_REGISTRY: LazyLock<RwLock<HashMap<usize, PubRecord>>> =
 /// Register a publisher. Called from `rcl_publisher_init` hook (cold path).
 pub fn register_publisher(ptr: usize, topic_name: &str, stamp_offset: Option<usize>) {
     let topic_hash = fnv1a(topic_name.as_bytes());
-    let frontier = frontier::get_or_create(topic_hash);
     let mut map = PUB_REGISTRY.write();
     map.insert(
         ptr,
         PubRecord {
             topic_hash,
             stamp_offset,
-            frontier,
         },
     );
 }
@@ -73,8 +66,16 @@ pub fn lookup_publisher(ptr: usize) -> Option<PubEntry> {
     Some(PubEntry {
         topic_hash: record.topic_hash,
         stamp_offset: record.stamp_offset?,
-        frontier: record.frontier,
     })
+}
+
+/// Look up a publisher by pointer, returning topic info even if no stamp.
+/// Used by the init dispatch path to pass full info to plugins.
+#[allow(dead_code)]
+pub fn lookup_publisher_full(ptr: usize) -> Option<(u64, Option<usize>)> {
+    let map = PUB_REGISTRY.read();
+    let record = map.get(&ptr)?;
+    Some((record.topic_hash, record.stamp_offset))
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +115,15 @@ pub fn lookup_subscription(ptr: usize) -> Option<SubEntry> {
     })
 }
 
+/// Look up a subscription by pointer, returning topic info even if no stamp.
+/// Used by the init dispatch path to pass full info to plugins.
+#[allow(dead_code)]
+pub fn lookup_subscription_full(ptr: usize) -> Option<(u64, Option<usize>)> {
+    let map = SUB_REGISTRY.read();
+    let record = map.get(&ptr)?;
+    Some((record.topic_hash, record.stamp_offset))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +146,14 @@ mod tests {
     fn publisher_without_stamp_returns_none() {
         register_publisher(0x2000, "/no_stamp", None);
         assert!(lookup_publisher(0x2000).is_none());
+    }
+
+    #[test]
+    fn publisher_full_lookup_includes_no_stamp() {
+        register_publisher(0x4000, "/no_stamp_full", None);
+        let (hash, offset) = lookup_publisher_full(0x4000).unwrap();
+        assert_eq!(hash, fnv1a(b"/no_stamp_full"));
+        assert!(offset.is_none());
     }
 
     #[test]
