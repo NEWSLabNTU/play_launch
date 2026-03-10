@@ -143,7 +143,8 @@ fn replace_ros_booleans(expr: &str) -> String {
 fn needs_python_eval(expr: &str) -> bool {
     // Check for Python keywords/operators not supported by the Rust evaluator
     let keywords = [
-        " in ", " or ", " and ", " not ", "len(", ".split(", ".strip(", ".join(",
+        " in ", " or ", " and ", " not ", " if ", " else ", "len(", ".split(", ".strip(",
+        ".join(",
     ];
     keywords.iter().any(|kw| expr.contains(kw))
 }
