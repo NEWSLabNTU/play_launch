@@ -59,17 +59,11 @@ impl LoadComposableNodeAction {
         let target_container_name = resolve_substitutions(&self.target, context)
             .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
 
-        // Normalize target container name
-        let normalized_target = if target_container_name.starts_with('/') {
-            target_container_name
-        } else {
-            let current_ns = context.current_namespace();
-            if current_ns == "/" {
-                format!("/{}", target_container_name)
-            } else {
-                format!("{}/{}", current_ns, target_container_name)
-            }
-        };
+        // Store resolved target as-is. The target_container is a reference to an
+        // existing container by its node name, NOT a namespace-relative path.
+        // The Python launch system (perform_substitutions) does not prepend namespace.
+        // The replay builder normalizes by adding "/" if needed for matching.
+        let normalized_target = target_container_name;
 
         // Convert composable nodes to LoadNodeCaptures
         let captures: Vec<LoadNodeCapture> = self
@@ -127,19 +121,11 @@ impl LoadComposableNodeAction {
         let target_container_name = resolve_substitutions(&self.target, context)
             .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
 
-        // Normalize target container name
-        // If it starts with '/', keep it as is
-        // Otherwise, prepend current namespace
-        let normalized_target = if target_container_name.starts_with('/') {
-            target_container_name
-        } else {
-            let current_ns = context.current_namespace();
-            if current_ns == "/" {
-                format!("/{}", target_container_name)
-            } else {
-                format!("{}/{}", current_ns, target_container_name)
-            }
-        };
+        // Store resolved target as-is. The target_container is a reference to an
+        // existing container by its node name, NOT a namespace-relative path.
+        // The Python launch system (perform_substitutions) does not prepend namespace.
+        // The replay builder normalizes by adding "/" if needed for matching.
+        let normalized_target = target_container_name;
 
         // Get global parameters from context (set via SetParameter actions)
         let global_params_vec: Vec<(String, String)> =
@@ -323,8 +309,9 @@ mod tests {
         let records = action.to_load_node_records(&context).unwrap();
 
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].target_container_name, "/test_ns/my_container");
-        assert_eq!(records[0].namespace, "/test_ns");
+        // Target container is stored as-is (no namespace prepending).
+        // The replay builder normalizes by adding "/" for matching.
+        assert_eq!(records[0].target_container_name, "my_container");
     }
 
     #[test]

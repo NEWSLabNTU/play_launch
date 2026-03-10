@@ -240,23 +240,54 @@ impl LoadComposableNodes {
         // Try to extract as ComposableNodeContainer instance
         if let Ok(name_attr) = target_ref.getattr("name") {
             let name = Self::pyobject_to_string(&name_attr)?;
-            let namespace = target_ref
+            let container_namespace = target_ref
                 .getattr("namespace")
                 .ok()
                 .and_then(|ns| Self::pyobject_to_string(&ns).ok());
 
-            // Build full target container name: namespace + name
-            let full_name = if let Some(ref ns) = namespace {
-                Self::normalize_namespace_path(ns, &name)
+            // Build full target container name: ros_namespace + container_namespace + name
+            // This must match how capture_container() builds the full name, which
+            // combines the current ROS namespace (from push-ros-namespace stack)
+            // with the container's own namespace.
+            use crate::python::bridge::get_current_ros_namespace;
+            let ros_namespace = get_current_ros_namespace();
+
+            // Normalize container's namespace (same logic as capture_container)
+            let container_ns = container_namespace
+                .as_ref()
+                .map(|ns| {
+                    if ns.is_empty() {
+                        String::new()
+                    } else if ns.starts_with('/') {
+                        ns.clone()
+                    } else {
+                        format!("/{}", ns)
+                    }
+                })
+                .unwrap_or_default();
+
+            // Combine ROS namespace with container namespace (same as capture_container)
+            let full_namespace = if ros_namespace == "/" {
+                if container_ns.is_empty() {
+                    "/".to_string()
+                } else {
+                    container_ns
+                }
+            } else if container_ns.is_empty() {
+                ros_namespace.clone()
             } else {
-                format!("/{}", name)
+                format!("{}{}", ros_namespace, container_ns)
             };
 
+            let full_name = Self::normalize_namespace_path(&full_namespace, &name);
+
             log::debug!(
-                "Extracted target container from ComposableNodeContainer instance: {}",
-                full_name
+                "Extracted target container from instance: {} (ros_ns='{}', container_ns='{}')",
+                full_name,
+                ros_namespace,
+                container_namespace.as_deref().unwrap_or("")
             );
-            return Ok((full_name, namespace));
+            return Ok((full_name, Some(full_namespace)));
         }
 
         // Try as string, LaunchConfiguration, or other substitution

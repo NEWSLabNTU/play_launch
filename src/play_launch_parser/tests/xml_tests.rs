@@ -1045,11 +1045,14 @@ fn test_load_composable_node() {
         .find(|n| n["node_name"].as_str() == Some("validator"));
     assert!(validator.is_some(), "Should have validator node");
     let validator = validator.unwrap();
+    // Target container is stored as-is from the XML attribute (no namespace prepending).
+    // The replay builder handles matching via suffix fallback.
     assert_eq!(
         validator["target_container_name"].as_str().unwrap(),
-        "/planning/planning_container"
+        "planning_container"
     );
-    assert_eq!(validator["namespace"].as_str().unwrap(), "/planning");
+    // Namespace defaults to "/" since the raw target has no slash
+    assert_eq!(validator["namespace"].as_str().unwrap(), "/");
     assert_eq!(validator["package"].as_str().unwrap(), "validator_pkg");
 }
 
