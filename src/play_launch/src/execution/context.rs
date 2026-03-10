@@ -85,12 +85,13 @@ impl NodeContext {
             output_dir,
         } = self;
 
-        let Some(_exec_name) = &record.exec_name else {
-            bail!(r#"expect the "exec_name" field but not found"#);
-        };
-        let Some(_package) = &record.package else {
-            bail!(r#"expect the "package" field but not found"#);
-        };
+        // Raw executables (from <executable> tags) have no package or exec_name.
+        // Only require these fields for regular ROS nodes.
+        if record.package.is_some() {
+            if record.exec_name.is_none() {
+                bail!(r#"expect the "exec_name" field but not found"#);
+            }
+        }
 
         let stdout_path = output_dir.join("out");
         let stderr_path = output_dir.join("err");
