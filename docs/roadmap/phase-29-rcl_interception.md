@@ -212,7 +212,7 @@ Opaque handle types and function pointer aliases are hand-written (shared across
 - [x] Verify events arrive with correct topic hash and advancing timestamps — confirmed: all events from `/image` topic, stamps match wall-clock time
 - [x] Test inert mode: `LD_PRELOAD=...so ros2 run demo_nodes_cpp talker` (no env var) — no "active" message, no events, no crash
 - [x] **Bug fix**: added C++ introspection fallback (`rosidl_typesupport_introspection_cpp`) in `find_stamp_offset()` — C++ nodes use `rosidl_typesupport_cpp` type support, so `rosidl_typesupport_introspection_c` identifier alone returns NULL. Now tries C first, falls back to C++.
-- **Known limitation**: LD_PRELOAD + Python/rclpy nodes fails with "error creating node" — dlsym(RTLD_NEXT) can't find rcl symbols because librcl.so is loaded lazily by rclpy's `_rclpy_pybind11.so`. Works correctly with C++ nodes (librcl.so is a direct dependency). This is acceptable since Autoware nodes are C++.
+- [x] **Bug fix**: Python/rclpy support via lazy resolution with `dlopen("librcl.so", RTLD_NOLOAD)` fallback. Python loads `_rclpy_pybind11.so` (and transitively `librcl.so`) with `RTLD_LOCAL`, so `dlsym(RTLD_NEXT)` can't find originals. Solution: defer resolution from `#[ctor]` to first hook invocation, try `RTLD_NEXT` (C++ nodes) first, then `dlopen(RTLD_NOLOAD)` + `dlsym(handle)` (Python nodes). Verified: both C++ and Python nodes produce correct frontier events.
 
 ### 29.8: play_launch config & CLI
 

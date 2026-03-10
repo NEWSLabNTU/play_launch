@@ -9,6 +9,14 @@
 //! The library is inert (all hooks pass through with zero extra work) when:
 //! - `PLAY_LAUNCH_INTERCEPTION_SOCKET` is not set, OR
 //! - the process doesn't link rcl (dlsym can't find the originals)
+//!
+//! # Python / rclpy support
+//!
+//! Python nodes load `librcl.so` lazily via `_rclpy_pybind11.so` with
+//! `RTLD_LOCAL`, so `dlsym(RTLD_NEXT)` can't find it at ctor time. We use
+//! lazy resolution: on first hook invocation, try `RTLD_NEXT` (C++ nodes),
+//! then fall back to `dlopen("librcl.so", RTLD_NOLOAD)` + `dlsym(handle)`
+//! to find the already-loaded library in its local scope.
 
 mod channel;
 mod frontier;
@@ -27,8 +35,11 @@ use channel::{EVENT_PUBLISH, EVENT_TAKE, FrontierEvent};
 // Global state
 // ---------------------------------------------------------------------------
 
-/// When true, all hooks are pure pass-through (no socket, no registry).
-static INERT: AtomicBool = AtomicBool::new(true);
+/// When true, frontier tracking is disabled (no socket, no registry).
+/// Set to false in `#[ctor]` if `PLAY_LAUNCH_INTERCEPTION_SOCKET` is set.
+/// The hooks still call through to originals regardless — INERT only
+/// controls whether we inspect messages and send events.
+static CHANNEL_READY: AtomicBool = AtomicBool::new(false);
 
 struct Originals {
     publisher_init: FnRclPublisherInit,
@@ -37,42 +48,83 @@ struct Originals {
     take: FnRclTake,
 }
 
-static ORIGINALS: OnceLock<Originals> = OnceLock::new();
+/// Lazily resolved original function pointers. Initialized on first hook
+/// invocation, not in `#[ctor]`, because Python nodes load `librcl.so`
+/// after the constructor runs.
+static ORIGINALS: OnceLock<Option<Originals>> = OnceLock::new();
 
-/// Try to resolve original function pointers via `dlsym(RTLD_NEXT, ...)`.
+/// Resolve all 4 rcl symbols from `source`, returning `None` if any are
+/// missing.
 ///
-/// Returns `None` if any symbol is missing (the process doesn't link rcl).
-fn try_resolve_originals() -> Option<Originals> {
-    unsafe {
-        let publisher_init = libc::dlsym(libc::RTLD_NEXT, c"rcl_publisher_init".as_ptr());
-        let publish = libc::dlsym(libc::RTLD_NEXT, c"rcl_publish".as_ptr());
-        let subscription_init =
-            libc::dlsym(libc::RTLD_NEXT, c"rcl_subscription_init".as_ptr());
-        let take = libc::dlsym(libc::RTLD_NEXT, c"rcl_take".as_ptr());
+/// # Safety
+///
+/// `source` must be a valid handle for `dlsym` (`RTLD_NEXT` or a dlopen'd
+/// handle).
+unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
+    let publisher_init = unsafe { libc::dlsym(source, c"rcl_publisher_init".as_ptr()) };
+    let publish = unsafe { libc::dlsym(source, c"rcl_publish".as_ptr()) };
+    let subscription_init =
+        unsafe { libc::dlsym(source, c"rcl_subscription_init".as_ptr()) };
+    let take = unsafe { libc::dlsym(source, c"rcl_take".as_ptr()) };
 
-        if publisher_init.is_null()
-            || publish.is_null()
-            || subscription_init.is_null()
-            || take.is_null()
-        {
-            return None;
-        }
-
-        Some(Originals {
-            publisher_init: std::mem::transmute::<*mut c_void, FnRclPublisherInit>(publisher_init),
-            publish: std::mem::transmute::<*mut c_void, FnRclPublish>(publish),
-            subscription_init: std::mem::transmute::<*mut c_void, FnRclSubscriptionInit>(
-                subscription_init,
-            ),
-            take: std::mem::transmute::<*mut c_void, FnRclTake>(take),
-        })
+    if publisher_init.is_null()
+        || publish.is_null()
+        || subscription_init.is_null()
+        || take.is_null()
+    {
+        return None;
     }
+
+    Some(Originals {
+        publisher_init: unsafe {
+            std::mem::transmute::<*mut c_void, FnRclPublisherInit>(publisher_init)
+        },
+        publish: unsafe { std::mem::transmute::<*mut c_void, FnRclPublish>(publish) },
+        subscription_init: unsafe {
+            std::mem::transmute::<*mut c_void, FnRclSubscriptionInit>(subscription_init)
+        },
+        take: unsafe { std::mem::transmute::<*mut c_void, FnRclTake>(take) },
+    })
 }
 
-/// Get resolved originals. Returns `None` if rcl was not found at init.
+/// Try to resolve original rcl function pointers.
+///
+/// 1. `RTLD_NEXT` — works for C++ nodes where `librcl.so` is in the global
+///    symbol scope (loaded as a DT_NEEDED dependency of the main binary).
+/// 2. `dlopen("librcl.so", RTLD_NOLOAD)` — works for Python nodes where
+///    `librcl.so` was loaded with `RTLD_LOCAL` by `_rclpy_pybind11.so`.
+///    `RTLD_NOLOAD` finds the already-loaded library without loading a new
+///    copy, and handle-based `dlsym` searches its symbol table directly
+///    (bypassing scope restrictions, no recursion risk).
+fn try_resolve_originals() -> Option<Originals> {
+    // Strategy 1: RTLD_NEXT (global scope — C++ nodes).
+    if let Some(orig) = unsafe { resolve_from(libc::RTLD_NEXT) } {
+        return Some(orig);
+    }
+
+    // Strategy 2: dlopen RTLD_NOLOAD (local scope — Python/rclpy nodes).
+    let handle = unsafe { libc::dlopen(c"librcl.so".as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
+    if handle.is_null() {
+        return None;
+    }
+    // Don't dlclose — we need the symbols to stay valid for the process lifetime.
+    unsafe { resolve_from(handle) }
+}
+
+/// Get resolved originals, initializing lazily on first call.
+///
+/// Returns `None` if `librcl.so` was not found via either strategy.
 #[inline(always)]
 fn originals() -> Option<&'static Originals> {
-    ORIGINALS.get()
+    ORIGINALS
+        .get_or_init(|| {
+            let result = try_resolve_originals();
+            if result.is_some() && CHANNEL_READY.load(Ordering::Acquire) {
+                eprintln!("[play_launch_interception] active — socket configured");
+            }
+            result
+        })
+        .as_ref()
 }
 
 // ---------------------------------------------------------------------------
@@ -81,19 +133,13 @@ fn originals() -> Option<&'static Originals> {
 
 #[ctor::ctor]
 fn init() {
-    // 1. Always try to resolve rcl originals — our exported symbols override
-    //    the real ones regardless of mode, so hooks must be able to call through.
-    if let Some(orig) = try_resolve_originals() {
-        let _ = ORIGINALS.set(orig);
-    }
-    // If dlsym failed, ORIGINALS stays empty. Hooks return error (1), which
-    // is fine — this only happens in non-ROS processes that don't call rcl.
-
-    // 2. Activate frontier tracking only if the socket channel is ready AND
-    //    we successfully resolved the originals.
-    if channel::init() && ORIGINALS.get().is_some() {
-        INERT.store(false, Ordering::Release);
-        eprintln!("[play_launch_interception] active — socket configured");
+    // Initialize the socket channel early. This only checks the env var and
+    // opens a socket — no dependency on librcl.so.
+    //
+    // Originals resolution is deferred to the first hook invocation because
+    // Python nodes haven't loaded librcl.so yet at ctor time.
+    if channel::init() {
+        CHANNEL_READY.store(true, Ordering::Release);
     }
 }
 
@@ -121,7 +167,7 @@ pub unsafe extern "C" fn rcl_publisher_init(
     let ret =
         unsafe { (orig.publisher_init)(publisher, node, type_support, topic_name, options) };
 
-    if ret == 0 && !INERT.load(Ordering::Acquire) {
+    if ret == 0 && CHANNEL_READY.load(Ordering::Acquire) {
         let topic = unsafe { CStr::from_ptr(topic_name) }
             .to_string_lossy()
             .into_owned();
@@ -145,7 +191,7 @@ pub unsafe extern "C" fn rcl_publish(
         return 1;
     };
 
-    if !INERT.load(Ordering::Acquire)
+    if CHANNEL_READY.load(Ordering::Acquire)
         && let Some(info) = registry::lookup_publisher(publisher as usize)
     {
         let stamp_ptr =
@@ -184,7 +230,7 @@ pub unsafe extern "C" fn rcl_subscription_init(
         (orig.subscription_init)(subscription, node, type_support, topic_name, options)
     };
 
-    if ret == 0 && !INERT.load(Ordering::Acquire) {
+    if ret == 0 && CHANNEL_READY.load(Ordering::Acquire) {
         let topic = unsafe { CStr::from_ptr(topic_name) }
             .to_string_lossy()
             .into_owned();
@@ -212,7 +258,7 @@ pub unsafe extern "C" fn rcl_take(
     let ret = unsafe { (orig.take)(subscription, ros_message, message_info, allocation) };
 
     if ret == 0
-        && !INERT.load(Ordering::Acquire)
+        && CHANNEL_READY.load(Ordering::Acquire)
         && let Some(info) = registry::lookup_subscription(subscription as usize)
     {
         let stamp_ptr = unsafe {
