@@ -122,6 +122,7 @@ Composable nodes don't have separate directories — metadata in parent containe
 - **ALWAYS** use Bash tool's `timeout` parameter (never `timeout` command prefix)
 - Temp files in `tmp/` (gitignored), never `/tmp`
 - Create temp scripts with Write tool, never inline in Bash
+- **Standalone crates** (outside the workspace, with their own `[workspace]` in Cargo.toml) must have a `/target/` `.gitignore` — e.g. `play_launch_interception`, `play_launch_interception_abi`, `play_launch_interception_frontier`, `rcl_interception_sys`
 
 ### Process Management
 - **NEVER** `kill -9` individual processes — kill the process group (PGID):
