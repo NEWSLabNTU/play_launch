@@ -161,6 +161,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-03-11**: Fixed `$(eval)` Python conditional expressions returning "false" — `needs_python_eval()` didn't recognize `" if "` / `" else "` keywords, so expressions like `'centerpoint_tiny' if ''=='' else ''` were handled by the Rust string comparison evaluator (which found `==` first), naively split on it, and returned "false". Fix: added `" if "` and `" else "` to the `needs_python_eval()` keywords list in `eval.rs` so conditional expressions delegate to Python eval.
 - **2026-03-11**: Fixed composable node container matching — 5 nodes were failing to find their target containers:
   1. **`container.rs` (Python mock)**: `ComposableNodeContainer` was missing `#[getter]` for `name` and `namespace`, causing `LoadComposableNodes.extract_target_container()` to fall through to `__repr__()`, producing targets like `"ComposableNodeContainer(name='...', namespace='')"` instead of proper names. Fix: added `#[getter]` annotations.
   2. **`load_composable.rs` (Python mock)**: `extract_target_container()` wasn't combining ROS namespace (from `get_current_ros_namespace()`) with container's own namespace when building the target name. Fix: integrate ROS namespace using same logic as `capture_container()`.
