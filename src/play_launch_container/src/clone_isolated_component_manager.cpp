@@ -349,8 +349,12 @@ CloneIsolatedComponentManager::ChildInfo CloneIsolatedComponentManager::spawn_ch
     args.push_back("__node:=" + request->node_name);
   }
   if (!request->node_namespace.empty()) {
+    std::string ns = request->node_namespace;
+    if (ns[0] != '/') {
+      ns = "/" + ns;
+    }
     args.push_back("-r");
-    args.push_back("__ns:=" + request->node_namespace);
+    args.push_back("__ns:=" + ns);
   }
 
   // Log level (uint8: 0=unset, 10=DEBUG, 20=INFO, 30=WARN, 40=ERROR, 50=FATAL)
