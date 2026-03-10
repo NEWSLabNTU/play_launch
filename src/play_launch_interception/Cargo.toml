@@ -17,5 +17,6 @@ jazzy = ["rcl_interception_sys/jazzy"]
 
 [dependencies]
 rcl_interception_sys = { path = "../vendor/rcl_interception_sys" }
+spsc_shm = { path = "../spsc_shm" }
 libc = "0.2"
 parking_lot = "0.12"

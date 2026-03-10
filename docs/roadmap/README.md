@@ -57,9 +57,9 @@ See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md).
 
 See [phase-25-topic_introspection.md](./phase-25-topic_introspection.md).
 
-### Phase 29: RCL Interception & Frontier Tracking (planned)
+### Phase 29: RCL Interception & Frontier Tracking (in progress)
 
-Rust LD_PRELOAD interceptor hooking rcl_publish/rcl_take to track per-topic timestamp frontiers. Injects transparently via play_launch. Uses external `rcl_interception_sys` crate for FFI types.
+Rust LD_PRELOAD interceptor hooking rcl_publish/rcl_take with a trait-based compiled-in plugin architecture. Three phases: **(A) Interceptor** — complete (29.0–29.7): lazy dlsym, rosidl introspection, `InterceptionPlugin` trait, FrontierPlugin, 17 tests. **(B) IPC + plugins** — planned: `spsc_shm` crate (generic zero-copy shared memory SPSC ring buffer, memfd + eventfd), migrate frontier plugin to shared memory, add StatsPlugin for message statistics. **(C) play_launch integration** — planned: YAML config (`interception` section), LD_PRELOAD injection, `InterceptionListener` tokio consumer task, logging, web UI.
 
 See [phase-29-rcl_interception.md](./phase-29-rcl_interception.md).
 

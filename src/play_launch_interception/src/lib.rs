@@ -6,8 +6,13 @@
 //!
 //! # Compiled-in plugins
 //!
-//! All plugins are compiled into the interception `.so`. Currently:
-//! - **FrontierPlugin** — activated when `PLAY_LAUNCH_INTERCEPTION_SOCKET` is set
+//! All plugins are compiled into the interception `.so`:
+//! - **FrontierPlugin** — per-topic timestamp frontier tracking
+//! - **StatsPlugin** — message counts, rates, latency (every publish/take)
+//!
+//! Both plugins share a single `spsc_shm` ring buffer (activated when
+//! `PLAY_LAUNCH_INTERCEPTION_SHM_FD` is set). FrontierPlugin also supports
+//! a standalone socket fallback via `PLAY_LAUNCH_INTERCEPTION_SOCKET`.
 //!
 //! # Inert mode
 //!
@@ -23,6 +28,7 @@
 //! then fall back to `dlopen("librcl.so", RTLD_NOLOAD)` + `dlsym(handle)`
 //! to find the already-loaded library in its local scope.
 
+mod event;
 mod introspection;
 mod plugin;
 mod plugin_dispatch;
@@ -30,10 +36,15 @@ mod plugins;
 mod registry;
 
 use std::ffi::{CStr, c_char, c_void};
-use std::sync::OnceLock;
+use std::os::fd::RawFd;
+use std::sync::{Arc, OnceLock};
 
+use parking_lot::Mutex;
 use plugin::{InterceptionPlugin, Stamp};
 use rcl_interception_sys::*;
+
+use event::InterceptionEvent;
+use spsc_shm::Producer;
 
 // ---------------------------------------------------------------------------
 // Runtime — replaces the old global state
@@ -114,12 +125,32 @@ fn try_resolve_originals() -> Option<Originals> {
     unsafe { resolve_from(handle) }
 }
 
-/// Build the list of compiled-in plugins, activating each based on its env var.
+/// Try to open the shared memory ring buffer from `PLAY_LAUNCH_INTERCEPTION_SHM_FD`.
+fn try_open_producer() -> Option<Arc<Mutex<Producer<InterceptionEvent>>>> {
+    let fd_str = std::env::var("PLAY_LAUNCH_INTERCEPTION_SHM_FD").ok()?;
+    let fd: RawFd = fd_str.parse().ok()?;
+    let producer = unsafe { Producer::<InterceptionEvent>::from_raw_fd(fd) }.ok()?;
+    Some(Arc::new(Mutex::new(producer)))
+}
+
+/// Build the list of compiled-in plugins, activating each based on env vars.
+///
+/// If `PLAY_LAUNCH_INTERCEPTION_SHM_FD` is set, both FrontierPlugin and
+/// StatsPlugin are activated sharing a single ring buffer. FrontierPlugin
+/// also supports standalone socket fallback via `PLAY_LAUNCH_INTERCEPTION_SOCKET`.
 fn build_plugins() -> Vec<Box<dyn InterceptionPlugin>> {
     let mut plugins: Vec<Box<dyn InterceptionPlugin>> = Vec::new();
 
-    if let Some(frontier) = plugins::frontier::FrontierPlugin::new() {
+    let producer = try_open_producer();
+
+    // FrontierPlugin: prefers shared memory, falls back to socket
+    if let Some(frontier) = plugins::frontier::FrontierPlugin::new(producer.clone()) {
         plugins.push(Box::new(frontier));
+    }
+
+    // StatsPlugin: requires shared memory
+    if let Some(ref prod) = producer {
+        plugins.push(Box::new(plugins::stats::StatsPlugin::new(prod.clone())));
     }
 
     plugins

@@ -59,6 +59,7 @@ dependencies = [
  "libc",
  "parking_lot",
  "rcl_interception_sys",
+ "spsc_shm",
 ]
 
 [[package]]
@@ -85,6 +86,13 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "spsc_shm"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "windows-link"
