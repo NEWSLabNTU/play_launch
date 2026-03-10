@@ -323,10 +323,19 @@ impl MemberCoordinatorBuilder {
                 format!("/{}", def.target_container_name)
             };
 
-            // Find the container member name for this full node name
+            // Find the container member name for this full node name.
+            // First try exact match, then fall back to suffix matching for relative
+            // targets that may omit namespace prefix (e.g. "planning_container" should
+            // match "/planning/planning_container").
             let container_member_name = container_full_names
                 .iter()
                 .find(|(_, full_name)| *full_name == &normalized_target)
+                .or_else(|| {
+                    let suffix = format!("/{}", def.target_container_name.trim_start_matches('/'));
+                    container_full_names
+                        .iter()
+                        .find(|(_, full_name)| full_name.ends_with(&suffix))
+                })
                 .map(|(member_name, _)| member_name.clone());
 
             if let Some(container_member_name) = container_member_name {
