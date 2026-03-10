@@ -60,14 +60,17 @@ impl LaunchTraverser {
             for node in self.records.iter_mut() {
                 if node.global_params.is_none() {
                     node.global_params = Some(global_params_vec.clone());
-                    // Also insert global params into cmd (they were missing at parse time)
-                    for (key, value) in global_params_vec {
-                        node.cmd.push("-p".to_string());
-                        node.cmd.push(format!(
-                            "{}:={}",
-                            key,
-                            crate::record::generator::normalize_param_value(value)
-                        ));
+                    // Only inject -p params into cmd for ROS nodes (package is Some).
+                    // Raw executables (package is None) don't understand ROS params.
+                    if node.package.is_some() {
+                        for (key, value) in global_params_vec {
+                            node.cmd.push("-p".to_string());
+                            node.cmd.push(format!(
+                                "{}:={}",
+                                key,
+                                crate::record::generator::normalize_param_value(value)
+                            ));
+                        }
                     }
                     backfilled_count += 1;
                 }
