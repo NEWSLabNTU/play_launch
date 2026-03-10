@@ -161,6 +161,11 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-03-11**: Fixed composable node container matching — 5 nodes were failing to find their target containers:
+  1. **`container.rs` (Python mock)**: `ComposableNodeContainer` was missing `#[getter]` for `name` and `namespace`, causing `LoadComposableNodes.extract_target_container()` to fall through to `__repr__()`, producing targets like `"ComposableNodeContainer(name='...', namespace='')"` instead of proper names. Fix: added `#[getter]` annotations.
+  2. **`load_composable.rs` (Python mock)**: `extract_target_container()` wasn't combining ROS namespace (from `get_current_ros_namespace()`) with container's own namespace when building the target name. Fix: integrate ROS namespace using same logic as `capture_container()`.
+  3. **`load_composable_node.rs` (XML path)**: `to_captures()` and `to_load_node_records()` were prepending `context.current_namespace()` to the resolved target name, but target is a reference by name, not a namespace-relative path. Fix: store raw resolved value. The builder handles matching via suffix fallback.
+  4. **`builder.rs`**: Container matching used strict exact match only. When a relative target like `"pointcloud_container"` (no namespace prefix) normalized to `"/pointcloud_container"`, it wouldn't match a container at `"/pointcloud_container"` if the composable node was in a deep namespace. Fix: added suffix matching fallback — when exact match fails, find a container whose full name ends with `"/{target_name}"`.
 - **2026-03-10**: Fixed two bugs affecting `<executable>` tags in launch XML:
   1. **`context.rs:to_exec_context()`**: Was bailing on all records where `exec_name` was `None`, but raw executables (from `<executable>` tags) legitimately have `package: None` and may lack `exec_name`. Fix: only require `exec_name` when `package` is `Some` (i.e., ROS nodes).
   2. **`record_conv.rs:into_record_json()`**: Global params backfill was injecting `-p key:=value` into `cmd` for ALL records in `self.records`, including raw executables. Raw executables don't understand ROS params, so these leaked params (e.g., `-p use_sim_time:=True`) were passed as arguments to non-ROS processes like CARLA. Fix: skip `-p` cmd injection when `node.package.is_none()`.
