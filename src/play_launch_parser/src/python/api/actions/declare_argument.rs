@@ -35,7 +35,7 @@ impl DeclareLaunchArgument {
         name: String,
         default_value: Option<PyObject>,
         description: Option<String>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         use crate::python::bridge::with_launch_context;
 

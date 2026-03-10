@@ -33,7 +33,7 @@ impl PushRosNamespace {
         } else if let Ok(str_result) = namespace.call_method0(py, "__str__") {
             str_result.extract::<String>(py)?
         } else {
-            namespace.to_string()
+            namespace.bind(py).str()?.to_string()
         };
 
         log::debug!("Python Launch PushRosNamespace: '{}'", namespace_str);

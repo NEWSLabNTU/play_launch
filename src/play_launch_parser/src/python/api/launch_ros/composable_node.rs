@@ -58,7 +58,7 @@ impl ComposableNode {
         namespace: Option<PyObject>,
         parameters: Option<Vec<PyObject>>,
         remappings: Option<Vec<PyObject>>,
-        _kwargs: Option<&PyDict>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         // Convert PyObjects to strings (handles both strings and substitutions/lists)
         log::debug!("ComposableNode::new: creating composable node");
@@ -232,7 +232,7 @@ impl ComposableNode {
         let mut parsed_params = Vec::new();
 
         for param_obj in &self.parameters {
-            let param_any = param_obj.as_ref(py);
+            let param_any = param_obj.bind(py);
 
             // String (parameter file path or literal value)
             if let Ok(path) = param_any.extract::<String>() {
@@ -277,7 +277,11 @@ impl ComposableNode {
             }
 
             // ParameterFile object — load YAML and expand inline
-            let type_name = param_any.get_type().name().unwrap_or("");
+            let type_name = param_any
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_default();
             if type_name.contains("ParameterFile") {
                 if let Ok(str_val) = param_any.call_method0("__str__")
                     && let Ok(path) = str_val.extract::<String>()
@@ -332,7 +336,7 @@ impl ComposableNode {
         let mut parsed_remaps = Vec::new();
 
         for remap_obj in &self.remappings {
-            let remap_any = remap_obj.as_ref(py);
+            let remap_any = remap_obj.bind(py);
 
             // Remappings should be tuples of (from, to)
             if let Ok(remap_tuple) = remap_any.downcast::<pyo3::types::PyTuple>()
@@ -349,7 +353,7 @@ impl ComposableNode {
                 } else if let Ok(str_result) = from_obj.call_method0("__str__") {
                     str_result.extract::<String>()?
                 } else {
-                    from_obj.to_string()
+                    from_obj.str()?.to_string()
                 };
 
                 let to = if let Ok(s) = to_obj.extract::<String>() {
@@ -357,7 +361,7 @@ impl ComposableNode {
                 } else if let Ok(str_result) = to_obj.call_method0("__str__") {
                     str_result.extract::<String>()?
                 } else {
-                    to_obj.to_string()
+                    to_obj.str()?.to_string()
                 };
 
                 parsed_remaps.push((from, to));

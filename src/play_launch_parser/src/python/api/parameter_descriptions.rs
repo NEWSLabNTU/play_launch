@@ -33,7 +33,7 @@ impl ParameterFile {
     fn new(
         param_file: PyObject,
         allow_substs: Option<bool>,
-        _kwargs: Option<&PyDict>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         Ok(Self {
             param_file,
@@ -42,7 +42,7 @@ impl ParameterFile {
     }
 
     fn __repr__(&self, py: Python) -> String {
-        let param_file_str = self.param_file.as_ref(py).to_string();
+        let param_file_str = self.param_file.bind(py).to_string();
         format!("ParameterFile({})", param_file_str)
     }
 
@@ -86,16 +86,16 @@ impl ParameterValue {
     fn new(
         value: PyObject,
         value_type: Option<PyObject>,
-        _kwargs: Option<&PyDict>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         Ok(Self { value, value_type })
     }
 
     fn __repr__(&self, py: Python) -> String {
-        let value_str = self.value.as_ref(py).to_string();
+        let value_str = self.value.bind(py).to_string();
 
         if let Some(ref vtype) = self.value_type {
-            let type_str = vtype.as_ref(py).to_string();
+            let type_str = vtype.bind(py).to_string();
             format!("ParameterValue({}, value_type={})", value_str, type_str)
         } else {
             format!("ParameterValue({})", value_str)
@@ -104,7 +104,7 @@ impl ParameterValue {
 
     /// Get the parameter value as a string
     fn __str__(&self, py: Python) -> PyResult<String> {
-        let obj_ref = self.value.as_ref(py);
+        let obj_ref = self.value.bind(py);
 
         // Try direct string extraction
         if let Ok(s) = obj_ref.extract::<String>() {

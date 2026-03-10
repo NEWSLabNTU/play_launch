@@ -7,7 +7,7 @@ use crate::{
 };
 use pyo3::{
     prelude::*,
-    types::{PyAny, PyDict, PyList},
+    types::{PyDict, PyList},
 };
 
 /// Mock Node class
@@ -70,7 +70,7 @@ impl Node {
         arguments: Option<Vec<PyObject>>,
         env: Option<Vec<(String, String)>>,
         condition: Option<PyObject>,
-        _kwargs: Option<&PyDict>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         // Convert PyObjects to strings (handles both strings and substitutions)
         log::debug!("Node::new: creating node with package and executable");
@@ -156,7 +156,7 @@ impl Node {
     ///
     /// Calls the evaluate() method on the condition if it exists
     pub(super) fn evaluate_condition(py: Python, condition: &PyObject) -> PyResult<bool> {
-        let cond_ref = condition.as_ref(py);
+        let cond_ref = condition.bind(py);
 
         // Try calling evaluate() method on the condition object
         // Note: The py: Python parameter is automatically injected by pyo3,
@@ -275,7 +275,7 @@ impl Node {
 
         for param_obj in &self.parameters {
             // Try to extract as different types
-            let param_any = param_obj.as_ref(py);
+            let param_any = param_obj.bind(py);
 
             // Case 1: String (parameter file path or literal value)
             if let Ok(path) = param_any.extract::<String>() {
@@ -320,7 +320,11 @@ impl Node {
             }
 
             // Case 4: ParameterFile object -- load YAML and expand inline
-            let type_name = param_any.get_type().name().unwrap_or("");
+            let type_name = param_any
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_default();
             if type_name.contains("ParameterFile") {
                 if let Ok(str_val) = param_any.call_method0("__str__")
                     && let Ok(path) = str_val.extract::<String>()
@@ -369,7 +373,7 @@ impl Node {
     ///
     /// Handles nested dicts by using dot notation: `{"ns": {"param": "value"}}` -> `("ns.param", "value")`
     pub(super) fn parse_dict_params(
-        dict: &PyDict,
+        dict: &Bound<'_, PyDict>,
         prefix: &str,
         params: &mut Vec<(String, String)>,
     ) -> PyResult<()> {
@@ -386,7 +390,11 @@ impl Node {
                 // Recursively parse nested dict
                 Self::parse_dict_params(nested_dict, &full_key, params)?;
             } else {
-                let type_name = value.get_type().name().unwrap_or("?");
+                let type_name = value
+                    .get_type()
+                    .name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_default();
                 if type_name == "dict" {
                     // Value is a dict but downcast failed (e.g., from CPython yaml.safe_load)
                     // Use PyAny dict API instead
@@ -398,22 +406,31 @@ impl Node {
                         && let Ok(iter) = items.iter()
                     {
                         for item in iter.flatten() {
-                            if let Ok((k, v)) = item.extract::<(String, &PyAny)>() {
+                            if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>()
+                                && tuple.len() == 2
+                            {
+                                let k = tuple.get_item(0)?.extract::<String>()?;
+                                let v = tuple.get_item(1)?;
                                 let sub_key = if full_key.is_empty() {
                                     k.clone()
                                 } else {
                                     format!("{}.{}", full_key, k)
                                 };
                                 // Recurse if the sub-value is also a dict
-                                if v.get_type().name().unwrap_or("") == "dict" {
+                                if v.get_type()
+                                    .name()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_default()
+                                    == "dict"
+                                {
                                     if let Ok(sub_dict) = v.downcast::<PyDict>() {
                                         Self::parse_dict_params(sub_dict, &sub_key, params)?;
                                     } else {
-                                        let val = Self::extract_param_value(v)?;
+                                        let val = Self::extract_param_value(&v)?;
                                         params.push((sub_key, val));
                                     }
                                 } else {
-                                    let val = Self::extract_param_value(v)?;
+                                    let val = Self::extract_param_value(&v)?;
                                     params.push((sub_key, val));
                                 }
                             }
@@ -422,7 +439,7 @@ impl Node {
                     }
                 }
                 // Extract value as string (handles various Python types)
-                let value_str = Self::extract_param_value(value)?;
+                let value_str = Self::extract_param_value(&value)?;
                 params.push((full_key, value_str));
             }
         }
@@ -433,7 +450,7 @@ impl Node {
     /// Extract a parameter value from a Python object
     ///
     /// Handles: str, int, float, bool, substitutions (including PythonExpression), and objects with __str__
-    pub(super) fn extract_param_value(value: &PyAny) -> PyResult<String> {
+    pub(super) fn extract_param_value(value: &Bound<'_, PyAny>) -> PyResult<String> {
         use pyo3::types::{PyBool, PyList};
 
         // Try direct string extraction
@@ -467,7 +484,7 @@ impl Node {
         if let Ok(list) = value.downcast::<PyList>() {
             let mut formatted_items = Vec::new();
             for item in list.iter() {
-                let val = Self::extract_param_value(item)?;
+                let val = Self::extract_param_value(&item)?;
                 // Quote string elements (non-numeric, non-boolean) with single quotes
                 // to match Python parser output format: ['a', 'b'] not [a, b]
                 let is_numeric_or_bool = val.parse::<f64>().is_ok()
@@ -486,7 +503,7 @@ impl Node {
         // For substitutions (including PythonExpression), use the centralized utility
         // This handles evaluation of PythonExpression and other evaluating substitutions
         let py = value.py();
-        let obj_py = value.to_object(py);
+        let obj_py: PyObject = value.clone().unbind();
         crate::python::api::utils::pyobject_to_string(py, &obj_py)
     }
 
@@ -500,7 +517,7 @@ impl Node {
         let mut parsed_remaps = Vec::new();
 
         for remap_obj in &self.remappings {
-            let remap_any = remap_obj.as_ref(py);
+            let remap_any = remap_obj.bind(py);
 
             // Remappings should be tuples of (from, to)
             if let Ok(remap_tuple) = remap_any.downcast::<pyo3::types::PyTuple>()
@@ -517,7 +534,7 @@ impl Node {
                 } else if let Ok(str_result) = from_obj.call_method0("__str__") {
                     str_result.extract::<String>()?
                 } else {
-                    from_obj.to_string()
+                    from_obj.str()?.to_string()
                 };
 
                 let to = if let Ok(s) = to_obj.extract::<String>() {
@@ -525,7 +542,7 @@ impl Node {
                 } else if let Ok(str_result) = to_obj.call_method0("__str__") {
                     str_result.extract::<String>()?
                 } else {
-                    to_obj.to_string()
+                    to_obj.str()?.to_string()
                 };
 
                 parsed_remaps.push((from, to));

@@ -175,7 +175,7 @@ impl EqualsSubstitution {
     }
 
     /// Perform the substitution - evaluate both sides and compare
-    fn perform(&self, py: Python, context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let left_str = sub_utils::perform_or_to_string(&self.left, py, context)?;
         let right_str = sub_utils::perform_or_to_string(&self.right, py, context)?;
         Ok(if left_str == right_str {
@@ -231,7 +231,7 @@ impl IfElseSubstitution {
     }
 
     /// Perform the substitution - evaluate condition and return appropriate value
-    fn perform(&self, py: Python, context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let cond_str = sub_utils::perform_or_to_string(&self.condition, py, context)?;
         let cond_val = matches!(cond_str.to_lowercase().as_str(), "true" | "1" | "yes");
         let obj = if cond_val {
@@ -283,7 +283,7 @@ impl NotEqualsSubstitution {
     }
 
     /// Perform the substitution - evaluate both sides and compare
-    fn perform(&self, py: Python, context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let left_str = sub_utils::perform_or_to_string(&self.left, py, context)?;
         let right_str = sub_utils::perform_or_to_string(&self.right, py, context)?;
         Ok(if left_str != right_str {

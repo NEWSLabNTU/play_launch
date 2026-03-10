@@ -23,7 +23,10 @@ pub struct OpaqueFunction {
 impl OpaqueFunction {
     #[new]
     #[pyo3(signature = (*, function=None, **_kwargs))]
-    fn new(function: Option<PyObject>, _kwargs: Option<&pyo3::types::PyDict>) -> PyResult<Self> {
+    fn new(
+        function: Option<PyObject>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<Self> {
         Ok(Self { function })
     }
 
@@ -154,7 +157,7 @@ context = MockLaunchContext(launch_configurations, ros_namespace, resolve_substi
                     } else {
                         value_str.into_py(py)
                     };
-                    let tuple = pyo3::types::PyTuple::new(py, [name.into_py(py), py_value]);
+                    let tuple = pyo3::types::PyTuple::new(py, [name.into_py(py), py_value])?;
                     gp_list.append(tuple)?;
                 }
                 configs_dict.set_item("global_params", gp_list)?;
@@ -171,12 +174,23 @@ context = MockLaunchContext(launch_configurations, ros_namespace, resolve_substi
 
             // Add Python builtins that OpaqueFunction might need
             // Import Path for file operations
-            py.run("from pathlib import Path", Some(namespace), Some(namespace))?;
+            py.run(
+                c"from pathlib import Path",
+                Some(&namespace),
+                Some(&namespace),
+            )?;
             // Import yaml for YAML loading
-            py.run("import yaml", Some(namespace), Some(namespace)).ok(); // Ignore if yaml not available
+            py.run(c"import yaml", Some(&namespace), Some(&namespace))
+                .ok(); // Ignore if yaml not available
 
             // Create the context using the code above
-            py.run(context_code, Some(namespace), Some(namespace))?;
+            let context_cstr = std::ffi::CString::new(context_code).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "context code contains null byte: {}",
+                    e
+                ))
+            })?;
+            py.run(&context_cstr, Some(&namespace), Some(&namespace))?;
             let context = namespace.get_item("context")?.unwrap();
 
             // Call the function with the context
@@ -184,11 +198,16 @@ context = MockLaunchContext(launch_configurations, ros_namespace, resolve_substi
             let result = func.call1(py, (context,))?;
 
             // Log the result type
-            let result_type = result.as_ref(py).get_type().name().unwrap_or("unknown");
+            let result_type = result
+                .bind(py)
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
             log::debug!("OpaqueFunction returned type: {}", result_type);
 
             // If it's a list, log the count
-            if let Ok(list) = result.as_ref(py).extract::<Vec<PyObject>>() {
+            if let Ok(list) = result.bind(py).extract::<Vec<PyObject>>() {
                 log::debug!("OpaqueFunction returned list with {} items", list.len());
             }
 

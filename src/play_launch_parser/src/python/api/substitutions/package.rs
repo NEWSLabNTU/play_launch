@@ -83,7 +83,7 @@ impl PathJoinSubstitution {
     /// Perform the substitution - resolve all parts and join with '/'
     ///
     /// This method calls perform() on each substitution if available, or falls back to __str__
-    fn perform(&self, py: Python, context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let mut parts = Vec::new();
         for obj in &self.substitutions {
             // Try to call perform() if available (for FindPackageShare, LaunchConfiguration, etc.)
@@ -131,7 +131,7 @@ impl FindPackageShare {
         // Extract package name (could be string, substitution, or list)
         let pkg = if let Ok(s) = self.package_name.extract::<String>(py) {
             s
-        } else if let Ok(list) = self.package_name.downcast::<PyList>(py) {
+        } else if let Ok(list) = self.package_name.bind(py).downcast::<PyList>() {
             // Handle list case: concatenate all elements using __str__()
             let mut result = String::new();
             for item in list.iter() {
@@ -164,13 +164,13 @@ impl FindPackageShare {
     ///
     /// In ROS 2, this method is called with a launch context to resolve the package path.
     /// We implement the same package finding logic as the Rust substitution system.
-    fn perform(&self, py: Python, _context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
         use pyo3::types::PyList;
 
         // Extract package name (could be string, LaunchConfiguration, or list)
         let pkg_name = if let Ok(s) = self.package_name.extract::<String>(py) {
             s
-        } else if let Ok(list) = self.package_name.downcast::<PyList>(py) {
+        } else if let Ok(list) = self.package_name.bind(py).downcast::<PyList>() {
             // Handle list case: concatenate all elements after performing them
             let mut result = String::new();
             for item in list.iter() {
@@ -203,7 +203,7 @@ impl FindPackageShare {
             result
         } else {
             // Try calling perform() on the object if it has it (for LaunchConfiguration)
-            let obj_ref = self.package_name.as_ref(py);
+            let obj_ref = self.package_name.bind(py);
             if obj_ref.hasattr("perform")? {
                 if let Ok(result) = obj_ref.call_method1("perform", (_context,)) {
                     result.extract::<String>()?
@@ -311,8 +311,8 @@ impl FileContent {
     }
 
     /// Perform the substitution - resolve path and read file contents
-    fn perform(&self, py: Python, context: &PyAny) -> PyResult<String> {
-        let path_obj_ref = self.path.as_ref(py);
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
+        let path_obj_ref = self.path.bind(py);
 
         // Try to call perform() on the path if it has it (for substitutions)
         let path_str = if path_obj_ref.hasattr("perform")? {
@@ -402,7 +402,11 @@ pub struct ExecutableInPackage {
 impl ExecutableInPackage {
     #[new]
     #[pyo3(signature = (package, executable, **_kwargs))]
-    fn new(package: PyObject, executable: PyObject, _kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(
+        package: PyObject,
+        executable: PyObject,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> Self {
         Self {
             package,
             executable,
@@ -426,7 +430,7 @@ impl ExecutableInPackage {
         format!("ExecutableInPackage('{}', '{}')", pkg_str, exec_str)
     }
 
-    fn perform(&self, py: Python, context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let pkg_str = sub_utils::perform_or_to_string(&self.package, py, context)?;
         let exec_str = sub_utils::perform_or_to_string(&self.executable, py, context)?;
 
@@ -468,7 +472,7 @@ impl FindPackage {
         format!("FindPackage('{}')", pkg_str)
     }
 
-    fn perform(&self, py: Python, context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let pkg_str = sub_utils::perform_or_to_string(&self.package, py, context)?;
         Ok(format!("$(find-pkg-prefix {})", pkg_str))
     }
@@ -503,7 +507,7 @@ impl LaunchLogDir {
         "LaunchLogDir()".to_string()
     }
 
-    fn perform(&self, _py: Python, _context: &PyAny) -> PyResult<String> {
+    fn perform(&self, _py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
         Ok("$(launch-log-dir)".to_string())
     }
 }
@@ -537,7 +541,7 @@ impl ThisLaunchFile {
         "ThisLaunchFile()".to_string()
     }
 
-    fn perform(&self, _py: Python, _context: &PyAny) -> PyResult<String> {
+    fn perform(&self, _py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
         Ok("$(this-launch-file)".to_string())
     }
 }

@@ -12,7 +12,6 @@ use pyo3::prelude::*;
 /// launch_desc = LaunchDescription([action1, action2, ...])
 /// ```
 #[pyclass(module = "launch")]
-#[derive(Clone)]
 pub struct LaunchDescription {
     #[pyo3(get)]
     pub actions: Vec<PyObject>,

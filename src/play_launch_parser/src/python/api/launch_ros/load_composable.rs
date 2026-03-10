@@ -4,7 +4,7 @@ use super::{
     helpers::{is_yaml_file, load_yaml_params},
     node::Node,
 };
-use pyo3::{prelude::*, types::PyAny};
+use pyo3::prelude::*;
 
 /// Mock LoadComposableNodes action
 ///
@@ -43,10 +43,10 @@ impl LoadComposableNodes {
         target_container: PyObject,
         composable_node_descriptions: Vec<PyObject>,
         condition: Option<PyObject>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Extract target container name for logging
-        let target_str = Self::pyobject_to_string(target_container.as_ref(py))
+        let target_str = Self::pyobject_to_string(target_container.bind(py))
             .unwrap_or_else(|_| "<unknown>".to_string());
 
         // Evaluate condition (if present) and only capture if true
@@ -71,7 +71,7 @@ impl LoadComposableNodes {
             let node_names: Vec<String> = composable_node_descriptions
                 .iter()
                 .filter_map(|obj| {
-                    obj.as_ref(py)
+                    obj.bind(py)
                         .getattr("_ComposableNode__node_name")
                         .ok()
                         .and_then(|attr| attr.extract::<String>().ok())
@@ -127,25 +127,25 @@ impl LoadComposableNodes {
 
         for desc_obj in descriptions {
             // Try to get the ComposableNode attributes
-            let desc = desc_obj.as_ref(py);
+            let desc = desc_obj.bind(py);
 
             // Extract package (required)
             let package = if let Ok(pkg) = desc.getattr("package") {
-                Self::pyobject_to_string(pkg)?
+                Self::pyobject_to_string(&pkg)?
             } else {
                 continue; // Skip if no package
             };
 
             // Extract plugin (required)
             let plugin = if let Ok(plg) = desc.getattr("plugin") {
-                Self::pyobject_to_string(plg)?
+                Self::pyobject_to_string(&plg)?
             } else {
                 continue; // Skip if no plugin
             };
 
             // Extract name (required)
             let node_name = if let Ok(n) = desc.getattr("name") {
-                Self::pyobject_to_string(n)?
+                Self::pyobject_to_string(&n)?
             } else {
                 continue; // Skip if no name
             };
@@ -159,7 +159,7 @@ impl LoadComposableNodes {
                     if ns.is_none() {
                         None
                     } else {
-                        Self::pyobject_to_string(ns).ok()
+                        Self::pyobject_to_string(&ns).ok()
                     }
                 })
                 .or_else(|| container_namespace.clone())
@@ -167,14 +167,14 @@ impl LoadComposableNodes {
 
             // Extract parameters (optional)
             let parameters = if let Ok(params_obj) = desc.getattr("parameters") {
-                Self::extract_parameters(params_obj)?
+                Self::extract_parameters(&params_obj)?
             } else {
                 Vec::new()
             };
 
             // Extract remappings (optional)
             let remappings = if let Ok(remaps_obj) = desc.getattr("remappings") {
-                Self::extract_remappings(remaps_obj)?
+                Self::extract_remappings(&remaps_obj)?
             } else {
                 Vec::new()
             };
@@ -210,7 +210,7 @@ impl LoadComposableNodes {
 
     /// Evaluate a condition object (same logic as Node)
     fn evaluate_condition(py: Python, condition: &PyObject) -> PyResult<bool> {
-        let cond_ref = condition.as_ref(py);
+        let cond_ref = condition.bind(py);
 
         // Try calling evaluate() method on the condition object
         if let Ok(result) = cond_ref.call_method0("evaluate")
@@ -235,15 +235,15 @@ impl LoadComposableNodes {
         py: Python,
         target: &PyObject,
     ) -> PyResult<(String, Option<String>)> {
-        let target_ref = target.as_ref(py);
+        let target_ref = target.bind(py);
 
         // Try to extract as ComposableNodeContainer instance
         if let Ok(name_attr) = target_ref.getattr("name") {
-            let name = Self::pyobject_to_string(name_attr)?;
+            let name = Self::pyobject_to_string(&name_attr)?;
             let namespace = target_ref
                 .getattr("namespace")
                 .ok()
-                .and_then(|ns| Self::pyobject_to_string(ns).ok());
+                .and_then(|ns| Self::pyobject_to_string(&ns).ok());
 
             // Build full target container name: namespace + name
             let full_name = if let Some(ref ns) = namespace {
@@ -261,7 +261,7 @@ impl LoadComposableNodes {
 
         // Try as string, LaunchConfiguration, or other substitution
         // Use pyobject_to_string to get the substitution string for output
-        let name = Self::pyobject_to_string(target_ref)?;
+        let name = Self::pyobject_to_string(&target_ref)?;
 
         log::debug!(
             "Extracted target container from string/substitution: '{}'",
@@ -357,7 +357,7 @@ impl LoadComposableNodes {
     }
 
     /// Extract parameters from Python object
-    fn extract_parameters(params_obj: &PyAny) -> PyResult<Vec<(String, String)>> {
+    fn extract_parameters(params_obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, String)>> {
         let mut parsed_params = Vec::new();
 
         if let Ok(params_list) = params_obj.downcast::<pyo3::types::PyList>() {
@@ -402,7 +402,11 @@ impl LoadComposableNodes {
                     // Normal dict processing (recursively flatten nested dicts)
                     Node::parse_dict_params(param_dict, "", &mut parsed_params)?;
                 } else {
-                    let type_name = param_item.get_type().name().unwrap_or("<unknown>");
+                    let type_name = param_item
+                        .get_type()
+                        .name()
+                        .map(|n| n.to_string())
+                        .unwrap_or_default();
                     log::trace!("extract_parameters: item {} type={}", idx, type_name);
 
                     // Check if it's a ParameterFile object
@@ -474,7 +478,7 @@ impl LoadComposableNodes {
     }
 
     /// Extract remappings from Python object
-    fn extract_remappings(remaps_obj: &PyAny) -> PyResult<Vec<(String, String)>> {
+    fn extract_remappings(remaps_obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, String)>> {
         let mut parsed_remaps = Vec::new();
 
         if let Ok(remaps_list) = remaps_obj.downcast::<pyo3::types::PyList>() {
@@ -483,8 +487,8 @@ impl LoadComposableNodes {
                     && remap_tuple.len() == 2
                 {
                     // Use pyobject_to_string to handle LaunchConfiguration objects
-                    let from = Self::pyobject_to_string(remap_tuple.get_item(0)?)?;
-                    let to = Self::pyobject_to_string(remap_tuple.get_item(1)?)?;
+                    let from = Self::pyobject_to_string(&remap_tuple.get_item(0)?)?;
+                    let to = Self::pyobject_to_string(&remap_tuple.get_item(1)?)?;
                     parsed_remaps.push((from, to));
                 }
             }
@@ -494,9 +498,9 @@ impl LoadComposableNodes {
     }
 
     /// Convert PyObject to string (handles substitutions)
-    fn pyobject_to_string(obj: &PyAny) -> PyResult<String> {
+    fn pyobject_to_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
         let py = obj.py();
-        let py_obj = obj.into();
+        let py_obj: PyObject = obj.clone().unbind();
         crate::python::api::utils::pyobject_to_string(py, &py_obj)
     }
 }

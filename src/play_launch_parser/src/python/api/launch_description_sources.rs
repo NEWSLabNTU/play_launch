@@ -67,11 +67,11 @@ fn resolve_path(py: Python, path_obj: &PyObject) -> PyResult<String> {
         .unwrap_or_else(|| py.None());
 
     // Try to extract as list of substitutions
-    if let Ok(list) = path_obj.downcast::<pyo3::types::PyList>(py) {
+    if let Ok(list) = path_obj.bind(py).downcast::<pyo3::types::PyList>() {
         let mut parts = Vec::new();
         for item in list.iter() {
             // Try perform() first for substitutions like FindPackageShare
-            if let Ok(result) = item.call_method1("perform", (context_obj.as_ref(py),)) {
+            if let Ok(result) = item.call_method1("perform", (context_obj.bind(py),)) {
                 parts.push(result.extract::<String>()?);
             } else if let Ok(s) = item.extract::<String>() {
                 parts.push(s);
@@ -83,7 +83,7 @@ fn resolve_path(py: Python, path_obj: &PyObject) -> PyResult<String> {
     }
 
     // Try calling perform() for substitutions (PathJoinSubstitution, FindPackageShare, etc.)
-    if let Ok(result) = path_obj.call_method1(py, "perform", (context_obj.as_ref(py),))
+    if let Ok(result) = path_obj.call_method1(py, "perform", (context_obj.bind(py),))
         && let Ok(s) = result.extract::<String>(py)
     {
         return Ok(s);

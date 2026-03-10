@@ -106,11 +106,14 @@ impl PythonExpression {
     }
 
     /// Perform the substitution - evaluate the Python expression
-    fn perform(&self, py: Python, _context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
         // Evaluate the Python expression
         // Safety: This evaluates arbitrary Python code, but it comes from the launch file
         // which is already trusted (user-provided configuration)
-        let result = py.eval(&self.expression, None, None)?;
+        let code = std::ffi::CString::new(self.expression.as_str()).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Invalid expression: {}", e))
+        })?;
+        let result = py.eval(&code, None, None)?;
 
         // Convert result to string
         if let Ok(s) = result.extract::<String>() {

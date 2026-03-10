@@ -35,7 +35,7 @@ impl GroupAction {
         actions: Vec<PyObject>,
         scoped: Option<bool>,
         forwarding: Option<bool>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // CRITICAL FIX: GroupActions create a scoped namespace context.
         // When the actions list is passed in, any PushRosNamespace actions have already

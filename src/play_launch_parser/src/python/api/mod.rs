@@ -12,7 +12,7 @@ pub mod substitutions;
 pub mod utilities;
 pub mod utils;
 
-use pyo3::prelude::*;
+use pyo3::{PyTypeInfo, prelude::*};
 
 /// Register all mock Python modules in sys.modules
 ///
@@ -29,12 +29,7 @@ pub fn register_modules(py: Python) -> PyResult<()> {
     // CRITICAL: Clear any existing launch.* modules from sys.modules first
     // This prevents stale module objects from being cached
     py.run(
-        r#"
-import sys
-for key in list(sys.modules.keys()):
-    if key.startswith(('launch', 'launch_ros', 'launch_xml')):
-        del sys.modules[key]
-"#,
+        c"import sys\nfor key in list(sys.modules.keys()):\n    if key.startswith(('launch', 'launch_ros', 'launch_xml')):\n        del sys.modules[key]",
         None,
         None,
     )?;
@@ -44,14 +39,11 @@ for key in list(sys.modules.keys()):
     launch_mod.add_class::<launch::LaunchDescription>()?;
 
     // Add SomeSubstitutionsType_types_tuple to launch module (for top-level imports)
-    let str_type = py.get_type::<pyo3::types::PyString>();
-    let tuple_type = py.get_type::<pyo3::types::PyTuple>();
-    let list_type = py.get_type::<pyo3::types::PyList>();
-    let types_tuple = pyo3::types::PyTuple::new(
-        py,
-        [str_type.as_ref(), tuple_type.as_ref(), list_type.as_ref()],
-    );
-    launch_mod.add("SomeSubstitutionsType_types_tuple", types_tuple)?;
+    let str_type = pyo3::types::PyString::type_object(py);
+    let tuple_type = pyo3::types::PyTuple::type_object(py);
+    let list_type = pyo3::types::PyList::type_object(py);
+    let types_tuple = pyo3::types::PyTuple::new(py, [&str_type, &tuple_type, &list_type])?;
+    launch_mod.add("SomeSubstitutionsType_types_tuple", &types_tuple)?;
     // Also add SomeSubstitutionsType as None (it's a type alias used for type hints)
     launch_mod.add("SomeSubstitutionsType", py.None())?;
 
@@ -128,11 +120,11 @@ for key in list(sys.modules.keys()):
     // Create launch.frontend submodule with stub classes for import compatibility
     let launch_frontend = PyModule::new(py, "launch.frontend")?;
     // Add stub Entity class - not used in our static parsing but needed for imports
-    let entity_class = py.eval("type('Entity', (), {})", None, None)?;
-    launch_frontend.add("Entity", entity_class)?;
+    let entity_class = py.eval(c"type('Entity', (), {})", None, None)?;
+    launch_frontend.add("Entity", &entity_class)?;
     // Add stub Parser class
-    let parser_class = py.eval("type('Parser', (), {})", None, None)?;
-    launch_frontend.add("Parser", parser_class)?;
+    let parser_class = py.eval(c"type('Parser', (), {})", None, None)?;
+    launch_frontend.add("Parser", &parser_class)?;
     // Add stub functions
     launch_frontend.add("expose_action", py.None())?;
     launch_frontend.add("expose_substitution", py.None())?;
@@ -143,7 +135,7 @@ for key in list(sys.modules.keys()):
     launch_frontend_type_utils.add("check_is_list_entity", py.None())?;
     launch_frontend_type_utils.add("get_data_type", py.None())?;
     launch_frontend_type_utils.add("is_iterable", py.None())?;
-    launch_frontend.add_submodule(launch_frontend_type_utils)?;
+    launch_frontend.add_submodule(&launch_frontend_type_utils)?;
 
     // Create launch.utilities submodule (empty placeholder for imports)
     let launch_utilities = PyModule::new(py, "launch.utilities")?;
@@ -179,16 +171,16 @@ for key in list(sys.modules.keys()):
     launch_utilities_type_utils.add("normalize_typed_substitution", py.None())?;
     launch_utilities_type_utils.add("is_normalized_substitution", py.None())?;
     launch_utilities_type_utils.add("perform_typed_substitution", py.None())?;
-    launch_utilities.add_submodule(launch_utilities_type_utils)?;
+    launch_utilities.add_submodule(&launch_utilities_type_utils)?;
 
     // Add submodules to parent module as attributes
-    launch_mod.add_submodule(launch_actions)?;
-    launch_mod.add_submodule(launch_subs)?;
-    launch_mod.add_submodule(launch_conditions)?;
-    launch_mod.add_submodule(launch_event_handlers)?;
-    launch_mod.add_submodule(launch_sources)?;
-    launch_mod.add_submodule(launch_frontend)?;
-    launch_mod.add_submodule(launch_utilities)?;
+    launch_mod.add_submodule(&launch_actions)?;
+    launch_mod.add_submodule(&launch_subs)?;
+    launch_mod.add_submodule(&launch_conditions)?;
+    launch_mod.add_submodule(&launch_event_handlers)?;
+    launch_mod.add_submodule(&launch_sources)?;
+    launch_mod.add_submodule(&launch_frontend)?;
+    launch_mod.add_submodule(&launch_utilities)?;
 
     // Create launch_ros module
     let launch_ros_mod = PyModule::new(py, "launch_ros")?;
@@ -229,26 +221,26 @@ for key in list(sys.modules.keys()):
     let launch_ros_utilities = PyModule::new(py, "launch_ros.utilities")?;
     launch_ros_utilities.add_function(wrap_pyfunction!(
         utilities::make_namespace_absolute,
-        launch_ros_utilities
+        &launch_ros_utilities
     )?)?;
     launch_ros_utilities.add_function(wrap_pyfunction!(
         utilities::prefix_namespace,
-        launch_ros_utilities
+        &launch_ros_utilities
     )?)?;
 
     // Add submodules to parent module as attributes
-    launch_ros_mod.add_submodule(launch_ros_actions)?;
-    launch_ros_mod.add_submodule(launch_ros_desc)?;
-    launch_ros_mod.add_submodule(launch_ros_subs)?;
-    launch_ros_mod.add_submodule(launch_ros_param_desc)?;
-    launch_ros_mod.add_submodule(launch_ros_utilities)?;
+    launch_ros_mod.add_submodule(&launch_ros_actions)?;
+    launch_ros_mod.add_submodule(&launch_ros_desc)?;
+    launch_ros_mod.add_submodule(&launch_ros_subs)?;
+    launch_ros_mod.add_submodule(&launch_ros_param_desc)?;
+    launch_ros_mod.add_submodule(&launch_ros_utilities)?;
 
     // Also set as direct attributes for Python's attribute access
-    launch_ros_mod.add("actions", launch_ros_actions)?;
-    launch_ros_mod.add("descriptions", launch_ros_desc)?;
-    launch_ros_mod.add("substitutions", launch_ros_subs)?;
-    launch_ros_mod.add("parameter_descriptions", launch_ros_param_desc)?;
-    launch_ros_mod.add("utilities", launch_ros_utilities)?;
+    launch_ros_mod.add("actions", &launch_ros_actions)?;
+    launch_ros_mod.add("descriptions", &launch_ros_desc)?;
+    launch_ros_mod.add("substitutions", &launch_ros_subs)?;
+    launch_ros_mod.add("parameter_descriptions", &launch_ros_param_desc)?;
+    launch_ros_mod.add("utilities", &launch_ros_utilities)?;
 
     // Register in sys.modules
     let sys = py.import("sys")?;
@@ -287,27 +279,27 @@ for key in list(sys.modules.keys()):
         }
     }
 
-    modules.set_item("launch", launch_mod)?;
-    modules.set_item("launch.actions", launch_actions)?;
-    modules.set_item("launch.substitutions", launch_subs)?;
-    modules.set_item("launch.conditions", launch_conditions)?;
-    modules.set_item("launch.event_handlers", launch_event_handlers)?;
-    modules.set_item("launch.launch_description_sources", launch_sources)?;
-    modules.set_item("launch.frontend", launch_frontend)?;
-    modules.set_item("launch.frontend.type_utils", launch_frontend_type_utils)?;
-    modules.set_item("launch.utilities", launch_utilities)?;
-    modules.set_item("launch.utilities.type_utils", launch_utilities_type_utils)?;
-    modules.set_item("launch_ros", launch_ros_mod)?;
-    modules.set_item("launch_ros.actions", launch_ros_actions)?;
-    modules.set_item("launch_ros.descriptions", launch_ros_desc)?;
-    modules.set_item("launch_ros.substitutions", launch_ros_subs)?;
-    modules.set_item("launch_ros.parameter_descriptions", launch_ros_param_desc)?;
-    modules.set_item("launch_ros.utilities", launch_ros_utilities)?;
+    modules.set_item("launch", &launch_mod)?;
+    modules.set_item("launch.actions", &launch_actions)?;
+    modules.set_item("launch.substitutions", &launch_subs)?;
+    modules.set_item("launch.conditions", &launch_conditions)?;
+    modules.set_item("launch.event_handlers", &launch_event_handlers)?;
+    modules.set_item("launch.launch_description_sources", &launch_sources)?;
+    modules.set_item("launch.frontend", &launch_frontend)?;
+    modules.set_item("launch.frontend.type_utils", &launch_frontend_type_utils)?;
+    modules.set_item("launch.utilities", &launch_utilities)?;
+    modules.set_item("launch.utilities.type_utils", &launch_utilities_type_utils)?;
+    modules.set_item("launch_ros", &launch_ros_mod)?;
+    modules.set_item("launch_ros.actions", &launch_ros_actions)?;
+    modules.set_item("launch_ros.descriptions", &launch_ros_desc)?;
+    modules.set_item("launch_ros.substitutions", &launch_ros_subs)?;
+    modules.set_item("launch_ros.parameter_descriptions", &launch_ros_param_desc)?;
+    modules.set_item("launch_ros.utilities", &launch_ros_utilities)?;
 
     // Create and register launch.some_substitutions_type submodule
     let launch_some_subs_type = some_substitutions_type::register_module(py)?;
-    launch_mod.add_submodule(launch_some_subs_type)?;
-    modules.set_item("launch.some_substitutions_type", launch_some_subs_type)?;
+    launch_mod.add_submodule(&launch_some_subs_type)?;
+    modules.set_item("launch.some_substitutions_type", &launch_some_subs_type)?;
 
     // Create launch_xml module
     let launch_xml_mod = PyModule::new(py, "launch_xml")?;
@@ -315,11 +307,11 @@ for key in list(sys.modules.keys()):
     // Create launch_xml.launch_description_sources submodule
     let launch_xml_sources = PyModule::new(py, "launch_xml.launch_description_sources")?;
     launch_xml_sources.add_class::<launch_description_sources::XMLLaunchDescriptionSource>()?;
-    launch_xml_mod.add_submodule(launch_xml_sources)?;
+    launch_xml_mod.add_submodule(&launch_xml_sources)?;
 
     // Register launch_xml in sys.modules
-    modules.set_item("launch_xml", launch_xml_mod)?;
-    modules.set_item("launch_xml.launch_description_sources", launch_xml_sources)?;
+    modules.set_item("launch_xml", &launch_xml_mod)?;
+    modules.set_item("launch_xml.launch_description_sources", &launch_xml_sources)?;
 
     Ok(())
 }

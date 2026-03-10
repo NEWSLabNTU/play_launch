@@ -35,7 +35,7 @@ impl LaunchConfiguration {
     fn new(
         variable_name: String,
         default: Option<String>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         Self {
             variable_name,
@@ -56,7 +56,7 @@ impl LaunchConfiguration {
     /// In ROS 2, this method is called with a launch context to resolve the value.
     /// Uses the thread-local LaunchContext which already has all configurations
     /// with proper scope chain resolution.
-    fn perform(&self, _context: &PyAny) -> PyResult<String> {
+    fn perform(&self, _context: &Bound<'_, PyAny>) -> PyResult<String> {
         use crate::python::bridge::with_launch_context;
 
         // Get value from LaunchContext (already resolves nested substitutions)
@@ -157,7 +157,7 @@ impl Parameter {
         format!("Parameter('{}')", name_str)
     }
 
-    fn perform(&self, py: Python, context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let name_str = sub_utils::perform_or_to_string(&self.name, py, context)?;
         Ok(format!("$(param {})", name_str))
     }
@@ -196,7 +196,7 @@ impl BooleanSubstitution {
         format!("BooleanSubstitution('{}')", val_str)
     }
 
-    fn perform(&self, py: Python, context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let val_str = sub_utils::perform_or_to_string(&self.value, py, context)?;
         Ok(Self::to_boolean_string(&val_str))
     }
@@ -247,7 +247,7 @@ impl FindExecutable {
         format!("FindExecutable('{}')", name_str)
     }
 
-    fn perform(&self, py: Python, context: &PyAny) -> PyResult<String> {
+    fn perform(&self, py: Python, context: &Bound<'_, PyAny>) -> PyResult<String> {
         let name_str = sub_utils::perform_or_to_string(&self.name, py, context)?;
         Ok(format!("$(find-executable {})", name_str))
     }

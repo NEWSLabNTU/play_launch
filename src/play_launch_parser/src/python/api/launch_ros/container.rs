@@ -55,7 +55,7 @@ impl ComposableNodeContainer {
         executable: PyObject,
         composable_node_descriptions: Option<Vec<Py<ComposableNode>>>,
         condition: Option<PyObject>,
-        _kwargs: Option<&PyDict>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let composable_nodes = composable_node_descriptions.unwrap_or_default();
 
@@ -152,6 +152,17 @@ impl ComposableNodeContainer {
             self.namespace.as_deref().unwrap_or("/")
         )
     }
+
+    // Getter methods for LoadComposableNodes to access attributes
+    #[getter]
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[getter]
+    fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
+    }
 }
 
 impl ComposableNodeContainer {
@@ -164,7 +175,7 @@ impl ComposableNodeContainer {
         use crate::python::api::utils::create_launch_context;
         use pyo3::types::PyList;
 
-        let obj_ref = obj.as_ref(py);
+        let obj_ref = obj.bind(py);
 
         // Handle lists specially - resolve each element
         if let Ok(list) = obj_ref.downcast::<PyList>() {
@@ -272,7 +283,7 @@ impl ComposableNodeContainer {
 
     /// Evaluate a condition object (same logic as Node)
     fn evaluate_condition(py: Python, condition: &PyObject) -> PyResult<bool> {
-        let cond_ref = condition.as_ref(py);
+        let cond_ref = condition.bind(py);
 
         log::debug!(
             "Evaluating container condition, type: {:?}",

@@ -35,7 +35,7 @@ impl OnProcessStart {
     fn new(
         target_action: Option<PyObject>,
         on_start: Option<Vec<PyObject>>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         let action_count = on_start.as_ref().map_or(0, |v| v.len());
         log::debug!(
@@ -87,7 +87,7 @@ impl OnProcessExit {
     fn new(
         target_action: Option<PyObject>,
         on_exit: Option<Vec<PyObject>>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         let action_count = on_exit.as_ref().map_or(0, |v| v.len());
         log::debug!(
@@ -144,7 +144,7 @@ impl OnStateTransition {
         target_lifecycle_node: Option<PyObject>,
         goal_state: Option<String>,
         entities: Option<Vec<PyObject>>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         let entity_count = entities.as_ref().map_or(0, |v| v.len());
         log::debug!(
@@ -193,7 +193,10 @@ pub struct OnShutdown {
 impl OnShutdown {
     #[new]
     #[pyo3(signature = (*, on_shutdown=None, **_kwargs))]
-    fn new(on_shutdown: Option<Vec<PyObject>>, _kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(
+        on_shutdown: Option<Vec<PyObject>>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> Self {
         let action_count = on_shutdown.as_ref().map_or(0, |v| v.len());
         log::debug!(
             "Python Launch OnShutdown created with {} actions (limited support)",

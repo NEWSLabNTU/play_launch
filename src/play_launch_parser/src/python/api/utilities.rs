@@ -57,12 +57,15 @@ pub fn prefix_namespace(py: Python, prefix: PyObject, name: String) -> PyResult<
 /// Register utilities module in Python
 pub fn register_utilities_module(py: Python) -> PyResult<()> {
     let utilities_module = PyModule::new(py, "utilities")?;
-    utilities_module.add_function(wrap_pyfunction!(make_namespace_absolute, utilities_module)?)?;
-    utilities_module.add_function(wrap_pyfunction!(prefix_namespace, utilities_module)?)?;
+    utilities_module.add_function(wrap_pyfunction!(
+        make_namespace_absolute,
+        &utilities_module
+    )?)?;
+    utilities_module.add_function(wrap_pyfunction!(prefix_namespace, &utilities_module)?)?;
 
     // Add utilities as a submodule of launch_ros
     let launch_ros = py.import("launch_ros")?;
-    launch_ros.add_submodule(utilities_module)?;
+    launch_ros.add_submodule(&utilities_module)?;
 
     Ok(())
 }

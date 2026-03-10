@@ -31,7 +31,7 @@ impl SetLaunchConfiguration {
         py: Python,
         name: PyObject,
         value: PyObject,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Convert name to string (may be a substitution)
         let name_str = if let Ok(s) = name.extract::<String>(py) {
@@ -92,7 +92,7 @@ pub struct RegisterEventHandler {
 impl RegisterEventHandler {
     #[new]
     #[pyo3(signature = (event_handler, **_kwargs))]
-    fn new(event_handler: PyObject, _kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(event_handler: PyObject, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         log::debug!("Python Launch RegisterEventHandler created (limited support)");
         Self { event_handler }
     }
@@ -120,7 +120,7 @@ pub struct PushEnvironment {}
 impl PushEnvironment {
     #[new]
     #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         log::debug!("Python Launch PushEnvironment: pushing environment state");
         Self {}
     }
@@ -148,7 +148,7 @@ pub struct PopEnvironment {}
 impl PopEnvironment {
     #[new]
     #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         log::debug!("Python Launch PopEnvironment: popping environment state");
         Self {}
     }
@@ -175,7 +175,7 @@ pub struct ResetEnvironment {}
 impl ResetEnvironment {
     #[new]
     #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         log::debug!("Python Launch ResetEnvironment: resetting environment to initial state");
         Self {}
     }
@@ -217,7 +217,7 @@ impl AppendEnvironmentVariable {
         value: PyObject,
         prepend: Option<PyObject>,
         separator: Option<PyObject>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Convert name to string (handles strings, substitutions, and lists)
         let name_str = Self::pyobject_to_string(py, &name)?;
@@ -318,7 +318,7 @@ pub struct PushLaunchConfigurations {}
 impl PushLaunchConfigurations {
     #[new]
     #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         log::debug!("Python Launch PushLaunchConfigurations: pushing configuration state");
         Self {}
     }
@@ -346,7 +346,7 @@ pub struct PopLaunchConfigurations {}
 impl PopLaunchConfigurations {
     #[new]
     #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         log::debug!("Python Launch PopLaunchConfigurations: popping configuration state");
         Self {}
     }
@@ -373,7 +373,7 @@ pub struct ResetLaunchConfigurations {}
 impl ResetLaunchConfigurations {
     #[new]
     #[pyo3(signature = (**_kwargs))]
-    fn new(_kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         log::debug!(
             "Python Launch ResetLaunchConfigurations: resetting configurations to initial state"
         );
@@ -434,7 +434,7 @@ pub struct Shutdown {
 impl Shutdown {
     #[new]
     #[pyo3(signature = (*, reason=None, **_kwargs))]
-    fn new(reason: Option<String>, _kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(reason: Option<String>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         if let Some(ref r) = reason {
             log::debug!("Python Launch Shutdown: reason={}", r);
         } else {

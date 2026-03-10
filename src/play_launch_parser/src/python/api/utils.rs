@@ -20,7 +20,7 @@ pub fn create_launch_context(py: Python) -> PyResult<PyObject> {
 
     // Create a simple context object that has a launch_configurations dict
     let context_class = py.eval(
-        "type('Context', (), {
+        c"type('Context', (), {
             'launch_configurations': None,
             '__init__': lambda self, configs: setattr(self, 'launch_configurations', configs)
         })",
@@ -61,8 +61,8 @@ pub fn create_launch_context(py: Python) -> PyResult<PyObject> {
             } else {
                 value_str.into_py(py)
             };
-            let tuple = PyTuple::new(py, [name.into_py(py), py_value]);
-            gp_list.append(tuple)?;
+            let tuple = PyTuple::new(py, [name.into_py(py), py_value])?;
+            gp_list.append(&tuple)?;
         }
         py_configs.set_item("global_params", gp_list)?;
     }
@@ -141,7 +141,7 @@ pub fn create_launch_context(py: Python) -> PyResult<PyObject> {
 /// not during node runtime, so performance impact is negligible.
 pub fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
     use pyo3::types::{PyBool, PyList};
-    let obj_ref = obj.as_ref(py);
+    let obj_ref = obj.bind(py);
 
     // Try direct string extraction first (most common case)
     if let Ok(s) = obj_ref.extract::<String>() {
@@ -184,7 +184,11 @@ pub fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
     // Some LaunchConfigurations (e.g., container_executable) are set via SetLaunchConfiguration
     // and should be resolved at parse time rather than preserved as $(var name)
     {
-        let type_name = obj_ref.get_type().name().unwrap_or("");
+        let type_name = obj_ref
+            .get_type()
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_default();
         if type_name == "LaunchConfiguration"
             && let Ok(str_result) = obj_ref.call_method0("__str__")
             && let Ok(s) = str_result.extract::<String>()
@@ -213,7 +217,7 @@ pub fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
     }
 
     // Fallback to Python repr
-    Ok(obj_ref.to_string())
+    Ok(obj_ref.str()?.to_string())
 }
 
 /// Check if a PyObject is a substitution that needs evaluation during parsing.
@@ -233,10 +237,10 @@ pub fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
 ///
 /// LaunchConfiguration is NOT in this list - it should be preserved as "$(var name)"
 /// for replay-time resolution.
-fn is_evaluating_substitution(obj: &PyAny) -> PyResult<bool> {
-    let type_name = obj.get_type().name()?;
+fn is_evaluating_substitution(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let type_name = obj.get_type().name()?.to_string();
     Ok(matches!(
-        type_name,
+        type_name.as_str(),
         // Conditional substitutions
         "EqualsSubstitution"
             | "NotEqualsSubstitution"
@@ -256,8 +260,12 @@ fn is_evaluating_substitution(obj: &PyAny) -> PyResult<bool> {
 ///
 /// Used by substitution structs that need to resolve operands which may themselves
 /// be substitutions (e.g., EqualsSubstitution comparing two LaunchConfigurations).
-pub fn perform_or_to_string(obj: &PyObject, py: Python, context: &PyAny) -> PyResult<String> {
-    let obj_ref = obj.as_ref(py);
+pub fn perform_or_to_string(
+    obj: &PyObject,
+    py: Python,
+    context: &Bound<'_, PyAny>,
+) -> PyResult<String> {
+    let obj_ref = obj.bind(py);
 
     // Try perform() first (resolves nested substitutions)
     if obj_ref.hasattr("perform")?
@@ -302,7 +310,7 @@ mod tests {
         pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             let s = "hello world";
-            let py_str = s.to_object(py);
+            let py_str = s.into_py(py);
             let result = pyobject_to_string(py, &py_str).unwrap();
             assert_eq!(result, "hello world");
         });
@@ -313,8 +321,8 @@ mod tests {
         pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             // Create a list: ["hello", " ", "world"]
-            let list = pyo3::types::PyList::new(py, ["hello", " ", "world"]);
-            let py_list = list.to_object(py);
+            let list = pyo3::types::PyList::new(py, ["hello", " ", "world"]).unwrap();
+            let py_list = list.into_py(py);
             let result = pyobject_to_string(py, &py_list).unwrap();
             assert_eq!(result, "hello world");
         });
@@ -325,7 +333,7 @@ mod tests {
         pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             let num = 42;
-            let py_num = num.to_object(py);
+            let py_num = num.into_py(py);
             let result = pyobject_to_string(py, &py_num).unwrap();
             assert_eq!(result, "42");
         });

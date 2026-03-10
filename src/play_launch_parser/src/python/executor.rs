@@ -4,6 +4,7 @@
 
 use crate::error::Result;
 use pyo3::prelude::*;
+use std::ffi::CString;
 
 /// Executes Python launch files with mock API
 #[derive(Default)]
@@ -99,7 +100,8 @@ if not _ok:
 "#;
 
             // IMPORTANT: Run isolation in the GLOBAL context first so sys.modules is clean
-            py.run(isolation_code, None, None)?;
+            let isolation_cstr = CString::new(isolation_code).expect("isolation code contains NUL");
+            py.run(&isolation_cstr, None, None)?;
             log::debug!("Installed aggressive Python environment isolation for launch* mocks");
 
             // Launch configurations are already in the thread-local LaunchContext
@@ -125,7 +127,7 @@ if not _ok:
 
             // CRITICAL: Run isolation AGAIN right before executing the file
             // This ensures any modifications to sys.modules/sys.path by previous files are reset
-            py.run(isolation_code, None, None)?;
+            py.run(&isolation_cstr, None, None)?;
             log::debug!("Re-applied isolation right before file execution");
 
             // Add debug logging to catch Python execution errors
@@ -133,7 +135,13 @@ if not _ok:
             log::trace!("Python code length: {} bytes", code.len());
 
             // Execute the file
-            if let Err(e) = py.run(&code, Some(globals), None) {
+            let code_cstr = CString::new(code).map_err(|e| {
+                crate::error::ParseError::PythonError(format!(
+                    "Python code contains NUL byte: {}",
+                    e
+                ))
+            })?;
+            if let Err(e) = py.run(&code_cstr, Some(&globals), None) {
                 log::error!("Python execution failed: {}", e);
                 // Log the Python traceback if available
                 if let Some(traceback) = e.traceback(py)

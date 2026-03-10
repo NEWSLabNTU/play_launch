@@ -45,7 +45,12 @@ pub struct SetParameter {
 impl SetParameter {
     #[new]
     #[pyo3(signature = (*, name, value, **_kwargs))]
-    fn new(py: Python, name: String, value: PyObject, _kwargs: Option<&PyDict>) -> PyResult<Self> {
+    fn new(
+        py: Python,
+        name: String,
+        value: PyObject,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
         // Try to resolve the value if it's a substitution (like LaunchConfiguration)
         // Use perform() with context if available, otherwise fall back to string conversion
         let value_str = Self::resolve_value(py, &value)?;
@@ -86,7 +91,7 @@ impl SetParameter {
     fn resolve_value(py: Python, obj: &PyObject) -> PyResult<String> {
         use crate::python::api::utils::create_launch_context;
 
-        let obj_ref = obj.as_ref(py);
+        let obj_ref = obj.bind(py);
 
         // If it has a perform() method, try to resolve it with a real context
         if obj_ref.hasattr("perform")?
@@ -130,7 +135,11 @@ pub struct SetParametersFromFile {
 impl SetParametersFromFile {
     #[new]
     #[pyo3(signature = (filename, *, node_name=None, **_kwargs))]
-    fn new(filename: PyObject, node_name: Option<String>, _kwargs: Option<&PyDict>) -> Self {
+    fn new(
+        filename: PyObject,
+        node_name: Option<String>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> Self {
         log::debug!(
             "Python Launch SetParametersFromFile: node_name={:?}",
             node_name
@@ -179,7 +188,7 @@ impl RosTimer {
         py: Python,
         period: PyObject,
         actions: Option<PyObject>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Convert period to string for logging
         let period_str = if let Ok(f) = period.extract::<f64>(py) {
@@ -249,7 +258,7 @@ pub struct SetRemap {
 impl SetRemap {
     #[new]
     #[pyo3(signature = (src, dst, **_kwargs))]
-    fn new(src: String, dst: String, _kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(src: String, dst: String, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         log::debug!("Python Launch SetRemap: {} -> {}", src, dst);
         Self { src, dst }
     }

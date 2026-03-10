@@ -1,10 +1,7 @@
 //! Mock LifecycleNode and LifecycleTransition classes for launch_ros.actions
 
 use super::helpers::{is_yaml_file, load_yaml_params};
-use pyo3::{
-    prelude::*,
-    types::{PyAny, PyDict},
-};
+use pyo3::{prelude::*, types::PyDict};
 
 /// Mock LifecycleNode class
 ///
@@ -63,7 +60,7 @@ impl LifecycleNode {
         remappings: Option<Vec<PyObject>>,
         arguments: Option<Vec<PyObject>>,
         output: Option<String>,
-        _kwargs: Option<&PyDict>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         // Convert PyObjects to strings (handles both strings and substitutions)
         let package_str = Self::pyobject_to_string_static(py, &package)?;
@@ -120,7 +117,7 @@ impl LifecycleNode {
         }
 
         // Fallback to repr
-        Ok(obj.to_string())
+        Ok(obj.bind(py).str()?.to_string())
     }
 
     /// Capture the lifecycle node as a regular NodeCapture
@@ -221,14 +218,14 @@ impl LifecycleNode {
         );
 
         for param_obj in self.parameters.iter() {
-            let param_any = param_obj.as_ref(py);
+            let param_any = param_obj.bind(py);
 
             // Try to extract as dict (most common case for parameters)
             if let Ok(param_dict) = param_any.downcast::<pyo3::types::PyDict>() {
                 for (key, value) in param_dict.iter() {
                     let key_str = key.extract::<String>()?;
                     // Convert value to string
-                    let value_str = Self::pyobject_to_string(value)?;
+                    let value_str = Self::pyobject_to_string(&value)?;
                     parsed_params.push((key_str, value_str));
                 }
                 continue;
@@ -260,7 +257,11 @@ impl LifecycleNode {
             }
 
             // ParameterFile object — load YAML and expand inline
-            let type_name = param_any.get_type().name().unwrap_or("");
+            let type_name = param_any
+                .get_type()
+                .name()
+                .map(|n| n.to_string())
+                .unwrap_or_default();
             if type_name.contains("ParameterFile") {
                 if let Ok(str_val) = param_any.call_method0("__str__")
                     && let Ok(path) = str_val.extract::<String>()
@@ -310,7 +311,8 @@ impl LifecycleNode {
         let mut parsed_remaps = Vec::new();
 
         for remap_obj in &self.remappings {
-            if let Ok(remap_tuple) = remap_obj.downcast::<pyo3::types::PyTuple>(py)
+            let remap_any = remap_obj.bind(py);
+            if let Ok(remap_tuple) = remap_any.downcast::<pyo3::types::PyTuple>()
                 && remap_tuple.len() == 2
             {
                 // Extract both elements and convert to strings
@@ -324,7 +326,7 @@ impl LifecycleNode {
                 } else if let Ok(str_result) = from_obj.call_method0("__str__") {
                     str_result.extract::<String>()?
                 } else {
-                    from_obj.to_string()
+                    from_obj.str()?.to_string()
                 };
 
                 let to = if let Ok(s) = to_obj.extract::<String>() {
@@ -332,7 +334,7 @@ impl LifecycleNode {
                 } else if let Ok(str_result) = to_obj.call_method0("__str__") {
                     str_result.extract::<String>()?
                 } else {
-                    to_obj.to_string()
+                    to_obj.str()?.to_string()
                 };
 
                 parsed_remaps.push((from, to));
@@ -356,9 +358,9 @@ impl LifecycleNode {
     }
 
     /// Convert PyObject to string (handles substitutions)
-    fn pyobject_to_string(obj: &PyAny) -> PyResult<String> {
+    fn pyobject_to_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
         let py = obj.py();
-        let py_obj = obj.into();
+        let py_obj: PyObject = obj.clone().unbind();
         crate::python::api::utils::pyobject_to_string(py, &py_obj)
     }
 }
@@ -397,7 +399,7 @@ impl LifecycleTransition {
         lifecycle_node_names: Vec<String>,
         transition_id: Option<i32>,
         transition_label: Option<String>,
-        _kwargs: Option<&PyDict>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> Self {
         log::debug!(
             "Python Launch LifecycleTransition: nodes={:?}, transition={:?}",

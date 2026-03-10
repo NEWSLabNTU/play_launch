@@ -23,7 +23,11 @@ pub struct LogInfo {
 impl LogInfo {
     #[new]
     #[pyo3(signature = (*, msg, **_kwargs))]
-    fn new(py: Python, msg: PyObject, _kwargs: Option<&pyo3::types::PyDict>) -> PyResult<Self> {
+    fn new(
+        py: Python,
+        msg: PyObject,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<Self> {
         // Convert msg to string (handles strings, lists, LaunchConfiguration, etc.)
         let msg_str = Self::pyobject_to_string(py, &msg)?;
 
@@ -164,7 +168,7 @@ impl ExecuteProcess {
         cwd: Option<PyObject>,
         name: Option<PyObject>,
         output: Option<String>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Convert cmd elements to strings
         let cmd_strs: Result<Vec<String>, _> = cmd
@@ -239,7 +243,7 @@ impl ExecuteLocal {
         cwd: Option<String>,
         output: Option<String>,
         shell: Option<bool>,
-        _kwargs: Option<&pyo3::types::PyDict>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         // Log what we're executing
         if let Some(ref c) = cmd {
@@ -291,7 +295,11 @@ pub struct TimerAction {
 impl TimerAction {
     #[new]
     #[pyo3(signature = (*, period, actions, **_kwargs))]
-    fn new(period: f64, actions: Vec<PyObject>, _kwargs: Option<&pyo3::types::PyDict>) -> Self {
+    fn new(
+        period: f64,
+        actions: Vec<PyObject>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> Self {
         log::debug!("Python Launch TimerAction: period={}s", period);
         Self { period, actions }
     }
@@ -337,7 +345,7 @@ impl OpaqueCoroutine {
         coroutine: PyObject,
         args: Option<Vec<PyObject>>,
         kwargs: Option<PyObject>,
-        _extra_kwargs: Option<&pyo3::types::PyDict>,
+        _extra_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         log::debug!("Python Launch OpaqueCoroutine: coroutine provided");
         Self {

@@ -5,7 +5,7 @@
 use pyo3::prelude::*;
 
 /// Register the some_substitutions_type module with its type tuples
-pub fn register_module(py: Python<'_>) -> PyResult<&PyModule> {
+pub fn register_module(py: Python<'_>) -> PyResult<Bound<'_, PyModule>> {
     let module = PyModule::new(py, "launch.some_substitutions_type")?;
 
     // SomeSubstitutionsType_types_tuple is a tuple of types that can be used as substitutions
@@ -18,14 +18,10 @@ pub fn register_module(py: Python<'_>) -> PyResult<&PyModule> {
     // Create a tuple with the types
     let types_tuple = pyo3::types::PyTuple::new(
         py,
-        [
-            str_type.as_ref(),
-            tuple_type.as_ref(), // Approximating Substitution with tuple
-            list_type.as_ref(),  // Approximating Iterable with list
-        ],
-    );
+        [str_type.as_any(), tuple_type.as_any(), list_type.as_any()],
+    )?;
 
-    module.add("SomeSubstitutionsType_types_tuple", types_tuple)?;
+    module.add("SomeSubstitutionsType_types_tuple", &types_tuple)?;
 
     Ok(module)
 }

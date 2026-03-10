@@ -20,9 +20,16 @@ use pyo3::{
 ///
 /// Evaluates to true if the predicate evaluates to a truthy value
 #[pyclass(module = "launch.conditions")]
-#[derive(Clone)]
 pub struct IfCondition {
     predicate: PyObject,
+}
+
+impl Clone for IfCondition {
+    fn clone(&self) -> Self {
+        Python::with_gil(|py| Self {
+            predicate: self.predicate.clone_ref(py),
+        })
+    }
 }
 
 #[pymethods]
@@ -41,8 +48,8 @@ impl IfCondition {
     pub fn evaluate(
         &self,
         py: Python,
-        _args: &PyTuple,
-        _kwargs: Option<&PyDict>,
+        _args: &Bound<'_, PyTuple>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<bool> {
         // Convert predicate to string and evaluate as boolean
         let value = self.predicate_to_string(py)?;
@@ -57,7 +64,7 @@ impl IfCondition {
 impl IfCondition {
     /// Convert predicate PyObject to string
     fn predicate_to_string(&self, py: Python) -> PyResult<String> {
-        let pred_ref = self.predicate.as_ref(py);
+        let pred_ref = self.predicate.bind(py);
 
         // Try direct string extraction
         if let Ok(s) = pred_ref.extract::<String>() {
@@ -70,7 +77,7 @@ impl IfCondition {
             && has_perform
         {
             // Create a dummy context (not used by our LaunchConfiguration.perform())
-            if let Ok(context) = py.eval("type('Context', (), {})()", None, None)
+            if let Ok(context) = py.eval(c"type('Context', (), {})()", None, None)
                 && let Ok(result) = pred_ref.call_method1("perform", (context,))
                 && let Ok(s) = result.extract::<String>()
             {
@@ -86,7 +93,7 @@ impl IfCondition {
         }
 
         // Fallback to repr
-        Ok(pred_ref.to_string())
+        Ok(pred_ref.str()?.to_string())
     }
 
     /// Check if a string value is truthy
@@ -136,9 +143,16 @@ impl IfCondition {
 ///
 /// Evaluates to true if the predicate evaluates to a falsy value (inverted IfCondition)
 #[pyclass(module = "launch.conditions")]
-#[derive(Clone)]
 pub struct UnlessCondition {
     predicate: PyObject,
+}
+
+impl Clone for UnlessCondition {
+    fn clone(&self) -> Self {
+        Python::with_gil(|py| Self {
+            predicate: self.predicate.clone_ref(py),
+        })
+    }
 }
 
 #[pymethods]
@@ -153,8 +167,8 @@ impl UnlessCondition {
     pub fn evaluate(
         &self,
         py: Python,
-        _args: &PyTuple,
-        _kwargs: Option<&PyDict>,
+        _args: &Bound<'_, PyTuple>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<bool> {
         // Convert predicate to string and evaluate as boolean (inverted)
         let value = self.predicate_to_string(py)?;
@@ -169,7 +183,7 @@ impl UnlessCondition {
 impl UnlessCondition {
     /// Convert predicate PyObject to string (same logic as IfCondition)
     fn predicate_to_string(&self, py: Python) -> PyResult<String> {
-        let pred_ref = self.predicate.as_ref(py);
+        let pred_ref = self.predicate.bind(py);
 
         // Try direct string extraction
         if let Ok(s) = pred_ref.extract::<String>() {
@@ -182,7 +196,7 @@ impl UnlessCondition {
             && has_perform
         {
             // Create a dummy context (not used by our LaunchConfiguration.perform())
-            if let Ok(context) = py.eval("type('Context', (), {})()", None, None)
+            if let Ok(context) = py.eval(c"type('Context', (), {})()", None, None)
                 && let Ok(result) = pred_ref.call_method1("perform", (context,))
                 && let Ok(s) = result.extract::<String>()
             {
@@ -197,7 +211,7 @@ impl UnlessCondition {
             return Ok(s);
         }
 
-        Ok(pred_ref.to_string())
+        Ok(pred_ref.str()?.to_string())
     }
 }
 
@@ -230,8 +244,8 @@ impl LaunchConfigurationEquals {
     pub fn evaluate(
         &self,
         _py: Python,
-        _args: &PyTuple,
-        _kwargs: Option<&PyDict>,
+        _args: &Bound<'_, PyTuple>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<bool> {
         let actual = with_launch_context(|ctx| ctx.get_configuration(&self.variable_name));
         Ok(actual.as_deref() == Some(self.expected_value.as_str()))
@@ -274,8 +288,8 @@ impl LaunchConfigurationNotEquals {
     pub fn evaluate(
         &self,
         _py: Python,
-        _args: &PyTuple,
-        _kwargs: Option<&PyDict>,
+        _args: &Bound<'_, PyTuple>,
+        _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<bool> {
         let actual = with_launch_context(|ctx| ctx.get_configuration(&self.variable_name));
         Ok(actual.as_deref() != Some(self.expected_value.as_str()))
