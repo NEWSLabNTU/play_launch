@@ -68,7 +68,7 @@ notify = { version = "6", default-features = false, features = ["macos_kqueue"] 
 async-stream = "0.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 which = "6.0"
-pyo3 = { version = "0.20", features = ["auto-initialize"] }
+pyo3 = { version = "0.24", features = ["auto-initialize", "py-clone"] }
 
 [build-dependencies]
 pkg-config = "0.3"

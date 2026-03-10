@@ -8,7 +8,7 @@ license = "Apache-2.0"
 [dependencies]
 play_launch_wasm_common = { path = "../play_launch_wasm_common" }
 play_launch_parser = { path = "../play_launch_parser/src/play_launch_parser" }
-wasmtime = "29"
+wasmtime = "36"
 anyhow = "1.0"
 
 [dev-dependencies]
