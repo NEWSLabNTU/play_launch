@@ -403,7 +403,7 @@ impl Node {
                         full_key
                     );
                     if let Ok(items) = value.call_method0("items")
-                        && let Ok(iter) = items.iter()
+                        && let Ok(iter) = items.try_iter()
                     {
                         for item in iter.flatten() {
                             if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>()

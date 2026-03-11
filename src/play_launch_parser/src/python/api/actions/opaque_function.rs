@@ -1,6 +1,6 @@
 //! OpaqueFunction action
 
-use pyo3::prelude::*;
+use pyo3::{IntoPyObjectExt, prelude::*};
 
 /// Mock OpaqueFunction action
 ///
@@ -143,21 +143,22 @@ context = MockLaunchContext(launch_configurations, ros_namespace, resolve_substi
                     let py_value: PyObject = if let Ok(f) = value_str.parse::<f64>() {
                         if !value_str.contains('.') {
                             if let Ok(i) = value_str.parse::<i64>() {
-                                i.into_py(py)
+                                i.into_py_any(py)?
                             } else {
-                                f.into_py(py)
+                                f.into_py_any(py)?
                             }
                         } else {
-                            f.into_py(py)
+                            f.into_py_any(py)?
                         }
                     } else if value_str == "True" || value_str == "true" {
-                        true.into_py(py)
+                        true.into_py_any(py)?
                     } else if value_str == "False" || value_str == "false" {
-                        false.into_py(py)
+                        false.into_py_any(py)?
                     } else {
-                        value_str.into_py(py)
+                        value_str.as_str().into_py_any(py)?
                     };
-                    let tuple = pyo3::types::PyTuple::new(py, [name.into_py(py), py_value])?;
+                    let tuple =
+                        pyo3::types::PyTuple::new(py, [name.as_str().into_py_any(py)?, py_value])?;
                     gp_list.append(tuple)?;
                 }
                 configs_dict.set_item("global_params", gp_list)?;

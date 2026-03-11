@@ -62,9 +62,7 @@ fn resolve_path(py: Python, path_obj: &PyObject) -> PyResult<String> {
         .ok()
         .and_then(|m| m.dict().get_item("context").ok().flatten());
 
-    let context_obj = context
-        .map(|c| c.to_object(py))
-        .unwrap_or_else(|| py.None());
+    let context_obj = context.map(|c| c.unbind()).unwrap_or_else(|| py.None());
 
     // Try to extract as list of substitutions
     if let Ok(list) = path_obj.bind(py).downcast::<pyo3::types::PyList>() {

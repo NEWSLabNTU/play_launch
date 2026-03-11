@@ -292,7 +292,7 @@ impl LoadComposableNodes {
 
         // Try as string, LaunchConfiguration, or other substitution
         // Use pyobject_to_string to get the substitution string for output
-        let name = Self::pyobject_to_string(&target_ref)?;
+        let name = Self::pyobject_to_string(target_ref)?;
 
         log::debug!(
             "Extracted target container from string/substitution: '{}'",

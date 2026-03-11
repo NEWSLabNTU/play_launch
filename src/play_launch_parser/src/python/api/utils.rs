@@ -5,6 +5,7 @@
 //! SomeSubstitutionsType pattern.
 
 use pyo3::{
+    IntoPyObjectExt,
     prelude::*,
     types::{PyDict, PyList, PyTuple},
 };
@@ -47,21 +48,21 @@ pub fn create_launch_context(py: Python) -> PyResult<PyObject> {
                 // Check if it could be an integer (no decimal point in original)
                 if !value_str.contains('.') {
                     if let Ok(i) = value_str.parse::<i64>() {
-                        i.into_py(py)
+                        i.into_py_any(py)?
                     } else {
-                        f.into_py(py)
+                        f.into_py_any(py)?
                     }
                 } else {
-                    f.into_py(py)
+                    f.into_py_any(py)?
                 }
             } else if value_str == "True" || value_str == "true" {
-                true.into_py(py)
+                true.into_py_any(py)?
             } else if value_str == "False" || value_str == "false" {
-                false.into_py(py)
+                false.into_py_any(py)?
             } else {
-                value_str.into_py(py)
+                value_str.as_str().into_py_any(py)?
             };
-            let tuple = PyTuple::new(py, [name.into_py(py), py_value])?;
+            let tuple = PyTuple::new(py, [name.as_str().into_py_any(py)?, py_value])?;
             gp_list.append(&tuple)?;
         }
         py_configs.set_item("global_params", gp_list)?;
@@ -304,13 +305,14 @@ pub fn pyobject_to_bool(obj: &PyObject, py: Python) -> PyResult<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyo3::IntoPyObjectExt;
 
     #[test]
     fn test_pyobject_to_string_plain_string() {
         pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
             let s = "hello world";
-            let py_str = s.into_py(py);
+            let py_str = s.into_py_any(py).unwrap();
             let result = pyobject_to_string(py, &py_str).unwrap();
             assert_eq!(result, "hello world");
         });
@@ -322,7 +324,7 @@ mod tests {
         Python::with_gil(|py| {
             // Create a list: ["hello", " ", "world"]
             let list = pyo3::types::PyList::new(py, ["hello", " ", "world"]).unwrap();
-            let py_list = list.into_py(py);
+            let py_list = list.into_any().unbind();
             let result = pyobject_to_string(py, &py_list).unwrap();
             assert_eq!(result, "hello world");
         });
@@ -332,8 +334,8 @@ mod tests {
     fn test_pyobject_to_string_number() {
         pyo3::prepare_freethreaded_python();
         Python::with_gil(|py| {
-            let num = 42;
-            let py_num = num.into_py(py);
+            let num: i64 = 42;
+            let py_num = num.into_py_any(py).unwrap();
             let result = pyobject_to_string(py, &py_num).unwrap();
             assert_eq!(result, "42");
         });
