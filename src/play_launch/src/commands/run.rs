@@ -199,11 +199,12 @@ async fn run_direct(
 
     // Add actors to builder
     for context in pure_node_contexts {
-        // Use the node name from record.json directly
+        // Use node name, falling back to exec_name (many Autoware nodes have name=null)
         let member_name = context
             .record
             .name
             .as_ref()
+            .or(context.record.exec_name.as_ref())
             .cloned()
             .unwrap_or_else(|| "unknown".to_string());
 
