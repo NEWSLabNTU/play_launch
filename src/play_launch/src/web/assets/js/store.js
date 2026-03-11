@@ -16,7 +16,8 @@ export const parameterVersion = signal(new Map());
 // --- UI state ---
 
 export const selectedNode = signal(null);
-export const panelOpen = signal(false);
+export const nodePanelOpen = signal(false);
+export const graphPanelOpen = signal(false);
 export const activeTab = signal('stderr');
 export const theme = signal(localStorage.getItem('theme') || 'light');
 export const currentView = signal('nodes');

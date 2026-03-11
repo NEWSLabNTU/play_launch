@@ -5,7 +5,7 @@ export function getCyStyle(isDark) {
     const textMuted = isDark ? '#8a8d91' : '#6c757d';
     const borderColor = isDark ? '#3a3d45' : '#dee2e6';
     const nsBg = isDark ? '#1e2128' : '#f1f3f5';
-    const nsBorder = isDark ? '#4a4d55' : '#c5c9d0';
+    const nsBorder = isDark ? '#556677' : '#a0b4c8';
     const edgeColor = isDark ? '#6b7280' : '#9ca3af';
     const danglingEdge = isDark ? '#fbbf24' : '#d97706';
     const defaultNode = isDark ? '#818cf8' : '#6366f1';
@@ -23,22 +23,22 @@ export function getCyStyle(isDark) {
                     const depth = ns === '/' ? 0 : ns.split('/').filter(Boolean).length;
                     if (isDark) {
                         // Dark: base #1e2128, lighter per level
-                        const base = 30; // R/G/B base
-                        const step = 5;
-                        const v = Math.min(base + depth * step, 55);
+                        const base = 30;
+                        const step = 8;
+                        const v = Math.min(base + depth * step, 62);
                         return 'rgb(' + v + ',' + (v + 2) + ',' + (v + 5) + ')';
                     } else {
                         // Light: base #f1f3f5, darker per level
-                        const base = 245;
-                        const step = 6;
-                        const v = Math.max(base - depth * step, 215);
+                        const base = 243;
+                        const step = 10;
+                        const v = Math.max(base - depth * step, 203);
                         return 'rgb(' + v + ',' + (v - 2) + ',' + (v - 4) + ')';
                     }
                 },
                 'background-opacity': 1,
                 'border-color': nsBorder,
-                'border-width': 1.5,
-                'border-style': 'dashed',
+                'border-width': 2,
+                'border-style': 'solid',
                 'label': function(ele) {
                     return '\u25BE ' + (ele.data('label') || '');
                 },
@@ -176,7 +176,7 @@ export function getCyStyle(isDark) {
                     const c = ele.data('topicCount') || 1;
                     return Math.min(1.5 + Math.log2(c) * 1.2, 7);
                 },
-                'opacity': 0.7,
+                'opacity': 0.5,
                 'arrow-scale': 0.8,
                 'font-size': '10px',
                 'color': textMuted,
@@ -193,7 +193,7 @@ export function getCyStyle(isDark) {
                 'curve-style': 'bezier',
                 'line-style': 'dotted',
                 'width': 1,
-                'opacity': 0.3,
+                'opacity': 0.15,
                 'target-arrow-shape': 'none',
             },
         },

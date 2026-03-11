@@ -1,6 +1,7 @@
 // graph-layout.js — ELK layout engine integration + scrollbar helper.
 
 import ELK from '../vendor/elk.bundled.esm.js';
+import { resolvePostLayoutOverlaps } from './graph-containment.js';
 
 const elk = new ELK();
 
@@ -283,6 +284,7 @@ export async function runElkLayout(cy, fit) {
             elkGraph.children.length, elkGraph.edges.length);
         const result = await elk.layout(elkGraph);
         await applyElkPositions(cy, result, animate);
+        resolvePostLayoutOverlaps(cy);
         snapPortsToBorder(cy);
         if (fit) {
             cy.fit(undefined, 40);           // instant fit on initial load

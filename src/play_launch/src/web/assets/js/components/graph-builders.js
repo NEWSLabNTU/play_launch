@@ -1,6 +1,6 @@
 // graph-builders.js — Convert snapshot data into Cytoscape elements.
 
-import { isInfra, getNamespace, getShortName, namespaceLevels } from './graph-utils.js';
+import { isInfra, isInfraNode, getNamespace, getShortName, namespaceLevels } from './graph-utils.js';
 import { getStatusString } from '../store.js';
 
 /**
@@ -18,6 +18,11 @@ export function buildCyNodes(snapshot, nodesMap, showInfra) {
         if (!showInfra && isInfra(topic.name)) continue;
         for (const ep of topic.publishers) allFqns.add(ep.fqn);
         for (const ep of topic.subscribers) allFqns.add(ep.fqn);
+    }
+    if (!showInfra) {
+        for (const fqn of allFqns) {
+            if (isInfraNode(fqn)) allFqns.delete(fqn);
+        }
     }
 
     // Build namespace set

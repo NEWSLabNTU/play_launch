@@ -3,7 +3,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { currentView, theme, healthSummary, diagnostics, systemMetrics, panelOpen, graphSelectedElement } from '../store.js';
+import { currentView, theme, healthSummary, diagnostics, systemMetrics, graphSelectedElement } from '../store.js';
 
 const html = htm.bind(h);
 

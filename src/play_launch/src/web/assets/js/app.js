@@ -47,7 +47,7 @@ function ConnectionOverlay() {
 
 function App() {
     const view = store.currentView.value;
-    const isOpen = store.panelOpen.value;
+    const isOpen = view === 'graph' ? store.graphPanelOpen.value : store.nodePanelOpen.value;
 
     // Nodes and Diagnostics live in separate containers toggled by display.
     // This suppresses the left-panel width transition on view switches

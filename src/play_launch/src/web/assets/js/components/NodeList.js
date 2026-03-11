@@ -4,7 +4,7 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useMemo, useCallback } from '../vendor/hooks.module.js';
 import { useSignal } from '../vendor/signals.module.js';
 import htm from '../vendor/htm.module.js';
-import { nodeList, selectedNode, panelOpen, activeTab, getStatusString } from '../store.js';
+import { nodeList, selectedNode, nodePanelOpen, activeTab, getStatusString } from '../store.js';
 import { NodeCard } from './NodeCard.js';
 
 const html = htm.bind(h);
@@ -125,7 +125,7 @@ export function NodeList() {
 
     const onViewNode = useCallback((name) => {
         selectedNode.value = name;
-        panelOpen.value = true;
+        nodePanelOpen.value = true;
         activeTab.value = activeTab.peek() || 'stderr';
     }, []);
 

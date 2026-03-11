@@ -3,7 +3,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { selectedNode, panelOpen, activeTab, nodes, getStatusString } from '../store.js';
+import { selectedNode, nodePanelOpen, activeTab, nodes, getStatusString } from '../store.js';
 import { InfoTab } from './InfoTab.js';
 import { LogTab } from './LogTab.js';
 import { ParametersTab } from './ParametersTab.js';
@@ -14,7 +14,7 @@ const html = htm.bind(h);
 
 export function RightPanel() {
     const name = selectedNode.value;
-    const isOpen = panelOpen.value;
+    const isOpen = nodePanelOpen.value;
     const tab = activeTab.value;
     const [nodeData, setNodeData] = useState(null);
 
@@ -42,8 +42,8 @@ export function RightPanel() {
     // Close on Escape
     useEffect(() => {
         const onKey = (e) => {
-            if (e.key === 'Escape' && panelOpen.value) {
-                panelOpen.value = false;
+            if (e.key === 'Escape' && nodePanelOpen.value) {
+                nodePanelOpen.value = false;
             }
         };
         document.addEventListener('keydown', onKey);
@@ -51,7 +51,7 @@ export function RightPanel() {
     }, []);
 
     const close = useCallback(() => {
-        panelOpen.value = false;
+        nodePanelOpen.value = false;
         selectedNode.value = null;
     }, []);
 

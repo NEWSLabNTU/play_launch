@@ -12,7 +12,7 @@ import htm from '../vendor/htm.module.js';
 import cytoscape from '../vendor/cytoscape.esm.min.js';
 import expandCollapse from '../vendor/cytoscape-expand-collapse.js';
 import {
-    graphSnapshot, nodes, panelOpen,
+    graphSnapshot, nodes, graphPanelOpen,
     getStatusString, currentView, graphSelectedElement,
 } from '../store.js';
 
@@ -21,6 +21,10 @@ import { buildCyNodes, buildRawEdges } from './graph-builders.js';
 import { traceEdgePaths, NEIGHBOR_CLASSES, recomputeEdges } from './graph-edges.js';
 import { runElkLayout, updateScrollbars } from './graph-layout.js';
 import { getCyStyle } from './graph-styles.js';
+import {
+    getSiblingExpandedNs, getNodeDimensions, constrainPosition,
+    cascadePush, pushOverlappingSiblings,
+} from './graph-containment.js';
 
 const html = htm.bind(h);
 
@@ -233,7 +237,7 @@ export function GraphView() {
                             type: 'namespace', id: target.id(), data: target.data(),
                         };
                     }
-                    panelOpen.value = true;
+                    graphPanelOpen.value = true;
                 } else {
                     // Edge: trace full path through ports + color terminals
                     target.addClass('highlighted');
@@ -312,7 +316,7 @@ export function GraphView() {
                             outputEndpoints,
                         },
                     };
-                    panelOpen.value = true;
+                    graphPanelOpen.value = true;
                 }
             });
 
@@ -360,7 +364,7 @@ export function GraphView() {
                     graphSelectedElement.value = {
                         type: 'namespace', id: target.id(), data: target.data(),
                     };
-                    panelOpen.value = true;
+                    graphPanelOpen.value = true;
                 }
 
                 // Update breadcrumb to the expanded/collapsed node
@@ -378,7 +382,7 @@ export function GraphView() {
                 if (evt.target === cy) {
                     cy.elements().removeClass('highlighted ' + NEIGHBOR_CLASSES);
                     graphSelectedElement.value = null;
-                    panelOpen.value = false;
+                    graphPanelOpen.value = false;
                     if (focusedNodeRef.current) {
                         exitFocusMode(cy);
                         focusedNodeRef.current = null;
@@ -407,14 +411,91 @@ export function GraphView() {
                 }
             });
 
-            // Expanded namespaces are auto-positioned — don't let users drag them
-            cy.on('grab', 'node.namespace', (evt) => {
-                const n = evt.target;
-                if (!n.hasClass('cy-expand-collapse-collapsed-node')) {
-                    n.ungrabify();
-                    setTimeout(() => n.grabify(), 0);
-                }
-            });
+            // ── Drag containment & push ────────────────────────────
+            // Leaf / collapsed NS: prevent entering sibling expanded NS, push on contact.
+            // Expanded NS: push overlapping siblings when dragged.
+            {
+                let dragState = null;
+                let constraining = false;  // re-entrancy guard
+
+                cy.on('grab', 'node', (evt) => {
+                    const node = evt.target;
+                    if (node.hasClass('spacer-node') || node.hasClass('port-node')) return;
+                    if (!node.data('parent')) { dragState = null; return; }
+
+                    const isExpandedNs = node.hasClass('namespace') &&
+                        !node.hasClass('cy-expand-collapse-collapsed-node') && node.isParent();
+
+                    if (isExpandedNs) {
+                        const bb = node.boundingBox();
+                        dragState = {
+                            type: 'expanded-ns',
+                            nodeId: node.id(),
+                            prevCenter: { x: (bb.x1 + bb.x2) / 2, y: (bb.y1 + bb.y2) / 2 },
+                        };
+                    } else if (node.hasClass('leaf-node') ||
+                               node.hasClass('cy-expand-collapse-collapsed-node')) {
+                        dragState = {
+                            type: 'leaf',
+                            nodeId: node.id(),
+                            prevPos: { ...node.position() },
+                            siblingBBs: getSiblingExpandedNs(cy, node),
+                            dims: getNodeDimensions(node),
+                        };
+                    } else {
+                        dragState = null;
+                    }
+                });
+
+                cy.on('position', 'node', (evt) => {
+                    if (!dragState || constraining) return;
+                    const node = evt.target;
+                    if (!node.grabbed()) return;
+                    if (node.id() !== dragState.nodeId) return;
+
+                    constraining = true;
+                    try {
+                        if (dragState.type === 'leaf') {
+                            const pos = node.position();
+                            // Constrain against expanded NS siblings (can't enter them)
+                            if (dragState.siblingBBs.length > 0) {
+                                const { pos: newPos, pushes } = constrainPosition(
+                                    pos, dragState.dims, dragState.siblingBBs, dragState.prevPos
+                                );
+                                if (newPos.x !== pos.x || newPos.y !== pos.y) {
+                                    node.position(newPos);
+                                }
+                                for (const push of pushes) {
+                                    cascadePush(cy, push.node, push.dx, push.dy);
+                                }
+                            }
+                            // Push any overlapping siblings (leaf, collapsed NS, expanded NS)
+                            const currPos = node.position();
+                            const biasX = currPos.x - dragState.prevPos.x;
+                            const biasY = currPos.y - dragState.prevPos.y;
+                            pushOverlappingSiblings(cy, node, biasX, biasY);
+                            dragState.prevPos = currPos;
+                            for (const sib of dragState.siblingBBs) {
+                                sib.bb = sib.node.boundingBox();
+                            }
+                        } else if (dragState.type === 'expanded-ns') {
+                            const bb = node.boundingBox();
+                            const centerX = (bb.x1 + bb.x2) / 2;
+                            const centerY = (bb.y1 + bb.y2) / 2;
+                            const dx = centerX - dragState.prevCenter.x;
+                            const dy = centerY - dragState.prevCenter.y;
+                            pushOverlappingSiblings(cy, node, dx, dy);
+                            dragState.prevCenter = { x: centerX, y: centerY };
+                        }
+                    } finally {
+                        constraining = false;
+                    }
+                });
+
+                cy.on('free', 'node', () => {
+                    dragState = null;
+                });
+            }
 
             // ── NS border resize ────────────────────────────────────
             // Allow users to drag expanded NS borders to resize them.
@@ -577,9 +658,16 @@ export function GraphView() {
 
                 const endResize = () => {
                     if (!resizeState) return;
+                    const nsId = resizeState.nsId;
                     resizeState = null;
                     container.style.cursor = '';
                     cy.userPanningEnabled(true);
+
+                    // Push siblings that overlap after resize (with cascading)
+                    const nsNode = cy.getElementById(nsId);
+                    if (nsNode && nsNode.length > 0) {
+                        pushOverlappingSiblings(cy, nsNode, 0, 0);
+                    }
                 };
                 container.addEventListener('mouseup', endResize);
                 container.addEventListener('mouseleave', endResize);
@@ -814,8 +902,15 @@ export function GraphView() {
         if (view !== 'graph') return;
 
         function onGraphJump(evt) {
-            const targetId = evt.detail;
+            let targetId = evt.detail;
             if (!targetId || !cyRef.current) return;
+
+            // Port nodes → resolve to parent namespace
+            if (targetId.startsWith('outport:ns:') || targetId.startsWith('inport:ns:')) {
+                const ns = targetId.replace(/^(?:out|in)port:ns:/, '');
+                console.log('[GraphView] jump: port %s → ns:%s', targetId, ns);
+                targetId = 'ns:' + ns;
+            }
 
             const cy = cyRef.current;
             let ele = cy.getElementById(targetId);
@@ -849,11 +944,14 @@ export function GraphView() {
                             const retryEle = cy.getElementById(targetId);
                             if (retryEle && retryEle.length > 0) {
                                 performJump(cy, retryEle);
+                            } else {
+                                console.warn('[GraphView] jump: target not found after expand: %s', targetId);
                             }
                         });
                         return;
                     }
                 }
+                console.warn('[GraphView] jump: target not found: %s', targetId);
                 return;
             }
 
@@ -892,7 +990,7 @@ export function GraphView() {
                     type: 'namespace', id: target.id(), data: target.data(),
                 };
             }
-            panelOpen.value = true;
+            graphPanelOpen.value = true;
         }
 
         document.addEventListener('graph-jump', onGraphJump);

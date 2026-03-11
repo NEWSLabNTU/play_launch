@@ -3,7 +3,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useState, useCallback, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { nodes, getStatusString, selectedNode, panelOpen, graphSnapshot } from '../store.js';
+import { nodes, getStatusString, selectedNode, nodePanelOpen, graphPanelOpen, graphSnapshot, currentView } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -57,7 +57,8 @@ function QosBadges({ qos }) {
 /** Jump to a managed node in the left panel. */
 function jumpToNode(targetName) {
     selectedNode.value = targetName;
-    panelOpen.value = true;
+    const po = currentView.value === 'graph' ? graphPanelOpen : nodePanelOpen;
+    po.value = true;
     // Scroll the node card into view
     requestAnimationFrame(() => {
         const el = document.querySelector(`[data-node="${CSS.escape(targetName)}"]`);

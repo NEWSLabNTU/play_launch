@@ -1,7 +1,7 @@
 // graph-utils.js — Pure helper functions for graph visualization.
 // No Cytoscape or Preact dependency.
 
-// Infrastructure prefixes to filter
+// Infrastructure topic prefixes — hidden by default
 export const INFRA_PREFIXES = [
     '/parameter_events', '/rosout', '/tf', '/tf_static',
     '/clock', '/diagnostics', '/_action',
@@ -9,6 +9,13 @@ export const INFRA_PREFIXES = [
 
 export function isInfra(name) {
     return INFRA_PREFIXES.some(p => name === p || name.startsWith(p + '/'));
+}
+
+// Infrastructure node FQNs — hidden when infra is toggled off
+const INFRA_NODES = new Set(['/play_launch']);
+
+export function isInfraNode(fqn) {
+    return INFRA_NODES.has(fqn);
 }
 
 /** Extract namespace from FQN: "/a/b/node" → "/a/b" */

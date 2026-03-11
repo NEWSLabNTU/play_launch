@@ -10,7 +10,7 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import {
-    graphSelectedElement, panelOpen, nodes, graphSnapshot,
+    graphSelectedElement, graphPanelOpen, nodes, graphSnapshot,
     getStatusString,
 } from '../store.js';
 
@@ -51,7 +51,7 @@ function GraphNodeDetail({ data }) {
             </span>
             <button class="panel-close-btn" onClick=${() => {
                 graphSelectedElement.value = null;
-                panelOpen.value = false;
+                graphPanelOpen.value = false;
             }}>\u00d7</button>
         </div>
         <div class="right-panel-tabs">
@@ -204,7 +204,7 @@ function GraphNsDetail({ data }) {
             </span>
             <button class="panel-close-btn" onClick=${() => {
                 graphSelectedElement.value = null;
-                panelOpen.value = false;
+                graphPanelOpen.value = false;
             }}>\u00d7</button>
         </div>
         <div class="right-panel-content" style=${{ overflow: 'auto' }}>
@@ -339,7 +339,7 @@ function GraphEdgeDetail({ data }) {
             </span>
             <button class="panel-close-btn" onClick=${() => {
                 graphSelectedElement.value = null;
-                panelOpen.value = false;
+                graphPanelOpen.value = false;
             }}>\u00d7</button>
         </div>
         <div class="right-panel-content" style=${{ overflow: 'auto' }}>
@@ -454,14 +454,14 @@ function EdgeTopicRow({ topic }) {
 
 export function GraphPanel() {
     const sel = graphSelectedElement.value;
-    const isOpen = panelOpen.value;
+    const isOpen = graphPanelOpen.value;
 
     // Escape closes the panel
     useEffect(() => {
         const onKey = (e) => {
-            if (e.key === 'Escape' && panelOpen.value) {
+            if (e.key === 'Escape' && graphPanelOpen.value) {
                 graphSelectedElement.value = null;
-                panelOpen.value = false;
+                graphPanelOpen.value = false;
             }
         };
         document.addEventListener('keydown', onKey);

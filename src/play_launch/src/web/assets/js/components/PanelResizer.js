@@ -3,7 +3,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useRef, useCallback, useEffect } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { panelOpen } from '../store.js';
+import { nodePanelOpen, graphPanelOpen, currentView } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -56,7 +56,7 @@ export function PanelResizer() {
         };
     }, [setWidth]);
 
-    const isOpen = panelOpen.value;
+    const isOpen = currentView.value === 'graph' ? graphPanelOpen.value : nodePanelOpen.value;
 
     return html`
         <div class="panel-resizer ${isOpen ? 'visible' : ''}"
