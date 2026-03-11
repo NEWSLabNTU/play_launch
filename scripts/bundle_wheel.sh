@@ -78,6 +78,18 @@ for entry in "${ARTIFACTS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Optional: copy interception .so (built standalone, not via colcon)
+# ---------------------------------------------------------------------------
+INTERCEPTION_SO="$REPO_ROOT/src/play_launch_interception/target/release/libplay_launch_interception.so"
+if [[ -f "$INTERCEPTION_SO" ]]; then
+  mkdir -p "$DEST_ROOT/lib"
+  cp "$INTERCEPTION_SO" "$DEST_ROOT/lib/"
+  chmod +x "$DEST_ROOT/lib/libplay_launch_interception.so"
+  echo "  libplay_launch_interception.so -> lib/libplay_launch_interception.so"
+  copied=$((copied + 1))
+fi
+
+# ---------------------------------------------------------------------------
 # Create markers
 # ---------------------------------------------------------------------------
 for marker in "${MARKERS[@]}"; do

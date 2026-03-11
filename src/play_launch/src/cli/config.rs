@@ -22,6 +22,10 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub diagnostics: DiagnosticsSettings,
 
+    /// RCL interception settings (LD_PRELOAD-based message introspection)
+    #[serde(default)]
+    pub interception: InterceptionSettings,
+
     /// Per-process configurations
     #[serde(default)]
     pub processes: Vec<ProcessConfig>,
@@ -114,6 +118,45 @@ fn default_diagnostics_topics() -> Vec<String> {
 
 fn default_debounce_ms() -> u64 {
     100
+}
+
+/// RCL interception settings — LD_PRELOAD-based message introspection.
+///
+/// When enabled, play_launch injects `libplay_launch_interception.so` via
+/// LD_PRELOAD into all managed nodes, giving transparent data flow visibility
+/// without modifying user code.
+#[derive(Debug, Clone, Deserialize)]
+pub struct InterceptionSettings {
+    /// Enable interception (default: false)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Enable frontier tracking (default: true when interception is enabled)
+    #[serde(default = "default_true")]
+    pub frontier: bool,
+
+    /// Enable message statistics (default: true when interception is enabled)
+    #[serde(default = "default_true")]
+    pub stats: bool,
+
+    /// SPSC ring buffer capacity per child process (default: 65536)
+    #[serde(default = "default_ring_capacity")]
+    pub ring_capacity: usize,
+}
+
+impl Default for InterceptionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            frontier: default_true(),
+            stats: default_true(),
+            ring_capacity: default_ring_capacity(),
+        }
+    }
+}
+
+fn default_ring_capacity() -> usize {
+    65536
 }
 
 /// Composable node loading settings
@@ -325,6 +368,7 @@ pub struct ResolvedRuntimeConfig {
     pub composable_node_loading: ComposableNodeLoadingSettings,
     pub container_readiness: ContainerReadinessSettings,
     pub diagnostics: DiagnosticsSettings,
+    pub interception: InterceptionSettings,
 }
 
 /// Resolved monitoring configuration
@@ -450,6 +494,7 @@ pub fn load_runtime_config(
         composable_node_loading: config.composable_node_loading,
         container_readiness: config.container_readiness,
         diagnostics: config.diagnostics,
+        interception: config.interception,
     })
 }
 
@@ -483,6 +528,12 @@ mod tests {
         assert!(config.container_readiness.wait_for_service_ready); // Now defaults to true
         assert_eq!(config.container_readiness.service_ready_timeout_secs, 120);
         assert_eq!(config.container_readiness.service_poll_interval_ms, 500);
+
+        // Test interception defaults
+        assert!(!config.interception.enabled);
+        assert!(config.interception.frontier);
+        assert!(config.interception.stats);
+        assert_eq!(config.interception.ring_capacity, 65536);
     }
 
     #[test]

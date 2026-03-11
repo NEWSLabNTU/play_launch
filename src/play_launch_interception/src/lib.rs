@@ -241,19 +241,31 @@ pub unsafe extern "C" fn rcl_publish(
     };
 
     if !rt.plugins.is_empty() {
-        if let Some(info) = registry::lookup_publisher(publisher as usize) {
+        // Try stamp-aware lookup first; fall back to full lookup for no-stamp messages.
+        let dispatch_info = if let Some(info) = registry::lookup_publisher(publisher as usize) {
             let stamp_ptr = unsafe {
                 (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime
             };
             let stamp = unsafe { &*stamp_ptr };
-            plugin_dispatch::dispatch_publish(
-                &rt.plugins,
-                publisher as usize,
+            Some((
                 info.topic_hash,
                 Some(Stamp {
                     sec: stamp.sec,
                     nanosec: stamp.nanosec,
                 }),
+            ))
+        } else {
+            // No stamp_offset — still dispatch with stamp=None for StatsPlugin.
+            registry::lookup_publisher_full(publisher as usize)
+                .map(|(hash, _)| (hash, None))
+        };
+
+        if let Some((topic_hash, stamp)) = dispatch_info {
+            plugin_dispatch::dispatch_publish(
+                &rt.plugins,
+                publisher as usize,
+                topic_hash,
+                stamp,
             );
         }
     }
@@ -319,19 +331,29 @@ pub unsafe extern "C" fn rcl_take(
     let ret = unsafe { (rt.originals.take)(subscription, ros_message, message_info, allocation) };
 
     if ret == 0 && !rt.plugins.is_empty() {
-        if let Some(info) = registry::lookup_subscription(subscription as usize) {
+        let dispatch_info = if let Some(info) = registry::lookup_subscription(subscription as usize) {
             let stamp_ptr = unsafe {
                 (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime
             };
             let stamp = unsafe { &*stamp_ptr };
-            plugin_dispatch::dispatch_take(
-                &rt.plugins,
-                subscription as usize,
+            Some((
                 info.topic_hash,
                 Some(Stamp {
                     sec: stamp.sec,
                     nanosec: stamp.nanosec,
                 }),
+            ))
+        } else {
+            registry::lookup_subscription_full(subscription as usize)
+                .map(|(hash, _)| (hash, None))
+        };
+
+        if let Some((topic_hash, stamp)) = dispatch_info {
+            plugin_dispatch::dispatch_take(
+                &rt.plugins,
+                subscription as usize,
+                topic_hash,
+                stamp,
             );
         }
     }

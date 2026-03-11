@@ -96,6 +96,14 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
         let (addr, port) = args.common.parse_web_addr()?;
         info!("  Web UI: http://{}:{}", addr, port);
     }
+    info!(
+        "  Interception: {}",
+        if runtime_config.interception.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
 
     // Note: ROS service discovery and anchor process now started in play() async function (Phase 2, 4)
 
@@ -395,15 +403,60 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 
     // Prepare node and container execution contexts
     debug!("Preparing node execution contexts...");
-    let pure_node_contexts = prepare_node_contexts(&launch_dump, &node_log_dir)?;
+    let mut pure_node_contexts = prepare_node_contexts(&launch_dump, &node_log_dir)?;
 
     debug!("Preparing container execution contexts...");
-    let container_contexts =
+    let mut container_contexts =
         prepare_container_contexts(&launch_dump, &node_log_dir, common.container_mode)?;
 
     // Prepare LoadNode request execution contexts
     let ComposableNodeContextSet { load_node_contexts } =
         prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?;
+
+    // Setup interception if enabled (Phase 29)
+    let mut interception_consumers: Vec<crate::interception::ChildConsumer> = Vec::new();
+    let _interception_so_path = if runtime_config.interception.enabled {
+        match crate::interception::find_interception_so() {
+            Some(so_path) => {
+                info!("Interception enabled (so: {})", so_path.display());
+                // Inject LD_PRELOAD + fd env vars into each pure node
+                for ctx in &mut pure_node_contexts {
+                    match crate::interception::setup_child_interception(
+                        &mut ctx.cmdline.env,
+                        &so_path,
+                        &runtime_config.interception,
+                    ) {
+                        Ok(consumer) => interception_consumers.push(consumer),
+                        Err(e) => warn!("Interception setup failed for node: {:#}", e),
+                    }
+                }
+                // Inject into each container
+                for ctx in &mut container_contexts {
+                    match crate::interception::setup_child_interception(
+                        &mut ctx.node_context.cmdline.env,
+                        &so_path,
+                        &runtime_config.interception,
+                    ) {
+                        Ok(consumer) => interception_consumers.push(consumer),
+                        Err(e) => warn!("Interception setup failed for container: {:#}", e),
+                    }
+                }
+                debug!(
+                    "Interception: {} consumers created",
+                    interception_consumers.len()
+                );
+                Some(so_path)
+            }
+            None => {
+                warn!(
+                    "Interception enabled but libplay_launch_interception.so not found — disabling"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Create MemberCoordinatorBuilder for collecting member definitions
     debug!("Creating MemberCoordinatorBuilder...");
@@ -677,6 +730,20 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         named_tasks.push(NamedTask {
             name: "parameter_events",
             task,
+        });
+    }
+
+    // Spawn interception consumer task if we have consumers (Phase 29)
+    if !interception_consumers.is_empty() {
+        let interception_task = tokio::spawn(crate::interception::run_interception_task(
+            interception_consumers,
+            log_dir.clone(),
+            runtime_config.interception.clone(),
+            shutdown_signal.clone(),
+        ));
+        named_tasks.push(NamedTask {
+            name: "interception",
+            task: interception_task,
         });
     }
 

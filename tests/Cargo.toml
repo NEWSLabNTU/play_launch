@@ -40,6 +40,10 @@ path = "tests/container_events.rs"
 name = "parallel_loading"
 path = "tests/parallel_loading.rs"
 
+[[test]]
+name = "interception"
+path = "tests/interception.rs"
+
 [dependencies]
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }

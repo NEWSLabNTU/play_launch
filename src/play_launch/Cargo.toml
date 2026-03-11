@@ -37,6 +37,7 @@ diagnostic_msgs = "*"
 eyre = "0.6.12"
 play_launch_msgs = "*"
 play_launch_parser = { path = "../play_launch_parser/src/play_launch_parser" }
+spsc_shm = { path = "../spsc_shm" }
 futures = "0.3.30"
 glob = "0.3"
 humantime-serde = "1.1"

@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod diagnostics;
 mod execution;
+mod interception;
 mod member_actor;
 mod monitoring;
 mod process;

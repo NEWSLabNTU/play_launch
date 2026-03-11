@@ -67,6 +67,14 @@ build-wasm:
     source install/setup.bash
     cd src/play_launch && cargo build --release --features wasm
 
+# Build interception .so (standalone, not in colcon workspace)
+build-interception:
+    #!/usr/bin/env bash
+    set -e
+    (cd src/spsc_shm && cargo build --release)
+    (cd src/play_launch_interception && cargo build --release --features {{ros_distro}})
+    echo "Built: src/play_launch_interception/target/release/libplay_launch_interception.so"
+
 # Bundle colcon artifacts + build wheel (no colcon rebuild)
 build-wheel:
     #!/usr/bin/env bash

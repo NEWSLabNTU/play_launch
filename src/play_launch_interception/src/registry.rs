@@ -70,8 +70,7 @@ pub fn lookup_publisher(ptr: usize) -> Option<PubEntry> {
 }
 
 /// Look up a publisher by pointer, returning topic info even if no stamp.
-/// Used by the init dispatch path to pass full info to plugins.
-#[allow(dead_code)]
+/// Used by the publish dispatch path for messages without `header.stamp`.
 pub fn lookup_publisher_full(ptr: usize) -> Option<(u64, Option<usize>)> {
     let map = PUB_REGISTRY.read();
     let record = map.get(&ptr)?;
@@ -116,8 +115,7 @@ pub fn lookup_subscription(ptr: usize) -> Option<SubEntry> {
 }
 
 /// Look up a subscription by pointer, returning topic info even if no stamp.
-/// Used by the init dispatch path to pass full info to plugins.
-#[allow(dead_code)]
+/// Used by the take dispatch path for messages without `header.stamp`.
 pub fn lookup_subscription_full(ptr: usize) -> Option<(u64, Option<usize>)> {
     let map = SUB_REGISTRY.read();
     let record = map.get(&ptr)?;

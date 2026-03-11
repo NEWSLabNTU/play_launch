@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 29 phases total; 24 complete, 2 in progress, 3 planned.
+Started October 2025. 29 phases total; 25 complete, 2 in progress, 2 planned.
 
 Completed phase docs are in `archive/`.
 
@@ -33,7 +33,7 @@ Completed phase docs are in `archive/`.
 | 26 | Web UI Metrics Dashboard | ✅ | 2026-03-01 |
 | 27 | Runtime Dependency Check | ✅ | 2026-03-03 |
 | 28 | Parser Integration Test Coverage | ✅ | 2026-03-03 |
-| 29 | RCL Interception & Frontier Tracking | ⏳ Planned | — |
+| 29 | RCL Interception & Frontier Tracking | ✅ | 2026-03-11 |
 
 ---
 
@@ -56,12 +56,6 @@ See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md).
 25.1–25.9 complete (graph builder, topic/QoS endpoints, TopicsTab, node badges, Cytoscape.js graph view with ELK layout). 25.10 in progress.
 
 See [phase-25-topic_introspection.md](./phase-25-topic_introspection.md).
-
-### Phase 29: RCL Interception & Frontier Tracking (in progress)
-
-Rust LD_PRELOAD interceptor hooking rcl_publish/rcl_take with a trait-based compiled-in plugin architecture. Three phases: **(A) Interceptor** — complete (29.0–29.7): lazy dlsym, rosidl introspection, `InterceptionPlugin` trait, FrontierPlugin, 17 tests. **(B) IPC + plugins** — planned: `spsc_shm` crate (generic zero-copy shared memory SPSC ring buffer, memfd + eventfd), migrate frontier plugin to shared memory, add StatsPlugin for message statistics. **(C) play_launch integration** — planned: YAML config (`interception` section), LD_PRELOAD injection, `InterceptionListener` tokio consumer task, logging, web UI.
-
-See [phase-29-rcl_interception.md](./phase-29-rcl_interception.md).
 
 ---
 

@@ -55,6 +55,7 @@ just build                          # Full build: colcon + bundle + wheel
 just build-cpp                      # C++ only (msgs + container)
 just build-rust                     # Rust only (assumes C++ install/ exists)
 just build-wheel                    # Bundle + wheel only (no colcon rebuild)
+just build-interception             # Build interception .so (standalone, not in colcon)
 just run launch <pkg> <launch_file> # Run with colcon build
 play_launch launch <pkg> <launch>   # Run if installed via pip
 play_launch plot                    # Analysis
@@ -104,11 +105,38 @@ When mode is not `stock`, `prepare_container_contexts()` in `src/execution/conte
 
 See `tests/fixtures/autoware/autoware_config.yaml` for full config YAML reference.
 
+**Interception** (`interception` config section, default: disabled):
+- `enabled: true` — inject `LD_PRELOAD` interception .so into all child processes
+- `frontier: true` — enable per-topic timestamp frontier tracking
+- `stats: true` — enable per-topic message count/rate statistics
+- `ring_capacity: 65536` — SPSC ring buffer capacity per child process
+
+When enabled, play_launch creates a shared memory ring buffer per child, injects `LD_PRELOAD` + fd env vars, and spawns a consumer tokio task that writes `frontier_summary.json` and `stats_summary.json` to `play_log/<ts>/interception/` on shutdown.
+
+### RCL Interception Architecture
+
+`libplay_launch_interception.so` (LD_PRELOAD) hooks `rcl_publish`/`rcl_take` to extract `header.stamp` from messages. Compiled-in plugins (`FrontierPlugin`, `StatsPlugin`) write `InterceptionEvent` to a zero-copy SPSC ring buffer shared with play_launch.
+
+Standalone crates (not in colcon workspace):
+- `src/vendor/rcl_interception_sys/` — bindgen FFI types for rcl/rosidl
+- `src/play_launch_interception/` — cdylib: hooks, registry, introspection, plugins
+- `src/spsc_shm/` — generic SPSC ring buffer over shared memory (memfd + eventfd)
+
+Env vars (set by play_launch, consumed by the .so):
+- `PLAY_LAUNCH_INTERCEPTION_SHM_FD` — shared memory fd for ring buffer
+- `PLAY_LAUNCH_INTERCEPTION_EVENT_FD` — eventfd for wakeup signaling
+- `PLAY_LAUNCH_INTERCEPTION_SO` — override path to the .so (for tests)
+
+Build: `just build-interception` (requires ROS environment). Design: `docs/roadmap/phase-29-rcl_interception.md`.
+
 ## Log Directory Structure
 
 ```
 play_log/<timestamp>/
 ├── params_files/
+├── interception/                   # when interception enabled
+│   ├── frontier_summary.json       # per-topic frontier state
+│   └── stats_summary.json          # per-topic pub/take counts, rates
 ├── system_stats.csv, diagnostics.csv
 └── node/<node_name>/{metadata.json, metrics.csv, out, err, pid, status, cmdline}
 ```
@@ -122,7 +150,7 @@ Composable nodes don't have separate directories — metadata in parent containe
 - **ALWAYS** use Bash tool's `timeout` parameter (never `timeout` command prefix)
 - Temp files in `tmp/` (gitignored), never `/tmp`
 - Create temp scripts with Write tool, never inline in Bash
-- **Standalone crates** (outside the workspace, with their own `[workspace]` in Cargo.toml) must have a `/target/` `.gitignore` — e.g. `play_launch_interception`, `play_launch_interception_abi`, `play_launch_interception_frontier`, `rcl_interception_sys`
+- **Standalone crates** (outside the workspace, with their own `[workspace]` in Cargo.toml) must have a `/target/` `.gitignore` — e.g. `play_launch_interception`, `rcl_interception_sys`, `spsc_shm`
 
 ### Process Management
 - **NEVER** `kill -9` individual processes — kill the process group (PGID):
@@ -162,6 +190,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-03-11**: Phase 29 (RCL Interception) integration complete — play_launch consumer wired into replay.rs, 5 integration tests passing (stats, frontier, disabled, defaults, toggles). Bug fix: `rcl_publish`/`rcl_take` hooks now fall back to `lookup_publisher_full()`/`lookup_subscription_full()` for messages without `header.stamp`, dispatching with `stamp: None` so StatsPlugin counts all messages.
 - **2026-03-11**: Fixed `$(eval)` Python conditional expressions returning "false" — `needs_python_eval()` didn't recognize `" if "` / `" else "` keywords, so expressions like `'centerpoint_tiny' if ''=='' else ''` were handled by the Rust string comparison evaluator (which found `==` first), naively split on it, and returned "false". Fix: added `" if "` and `" else "` to the `needs_python_eval()` keywords list in `eval.rs` so conditional expressions delegate to Python eval.
 - **2026-03-11**: Fixed composable node container matching — 5 nodes were failing to find their target containers:
   1. **`container.rs` (Python mock)**: `ComposableNodeContainer` was missing `#[getter]` for `name` and `namespace`, causing `LoadComposableNodes.extract_target_container()` to fall through to `__repr__()`, producing targets like `"ComposableNodeContainer(name='...', namespace='')"` instead of proper names. Fix: added `#[getter]` annotations.
@@ -194,6 +223,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 - **Build Optimization**: `docs/roadmap/phase-21-build_optimization.md` — bundle script, incremental builds
 - **Launch Tree IR**: `docs/roadmap/phase-22-launch_tree_ir.md` — IR design, WASM pipeline, validation
 - **Topic Introspection**: `docs/roadmap/phase-25-topic_introspection.md` — graph view, namespace grouping, ELK layout, edge bundling
+- **RCL Interception**: `docs/roadmap/phase-29-rcl_interception.md` — LD_PRELOAD interceptor, SPSC shared memory, frontier/stats plugins
 - **Migration Guide**: `docs/guide/parser-migration.md` — Rust parser migration (v0.6.0+)
 
 ## Parser Parity Status
