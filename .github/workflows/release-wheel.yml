@@ -94,13 +94,14 @@ jobs:
             source ~/.cargo/env
 
             # Install Python build tools
-            pip3 install 'colcon-cargo-ros2>=0.4.0' build 'wheel>=0.40'
+            pip3 install 'colcon-cargo-ros2>=0.4.0' build 'wheel>=0.40' uv
+
+            # Install just
+            curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
             # Build
             source /opt/ros/humble/setup.bash
-            colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release --base-paths src
-            scripts/bundle_wheel.sh
-            python3 -m build --wheel
+            just build
             for whl in dist/*.whl; do
               wheel tags --platform-tag=${WHEEL_PLATFORM} --remove \"\$whl\"
             done
