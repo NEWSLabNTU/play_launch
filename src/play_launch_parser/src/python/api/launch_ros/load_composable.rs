@@ -119,11 +119,19 @@ impl LoadComposableNodes {
         target_container: &PyObject,
         descriptions: &[PyObject],
     ) -> PyResult<()> {
-        use crate::{captures::LoadNodeCapture, python::bridge::capture_load_node};
+        use crate::{
+            captures::LoadNodeCapture,
+            python::bridge::{capture_load_node, get_current_ros_namespace},
+        };
 
         // Extract target container name and namespace
-        let (container_name, container_namespace) =
+        let (container_name, _container_namespace) =
             Self::extract_target_container(py, target_container)?;
+
+        // Get the ROS context namespace (from push-ros-namespace stack).
+        // ROS2's get_composable_node_load_request() uses the launch context namespace,
+        // not the container's namespace, for composable nodes.
+        let ros_namespace = get_current_ros_namespace();
 
         for desc_obj in descriptions {
             // Try to get the ComposableNode attributes
@@ -150,20 +158,34 @@ impl LoadComposableNodes {
                 continue; // Skip if no name
             };
 
-            // Extract namespace (optional, defaults to container namespace or "/")
-            let namespace = desc
-                .getattr("namespace")
-                .ok()
-                .and_then(|ns| {
-                    // Check if it's None
-                    if ns.is_none() {
-                        None
+            // Resolve namespace using ROS context namespace (matching ROS2 behavior).
+            // If the node has an explicit namespace, resolve relative to ROS context.
+            // If no namespace, use the ROS context namespace.
+            let explicit_ns = desc.getattr("namespace").ok().and_then(|ns| {
+                if ns.is_none() {
+                    None
+                } else {
+                    Self::pyobject_to_string(&ns).ok()
+                }
+            });
+
+            let namespace = if let Some(ns) = explicit_ns {
+                if ns.is_empty() {
+                    ros_namespace.clone()
+                } else if ns.starts_with('/') {
+                    ns // Absolute — use as-is
+                } else {
+                    // Relative — combine with ROS context namespace
+                    if ros_namespace == "/" {
+                        format!("/{}", ns)
                     } else {
-                        Self::pyobject_to_string(&ns).ok()
+                        format!("{}/{}", ros_namespace, ns)
                     }
-                })
-                .or_else(|| container_namespace.clone())
-                .unwrap_or_else(|| "/".to_string());
+                }
+            } else {
+                // No explicit namespace — use ROS context namespace
+                ros_namespace.clone()
+            };
 
             // Extract parameters (optional)
             let parameters = if let Ok(params_obj) = desc.getattr("parameters") {

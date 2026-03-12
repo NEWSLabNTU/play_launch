@@ -270,13 +270,16 @@ impl ComposableNodeContainer {
 
         capture_container(capture);
 
-        // Capture each composable node as a load_node entry
-        // Use full_namespace (includes ros_namespace) not container.namespace
+        // Capture each composable node as a load_node entry.
+        // Pass full_namespace (ros + container NS) for target_container_name building,
+        // and ros_namespace separately for node namespace resolution.
+        // ROS2 composable nodes inherit the ROS context namespace (from push-ros-namespace),
+        // NOT the container's own namespace.
         let full_ns_opt = Some(full_namespace);
         Python::with_gil(|py| {
             for node_obj in &container.composable_nodes {
                 let node = node_obj.borrow(py);
-                node.capture_as_load_node(&container.name, &full_ns_opt);
+                node.capture_as_load_node(&container.name, &full_ns_opt, &ros_namespace);
             }
         });
     }

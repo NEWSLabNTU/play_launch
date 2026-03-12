@@ -160,8 +160,8 @@ fn test_parse_python_container() {
     );
     assert_eq!(
         load_nodes[0]["namespace"].as_str().unwrap(),
-        "/test_ns", // Inherits from container
-        "Should inherit namespace from container"
+        "/", // ROS2 composable nodes use the ROS context namespace, not the container's
+        "Should use ROS context namespace (root when no push-ros-namespace)"
     );
 
     // Check second composable node
@@ -768,7 +768,7 @@ fn test_python_load_composable_nodes() {
         initial_node["target_container_name"].as_str().unwrap(),
         "/test/test_container"
     );
-    assert_eq!(initial_node["namespace"].as_str().unwrap(), "/test");
+    assert_eq!(initial_node["namespace"].as_str().unwrap(), "/");
 
     // Check dynamic_node_1 (LaunchConfiguration target with full path)
     let dynamic_node_1 = load_nodes
@@ -782,7 +782,7 @@ fn test_python_load_composable_nodes() {
         "/test/test_container",
         "target_container with LaunchConfiguration should be resolved to actual value"
     );
-    assert_eq!(dynamic_node_1["namespace"].as_str().unwrap(), "/test");
+    assert_eq!(dynamic_node_1["namespace"].as_str().unwrap(), "/");
     assert_eq!(dynamic_node_1["package"].as_str().unwrap(), "dynamic_pkg1");
 
     // Check dynamic_node_2 (custom namespace)
@@ -808,8 +808,8 @@ fn test_python_load_composable_nodes() {
         string_node["target_container_name"].as_str().unwrap(),
         "/test/my_container"
     );
-    // Namespace should be inherited from container ("/test")
-    assert_eq!(string_node["namespace"].as_str().unwrap(), "/test");
+    // Namespace uses ROS context namespace (root when no push-ros-namespace)
+    assert_eq!(string_node["namespace"].as_str().unwrap(), "/");
     assert_eq!(string_node["package"].as_str().unwrap(), "string_pkg");
 }
 

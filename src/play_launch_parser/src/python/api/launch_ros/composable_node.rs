@@ -139,6 +139,7 @@ impl ComposableNode {
         &self,
         container_name: &str,
         container_namespace: &Option<String>,
+        ros_namespace: &str,
     ) {
         // Parse parameters and remappings from Python objects
         let parameters = Python::with_gil(|py| self.parse_parameters(py).unwrap_or_default());
@@ -157,21 +158,27 @@ impl ComposableNode {
             }
         };
 
-        // Use namespace from composable node if provided, otherwise inherit from container
-        // Don't normalize - preserve namespace as-is from list concatenation
-        let node_namespace = self
-            .namespace
-            .clone()
-            .or_else(|| container_namespace.clone())
-            .unwrap_or_else(|| "/".to_string());
-
-        // Ensure namespace always has a leading slash for RCL compatibility
-        let normalized_namespace = if node_namespace.is_empty() {
-            "/".to_string()
-        } else if node_namespace.starts_with('/') {
-            node_namespace
+        // Resolve node namespace using ROS context namespace (from push-ros-namespace).
+        // This matches ROS2's get_composable_node_load_request() behavior:
+        // - If the node has an explicit namespace: resolve relative to ROS context
+        // - If no namespace: inherit the ROS context namespace
+        let normalized_namespace = if let Some(ns) = &self.namespace {
+            if ns.is_empty() {
+                ros_namespace.to_string()
+            } else if ns.starts_with('/') {
+                // Absolute namespace — use as-is
+                ns.clone()
+            } else {
+                // Relative namespace — combine with ROS context namespace
+                if ros_namespace == "/" {
+                    format!("/{}", ns)
+                } else {
+                    format!("{}/{}", ros_namespace, ns)
+                }
+            }
         } else {
-            format!("/{}", node_namespace)
+            // No explicit namespace — use the ROS context namespace
+            ros_namespace.to_string()
         };
 
         let capture = LoadNodeCapture {
