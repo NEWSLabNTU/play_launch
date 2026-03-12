@@ -115,8 +115,12 @@ impl NodeCommandLine {
         };
 
         let remaps: HashMap<_, _> = {
+            // Fall back to exec_name for nodes without an explicit name in the launch file.
+            // This forces the ROS node to adopt exec_name as its identity so play_launch
+            // can discover it in the graph, serve parameters, etc.
             let name_remap = name
                 .as_ref()
+                .or(record.exec_name.as_ref())
                 .map(|name| ("__node".to_string(), name.to_string()));
             let namespace_remap = namespace
                 .as_ref()

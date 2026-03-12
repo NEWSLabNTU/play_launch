@@ -78,7 +78,11 @@ impl MemberCoordinatorBuilder {
             respawn_enabled: context.record.respawn,
             respawn_delay: context.record.respawn_delay,
             exec_name: context.record.exec_name.clone(),
-            node_name: context.record.name.clone(),
+            node_name: context
+                .record
+                .name
+                .clone()
+                .or(context.record.exec_name.clone()),
             auto_load: None, // Not applicable for regular nodes
         };
 
