@@ -39,6 +39,7 @@ build:
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
     colcon build {{colcon_flags}} --base-paths src
+    just build-interception
     scripts/bundle_wheel.sh
     uv build --wheel
     echo ""
@@ -147,7 +148,10 @@ build-sdist:
 install-wheel:
     #!/usr/bin/env bash
     set -e
-    pip install dist/play_launch-*.whl --force-reinstall
+    # Install the newest wheel in dist/
+    whl=$(ls -t dist/play_launch-*.whl | head -1)
+    echo "Installing $whl"
+    pip install "$whl" --force-reinstall
 
 # Publish wheel to PyPI (requires PYPI_TOKEN env var)
 publish-pypi:
