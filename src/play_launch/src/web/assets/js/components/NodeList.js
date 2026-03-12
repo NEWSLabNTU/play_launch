@@ -1,10 +1,10 @@
 // NodeList component — renders the grouped, sorted, filtered node list.
 
 import { h } from '../vendor/preact.module.js';
-import { useState, useMemo, useCallback } from '../vendor/hooks.module.js';
+import { useState, useMemo, useCallback, useEffect } from '../vendor/hooks.module.js';
 import { useSignal } from '../vendor/signals.module.js';
 import htm from '../vendor/htm.module.js';
-import { nodeList, selectedNode, nodePanelOpen, activeTab, getStatusString } from '../store.js';
+import { nodeList, selectedNode, nodePanelOpen, activeTab, getStatusString, fetchNodes } from '../store.js';
 import { NodeCard } from './NodeCard.js';
 
 const html = htm.bind(h);
@@ -32,6 +32,12 @@ function makeSorter(sortBy) {
             const sp = statusPriority(a) - statusPriority(b);
             return sp !== 0 ? sp : a.name.localeCompare(b.name);
         }
+        if (sortBy === 'activity') {
+            const ta = a.stderr_last_modified || 0;
+            const tb = b.stderr_last_modified || 0;
+            if (ta !== tb) return tb - ta; // most recent first
+            return a.name.localeCompare(b.name);
+        }
         return 0;
     };
 }
@@ -58,6 +64,13 @@ export function NodeList() {
     const [sortBy, setSortBy] = useState('name');
     const [filterTerm, setFilterTerm] = useState('');
     const [treeView, setTreeView] = useState(true);
+
+    // Poll node data periodically when sorting by activity so timestamps stay fresh.
+    useEffect(() => {
+        if (sortBy !== 'activity') return;
+        const id = setInterval(fetchNodes, 3000);
+        return () => clearInterval(id);
+    }, [sortBy]);
 
     const allNodes = nodeList.value;
 
@@ -92,24 +105,54 @@ export function NodeList() {
             }
         }
 
-        regularNodes.sort(sorter);
-        containers.sort(sorter);
         containerChildren.forEach(children => children.sort(sorter));
 
-        const result = [];
+        // Build top-level entries: regular nodes + container groups.
+        // For activity sort, compute effective activity per container group
+        // (max of container + children) so groups interleave with regular nodes.
+        const topLevel = []; // { node, type: 'regular'|'container' }
+
         for (const node of regularNodes) {
             if (matchesFilter(node, filterTerm)) {
-                result.push({ node, isChild: false });
+                topLevel.push({ node, type: 'regular' });
             }
         }
         for (const container of containers) {
             const children = containerChildren.get(container.name) || [];
             const containerMatches = matchesFilter(container, filterTerm);
             const matchingChildren = children.filter(c => matchesFilter(c, filterTerm));
-
             if (containerMatches || matchingChildren.length > 0) {
-                result.push({ node: container, isChild: false });
-                const childrenToShow = containerMatches ? children : matchingChildren;
+                topLevel.push({ node: container, type: 'container', children, containerMatches, matchingChildren });
+            }
+        }
+
+        if (sortBy === 'activity') {
+            // Effective activity: for containers, max across group members
+            const effectiveActivity = (entry) => {
+                let t = entry.node.stderr_last_modified || 0;
+                if (entry.type === 'container') {
+                    for (const child of (containerChildren.get(entry.node.name) || [])) {
+                        t = Math.max(t, child.stderr_last_modified || 0);
+                    }
+                }
+                return t;
+            };
+            topLevel.sort((a, b) => {
+                const ta = effectiveActivity(a);
+                const tb = effectiveActivity(b);
+                if (ta !== tb) return tb - ta;
+                return a.node.name.localeCompare(b.node.name);
+            });
+        } else {
+            topLevel.sort((a, b) => sorter(a.node, b.node));
+        }
+
+        // Flatten: emit each top-level entry, expanding container groups
+        const result = [];
+        for (const entry of topLevel) {
+            result.push({ node: entry.node, isChild: false });
+            if (entry.type === 'container') {
+                const childrenToShow = entry.containerMatches ? entry.children : entry.matchingChildren;
                 for (const child of childrenToShow) {
                     result.push({ node: child, isChild: true });
                 }
@@ -139,6 +182,7 @@ export function NodeList() {
                         <option value="name-desc">Name (Z-A)</option>
                         <option value="type">Type</option>
                         <option value="status">Status</option>
+                        <option value="activity">Last Activity</option>
                     </select>
                     <label class="toggle-checkbox tree-toggle">
                         <input type="checkbox" checked=${treeView}
