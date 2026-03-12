@@ -474,6 +474,12 @@ export function GraphPanel() {
     let content;
     if (!sel) {
         content = html`
+            <div class="right-panel-header">
+                <span class="right-panel-title">Inspect</span>
+                <button class="panel-close-btn" onClick=${() => {
+                    graphPanelOpen.value = false;
+                }}>${'\u00d7'}</button>
+            </div>
             <div class="graph-panel-hint">
                 <div>Click a node, namespace, or edge to inspect it.</div>
             </div>
