@@ -47,6 +47,15 @@ const EC_EVENTS = {
 // smoke-check is not feasible because the exported register function doesn't
 // contain the internal event-emitting code.
 
+/** Build selection data for a namespace node, including collapsed state. */
+function nsSelectionData(target, extra) {
+    return {
+        ...target.data(),
+        collapsed: target.hasClass('cy-expand-collapse-collapsed-node'),
+        ...extra,
+    };
+}
+
 // ─── Focus mode ──────────────────────────────────────────────────────────
 
 function enterFocusMode(cy, node) {
@@ -229,12 +238,12 @@ export function GraphView() {
                         };
                         graphSelectedElement.value = target.hasClass('leaf-node')
                             ? { type: 'node', id: target.id(), data: { ...target.data(), ...epData } }
-                            : { type: 'namespace', id: target.id(), data: { ...target.data(), ...epData } };
+                            : { type: 'namespace', id: target.id(), data: nsSelectionData(target, epData) };
                     } else if (target.hasClass('namespace')) {
                         // Expanded NS: only border highlight
                         target.addClass('highlighted');
                         graphSelectedElement.value = {
-                            type: 'namespace', id: target.id(), data: target.data(),
+                            type: 'namespace', id: target.id(), data: nsSelectionData(target),
                         };
                     }
                     graphPanelOpen.value = true;
@@ -321,9 +330,12 @@ export function GraphView() {
             });
 
             // Double-tap on namespace → toggle expand/collapse
-            cy.on('dbltap', 'node.namespace', (evt) => {
+            // Default: expand one layer (collapse child namespaces after expand)
+            // Ctrl+dblclick: expand all descendants recursively
+            cy.on('dbltap', 'node.namespace', async (evt) => {
                 const target = evt.target;
                 if (!ecApiRef.current) return;
+                const expandAll = evt.originalEvent && evt.originalEvent.ctrlKey;
                 // Protect root from collapse
                 if (target.data('fullNs') === '/') {
                     if (target.hasClass('cy-expand-collapse-collapsed-node')) {
@@ -332,7 +344,38 @@ export function GraphView() {
                     return;
                 }
                 if (target.hasClass('cy-expand-collapse-collapsed-node')) {
-                    try { ecApiRef.current.expand(target); } catch (_) { /* */ }
+                    batchRef.current = true;
+                    try {
+                        if (expandAll) {
+                            // Recursively expand target and all descendant namespaces
+                            const expandDescendants = (node) => {
+                                if (node.hasClass('cy-expand-collapse-collapsed-node')) {
+                                    ecApiRef.current.expand(node);
+                                }
+                                node.children('.namespace').forEach(child => expandDescendants(child));
+                            };
+                            expandDescendants(target);
+                        } else {
+                            // One layer: expand target, then collapse direct child namespaces
+                            ecApiRef.current.expand(target);
+                            target.children('.namespace').forEach(child => {
+                                if (child.isParent() && !child.hasClass('cy-expand-collapse-collapsed-node')) {
+                                    try { ecApiRef.current.collapse(child); } catch (_) { /* */ }
+                                }
+                            });
+                        }
+                    } catch (_) { /* */ }
+                    batchRef.current = false;
+                    recomputeEdges(cy, rawEdgesRef.current);
+                    applyEdgeVisibility(cy, edgeModeRef.current);
+                    await runElkLayout(cy);
+                    // Auto-focus expanded namespace
+                    cy.elements().removeClass('highlighted ' + NEIGHBOR_CLASSES);
+                    target.addClass('highlighted');
+                    graphSelectedElement.value = {
+                        type: 'namespace', id: target.id(), data: nsSelectionData(target),
+                    };
+                    graphPanelOpen.value = true;
                 } else if (target.isParent()) {
                     try { ecApiRef.current.collapse(target); } catch (_) { /* */ }
                 }
@@ -357,12 +400,12 @@ export function GraphView() {
                 applyEdgeVisibility(cy, edgeModeRef.current);
                 await runElkLayout(cy);
 
-                // Auto-focus expanded namespace
-                if (evtType === 'expand') {
+                // Auto-focus expanded/collapsed namespace
+                if (evtType === 'expand' || evtType === 'collapse') {
                     cy.elements().removeClass('highlighted ' + NEIGHBOR_CLASSES);
                     target.addClass('highlighted');
                     graphSelectedElement.value = {
-                        type: 'namespace', id: target.id(), data: target.data(),
+                        type: 'namespace', id: target.id(), data: nsSelectionData(target),
                     };
                     graphPanelOpen.value = true;
                 }
@@ -983,11 +1026,11 @@ export function GraphView() {
                 };
                 graphSelectedElement.value = target.hasClass('leaf-node')
                     ? { type: 'node', id: target.id(), data: { ...target.data(), ...epData } }
-                    : { type: 'namespace', id: target.id(), data: { ...target.data(), ...epData } };
+                    : { type: 'namespace', id: target.id(), data: nsSelectionData(target, epData) };
             } else if (target.hasClass('namespace')) {
                 target.addClass('highlighted');
                 graphSelectedElement.value = {
-                    type: 'namespace', id: target.id(), data: target.data(),
+                    type: 'namespace', id: target.id(), data: nsSelectionData(target),
                 };
             }
             graphPanelOpen.value = true;
@@ -995,6 +1038,59 @@ export function GraphView() {
 
         document.addEventListener('graph-jump', onGraphJump);
         return () => document.removeEventListener('graph-jump', onGraphJump);
+    }, [view]);
+
+    // Expand/collapse namespace: listen for 'graph-expand-ns' custom events from the panel.
+    // detail: { nsId: 'ns:/foo', action: 'expand'|'expand-all'|'collapse' }
+    useEffect(() => {
+        if (view !== 'graph') return;
+        const onExpandNs = async (evt) => {
+            const cy = cyRef.current;
+            const api = ecApiRef.current;
+            if (!cy || !api) return;
+            const { nsId, action } = evt.detail;
+            const target = cy.getElementById(nsId);
+            if (!target || target.length === 0) return;
+
+            batchRef.current = true;
+            try {
+                if (action === 'collapse') {
+                    if (target.isParent() && !target.hasClass('cy-expand-collapse-collapsed-node')) {
+                        api.collapse(target);
+                    }
+                } else if (action === 'expand') {
+                    // One layer: expand target, then collapse direct child namespaces
+                    if (target.hasClass('cy-expand-collapse-collapsed-node')) {
+                        api.expand(target);
+                    }
+                    target.children('.namespace').forEach(child => {
+                        if (child.isParent() && !child.hasClass('cy-expand-collapse-collapsed-node')) {
+                            try { api.collapse(child); } catch (_) { /* */ }
+                        }
+                    });
+                } else if (action === 'expand-all') {
+                    // Recursive: expand target and all descendant namespaces
+                    const expandDescendants = (node) => {
+                        if (node.hasClass('cy-expand-collapse-collapsed-node')) {
+                            api.expand(node);
+                        }
+                        node.children('.namespace').forEach(child => expandDescendants(child));
+                    };
+                    expandDescendants(target);
+                }
+            } catch (_) { /* */ }
+            batchRef.current = false;
+            recomputeEdges(cy, rawEdgesRef.current);
+            applyEdgeVisibility(cy, edgeModeRef.current);
+            await runElkLayout(cy);
+            cy.elements().removeClass('highlighted ' + NEIGHBOR_CLASSES);
+            target.addClass('highlighted');
+            graphSelectedElement.value = {
+                type: 'namespace', id: target.id(), data: nsSelectionData(target),
+            };
+        };
+        document.addEventListener('graph-expand-ns', onExpandNs);
+        return () => document.removeEventListener('graph-expand-ns', onExpandNs);
     }, [view]);
 
     // Handle resize

@@ -18,6 +18,14 @@ import {
 function graphJumpTo(elementId) {
     document.dispatchEvent(new CustomEvent('graph-jump', { detail: elementId }));
 }
+
+/** Dispatch an expand/collapse event for a namespace node.
+ * @param {string} nsId - e.g. 'ns:/system'
+ * @param {'expand'|'expand-all'|'collapse'} action
+ */
+function graphNsAction(nsId, action) {
+    document.dispatchEvent(new CustomEvent('graph-expand-ns', { detail: { nsId, action } }));
+}
 import { TopicsTab } from './TopicsTab.js';
 import { ParametersTab } from './ParametersTab.js';
 import { LogTab } from './LogTab.js';
@@ -196,6 +204,12 @@ function GraphNsDetail({ data }) {
         }));
     }, [outputEndpoints, snap, topicNameSet]);
 
+    const nsId = 'ns:' + fullNs;
+    const isCollapsed = data.collapsed;
+    const handleExpand = useCallback(() => graphNsAction(nsId, 'expand'), [nsId]);
+    const handleExpandAll = useCallback(() => graphNsAction(nsId, 'expand-all'), [nsId]);
+    const handleCollapse = useCallback(() => graphNsAction(nsId, 'collapse'), [nsId]);
+
     return html`
         <div class="right-panel-header">
             <span class="right-panel-title">
@@ -207,6 +221,26 @@ function GraphNsDetail({ data }) {
                 graphPanelOpen.value = false;
             }}>\u00d7</button>
         </div>
+        ${fullNs !== '/' && html`
+            <div class="graph-panel-expand-bar">
+                ${isCollapsed ? html`
+                    <button class="graph-panel-expand-btn" onClick=${handleExpand}
+                        title="Expand one layer">
+                        ${'▸'} Expand
+                    </button>
+                ` : html`
+                    <button class="graph-panel-expand-btn" onClick=${handleCollapse}
+                        title="Collapse this namespace">
+                        ${'▾'} Collapse
+                    </button>
+                `}
+                <button class="graph-panel-expand-btn" onClick=${handleExpandAll}
+                    title="Expand all descendants (Ctrl+double-click)">
+                    ${'⊞'} Expand All
+                    <kbd class="graph-panel-kbd">Ctrl+dblclick</kbd>
+                </button>
+            </div>
+        `}
         <div class="right-panel-content" style=${{ overflow: 'auto' }}>
             ${hasEndpoints && html`
                 ${inputDetails.length > 0 && html`
