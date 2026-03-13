@@ -1007,7 +1007,8 @@ fn test_load_composable_node() {
         dynamic_node_1["target_container_name"].as_str().unwrap(),
         "/test/my_container"
     );
-    assert_eq!(dynamic_node_1["namespace"].as_str().unwrap(), "/test");
+    // No push-ros-namespace at top level, so namespace is root
+    assert_eq!(dynamic_node_1["namespace"].as_str().unwrap(), "/");
     assert_eq!(dynamic_node_1["package"].as_str().unwrap(), "dynamic_pkg1");
     assert_eq!(dynamic_node_1["plugin"].as_str().unwrap(), "DynamicPlugin1");
 
@@ -1051,8 +1052,8 @@ fn test_load_composable_node() {
         validator["target_container_name"].as_str().unwrap(),
         "planning_container"
     );
-    // Namespace defaults to "/" since the raw target has no slash
-    assert_eq!(validator["namespace"].as_str().unwrap(), "/");
+    // Namespace inherited from push-ros-namespace "planning"
+    assert_eq!(validator["namespace"].as_str().unwrap(), "/planning");
     assert_eq!(validator["package"].as_str().unwrap(), "validator_pkg");
 }
 

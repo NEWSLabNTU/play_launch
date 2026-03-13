@@ -58,7 +58,6 @@ impl LoadComposableNodeAction {
         // Resolve target container name
         let target_container_name = resolve_substitutions(&self.target, context)
             .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-
         // Store resolved target as-is. The target_container is a reference to an
         // existing container by its node name, NOT a namespace-relative path.
         // The Python launch system (perform_substitutions) does not prepend namespace.
@@ -89,16 +88,11 @@ impl LoadComposableNodeAction {
                         }
                     }
                 } else {
-                    // Extract the container namespace from the target
-                    if let Some(last_slash_idx) = normalized_target.rfind('/') {
-                        if last_slash_idx == 0 {
-                            "/".to_string()
-                        } else {
-                            normalized_target[..last_slash_idx].to_string()
-                        }
-                    } else {
-                        "/".to_string()
-                    }
+                    // No explicit namespace on the composable node.
+                    // Use the accumulated namespace from push-ros-namespace,
+                    // matching ROS 2 launch behavior where composable nodes
+                    // inherit the context namespace.
+                    context.current_namespace()
                 };
 
                 LoadNodeCapture {
@@ -155,16 +149,11 @@ impl LoadComposableNodeAction {
                         }
                     }
                 } else {
-                    // Extract the container namespace from the target
-                    if let Some(last_slash_idx) = normalized_target.rfind('/') {
-                        if last_slash_idx == 0 {
-                            "/".to_string()
-                        } else {
-                            normalized_target[..last_slash_idx].to_string()
-                        }
-                    } else {
-                        "/".to_string()
-                    }
+                    // No explicit namespace on the composable node.
+                    // Use the accumulated namespace from push-ros-namespace,
+                    // matching ROS 2 launch behavior where composable nodes
+                    // inherit the context namespace.
+                    context.current_namespace()
                 };
 
                 // Merge global parameters with node-specific parameters
@@ -283,13 +272,40 @@ mod tests {
             "/control/control_container"
         );
         assert_eq!(records[0].node_name, "node1");
-        assert_eq!(records[0].namespace, "/control");
+        // No explicit namespace + no push-ros-namespace = root namespace
+        assert_eq!(records[0].namespace, "/");
         assert_eq!(
             records[1].target_container_name,
             "/control/control_container"
         );
         assert_eq!(records[1].node_name, "node2");
-        assert_eq!(records[1].namespace, "/control");
+        assert_eq!(records[1].namespace, "/");
+    }
+
+    #[test]
+    fn test_to_load_node_records_inherits_push_ros_namespace() {
+        // Composable nodes without explicit namespace should inherit
+        // the accumulated namespace from push-ros-namespace
+        let xml = r#"
+            <load_composable_node target="/pointcloud_container">
+                <composable_node pkg="pkg1" plugin="plugin1" name="node1"/>
+            </load_composable_node>
+        "#;
+
+        let doc = Document::parse(xml).unwrap();
+        let entity = XmlEntity::new(doc.root_element());
+        let mut context = LaunchContext::new();
+        // Simulate push-ros-namespace "localization" then "util"
+        context.push_namespace("localization".to_string());
+        context.push_namespace("util".to_string());
+
+        let action = LoadComposableNodeAction::from_entity(&entity, &context).unwrap();
+        let records = action.to_load_node_records(&context).unwrap();
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].target_container_name, "/pointcloud_container");
+        assert_eq!(records[0].node_name, "node1");
+        assert_eq!(records[0].namespace, "/localization/util");
     }
 
     #[test]
