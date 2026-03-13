@@ -426,9 +426,11 @@ fn composable_to_load_record(
     let namespace = if let Some(ns) = comp.namespace {
         ns
     } else {
-        // Extract namespace from target container path (e.g. "/test/my_container" → "/test")
-        extract_namespace_from_target(target_container)
-            .unwrap_or_else(|| default_namespace.to_string())
+        // No explicit namespace on the composable node.
+        // Use the accumulated namespace from push-ros-namespace,
+        // matching ROS 2 launch behavior where composable nodes
+        // inherit the context namespace.
+        default_namespace.to_string()
     };
     let params: Vec<(String, String)> = comp
         .params
@@ -450,16 +452,3 @@ fn composable_to_load_record(
     }
 }
 
-/// Extract the namespace portion from a target container path.
-/// E.g. "/test/my_container" → "/test", "/my_container" → "/".
-fn extract_namespace_from_target(target: &str) -> Option<String> {
-    if let Some(last_slash_idx) = target.rfind('/') {
-        if last_slash_idx == 0 {
-            Some("/".to_string())
-        } else {
-            Some(target[..last_slash_idx].to_string())
-        }
-    } else {
-        None
-    }
-}
