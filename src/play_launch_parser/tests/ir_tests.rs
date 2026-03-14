@@ -1,3 +1,5 @@
+#![cfg(feature = "ir")]
+
 use play_launch_parser::{
     analyze_launch_file,
     ir::{ActionKind, Condition},

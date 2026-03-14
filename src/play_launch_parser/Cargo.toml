@@ -33,6 +33,10 @@ lru = "0.16.3"            # LRU cache for substitution parsing
 # Parser parity fixes
 indexmap = "2.0"          # Preserves insertion order for configurations
 
+[features]
+default = []
+ir = []
+
 [dev-dependencies]
 tempfile = "3.8"
 

@@ -1,3 +1,5 @@
+#![cfg(feature = "ir")]
+
 use play_launch_parser::{evaluate_launch_file, parse_launch_file};
 use std::{collections::HashMap, io::Write};
 use tempfile::NamedTempFile;

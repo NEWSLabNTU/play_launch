@@ -28,8 +28,10 @@ pub use set_remap::SetRemapAction;
 
 // --- From impls for converting action types to IR ActionKind ---
 
+#[cfg(feature = "ir")]
 use crate::ir::{ActionKind, ComposableNodeDecl, EnvDecl, Expr, IncludeArg, ParamDecl, RemapDecl};
 
+#[cfg(feature = "ir")]
 impl From<NodeAction> for ActionKind {
     fn from(node: NodeAction) -> Self {
         ActionKind::SpawnNode {
@@ -69,6 +71,7 @@ impl From<NodeAction> for ActionKind {
     }
 }
 
+#[cfg(feature = "ir")]
 impl From<ExecutableAction> for ActionKind {
     fn from(exec: ExecutableAction) -> Self {
         ActionKind::SpawnExecutable {
@@ -87,6 +90,7 @@ impl From<ExecutableAction> for ActionKind {
     }
 }
 
+#[cfg(feature = "ir")]
 impl From<ContainerAction> for ActionKind {
     fn from(c: ContainerAction) -> Self {
         ActionKind::SpawnContainer {
@@ -100,6 +104,7 @@ impl From<ContainerAction> for ActionKind {
     }
 }
 
+#[cfg(feature = "ir")]
 impl From<ComposableNodeAction> for ComposableNodeDecl {
     fn from(n: ComposableNodeAction) -> Self {
         ComposableNodeDecl {
@@ -130,6 +135,7 @@ impl From<ComposableNodeAction> for ComposableNodeDecl {
     }
 }
 
+#[cfg(feature = "ir")]
 impl From<LoadComposableNodeAction> for ActionKind {
     fn from(l: LoadComposableNodeAction) -> Self {
         ActionKind::LoadComposableNode {
@@ -139,6 +145,7 @@ impl From<LoadComposableNodeAction> for ActionKind {
     }
 }
 
+#[cfg(feature = "ir")]
 impl From<IncludeAction> for ActionKind {
     fn from(inc: IncludeAction) -> Self {
         ActionKind::Include {
@@ -156,6 +163,7 @@ impl From<IncludeAction> for ActionKind {
     }
 }
 
+#[cfg(feature = "ir")]
 impl From<SetEnvAction> for ActionKind {
     fn from(a: SetEnvAction) -> Self {
         ActionKind::SetEnv {
@@ -165,12 +173,14 @@ impl From<SetEnvAction> for ActionKind {
     }
 }
 
+#[cfg(feature = "ir")]
 impl From<UnsetEnvAction> for ActionKind {
     fn from(a: UnsetEnvAction) -> Self {
         ActionKind::UnsetEnv { name: a.name }
     }
 }
 
+#[cfg(feature = "ir")]
 impl From<SetParameterAction> for ActionKind {
     fn from(a: SetParameterAction) -> Self {
         ActionKind::SetParameter {
@@ -180,6 +190,7 @@ impl From<SetParameterAction> for ActionKind {
     }
 }
 
+#[cfg(feature = "ir")]
 impl From<SetRemapAction> for ActionKind {
     fn from(a: SetRemapAction) -> Self {
         ActionKind::SetRemap {
@@ -189,6 +200,7 @@ impl From<SetRemapAction> for ActionKind {
     }
 }
 
+#[cfg(feature = "ir")]
 impl From<GroupAction> for ActionKind {
     fn from(g: GroupAction) -> Self {
         ActionKind::Group {

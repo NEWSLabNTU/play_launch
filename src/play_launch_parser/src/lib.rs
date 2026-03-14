@@ -10,6 +10,7 @@ pub mod captures;
 pub mod condition;
 pub mod error;
 mod file_cache;
+#[cfg(feature = "ir")]
 pub mod ir;
 pub mod params;
 pub mod python;
@@ -93,6 +94,7 @@ pub fn parse_launch_file(path: &Path, cli_args: HashMap<String, String>) -> Resu
     traverser.into_record_json()
 }
 
+#[cfg(feature = "ir")]
 /// Parse a launch file into its IR without evaluating conditions.
 ///
 /// Returns a `LaunchProgram` tree that preserves all conditional branches,
@@ -102,6 +104,7 @@ pub fn analyze_launch_file(path: &Path) -> Result<ir::LaunchProgram> {
     traverser.build_ir_file(path)
 }
 
+#[cfg(feature = "ir")]
 /// Parse a launch file into its IR with the given arguments applied.
 ///
 /// Arguments are applied to the context so that include file paths and
@@ -115,6 +118,7 @@ pub fn analyze_launch_file_with_args(
     traverser.build_ir_file(path)
 }
 
+#[cfg(feature = "ir")]
 /// Evaluate a launch file via its IR representation.
 ///
 /// Builds the IR tree with `analyze_launch_file_with_args`, then walks the tree
