@@ -3,9 +3,6 @@ resolver = "3"
 members = [
     "src/play_launch",
     "src/play_launch_parser/src/play_launch_parser",
-    "src/play_launch_wasm_common",
-    "src/play_launch_wasm_codegen",
-    "src/play_launch_wasm_runtime",
 ]
 exclude = [
     "tests",

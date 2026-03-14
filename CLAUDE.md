@@ -11,9 +11,6 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for pe
 - **play_launch_analyzer** (Python): Analyzes and visualizes logs
 - **play_launch_container** (C++): Custom component container with event publishing
 - **play_launch_msgs** (C++): ROS 2 message definitions (ComponentEvent.msg)
-- **play_launch_wasm_common** (Rust): WASM ABI definitions (host function signatures, memory layout)
-- **play_launch_wasm_codegen** (Rust): Compiles Launch IR → WASM bytecode
-- **play_launch_wasm_runtime** (Rust): Executes WASM launch plans via wasmtime
 
 ## Launch File Parsing
 
@@ -34,19 +31,9 @@ The parser evaluates conditions during parsing and processes only the selected p
 
 Implementation: `src/python/api/utils.rs` (substitution handling), `src/params.rs` (YAML resolution)
 
-### Launch IR & WASM Pipeline (Phase 22)
+### Launch IR (feature-gated)
 
-The parser has a two-stage architecture: parse → IR → evaluate.
-
-- **`analyze_launch_file_with_args()`** → `LaunchProgram` IR (preserves full structure: conditions, substitution expressions, groups, includes)
-- **`compile_to_wasm()`** → WASM bytecode (IR compiled to wasmtime-executable module)
-- **`execute_wasm()`** → `RecordJson` (WASM host functions build records via begin/set/end pattern)
-
-IR types: `src/play_launch_parser/.../ir.rs` — `ActionKind` enum (DeclareArgument, SetVariable, SetEnv, UnsetEnv, PushNamespace, PopNamespace, SetParameter, SetRemap, Group, Include, Node, Container, LoadComposableNode, Executable, OpaqueFunction).
-
-WASM ABI: `src/play_launch_wasm_common/src/lib.rs` — host function signatures, memory layout (return area + bump allocator).
-
-CLI (feature-gated): `play_launch compile <pkg> <file> -o plan.wasm`, `play_launch exec plan.wasm -o record.json`, `play_launch dump <pkg> <file> --wasm`. Build with `just build-wasm` or `cargo build --features wasm`.
+The parser includes an optional IR layer (`--features ir` on the parser crate) that preserves the full launch structure (conditions, substitution expressions, groups, includes) without evaluating. IR types: `src/play_launch_parser/.../ir.rs`. IR tests: `cargo test -p play_launch_parser --features ir`.
 
 ## Installation & Usage
 
@@ -175,11 +162,11 @@ Composable nodes don't have separate directories — metadata in parent containe
 ## Testing
 
 ```bash
-just test              # Parser unit (413) + fast integration (6), ~3s
-just test-all          # Parser unit (413) + all integration (42), ~70s
+just test              # Parser unit (371) + fast integration (6), ~3s
+just test-all          # Parser unit (371) + all integration (42), ~70s
 just test-unit         # Parser unit tests only
 just test-integration  # All integration tests (simple + Autoware)
-cargo test -p play_launch_wasm_runtime --test fixture_round_trip  # WASM round-trip (18 tests)
+cargo test -p play_launch_parser --features ir  # IR tests (42 tests, not included in default)
 ```
 
 Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests (`tests/`, excluded from workspace). Integration tests use `ManagedProcess` RAII guard (`tests/src/process.rs`) for guaranteed cleanup via `setsid()` + `PR_SET_PDEATHSIG` + PGID kill on Drop.
@@ -205,7 +192,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 - **2026-03-02**: Split `GraphView.js` (~2300 lines) into 6 modules in `web/assets/js/components/`: `graph-utils.js` (pure helpers), `graph-builders.js` (snapshot→Cytoscape elements), `graph-edges.js` (edge routing + port bundling), `graph-layout.js` (ELK integration + scrollbars), `graph-styles.js` (Cytoscape stylesheet), `GraphView.js` (component + event handlers). Public API unchanged (`export function GraphView`).
 - **2026-03-01**: Phase 25 (Topic Introspection) — graph view animated ELK layout transitions, overlap fix, and SSE rebuild stability. `applyElkPositions` supports `animate` param (300ms slide via `ele.animation()`); initial load instant, subsequent layouts animated. `buildElkGraph` computes leaf/port dimensions from style formula (not stale `layoutDimensions()`). Branch edges use `haystack` curve-style to avoid invalid-endpoint warnings when port nodes overlap leaf nodes. SSE rebuild defers collapse via `setTimeout(0)` after `cy.json()` so expand-collapse extension can register new elements. `[GraphView]` console logs at all lifecycle points (init, update, rebuild, expand/collapse, layout, edges). New file: `GraphPanel.js`.
 - **2026-02-27**: Phase 24 (Web UI Parameter Control) complete. ParameterProxy service client wrapper, ParamValue types with bidirectional ROS conversion, MemberHandle integration with FQN map, GET/POST `/api/nodes/:name/parameters` endpoints, SSE `/parameter_events` subscription, ParametersTab frontend with type-aware inputs (bool toggle, number/string inputs, range constraints), search/filter. New files: `ros/parameter_types.rs`, `ros/parameter_proxy.rs`, `web/assets/js/components/ParametersTab.js`.
-- **2026-02-24**: Phase 22 (Launch Tree IR) phases 22.1–22.8 complete. IR preserves full launch structure (conditions, expressions, groups, includes). WASM pipeline: analyze → compile → execute produces identical output to direct parsing (18 round-trip tests). CLI integration behind `--features wasm`. Bugs fixed: `push-ros-namespace` `ns=` attribute in IR builder, `PopNamespace` added to IR, container namespace resolution in WASM host, load_node namespace extraction from target path.
+- **2026-02-24**: Phase 22 (Launch Tree IR) phases 22.1–22.8 complete. IR preserves full launch structure (conditions, expressions, groups, includes). IR now feature-gated behind `--features ir` in the parser crate; WASM crates removed from workspace (kept on disk).
 - **2026-02-18**: Phase 21 (build optimization) mostly complete: `scripts/bundle_wheel.sh` with artifact manifest, incremental build recipes (`build-cpp`, `build-rust`, `build-wheel`), proper wheel platform tag via `wheel tags`. Phase 20 (web UI modernization) planned: Preact + htm + SSE-driven state, vendored locally (no CDN), zero polling.
 - **2026-02-17**: Phase 19 complete — fork()+exec() isolation, child death monitoring, parallel loading, event-driven container status. PR_SET_CHILD_SUBREAPER added to replay. Subprocess PID cache uses time-based 1s interval.
 - **2026-02-16**: Fix container parameter passing in fork+exec isolation: `write_params_file()` now serializes `request->parameters` (not `extra_arguments`), uses `/**:` wildcard YAML namespace, enforces decimal points on double arrays. Smoke test (`tests/src/health.rs`) detects `ComponentEvent LOAD_FAILED` events. `component_node` supports `--use-intra-process-comms`. Autoware: 64/64 composable nodes load successfully.
@@ -222,7 +209,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 - **Clone VM Design**: `docs/archive/clone-vm-container-design.md` — clone(CLONE_VM) implementation spec (archived)
 - **Web UI Modernization**: `docs/roadmap/phase-20-web_ui_modernization.md` — Preact + SSE migration plan
 - **Build Optimization**: `docs/roadmap/phase-21-build_optimization.md` — bundle script, incremental builds
-- **Launch Tree IR**: `docs/roadmap/phase-22-launch_tree_ir.md` — IR design, WASM pipeline, validation
+- **Launch Tree IR**: `docs/roadmap/phase-22-launch_tree_ir.md` — IR design (feature-gated behind `--features ir`)
 - **Topic Introspection**: `docs/roadmap/phase-25-topic_introspection.md` — graph view, namespace grouping, ELK layout, edge bundling
 - **RCL Interception**: `docs/roadmap/phase-29-rcl_interception.md` — LD_PRELOAD interceptor, SPSC shared memory, frontier/stats plugins
 - **Migration Guide**: `docs/guide/parser-migration.md` — Rust parser migration (v0.6.0+)

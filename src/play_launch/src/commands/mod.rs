@@ -9,11 +9,6 @@ pub mod replay;
 pub mod run;
 pub(crate) mod signal_handler;
 
-#[cfg(feature = "wasm-compile")]
-pub mod compile;
-#[cfg(feature = "wasm-exec")]
-pub mod exec;
-
 // Re-export command handlers
 pub use dump::handle_dump;
 pub use io_helper::{handle_setcap_io_helper, handle_verify_io_helper};
@@ -21,11 +16,6 @@ pub use launch::handle_launch;
 pub use plot::handle_plot;
 pub use replay::handle_replay;
 pub use run::handle_run;
-
-#[cfg(feature = "wasm-compile")]
-pub use compile::handle_compile;
-#[cfg(feature = "wasm-exec")]
-pub use exec::handle_exec;
 
 use std::collections::HashMap;
 use tracing::warn;
