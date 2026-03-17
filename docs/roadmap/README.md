@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 29 phases total; 25 complete, 2 in progress, 2 planned.
+Started October 2025. 30 phases total; 25 complete, 2 in progress, 3 planned.
 
 Completed phase docs are in `archive/`.
 
@@ -34,6 +34,7 @@ Completed phase docs are in `archive/`.
 | 27 | Runtime Dependency Check | ✅ | 2026-03-03 |
 | 28 | Parser Integration Test Coverage | ✅ | 2026-03-03 |
 | 29 | RCL Interception & Frontier Tracking | ✅ | 2026-03-11 |
+| 30 | Topic Manifest | 📋 Planned | — |
 
 ---
 
@@ -56,6 +57,13 @@ See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md).
 25.1–25.9 complete (graph builder, topic/QoS endpoints, TopicsTab, node badges, Cytoscape.js graph view with ELK layout). 25.10 in progress.
 
 See [phase-25-topic_introspection.md](./phase-25-topic_introspection.md).
+
+### Phase 30: Topic Manifest (planned)
+
+Per-launch-file manifest system. Describes expected topics, services, actions, QoS. Parser loads manifests alongside launch files, embeds expected graph into record.json. Executor audits runtime graph against it. New `play_launch_manifest` crate for shared types.
+
+See [phase-30-topic_manifest.md](./phase-30-topic_manifest.md).
+Design: [docs/design/topic-manifest.md](../design/topic-manifest.md).
 
 ---
 

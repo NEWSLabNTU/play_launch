@@ -14,25 +14,36 @@ to compare against.
 
 ## Model
 
-The manifest describes the communication graph using four concepts:
+A manifest file describes what one launch file contributes to the
+communication graph: its nodes and the topics they create. Manifest files
+are organized by package and launch file in a manifest directory.
 
-1. **Topic** — a first-class entity: the communication channel. Carries the
-   message type and QoS. Topics are the connection mechanism — publishers and
-   subscribers on the same topic name are connected, just like in ROS 2.
-   Services and actions are analogous first-class entities.
+The parser loads manifests alongside launch files. When it encounters
+`<include pkg="X" file="Y.launch.xml">`, it looks up
+`<manifest_dir>/X/Y.yaml`. The parser applies the namespace from the
+include context, so manifest files use relative names and are reusable
+across different namespace contexts.
 
-2. **Node** — a leaf execution entity. References topics by name
-   (pub/sub lists). Does not carry type or QoS — those live on the topic.
+**Four concepts:**
 
-3. **Component** — a composite entity containing nodes, topics, and
-   sub-components. Has a namespace and an interface.
+1. **Topic** — a first-class entity: the communication channel. Carries
+   message type and QoS. Connection is by name matching, same as ROS 2.
+   Services and actions are analogous.
 
-4. **Interface** — the subset of topics that cross a component's boundary.
-   Topics are internal by default. Unconnected interface topics accumulate
-   upward to the parent.
+2. **Node** — a leaf execution entity. References topics by name (pub/sub
+   lists). Type and QoS live on the topic, not the node.
+
+3. **Component** — an optional organizational grouping within a manifest
+   file (for `<group>` blocks). The launch file include tree provides the
+   primary component structure — the parser handles it automatically.
+
+4. **Interface** — the subset of topics that cross a launch file's
+   boundary. Topics are internal by default. Interface topics accumulate
+   upward through the include tree.
 
 ```
-  Component "perception" (namespace: /perception)
+  Manifest for perception.launch.xml
+  (loaded with namespace: /perception)
   ┌────────────────────────────────────────────────────┐
   │                                                    │
   │  topics:                                           │
@@ -57,11 +68,18 @@ semantics. QoS lives on the topic, the single source of truth.
 ## Workflow
 
 ```
-1. CAPTURE   play_launch launch ... --save-manifest dir/
-   Run → stabilize → snapshot graph → write manifest files
+1. CAPTURE
+   play_launch launch <pkg> <launch_file> \
+       --save-manifest-dir manifests/
 
-2. AUDIT     play_launch launch ... --manifest dir/manifest.yaml
-   Run → periodically diff graph vs manifest → warn on deviations
+   Run → stabilize → snapshot graph → write per-launch-file manifests
+
+2. AUDIT
+   play_launch launch <pkg> <launch_file> \
+       --manifest-dir manifests/
+
+   Parse → load manifests alongside includes → build expected graph
+   Run → periodically diff actual vs expected → warn on deviations
 ```
 
 ## Format
@@ -69,10 +87,9 @@ semantics. QoS lives on the topic, the single source of truth.
 ### Quick Example
 
 ```yaml
-version: 3
-
+# manifests/demo_nodes_cpp/talker_listener.launch.yaml
 topics:
-  chatter: std_msgs/msg/String                   # shorthand: type only, default QoS
+  chatter: std_msgs/msg/String
 
 nodes:
   talker:
@@ -86,13 +103,10 @@ interface:
 
 ### Metadata
 
-Root manifests only.
+Optional. Only meaningful in the top-level launch file's manifest.
 
 | Field              | Required | Description                                                        |
 |--------------------|----------|--------------------------------------------------------------------|
-| `version`          | yes      | Schema version (`3`)                                               |
-| `captured_at`      | no       | ISO 8601 timestamp                                                 |
-| `launch_file`      | no       | Source launch file (package/file or path)                          |
 | `exclude_patterns` | no       | Topic prefixes to ignore (default: `/rosout`, `/parameter_events`) |
 
 ### Topics
@@ -108,15 +122,11 @@ topics:
   objects: autoware_perception_msgs/msg/DetectedObjects
 
   # Full form: type + explicit QoS
-  /sensing/pointcloud:
+  pointcloud:
     type: sensor_msgs/msg/PointCloud2
     qos:
       reliability: best_effort
       depth: 1
-
-  /tf:
-    type: tf2_msgs/msg/TFMessage
-    qos: { reliability: reliable, durability: volatile, depth: 100 }
 ```
 
 **QoS fields** (all optional — omitted fields use ROS defaults, not audited):
@@ -131,15 +141,12 @@ topics:
 | `lifespan_ms`  | integer                              |
 | `liveliness`   | `automatic` \| `manual_by_topic`     |
 
-**Where to declare topics:**
+All names are **relative** — the parser applies the namespace from the
+launch file's include context. Use absolute names (leading `/`) only for
+global topics like `/tf` or `/clock`.
 
-| Scope                 | Declare in              | Example                      |
-|-----------------------|-------------------------|------------------------------|
-| Cross-component       | Root manifest `topics:` | `/sensing/pointcloud`, `/tf` |
-| Internal to component | Component's `topics:`   | `cropped`, `filtered`        |
-
-Every topic referenced by a node must be declared in the component's or an
-ancestor's `topics:` section.
+Every topic referenced by a node must be declared in the same manifest's
+`topics:` section or as an absolute topic from the runtime environment.
 
 ### Services and Actions
 
@@ -147,23 +154,20 @@ Same pattern as topics — declared with type, referenced by nodes.
 
 ```yaml
 services:
-  /driver/configure: std_srvs/srv/SetBool
-  /driver/set_mode:
-    type: custom_msgs/srv/SetMode
-    # No QoS — services use ROS defaults (reliable, volatile)
+  configure: std_srvs/srv/SetBool
 
 actions:
-  /navigator/navigate: nav2_msgs/action/NavigateToPose
+  navigate: nav2_msgs/action/NavigateToPose
 
 nodes:
   driver:
-    srv: [/driver/configure, /driver/set_mode]
+    srv: [configure]
   controller:
-    cli: [/driver/configure]
+    cli: [configure]
   navigator:
-    action_server: [/navigator/navigate]
+    action_server: [navigate]
   planner:
-    action_client: [/navigator/navigate]
+    action_client: [navigate]
 ```
 
 ### Nodes
@@ -174,50 +178,66 @@ Nodes reference topics, services, and actions by name. All keys are optional.
 nodes:
   cropbox_filter:
     pub: [cropped]
-    sub: [/sensing/pointcloud]
+    sub: [pointcloud]
 
   fusion_node:
     pub: [fused_objects]
-    sub: [lidar/objects, camera/objects]
+    sub: [lidar_objects, camera_objects]
 
   # Minimal — just registers the node's existence
   evaluator:
 ```
 
-Node names are relative (prefixed by component namespace) or absolute
-(leading `/`).
+Node names are relative (prefixed by the launch file's namespace context).
+
+### Composable Nodes
+
+Composable nodes (`<load_composable_node>`) appear as regular nodes in the
+manifest. The container relationship is a deployment detail — from the topic
+graph perspective, composable nodes publish and subscribe like any other node.
+
+```yaml
+# This launch file declares a container and loads composable nodes into it.
+# Only the composable nodes need topic declarations — the container is a
+# process host with no topics of its own.
+nodes:
+  cropbox_filter:         # composable node, loaded into some_container
+    pub: [cropped]
+    sub: [pointcloud]
+  centerpoint:            # another composable node in the same container
+    sub: [cropped]
+    pub: [objects]
+```
+
+When a composable node is loaded into a container declared in a **different**
+launch file (common in Autoware), the node belongs to the manifest of the
+launch file that contains the `<load_composable_node>`, not the one that
+declares the container.
 
 ### Components
 
-A component groups nodes, topics, and sub-components under a namespace.
+Components are optional groupings **within** a single manifest file. They
+correspond to `<group>` blocks in the launch file. For `<include>` blocks,
+the parser handles the nesting automatically by looking up the included
+launch file's manifest from the manifest directory.
 
 ```yaml
+# Components for <group> blocks within this launch file
 components:
-  # Include from file
-  perception:
-    include: perception.topics.yaml
-    namespace: /perception
-
-  # Include from ROS package (reusable)
-  front_camera:
-    include: { pkg: camera_driver, file: camera_driver.topics.yaml }
-    namespace: /sensing/camera/front
-
-  # Same manifest, different namespace
-  rear_camera:
-    include: { pkg: camera_driver, file: camera_driver.topics.yaml }
-    namespace: /sensing/camera/rear
-
-  # Inline component
-  safety:
-    namespace: /system
+  lidar:
+    namespace: lidar
     topics:
-      heartbeat: std_msgs/msg/Bool
+      cropped: sensor_msgs/msg/PointCloud2
+      objects: autoware_perception_msgs/msg/DetectedObjects
     nodes:
-      watchdog:
-        pub: [heartbeat]
+      cropbox_filter:
+        sub: [pointcloud]
+        pub: [cropped]
+      centerpoint:
+        sub: [cropped]
+        pub: [objects]
     interface:
-      pub: [heartbeat]
+      pub: [objects]
 
   # Component without namespace (organizational grouping only)
   fusion_group:
@@ -231,65 +251,45 @@ components:
 - Absolute (leading `/`): replaces parent namespace.
 - Relative: appended to parent namespace.
 
-| ROS launch construct                            | Manifest equivalent                       |
-|-------------------------------------------------|-------------------------------------------|
-| `<group>` + `<push_ros_namespace ns="foo">`     | `components:` entry with `namespace: foo` |
-| `<include namespace="foo">`                     | `include:` with `namespace: foo`          |
-| `<group>` without namespace                     | Component without `namespace:`            |
-
 ### Interface
 
-The interface declares which topics cross the component boundary. Topics
-are **internal by default**.
+The interface declares which topics cross the launch file's boundary.
+Topics are **internal by default**. The interface is what the parent launch
+file (the one that `<include>`s this one) can see.
 
 ```yaml
 interface:
-  pub: [tracked_objects, /tf]
-  sub: [/sensing/pointcloud, /sensing/image]
+  pub: [tracked_objects]
+  sub: [pointcloud, image]
   srv: [configure]
 ```
 
-A simple list of topic names from the component's `topics:` section (or
-absolute topics from an ancestor). From the parent, these are the component's
-visible topics.
+A simple list of topic names from the manifest's `topics:` section.
 
-**Absolute topics** (`/tf`, `/clock`) bypass the interface — they are
-globally visible and do not need to be listed.
+**Absolute topics** (`/tf`, `/clock`) are globally visible and do not need
+to be listed in the interface.
 
 ### Interface Accumulation
 
-A component's interface topic that is not published or subscribed by any
-sibling entity in the parent **accumulates** to the parent's interface.
+When a launch file includes another launch file that has a manifest, the
+included manifest's interface topics that are not consumed within the parent
+**accumulate** to the parent's interface.
 
-```yaml
-# perception.topics.yaml
-interface:
-  sub: [/sensing/pointcloud]
-  pub: [tracked_objects]           # relative → /perception/tracked_objects
+```
+Parent launch file includes:
+  - sensing.launch.xml (ns: /sensing)     → interface.pub: [pointcloud]
+  - perception.launch.xml (ns: /perception) → interface.sub: [/sensing/pointcloud]
+                                              interface.pub: [tracked_objects]
 
-# root manifest
-components:
-  sensing: ...
-  perception:
-    include: perception.topics.yaml
-    namespace: /perception
-
-# /sensing/pointcloud is published by sensing → consumed, does NOT accumulate
-# /perception/tracked_objects is not consumed by any sibling → ACCUMULATES
-
-# Effective root interface (accumulated):
-interface:
-  pub: [/perception/tracked_objects]
+/sensing/pointcloud is published by sensing, subscribed by perception → internal
+/perception/tracked_objects is not consumed by any sibling → accumulates to parent
 ```
 
 **Rules:**
-1. Resolve each child's interface topics with its `namespace:`.
-2. A child's interface topic that matches a sibling's topic (by resolved
-   name) is **internal** — consumed within the parent.
-3. A child's interface topic with **no matching sibling** accumulates to the
-   parent's interface.
+1. Resolve each included manifest's interface topics with its namespace.
+2. An interface topic matched by a sibling (by resolved name) is **internal**.
+3. An unmatched interface topic **accumulates** to the parent's interface.
 4. Absolute topics accumulate unchanged at every level.
-5. Explicit `interface:` on the parent takes precedence over accumulation.
 
 ### Sync Policies
 
@@ -298,7 +298,7 @@ Declared inside components that contain multi-input fusion nodes.
 ```yaml
 sync:
   object_fusion:
-    inputs: [lidar/objects, camera/objects]    # topic names
+    inputs: [lidar_objects, camera_objects]
     correlation: timestamp
     tolerance_ms: 50
     timeout_ms: 80
@@ -311,7 +311,7 @@ sync:
 
 ### Requirements
 
-Per-component latency and reliability contracts.
+Per-manifest latency and reliability contracts.
 
 ```yaml
 requirements:
@@ -319,68 +319,51 @@ requirements:
   drop_rate: 0.01
 ```
 
-Requirements compose across pipelines: parallel branches contribute their
-max latency (fork-join critical path).
+Requirements compose across the include tree: parallel branches contribute
+their max latency (fork-join critical path).
 
 ## Pipeline Example
 
 Autoware-like perception pipeline with branches, merge, and sync.
 
 ```
-sensing ──→ lidar_perception ──┐
-                               ├──→ fusion ──→ planning
-sensing ──→ camera_perception ──┘
+sensing.launch.xml ──→ lidar_perception.launch.xml ──┐
+                                                      ├──→ fusion (inline)
+sensing.launch.xml ──→ camera_perception.launch.xml ──┘
+                                                      ──→ planning.launch.xml
 ```
 
-**Directory layout:**
+**Manifest directory:**
 ```
-manifests/autoware_launch/
-├── planning_simulator.topics.yaml     ← root
-├── sensing.topics.yaml
-├── perception.topics.yaml
-└── planning.topics.yaml
+manifests/
+├── tier4_sensing_launch/
+│   └── sensing.launch.yaml
+├── tier4_perception_launch/
+│   ├── perception.launch.yaml
+│   ├── lidar_perception.launch.yaml
+│   └── camera_perception.launch.yaml
+├── tier4_planning_launch/
+│   └── planning.launch.yaml
+└── autoware_launch/
+    └── planning_simulator.launch.yaml
 ```
 
-**`planning_simulator.topics.yaml`** (root):
+**`autoware_launch/planning_simulator.launch.yaml`**:
 ```yaml
-version: 3
-launch_file: autoware_launch/planning_simulator.launch.xml
 exclude_patterns: [/rosout, /parameter_events]
 
-# Cross-component topics
+# Cross-launch-file topics declared here for QoS specification.
+# These are referenced by absolute name in child manifests.
 topics:
-  /sensing/pointcloud:
-    type: sensor_msgs/msg/PointCloud2
-    qos: { reliability: best_effort, depth: 1 }
-  /sensing/image:
-    type: sensor_msgs/msg/Image
-    qos: { reliability: best_effort, depth: 1 }
-  /perception/tracked_objects:
-    type: autoware_perception_msgs/msg/TrackedObjects
-    qos: { reliability: reliable, depth: 1 }
-  /planning/trajectory:
-    type: autoware_planning_msgs/msg/Trajectory
-    qos: { reliability: reliable, durability: transient_local, depth: 1 }
   /tf:
     type: tf2_msgs/msg/TFMessage
     qos: { reliability: reliable, depth: 100 }
-
-components:
-  sensing:
-    include: sensing.topics.yaml
-    namespace: /sensing
-  perception:
-    include: perception.topics.yaml
-    namespace: /perception
-  planning:
-    include: planning.topics.yaml
-    namespace: /planning
 
 interface:
   pub: [/planning/trajectory]
 ```
 
-**`sensing.topics.yaml`**:
+**`tier4_sensing_launch/sensing.launch.yaml`**:
 ```yaml
 topics:
   pointcloud: sensor_msgs/msg/PointCloud2
@@ -399,78 +382,94 @@ requirements:
   latency_ms: 5
 ```
 
-**`perception.topics.yaml`**:
+**`tier4_perception_launch/perception.launch.yaml`**:
 ```yaml
-components:
-  lidar:
-    namespace: lidar
-    topics:
-      cropped: sensor_msgs/msg/PointCloud2
-      no_ground: sensor_msgs/msg/PointCloud2
-      objects: autoware_perception_msgs/msg/DetectedObjects
-    nodes:
-      cropbox_filter:
-        sub: [/sensing/pointcloud]
-        pub: [cropped]
-      ground_filter:
-        sub: [cropped]
-        pub: [no_ground]
-      centerpoint:
-        sub: [no_ground]
-        pub: [objects]
-    interface:
-      pub: [objects]
-    requirements:
-      latency_ms: 50
+# This launch file includes lidar_perception.launch.xml and
+# camera_perception.launch.xml via <include>. The parser looks up
+# their manifests automatically. Only inline content is declared here.
 
-  camera:
-    namespace: camera
-    topics:
-      rectified: sensor_msgs/msg/Image
-      objects: autoware_perception_msgs/msg/DetectedObjects2D
-    nodes:
-      rectifier:
-        sub: [/sensing/image]
-        pub: [rectified]
-      yolo:
-        sub: [rectified]
-        pub: [objects]
-    interface:
-      pub: [objects]
-    requirements:
-      latency_ms: 30
+topics:
+  fused:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    qos: { reliability: reliable, depth: 1 }
+  tracked_objects:
+    type: autoware_perception_msgs/msg/TrackedObjects
+    qos: { reliability: reliable, depth: 1 }
 
-  fusion:
-    topics:
-      fused: autoware_perception_msgs/msg/DetectedObjects
-      tracked_objects: autoware_perception_msgs/msg/TrackedObjects
-    nodes:
-      fusion_node:
-        sub: [/perception/lidar/objects, /perception/camera/objects]
-        pub: [fused]
-      tracker:
-        sub: [fused]
-        pub: [tracked_objects]
-    sync:
-      object_fusion:
-        inputs: [/perception/lidar/objects, /perception/camera/objects]
-        correlation: timestamp
-        tolerance_ms: 50
-        timeout_ms: 80
-        on_drop: propagate
-    interface:
-      pub: [tracked_objects]
-    requirements:
-      latency_ms: 20
+nodes:
+  fusion_node:
+    sub: [lidar/objects, camera/objects]
+    pub: [fused]
+  tracker:
+    sub: [fused]
+    pub: [tracked_objects]
+
+sync:
+  object_fusion:
+    inputs: [lidar/objects, camera/objects]
+    correlation: timestamp
+    tolerance_ms: 50
+    timeout_ms: 80
+    on_drop: propagate
 
 interface:
-  pub: [fusion/tracked_objects]
+  pub: [tracked_objects]
 
 requirements:
   latency_ms: 80
 ```
 
-**`planning.topics.yaml`**:
+**`tier4_perception_launch/lidar_perception.launch.yaml`**:
+```yaml
+topics:
+  cropped: sensor_msgs/msg/PointCloud2
+  no_ground: sensor_msgs/msg/PointCloud2
+  objects:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    qos: { reliability: best_effort, depth: 1 }
+
+nodes:
+  cropbox_filter:
+    sub: [/sensing/pointcloud]
+    pub: [cropped]
+  ground_filter:
+    sub: [cropped]
+    pub: [no_ground]
+  centerpoint:
+    sub: [no_ground]
+    pub: [objects]
+
+interface:
+  pub: [objects]
+
+requirements:
+  latency_ms: 50
+```
+
+**`tier4_perception_launch/camera_perception.launch.yaml`**:
+```yaml
+topics:
+  rectified: sensor_msgs/msg/Image
+  objects:
+    type: autoware_perception_msgs/msg/DetectedObjects2D
+    qos: { reliability: best_effort, depth: 1 }
+
+nodes:
+  rectifier:
+    sub: [/sensing/image]
+    pub: [rectified]
+  yolo:
+    sub: [rectified]
+    pub: [objects]
+
+interface:
+  pub: [objects]
+
+requirements:
+  latency_ms: 30
+```
+
+**`tier4_planning_launch/planning.launch.yaml`**:
 ```yaml
 topics:
   predicted_objects:
@@ -502,66 +501,164 @@ Critical path: 5 + 50 + 20 + 100 = 175ms
 
 ## File Organization
 
+### Manifest Directory
+
+Manifests are organized by package and launch file in a user-specified
+directory:
+
+```
+<manifest_dir>/
+├── <package_a>/
+│   ├── <launch_file_1>.yaml
+│   └── <launch_file_2>.yaml
+├── <package_b>/
+│   └── <launch_file_3>.yaml
+└── ...
+```
+
+The user specifies the manifest directory via CLI flag:
+
+```bash
+# Audit with manifests
+play_launch launch autoware_launch planning_simulator.launch.xml \
+    --manifest-dir ./manifests
+
+# Capture manifests from a running system
+play_launch launch autoware_launch planning_simulator.launch.xml \
+    --save-manifest-dir ./manifests
+```
+
+### Manifest Lookup
+
+During parsing, when the parser encounters
+`<include pkg="X" file="Y.launch.xml">`, it looks for:
+
+```
+<manifest_dir>/X/Y.yaml
+```
+
+If the file exists, the manifest is loaded and its names are resolved using
+the namespace from the include context. If the file does not exist, the
+include is processed normally without manifest auditing (partial coverage).
+
 ### Manifest Association
 
-A manifest is associated with a **top-level launch invocation**. Sub-files
-are organizational splits, not independent manifests. Package-level manifests
-(with relative names) can be reused via `include:` with `namespace:`.
+Each manifest file describes **one launch file**. The file path within the
+manifest directory mirrors the ROS package structure:
 
-### Resolution
+| Launch file | Manifest file |
+|---|---|
+| `camera_driver/camera_driver.launch.xml` | `camera_driver/camera_driver.launch.yaml` |
+| `tier4_perception_launch/perception.launch.xml` | `tier4_perception_launch/perception.launch.yaml` |
+| `autoware_launch/planning_simulator.launch.xml` | `autoware_launch/planning_simulator.launch.yaml` |
 
-Root manifest lookup:
+The same manifest works for multiple instantiations of the same launch file
+(e.g., `camera_driver.launch.xml` included twice under different namespaces).
+The parser applies the namespace each time.
+
+## Expected Graph in record.json
+
+The parser builds the expected topic graph from manifest files and embeds it
+into `record.json` as new optional fields. This maintains backward
+compatibility — old `record.json` files without these fields work as before.
+The executor enables auditing only when the fields are present.
+
 ```
-1. --manifest /path/to/manifest.yaml      (explicit)
-2. {launch_dir}/{stem}.topics.yaml        (sidecar)
-3. ~/.config/play_launch/manifests/{pkg}/{file}.topics.yaml  (central store)
-4. None                                   (auditing disabled)
+Parser (with --manifest-dir)
+  └── processes launch files + loads manifests → record.json
+        ├── nodes, params, remaps, ...     (existing fields)
+        ├── topics: { ... }                (new — from manifests)
+        ├── services: { ... }              (new)
+        ├── actions: { ... }               (new)
+        └── manifest_sync: { ... }         (new — sync policies)
+
+Executor
+  ├── record.json → spawn nodes            (existing)
+  └── record.json topics + GraphSnapshot → audit  (new, if fields present)
 ```
 
-Component `include:` paths resolve relative to the including file's directory.
-Package includes (`pkg: ...`) resolve via `AMENT_PREFIX_PATH`.
+**New fields in record.json:**
 
-### Splitting Guidelines
+| Field | Type | Description |
+|-------|------|-------------|
+| `topics` | map | Resolved topic name → `{ type, qos, publishers: [node_fqn], subscribers: [node_fqn] }` |
+| `services` | map | Resolved service name → `{ type, servers: [node_fqn], clients: [node_fqn] }` |
+| `actions` | map | Resolved action name → `{ type, servers: [node_fqn], clients: [node_fqn] }` |
+| `manifest_sync` | map | Sync policy name → `{ inputs, correlation, tolerance_ms, timeout_ms, on_drop }` |
+| `manifest_requirements` | map | Node FQN or manifest path → `{ latency_ms, drop_rate }` |
 
-| Node count | Recommendation                         |
-|-----------|----------------------------------------|
-| 1-10      | Inline in parent                       |
-| 10-25     | Own file, flat                         |
-| 25+       | Own file + split into sub-components   |
+These fields are populated by the parser when `--manifest-dir` is provided.
+Each node's existing record gains optional `pub`, `sub`, `srv`, `cli`,
+`action_server`, `action_client` lists (topic/service/action names).
+
+**Construction algorithm:**
+
+1. Parser encounters `<include pkg="X" file="Y.launch.xml" ns="/foo">`.
+2. Parser processes the launch file (existing → node records).
+3. Parser looks up `<manifest_dir>/X/Y.yaml`.
+4. If found, resolves relative names using namespace `/foo`.
+5. Adds topic declarations to `record.json` `topics` map.
+6. Annotates each node record with pub/sub/srv/cli lists.
+7. Repeats recursively for nested includes.
+8. After all includes: resolves connections (topic name matching),
+   validates interface accumulation, checks QoS compatibility.
+9. Writes single `record.json` with both execution plan and expected graph.
+
+The expected graph embedded in `record.json` can be inspected, diffed
+against previous versions, or consumed by external tools without running
+the system.
 
 ## Capture and Audit
 
 ### Capture
 
-`--save-manifest manifest.yaml` → single flat file.
-`--save-manifest dir/` → directory tree split by namespace.
+```bash
+play_launch launch autoware_launch planning_simulator.launch.xml \
+    --save-manifest-dir ./manifests
+```
+
+The parser tracks which nodes originate from which `<include>`. After the
+system stabilizes, the runtime graph is partitioned back into per-launch-file
+manifests.
 
 **Capture algorithm:**
 1. Build `GraphSnapshot` via `build_graph_snapshot()`
-2. Group nodes by namespace → components
-3. For each component, strip namespace prefix → relative names
-4. Collect topics: name, type, QoS from runtime graph
-5. Classify topics: cross-component (root) vs internal (component)
+2. Map each node to its originating launch file (from parser include tracking)
+3. For each launch file, collect its nodes and their pub/sub topics
+4. Strip namespace prefix → relative topic and node names
+5. Collect topic declarations: name, type, QoS from runtime
 6. Infer interface from topics with no internal counterpart
-7. Write YAML
+7. Write `<manifest_dir>/<package>/<launch_stem>.yaml`
 
 **Auto-captured:** topics (type + QoS), nodes (pub/sub lists), interface.
-**User-authored:** sync policies, requirements, component restructuring.
+**User-authored:** sync policies, requirements.
 
 ### Audit
 
-Auditing is **warn-only**. Deviations:
+Two-phase auditing, using the expected graph embedded in `record.json`:
 
-| Category             | Severity |
-|----------------------|----------|
-| New topic            | `warn`   |
-| Missing topic        | `info` → `warn` after stabilization |
-| New endpoint         | `warn`   |
-| Missing endpoint     | `info`   |
-| QoS mismatch         | `warn`   |
-| QoS incompatible     | `error`  |
-| Latency exceeded     | `warn`   |
-| Sync violation        | `warn`   |
+**Phase 1 — Parse-time (static):**
+- Parser builds expected graph from manifests into `record.json`
+- Checks QoS compatibility between publishers and subscribers
+- Validates interface consistency (declared vs accumulated)
+- Reports issues before any node starts
+
+**Phase 2 — Runtime (dynamic):**
+- Executor reads `topics` field from `record.json` (if present)
+- Periodically builds `GraphSnapshot` from the running system
+- Diffs actual graph vs expected graph
+- Catches topics created in code but not declared in manifests
+
+| Category             | Phase   | Severity |
+|----------------------|---------|----------|
+| QoS incompatible     | parse   | `error`  |
+| New topic            | runtime | `warn`   |
+| Missing topic        | runtime | `info` → `warn` after stabilization |
+| New endpoint         | runtime | `warn`   |
+| Missing endpoint     | runtime | `info`   |
+| QoS mismatch         | runtime | `warn`   |
+| Latency exceeded     | runtime | `warn`   |
+| Sync violation        | runtime | `warn`   |
 
 Output: terminal log, `GET /api/manifest/diff`, `play_log/<ts>/manifest_audit.json`.
 
@@ -581,10 +678,9 @@ Output: terminal log, `GET /api/manifest/diff`, `play_log/<ts>/manifest_audit.js
 
 ## Non-Goals (v3)
 
+- **Automatic manifest resolution** (sidecar, central store, AMENT_PREFIX_PATH
+  lookup) — for now, `--manifest-dir` is the only mechanism.
 - **Blocking enforcement** via RCL interception (future).
 - **Drop propagation enforcement** at the middleware level (future).
 - **Semantic component extraction** (namespace-based splitting is mechanical;
   meaningful grouping is user-authored).
-- **Reusable component manifests** with abstract port names — the manifest
-  uses resolved topic names for direct ROS launch file mapping. Reusability
-  via relative names + `namespace:` on include.
