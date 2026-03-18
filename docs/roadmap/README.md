@@ -34,7 +34,7 @@ Completed phase docs are in `archive/`.
 | 27 | Runtime Dependency Check | ✅ | 2026-03-03 |
 | 28 | Parser Integration Test Coverage | ✅ | 2026-03-03 |
 | 29 | RCL Interception & Frontier Tracking | ✅ | 2026-03-11 |
-| 30 | Launch Tree Scoping | 🔄 30.1–30.2 done | — |
+| 30 | Launch Tree Scoping | 🔄 30.1–30.3 done | — |
 | 31 | Launch Manifest | 📋 Planned | — |
 
 ---
@@ -61,7 +61,7 @@ See [phase-25-topic_introspection.md](./phase-25-topic_introspection.md).
 
 ### Phase 30: Launch Tree Scoping (in progress)
 
-30.1–30.2 done: `ScopeEntry`/`ScopeTable` types, scope tracking in parser traverser (XML includes), record format extensions (`scopes` + per-record `scope`), 9 tests. Remaining: Python include scoping, duplicate detection, executor adaptation, context extraction tool.
+30.1–30.3 done: scope table in Rust parser (all include paths), record format, executor adaptation. 79 scopes / 119 entities correct for Autoware. Remaining: Python parser scope tracking (30.4), cross-parser comparison (30.5), context extraction tool (30.6).
 
 See [phase-30-launch_scoping.md](./phase-30-launch_scoping.md).
 Design: [docs/design/record-format.md](../design/record-format.md), [docs/design/launch-context-tool.md](../design/launch-context-tool.md).

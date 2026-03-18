@@ -79,6 +79,7 @@ def visit_load_composable_nodes(
             remaps=[text_to_kv(expr) for expr in request.remap_rules],
             params=[param_to_kv(param) for param in request.parameters],
             extra_args=dict(param_to_kv(param) for param in request.extra_arguments),
+            scope=dump.current_scope_id,
         )
         dump.load_node.append(record)
 

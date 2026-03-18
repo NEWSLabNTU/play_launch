@@ -101,6 +101,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
 
 [[patch.unused]]
+name = "action_msgs"
+version = "1.2.2"
+
+[[patch.unused]]
 name = "builtin_interfaces"
 version = "1.2.2"
 
@@ -111,6 +115,10 @@ version = "1.2.2"
 [[patch.unused]]
 name = "diagnostic_msgs"
 version = "4.9.1"
+
+[[patch.unused]]
+name = "example_interfaces"
+version = "0.9.3"
 
 [[patch.unused]]
 name = "geometry_msgs"
@@ -125,13 +133,17 @@ name = "rcl_interfaces"
 version = "1.2.2"
 
 [[patch.unused]]
-name = "rclrs"
-version = "0.7.0"
-
-[[patch.unused]]
-name = "rosidl_runtime_rs"
-version = "0.6.0"
+name = "rosgraph_msgs"
+version = "1.2.2"
 
 [[patch.unused]]
 name = "std_msgs"
 version = "4.9.1"
+
+[[patch.unused]]
+name = "test_msgs"
+version = "1.2.2"
+
+[[patch.unused]]
+name = "unique_identifier_msgs"
+version = "2.2.1"

@@ -232,6 +232,7 @@ def visit_composable_node_container(
         respawn=respawn,
         respawn_delay=respawn_delay,
         global_params=global_params if global_params else None,
+        scope=dump.current_scope_id,
     )
     dump.container.append(record)
 

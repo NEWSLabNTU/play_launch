@@ -1,10 +1,12 @@
+import os
+
 from launch.actions.include_launch_description import IncludeLaunchDescription
 from launch.actions.set_launch_configuration import SetLaunchConfiguration
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions
 
-from ..launch_dump import LaunchDump
+from ..launch_dump import LaunchDump, extract_package_from_path
 
 
 def visit_include_launch_description(
@@ -12,10 +14,35 @@ def visit_include_launch_description(
 ) -> list[LaunchDescriptionEntity]:
     """Execute the action."""
     launch_description = include.launch_description_source.get_launch_description(context)
+
+    # Push scope for this include
+    launch_file_path = include._get_launch_file()
+    filename = os.path.basename(launch_file_path) if launch_file_path else "unknown"
+    pkg = extract_package_from_path(launch_file_path) if launch_file_path else None
+
+    # Get namespace from context
+    ns = context.launch_configurations.get("ros_namespace", "/")
+
+    # Get include args
+    include_args = {}
+    for arg_name, arg_value in include.launch_arguments:
+        try:
+            resolved_name = perform_substitutions(
+                context, normalize_to_list_of_substitutions(arg_name)
+            )
+            resolved_value = perform_substitutions(
+                context, normalize_to_list_of_substitutions(arg_value)
+            )
+            include_args[resolved_name] = resolved_value
+        except Exception:
+            pass  # Best effort for args
+
+    dump.push_scope(pkg, filename, ns, include_args)
+
     # If the location does not exist, then it's likely set to '<script>' or something.
     context.extend_locals(
         {
-            "current_launch_file_path": include._get_launch_file(),
+            "current_launch_file_path": launch_file_path,
         }
     )
     context.extend_locals(

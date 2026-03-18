@@ -3,9 +3,10 @@
 import asyncio
 
 from launch.action import Action
+from launch.actions.include_launch_description import IncludeLaunchDescription
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
-from launch.utilities import is_a_subclass
+from launch.utilities import is_a, is_a_subclass
 
 from ..launch_dump import LaunchDump
 from .action import visit_action
@@ -23,6 +24,8 @@ def visit_entity(
 
     This function may call itself to traverse the sub-entities recursively.
     """
+    # Track whether this entity is an include (scope was pushed in the visitor)
+    is_include = is_a(entity, IncludeLaunchDescription)
 
     if is_a_subclass(entity, Action):
         sub_entities = visit_action(entity, context, dump)
@@ -37,4 +40,9 @@ def visit_entity(
     if sub_entities is not None:
         for sub_entity in sub_entities:
             futures_to_return += visit_entity(sub_entity, context, dump)
+
+    # Pop scope after all sub-entities of an include have been visited
+    if is_include:
+        dump.pop_scope()
+
     return [future_pair for future_pair in futures_to_return if future_pair[1] is not None]

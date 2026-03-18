@@ -91,6 +91,7 @@ class LaunchInspector:
             node=[],
             container=[],
             lifecycle_node=[],
+            scopes=[],
         )
 
     def emit_event(self, event: Event) -> None:
@@ -461,19 +462,9 @@ class LaunchInspector:
                 )
 
     def dump(self):
-        # composable_node_containers = list(
-        #     action.cmd for action in self.__composable_node_containers
-        # )
-        # lifecycle_nodes = list(action.cmd for action in self.__lifecycle_nodes)
-        # nodes = list(action.cmd for action in self.__nodes)
-        # actions = list(action.cmd for action in self.__actions)
-        # output = {
-        #     "composable_node_containers": composable_node_containers,
-        #     "lifecycle_nodes": lifecycle_nodes,
-        #     "nodes": nodes,
-        #     "actions": actions,
-        # }
         dump = dataclasses.asdict(self.__launch_dump)
+        # Remove internal fields not meant for serialization
+        dump.pop("_scope_stack", None)
         return dump
 
     @property
