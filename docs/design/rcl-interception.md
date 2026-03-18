@@ -142,7 +142,7 @@ These call `rcl_get_topic_names_and_types`,
 - Services and actions require separate API calls
   (`get_service_names_and_types`, etc.)
 
-This is used by Phase 30 (Topic Manifest) v1 for runtime audit: the
+This is used by Phase 30 (Launch Manifest) v1 for runtime audit: the
 executor diffs `GraphSnapshot` against the expected graph from `record.json`.
 
 ### Future: Interception-based graph discovery

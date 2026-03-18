@@ -34,7 +34,7 @@ Completed phase docs are in `archive/`.
 | 27 | Runtime Dependency Check | ✅ | 2026-03-03 |
 | 28 | Parser Integration Test Coverage | ✅ | 2026-03-03 |
 | 29 | RCL Interception & Frontier Tracking | ✅ | 2026-03-11 |
-| 30 | Topic Manifest | 📋 Planned | — |
+| 30 | Launch Manifest | 📋 Planned | — |
 
 ---
 
@@ -58,12 +58,12 @@ See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md).
 
 See [phase-25-topic_introspection.md](./phase-25-topic_introspection.md).
 
-### Phase 30: Topic Manifest (planned)
+### Phase 30: Launch Manifest (planned)
 
-Per-launch-file manifest system. Describes expected topics, services, actions, QoS. Parser loads manifests alongside launch files, embeds expected graph into record.json. Executor audits runtime graph against it. New `play_launch_manifest` crate for shared types.
+Per-launch-file manifest system. Describes expected communication graph: topics, services, actions, QoS, timing contracts, reliability. Parser loads manifests alongside launch files, embeds expected graph into record.json. Executor audits runtime graph against it. New `play_launch_manifest` crate for shared types.
 
 See [phase-30-topic_manifest.md](./phase-30-topic_manifest.md).
-Design: [docs/design/topic-manifest.md](../design/topic-manifest.md).
+Design: [docs/design/launch-manifest.md](../design/topic-manifest.md).
 
 ---
 

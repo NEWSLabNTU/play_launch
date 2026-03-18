@@ -1,6 +1,6 @@
-# Topic Manifest & RCL Interception
+# Launch Manifest & RCL Interception
 
-## play_launch — Communication Graph Specification & Enforcement
+## play_launch — Communication Graph Specification and Enforcement
 
 ---
 
@@ -25,7 +25,7 @@ Autoware: **~110 nodes, ~500 topics** — invisible until runtime.
 
 ---
 
-## 2. The Solution: Topic Manifest
+## 2. The Solution: Launch Manifest
 
 A **manifest file** per launch file describes the expected communication
 graph. The parser loads manifests alongside launch files, and the executor
@@ -201,46 +201,58 @@ unauthorized, the hook returns an error — the publisher is never created.
 
 ---
 
-## 7. System-Level Properties
+## 7. Quality Contracts
 
-Manifests declare **per-component contracts**. These compose across the
-pipeline.
+Contracts are specified at **per-node** and **per-chain** granularity, using
+AUTOSAR TIMEX semantics (MRT, MDA) and CARET measurement definitions.
 
+**Per-node timing contract** (assume-guarantee):
 ```yaml
-# Per-component requirements
-requirements:
-  latency_ms: 50     # max input-to-output latency (p99)
-  drop_rate: 0.01    # max 1% message drops
-
-# Sync policy at merge points
-sync:
-  object_fusion:
-    inputs: [lidar/objects, camera/objects]
-    correlation: timestamp
-    tolerance_ms: 50
-    on_drop: propagate    # drop all correlated messages if one is missing
+nodes:
+  centerpoint:
+    requirements:
+      node_latency_ms: 30         # t_publish - t_subscribe (p99)
+      max_deadline_misses: 3
 ```
 
-**Latency composition (fork-join):**
-
+**End-to-end latency chain** (stimulus → response):
+```yaml
+chains:
+  sensor_to_actuation:
+    stimulus: /sensing/pointcloud
+    response: /control/command
+    max_reaction_time_ms: 100     # MRT: cause → first effect
+    max_data_age_ms: 50           # MDA: data freshness at output
+    node_budgets:                 # optional per-node breakdown
+      - { node: /perception/centerpoint, budget_ms: 30 }
+      - { node: /planning/motion_planner, budget_ms: 35 }
 ```
-sensing (5ms) → max(lidar (50ms), camera (30ms)) → fusion (20ms) → planning (100ms)
-                                                    ─────────────
-Critical path: 5 + 50 + 20 + 100 = 175ms           on_drop: propagate
+
+**Reliability contract** (per-topic):
+```yaml
+reliability:
+  /sensing/pointcloud:
+    max_loss_ratio: 0.05          # 5% over sliding window
+    max_consecutive_drops: 2
+  /planning/trajectory:
+    deadline_ms: 100              # max inter-message interval
+    max_deadline_misses: 0        # zero tolerance
 ```
 
-**Implementation path:**
+**Fork-join**: MRT at merge = `max(branch MRTs) + merge node budget`.
 
-| Property        | Monitoring (data source)                        | Enforcement                                           |
-|-----------------|-------------------------------------------------|-------------------------------------------------------|
-| **Latency**     | RCL interception timestamps (frontier plugin)   | Warn when component exceeds budget                    |
-| **Drop rate**   | Stats plugin: pub count vs take count per topic | Warn when ratio exceeds threshold                     |
-| **QoS compat**  | Parse-time: manifest QoS declarations           | Block at `rcl_publisher_init` (v3)                    |
-| **Sync**        | Frontier plugin: detect temporal gaps at merge  | Drop correlated messages (future interception plugin) |
-| **Reliability** | Stats plugin: message loss patterns             | Escalate warnings per component contract              |
+**Measurement → enforcement path:**
 
-Monitoring uses existing Phase 29 infrastructure (frontier + stats plugins).
-Enforcement builds on top — same data, different action (warn → block).
+| Metric | Measured by | Monitoring | Enforcement |
+|--------|------------|------------|-------------|
+| Node latency | Interception: `t_pub - t_sub` | Warn on budget miss | Degrade mode (future) |
+| Chain MRT | Frontier: sensor vs control | Warn on threshold | — |
+| Loss ratio | Stats: `1 - take/pub` | Warn on threshold | Rate-limit upstream (future) |
+| QoS compat | Parse-time: manifest QoS | Error before start | Block at `rcl_*_init` (v3) |
+| Sync | Frontier: temporal gaps | Warn | Coordinated drop (future) |
+
+All monitoring uses existing Phase 29 interception (FrontierPlugin +
+StatsPlugin). No new hooks needed for measurement.
 
 ---
 
