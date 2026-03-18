@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 30 phases total; 25 complete, 2 in progress, 3 planned.
+Started October 2025. 31 phases total; 25 complete, 2 in progress, 4 planned.
 
 Completed phase docs are in `archive/`.
 
@@ -34,7 +34,8 @@ Completed phase docs are in `archive/`.
 | 27 | Runtime Dependency Check | ✅ | 2026-03-03 |
 | 28 | Parser Integration Test Coverage | ✅ | 2026-03-03 |
 | 29 | RCL Interception & Frontier Tracking | ✅ | 2026-03-11 |
-| 30 | Launch Manifest | 📋 Planned | — |
+| 30 | Launch Tree Scoping | 📋 Planned | — |
+| 31 | Launch Manifest | 📋 Planned | — |
 
 ---
 
@@ -58,12 +59,19 @@ See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md).
 
 See [phase-25-topic_introspection.md](./phase-25-topic_introspection.md).
 
-### Phase 30: Launch Manifest (planned)
+### Phase 30: Launch Tree Scoping (planned)
 
-Per-launch-file manifest system. Describes expected communication graph: topics, services, actions, QoS, timing contracts, reliability. Parser loads manifests alongside launch files, embeds expected graph into record.json. Executor audits runtime graph against it. New `play_launch_manifest` crate for shared types.
+Parser refactoring: scope table in record.json, per-node scope references, context deduplication. Context extraction tool for debugging. Foundation for Phase 31.
 
-See [phase-30-topic_manifest.md](./phase-30-topic_manifest.md).
-Design: [docs/design/launch-manifest.md](../design/topic-manifest.md).
+See [phase-30-launch_scoping.md](./phase-30-launch_scoping.md).
+Design: [docs/design/record-format.md](../design/record-format.md), [docs/design/launch-context-tool.md](../design/launch-context-tool.md).
+
+### Phase 31: Launch Manifest (planned)
+
+Per-launch-file manifest system. Describes expected communication graph: topics, services, actions, QoS, timing contracts. Manifest crate, parser integration, executor audit. Uses Phase 30 scope table as the bridge between manifests and record.json.
+
+See [phase-31-launch_manifest.md](./phase-31-launch_manifest.md).
+Design: [docs/design/launch-manifest.md](../design/launch-manifest.md).
 
 ---
 
