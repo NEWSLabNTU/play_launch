@@ -67,6 +67,9 @@ fn main() -> eyre::Result<()> {
         cli::options::Command::VerifyIoHelper => {
             commands::handle_verify_io_helper()?;
         }
+        cli::options::Command::Context(args) => {
+            commands::handle_context(args)?;
+        }
     }
 
     Ok(())

@@ -1,6 +1,6 @@
 # Phase 30: Launch Tree Scoping
 
-**Status**: In progress (30.1–30.5 done)
+**Status**: Complete (30.1–30.6 done)
 **Priority**: High (Foundation for Phase 31 + debugging tool)
 **Dependencies**: None (uses existing parser infrastructure)
 
@@ -160,14 +160,18 @@ agree.
 - [x] Fixed Python-to-Python include scope tracking in `python_exec.rs`
   (was missing scope push for `.py` and `.yaml` includes from Python)
 
-### 30.6: Context extraction tool
+### 30.6: Context extraction tool — done
 
-- [ ] Add `context` subcommand to CLI
-- [ ] `--node <FQN>` — show node's resolved values + scope provenance
-- [ ] `--launch <pkg> <file> [--namespace <ns>]` — show include context
-- [ ] `--all` — list all invocations of a launch file
-- [ ] Output: YAML
-- [ ] Test: extract context for Autoware nodes
+Implemented as `play_launch context` subcommand (Rust, in
+`src/play_launch/src/commands/context.rs`). Reads record.json directly.
+
+- [x] `--tree` — print launch include tree with entity counts
+- [x] `--node <FQN>` — show node's resolved values + scope provenance + scope chain
+- [x] `--launch <PKG> <FILE>` — show include context, args, child includes
+- [x] `--launch <PKG> <FILE> --namespace <ns>` — disambiguate
+- [x] `--launch <PKG> <FILE> --all` — show all invocations
+- [x] Error messages list available nodes/scopes when not found
+- [x] Validated on Autoware: node context, launch tree, multi-invocation lookup
 
 ## Verification
 

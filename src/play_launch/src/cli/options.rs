@@ -88,6 +88,40 @@ pub enum Command {
     /// Check if I/O helper has required capabilities
     #[command(name = "verify-io-helper")]
     VerifyIoHelper,
+
+    /// Extract per-node or per-launch-file context from record.json
+    #[command(after_help = "Examples:\n  \
+        play_launch context record.json --tree\n  \
+        play_launch context record.json --node /perception/centerpoint\n  \
+        play_launch context record.json --launch tier4_system_launch system.launch.xml")]
+    Context(ContextArgs),
+}
+
+/// Arguments for the context extraction command
+#[derive(Args)]
+pub struct ContextArgs {
+    /// Path to record.json
+    pub record: String,
+
+    /// Show context for a specific node (by FQN)
+    #[arg(long)]
+    pub node: Option<String>,
+
+    /// Show context for a launch file invocation (PKG FILE)
+    #[arg(long, num_args = 2, value_names = ["PKG", "FILE"])]
+    pub launch: Option<Vec<String>>,
+
+    /// Disambiguate launch file by namespace
+    #[arg(long)]
+    pub namespace: Option<String>,
+
+    /// Show all invocations of a launch file
+    #[arg(long)]
+    pub all: bool,
+
+    /// Print the launch include tree
+    #[arg(long)]
+    pub tree: bool,
 }
 
 /// Arguments for launching a launch file
