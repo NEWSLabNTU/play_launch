@@ -59,6 +59,7 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         cmd,
         respawn: args.common.disable_respawn.then_some(false),
         respawn_delay: Some(0.0),
+        scope: None,
     };
 
     let launch_dump = LaunchDump {
@@ -68,6 +69,7 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         lifecycle_node: vec![],
         file_data: HashMap::new(),
         variables: HashMap::new(),
+        scopes: Vec::new(),
     };
 
     let runtime = build_tokio_runtime()?;

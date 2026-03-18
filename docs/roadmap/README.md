@@ -34,7 +34,7 @@ Completed phase docs are in `archive/`.
 | 27 | Runtime Dependency Check | ✅ | 2026-03-03 |
 | 28 | Parser Integration Test Coverage | ✅ | 2026-03-03 |
 | 29 | RCL Interception & Frontier Tracking | ✅ | 2026-03-11 |
-| 30 | Launch Tree Scoping | 📋 Planned | — |
+| 30 | Launch Tree Scoping | 🔄 30.1–30.2 done | — |
 | 31 | Launch Manifest | 📋 Planned | — |
 
 ---
@@ -59,9 +59,9 @@ See [phase-22-launch_tree_ir.md](./phase-22-launch_tree_ir.md).
 
 See [phase-25-topic_introspection.md](./phase-25-topic_introspection.md).
 
-### Phase 30: Launch Tree Scoping (planned)
+### Phase 30: Launch Tree Scoping (in progress)
 
-Parser refactoring: scope table in record.json, per-node scope references, context deduplication. Context extraction tool for debugging. Foundation for Phase 31.
+30.1–30.2 done: `ScopeEntry`/`ScopeTable` types, scope tracking in parser traverser (XML includes), record format extensions (`scopes` + per-record `scope`), 9 tests. Remaining: Python include scoping, duplicate detection, executor adaptation, context extraction tool.
 
 See [phase-30-launch_scoping.md](./phase-30-launch_scoping.md).
 Design: [docs/design/record-format.md](../design/record-format.md), [docs/design/launch-context-tool.md](../design/launch-context-tool.md).

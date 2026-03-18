@@ -1,6 +1,6 @@
 # Phase 30: Launch Tree Scoping
 
-**Status**: Planned
+**Status**: In progress (30.1–30.2 done)
 **Priority**: High (Foundation for Phase 31 + debugging tool)
 **Dependencies**: None (uses existing parser infrastructure)
 
@@ -75,28 +75,32 @@ params_files, remaps, cmd, ros_args, respawn
 
 ## Work Items
 
-### 30.1: Scope tracking in parser
+### 30.1: Scope tracking in parser — done
 
-- [ ] Define `ScopeEntry` struct (id, pkg, file, ns, args, env,
-  global_params, parent) with serde
-- [ ] Add scope stack (`Vec<usize>`) to parser traverser
-- [ ] Push scope at `process_include()` (entity.rs, yaml.rs, python_exec.rs)
-- [ ] Pop scope at `restore_scope()` / include return
-- [ ] Build scope table during traversal, assign sequential IDs
+- [x] Define `ScopeEntry` struct (id, pkg, file, ns, args, parent) with serde
+- [x] Define `ScopeTable` helper (push, get, len, is_empty, into_entries)
+- [x] Define `extract_package_from_path()` helper (ament `/share/<pkg>/` pattern)
+- [x] Add `scope_table: ScopeTable` and `current_scope_id: usize` to `LaunchTraverser`
+- [x] Create root scope in `traverse_file()` on first invocation
+- [x] Push scope at XML includes (`include.rs`) — transfer table to child, take back
+- [x] Push scope at XML-from-Python includes (`xml_include.rs`)
+- [x] Stamp `scope_id` on XML nodes, executables, containers, load_nodes (`entity.rs`)
+- [x] Stamp `scope_id` on Python captures during `into_record_json()` (`record_conv.rs`)
+- [x] Output scope table in `RecordJson.scopes` field
+- [x] Unit tests: ScopeTable operations, extract_package_from_path (5 tests)
+- [x] Integration tests: scope tracking with simple launch and includes (2 tests)
+- [x] Backward compat tests: old JSON without scopes, node scope optional (2 tests)
+- [ ] Push scope at Python file execution (`python_exec.rs`) — not yet wired
 - [ ] Detect duplicate `(pkg, file, ns, args)` — emit parse warning
-- [ ] Stamp `scope_id` on `NodeCapture`, `ContainerCapture`, `LoadNodeCapture`
-- [ ] Unit tests: scope tracking through includes, groups, nested includes
-- [ ] Test fixture: multi-include tree, verify scope table
-- [ ] Test fixture: same launch file included twice with different ns
 
-### 30.2: Record format extension
+### 30.2: Record format extension — done
 
-- [ ] Add `scopes: Option<Vec<ScopeEntry>>` to parser's `RecordJson`
-- [ ] Add `scope: Option<usize>` to `NodeRecord`,
-  `ComposableNodeContainerRecord`, `LoadNodeRecord`
-- [ ] `#[serde(default, skip_serializing_if)]` for backward compat
-- [ ] Test: old record.json (no scopes) still deserializes correctly
-- [ ] Test: new record.json round-trips with scope data
+- [x] Add `scopes: Vec<ScopeEntry>` to parser's `RecordJson` (skip_serializing_if empty)
+- [x] Add `scope: Option<usize>` to `NodeRecord`,
+  `ComposableNodeContainerRecord`, `LoadNodeRecord` (skip_serializing_if None)
+- [x] `#[serde(default, skip_serializing_if)]` on all new fields
+- [x] Test: old record.json (no scopes) still deserializes correctly
+- [x] Test: new record.json round-trips with scope data
 - [ ] Verify Autoware record.json gains correct scope table
 
 ### 30.3: Executor adaptation

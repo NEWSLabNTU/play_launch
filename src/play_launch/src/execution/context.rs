@@ -333,6 +333,7 @@ pub fn prepare_container_contexts(
                 respawn: container_record.respawn,
                 respawn_delay: container_record.respawn_delay,
                 global_params: container_record.global_params.clone(),
+                scope: container_record.scope,
             };
 
             // Build full container name for matching with composable nodes

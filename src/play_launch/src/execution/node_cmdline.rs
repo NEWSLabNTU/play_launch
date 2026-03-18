@@ -78,6 +78,7 @@ impl NodeCommandLine {
             respawn: _,
             respawn_delay: _,
             global_params,
+            scope: _,
         } = record;
 
         let Some(package) = package else {

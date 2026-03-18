@@ -3159,5 +3159,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4de98dfa5d5b7fef4ee834d0073d560c9ca7b6c46a71d058c48db7960f8cfaf7"
 
 [[patch.unused]]
+name = "action_msgs"
+version = "1.2.2"
+
+[[patch.unused]]
+name = "example_interfaces"
+version = "0.9.3"
+
+[[patch.unused]]
 name = "geometry_msgs"
 version = "4.9.1"
+
+[[patch.unused]]
+name = "rosgraph_msgs"
+version = "1.2.2"
+
+[[patch.unused]]
+name = "test_msgs"
+version = "1.2.2"
+
+[[patch.unused]]
+name = "unique_identifier_msgs"
+version = "2.2.1"
