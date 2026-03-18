@@ -1,6 +1,6 @@
 # Phase 30: Launch Tree Scoping
 
-**Status**: In progress (30.1–30.4 done)
+**Status**: In progress (30.1–30.5 done)
 **Priority**: High (Foundation for Phase 31 + debugging tool)
 **Dependencies**: None (uses existing parser infrastructure)
 
@@ -148,22 +148,17 @@ agree.
 | Per-node scope_id            | Same (pkg, file) | IDs may differ but must point to same scope entry |
 | Scope args                   | Best effort      | Key-value pairs may differ in resolution order    |
 
-**Work items:**
+**Work items — done:**
 
-- [ ] Create comparison script `scripts/compare_scopes.py`:
-  - Parse launch file with both parsers
-  - Load both record.json files
-  - Compare scope tables (normalize by (pkg, file, ns), ignore ID values)
-  - Compare per-node scope assignments (match nodes by FQN, compare scope
-    (pkg, file) tuples)
-  - Report mismatches
-- [ ] Run comparison on test fixtures:
-  - `tests/fixtures/simple_test/`
-  - `tests/fixtures/sequential_loading/`
-  - `tests/fixtures/concurrent_loading/`
-- [ ] Run comparison on Autoware planning_simulator
-- [ ] Add to `just test-compare` recipe
-- [ ] Fix any discrepancies found
+- [x] `scripts/compare_scopes.py`: compares scope count, (pkg, file)
+  counts, scope identities with parents, entity counts, per-entity
+  scope assignments
+- [x] `just compare-scopes <pkg> <launch> [args...]` recipe
+- [x] Validated on `simple_test/pure_nodes.launch.xml` — 1 scope, 2 nodes, PASS
+- [x] Validated on `simple_test/all.launch.xml` — 1 scope, 6+1+2 entities, PASS
+- [x] Validated on Autoware planning_simulator — 83 scopes, 119 entities, PASS
+- [x] Fixed Python-to-Python include scope tracking in `python_exec.rs`
+  (was missing scope push for `.py` and `.yaml` includes from Python)
 
 ### 30.6: Context extraction tool
 

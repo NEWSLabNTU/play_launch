@@ -254,6 +254,21 @@ compare-parsers:
     source install/setup.bash
     ./scripts/compare_parsers.sh
 
+# Compare scope tables between Rust and Python parsers
+compare-scopes PKG LAUNCH *ARGS:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    source install/setup.bash
+    TMPDIR=$(mktemp -d)
+    trap "rm -rf $TMPDIR" EXIT
+    echo "=== Dumping with Rust parser ==="
+    play_launch dump -o "$TMPDIR/rust.json" launch {{PKG}} {{LAUNCH}} {{ARGS}}
+    echo "=== Dumping with Python parser ==="
+    play_launch dump -o "$TMPDIR/python.json" launch --parser python {{PKG}} {{LAUNCH}} {{ARGS}}
+    echo "=== Comparing scopes ==="
+    python3 scripts/compare_scopes.py "$TMPDIR/rust.json" "$TMPDIR/python.json"
+
 # Benchmark Rust vs Python parser performance
 benchmark-parsers ITERATIONS="5":
     #!/usr/bin/env bash
