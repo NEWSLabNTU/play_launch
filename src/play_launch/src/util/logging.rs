@@ -27,5 +27,6 @@ fn get_verbose_flag(opts: &Options) -> bool {
         crate::cli::options::Command::Plot(_) => false, // Plot doesn't use CommonOptions
         crate::cli::options::Command::SetcapIoHelper => false,
         crate::cli::options::Command::VerifyIoHelper => false,
+        crate::cli::options::Command::Context(_) => false,
     }
 }
