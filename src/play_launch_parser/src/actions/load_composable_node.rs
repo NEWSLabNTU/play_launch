@@ -103,6 +103,7 @@ impl LoadComposableNodeAction {
                     namespace,
                     parameters: node.parameters.clone(),
                     remappings: node.remappings.clone(),
+                    scope_id: None,
                 }
             })
             .collect();
@@ -181,6 +182,7 @@ impl LoadComposableNodeAction {
                     params: merged_params,
                     extra_args: node.extra_args.clone(),
                     env: None,
+                    scope: None,
                 }
             })
             .collect();

@@ -194,6 +194,7 @@ impl LifecycleNode {
             remappings: parsed_remaps,
             arguments: parsed_args,
             env_vars: Vec::new(),
+            scope_id: None,
         };
 
         log::debug!(

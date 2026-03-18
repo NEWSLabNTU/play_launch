@@ -54,6 +54,7 @@ impl NodeCapture {
             respawn: None,
             respawn_delay: None,
             ros_args: None, // Python parser doesn't populate ros_args
+            scope: None,
         })
     }
 
@@ -186,6 +187,7 @@ impl ContainerCapture {
             respawn: Some(false),
             respawn_delay: None,
             ros_args: None,
+            scope: None,
         })
     }
 }
@@ -234,6 +236,7 @@ impl LoadNodeCapture {
             params: merged_params,
             extra_args: HashMap::new(),
             env: None,
+            scope: None,
         })
     }
 }

@@ -1011,6 +1011,7 @@ mod tests {
             remappings: Vec::new(),
             arguments: Vec::new(),
             env_vars: Vec::new(),
+            scope_id: None,
         };
 
         context.capture_node(node);
@@ -1032,6 +1033,7 @@ mod tests {
             remappings: Vec::new(),
             arguments: Vec::new(),
             env_vars: Vec::new(),
+            scope_id: None,
         });
 
         context.capture_node(NodeCapture {
@@ -1044,6 +1046,7 @@ mod tests {
             remappings: Vec::new(),
             arguments: Vec::new(),
             env_vars: Vec::new(),
+            scope_id: None,
         });
 
         assert_eq!(context.captured_nodes().len(), 2);
@@ -1059,6 +1062,7 @@ mod tests {
             package: Some("rclcpp_components".to_string()),
             executable: Some("component_container".to_string()),
             cmd: Vec::new(),
+            scope_id: None,
         });
 
         assert_eq!(context.captured_containers().len(), 1);
@@ -1077,6 +1081,7 @@ mod tests {
             namespace: "/ns".to_string(),
             parameters: vec![("key".to_string(), "value".to_string())],
             remappings: Vec::new(),
+            scope_id: None,
         });
 
         assert_eq!(context.captured_load_nodes().len(), 1);
@@ -1115,6 +1120,7 @@ mod tests {
             remappings: Vec::new(),
             arguments: Vec::new(),
             env_vars: Vec::new(),
+            scope_id: None,
         });
         assert_eq!(context.captured_nodes().len(), 1);
 

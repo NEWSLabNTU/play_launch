@@ -38,6 +38,10 @@ pub struct LaunchTraverser {
     pub(crate) records: Vec<record::NodeRecord>,
     pub(crate) containers: Vec<record::ComposableNodeContainerRecord>,
     pub(crate) load_nodes: Vec<record::LoadNodeRecord>,
+    /// Launch tree scope table — tracks which launch file each node comes from
+    pub(crate) scope_table: record::ScopeTable,
+    /// Current scope ID (set when entering a launch file, used to stamp records)
+    pub(crate) current_scope_id: usize,
 }
 
 impl LaunchTraverser {
@@ -54,10 +58,27 @@ impl LaunchTraverser {
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),
+            scope_table: record::ScopeTable::new(),
+            current_scope_id: 0,
         }
     }
 
     pub fn traverse_file(&mut self, path: &Path) -> Result<()> {
+        // Create root scope if the scope table is empty (first file)
+        if self.scope_table.is_empty() {
+            let file_name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let pkg = record::extract_package_from_path(path);
+            let ns = self.context.current_namespace();
+            let root_id =
+                self.scope_table
+                    .push(pkg, file_name, ns, self.context.configurations(), None);
+            self.current_scope_id = root_id;
+        }
+
         // Check file extension and handle non-XML files
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             match ext {

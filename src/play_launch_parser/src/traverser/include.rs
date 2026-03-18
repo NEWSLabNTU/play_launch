@@ -3,6 +3,7 @@ use crate::{
     actions::IncludeAction,
     error::{ParseError, Result},
     file_cache::read_file_cached,
+    record::extract_package_from_path,
     substitution::resolve_substitutions,
     xml,
 };
@@ -67,14 +68,101 @@ impl LaunchTraverser {
                         python_args.insert(key.clone(), resolved_value);
                     }
 
-                    return self.execute_python_file(&resolved_path, &python_args);
+                    // Push scope for this Python include
+                    let py_file_name = resolved_path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let py_pkg = extract_package_from_path(&resolved_path);
+                    let py_ns = self.context.current_namespace();
+                    let child_scope_id = self.scope_table.push(
+                        py_pkg,
+                        py_file_name,
+                        py_ns,
+                        python_args.clone(),
+                        Some(self.current_scope_id),
+                    );
+                    let prev_scope_id = self.current_scope_id;
+                    self.current_scope_id = child_scope_id;
+
+                    // Track counts before execution to stamp new entries
+                    let prev_rec = self.records.len();
+                    let prev_cont = self.containers.len();
+                    let prev_ln = self.load_nodes.len();
+                    let prev_cap_nodes = self.context.captured_nodes().len();
+                    let prev_cap_containers = self.context.captured_containers().len();
+                    let prev_cap_load_nodes = self.context.captured_load_nodes().len();
+
+                    let result = self.execute_python_file(&resolved_path, &python_args);
+
+                    // Stamp scope on records added during this Python execution.
+                    // XML records created via process_xml_include_with_namespace
+                    // already have scope from their child traverser, so only stamp
+                    // those that are still None.
+                    for rec in &mut self.records[prev_rec..] {
+                        if rec.scope.is_none() {
+                            rec.scope = Some(child_scope_id);
+                        }
+                    }
+                    for rec in &mut self.containers[prev_cont..] {
+                        if rec.scope.is_none() {
+                            rec.scope = Some(child_scope_id);
+                        }
+                    }
+                    for rec in &mut self.load_nodes[prev_ln..] {
+                        if rec.scope.is_none() {
+                            rec.scope = Some(child_scope_id);
+                        }
+                    }
+
+                    // Stamp scope on captures added during this Python execution.
+                    for cap in &mut self.context.captured_nodes_mut()[prev_cap_nodes..] {
+                        if cap.scope_id.is_none() {
+                            cap.scope_id = Some(child_scope_id);
+                        }
+                    }
+                    for cap in &mut self.context.captured_containers_mut()[prev_cap_containers..] {
+                        if cap.scope_id.is_none() {
+                            cap.scope_id = Some(child_scope_id);
+                        }
+                    }
+                    for cap in &mut self.context.captured_load_nodes_mut()[prev_cap_load_nodes..] {
+                        if cap.scope_id.is_none() {
+                            cap.scope_id = Some(child_scope_id);
+                        }
+                    }
+
+                    self.current_scope_id = prev_scope_id;
+                    return result;
                 }
                 "yaml" | "yml" => {
                     // YAML files in <include> are always launch files
                     // (parameter files are handled in <param from="..."> context)
                     log::debug!("Including YAML launch file: {}", resolved_path.display());
-                    self.process_yaml_launch_file(&resolved_path)?;
-                    return Ok(());
+
+                    // Push scope for this YAML include
+                    let yaml_file_name = resolved_path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let yaml_pkg = extract_package_from_path(&resolved_path);
+                    let yaml_ns = self.context.current_namespace();
+                    let child_scope_id = self.scope_table.push(
+                        yaml_pkg,
+                        yaml_file_name,
+                        yaml_ns,
+                        self.context.configurations(),
+                        Some(self.current_scope_id),
+                    );
+                    let prev_scope_id = self.current_scope_id;
+                    self.current_scope_id = child_scope_id;
+
+                    let result = self.process_yaml_launch_file(&resolved_path);
+
+                    self.current_scope_id = prev_scope_id;
+                    return result;
                 }
                 _ => {}
             }
@@ -109,31 +197,66 @@ impl LaunchTraverser {
         let mut child_chain = self.include_chain.clone();
         child_chain.push(canonical_path);
 
+        // Push a new scope for this include
+        let include_file_name = resolved_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let include_pkg = extract_package_from_path(&resolved_path);
+        let include_ns = include_context.current_namespace();
+        let include_args = include_context.configurations();
+        let child_scope_id = self.scope_table.push(
+            include_pkg,
+            include_file_name,
+            include_ns,
+            include_args,
+            Some(self.current_scope_id),
+        );
+
         let mut included_traverser = LaunchTraverser {
             context: include_context,
             include_chain: child_chain,
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),
+            scope_table: std::mem::take(&mut self.scope_table),
+            current_scope_id: child_scope_id,
         };
         included_traverser.traverse_entity(&root)?;
+
+        // Take back the scope table (child may have added entries from nested includes)
+        self.scope_table = std::mem::take(&mut included_traverser.scope_table);
 
         // Merge records from included file into current records
         self.records.extend(included_traverser.records);
         self.containers.extend(included_traverser.containers);
         self.load_nodes.extend(included_traverser.load_nodes);
 
-        // Merge captures from included file's context
+        // Merge captures from included file's context, stamping scope_id
+        let child_scope = included_traverser.current_scope_id;
         for node in included_traverser.context.captured_nodes() {
-            self.context.capture_node(node.clone());
+            let mut node_copy = node.clone();
+            if node_copy.scope_id.is_none() {
+                node_copy.scope_id = Some(child_scope);
+            }
+            self.context.capture_node(node_copy);
         }
 
         for container in included_traverser.context.captured_containers() {
-            self.context.capture_container(container.clone());
+            let mut container_copy = container.clone();
+            if container_copy.scope_id.is_none() {
+                container_copy.scope_id = Some(child_scope);
+            }
+            self.context.capture_container(container_copy);
         }
 
         for load_node in included_traverser.context.captured_load_nodes() {
-            self.context.capture_load_node(load_node.clone());
+            let mut load_node_copy = load_node.clone();
+            if load_node_copy.scope_id.is_none() {
+                load_node_copy.scope_id = Some(child_scope);
+            }
+            self.context.capture_load_node(load_node_copy);
         }
 
         // CRITICAL: Merge global parameters from included file back to parent context

@@ -249,6 +249,7 @@ impl Node {
             remappings,
             arguments: node.arguments.clone(),
             env_vars: node.env_vars.clone(),
+            scope_id: None,
         };
 
         log::debug!(

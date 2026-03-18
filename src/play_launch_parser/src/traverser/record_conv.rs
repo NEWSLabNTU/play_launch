@@ -8,6 +8,7 @@ impl LaunchTraverser {
         let captured_count = self.context.captured_nodes().len();
         log::debug!("Processing {} captured nodes from context", captured_count);
         log::debug!("Also have {} nodes in self.records", self.records.len());
+        log::debug!("Scope table: {} scopes", self.scope_table.len());
 
         // Build global_params from context (accumulated via SetParameter actions)
         let final_global_params = self.context.global_parameters();
@@ -17,25 +18,46 @@ impl LaunchTraverser {
             Some(final_global_params.into_iter().collect::<Vec<_>>())
         };
 
+        // Convert captures to records.
+        // Use capture.scope_id if set (stamped during include processing),
+        // otherwise fall back to current_scope_id (root).
         let mut nodes: Vec<_> = self
             .context
             .captured_nodes()
             .iter()
-            .map(|n| n.to_record(&global_params_opt))
+            .map(|n| {
+                let mut rec = n.to_record(&global_params_opt)?;
+                if rec.scope.is_none() {
+                    rec.scope = Some(n.scope_id.unwrap_or(self.current_scope_id));
+                }
+                Ok(rec)
+            })
             .collect::<Result<Vec<_>>>()?;
 
         let mut containers: Vec<_> = self
             .context
             .captured_containers()
             .iter()
-            .map(|c| c.to_record(&global_params_opt))
+            .map(|c| {
+                let mut rec = c.to_record(&global_params_opt)?;
+                if rec.scope.is_none() {
+                    rec.scope = Some(c.scope_id.unwrap_or(self.current_scope_id));
+                }
+                Ok(rec)
+            })
             .collect::<Result<Vec<_>>>()?;
 
         let mut load_nodes: Vec<_> = self
             .context
             .captured_load_nodes()
             .iter()
-            .map(|ln| ln.to_record(&global_params_opt))
+            .map(|ln| {
+                let mut rec = ln.to_record(&global_params_opt)?;
+                if rec.scope.is_none() {
+                    rec.scope = Some(ln.scope_id.unwrap_or(self.current_scope_id));
+                }
+                Ok(rec)
+            })
             .collect::<Result<Vec<_>>>()?;
 
         // CRITICAL: Backfill global_params for nodes that were created before SetParameter ran
@@ -105,6 +127,7 @@ impl LaunchTraverser {
             lifecycle_node: Vec::new(),
             file_data: HashMap::new(),
             variables: self.context.configurations(),
+            scopes: self.scope_table.into_entries(),
         })
     }
 }

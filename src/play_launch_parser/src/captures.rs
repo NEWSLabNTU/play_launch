@@ -19,6 +19,8 @@ pub struct NodeCapture {
     pub remappings: Vec<(String, String)>,
     pub arguments: Vec<String>,
     pub env_vars: Vec<(String, String)>,
+    /// Scope ID from the launch tree (set by traverser after capture)
+    pub scope_id: Option<usize>,
 }
 
 /// Captured container data from Python or XML parsing
@@ -29,6 +31,8 @@ pub struct ContainerCapture {
     pub package: Option<String>,
     pub executable: Option<String>,
     pub cmd: Vec<String>,
+    /// Scope ID from the launch tree (set by traverser after capture)
+    pub scope_id: Option<usize>,
 }
 
 /// Captured composable node data from Python or XML parsing
@@ -41,6 +45,8 @@ pub struct LoadNodeCapture {
     pub namespace: String,
     pub parameters: Vec<(String, String)>,
     pub remappings: Vec<(String, String)>,
+    /// Scope ID from the launch tree (set by traverser after capture)
+    pub scope_id: Option<usize>,
 }
 
 /// Captured include data from Python or XML parsing

@@ -201,6 +201,7 @@ impl ContainerAction {
             respawn: None,
             respawn_delay: None,
             ros_args: None,
+            scope: None,
         })
     }
 
@@ -285,6 +286,7 @@ impl ContainerAction {
             respawn: None,
             respawn_delay: None,
             ros_args: None,
+            scope: None,
         })
     }
 }
@@ -494,6 +496,7 @@ impl ComposableNodeAction {
             params: merged_params,
             extra_args: self.extra_args.clone(),
             env: None,
+            scope: None,
         }
     }
 }

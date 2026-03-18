@@ -128,6 +128,7 @@ impl ExecutableAction {
             remappings: Vec::new(),
             arguments,
             env_vars: self.environment.clone(),
+            scope_id: None,
         })
     }
 }

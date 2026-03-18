@@ -215,6 +215,7 @@ impl LoadComposableNodes {
                 namespace,
                 parameters,
                 remappings,
+                scope_id: None,
             };
 
             log::debug!(

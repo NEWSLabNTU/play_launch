@@ -1,5 +1,5 @@
 use super::super::LaunchTraverser;
-use crate::{error::Result, file_cache::read_file_cached, xml};
+use crate::{error::Result, file_cache::read_file_cached, record::extract_package_from_path, xml};
 use std::{collections::HashMap, path::Path};
 
 impl LaunchTraverser {
@@ -77,6 +77,22 @@ impl LaunchTraverser {
         let doc = roxmltree::Document::parse(&content)?;
         let root = xml::XmlEntity::new(doc.root_element());
 
+        // Push a new scope for this XML include (from Python)
+        let include_file_name = resolved_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let include_pkg = extract_package_from_path(resolved_path);
+        let include_ns = include_context.current_namespace();
+        let child_scope_id = self.scope_table.push(
+            include_pkg,
+            include_file_name,
+            include_ns,
+            include_args.clone(),
+            Some(self.current_scope_id),
+        );
+
         // Create temporary traverser for included file
         let mut included_traverser = LaunchTraverser {
             context: include_context,
@@ -84,8 +100,13 @@ impl LaunchTraverser {
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),
+            scope_table: std::mem::take(&mut self.scope_table),
+            current_scope_id: child_scope_id,
         };
         included_traverser.traverse_entity(&root)?;
+
+        // Take back the scope table
+        self.scope_table = std::mem::take(&mut included_traverser.scope_table);
 
         // CRITICAL: Merge global parameters from included file back to parent context
         // SetParameter actions in Python files (called from XML includes) write to the
@@ -187,9 +208,13 @@ impl LaunchTraverser {
         self.load_nodes.extend(included_traverser.load_nodes);
 
         // Merge captures from included file's context
-        // Apply namespace to captures as well
+        // Apply namespace and stamp scope_id
+        let child_scope = included_traverser.current_scope_id;
         for node in included_traverser.context.captured_nodes() {
             let mut node_copy = node.clone();
+            if node_copy.scope_id.is_none() {
+                node_copy.scope_id = Some(child_scope);
+            }
             if let Some(ref ns) = ros_namespace
                 && !ns.is_empty()
                 && ns != "/"
@@ -205,6 +230,9 @@ impl LaunchTraverser {
 
         for container in included_traverser.context.captured_containers() {
             let mut container_copy = container.clone();
+            if container_copy.scope_id.is_none() {
+                container_copy.scope_id = Some(child_scope);
+            }
             if let Some(ref ns) = ros_namespace
                 && !ns.is_empty()
                 && ns != "/"
@@ -218,6 +246,9 @@ impl LaunchTraverser {
 
         for load_node in included_traverser.context.captured_load_nodes() {
             let mut load_node_copy = load_node.clone();
+            if load_node_copy.scope_id.is_none() {
+                load_node_copy.scope_id = Some(child_scope);
+            }
             log::debug!(
                 "Merging load_node capture: target='{}', ros_namespace={:?}",
                 load_node_copy.target_container_name,

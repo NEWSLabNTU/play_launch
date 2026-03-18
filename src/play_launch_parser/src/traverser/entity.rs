@@ -77,15 +77,17 @@ impl LaunchTraverser {
             "node" => {
                 // XML nodes use CommandGenerator for complete parameter file loading
                 let node = NodeAction::from_entity(entity)?;
-                let record = CommandGenerator::generate_node_record(&node, &self.context)
+                let mut record = CommandGenerator::generate_node_record(&node, &self.context)
                     .map_err(|e| ParseError::IoError(std::io::Error::other(e.to_string())))?;
+                record.scope = Some(self.current_scope_id);
                 self.records.push(record);
             }
             "executable" => {
                 // Executables don't use NodeCapture - they generate NodeRecord directly
                 let exec = ExecutableAction::from_entity(entity)?;
-                let record = CommandGenerator::generate_executable_record(&exec, &self.context)
+                let mut record = CommandGenerator::generate_executable_record(&exec, &self.context)
                     .map_err(|e| ParseError::IoError(std::io::Error::other(e.to_string())))?;
+                record.scope = Some(self.current_scope_id);
                 self.records.push(record);
             }
             "include" => {
@@ -189,11 +191,15 @@ impl LaunchTraverser {
                 let container_action = ContainerAction::from_entity(entity, &self.context)?;
 
                 // Add container record
-                self.containers
-                    .push(container_action.to_container_record(&self.context)?);
+                let mut container_rec = container_action.to_container_record(&self.context)?;
+                container_rec.scope = Some(self.current_scope_id);
+                self.containers.push(container_rec);
 
                 // Add load_node records for each composable node
-                let load_node_records = container_action.to_load_node_records(&self.context)?;
+                let mut load_node_records = container_action.to_load_node_records(&self.context)?;
+                for rec in &mut load_node_records {
+                    rec.scope = Some(self.current_scope_id);
+                }
                 self.load_nodes.extend(load_node_records);
 
                 log::debug!(

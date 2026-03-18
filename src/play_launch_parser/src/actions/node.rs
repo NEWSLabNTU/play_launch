@@ -193,6 +193,7 @@ impl NodeAction {
             remappings,
             arguments,
             env_vars: self.environment.clone(),
+            scope_id: None,
         })
     }
 }

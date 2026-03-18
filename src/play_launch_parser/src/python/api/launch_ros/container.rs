@@ -257,6 +257,7 @@ impl ComposableNodeContainer {
             package: Some(container.package.clone()),
             executable: Some(container.executable.clone()),
             cmd: Vec::new(), // Will be generated in to_record()
+            scope_id: None,
         };
 
         log::debug!(

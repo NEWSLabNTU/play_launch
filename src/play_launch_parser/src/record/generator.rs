@@ -341,6 +341,7 @@ impl CommandGenerator {
                 })
                 .transpose()?,
             ros_args: None,
+            scope: None,
         })
     }
 
@@ -467,6 +468,7 @@ impl CommandGenerator {
             respawn: None,
             respawn_delay: None,
             ros_args: None,
+            scope: None,
         })
     }
 }
