@@ -1,6 +1,7 @@
 use super::super::LaunchTraverser;
 use crate::{
     error::{ParseError, Result},
+    record::extract_package_from_path,
     substitution::{parse_substitutions, resolve_substitutions},
 };
 use std::{collections::HashMap, path::Path};
@@ -147,6 +148,32 @@ impl LaunchTraverser {
                 if let Some(ext) = resolved_include_path.extension().and_then(|s| s.to_str()) {
                     match ext {
                         "py" => {
+                            // Push scope for this Python-to-Python include
+                            let py_file_name = resolved_include_path
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let py_pkg = extract_package_from_path(&resolved_include_path);
+                            let py_ns = self.context.current_namespace();
+                            let child_scope_id = self.scope_table.push(
+                                py_pkg,
+                                py_file_name,
+                                py_ns,
+                                include_args.clone(),
+                                Some(self.current_scope_id),
+                            );
+                            let prev_scope_id = self.current_scope_id;
+                            self.current_scope_id = child_scope_id;
+
+                            // Track captures before execution
+                            let prev_cap_nodes = self.context.captured_nodes().len();
+                            let prev_cap_containers = self.context.captured_containers().len();
+                            let prev_cap_load_nodes = self.context.captured_load_nodes().len();
+                            let prev_rec = self.records.len();
+                            let prev_cont = self.containers.len();
+                            let prev_ln = self.load_nodes.len();
+
                             // Save scope so namespace is restored after include
                             let scope = self.context.save_scope();
                             if let Some(ref ns) = ros_ns {
@@ -155,6 +182,44 @@ impl LaunchTraverser {
                             let result =
                                 self.execute_python_file(&resolved_include_path, &include_args);
                             self.context.restore_scope(scope);
+
+                            // Stamp scope on new captures/records
+                            for cap in &mut self.context.captured_nodes_mut()[prev_cap_nodes..] {
+                                if cap.scope_id.is_none() {
+                                    cap.scope_id = Some(child_scope_id);
+                                }
+                            }
+                            for cap in
+                                &mut self.context.captured_containers_mut()[prev_cap_containers..]
+                            {
+                                if cap.scope_id.is_none() {
+                                    cap.scope_id = Some(child_scope_id);
+                                }
+                            }
+                            for cap in
+                                &mut self.context.captured_load_nodes_mut()[prev_cap_load_nodes..]
+                            {
+                                if cap.scope_id.is_none() {
+                                    cap.scope_id = Some(child_scope_id);
+                                }
+                            }
+                            for rec in &mut self.records[prev_rec..] {
+                                if rec.scope.is_none() {
+                                    rec.scope = Some(child_scope_id);
+                                }
+                            }
+                            for rec in &mut self.containers[prev_cont..] {
+                                if rec.scope.is_none() {
+                                    rec.scope = Some(child_scope_id);
+                                }
+                            }
+                            for rec in &mut self.load_nodes[prev_ln..] {
+                                if rec.scope.is_none() {
+                                    rec.scope = Some(child_scope_id);
+                                }
+                            }
+
+                            self.current_scope_id = prev_scope_id;
                             result
                         }
                         "xml" => {
@@ -166,8 +231,28 @@ impl LaunchTraverser {
                             )
                         }
                         "yaml" | "yml" => {
-                            // Process as YAML launch file
-                            self.process_yaml_launch_file(&resolved_include_path)
+                            // Push scope for YAML include from Python
+                            let yaml_file_name = resolved_include_path
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let yaml_pkg = extract_package_from_path(&resolved_include_path);
+                            let yaml_ns = self.context.current_namespace();
+                            let child_scope_id = self.scope_table.push(
+                                yaml_pkg,
+                                yaml_file_name,
+                                yaml_ns,
+                                include_args.clone(),
+                                Some(self.current_scope_id),
+                            );
+                            let prev_scope_id = self.current_scope_id;
+                            self.current_scope_id = child_scope_id;
+
+                            let result = self.process_yaml_launch_file(&resolved_include_path);
+
+                            self.current_scope_id = prev_scope_id;
+                            result
                         }
                         _ => {
                             log::warn!(
