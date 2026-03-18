@@ -76,11 +76,45 @@ fn scope_chain(scopes: &[ScopeEntry], scope_id: usize) -> Vec<&ScopeEntry> {
     chain
 }
 
+/// ANSI color codes (empty strings when not a terminal)
+struct Colors {
+    pkg: &'static str,
+    file: &'static str,
+    ns: &'static str,
+    dim: &'static str,
+    reset: &'static str,
+}
+
+impl Colors {
+    fn auto() -> Self {
+        use std::io::IsTerminal;
+        if std::io::stdout().is_terminal() {
+            Self {
+                pkg: "\x1b[36m",  // cyan
+                file: "\x1b[33m", // yellow
+                ns: "\x1b[32m",   // green
+                dim: "\x1b[2m",   // dim
+                reset: "\x1b[0m",
+            }
+        } else {
+            Self {
+                pkg: "",
+                file: "",
+                ns: "",
+                dim: "",
+                reset: "",
+            }
+        }
+    }
+}
+
 fn print_tree(dump: &LaunchDump) {
     if dump.scopes.is_empty() {
         println!("No scopes found in record.json");
         return;
     }
+
+    let c = Colors::auto();
 
     // Count entities per scope
     let mut counts = std::collections::HashMap::new();
@@ -89,8 +123,8 @@ fn print_tree(dump: &LaunchDump) {
             *counts.entry(s).or_insert(0usize) += 1;
         }
     }
-    for c in &dump.container {
-        if let Some(s) = c.scope {
+    for container in &dump.container {
+        if let Some(s) = container.scope {
             *counts.entry(s).or_insert(0usize) += 1;
         }
     }
@@ -111,6 +145,7 @@ fn print_tree(dump: &LaunchDump) {
         scopes: &[ScopeEntry],
         children: &std::collections::HashMap<Option<usize>, Vec<usize>>,
         counts: &std::collections::HashMap<usize, usize>,
+        c: &Colors,
         id: usize,
         indent: usize,
     ) {
@@ -119,17 +154,27 @@ fn print_tree(dump: &LaunchDump) {
         let pkg = s.pkg.as_deref().unwrap_or("(none)");
         let count = counts.get(&id).copied().unwrap_or(0);
         let count_str = if count > 0 {
-            format!("  ({} entities)", count)
+            format!("  {}({} entities){}", c.dim, count, c.reset)
         } else {
             String::new()
         };
         println!(
-            "{}[{:2}] {}/{}  ns={}{}",
-            prefix, s.id, pkg, s.file, s.ns, count_str
+            "{}{dim}[{id:2}]{reset} {cpkg}{pkg}{reset} {cfile}{file}{reset}  {cns}ns={ns}{reset}{count}",
+            prefix,
+            dim = c.dim,
+            id = s.id,
+            reset = c.reset,
+            cpkg = c.pkg,
+            pkg = pkg,
+            cfile = c.file,
+            file = s.file,
+            cns = c.ns,
+            ns = s.ns,
+            count = count_str,
         );
         if let Some(child_ids) = children.get(&Some(id)) {
             for &child_id in child_ids {
-                print_scope(scopes, children, counts, child_id, indent + 1);
+                print_scope(scopes, children, counts, c, child_id, indent + 1);
             }
         }
     }
@@ -137,7 +182,7 @@ fn print_tree(dump: &LaunchDump) {
     // Print from roots
     if let Some(root_ids) = children.get(&None) {
         for &root_id in root_ids {
-            print_scope(&dump.scopes, &children, &counts, root_id, 0);
+            print_scope(&dump.scopes, &children, &counts, &c, root_id, 0);
         }
     }
 }
