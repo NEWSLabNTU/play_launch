@@ -8,6 +8,20 @@ use std::{
 
 pub type ParameterValue = String;
 
+/// A scope in the launch include tree (from parser Phase 30).
+/// Each entry represents one launch file invocation.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScopeEntry {
+    pub id: usize,
+    #[serde(default)]
+    pub pkg: Option<String>,
+    pub file: String,
+    pub ns: String,
+    #[serde(default)]
+    pub args: HashMap<String, String>,
+    pub parent: Option<usize>,
+}
+
 /// The serialization format for a recorded launch.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LaunchDump {
@@ -26,6 +40,10 @@ pub struct LaunchDump {
     /// Used to substitute $(var name) patterns in command arguments during replay
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub variables: HashMap<String, String>,
+    /// Launch tree scope table — each entry is one launch file invocation.
+    /// Present when the parser is run with scope tracking enabled.
+    #[serde(default)]
+    pub scopes: Vec<ScopeEntry>,
 }
 
 /// The serialization format for a node container record.
@@ -51,6 +69,9 @@ pub struct NodeContainerRecord {
     pub respawn_delay: Option<f64>,
     #[serde(default)]
     pub global_params: Option<Vec<(String, ParameterValue)>>,
+    /// Scope ID referencing the scopes table (launch file origin)
+    #[serde(default)]
+    pub scope: Option<usize>,
 }
 
 /// The serialization format for a ROS node record.
@@ -79,6 +100,9 @@ pub struct NodeRecord {
     /// Global parameters from SetParameter action (scope-aware)
     #[serde(default)]
     pub global_params: Option<Vec<(String, ParameterValue)>>,
+    /// Scope ID referencing the scopes table (launch file origin)
+    #[serde(default)]
+    pub scope: Option<usize>,
 }
 
 /// The serialization format for a composable node record.
@@ -102,6 +126,10 @@ pub struct ComposableNodeRecord {
 
     #[allow(dead_code)]
     pub env: Option<Vec<(String, String)>>,
+
+    /// Scope ID referencing the scopes table (launch file origin)
+    #[serde(default)]
+    pub scope: Option<usize>,
 }
 
 /// Read an deserialize the launch record dump.
