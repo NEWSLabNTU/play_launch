@@ -576,12 +576,47 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         let state_broadcaster = std::sync::Arc::new(web::StateEventBroadcaster::new());
 
         // Start web server
+        // Build node→scope mapping from launch dump.
+        // Keys must match the member names used by the actor system:
+        //   nodes: name.or(exec_name)  (see context.rs line 153)
+        //   containers: name.or(exec_name)
+        //   composable nodes: node_name
+        let mut node_scope_map = std::collections::HashMap::new();
+        for n in &launch_dump.node {
+            if let Some(scope) = n.scope {
+                let member_name = n
+                    .name
+                    .as_ref()
+                    .or(n.exec_name.as_ref());
+                if let Some(name) = member_name {
+                    node_scope_map.insert(name.clone(), scope);
+                }
+            }
+        }
+        for c in &launch_dump.container {
+            if let Some(scope) = c.scope {
+                let member_name = c
+                    .exec_name
+                    .as_ref()
+                    .map(|s| s.as_str())
+                    .unwrap_or(&c.name);
+                node_scope_map.insert(member_name.to_string(), scope);
+            }
+        }
+        for ln in &launch_dump.load_node {
+            if let Some(scope) = ln.scope {
+                node_scope_map.insert(ln.node_name.clone(), scope);
+            }
+        }
+
         let web_state = std::sync::Arc::new(web::WebState::new(
-            member_handle.clone(), // Clone the Arc, not MemberHandle
+            member_handle.clone(),
             log_dir.clone(),
             state_broadcaster.clone(),
             diagnostic_registry.clone(),
             metrics_broadcaster.clone(),
+            launch_dump.scopes.clone(),
+            node_scope_map,
         ));
         let web_shutdown = shutdown_signal.clone();
 

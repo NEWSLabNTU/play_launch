@@ -16,3 +16,14 @@
 # Known counts:
 #   Autoware 1.5.0:    nodes=34  containers=15  load_nodes=70
 #   Autoware 2025.02:  nodes=46  containers=15  load_nodes=54
+
+source /opt/autoware/1.5.0/setup.bash
+export EXPECTED_NODES=34
+export EXPECTED_CONTAINERS=15
+export EXPECTED_LOAD_NODES=70
+
+# source ~/repos/autoware/2025.02-ws/install/setup.bash
+# export EXPECTED_NODES=46
+# export EXPECTED_CONTAINERS=15
+# export EXPECTED_LOAD_NODES=54
+

@@ -244,11 +244,13 @@ async fn run_direct(
 
         // Start web server
         let web_state = Arc::new(web::WebState::new(
-            member_handle.clone(), // Clone the Arc, not MemberHandle
+            member_handle.clone(),
             log_dir.clone(),
             state_broadcaster.clone(),
             diagnostic_registry.clone(),
-            None, // No metrics broadcaster in run mode
+            None,
+            Vec::new(),
+            std::collections::HashMap::new(),
         ));
 
         // Parse web address

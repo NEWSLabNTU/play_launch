@@ -48,6 +48,17 @@ export const healthSummary = signal(/** @type {any} */ ({
     composable_total: 0,
 }));
 
+// --- Launch tree state (Phase 30) ---
+
+/** @type {{ value: object|null }} Launch tree from GET /api/launch-tree */
+export const launchTree = signal(null);
+
+/** Currently selected scope or node in the launch tree view. */
+export const launchTreeSelection = signal(null);
+
+/** Expanded scope IDs in the launch tree view. */
+export const launchTreeExpanded = signal(new Set([0]));
+
 // --- Graph state (Phase 25) ---
 
 /** @type {{ value: object|null }} Full graph snapshot from GET /api/graph */
@@ -270,6 +281,17 @@ export async function fetchGraph() {
         graphSnapshot.value = await resp.json();
     } catch (e) {
         console.warn('[store] Failed to fetch graph:', e);
+    }
+}
+
+/** Fetch the launch tree (Phase 30). One-time fetch — scopes are static. */
+export async function fetchLaunchTree() {
+    try {
+        const resp = await fetch('/api/launch-tree');
+        if (!resp.ok) return;
+        launchTree.value = await resp.json();
+    } catch (e) {
+        console.warn('[store] Failed to fetch launch tree:', e);
     }
 }
 

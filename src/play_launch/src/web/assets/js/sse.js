@@ -2,7 +2,7 @@
 // Connects to /api/state/updates and applies events to the store.
 // Side-effect module — import to activate.
 
-import { applyStateEvent, fetchNodes, fetchHealth, fetchGraph, connected, systemMetrics } from './store.js';
+import { applyStateEvent, fetchNodes, fetchHealth, fetchGraph, fetchLaunchTree, connected, systemMetrics } from './store.js';
 
 /** How long to wait without any SSE message before declaring disconnect (ms). */
 const KEEPALIVE_TIMEOUT_MS = 8000;
@@ -133,5 +133,6 @@ function connectMetrics() {
 fetchNodes();
 fetchHealth();
 fetchGraph();
+fetchLaunchTree();
 connect();
 connectMetrics();

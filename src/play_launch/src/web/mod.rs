@@ -2,7 +2,11 @@
 //!
 //! Provides a web interface for monitoring and controlling ROS nodes.
 
-use crate::{diagnostics::DiagnosticRegistry, member_actor::MemberHandle};
+use crate::{
+    diagnostics::DiagnosticRegistry,
+    member_actor::MemberHandle,
+    ros::launch_dump::ScopeEntry,
+};
 use axum::{
     Router,
     http::{StatusCode, header},
@@ -44,6 +48,10 @@ pub struct WebState {
     pub diagnostic_registry: Arc<DiagnosticRegistry>,
     /// Broadcaster for system metrics to SSE clients (None when monitoring disabled)
     pub metrics_broadcaster: Option<Arc<SystemMetricsBroadcaster>>,
+    /// Launch tree scope table (from record.json, static after load)
+    pub scopes: Vec<ScopeEntry>,
+    /// Node name → scope ID mapping (built from record.json at startup)
+    pub node_scope_map: std::collections::HashMap<String, usize>,
 }
 
 impl WebState {
@@ -54,6 +62,8 @@ impl WebState {
         state_broadcaster: Arc<StateEventBroadcaster>,
         diagnostic_registry: Arc<DiagnosticRegistry>,
         metrics_broadcaster: Option<Arc<SystemMetricsBroadcaster>>,
+        scopes: Vec<ScopeEntry>,
+        node_scope_map: std::collections::HashMap<String, usize>,
     ) -> Self {
         Self {
             member_handle,
@@ -62,6 +72,8 @@ impl WebState {
             state_broadcaster,
             diagnostic_registry,
             metrics_broadcaster,
+            scopes,
+            node_scope_map,
         }
     }
 }
@@ -138,6 +150,7 @@ pub fn create_router(state: Arc<WebState>) -> Router {
         )
         .route("/api/nodes/:name/topics", get(handlers::get_node_topics))
         .route("/api/graph", get(handlers::get_graph))
+        .route("/api/launch-tree", get(handlers::get_launch_tree))
         .route("/api/health", get(handlers::health_summary))
         // Bulk operations
         .route("/api/nodes/start-all", post(handlers::start_all))

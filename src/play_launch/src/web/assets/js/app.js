@@ -11,6 +11,8 @@ import { GraphPanel } from './components/GraphPanel.js';
 import { PanelResizer } from './components/PanelResizer.js';
 import { DiagnosticsView } from './components/DiagnosticsView.js';
 import { GraphView } from './components/GraphView.js';
+import { LaunchTreeView } from './components/LaunchTreeView.js';
+import { LaunchPanel } from './components/LaunchPanel.js';
 
 const html = htm.bind(h);
 
@@ -47,12 +49,11 @@ function ConnectionOverlay() {
 
 function App() {
     const view = store.currentView.value;
-    const isOpen = view === 'graph' ? store.graphPanelOpen.value : store.nodePanelOpen.value;
+    const launchPanelOpen = view === 'launch-tree' && store.launchTreeSelection.value !== null;
+    const isOpen = view === 'graph' ? store.graphPanelOpen.value
+        : view === 'launch-tree' ? launchPanelOpen
+        : store.nodePanelOpen.value;
 
-    // Nodes and Diagnostics live in separate containers toggled by display.
-    // This suppresses the left-panel width transition on view switches
-    // (display:none → visible doesn't trigger CSS transitions) while
-    // preserving the slide animation when the user opens/closes the panel.
     return html`
         <${Header} />
         <div class="main-container">
@@ -69,9 +70,16 @@ function App() {
                     <${GraphView} />
                 </div>
             `}
+            <div class="left-panel ${isOpen ? 'with-sidebar' : ''}"
+                 style=${{ display: view === 'launch-tree' ? '' : 'none' }}>
+                <${LaunchTreeView} />
+            </div>
             ${view === 'graph' ? html`
                 <${PanelResizer} />
                 <${GraphPanel} />
+            ` : view === 'launch-tree' ? html`
+                <${PanelResizer} />
+                <${LaunchPanel} />
             ` : view === 'nodes' ? html`
                 <${PanelResizer} />
                 <${RightPanel} />

@@ -1,0 +1,290 @@
+/* Launch Tree View + Launch Panel styles */
+
+/* ── Tree container ── */
+
+.lt-container {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.lt-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.lt-header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.lt-summary {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.lt-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 6px;
+}
+
+.lt-btn {
+    font-size: 12px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-secondary, transparent);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.lt-btn:hover {
+    background: var(--hover-bg);
+    color: var(--text-primary);
+}
+
+/* ── Tree rows ── */
+
+.lt-tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    font-family: var(--font-mono, 'Consolas', 'Monaco', monospace);
+    font-size: 13px;
+}
+
+.lt-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    min-height: 24px;
+}
+
+.lt-row:hover {
+    background: var(--hover-bg);
+}
+
+.lt-selected {
+    background: var(--selected-bg, rgba(59, 130, 246, 0.15)) !important;
+    border-left: 2px solid var(--accent, #3b82f6);
+}
+
+/* ── Expand/collapse toggle ── */
+
+.lt-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    font-size: 10px;
+    color: var(--text-secondary);
+    user-select: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.lt-toggle:hover {
+    background: var(--hover-bg);
+    color: var(--text-primary);
+}
+
+/* ── Scope content ── */
+
+.lt-pkg {
+    color: var(--accent, #0ea5e9);
+    font-weight: 500;
+}
+
+.lt-file {
+    color: var(--text-primary);
+}
+
+.lt-ns {
+    color: var(--running-text, #22c55e);
+    font-size: 12px;
+}
+
+.lt-ns::before {
+    content: 'ns=';
+    color: var(--text-secondary);
+}
+
+.lt-count {
+    color: var(--text-secondary);
+    font-size: 11px;
+    background: var(--badge-bg, rgba(128, 128, 128, 0.15));
+    padding: 0 5px;
+    border-radius: 8px;
+}
+
+/* ── Node rows ── */
+
+.lt-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.lt-status-running { background: var(--running-bg, #22c55e); }
+.lt-status-stopped { background: var(--stopped-bg, #6b7280); }
+.lt-status-failed { background: var(--failed-bg, #ef4444); }
+.lt-status-loaded { background: var(--running-bg, #22c55e); }
+.lt-status-loading { background: var(--pending-bg, #f59e0b); }
+.lt-status-blocked { background: var(--blocked-bg, #f59e0b); }
+.lt-status-unknown { background: var(--stopped-bg, #6b7280); }
+
+.lt-node-name {
+    color: var(--text-primary);
+}
+
+.lt-node-fqn {
+    color: var(--text-secondary);
+    font-size: 11px;
+    margin-left: 4px;
+}
+
+/* ── Empty state ── */
+
+.lt-empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.lt-hint {
+    font-size: 13px;
+    margin-top: 8px;
+}
+
+/* ── Launch Panel (right panel) ── */
+
+.lp-scope-detail,
+.lp-node-detail {
+    overflow-y: auto;
+    flex: 1;
+}
+
+.lp-section {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.lp-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.lp-value {
+    font-family: var(--font-mono, 'Consolas', monospace);
+    font-size: 13px;
+    word-break: break-all;
+}
+
+.lp-pkg {
+    color: var(--accent, #0ea5e9);
+}
+
+.lp-ns {
+    color: var(--running-text, #22c55e);
+}
+
+/* Include chain */
+.lp-chain {
+    font-family: var(--font-mono, 'Consolas', monospace);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.lp-chain-depth {
+    color: var(--text-secondary);
+    white-space: pre;
+}
+
+/* Arguments */
+.lp-args {
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 12px;
+    font-family: var(--font-mono, 'Consolas', monospace);
+}
+
+.lp-arg {
+    display: flex;
+    gap: 8px;
+    padding: 2px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.lp-arg-key {
+    color: var(--text-primary);
+    font-weight: 500;
+    flex-shrink: 0;
+    min-width: 120px;
+}
+
+.lp-arg-val {
+    color: var(--text-secondary);
+    word-break: break-all;
+}
+
+/* Entity and include lists */
+.lp-entity,
+.lp-include {
+    padding: 3px 4px;
+    font-size: 12px;
+    font-family: var(--font-mono, 'Consolas', monospace);
+    cursor: pointer;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.lp-entity:hover,
+.lp-include:hover {
+    background: var(--hover-bg);
+}
+
+.lp-scroll {
+    overflow-y: auto;
+    flex: 1;
+}
+
+.lp-empty-tab {
+    padding: 20px;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.lp-ns-val {
+    color: var(--running-text, #22c55e);
+}
+
+.lp-args-table {
+    padding: 8px 16px;
+}
+
+.lp-scope-detail,
+.lp-node-detail {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}

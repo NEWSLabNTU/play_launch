@@ -649,3 +649,12 @@ pub async fn get_node_topics(
         }
     }
 }
+
+/// Get the launch tree (scope table + node→scope mapping).
+/// Static data — scopes don't change during replay.
+pub async fn get_launch_tree(State(state): State<Arc<WebState>>) -> Json<serde_json::Value> {
+    Json(json!({
+        "scopes": state.scopes,
+        "node_scopes": state.node_scope_map,
+    }))
+}
