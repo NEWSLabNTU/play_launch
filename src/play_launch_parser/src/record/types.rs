@@ -85,9 +85,9 @@ impl ScopeTable {
 /// Looks for `/share/<pkg>/` in the path.
 pub fn extract_package_from_path(path: &Path) -> Option<String> {
     let path_str = path.to_str()?;
-    // Look for /share/<pkg>/ pattern in the path
-    if let Some(share_pos) = path_str.find("/share/") {
-        let after_share = &path_str[share_pos + 7..]; // skip "/share/"
+    const SHARE_PREFIX: &str = "/share/";
+    if let Some(share_pos) = path_str.find(SHARE_PREFIX) {
+        let after_share = &path_str[share_pos + SHARE_PREFIX.len()..];
         // Package name is the next path component
         if let Some(slash_pos) = after_share.find('/') {
             let pkg = &after_share[..slash_pos];
