@@ -14,7 +14,7 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for pe
 
 ## Launch File Parsing
 
-**Default**: Rust parser (`play_launch_parser`, 3-12x faster, 413 tests, 100% Autoware)
+**Default**: Rust parser (`play_launch_parser`, 3-12x faster, 381+ tests, 100% Autoware)
 **Alternative**: `play_launch launch <pkg> <file> --parser python`
 
 **CRITICAL RULE**: When Rust and Python parser behaviors differ, **Python's behavior is always correct**. Fix Rust, not Python. Validate with `just compare-dumps` in test workspaces.
@@ -30,6 +30,20 @@ The parser evaluates conditions during parsing and processes only the selected p
 - **YAML params**: substitutions in YAML files resolved and typed before passing to nodes (`src/params.rs::load_and_resolve_param_file()`)
 
 Implementation: `src/python/api/utils.rs` (substitution handling), `src/params.rs` (YAML resolution)
+
+### Launch Tree Scoping (Phase 30)
+
+The parser tracks which launch file each node originates from via a **scope table** in `record.json`. Each `<include>` creates a new scope entry with `(pkg, file, ns, args, parent)`. Nodes reference their scope via `scope: Option<usize>`.
+
+- **Scope types**: `ScopeEntry`, `ScopeTable` in `record/types.rs` (parser) and `launch_dump.rs` (executor)
+- **Both parsers**: Rust (`include.rs`, `xml_include.rs`, `python_exec.rs`) and Python (`visitor/entity.py`, `visitor/include_launch_description.py`) produce matching scope tables
+- **record.json**: `scopes: [...]` (top-level) + `scope: N` (per node/container/load_node)
+- **Scope stamping**: captures stamped with `scope_id` during include processing; records stamped in `entity.rs`
+- **Member name mapping**: `node_scope_map` keyed by `name.or(exec_name)` to match actor system member names
+- **CLI**: `play_launch context record.json --tree|--node <FQN>|--launch <pkg> <file>`
+- **Web UI**: "Launch" page (`LaunchTreeView.js`, `LaunchPanel.js`) with tree view + detail panel
+- **API**: `GET /api/launch-tree` returns `{ scopes, node_scopes }`
+- **Validation**: `scripts/compare_scopes.py` — self-consistency + cross-parser comparison
 
 ### Launch IR (feature-gated)
 
@@ -162,11 +176,13 @@ Composable nodes don't have separate directories — metadata in parent containe
 ## Testing
 
 ```bash
-just test              # Parser unit (371) + fast integration (6), ~3s
-just test-all          # Parser unit (371) + all integration (42), ~70s
+just test              # Parser unit (371) + scope (9) + fast integration (6), ~3s
+just test-all          # Parser unit (371) + scope (9) + all integration (42), ~70s
 just test-unit         # Parser unit tests only
 just test-integration  # All integration tests (simple + Autoware)
 cargo test -p play_launch_parser --features ir  # IR tests (42 tests, not included in default)
+just compare-scopes <pkg> <launch> [args...]    # Cross-parser scope comparison
+play_launch context record.json --tree          # Launch tree inspection
 ```
 
 Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests (`tests/`, excluded from workspace). Integration tests use `ManagedProcess` RAII guard (`tests/src/process.rs`) for guaranteed cleanup via `setsid()` + `PR_SET_PDEATHSIG` + PGID kill on Drop.
@@ -177,6 +193,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-03-19**: Phase 30 (Launch Tree Scoping) complete. Scope table in `record.json` tracks which launch file each node comes from. Both Rust and Python parsers produce matching scope tables (83 scopes, 119 entities for Autoware). New types: `ScopeEntry`, `ScopeTable` in `record/types.rs`; `scope: Option<usize>` on all record types. New CLI: `play_launch context record.json --tree|--node|--launch`. New web UI: "Launch" page with tree view, expand/collapse, per-node detail panel with logs/params/topics tabs. Cross-parser validation: `scripts/compare_scopes.py`. New API: `GET /api/launch-tree`.
 - **2026-03-12**: Nodes with `name=None` in launch files now use `exec_name` as `__node` remap and FQN map key (`node_cmdline.rs`, `builder.rs`). Web UI: graph panel close button in hint state (`GraphPanel.js`); "Last Activity" sort in Node page sorts by `stderr_last_modified` with 3s polling, container groups use max child activity in tree mode (`NodeList.js`). Build: `just build` now includes `just build-interception`; interception .so required in wheel bundle (`bundle_wheel.sh`); `install-wheel` picks newest `.whl`. CI: `release-wheel.yml` uses `just build`; all GitHub Actions bumped to v5 (Node.js 24).
 - **2026-03-11**: Phase 29 (RCL Interception) integration complete — play_launch consumer wired into replay.rs, 5 integration tests passing (stats, frontier, disabled, defaults, toggles). Bug fix: `rcl_publish`/`rcl_take` hooks now fall back to `lookup_publisher_full()`/`lookup_subscription_full()` for messages without `header.stamp`, dispatching with `stamp: None` so StatsPlugin counts all messages.
 - **2026-03-11**: Fixed `$(eval)` Python conditional expressions returning "false" — `needs_python_eval()` didn't recognize `" if "` / `" else "` keywords, so expressions like `'centerpoint_tiny' if ''=='' else ''` were handled by the Rust string comparison evaluator (which found `==` first), naively split on it, and returned "false". Fix: added `" if "` and `" else "` to the `needs_python_eval()` keywords list in `eval.rs` so conditional expressions delegate to Python eval.
@@ -205,13 +222,22 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 ## Documentation
 
 - **Roadmap**: `docs/roadmap/README.md` — all phases and progress
-- **Container Design**: `docs/design/container-isolation.md` — why containers, Linux isolation, RMW consequences
-- **Clone VM Design**: `docs/archive/clone-vm-container-design.md` — clone(CLONE_VM) implementation spec (archived)
-- **Web UI Modernization**: `docs/roadmap/phase-20-web_ui_modernization.md` — Preact + SSE migration plan
-- **Build Optimization**: `docs/roadmap/phase-21-build_optimization.md` — bundle script, incremental builds
+- **Design docs**: `docs/design/` — active design documents:
+  - `container-isolation.md` — why containers, Linux isolation, RMW consequences
+  - `context-unification.md` — parser LaunchContext unification (Phase 17)
+  - `launch-manifest.md` — launch manifest format: topics, services, QoS, timing contracts (Phase 31)
+  - `rcl-interception.md` — RCL interception architecture + graph discovery evolution
+  - `record-format.md` — record.json format: current fields + Phase 30 extensions (scopes)
+  - `parser-context.md` — parser LaunchContext: scope chain, namespacing, captures
+  - `launch-context-tool.md` — context extraction tool design
+  - `manifest-slides.md` — presentation slides for launch manifest + RCL interception
+- **Archived designs**: `docs/design/archive/` — completed/abandoned designs
+- **Research**: `docs/research/data-quality-semantics.md` — data loss, latency, sync semantics survey
 - **Launch Tree IR**: `docs/roadmap/phase-22-launch_tree_ir.md` — IR design (feature-gated behind `--features ir`)
 - **Topic Introspection**: `docs/roadmap/phase-25-topic_introspection.md` — graph view, namespace grouping, ELK layout, edge bundling
 - **RCL Interception**: `docs/roadmap/phase-29-rcl_interception.md` — LD_PRELOAD interceptor, SPSC shared memory, frontier/stats plugins
+- **Launch Scoping**: `docs/roadmap/phase-30-launch_scoping.md` — scope table, context extraction, cross-parser validation
+- **Launch Manifest**: `docs/roadmap/phase-31-launch_manifest.md` — manifest crate, parser/executor integration, audit
 - **Migration Guide**: `docs/guide/parser-migration.md` — Rust parser migration (v0.6.0+)
 
 ## Parser Parity Status
