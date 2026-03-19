@@ -16,7 +16,10 @@ def visit_include_launch_description(
     launch_description = include.launch_description_source.get_launch_description(context)
 
     # Push scope for this include
-    launch_file_path = include._get_launch_file()
+    try:
+        launch_file_path = include._get_launch_file()
+    except Exception:
+        launch_file_path = None
     filename = os.path.basename(launch_file_path) if launch_file_path else "unknown"
     pkg = extract_package_from_path(launch_file_path) if launch_file_path else None
 

@@ -35,14 +35,16 @@ def visit_entity(
     entity_future = entity.get_asyncio_future()
 
     futures_to_return = []
-    if entity_future is not None:
-        futures_to_return.append((entity, entity_future))
-    if sub_entities is not None:
-        for sub_entity in sub_entities:
-            futures_to_return += visit_entity(sub_entity, context, dump)
-
-    # Pop scope after all sub-entities of an include have been visited
-    if is_include:
-        dump.pop_scope()
+    try:
+        if entity_future is not None:
+            futures_to_return.append((entity, entity_future))
+        if sub_entities is not None:
+            for sub_entity in sub_entities:
+                futures_to_return += visit_entity(sub_entity, context, dump)
+    finally:
+        # Pop scope after all sub-entities of an include have been visited.
+        # In a finally block to keep scope stack consistent on exceptions.
+        if is_include:
+            dump.pop_scope()
 
     return [future_pair for future_pair in futures_to_return if future_pair[1] is not None]
