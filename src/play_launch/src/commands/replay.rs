@@ -592,7 +592,8 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         }
         for c in &launch_dump.container {
             if let Some(scope) = c.scope {
-                let member_name = c.exec_name.as_deref().unwrap_or(&c.name);
+                // Container member name is c.name (matching actor system in context.rs)
+                let member_name: &str = &c.name;
                 node_scope_map.insert(member_name.to_string(), scope);
             }
         }
