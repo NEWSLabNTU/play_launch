@@ -19,10 +19,12 @@ const html = htm.bind(h);
 // ── Scope tabs ──
 
 function ScopeInfoTab({ scope, scopes, nodeScopes }) {
-    // Walk parent chain
+    // Walk parent chain (with cycle protection)
     const chain = [];
+    const visited = new Set();
     let current = scope.id;
-    while (current !== null && current !== undefined && current < scopes.length) {
+    while (current !== null && current !== undefined && current < scopes.length && !visited.has(current)) {
+        visited.add(current);
         chain.unshift(scopes[current]);
         current = scopes[current].parent;
     }
