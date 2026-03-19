@@ -3,9 +3,7 @@
 //! Provides a web interface for monitoring and controlling ROS nodes.
 
 use crate::{
-    diagnostics::DiagnosticRegistry,
-    member_actor::MemberHandle,
-    ros::launch_dump::ScopeEntry,
+    diagnostics::DiagnosticRegistry, member_actor::MemberHandle, ros::launch_dump::ScopeEntry,
 };
 use axum::{
     Router,

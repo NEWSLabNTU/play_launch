@@ -121,23 +121,110 @@
     color: var(--text-secondary);
 }
 
-.lt-count {
-    color: var(--text-secondary);
+/* ── Aggregate status on scope rows ── */
+
+.lt-agg {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
     font-size: 11px;
-    background: var(--badge-bg, rgba(128, 128, 128, 0.15));
-    padding: 0 5px;
-    border-radius: 8px;
+    margin-left: auto;
+    flex-shrink: 0;
 }
 
-/* ── Node rows ── */
+.lt-agg-ok {
+    color: var(--running-text, #22c55e);
+    font-weight: 500;
+}
 
-.lt-status-dot {
+.lt-agg-sep {
+    color: var(--text-secondary);
+}
+
+.lt-agg-total {
+    color: var(--text-secondary);
+}
+
+.lt-agg-failed {
+    color: var(--failed-text, #ef4444);
+    font-weight: 600;
+    margin-left: 4px;
+    background: rgba(239, 68, 68, 0.12);
+    padding: 0 4px;
+    border-radius: 3px;
+}
+
+/* Scope health tinting */
+.lt-scope-all-ok {
+    /* No tint for healthy — keep clean */
+}
+
+.lt-scope-has-failed {
+    background: rgba(239, 68, 68, 0.05);
+}
+
+.lt-scope-has-failed:hover {
+    background: rgba(239, 68, 68, 0.10);
+}
+
+/* ── Node type dots ── */
+
+.lt-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
 }
 
+/* Regular node: filled circle ● */
+.lt-dot.lt-type-node {
+    /* filled by status color below */
+}
+
+/* Container: ring/outline ○ */
+.lt-dot.lt-type-container {
+    background: transparent !important;
+    box-sizing: border-box;
+}
+
+.lt-dot.lt-type-container.lt-status-running,
+.lt-dot.lt-type-container.lt-status-loaded { border: 2px solid var(--running-bg, #22c55e); }
+.lt-dot.lt-type-container.lt-status-stopped,
+.lt-dot.lt-type-container.lt-status-unknown { border: 2px solid var(--stopped-bg, #6b7280); }
+.lt-dot.lt-type-container.lt-status-failed { border: 2px solid var(--failed-bg, #ef4444); }
+.lt-dot.lt-type-container.lt-status-loading,
+.lt-dot.lt-type-container.lt-status-blocked { border: 2px solid var(--pending-bg, #f59e0b); }
+
+/* Composable node: small filled dot • */
+.lt-dot.lt-type-composable {
+    width: 6px;
+    height: 6px;
+    margin: 0 1px; /* center within the 8px space */
+}
+
+/* Status colors for filled dots (node + composable) */
+.lt-dot.lt-type-node.lt-status-running,
+.lt-dot.lt-type-composable.lt-status-running { background: var(--running-bg, #22c55e); }
+.lt-dot.lt-type-node.lt-status-loaded,
+.lt-dot.lt-type-composable.lt-status-loaded { background: var(--running-bg, #22c55e); }
+.lt-dot.lt-type-node.lt-status-stopped,
+.lt-dot.lt-type-composable.lt-status-stopped { background: var(--stopped-bg, #6b7280); }
+.lt-dot.lt-type-node.lt-status-unknown,
+.lt-dot.lt-type-composable.lt-status-unknown { background: var(--stopped-bg, #6b7280); }
+.lt-dot.lt-type-node.lt-status-failed,
+.lt-dot.lt-type-composable.lt-status-failed { background: var(--failed-bg, #ef4444); }
+.lt-dot.lt-type-node.lt-status-loading,
+.lt-dot.lt-type-composable.lt-status-loading { background: var(--pending-bg, #f59e0b); }
+.lt-dot.lt-type-node.lt-status-blocked,
+.lt-dot.lt-type-composable.lt-status-blocked { background: var(--pending-bg, #f59e0b); }
+
+/* Keep old lt-status-dot classes for scope detail entity list */
+.lt-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
 .lt-status-running { background: var(--running-bg, #22c55e); }
 .lt-status-stopped { background: var(--stopped-bg, #6b7280); }
 .lt-status-failed { background: var(--failed-bg, #ef4444); }
@@ -146,14 +233,58 @@
 .lt-status-blocked { background: var(--blocked-bg, #f59e0b); }
 .lt-status-unknown { background: var(--stopped-bg, #6b7280); }
 
+/* ── Node row background tinting ── */
+
+.lt-node-running,
+.lt-node-loaded {
+    background: rgba(34, 197, 94, 0.06);
+}
+
+.lt-node-running:hover,
+.lt-node-loaded:hover {
+    background: rgba(34, 197, 94, 0.12);
+}
+
+.lt-node-failed {
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.lt-node-failed:hover {
+    background: rgba(239, 68, 68, 0.14);
+}
+
+.lt-node-stopped,
+.lt-node-unknown {
+    /* No tint for stopped — keep neutral */
+}
+
+/* ── Node name styling by type ── */
+
 .lt-node-name {
     color: var(--text-primary);
+}
+
+/* Container: bold name */
+.lt-type-container .lt-node-name {
+    font-weight: 600;
+}
+
+/* Composable node: dimmed name */
+.lt-type-composable .lt-node-name {
+    color: var(--text-secondary);
 }
 
 .lt-node-fqn {
     color: var(--text-secondary);
     font-size: 11px;
     margin-left: 4px;
+}
+
+/* Container reference for composable nodes */
+.lt-container-ref {
+    color: var(--text-secondary);
+    font-size: 11px;
+    opacity: 0.7;
 }
 
 /* ── Empty state ── */

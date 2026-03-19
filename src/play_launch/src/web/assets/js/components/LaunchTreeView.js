@@ -114,18 +114,49 @@ function ScopeActivityIcon({ scopeId, scopeChildren, scopeNodes }) {
     return html`<span class=${cls}>${'\uD83D\uDCCB'}</span>`;
 }
 
-/** Get status CSS class for a node. */
+/** Get status string for a node. */
 function statusClass(name) {
     const node = nodes.value.get(name);
     if (!node) return 'stopped';
     return getStatusString(node.status);
 }
 
-/** Render a single scope row. */
-function ScopeRow({ scope, depth, entityCount, isExpanded, hasChildren, scopeId, scopeChildren, scopeNodes }) {
+/** Compute aggregate status for a subtree: { running, loaded, failed, total }. */
+function getSubtreeStatus(scopeId, scopeChildren, scopeNodes) {
+    const counts = { running: 0, loaded: 0, failed: 0, stopped: 0, total: 0 };
+
+    // Direct nodes
+    const nodeNames = scopeNodes.get(scopeId) || [];
+    for (const name of nodeNames) {
+        counts.total++;
+        const s = statusClass(name);
+        if (s === 'running') counts.running++;
+        else if (s === 'loaded') counts.loaded++;
+        else if (s === 'failed') counts.failed++;
+        else counts.stopped++;
+    }
+
+    // Recurse into children
+    const children = scopeChildren.get(scopeId) || [];
+    for (const childId of children) {
+        const child = getSubtreeStatus(childId, scopeChildren, scopeNodes);
+        counts.running += child.running;
+        counts.loaded += child.loaded;
+        counts.failed += child.failed;
+        counts.stopped += child.stopped;
+        counts.total += child.total;
+    }
+
+    return counts;
+}
+
+/** Render a single scope row with aggregate status. */
+function ScopeRow({ scope, depth, isExpanded, hasChildren, scopeId, scopeChildren, scopeNodes }) {
     const sel = launchTreeSelection.value;
     const isSelected = sel?.type === 'scope' && sel?.id === scope.id;
     const pkg = scope.pkg || '(none)';
+
+    const agg = getSubtreeStatus(scopeId, scopeChildren, scopeNodes);
 
     const handleSelect = useCallback((e) => {
         e.stopPropagation();
@@ -136,8 +167,15 @@ function ScopeRow({ scope, depth, entityCount, isExpanded, hasChildren, scopeId,
         toggleExpand(scope.id, e);
     }, [scope.id]);
 
+    // Determine scope row health class for subtle tinting
+    let healthClass = '';
+    if (agg.total > 0) {
+        if (agg.failed > 0) healthClass = 'lt-scope-has-failed';
+        else if (agg.running + agg.loaded === agg.total) healthClass = 'lt-scope-all-ok';
+    }
+
     return html`
-        <div class="lt-row lt-scope ${isSelected ? 'lt-selected' : ''}"
+        <div class="lt-row lt-scope ${isSelected ? 'lt-selected' : ''} ${healthClass}"
              style=${{ paddingLeft: `${depth * 20 + 8}px` }}
              onClick=${handleSelect}>
             <span class="lt-toggle" onClick=${handleToggle}>
@@ -146,7 +184,16 @@ function ScopeRow({ scope, depth, entityCount, isExpanded, hasChildren, scopeId,
             <span class="lt-pkg">${pkg}</span>
             <span class="lt-file">${scope.file}</span>
             ${scope.ns !== '/' && html`<span class="lt-ns">${scope.ns}</span>`}
-            ${entityCount > 0 && html`<span class="lt-count">${entityCount}</span>`}
+            ${agg.total > 0 && html`
+                <span class="lt-agg">
+                    <span class="lt-agg-ok">${agg.running + agg.loaded}</span>
+                    <span class="lt-agg-sep">/</span>
+                    <span class="lt-agg-total">${agg.total}</span>
+                    ${agg.failed > 0 && html`
+                        <span class="lt-agg-failed">${agg.failed} failed</span>
+                    `}
+                </span>
+            `}
             ${!isExpanded && hasChildren && html`
                 <${ScopeActivityIcon} scopeId=${scopeId}
                     scopeChildren=${scopeChildren} scopeNodes=${scopeNodes} />
@@ -155,11 +202,13 @@ function ScopeRow({ scope, depth, entityCount, isExpanded, hasChildren, scopeId,
     `;
 }
 
-/** Render a node row under a scope. */
+/** Render a node row with type-aware styling. */
 function NodeRow({ name, depth }) {
     const sel = launchTreeSelection.value;
     const isSelected = sel?.type === 'node' && sel?.name === name;
-    const status = statusClass(name);
+    const storeNode = nodes.value.get(name);
+    const status = storeNode ? getStatusString(storeNode.status) : 'stopped';
+    const nodeType = storeNode?.node_type || 'node';
     const shortName = name.split('/').filter(Boolean).pop() || name;
 
     const handleClick = useCallback((e) => {
@@ -167,12 +216,25 @@ function NodeRow({ name, depth }) {
         launchTreeSelection.value = { type: 'node', name };
     }, [name]);
 
+    // Type-specific CSS class
+    const typeClass = nodeType === 'container' ? 'lt-type-container'
+        : nodeType === 'composable_node' ? 'lt-type-composable'
+        : 'lt-type-node';
+
+    // Container name for composable nodes (cross-reference)
+    const containerRef = nodeType === 'composable_node'
+        ? storeNode?.target_container || storeNode?.container_name
+        : null;
+
     return html`
-        <div class="lt-row lt-node ${isSelected ? 'lt-selected' : ''}"
+        <div class="lt-row lt-node lt-node-${status} ${typeClass} ${isSelected ? 'lt-selected' : ''}"
              style=${{ paddingLeft: `${depth * 20 + 28}px` }}
              onClick=${handleClick}>
-            <span class="lt-status-dot lt-status-${status}"></span>
+            <span class="lt-dot ${typeClass} lt-status-${status}"></span>
             <span class="lt-node-name">${shortName}</span>
+            ${containerRef && html`
+                <span class="lt-container-ref">${'\u2192'} ${containerRef}</span>
+            `}
             <span class="lt-node-fqn">${name}</span>
             <${ActivityIcon} nodeName=${name} />
         </div>
@@ -187,12 +249,11 @@ function ScopeTree({ scopes, scopeChildren, scopeNodes, scopeId, depth }) {
 
     const children = scopeChildren.get(scopeId) || [];
     const nodeNames = scopeNodes.get(scopeId) || [];
-    const entityCount = nodeNames.length;
     const hasChildren = children.length > 0 || nodeNames.length > 0;
     const isExpanded = expanded.has(scopeId);
 
     return html`
-        <${ScopeRow} scope=${scope} depth=${depth} entityCount=${entityCount}
+        <${ScopeRow} scope=${scope} depth=${depth}
             isExpanded=${isExpanded} hasChildren=${hasChildren}
             scopeId=${scopeId} scopeChildren=${scopeChildren} scopeNodes=${scopeNodes} />
         ${isExpanded && nodeNames.map(name => html`

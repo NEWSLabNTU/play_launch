@@ -215,19 +215,19 @@ function NodeDetail({ name }) {
                     <${InfoTab} nodeData=${displayData} />
                 </div>
                 <div class="tab-content" style=${{ display: tab === 'params' ? 'flex' : 'none' }}>
-                    ${tab === 'params' && html`<${ParametersTab} nodeName=${name} />`}
+                    ${tab === 'params' && html`<${ParametersTab} nodeName=${name} key=${'params-' + name} />`}
                 </div>
                 <div class="tab-content" style=${{ display: tab === 'topics' ? 'flex' : 'none' }}>
-                    ${tab === 'topics' && html`<${TopicsTab} nodeName=${name} />`}
+                    ${tab === 'topics' && html`<${TopicsTab} nodeName=${name} key=${'topics-' + name} />`}
                 </div>
                 <div class="tab-content" style=${{ display: tab === 'metrics' ? 'flex' : 'none' }}>
-                    ${tab === 'metrics' && html`<${MetricsTab} nodeName=${name} />`}
+                    ${tab === 'metrics' && html`<${MetricsTab} nodeName=${name} key=${'metrics-' + name} />`}
                 </div>
                 <div class="tab-content" style=${{ display: tab === 'stdout' ? 'flex' : 'none' }}>
-                    ${tab === 'stdout' && html`<${LogTab} nodeName=${name} logType="stdout" containerName=${containerName} />`}
+                    ${tab === 'stdout' && html`<${LogTab} nodeName=${name} logType="stdout" containerName=${containerName} key=${'stdout-' + name} />`}
                 </div>
                 <div class="tab-content" style=${{ display: tab === 'stderr' ? 'flex' : 'none' }}>
-                    ${(tab === 'stderr' || true) && html`<${LogTab} nodeName=${name} logType="stderr" containerName=${containerName} />`}
+                    ${tab === 'stderr' && html`<${LogTab} nodeName=${name} logType="stderr" containerName=${containerName} key=${'stderr-' + name} />`}
                 </div>
             </div>
         </div>
