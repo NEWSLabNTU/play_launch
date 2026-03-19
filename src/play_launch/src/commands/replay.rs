@@ -592,7 +592,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         }
         for c in &launch_dump.container {
             if let Some(scope) = c.scope {
-                let member_name = c.exec_name.as_ref().map(|s| s.as_str()).unwrap_or(&c.name);
+                let member_name = c.exec_name.as_deref().unwrap_or(&c.name);
                 node_scope_map.insert(member_name.to_string(), scope);
             }
         }
