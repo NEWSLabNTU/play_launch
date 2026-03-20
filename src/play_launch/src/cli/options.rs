@@ -143,6 +143,11 @@ pub struct LaunchArgs {
     #[arg(long, value_enum, default_value = "rust")]
     pub parser: ParserBackend,
 
+    /// Block $(command ...) substitutions in launch files.
+    /// When set, the parser rejects any $(command) with an error.
+    #[arg(long)]
+    pub block_commands: bool,
+
     #[command(flatten)]
     pub common: CommonOptions,
 }

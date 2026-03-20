@@ -12,6 +12,7 @@ pub fn handle_dump(args: &DumpArgs) -> Result<()> {
 
     match &args.subcommand {
         DumpSubcommand::Launch(launch_args) => {
+            play_launch_parser::block_command_substitution(launch_args.block_commands);
             // Choose parser based on selection
             match launch_args.parser {
                 ParserBackend::Rust => {
