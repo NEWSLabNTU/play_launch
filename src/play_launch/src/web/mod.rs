@@ -109,12 +109,40 @@ async fn static_handler(axum::extract::Path(path): axum::extract::Path<String>) 
 }
 
 /// Create the web server router
-pub fn create_router(state: Arc<WebState>) -> Router {
-    // CORS layer for development
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router {
+    // CORS policy based on bind address:
+    // - 0.0.0.0: intentionally network-exposed → allow any origin
+    //   (user explicitly opts in via --web-addr 0.0.0.0:PORT)
+    // - 127.0.0.1: localhost only → restrict to localhost origins
+    // - specific IP: restrict to that IP + localhost
+    let cors = if bind_addr == "0.0.0.0" {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        let mut origins = vec![
+            format!("http://{}:{}", bind_addr, port)
+                .parse::<axum::http::HeaderValue>()
+                .expect("valid origin"),
+        ];
+        if bind_addr != "127.0.0.1" {
+            origins.push(
+                format!("http://127.0.0.1:{}", port)
+                    .parse()
+                    .expect("valid origin"),
+            );
+        }
+        origins.push(
+            format!("http://localhost:{}", port)
+                .parse()
+                .expect("valid origin"),
+        );
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    };
 
     Router::new()
         // Static files
@@ -179,7 +207,7 @@ pub async fn run_server(
     port: u16,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> eyre::Result<()> {
-    let app = create_router(state);
+    let app = create_router(state, bind_addr, port);
 
     // Parse bind address
     let ip: std::net::IpAddr = bind_addr
