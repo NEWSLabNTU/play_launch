@@ -153,6 +153,8 @@ pub(super) fn resolve_launch_file(
 pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
     info!("Step 1/2: Recording launch execution...");
 
+    play_launch_parser::block_command_substitution(args.block_commands);
+
     // Choose parser based on selection
     match args.parser {
         ParserBackend::Rust => {
