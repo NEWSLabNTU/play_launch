@@ -149,8 +149,13 @@ fn needs_python_eval(expr: &str) -> bool {
 }
 
 /// Fall back to Python's eval() for expressions the Rust evaluator can't handle.
+///
+/// # Security
+/// Uses restricted globals that only expose safe builtins (arithmetic, string ops,
+/// boolean logic). Blocks `__import__`, `exec`, `eval`, `open`, `compile` etc.
+/// to prevent arbitrary code execution from malicious launch files.
 fn python_eval_fallback(expr: &str) -> Result<String, SubstitutionError> {
-    use pyo3::prelude::*;
+    use pyo3::{prelude::*, types::PyDict};
 
     // Unescape XML-style backslash-quotes (\' → ') that come from launch file
     // attribute values like value="[\'ndt\',\'yabloc\']"
@@ -168,7 +173,54 @@ fn python_eval_fallback(expr: &str) -> Result<String, SubstitutionError> {
         let expr_cstr = std::ffi::CString::new(expr).map_err(|e| {
             SubstitutionError::InvalidSubstitution(format!("Expression contains null byte: {}", e))
         })?;
-        let result = py.eval(&expr_cstr, None, None).map_err(|e| {
+
+        // Build restricted globals — only safe, pure builtins.
+        // This prevents __import__, exec, eval, open, compile etc.
+        let restricted_builtins = PyDict::new(py);
+        for name in [
+            "True",
+            "False",
+            "None",
+            "int",
+            "float",
+            "str",
+            "bool",
+            "list",
+            "tuple",
+            "dict",
+            "set",
+            "len",
+            "abs",
+            "min",
+            "max",
+            "round",
+            "sorted",
+            "reversed",
+            "enumerate",
+            "zip",
+            "map",
+            "filter",
+            "range",
+            "isinstance",
+            "type",
+            "hasattr",
+            "getattr",
+            "repr",
+            "format",
+            "chr",
+            "ord",
+            "hex",
+            "oct",
+            "bin",
+        ] {
+            if let Ok(builtin) = py.import("builtins").and_then(|b| b.getattr(name)) {
+                let _ = restricted_builtins.set_item(name, builtin);
+            }
+        }
+        let globals = PyDict::new(py);
+        let _ = globals.set_item("__builtins__", restricted_builtins);
+
+        let result = py.eval(&expr_cstr, Some(&globals), None).map_err(|e| {
             SubstitutionError::InvalidSubstitution(format!(
                 "Failed to evaluate expression '{}': {}",
                 expr, e

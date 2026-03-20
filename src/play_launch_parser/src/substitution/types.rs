@@ -4,6 +4,22 @@ use super::eval::evaluate_expression;
 use crate::{error::SubstitutionError, substitution::context::LaunchContext};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Global flag controlling whether `$(command ...)` substitutions are blocked.
+/// Default: false (allowed with warning). Set to true via `block_command_substitution(true)`.
+///
+/// # Security
+/// `$(command)` executes arbitrary shell commands. Use `--block-commands` to
+/// reject them entirely when parsing untrusted launch files.
+static BLOCK_COMMANDS: AtomicBool = AtomicBool::new(false);
+
+/// Block or allow `$(command ...)` substitution execution.
+/// When blocked, the parser returns an error on any `$(command)`.
+/// When allowed (default), commands execute with a security warning.
+pub fn block_command_substitution(block: bool) {
+    BLOCK_COMMANDS.store(block, Ordering::Relaxed);
+}
 
 /// Error handling mode for command substitutions
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -194,13 +210,26 @@ fn find_package_share_uncached(package_name: &str) -> Option<String> {
     None
 }
 
-/// Execute shell command and capture output
+/// Execute shell command and capture output.
 ///
-/// # Security Note
-/// This function executes arbitrary shell commands. Only use with trusted input.
-/// Commands are executed in a shell context and can access the full system.
+/// # Security
+/// This function executes arbitrary shell commands. Gated behind the
+/// `ALLOW_COMMANDS` flag — returns an error when disabled.
+/// Disable with `block_command_substitution(true)` or `--block-commands` CLI flag.
 fn execute_command(cmd: &str, error_mode: &CommandErrorMode) -> Result<String, SubstitutionError> {
     use std::process::Command;
+
+    if BLOCK_COMMANDS.load(Ordering::Relaxed) {
+        return Err(SubstitutionError::CommandFailed(format!(
+            "$(command {}) blocked: command substitutions are disabled via --block-commands.",
+            cmd
+        )));
+    }
+    log::warn!(
+        "Executing $(command {}) — command substitutions run arbitrary shell commands. \
+         Use --block-commands to reject them.",
+        cmd
+    );
 
     // Use bash instead of sh to ensure environment variables are preserved
     // (sh is often dash which doesn't source the same RC files)
@@ -265,6 +294,11 @@ pub fn resolve_substitutions(
 #[cfg(test)]
 mod tests {
     use super::{super::eval::is_string_concatenation, *};
+
+    /// Ensure command substitutions are enabled for tests (they are by default).
+    fn enable_commands() {
+        block_command_substitution(false);
+    }
 
     #[test]
     fn test_text_substitution() {
@@ -439,6 +473,7 @@ mod tests {
 
     #[test]
     fn test_command_simple() {
+        enable_commands();
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("echo hello".to_string())],
             error_mode: CommandErrorMode::Strict,
@@ -450,6 +485,7 @@ mod tests {
 
     #[test]
     fn test_command_with_output_trimming() {
+        enable_commands();
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("echo '  spaces  '".to_string())],
             error_mode: CommandErrorMode::Strict,
@@ -462,6 +498,7 @@ mod tests {
 
     #[test]
     fn test_command_with_newlines() {
+        enable_commands();
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("printf 'line1\\nline2\\n'".to_string())],
             error_mode: CommandErrorMode::Strict,
@@ -474,6 +511,7 @@ mod tests {
 
     #[test]
     fn test_command_failed() {
+        enable_commands();
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("exit 1".to_string())],
             error_mode: CommandErrorMode::Strict,
@@ -485,6 +523,7 @@ mod tests {
 
     #[test]
     fn test_command_with_args() {
+        enable_commands();
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("echo foo bar".to_string())],
             error_mode: CommandErrorMode::Strict,
@@ -496,6 +535,7 @@ mod tests {
 
     #[test]
     fn test_command_pwd() {
+        enable_commands();
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("pwd".to_string())],
             error_mode: CommandErrorMode::Strict,
@@ -509,6 +549,7 @@ mod tests {
 
     #[test]
     fn test_command_env_access() {
+        enable_commands();
         unsafe { std::env::set_var("TEST_CMD_VAR", "test_value") };
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("echo $TEST_CMD_VAR".to_string())],
@@ -576,6 +617,7 @@ mod tests {
 
     #[test]
     fn test_resolve_nested_var_in_command() {
+        enable_commands();
         // $(command echo $(var greeting)) where greeting=hello
         let sub = Substitution::Command {
             cmd: vec![
@@ -679,6 +721,7 @@ mod tests {
 
     #[test]
     fn test_resolve_nested_command_with_env() {
+        enable_commands();
         // $(command echo $(env USER))
         unsafe { std::env::set_var("TEST_USER_NESTED", "testuser") };
 
@@ -885,6 +928,7 @@ mod tests {
     // Command error mode execution tests
     #[test]
     fn test_command_strict_mode_fails_on_error() {
+        enable_commands();
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("exit 1".to_string())],
             error_mode: CommandErrorMode::Strict,
@@ -897,6 +941,7 @@ mod tests {
 
     #[test]
     fn test_command_warn_mode_continues_on_error() {
+        enable_commands();
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("echo output && exit 1".to_string())],
             error_mode: CommandErrorMode::Warn,
@@ -911,6 +956,7 @@ mod tests {
 
     #[test]
     fn test_command_ignore_mode_continues_on_error() {
+        enable_commands();
         let sub = Substitution::Command {
             cmd: vec![Substitution::Text("echo output && exit 1".to_string())],
             error_mode: CommandErrorMode::Ignore,
@@ -925,6 +971,7 @@ mod tests {
 
     #[test]
     fn test_command_all_modes_succeed_on_success() {
+        enable_commands();
         // All modes should succeed when command succeeds
         for error_mode in [
             CommandErrorMode::Strict,

@@ -22,11 +22,13 @@ pub mod xml;
 use error::Result;
 use file_cache::read_file_cached;
 use record::RecordJson;
+
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
 use substitution::LaunchContext;
+pub use substitution::types::block_command_substitution;
 
 /// Launch tree traverser for parsing launch files
 pub struct LaunchTraverser {
