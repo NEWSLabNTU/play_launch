@@ -4,7 +4,7 @@ use crate::{
     error::ParseError,
     substitution::{LaunchContext, resolve_substitutions},
 };
-use serde_yaml::Value;
+use serde_yml::Value;
 use std::{fs, path::Path};
 
 /// Load a parameter file and resolve all substitutions in its contents.
@@ -96,7 +96,7 @@ pub fn extract_params_from_yaml(
     context: &LaunchContext,
 ) -> Result<Vec<(String, String)>, ParseError> {
     let content = fs::read_to_string(path)?;
-    let mut yaml: Value = serde_yaml::from_str(&content)
+    let mut yaml: Value = serde_yml::from_str(&content)
         .map_err(|e| ParseError::InvalidSubstitution(format!("YAML parse error: {}", e)))?;
 
     // Recursively resolve all substitutions in the YAML structure
@@ -173,8 +173,8 @@ fn string_to_yaml_value(s: &str) -> Value {
 
     // Try to parse as float
     if let Ok(n) = s.parse::<f64>() {
-        // serde_yaml doesn't have a direct from_f64, so serialize and deserialize
-        if let Ok(value) = serde_yaml::to_value(n) {
+        // serde_yml doesn't have a direct from_f64, so serialize and deserialize
+        if let Ok(value) = serde_yml::to_value(n) {
             return value;
         }
     }
@@ -186,7 +186,7 @@ fn string_to_yaml_value(s: &str) -> Value {
 /// Load parameters from a YAML file
 pub fn load_param_file(path: &Path) -> Result<Vec<(String, String)>, ParseError> {
     let content = fs::read_to_string(path)?;
-    let yaml: Value = serde_yaml::from_str(&content)
+    let yaml: Value = serde_yml::from_str(&content)
         .map_err(|e| ParseError::InvalidSubstitution(format!("YAML parse error: {}", e)))?;
 
     let mut params = Vec::new();
@@ -213,7 +213,7 @@ pub fn load_param_file(path: &Path) -> Result<Vec<(String, String)>, ParseError>
 }
 
 /// Recursively flatten nested parameter maps
-fn flatten_params(prefix: &str, map: &serde_yaml::Mapping, output: &mut Vec<(String, String)>) {
+fn flatten_params(prefix: &str, map: &serde_yml::Mapping, output: &mut Vec<(String, String)>) {
     for (key, value) in map.iter() {
         if let Value::String(key_str) = key {
             let full_key = if prefix.is_empty() {

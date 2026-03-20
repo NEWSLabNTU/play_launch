@@ -13,14 +13,14 @@ use crate::{
         ArgumentMetadata, LaunchContext, Substitution, parse_substitutions, resolve_substitutions,
     },
 };
-use serde_yaml::{Mapping, Value};
+use serde_yml::{Mapping, Value};
 use std::{collections::HashMap, path::Path};
 
 impl LaunchTraverser {
     /// Process a YAML launch file (handles all action types)
     pub(crate) fn process_yaml_launch_file(&mut self, path: &Path) -> Result<()> {
         let content = read_file_cached(path)?;
-        let yaml: Value = serde_yaml::from_str(&content)
+        let yaml: Value = serde_yml::from_str(&content)
             .map_err(|e| ParseError::InvalidSubstitution(format!("Invalid YAML: {}", e)))?;
 
         // Save and set current file for correct $(dirname) resolution
@@ -753,7 +753,7 @@ mod tests {
         map.insert(Value::String("bool_val".to_string()), Value::Bool(true));
         map.insert(
             Value::String("int_val".to_string()),
-            Value::Number(serde_yaml::Number::from(42)),
+            Value::Number(serde_yml::Number::from(42)),
         );
 
         assert_eq!(

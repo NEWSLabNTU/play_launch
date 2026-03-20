@@ -64,11 +64,11 @@ impl LaunchTraverser {
     /// YAML includes modify the parent scope — variables they declare become visible
     /// to subsequent includes in the same file.
     fn build_ir_yaml(&mut self, path: &Path) -> Result<LaunchProgram> {
-        use serde_yaml::Value;
+        use serde_yml::Value;
 
         let source = path.to_path_buf();
         let content = read_file_cached(path)?;
-        let yaml: Value = serde_yaml::from_str(&content)
+        let yaml: Value = serde_yml::from_str(&content)
             .map_err(|e| ParseError::InvalidSubstitution(format!("Invalid YAML: {}", e)))?;
 
         let mut body = Vec::new();
