@@ -317,14 +317,21 @@ fn test_scope_group_push_ros_namespace_with_include() {
     );
 
     // The outer node should have no namespace or root namespace
-    let outer = record.node.iter().find(|n| n.name.as_deref() == Some("outer_node"));
+    let outer = record
+        .node
+        .iter()
+        .find(|n| n.name.as_deref() == Some("outer_node"));
     assert!(outer.is_some(), "should have outer_node");
 
     // The included node should have /sensing namespace
-    let inner = record.node.iter().find(|n| {
-        n.namespace.as_deref() == Some("/sensing")
-    });
-    assert!(inner.is_some(), "should have a node with /sensing namespace");
+    let inner = record
+        .node
+        .iter()
+        .find(|n| n.namespace.as_deref() == Some("/sensing"));
+    assert!(
+        inner.is_some(),
+        "should have a node with /sensing namespace"
+    );
 }
 
 #[test]
