@@ -9,6 +9,23 @@ use crate::{
 };
 use std::path::Path;
 
+/// Validate that an include path is a launch file (by extension).
+/// Prevents including arbitrary files like `/etc/passwd`.
+pub(crate) fn validate_include_path(path: &Path, original: &str) -> Result<()> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    match ext {
+        "xml" | "py" | "yaml" | "yml" => Ok(()),
+        _ => Err(ParseError::IoError(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "Include path '{}' has unexpected extension '.{}'. \
+                 Only .xml, .py, .yaml, .yml launch files can be included.",
+                original, ext
+            ),
+        ))),
+    }
+}
+
 impl LaunchTraverser {
     pub(crate) fn process_include(&mut self, include: &IncludeAction) -> Result<()> {
         // Resolve the file path
@@ -17,6 +34,9 @@ impl LaunchTraverser {
         let file_path = Path::new(&file_path_str);
 
         log::trace!("Processing include: {}", file_path_str);
+
+        // Validate the include path has a launch file extension
+        validate_include_path(file_path, &file_path_str)?;
 
         // Resolve relative paths relative to the current launch file
         let resolved_path = if file_path.is_relative() {

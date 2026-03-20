@@ -1,4 +1,4 @@
-use super::super::LaunchTraverser;
+use super::{super::LaunchTraverser, include::validate_include_path};
 use crate::{
     error::{ParseError, Result},
     record::extract_package_from_path,
@@ -123,8 +123,11 @@ impl LaunchTraverser {
                 file_path_str
             );
 
-            // Resolve relative paths relative to the current Python file
+            // Validate include path
             let include_path = Path::new(&file_path_str);
+            validate_include_path(include_path, &file_path_str)?;
+
+            // Resolve relative paths relative to the current Python file
             let resolved_include_path = if include_path.is_relative() {
                 // Resolve relative to the current Python file
                 if let Some(parent_dir) = path.parent() {
