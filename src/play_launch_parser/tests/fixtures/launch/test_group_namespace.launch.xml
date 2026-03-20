@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- Test: push-ros-namespace inside group wrapping an include.
+     Verifies that namespace is correctly propagated to included file's scope. -->
+<launch>
+  <group>
+    <push-ros-namespace namespace="sensing"/>
+    <include file="../includes/included.launch.xml"/>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="listener" name="outer_node"/>
+</launch>
