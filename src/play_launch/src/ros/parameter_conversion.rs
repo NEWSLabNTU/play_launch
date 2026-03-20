@@ -28,7 +28,7 @@ pub(crate) fn convert_parameters_to_ros(
 /// array parameters like [1, 2, 3] (integer_array) or [0.1, 0.2] (double_array).
 fn parse_parameter_value(value: &str) -> Result<rcl_interfaces::msg::ParameterValue> {
     // Parse value as YAML to determine type
-    let yaml_value: serde_yaml::Value = match serde_yaml::from_str(value) {
+    let yaml_value: serde_yml::Value = match serde_yml::from_str(value) {
         Ok(v) => v,
         Err(_) => {
             // If YAML parsing fails, treat as string
@@ -38,46 +38,40 @@ fn parse_parameter_value(value: &str) -> Result<rcl_interfaces::msg::ParameterVa
 
     match yaml_value {
         // Boolean
-        serde_yaml::Value::Bool(b) => Ok(create_bool_parameter(b)),
+        serde_yml::Value::Bool(b) => Ok(create_bool_parameter(b)),
 
         // Integer
-        serde_yaml::Value::Number(n) if n.is_i64() => {
+        serde_yml::Value::Number(n) if n.is_i64() => {
             Ok(create_integer_parameter(n.as_i64().unwrap()))
         }
 
         // Double (includes f64 and integers that need to be floats)
-        serde_yaml::Value::Number(n) if n.is_f64() => {
+        serde_yml::Value::Number(n) if n.is_f64() => {
             Ok(create_double_parameter(n.as_f64().unwrap()))
         }
 
         // Arrays (Sequence)
-        serde_yaml::Value::Sequence(seq) => {
+        serde_yml::Value::Sequence(seq) => {
             if seq.is_empty() {
                 // Empty array defaults to string array
                 return Ok(create_string_array_parameter(Vec::new()));
             }
 
             // Check if all elements are the same type
-            if seq.iter().all(|v| matches!(v, serde_yaml::Value::Bool(_))) {
+            if seq.iter().all(|v| matches!(v, serde_yml::Value::Bool(_))) {
                 let values: Vec<bool> = seq.iter().filter_map(|v| v.as_bool()).collect();
                 Ok(create_bool_array_parameter(values))
             } else if seq
                 .iter()
-                .all(|v| matches!(v, serde_yaml::Value::Number(n) if n.is_i64()))
+                .all(|v| matches!(v, serde_yml::Value::Number(n) if n.is_i64()))
             {
                 let values: Vec<i64> = seq.iter().filter_map(|v| v.as_i64()).collect();
                 Ok(create_integer_array_parameter(values))
-            } else if seq
-                .iter()
-                .all(|v| matches!(v, serde_yaml::Value::Number(_)))
-            {
+            } else if seq.iter().all(|v| matches!(v, serde_yml::Value::Number(_))) {
                 // All numbers, treat as doubles (handles mixed int/float)
                 let values: Vec<f64> = seq.iter().filter_map(|v| v.as_f64()).collect();
                 Ok(create_double_array_parameter(values))
-            } else if seq
-                .iter()
-                .all(|v| matches!(v, serde_yaml::Value::String(_)))
-            {
+            } else if seq.iter().all(|v| matches!(v, serde_yml::Value::String(_))) {
                 let values: Vec<String> = seq
                     .iter()
                     .filter_map(|v| v.as_str().map(String::from))
@@ -90,7 +84,7 @@ fn parse_parameter_value(value: &str) -> Result<rcl_interfaces::msg::ParameterVa
         }
 
         // String or other types
-        serde_yaml::Value::String(s) => Ok(create_string_parameter(&s)),
+        serde_yml::Value::String(s) => Ok(create_string_parameter(&s)),
         _ => Ok(create_string_parameter(value)),
     }
 }
