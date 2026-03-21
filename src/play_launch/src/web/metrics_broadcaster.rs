@@ -1,13 +1,15 @@
 //! Broadcaster for streaming system metrics to SSE clients.
+//!
+//! Uses `tokio::sync::broadcast` — same non-blocking pattern as
+//! `StateEventBroadcaster`.
 
 use serde::Serialize;
-use std::sync::Arc;
-use tokio::sync::{Mutex as TokioMutex, mpsc};
+use tokio::sync::broadcast;
 
 use crate::monitoring::system_stats::SystemStats;
 
-/// Channel capacity per SSE subscriber (small — metrics arrive every 2s)
-const METRICS_SUBSCRIBER_CHANNEL_SIZE: usize = 16;
+/// Shared broadcast buffer capacity (metrics arrive every 2s — 32 ≈ 1 min).
+const CHANNEL_CAPACITY: usize = 32;
 
 /// Subset of SystemStats fields for SSE streaming.
 #[derive(Debug, Clone, Serialize)]
@@ -45,47 +47,23 @@ impl From<&SystemStats> for SystemStatsSnapshot {
 
 /// Broadcaster for system metrics to SSE clients.
 pub struct SystemMetricsBroadcaster {
-    subscribers: Arc<TokioMutex<Vec<mpsc::Sender<SystemStatsSnapshot>>>>,
+    tx: broadcast::Sender<SystemStatsSnapshot>,
 }
 
 impl SystemMetricsBroadcaster {
     pub fn new() -> Self {
-        Self {
-            subscribers: Arc::new(TokioMutex::new(Vec::new())),
-        }
+        let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
+        Self { tx }
     }
 
     /// Subscribe to system metrics (for SSE connection).
-    pub async fn subscribe(&self) -> mpsc::Receiver<SystemStatsSnapshot> {
-        let (tx, rx) = mpsc::channel(METRICS_SUBSCRIBER_CHANNEL_SIZE);
-        let mut subs = self.subscribers.lock().await;
-        subs.push(tx);
-        tracing::debug!("New metrics SSE subscriber added (total: {})", subs.len());
-        rx
+    pub fn subscribe(&self) -> broadcast::Receiver<SystemStatsSnapshot> {
+        self.tx.subscribe()
     }
 
     /// Broadcast a snapshot to all subscribers.
-    ///
-    /// Automatically removes disconnected subscribers. Skips entirely when
-    /// there are no subscribers (zero overhead in the common case).
-    pub async fn broadcast(&self, snapshot: SystemStatsSnapshot) {
-        let mut subs = self.subscribers.lock().await;
-        if subs.is_empty() {
-            return;
-        }
-
-        // Remove disconnected subscribers
-        let initial_count = subs.len();
-        subs.retain(|tx| !tx.is_closed());
-        let removed = initial_count - subs.len();
-        if removed > 0 {
-            tracing::debug!("Removed {} disconnected metrics SSE subscribers", removed);
-        }
-
-        // Send to all active subscribers
-        for tx in subs.iter() {
-            let _ = tx.send(snapshot.clone()).await;
-        }
+    pub fn broadcast(&self, snapshot: SystemStatsSnapshot) {
+        let _ = self.tx.send(snapshot);
     }
 }
 

@@ -668,7 +668,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
                                                     name,
                                                     parameters: updates,
                                                 },
-                                            ).await;
+                                            );
                                         }
                                     }
                                 }

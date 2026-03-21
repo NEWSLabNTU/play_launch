@@ -87,7 +87,7 @@ pub(crate) async fn forward_state_events_and_wait(
             fqn_map.insert(name.clone(), full_node_name.clone());
             debug!("Updated FQN map: {} -> {}", name, full_node_name);
         }
-        broadcaster.broadcast(event).await;
+        broadcaster.broadcast(event);
     }
 
     // Join all actor tasks

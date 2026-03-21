@@ -579,7 +579,7 @@ pub async fn run_monitoring_task(
                         // Broadcast to SSE clients
                         if let Some(ref broadcaster) = metrics_broadcaster {
                             let snapshot = crate::web::SystemStatsSnapshot::from(&stats);
-                            broadcaster.broadcast(snapshot).await;
+                            broadcaster.broadcast(snapshot);
                         }
                     }
                     Err(e) => {

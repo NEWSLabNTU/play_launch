@@ -68,6 +68,13 @@ function connect() {
         }
     };
 
+    eventSource.addEventListener('refresh', () => {
+        console.warn('[sse] Server sent refresh (lagged) — re-syncing state');
+        fetchNodes();
+        fetchHealth();
+        fetchGraph();
+    });
+
     eventSource.onerror = () => {
         console.debug('[sse] Connection error');
         disconnect();

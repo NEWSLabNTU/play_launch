@@ -192,11 +192,13 @@ fn read_last_n_lines(path: &PathBuf, n: usize) -> eyre::Result<Vec<String>> {
 ///
 /// This endpoint provides real-time state updates for all nodes via Server-Sent Events.
 /// Each SSE message contains a JSON-serialized StateEvent.
+///
+/// If the client falls behind by more than the broadcast buffer capacity,
+/// a `refresh` event is sent so the client can re-sync via `/api/nodes`.
 pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Response {
     debug!("New SSE client connected for state updates");
 
-    // Subscribe to state events
-    let mut rx = state.state_broadcaster.subscribe().await;
+    let mut rx = state.state_broadcaster.subscribe();
 
     // Create the event stream with periodic heartbeat data events.
     // We send heartbeats as `data: keep-alive` (not SSE comments) because
@@ -208,9 +210,9 @@ pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Respons
 
         loop {
             tokio::select! {
-                event = rx.recv() => {
-                    match event {
-                        Some(event) => {
+                result = rx.recv() => {
+                    match result {
+                        Ok(event) => {
                             match serde_json::to_string(&event) {
                                 Ok(json) => {
                                     yield Ok::<_, Infallible>(Event::default().data(json));
@@ -220,7 +222,15 @@ pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Respons
                                 }
                             }
                         }
-                        None => break, // channel closed
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("SSE state client lagged by {} events, sending refresh", n);
+                            yield Ok::<_, Infallible>(
+                                Event::default()
+                                    .event("refresh")
+                                    .data(format!("{{\"lagged\":{n}}}"))
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
                 _ = heartbeat.tick() => {
@@ -247,7 +257,7 @@ pub async fn stream_system_metrics(State(state): State<Arc<WebState>>) -> Respon
     };
 
     debug!("New SSE client connected for system metrics");
-    let mut rx = broadcaster.subscribe().await;
+    let mut rx = broadcaster.subscribe();
 
     let stream = async_stream::stream! {
         let mut heartbeat = tokio::time::interval(SSE_KEEPALIVE_INTERVAL);
@@ -255,9 +265,9 @@ pub async fn stream_system_metrics(State(state): State<Arc<WebState>>) -> Respon
 
         loop {
             tokio::select! {
-                snapshot = rx.recv() => {
-                    match snapshot {
-                        Some(snap) => {
+                result = rx.recv() => {
+                    match result {
+                        Ok(snap) => {
                             match serde_json::to_string(&snap) {
                                 Ok(json) => {
                                     yield Ok::<_, Infallible>(Event::default().data(json));
@@ -267,7 +277,12 @@ pub async fn stream_system_metrics(State(state): State<Arc<WebState>>) -> Respon
                                 }
                             }
                         }
-                        None => break,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("SSE metrics client lagged by {} events", n);
+                            // Metrics are stateless snapshots — just continue,
+                            // the next recv() delivers the latest snapshot.
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
                 _ = heartbeat.tick() => {

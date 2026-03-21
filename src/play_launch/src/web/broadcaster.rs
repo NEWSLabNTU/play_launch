@@ -1,99 +1,57 @@
-//! Broadcaster for streaming StateEvents to SSE clients
+//! Broadcaster for streaming StateEvents to SSE clients.
+//!
+//! Uses `tokio::sync::broadcast` so the sender never blocks — if a subscriber
+//! falls behind by more than `CHANNEL_CAPACITY` events it receives a `Lagged`
+//! error and the SSE handler sends a "refresh" event so the client re-syncs.
 
 use crate::member_actor::StateEvent;
-use std::sync::Arc;
-use tokio::sync::{Mutex as TokioMutex, mpsc};
+use tokio::sync::broadcast;
 
-/// Channel capacity per SSE subscriber
-const SSE_SUBSCRIBER_CHANNEL_SIZE: usize = 100;
+/// Shared broadcast buffer capacity.
+///
+/// During Autoware startup ~120 nodes produce Started + LoadSucceeded events
+/// in rapid succession (~250 events).  512 gives comfortable headroom.
+const CHANNEL_CAPACITY: usize = 512;
 
-/// Broadcaster for StateEvents to SSE clients
+/// Broadcaster for StateEvents to SSE clients.
 pub struct StateEventBroadcaster {
-    /// Subscribers (each is a channel sender to SSE connection)
-    subscribers: Arc<TokioMutex<Vec<mpsc::Sender<StateEvent>>>>,
+    tx: broadcast::Sender<StateEvent>,
 }
 
 impl StateEventBroadcaster {
-    /// Create a new broadcaster
+    /// Create a new broadcaster.
     pub fn new() -> Self {
-        Self {
-            subscribers: Arc::new(TokioMutex::new(Vec::new())),
-        }
+        let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
+        Self { tx }
     }
 
-    /// Subscribe to state events (for SSE connection)
+    /// Subscribe to state events (for SSE connection).
     ///
-    /// Returns a receiver that will receive all StateEvents broadcast after subscription
-    pub async fn subscribe(&self) -> mpsc::Receiver<StateEvent> {
-        let (tx, rx) = mpsc::channel(SSE_SUBSCRIBER_CHANNEL_SIZE);
-        let mut subs = self.subscribers.lock().await;
-        subs.push(tx);
-        tracing::debug!("New SSE subscriber added (total: {})", subs.len());
-        rx
+    /// Returns a receiver that will receive all StateEvents broadcast after
+    /// subscription.  If the receiver falls behind by more than
+    /// `CHANNEL_CAPACITY`, the next `recv()` returns `RecvError::Lagged(n)`.
+    pub fn subscribe(&self) -> broadcast::Receiver<StateEvent> {
+        self.tx.subscribe()
     }
 
-    /// Broadcast a state event to all subscribers
+    /// Broadcast a state event to all subscribers.
     ///
-    /// Automatically removes disconnected subscribers
-    pub async fn broadcast(&self, event: StateEvent) {
-        let mut subs = self.subscribers.lock().await;
-
-        // Remove disconnected subscribers
-        let initial_count = subs.len();
-        subs.retain(|tx| !tx.is_closed());
-        let removed = initial_count - subs.len();
-        if removed > 0 {
-            tracing::debug!("Removed {} disconnected SSE subscribers", removed);
-        }
-
-        // Send to all active subscribers
-        for tx in subs.iter() {
-            // Ignore send errors (subscriber might have just disconnected)
-            let _ = tx.send(event.clone()).await;
-        }
-
-        if !subs.is_empty() {
-            tracing::trace!(
-                "Broadcast {:?} to {} subscribers",
-                event.event_type(),
-                subs.len()
-            );
-        }
+    /// This is **synchronous** and never blocks — events are placed into a
+    /// shared ring buffer.  Returns silently when there are no subscribers.
+    pub fn broadcast(&self, event: StateEvent) {
+        // send() only fails when there are zero receivers — that's fine.
+        let _ = self.tx.send(event);
     }
 
-    /// Get current subscriber count
+    /// Get current subscriber count.
     #[allow(dead_code)]
-    pub async fn subscriber_count(&self) -> usize {
-        let subs = self.subscribers.lock().await;
-        subs.len()
+    pub fn subscriber_count(&self) -> usize {
+        self.tx.receiver_count()
     }
 }
 
 impl Default for StateEventBroadcaster {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// Helper trait to get event type for logging
-trait EventType {
-    fn event_type(&self) -> &'static str;
-}
-
-impl EventType for StateEvent {
-    fn event_type(&self) -> &'static str {
-        match self {
-            StateEvent::Started { .. } => "Started",
-            StateEvent::Exited { .. } => "Exited",
-            StateEvent::Respawning { .. } => "Respawning",
-            StateEvent::Terminated { .. } => "Terminated",
-            StateEvent::Failed { .. } => "Failed",
-            StateEvent::LoadStarted { .. } => "LoadStarted",
-            StateEvent::LoadSucceeded { .. } => "LoadSucceeded",
-            StateEvent::LoadFailed { .. } => "LoadFailed",
-            StateEvent::Unloaded { .. } => "Unloaded",
-            StateEvent::Blocked { .. } => "Blocked",
-            StateEvent::ParameterChanged { .. } => "ParameterChanged",
-        }
     }
 }
