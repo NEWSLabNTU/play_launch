@@ -509,9 +509,12 @@ impl LaunchTraverser {
         let mut child_traverser = LaunchTraverser {
             context: child_context,
             include_chain: child_chain,
+            max_include_depth: self.max_include_depth,
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),
+            scope_table: crate::record::ScopeTable::new(),
+            current_scope_id: 0,
         };
 
         match child_traverser.build_ir_file(&resolved_path) {

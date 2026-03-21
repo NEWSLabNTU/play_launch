@@ -30,12 +30,35 @@ use std::{
 use substitution::LaunchContext;
 pub use substitution::types::block_command_substitution;
 
+/// Default maximum include depth (non-circular nesting limit).
+///
+/// Autoware's deepest include chain is ~10 levels. 100 is generous enough to
+/// never false-positive, conservative enough to prevent stack overflow.
+pub const DEFAULT_MAX_INCLUDE_DEPTH: usize = 100;
+
+/// Options for configuring the launch file parser.
+#[derive(Debug, Clone)]
+pub struct ParseOptions {
+    /// Maximum allowed include nesting depth (default: 100).
+    pub max_include_depth: usize,
+}
+
+impl Default for ParseOptions {
+    fn default() -> Self {
+        Self {
+            max_include_depth: DEFAULT_MAX_INCLUDE_DEPTH,
+        }
+    }
+}
+
 /// Launch tree traverser for parsing launch files
 pub struct LaunchTraverser {
     /// Unified context for substitution resolution, namespace management, and entity captures
     pub(crate) context: LaunchContext,
     /// Track include chain to detect circular includes (thread-local stack)
     pub(crate) include_chain: Vec<PathBuf>,
+    /// Maximum allowed include nesting depth
+    pub(crate) max_include_depth: usize,
     /// Temporary storage for records during XML parsing
     pub(crate) records: Vec<record::NodeRecord>,
     pub(crate) containers: Vec<record::ComposableNodeContainerRecord>,
@@ -48,6 +71,10 @@ pub struct LaunchTraverser {
 
 impl LaunchTraverser {
     pub fn new(cli_args: HashMap<String, String>) -> Self {
+        Self::with_options(cli_args, ParseOptions::default())
+    }
+
+    pub fn with_options(cli_args: HashMap<String, String>, options: ParseOptions) -> Self {
         let mut context = LaunchContext::new();
         // Apply CLI args to LaunchContext for substitution resolution
         for (k, v) in &cli_args {
@@ -57,6 +84,7 @@ impl LaunchTraverser {
         Self {
             context,
             include_chain: Vec::new(),
+            max_include_depth: options.max_include_depth,
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),
@@ -113,6 +141,17 @@ impl LaunchTraverser {
 /// Parse launch file and generate record.json
 pub fn parse_launch_file(path: &Path, cli_args: HashMap<String, String>) -> Result<RecordJson> {
     let mut traverser = LaunchTraverser::new(cli_args);
+    traverser.traverse_file(path)?;
+    traverser.into_record_json()
+}
+
+/// Parse launch file with custom options.
+pub fn parse_launch_file_with_options(
+    path: &Path,
+    cli_args: HashMap<String, String>,
+    options: ParseOptions,
+) -> Result<RecordJson> {
+    let mut traverser = LaunchTraverser::with_options(cli_args, options);
     traverser.traverse_file(path)?;
     traverser.into_record_json()
 }

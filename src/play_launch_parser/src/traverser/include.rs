@@ -64,6 +64,14 @@ impl LaunchTraverser {
             return Ok(()); // Skip circular includes
         }
 
+        // Check include depth limit
+        if self.include_chain.len() >= self.max_include_depth {
+            return Err(ParseError::MaxIncludeDepthExceeded {
+                max: self.max_include_depth,
+                file: canonical_path.display().to_string(),
+            });
+        }
+
         log::debug!("Including launch file: {}", resolved_path.display());
 
         // Log include arguments being passed
@@ -237,6 +245,7 @@ impl LaunchTraverser {
         let mut included_traverser = LaunchTraverser {
             context: include_context,
             include_chain: child_chain,
+            max_include_depth: self.max_include_depth,
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),

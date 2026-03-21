@@ -97,6 +97,7 @@ impl LaunchTraverser {
         let mut included_traverser = LaunchTraverser {
             context: include_context,
             include_chain: self.include_chain.clone(),
+            max_include_depth: self.max_include_depth,
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),

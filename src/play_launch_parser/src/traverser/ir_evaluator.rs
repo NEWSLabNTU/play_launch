@@ -251,12 +251,18 @@ impl LaunchTraverser {
         let mut child_traverser = LaunchTraverser {
             context: include_context,
             include_chain: self.include_chain.clone(),
+            max_include_depth: self.max_include_depth,
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),
+            scope_table: std::mem::take(&mut self.scope_table),
+            current_scope_id: self.current_scope_id,
         };
 
         child_traverser.evaluate_ir(body)?;
+
+        // Take back the scope table
+        self.scope_table = std::mem::take(&mut child_traverser.scope_table);
 
         // Merge records
         self.records.extend(child_traverser.records);

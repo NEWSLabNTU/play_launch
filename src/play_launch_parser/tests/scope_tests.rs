@@ -482,3 +482,56 @@ fn test_scoped_true_namespace_reverts() {
         "outside node should NOT inherit /scoped_ns from scoped=true group"
     );
 }
+
+#[test]
+fn test_max_include_depth_exceeded() {
+    use play_launch_parser::{ParseOptions, parse_launch_file_with_options};
+    use std::collections::HashMap;
+
+    // Create two files that include each other (non-circular because different names)
+    // but chain: a.launch.xml → b.launch.xml → a2.launch.xml → b2.launch.xml ...
+    // Easier: a self-including file won't work (circular detection catches it).
+    // Instead, set max_include_depth=2 and use a 3-level chain: a→b→c.
+    let dir = std::env::temp_dir().join("play_launch_test_depth_limit");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let c = dir.join("c.launch.xml");
+    std::fs::write(
+        &c,
+        r#"<launch><node pkg="demo" exec="c" name="c_node"/></launch>"#,
+    )
+    .unwrap();
+
+    let b = dir.join("b.launch.xml");
+    std::fs::write(
+        &b,
+        format!(r#"<launch><include file="{}"/></launch>"#, c.display()),
+    )
+    .unwrap();
+
+    let a = dir.join("a.launch.xml");
+    std::fs::write(
+        &a,
+        format!(r#"<launch><include file="{}"/></launch>"#, b.display()),
+    )
+    .unwrap();
+
+    // With max_include_depth=1, a→b is ok (depth 0), but b→c exceeds limit (depth 1)
+    let opts = ParseOptions {
+        max_include_depth: 1,
+    };
+    let result = parse_launch_file_with_options(&a, HashMap::new(), opts);
+    assert!(result.is_err(), "should fail with depth limit 2");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("Maximum include depth"),
+        "error should mention depth: {}",
+        err
+    );
+
+    // With default depth (100), same chain should succeed
+    let result = parse_launch_file_with_options(&a, HashMap::new(), ParseOptions::default());
+    assert!(result.is_ok(), "should succeed with default depth limit");
+
+    std::fs::remove_dir_all(&dir).ok();
+}

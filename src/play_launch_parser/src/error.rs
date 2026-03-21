@@ -41,6 +41,11 @@ pub enum ParseError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
+    #[error(
+        "Maximum include depth ({max}) exceeded at '{file}'. This may indicate a non-circular but excessively deep include chain."
+    )]
+    MaxIncludeDepthExceeded { max: usize, file: String },
+
     #[error("Python error: {0}")]
     PythonError(String),
 }
