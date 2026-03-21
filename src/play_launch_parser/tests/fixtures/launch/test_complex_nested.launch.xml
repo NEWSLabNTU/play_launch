@@ -15,7 +15,8 @@
   <set_parameter name="use_sim_time" value="$(var use_sim_time)" />
 
   <!-- Nested namespaces with multiple levels -->
-  <group ns="$(var robot_name)">
+  <group>
+    <push-ros-namespace namespace="$(var robot_name)"/>
     <push-ros-namespace ns="sensors" />
 
     <!-- Camera nodes -->

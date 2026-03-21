@@ -3,30 +3,56 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
 
-/// A scope in the launch include tree.
-/// Each scope corresponds to one launch file invocation.
-/// Shared context (namespace, env, global params) is stored once here,
-/// not duplicated per node.
+/// Origin of a scope — identifies the launch file.
+/// None for group scopes (anonymous).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScopeEntry {
-    pub id: usize,
+pub struct ScopeOrigin {
     /// ROS package name (extracted from ament install path, may be None)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pkg: Option<String>,
     /// Launch file name (basename, e.g. "sensing.launch.xml")
     pub file: String,
+}
+
+/// A scope in the launch tree.
+/// File scopes have `origin: Some(...)` — one per launch file invocation.
+/// Group scopes have `origin: None` — one per `<group>` that modifies
+/// namespace, env, or global params.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScopeEntry {
+    pub id: usize,
+    /// None for group scopes, Some for file scopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<ScopeOrigin>,
     /// Accumulated ROS namespace at this scope level
     pub ns: String,
-    /// Launch arguments passed to this scope
+    /// Launch arguments passed to this scope (file scopes only)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub args: HashMap<String, String>,
     /// Parent scope ID (None for root)
     pub parent: Option<usize>,
 }
 
+impl ScopeEntry {
+    /// Whether this is a file scope (has origin).
+    pub fn is_file_scope(&self) -> bool {
+        self.origin.is_some()
+    }
+
+    /// Package name (if file scope with known package).
+    pub fn pkg(&self) -> Option<&str> {
+        self.origin.as_ref().and_then(|o| o.pkg.as_deref())
+    }
+
+    /// File name (if file scope).
+    pub fn file(&self) -> Option<&str> {
+        self.origin.as_ref().map(|o| o.file.as_str())
+    }
+}
+
 /// Table of all scopes encountered during parsing.
 /// The root scope has id=0 and parent=None.
-/// Parent references form the launch include tree.
+/// Parent references form the launch tree (files + groups).
 #[derive(Debug, Clone, Default)]
 pub struct ScopeTable {
     entries: Vec<ScopeEntry>,
@@ -39,7 +65,7 @@ impl ScopeTable {
         }
     }
 
-    /// Push a new scope, returning its ID.
+    /// Push a file scope, returning its ID.
     pub fn push(
         &mut self,
         pkg: Option<String>,
@@ -51,10 +77,22 @@ impl ScopeTable {
         let id = self.entries.len();
         self.entries.push(ScopeEntry {
             id,
-            pkg,
-            file,
+            origin: Some(ScopeOrigin { pkg, file }),
             ns,
             args,
+            parent,
+        });
+        id
+    }
+
+    /// Push a group scope (anonymous, no file), returning its ID.
+    pub fn push_group(&mut self, ns: String, parent: Option<usize>) -> usize {
+        let id = self.entries.len();
+        self.entries.push(ScopeEntry {
+            id,
+            origin: None,
+            ns,
+            args: HashMap::new(),
             parent,
         });
         id

@@ -114,7 +114,7 @@ fn test_ir_conditional_branches() {
 fn test_ir_group_scoping() {
     let program = analyze_xml(
         r#"<launch>
-            <group ns="robot1">
+            <group><push-ros-namespace namespace="robot1"/>
                 <node pkg="demo_nodes_cpp" exec="talker" />
                 <node pkg="demo_nodes_cpp" exec="listener" />
             </group>

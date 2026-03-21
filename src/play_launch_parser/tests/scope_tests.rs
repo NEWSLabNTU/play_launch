@@ -1,6 +1,6 @@
 //! Tests for launch tree scope tracking (Phase 30.1)
 
-use play_launch_parser::record::{ScopeTable, extract_package_from_path};
+use play_launch_parser::record::{ScopeOrigin, ScopeTable, extract_package_from_path};
 use std::{collections::HashMap, path::Path};
 
 #[test]
@@ -20,8 +20,8 @@ fn test_scope_table_root() {
 
     let entry = table.get(0).unwrap();
     assert_eq!(entry.id, 0);
-    assert_eq!(entry.pkg.as_deref(), Some("my_pkg"));
-    assert_eq!(entry.file, "launch.xml");
+    assert_eq!(entry.pkg(), Some("my_pkg"));
+    assert_eq!(entry.file().unwrap_or("?"), "launch.xml");
     assert_eq!(entry.ns, "/");
     assert!(entry.parent.is_none());
 }
@@ -151,8 +151,10 @@ fn test_scope_serialization_roundtrip() {
 
     record.scopes.push(play_launch_parser::record::ScopeEntry {
         id: 0,
-        pkg: Some("demo_nodes_cpp".to_string()),
-        file: "talker_listener.launch.xml".to_string(),
+        origin: Some(ScopeOrigin {
+            pkg: Some("demo_nodes_cpp".to_string()),
+            file: "talker_listener.launch.xml".to_string(),
+        }),
         ns: "/".to_string(),
         args: HashMap::new(),
         parent: None,
@@ -165,7 +167,10 @@ fn test_scope_serialization_roundtrip() {
     // Deserialize back
     let parsed: RecordJson = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.scopes.len(), 1);
-    assert_eq!(parsed.scopes[0].file, "talker_listener.launch.xml");
+    assert_eq!(
+        parsed.scopes[0].file().unwrap_or("?"),
+        "talker_listener.launch.xml"
+    );
     assert!(parsed.scopes[0].parent.is_none());
 }
 
@@ -238,7 +243,10 @@ fn test_scope_tracking_simple_launch() {
     assert!(!record.scopes.is_empty(), "scopes should not be empty");
     assert_eq!(record.scopes[0].parent, None, "root scope has no parent");
     assert!(
-        record.scopes[0].file.ends_with(".launch.xml"),
+        record.scopes[0]
+            .file()
+            .unwrap_or("?")
+            .ends_with(".launch.xml"),
         "root scope file should be a launch file"
     );
 
@@ -298,23 +306,26 @@ fn test_scope_group_push_ros_namespace_with_include() {
 
     let record = parse_launch_file(path, HashMap::new()).unwrap();
 
-    // Should have 2 scopes: root + included file
+    // Should have 3+ scopes: root + group + included file
     assert!(
-        record.scopes.len() >= 2,
-        "expected at least 2 scopes, got {}",
+        record.scopes.len() >= 3,
+        "expected at least 3 scopes (root + group + include), got {}",
         record.scopes.len()
     );
 
-    // The included file's scope should have ns=/sensing
-    // (push-ros-namespace inside group propagates to include)
-    let child_scope = record.scopes.iter().find(|s| s.parent == Some(0));
-    assert!(child_scope.is_some(), "should have a child scope");
-    let child = child_scope.unwrap();
+    // Find the file scope (include) — it has origin set
+    let include_scope = record.scopes.iter().find(|s| s.is_file_scope() && s.id > 0);
+    assert!(include_scope.is_some(), "should have an include file scope");
+    let inc = include_scope.unwrap();
     assert_eq!(
-        child.ns, "/sensing",
+        inc.ns, "/sensing",
         "included file scope ns should be /sensing, got {}",
-        child.ns
+        inc.ns
     );
+
+    // Find the group scope — it has origin=None
+    let group_scope = record.scopes.iter().find(|s| !s.is_file_scope());
+    assert!(group_scope.is_some(), "should have a group scope");
 
     // The outer node should have no namespace or root namespace
     let outer = record
@@ -390,4 +401,84 @@ fn test_include_path_validation_blocks_non_launch() {
     );
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn test_scoped_false_namespace_leaks() {
+    use play_launch_parser::parse_launch_file;
+    use std::collections::HashMap;
+
+    let fixture_dir = format!("{}/tests/fixtures/launch", env!("CARGO_MANIFEST_DIR"));
+    let launch_file = format!("{}/test_scoped_false.launch.xml", fixture_dir);
+    let path = std::path::Path::new(&launch_file);
+
+    if !path.exists() {
+        return;
+    }
+
+    let record = parse_launch_file(path, HashMap::new()).unwrap();
+
+    // "inside" node should have /leaked_ns namespace
+    let inside = record
+        .node
+        .iter()
+        .find(|n| n.name.as_deref() == Some("inside"));
+    assert!(inside.is_some(), "should have 'inside' node");
+    assert_eq!(
+        inside.unwrap().namespace.as_deref(),
+        Some("/leaked_ns"),
+        "inside node should be in /leaked_ns"
+    );
+
+    // "outside" node should ALSO have /leaked_ns (scoped=false leaks)
+    let outside = record
+        .node
+        .iter()
+        .find(|n| n.name.as_deref() == Some("outside"));
+    assert!(outside.is_some(), "should have 'outside' node");
+    assert_eq!(
+        outside.unwrap().namespace.as_deref(),
+        Some("/leaked_ns"),
+        "outside node should inherit /leaked_ns from scoped=false group"
+    );
+}
+
+#[test]
+fn test_scoped_true_namespace_reverts() {
+    use play_launch_parser::parse_launch_file;
+    use std::collections::HashMap;
+
+    let fixture_dir = format!("{}/tests/fixtures/launch", env!("CARGO_MANIFEST_DIR"));
+    let launch_file = format!("{}/test_scoped_true.launch.xml", fixture_dir);
+    let path = std::path::Path::new(&launch_file);
+
+    if !path.exists() {
+        return;
+    }
+
+    let record = parse_launch_file(path, HashMap::new()).unwrap();
+
+    // "inside" node should have /scoped_ns namespace
+    let inside = record
+        .node
+        .iter()
+        .find(|n| n.name.as_deref() == Some("inside"));
+    assert!(inside.is_some(), "should have 'inside' node");
+    assert_eq!(
+        inside.unwrap().namespace.as_deref(),
+        Some("/scoped_ns"),
+        "inside node should be in /scoped_ns"
+    );
+
+    // "outside" node should NOT have /scoped_ns (scoped=true reverts)
+    let outside = record
+        .node
+        .iter()
+        .find(|n| n.name.as_deref() == Some("outside"));
+    assert!(outside.is_some(), "should have 'outside' node");
+    assert_ne!(
+        outside.unwrap().namespace.as_deref(),
+        Some("/scoped_ns"),
+        "outside node should NOT inherit /scoped_ns from scoped=true group"
+    );
 }

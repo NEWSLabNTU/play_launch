@@ -97,21 +97,36 @@ impl LaunchTraverser {
             "group" => {
                 let group = GroupAction::from_entity(entity)?;
 
-                // Save scope state — restored after group regardless of success/failure
-                let scope = self.context.save_scope();
+                // Only save/restore scope when scoped=true (default).
+                // When scoped=false, namespace/env changes leak to siblings.
+                let scope = if group.scoped {
+                    Some(self.context.save_scope())
+                } else {
+                    None
+                };
 
-                // Push namespace if specified
-                if let Some(ns_subs) = &group.namespace {
-                    let namespace = resolve_substitutions(ns_subs, &self.context)
-                        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-                    self.context.push_namespace(namespace);
+                // Push a group scope for scoped groups.
+                // This creates an anonymous scope entry so the launch tree
+                // reflects the group nesting structure.
+                let prev_scope_id = self.current_scope_id;
+                if group.scoped {
+                    let group_ns = self.context.current_namespace();
+                    let group_scope_id = self
+                        .scope_table
+                        .push_group(group_ns, Some(self.current_scope_id));
+                    self.current_scope_id = group_scope_id;
                 }
 
-                // Traverse children, then always restore scope
+                // Traverse children
                 let result = entity
                     .children()
                     .try_for_each(|child| self.traverse_entity(&child));
-                self.context.restore_scope(scope);
+
+                // Restore scope only if scoped=true
+                if let Some(saved) = scope {
+                    self.context.restore_scope(saved);
+                }
+                self.current_scope_id = prev_scope_id;
                 result?;
             }
             "let" => {
@@ -164,7 +179,7 @@ impl LaunchTraverser {
                     .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
                 self.context.add_remapping(from, to);
             }
-            "push-ros-namespace" => {
+            "push-ros-namespace" | "push_ros_namespace" => {
                 // Try "namespace" attribute first (Autoware/ROS 2 standard),
                 // then fall back to "ns" for backwards compatibility
                 let ns_str = entity
@@ -183,7 +198,7 @@ impl LaunchTraverser {
 
                 self.context.push_namespace(namespace);
             }
-            "pop-ros-namespace" => {
+            "pop-ros-namespace" | "pop_ros_namespace" => {
                 self.context.pop_namespace();
             }
             "node_container" | "node-container" => {

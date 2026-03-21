@@ -318,9 +318,9 @@ fn test_empty_launch_tag() {
 fn test_nested_groups_without_nodes() {
     // Nested groups without any actual nodes
     let xml = r#"<launch>
-        <group ns="outer">
-            <group ns="inner">
-                <group ns="innermost">
+        <group><push-ros-namespace namespace="outer"/>
+            <group><push-ros-namespace namespace="inner"/>
+                <group><push-ros-namespace namespace="innermost"/>
                     <!-- No nodes here -->
                 </group>
             </group>

@@ -7,7 +7,8 @@
   <let name="config_dir" value="$(find-pkg-share demo_nodes_cpp)/config" />
 
   <!-- Group with namespace -->
-  <group ns="$(var namespace)">
+  <group>
+    <push-ros-namespace namespace="$(var namespace)"/>
     <!-- Node with if condition -->
     <node pkg="demo_nodes_cpp" exec="talker" name="talker" if="$(var use_sim)">
       <param name="config" value="$(var config_dir)/params.yaml" />

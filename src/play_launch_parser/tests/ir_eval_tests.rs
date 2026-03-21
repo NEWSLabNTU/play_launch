@@ -65,7 +65,7 @@ fn test_evaluate_conditional_override() {
 fn test_evaluate_group_namespace() {
     let file = write_xml(
         r#"<launch>
-            <group ns="robot1">
+            <group><push-ros-namespace namespace="robot1"/>
                 <node pkg="demo_nodes_cpp" exec="talker" />
             </group>
         </launch>"#,
@@ -216,10 +216,10 @@ fn test_evaluate_round_trip_with_args() {
 fn test_evaluate_round_trip_with_group_namespace() {
     let file = write_xml(
         r#"<launch>
-            <group ns="robot1">
+            <group><push-ros-namespace namespace="robot1"/>
                 <node pkg="demo_nodes_cpp" exec="talker" />
             </group>
-            <group ns="robot2">
+            <group><push-ros-namespace namespace="robot2"/>
                 <node pkg="demo_nodes_cpp" exec="listener" />
             </group>
         </launch>"#,
@@ -318,7 +318,7 @@ fn test_evaluate_launch_program_all_nodes() {
     let file = write_xml(
         r#"<launch>
             <node pkg="pkg1" exec="node1" />
-            <group ns="ns1">
+            <group><push-ros-namespace namespace="ns1"/>
                 <executable cmd="exec1" />
             </group>
             <node_container name="container1" pkg="rclcpp_components" exec="component_container">
@@ -377,8 +377,8 @@ fn test_evaluate_push_namespace() {
 fn test_evaluate_nested_groups() {
     let file = write_xml(
         r#"<launch>
-            <group ns="robot1">
-                <group ns="sensors">
+            <group><push-ros-namespace namespace="robot1"/>
+                <group><push-ros-namespace namespace="sensors"/>
                     <node pkg="demo_nodes_cpp" exec="talker" />
                 </group>
             </group>

@@ -404,11 +404,13 @@ test_node:
     }
 
     #[test]
-    fn test_namespace_scoping_with_group_attribute() {
+    fn test_namespace_scoping_with_push_ros_namespace() {
         let xml = r#"<launch>
-            <group ns="robot1">
+            <group>
+                <push-ros-namespace namespace="robot1"/>
                 <node pkg="demo_nodes_cpp" exec="talker" />
-                <group ns="sensors">
+                <group>
+                    <push-ros-namespace namespace="sensors"/>
                     <node pkg="demo_nodes_cpp" exec="listener" />
                 </group>
             </group>
@@ -429,7 +431,8 @@ test_node:
     #[test]
     fn test_namespace_explicit_overrides_group() {
         let xml = r#"<launch>
-            <group ns="robot1">
+            <group>
+                <push-ros-namespace namespace="robot1"/>
                 <node pkg="demo_nodes_cpp" exec="talker" namespace="/override" />
             </group>
         </launch>"#;
@@ -446,8 +449,10 @@ test_node:
     #[test]
     fn test_namespace_absolute() {
         let xml = r#"<launch>
-            <group ns="robot1">
-                <group ns="/absolute">
+            <group>
+                <push-ros-namespace namespace="robot1"/>
+                <group>
+                    <push-ros-namespace namespace="/absolute"/>
                     <node pkg="demo_nodes_cpp" exec="talker" />
                 </group>
             </group>

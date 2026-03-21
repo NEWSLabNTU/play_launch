@@ -573,7 +573,7 @@ fn test_complex_nested_with_args_override() {
 fn test_deeply_nested_namespaces() {
     // Test that deeply nested namespace stacking works correctly
     let xml = r#"<launch>
-        <group ns="level1">
+        <group><push-ros-namespace namespace="level1"/>
             <push-ros-namespace ns="level2" />
             <group>
                 <push-ros-namespace ns="level3" />
