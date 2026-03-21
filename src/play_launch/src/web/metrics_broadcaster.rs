@@ -65,6 +65,11 @@ impl SystemMetricsBroadcaster {
     pub fn broadcast(&self, snapshot: SystemStatsSnapshot) {
         let _ = self.tx.send(snapshot);
     }
+
+    /// Get current subscriber count.
+    pub fn subscriber_count(&self) -> usize {
+        self.tx.receiver_count()
+    }
 }
 
 impl Default for SystemMetricsBroadcaster {

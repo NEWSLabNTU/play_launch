@@ -44,7 +44,6 @@ impl StateEventBroadcaster {
     }
 
     /// Get current subscriber count.
-    #[allow(dead_code)]
     pub fn subscriber_count(&self) -> usize {
         self.tx.receiver_count()
     }

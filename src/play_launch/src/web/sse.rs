@@ -30,6 +30,9 @@ const POLL_INTERVAL_MS: u64 = 500;
 /// SSE keepalive/heartbeat interval
 const SSE_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(3);
 
+/// Maximum concurrent SSE subscribers per broadcast channel.
+const MAX_SSE_SUBSCRIBERS: usize = 50;
+
 /// Stream stdout logs for a node
 pub async fn stream_stdout(
     State(state): State<Arc<WebState>>,
@@ -196,6 +199,14 @@ fn read_last_n_lines(path: &PathBuf, n: usize) -> eyre::Result<Vec<String>> {
 /// If the client falls behind by more than the broadcast buffer capacity,
 /// a `refresh` event is sent so the client can re-sync via `/api/nodes`.
 pub async fn stream_state_updates(State(state): State<Arc<WebState>>) -> Response {
+    if state.state_broadcaster.subscriber_count() >= MAX_SSE_SUBSCRIBERS {
+        warn!(
+            "SSE state subscriber limit reached ({})",
+            MAX_SSE_SUBSCRIBERS
+        );
+        return (StatusCode::SERVICE_UNAVAILABLE, "Too many SSE connections").into_response();
+    }
+
     debug!("New SSE client connected for state updates");
 
     let mut rx = state.state_broadcaster.subscribe();
@@ -255,6 +266,14 @@ pub async fn stream_system_metrics(State(state): State<Arc<WebState>>) -> Respon
             return (StatusCode::SERVICE_UNAVAILABLE, "Monitoring is disabled").into_response();
         }
     };
+
+    if broadcaster.subscriber_count() >= MAX_SSE_SUBSCRIBERS {
+        warn!(
+            "SSE metrics subscriber limit reached ({})",
+            MAX_SSE_SUBSCRIBERS
+        );
+        return (StatusCode::SERVICE_UNAVAILABLE, "Too many SSE connections").into_response();
+    }
 
     debug!("New SSE client connected for system metrics");
     let mut rx = broadcaster.subscribe();
