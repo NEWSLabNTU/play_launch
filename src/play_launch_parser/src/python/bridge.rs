@@ -300,9 +300,12 @@ fn set_current_launch_context(ctx: &mut LaunchContext) {
     });
 }
 
-/// Get the current LaunchContext for this thread
-/// Returns None if no context is set
-pub fn get_current_launch_context() -> Option<*mut LaunchContext> {
+/// Get the current LaunchContext for this thread.
+/// Returns None if no context is set.
+///
+/// Private — external code should use `with_launch_context()` or
+/// `try_with_launch_context()` which safely scope the borrow.
+fn get_current_launch_context() -> Option<*mut LaunchContext> {
     CURRENT_LAUNCH_CONTEXT.with(|cell| *cell.borrow())
 }
 
