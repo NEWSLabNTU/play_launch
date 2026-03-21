@@ -151,27 +151,40 @@ fn print_tree(dump: &LaunchDump) {
     ) {
         let s = &scopes[id];
         let prefix = "  ".repeat(indent);
-        let pkg = s.pkg.as_deref().unwrap_or("(none)");
+        let pkg = s.pkg().unwrap_or("(none)");
         let count = counts.get(&id).copied().unwrap_or(0);
         let count_str = if count > 0 {
             format!("  {}({} entities){}", c.dim, count, c.reset)
         } else {
             String::new()
         };
-        println!(
-            "{}{dim}[{id:2}]{reset} {cpkg}{pkg}{reset} {cfile}{file}{reset}  {cns}ns={ns}{reset}{count}",
-            prefix,
-            dim = c.dim,
-            id = s.id,
-            reset = c.reset,
-            cpkg = c.pkg,
-            pkg = pkg,
-            cfile = c.file,
-            file = s.file,
-            cns = c.ns,
-            ns = s.ns,
-            count = count_str,
-        );
+        if s.is_file_scope() {
+            println!(
+                "{}{dim}[{id:2}]{reset} {cpkg}{pkg}{reset} {cfile}{file}{reset}  {cns}ns={ns}{reset}{count}",
+                prefix,
+                dim = c.dim,
+                id = s.id,
+                reset = c.reset,
+                cpkg = c.pkg,
+                pkg = pkg,
+                cfile = c.file,
+                file = s.file().unwrap_or("?"),
+                cns = c.ns,
+                ns = s.ns,
+                count = count_str,
+            );
+        } else {
+            println!(
+                "{}{dim}[{id:2}]{reset} {dim}<group>{reset}  {cns}ns={ns}{reset}{count}",
+                prefix,
+                dim = c.dim,
+                id = s.id,
+                reset = c.reset,
+                cns = c.ns,
+                ns = s.ns,
+                count = count_str,
+            );
+        }
         if let Some(child_ids) = children.get(&Some(id)) {
             for &child_id in child_ids {
                 print_scope(scopes, children, counts, c, child_id, indent + 1);
@@ -275,7 +288,7 @@ fn show_launch_context(
     let matches: Vec<&ScopeEntry> = dump
         .scopes
         .iter()
-        .filter(|s| s.pkg.as_deref() == Some(pkg) && s.file == file)
+        .filter(|s| s.pkg() == Some(pkg) && s.file().unwrap_or("?") == file)
         .filter(|s| namespace.is_none() || s.ns == namespace.unwrap())
         .collect();
 
@@ -286,8 +299,8 @@ fn show_launch_context(
             eprintln!(
                 "  [{}] {}/{}  ns={}",
                 s.id,
-                s.pkg.as_deref().unwrap_or("?"),
-                s.file,
+                s.pkg().unwrap_or("?"),
+                s.file().unwrap_or("?"),
                 s.ns
             );
         }
@@ -316,8 +329,8 @@ fn show_launch_context(
         // Scope chain
         println!("scope_chain:");
         for s in scope_chain(&dump.scopes, scope.id) {
-            println!("  - pkg: {}", s.pkg.as_deref().unwrap_or("null"));
-            println!("    file: {}", s.file);
+            println!("  - pkg: {}", s.pkg().unwrap_or("null"));
+            println!("    file: {}", s.file().unwrap_or("?"));
             println!("    ns: {}", s.ns);
         }
 
@@ -364,8 +377,8 @@ fn show_launch_context(
         if !children.is_empty() {
             println!("includes:");
             for cs in &children {
-                println!("  - pkg: {}", cs.pkg.as_deref().unwrap_or("null"));
-                println!("    file: {}", cs.file);
+                println!("  - pkg: {}", cs.pkg().unwrap_or("null"));
+                println!("    file: {}", cs.file().unwrap_or("?"));
                 println!("    ns: {}", cs.ns);
             }
         }
@@ -381,15 +394,15 @@ fn print_scope_info(scopes: &[ScopeEntry], scope_id: Option<usize>) {
         && let Some(s) = scopes.get(id)
     {
         println!("origin:");
-        println!("  pkg: {}", s.pkg.as_deref().unwrap_or("null"));
-        println!("  file: {}", s.file);
+        println!("  pkg: {}", s.pkg().unwrap_or("null"));
+        println!("  file: {}", s.file().unwrap_or("?"));
         println!("  ns: {}", s.ns);
         println!("scope_chain:");
         for sc in scope_chain(scopes, id) {
             println!(
                 "  - {}/{}  ns={}",
-                sc.pkg.as_deref().unwrap_or("?"),
-                sc.file,
+                sc.pkg().unwrap_or("?"),
+                sc.file().unwrap_or("?"),
                 sc.ns
             );
         }

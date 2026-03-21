@@ -2,15 +2,30 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class ScopeEntry:
-    """A scope in the launch include tree."""
+class ScopeOrigin:
+    """Origin of a scope — identifies the launch file."""
 
-    id: int
     pkg: str | None
     file: str
+
+
+@dataclass
+class ScopeEntry:
+    """A scope in the launch tree."""
+
+    id: int
+    origin: ScopeOrigin | None
     ns: str
     args: dict[str, str] = field(default_factory=dict)
     parent: int | None = None
+
+    def pkg(self) -> str | None:
+        """Package name (if file scope with known package)."""
+        return self.origin.pkg if self.origin else None
+
+    def file(self) -> str | None:
+        """File name (if file scope)."""
+        return self.origin.file if self.origin else None
 
 
 def extract_package_from_path(path: str) -> str | None:
@@ -97,11 +112,11 @@ class LaunchDump:
         """Push a new scope entry. Returns the scope ID."""
         scope_id = len(self.scopes)
         parent = self._scope_stack[-1] if self._scope_stack else None
+        origin = ScopeOrigin(pkg=pkg, file=filename) if filename else None
         self.scopes.append(
             ScopeEntry(
                 id=scope_id,
-                pkg=pkg,
-                file=filename,
+                origin=origin,
                 ns=ns,
                 args=args or {},
                 parent=parent,

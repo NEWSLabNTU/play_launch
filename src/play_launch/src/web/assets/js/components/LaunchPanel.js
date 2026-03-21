@@ -39,32 +39,57 @@ function ScopeInfoTab({ scope, scopes, nodeScopes }) {
     // Child scopes
     const children = scopes.filter(s => s.parent === scope.id);
 
+    const isGroup = !scope.origin;
+    const pkg = scope.origin?.pkg || '(none)';
+    const file = scope.origin?.file || null;
+
+    // For groups, derive effective namespace from children
+    let effectiveNs = scope.ns;
+    if (isGroup) {
+        const childNsList = scopes
+            .filter(s => s.parent === scope.id && s.ns !== scope.ns)
+            .map(s => s.ns)
+            .sort((a, b) => a.length - b.length);
+        if (childNsList.length > 0) effectiveNs = childNsList[0];
+    }
+
     return html`
         <div class="lp-scroll">
-            <div class="lp-section">
-                <div class="lp-label">Package</div>
-                <div class="lp-value lp-pkg">${scope.pkg || '(none)'}</div>
-            </div>
-            <div class="lp-section">
-                <div class="lp-label">File</div>
-                <div class="lp-value">${scope.file}</div>
-            </div>
+            ${isGroup ? html`
+                <div class="lp-section">
+                    <div class="lp-label">Type</div>
+                    <div class="lp-value"><em>Group scope</em></div>
+                </div>
+            ` : html`
+                <div class="lp-section">
+                    <div class="lp-label">Package</div>
+                    <div class="lp-value lp-pkg">${pkg}</div>
+                </div>
+                <div class="lp-section">
+                    <div class="lp-label">File</div>
+                    <div class="lp-value">${file}</div>
+                </div>
+            `}
             <div class="lp-section">
                 <div class="lp-label">Namespace</div>
-                <div class="lp-value lp-ns-val">${scope.ns}</div>
+                <div class="lp-value lp-ns-val">${effectiveNs}</div>
             </div>
 
             ${chain.length > 1 && html`
                 <div class="lp-section">
                     <div class="lp-label">Include Chain</div>
                     <div class="lp-chain">
-                        ${chain.map((s, i) => html`
-                            <div class="lp-chain-item" key=${s.id}>
-                                <span class="lp-chain-depth">${'\u00A0'.repeat(i * 2)}${i > 0 ? '\u2514\u2500 ' : ''}</span>
-                                <span class="lp-pkg">${s.pkg || '?'}</span>
-                                <span> ${s.file}</span>
-                            </div>
-                        `)}
+                        ${chain.map((s, i) => {
+                            const label = s.origin
+                                ? (s.origin.pkg || '?') + ' ' + s.origin.file
+                                : '<group>';
+                            return html`
+                                <div class="lp-chain-item" key=${s.id}>
+                                    <span class="lp-chain-depth">${'\u00A0'.repeat(i * 2)}${i > 0 ? '\u2514\u2500 ' : ''}</span>
+                                    <span>${label}</span>
+                                </div>
+                            `;
+                        })}
                     </div>
                 </div>
             `}
@@ -92,14 +117,18 @@ function ScopeInfoTab({ scope, scopes, nodeScopes }) {
                 <div class="lp-section">
                     <div class="lp-label">Includes (${children.length})</div>
                     <div class="lp-includes">
-                        ${children.map(cs => html`
-                            <div class="lp-include" key=${cs.id}
-                                 onClick=${() => { launchTreeSelection.value = { type: 'scope', id: cs.id }; }}>
-                                <span class="lp-pkg">${cs.pkg || '?'}</span>
-                                <span> ${cs.file}</span>
-                                ${cs.ns !== '/' && html`<span class="lp-ns"> ${cs.ns}</span>`}
-                            </div>
-                        `)}
+                        ${children.map(cs => {
+                            const csLabel = cs.origin
+                                ? (cs.origin.pkg || '?') + ' ' + cs.origin.file
+                                : '<group>';
+                            return html`
+                                <div class="lp-include" key=${cs.id}
+                                     onClick=${() => { launchTreeSelection.value = { type: 'scope', id: cs.id }; }}>
+                                    <span>${csLabel}</span>
+                                    ${cs.ns !== '/' && html`<span class="lp-ns"> ${cs.ns}</span>`}
+                                </div>
+                            `;
+                        })}
                     </div>
                 </div>
             `}
@@ -260,8 +289,24 @@ export function LaunchPanel() {
     const title = sel.type === 'scope'
         ? (() => {
             const tree = launchTree.value;
-            const scope = tree?.scopes?.[sel.id];
-            return scope ? `${scope.pkg || '?'} ${scope.file}` : `Scope ${sel.id}`;
+            const scopes = tree?.scopes;
+            const scope = scopes?.[sel.id];
+            if (!scope) return `Scope ${sel.id}`;
+            if (scope.origin) return `${scope.origin.pkg || '?'} ${scope.origin.file}`;
+            // Derive group label from child namespace differences
+            const groupNs = scope.ns;
+            const childNsList = scopes
+                .filter(s => s.parent === scope.id && s.ns !== groupNs)
+                .map(s => s.ns)
+                .sort((a, b) => a.length - b.length);
+            if (childNsList.length > 0) {
+                const prefix = groupNs === '/' ? '/' : groupNs + '/';
+                const rel = childNsList[0].startsWith(prefix)
+                    ? childNsList[0].slice(prefix.length - 1)
+                    : childNsList[0];
+                return `group ${rel}`;
+            }
+            return 'group';
         })()
         : sel.name;
 

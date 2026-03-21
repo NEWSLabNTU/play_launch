@@ -35,7 +35,7 @@ Completed phase docs are in `archive/`.
 | 28 | Parser Integration Test Coverage | ✅ | 2026-03-03 |
 | 29 | RCL Interception & Frontier Tracking | ✅ | 2026-03-11 |
 | 30 | Launch Tree Scoping | ✅ | 2026-03-19 |
-| 30b | Group Scopes | 📋 Planned | — |
+| 30b | Group Scopes | ✅ | 2026-03-20 |
 | 31 | Launch Manifest | 📋 Planned | — |
 
 ---
@@ -67,9 +67,9 @@ Scope table in both Rust and Python parsers. 83 scopes / 119 entities for Autowa
 See [phase-30-launch_scoping.md](./phase-30-launch_scoping.md).
 Design: [docs/design/record-format.md](../design/record-format.md), [docs/design/launch-context-tool.md](../design/launch-context-tool.md).
 
-### Phase 30b: Group Scopes (planned)
+### Phase 30b: Group Scopes (complete)
 
-Extend scope table with `<group>` blocks as anonymous scopes. Fixes B2 (namespace not reflected in child scopes). ScopeEntry refactored: `origin: Option<ScopeOrigin>` (null for groups, object for files).
+ScopeEntry refactored: `origin: Option<ScopeOrigin>` (null for groups, object for files). Groups with namespace attribute create anonymous scope entries. Autoware: 83 file scopes, 0 group scopes (uses `<push-ros-namespace>` pattern). Cross-parser comparison passes.
 
 See [phase-30b-group_scopes.md](./phase-30b-group_scopes.md).
 

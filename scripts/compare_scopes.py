@@ -22,14 +22,30 @@ def load_record(path: str) -> dict:
         return json.load(f)
 
 
+def scope_pkg(s: dict) -> str | None:
+    """Get package name from a scope dict."""
+    origin = s.get("origin")
+    if origin:
+        return origin.get("pkg")
+    return None
+
+
+def scope_file(s: dict) -> str | None:
+    """Get file name from a scope dict."""
+    origin = s.get("origin")
+    if origin:
+        return origin.get("file")
+    return None
+
+
 def scope_identity(scopes: list[dict], s: dict) -> tuple:
     """Return (pkg, file, parent_pkg, parent_file) for a scope."""
     parent = scopes[s["parent"]] if s["parent"] is not None else None
     return (
-        s.get("pkg"),
-        s["file"],
-        parent.get("pkg") if parent else None,
-        parent["file"] if parent else None,
+        scope_pkg(s),
+        scope_file(s),
+        scope_pkg(parent) if parent else None,
+        scope_file(parent) if parent else None,
     )
 
 
@@ -248,8 +264,8 @@ def compare_scopes(rust_path: str, python_path: str) -> int:
     print()
 
     # --- (pkg, file) counts ---
-    rc = Counter((s.get("pkg"), s["file"]) for s in rust_scopes)
-    pc = Counter((s.get("pkg"), s["file"]) for s in python_scopes)
+    rc = Counter((scope_pkg(s), scope_file(s)) for s in rust_scopes)
+    pc = Counter((scope_pkg(s), scope_file(s)) for s in python_scopes)
 
     all_keys = sorted(set(rc.keys()) | set(pc.keys()))
     pkg_file_diffs = []
@@ -306,7 +322,7 @@ def compare_scopes(rust_path: str, python_path: str) -> int:
         if scope_id is None or scope_id >= len(scopes):
             return (None, None)
         s = scopes[scope_id]
-        return (s.get("pkg"), s["file"])
+        return (scope_pkg(s), scope_file(s))
 
     scope_mismatches = 0
     for kind in ["node", "container", "load_node"]:

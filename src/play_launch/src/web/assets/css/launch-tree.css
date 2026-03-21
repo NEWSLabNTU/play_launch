@@ -100,6 +100,34 @@
     color: var(--text-primary);
 }
 
+/* ── Subtree expand/collapse button ── */
+
+.lt-subtree-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    opacity: 0;
+    cursor: pointer;
+    border-radius: 3px;
+    user-select: none;
+    transition: opacity 0.15s;
+}
+
+.lt-row:hover .lt-subtree-btn {
+    opacity: 0.6;
+}
+
+.lt-subtree-btn:hover {
+    opacity: 1 !important;
+    background: var(--hover-bg);
+    color: var(--text-primary);
+}
+
 /* ── Scope content ── */
 
 .lt-pkg {
@@ -165,6 +193,17 @@
 
 .lt-scope-has-failed:hover {
     background: rgba(239, 68, 68, 0.10);
+}
+
+/* Group scope rows — dimmer, no package/file */
+.lt-scope-group {
+    opacity: 0.7;
+}
+
+.lt-group-label {
+    color: var(--text-secondary);
+    font-style: italic;
+    font-size: 12px;
 }
 
 /* ── Node type dots ── */

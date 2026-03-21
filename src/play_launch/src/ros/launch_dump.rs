@@ -8,18 +8,46 @@ use std::{
 
 pub type ParameterValue = String;
 
-/// A scope in the launch include tree (from parser Phase 30).
-/// Each entry represents one launch file invocation.
+/// Origin of a scope — identifies the launch file.
+/// None for group scopes (anonymous).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ScopeOrigin {
+    /// ROS package name (extracted from ament install path, may be None)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pkg: Option<String>,
+    /// Launch file name (basename)
+    pub file: String,
+}
+
+/// A scope in the launch tree (from parser Phase 30).
+/// File scopes have `origin: Some(...)`, group scopes have `origin: None`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScopeEntry {
     pub id: usize,
-    #[serde(default)]
-    pub pkg: Option<String>,
-    pub file: String,
+    /// None for group scopes, Some for file scopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<ScopeOrigin>,
     pub ns: String,
     #[serde(default)]
     pub args: HashMap<String, String>,
     pub parent: Option<usize>,
+}
+
+impl ScopeEntry {
+    /// Whether this is a file scope (has origin).
+    pub fn is_file_scope(&self) -> bool {
+        self.origin.is_some()
+    }
+
+    /// Package name (if file scope with known package).
+    pub fn pkg(&self) -> Option<&str> {
+        self.origin.as_ref().and_then(|o| o.pkg.as_deref())
+    }
+
+    /// File name (if file scope).
+    pub fn file(&self) -> Option<&str> {
+        self.origin.as_ref().map(|o| o.file.as_str())
+    }
 }
 
 /// The serialization format for a recorded launch.

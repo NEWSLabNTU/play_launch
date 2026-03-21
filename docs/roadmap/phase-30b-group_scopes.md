@@ -1,6 +1,6 @@
 # Phase 30b: Group Scopes
 
-**Status**: Planned
+**Status**: Complete
 **Priority**: Medium (fixes B2, improves launch tree fidelity)
 **Dependencies**: Phase 30 (Launch Tree Scoping — complete)
 

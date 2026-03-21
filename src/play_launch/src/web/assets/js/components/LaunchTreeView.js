@@ -32,6 +32,71 @@ function collapseAll() {
     launchTreeExpanded.value = new Set([0]);
 }
 
+/** Expand a scope and all its descendants. */
+function expandSubtree(scopeId, scopeChildren) {
+    const expanded = new Set(launchTreeExpanded.value);
+    const stack = [scopeId];
+    while (stack.length > 0) {
+        const id = stack.pop();
+        expanded.add(id);
+        const children = scopeChildren.get(id) || [];
+        for (const child of children) stack.push(child);
+    }
+    launchTreeExpanded.value = expanded;
+}
+
+/** Collapse a scope and all its descendants. */
+function collapseSubtree(scopeId, scopeChildren) {
+    const expanded = new Set(launchTreeExpanded.value);
+    const stack = [scopeId];
+    while (stack.length > 0) {
+        const id = stack.pop();
+        expanded.delete(id);
+        const children = scopeChildren.get(id) || [];
+        for (const child of children) stack.push(child);
+    }
+    launchTreeExpanded.value = expanded;
+}
+
+/** Check if the entire subtree is expanded. */
+function isSubtreeFullyExpanded(scopeId, scopeChildren, expanded) {
+    if (!expanded.has(scopeId)) return false;
+    const children = scopeChildren.get(scopeId) || [];
+    return children.every(c => isSubtreeFullyExpanded(c, scopeChildren, expanded));
+}
+
+/**
+ * Derive a display label for a group scope.
+ * The group scope's own `ns` is captured at entry (before push-ros-namespace),
+ * so it typically equals its parent's ns.  We look at direct child scopes
+ * to find the namespace segment(s) introduced by the group.
+ */
+function getGroupLabel(scope, scopes, scopeChildren) {
+    const groupNs = scope.ns;
+
+    // Check direct children for namespace differences
+    const childIds = scopeChildren.get(scope.id) || [];
+    const childNamespaces = [];
+    for (const cid of childIds) {
+        const cs = scopes[cid];
+        if (cs && cs.ns !== groupNs) childNamespaces.push(cs.ns);
+    }
+
+    if (childNamespaces.length > 0) {
+        // Pick the shortest differing namespace (closest to the group's ns push)
+        childNamespaces.sort((a, b) => a.length - b.length);
+        const childNs = childNamespaces[0];
+        // Compute relative part
+        const prefix = groupNs === '/' ? '/' : groupNs + '/';
+        const rel = childNs.startsWith(prefix)
+            ? childNs.slice(prefix.length - 1)  // keep leading /
+            : childNs;
+        return 'group ' + rel;
+    }
+
+    return 'group';
+}
+
 /** Check if a node has recent stderr activity. Returns 'hot'|'warm'|null. */
 function getNodeActivity(nodeName) {
     const node = nodes.value.get(nodeName);
@@ -151,12 +216,17 @@ function getSubtreeStatus(scopeId, scopeChildren, scopeNodes) {
 }
 
 /** Render a single scope row with aggregate status. */
-function ScopeRow({ scope, depth, isExpanded, hasChildren, scopeId, scopeChildren, scopeNodes }) {
+function ScopeRow({ scope, scopes, depth, isExpanded, hasChildren, scopeId, scopeChildren, scopeNodes }) {
     const sel = launchTreeSelection.value;
     const isSelected = sel?.type === 'scope' && sel?.id === scope.id;
-    const pkg = scope.pkg || '(none)';
+    const isGroup = !scope.origin;
+    const pkg = scope.origin?.pkg || '(none)';
+    const file = scope.origin?.file || null;
 
     const agg = getSubtreeStatus(scopeId, scopeChildren, scopeNodes);
+
+    // Has child scopes (not just nodes) — determines if subtree button is shown
+    const hasChildScopes = (scopeChildren.get(scopeId) || []).length > 0;
 
     const handleSelect = useCallback((e) => {
         e.stopPropagation();
@@ -167,23 +237,51 @@ function ScopeRow({ scope, depth, isExpanded, hasChildren, scopeId, scopeChildre
         toggleExpand(scope.id, e);
     }, [scope.id]);
 
-    // Determine scope row health class for subtle tinting
+    const handleDblClick = useCallback((e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        toggleExpand(scope.id);
+    }, [scope.id]);
+
+    const handleSubtreeToggle = useCallback((e) => {
+        e.stopPropagation();
+        const expanded = launchTreeExpanded.value;
+        if (isSubtreeFullyExpanded(scopeId, scopeChildren, expanded)) {
+            collapseSubtree(scopeId, scopeChildren);
+        } else {
+            expandSubtree(scopeId, scopeChildren);
+        }
+    }, [scopeId, scopeChildren]);
+
     let healthClass = '';
     if (agg.total > 0) {
         if (agg.failed > 0) healthClass = 'lt-scope-has-failed';
         else if (agg.running + agg.loaded === agg.total) healthClass = 'lt-scope-all-ok';
     }
 
+    const fullyExpanded = hasChildScopes && isSubtreeFullyExpanded(scopeId, scopeChildren, launchTreeExpanded.value);
+
     return html`
-        <div class="lt-row lt-scope ${isSelected ? 'lt-selected' : ''} ${healthClass}"
+        <div class="lt-row lt-scope ${isGroup ? 'lt-scope-group' : ''} ${isSelected ? 'lt-selected' : ''} ${healthClass}"
              style=${{ paddingLeft: `${depth * 20 + 8}px` }}
-             onClick=${handleSelect}>
+             onClick=${handleSelect}
+             onDblClick=${handleDblClick}>
             <span class="lt-toggle" onClick=${handleToggle}>
                 ${hasChildren ? (isExpanded ? '\u25BC' : '\u25B6') : '\u00A0'}
             </span>
-            <span class="lt-pkg">${pkg}</span>
-            <span class="lt-file">${scope.file}</span>
-            ${scope.ns !== '/' && html`<span class="lt-ns">${scope.ns}</span>`}
+            ${isGroup ? html`
+                <span class="lt-group-label">${getGroupLabel(scope, scopes, scopeChildren)}</span>
+            ` : html`
+                <span class="lt-pkg">${pkg}</span>
+                <span class="lt-file">${file}</span>
+            `}
+            ${!isGroup && scope.ns !== '/' && html`<span class="lt-ns">${scope.ns}</span>`}
+            ${hasChildScopes && html`
+                <span class="lt-subtree-btn" onClick=${handleSubtreeToggle}
+                      title=${fullyExpanded ? 'Collapse subtree' : 'Expand subtree'}>
+                    ${fullyExpanded ? '\u229F' : '\u229E'}
+                </span>
+            `}
             ${agg.total > 0 && html`
                 <span class="lt-agg">
                     <span class="lt-agg-ok">${agg.running + agg.loaded}</span>
@@ -253,7 +351,7 @@ function ScopeTree({ scopes, scopeChildren, scopeNodes, scopeId, depth }) {
     const isExpanded = expanded.has(scopeId);
 
     return html`
-        <${ScopeRow} scope=${scope} depth=${depth}
+        <${ScopeRow} scope=${scope} scopes=${scopes} depth=${depth}
             isExpanded=${isExpanded} hasChildren=${hasChildren}
             scopeId=${scopeId} scopeChildren=${scopeChildren} scopeNodes=${scopeNodes} />
         ${isExpanded && nodeNames.map(name => html`
