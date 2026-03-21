@@ -1,9 +1,5 @@
 //! play_launch_parser library
 
-// PyO3 0.20 macros generate unsafe calls inside unsafe fn without explicit
-// unsafe blocks. This lint became warn-by-default in edition 2024.
-// Remove this once PyO3 is upgraded to 0.23+.
-#![allow(unsafe_op_in_unsafe_fn)]
 
 pub mod actions;
 pub mod captures;
