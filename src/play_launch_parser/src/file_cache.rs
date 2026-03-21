@@ -6,6 +6,9 @@ use std::{
     time::SystemTime,
 };
 
+/// Maximum file size for cached reads (10 MB).
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
 /// Cached file content with modification time
 struct CachedFile {
     content: String,
@@ -22,6 +25,19 @@ static FILE_CACHE: Lazy<DashMap<PathBuf, CachedFile>> = Lazy::new(DashMap::new);
 pub(crate) fn read_file_cached(path: &Path) -> Result<String> {
     let metadata = std::fs::metadata(path)?;
     let modified = metadata.modified()?;
+
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "File '{}' is {} bytes, exceeds {} byte limit",
+                path.display(),
+                metadata.len(),
+                MAX_FILE_SIZE
+            ),
+        )
+        .into());
+    }
 
     // Check cache with modification time validation
     if let Some(entry) = FILE_CACHE.get(path)
