@@ -119,7 +119,15 @@ pub fn create<T: Copy>(capacity: usize) -> io::Result<(RawFd, RawFd)> {
     assert!(size_of::<T>() > 0, "element size must be > 0");
 
     let element_size = size_of::<T>();
-    let total_size = HEADER_SIZE + capacity * element_size;
+    let total_size = capacity
+        .checked_mul(element_size)
+        .and_then(|data_size| data_size.checked_add(HEADER_SIZE))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ring buffer size overflow: capacity * element_size exceeds usize",
+            )
+        })?;
 
     // 1. memfd_create — anonymous shared memory
     let shm_fd = unsafe { libc::memfd_create(c"spsc_shm".as_ptr(), 0) };
