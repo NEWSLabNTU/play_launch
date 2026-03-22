@@ -30,6 +30,12 @@ const POLL_INTERVAL_MS: u64 = 500;
 /// SSE keepalive/heartbeat interval
 const SSE_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(3);
 
+/// Maximum bytes to scan from the tail of a file for initial lines.
+const MAX_TAIL_SCAN_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Maximum line length before truncation (8 KB).
+const MAX_LINE_LEN: usize = 8 * 1024;
+
 /// Maximum concurrent SSE subscribers per broadcast channel.
 const MAX_SSE_SUBSCRIBERS: usize = 50;
 
@@ -167,9 +173,15 @@ async fn stream_file_to_channel(
                 tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
             }
             Ok(_) => {
-                let line = line_buf.trim_end().to_string();
+                let line = line_buf.trim_end();
                 if !line.is_empty() {
-                    let _ = tx.send(Ok(Event::default().data(line))).await;
+                    let _ = tx
+                        .send(Ok(Event::default().data(truncate_line(line))))
+                        .await;
+                }
+                // Shrink buffer if an oversized line inflated it
+                if line_buf.capacity() > MAX_LINE_LEN * 2 {
+                    line_buf = String::new();
                 }
             }
             Err(e) => {
@@ -180,14 +192,50 @@ async fn stream_file_to_channel(
     }
 }
 
-/// Read the last N lines from a file
+/// Truncate a line to `MAX_LINE_LEN`, appending a size marker if truncated.
+fn truncate_line(line: &str) -> String {
+    if line.len() <= MAX_LINE_LEN {
+        line.to_string()
+    } else {
+        let total = line.len();
+        // Truncate at a char boundary
+        let truncated = &line[..line.floor_char_boundary(MAX_LINE_LEN)];
+        format!("{}... (truncated, {} bytes total)", truncated, total)
+    }
+}
+
+/// Read the last N lines from the tail of a file.
+///
+/// Scans at most `MAX_TAIL_SCAN_BYTES` from the end. Lines exceeding
+/// `MAX_LINE_LEN` are truncated with a byte-count marker.
 fn read_last_n_lines(path: &PathBuf, n: usize) -> eyre::Result<Vec<String>> {
     let file = std::fs::File::open(path)?;
-    let reader = BufReader::new(file);
+    let file_len = file.metadata()?.len();
 
-    let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
+    let start = file_len.saturating_sub(MAX_TAIL_SCAN_BYTES);
+    let mut reader = BufReader::new(file);
+    reader.seek(SeekFrom::Start(start))?;
 
-    let start = if lines.len() > n { lines.len() - n } else { 0 };
+    // If we seeked into the middle, skip the first partial line
+    if start > 0 {
+        let mut discard = String::new();
+        reader.read_line(&mut discard)?;
+    }
+
+    let mut lines = Vec::new();
+    let mut buf = String::new();
+    loop {
+        buf.clear();
+        if reader.read_line(&mut buf)? == 0 {
+            break;
+        }
+        let line = buf.trim_end();
+        if !line.is_empty() {
+            lines.push(truncate_line(line));
+        }
+    }
+
+    let start = lines.len().saturating_sub(n);
     Ok(lines[start..].to_vec())
 }
 
@@ -426,9 +474,14 @@ async fn stream_file_to_channel_with_initial(
                 tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
             }
             Ok(_) => {
-                let line = line_buf.trim_end().to_string();
+                let line = line_buf.trim_end();
                 if !line.is_empty() {
-                    let _ = tx.send(Ok(Event::default().data(line))).await;
+                    let _ = tx
+                        .send(Ok(Event::default().data(truncate_line(line))))
+                        .await;
+                }
+                if line_buf.capacity() > MAX_LINE_LEN * 2 {
+                    line_buf = String::new();
                 }
             }
             Err(e) => {
