@@ -201,6 +201,7 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
         .route("/api/metrics/system", get(sse::stream_system_metrics))
         .route("/api/metrics/node/:name", get(sse::stream_node_metrics))
         .layer(cors)
+        .layer(tower_http::compression::CompressionLayer::new().gzip(true))
         .with_state(state)
 }
 
