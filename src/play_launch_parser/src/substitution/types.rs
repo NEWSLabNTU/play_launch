@@ -216,6 +216,12 @@ fn find_package_share_uncached(package_name: &str) -> Option<String> {
 /// This function executes arbitrary shell commands. Gated behind the
 /// `ALLOW_COMMANDS` flag — returns an error when disabled.
 /// Disable with `block_command_substitution(true)` or `--block-commands` CLI flag.
+/// Timeout for `$(command ...)` substitutions (seconds).
+const COMMAND_TIMEOUT_SECS: u32 = 30;
+
+/// Grace period before SIGKILL after SIGTERM on timeout (seconds).
+const COMMAND_KILL_AFTER_SECS: u32 = 5;
+
 fn execute_command(cmd: &str, error_mode: &CommandErrorMode) -> Result<String, SubstitutionError> {
     use std::process::Command;
 
@@ -231,15 +237,28 @@ fn execute_command(cmd: &str, error_mode: &CommandErrorMode) -> Result<String, S
         cmd
     );
 
-    // Use bash instead of sh to ensure environment variables are preserved
-    // (sh is often dash which doesn't source the same RC files)
-    let output = Command::new("bash")
+    // Wrap with `timeout` to prevent indefinite hangs (e.g., xacro on missing files).
+    // `timeout` handles cleanup: SIGTERM after COMMAND_TIMEOUT_SECS, SIGKILL after
+    // COMMAND_KILL_AFTER_SECS grace period. Exit code 124 = timed out.
+    // `output()` drains pipes correctly, avoiding deadlocks.
+    let output = Command::new("timeout")
+        .arg(format!("--kill-after={}", COMMAND_KILL_AFTER_SECS))
+        .arg(COMMAND_TIMEOUT_SECS.to_string())
+        .arg("bash")
         .arg("-c")
         .arg(cmd)
         .output()
         .map_err(|e| {
             SubstitutionError::CommandFailed(format!("Failed to execute '{}': {}", cmd, e))
         })?;
+
+    // Exit code 124 = timeout killed the command
+    if output.status.code() == Some(124) {
+        return Err(SubstitutionError::CommandFailed(format!(
+            "$(command {}) timed out after {}s",
+            cmd, COMMAND_TIMEOUT_SECS
+        )));
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
