@@ -68,6 +68,7 @@
     cursor: pointer;
     white-space: nowrap;
     min-height: 24px;
+    user-select: none;
 }
 
 .lt-row:hover {
@@ -100,7 +101,20 @@
     color: var(--text-primary);
 }
 
-/* ── Subtree expand/collapse button ── */
+/* ── Subtree expand/collapse buttons ── */
+
+.lt-subtree-btns {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.lt-row:hover .lt-subtree-btns {
+    opacity: 0.6;
+}
 
 .lt-subtree-btn {
     display: inline-flex;
@@ -108,24 +122,17 @@
     justify-content: center;
     width: 18px;
     height: 18px;
-    flex-shrink: 0;
-    font-size: 12px;
+    font-size: 16px;
     color: var(--text-secondary);
-    opacity: 0;
     cursor: pointer;
     border-radius: 3px;
     user-select: none;
-    transition: opacity 0.15s;
-}
-
-.lt-row:hover .lt-subtree-btn {
-    opacity: 0.6;
 }
 
 .lt-subtree-btn:hover {
-    opacity: 1 !important;
     background: var(--hover-bg);
     color: var(--text-primary);
+    opacity: 1;
 }
 
 /* ── Scope content ── */

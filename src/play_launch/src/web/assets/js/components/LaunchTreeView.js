@@ -32,7 +32,7 @@ function collapseAll() {
     launchTreeExpanded.value = new Set([0]);
 }
 
-/** Expand a scope and all its descendants. */
+/** Expand this scope and all its descendants. */
 function expandSubtree(scopeId, scopeChildren) {
     const expanded = new Set(launchTreeExpanded.value);
     const stack = [scopeId];
@@ -45,10 +45,13 @@ function expandSubtree(scopeId, scopeChildren) {
     launchTreeExpanded.value = expanded;
 }
 
-/** Collapse a scope and all its descendants. */
+/** Expand this scope but collapse all descendant scopes. */
 function collapseSubtree(scopeId, scopeChildren) {
     const expanded = new Set(launchTreeExpanded.value);
-    const stack = [scopeId];
+    // Ensure this scope is open (so user sees immediate children)
+    expanded.add(scopeId);
+    // Collapse all descendants
+    const stack = [...(scopeChildren.get(scopeId) || [])];
     while (stack.length > 0) {
         const id = stack.pop();
         expanded.delete(id);
@@ -56,13 +59,6 @@ function collapseSubtree(scopeId, scopeChildren) {
         for (const child of children) stack.push(child);
     }
     launchTreeExpanded.value = expanded;
-}
-
-/** Check if the entire subtree is expanded. */
-function isSubtreeFullyExpanded(scopeId, scopeChildren, expanded) {
-    if (!expanded.has(scopeId)) return false;
-    const children = scopeChildren.get(scopeId) || [];
-    return children.every(c => isSubtreeFullyExpanded(c, scopeChildren, expanded));
 }
 
 /**
@@ -159,17 +155,20 @@ function ActivityIcon({ nodeName }) {
     return html`<span class=${cls}>${'\uD83D\uDCCB'}</span>`;
 }
 
-/** Activity icon for a collapsed scope — propagates from subtree. */
+/** Activity icon for a scope — propagates from subtree nodes. */
 function ScopeActivityIcon({ scopeId, scopeChildren, scopeNodes }) {
     const [, setTick] = useState(0);
 
-    // Re-render periodically to update activity state
-    useEffect(() => {
-        const timer = setInterval(() => setTick(t => t + 1), 5000);
-        return () => clearInterval(timer);
-    }, []);
-
     const activity = getSubtreeActivity(scopeId, scopeChildren, scopeNodes);
+
+    // Re-render at phase boundaries (hot→warm at 10s, warm→gone at 60s)
+    useEffect(() => {
+        if (!activity) return;
+        const interval = activity === 'hot' ? 2000 : 5000;
+        const timer = setInterval(() => setTick(t => t + 1), interval);
+        return () => clearInterval(timer);
+    }, [activity]);
+
     if (!activity) return null;
 
     let cls = 'stderr-icon';
@@ -243,14 +242,14 @@ function ScopeRow({ scope, scopes, depth, isExpanded, hasChildren, scopeId, scop
         toggleExpand(scope.id);
     }, [scope.id]);
 
-    const handleSubtreeToggle = useCallback((e) => {
+    const handleExpandSubtree = useCallback((e) => {
         e.stopPropagation();
-        const expanded = launchTreeExpanded.value;
-        if (isSubtreeFullyExpanded(scopeId, scopeChildren, expanded)) {
-            collapseSubtree(scopeId, scopeChildren);
-        } else {
-            expandSubtree(scopeId, scopeChildren);
-        }
+        expandSubtree(scopeId, scopeChildren);
+    }, [scopeId, scopeChildren]);
+
+    const handleCollapseSubtree = useCallback((e) => {
+        e.stopPropagation();
+        collapseSubtree(scopeId, scopeChildren);
     }, [scopeId, scopeChildren]);
 
     let healthClass = '';
@@ -258,8 +257,6 @@ function ScopeRow({ scope, scopes, depth, isExpanded, hasChildren, scopeId, scop
         if (agg.failed > 0) healthClass = 'lt-scope-has-failed';
         else if (agg.running + agg.loaded === agg.total) healthClass = 'lt-scope-all-ok';
     }
-
-    const fullyExpanded = hasChildScopes && isSubtreeFullyExpanded(scopeId, scopeChildren, launchTreeExpanded.value);
 
     return html`
         <div class="lt-row lt-scope ${isGroup ? 'lt-scope-group' : ''} ${isSelected ? 'lt-selected' : ''} ${healthClass}"
@@ -276,10 +273,14 @@ function ScopeRow({ scope, scopes, depth, isExpanded, hasChildren, scopeId, scop
                 <span class="lt-file">${file}</span>
             `}
             ${!isGroup && scope.ns !== '/' && html`<span class="lt-ns">${scope.ns}</span>`}
+            <${ScopeActivityIcon} scopeId=${scopeId}
+                scopeChildren=${scopeChildren} scopeNodes=${scopeNodes} />
             ${hasChildScopes && html`
-                <span class="lt-subtree-btn" onClick=${handleSubtreeToggle}
-                      title=${fullyExpanded ? 'Collapse subtree' : 'Expand subtree'}>
-                    ${fullyExpanded ? '\u229F' : '\u229E'}
+                <span class="lt-subtree-btns">
+                    <span class="lt-subtree-btn" onClick=${handleExpandSubtree}
+                          title="Expand all subtrees">${'\u229E'}</span>
+                    <span class="lt-subtree-btn" onClick=${handleCollapseSubtree}
+                          title="Collapse all subtrees">${'\u229F'}</span>
                 </span>
             `}
             ${agg.total > 0 && html`
@@ -291,10 +292,6 @@ function ScopeRow({ scope, scopes, depth, isExpanded, hasChildren, scopeId, scop
                         <span class="lt-agg-failed">${agg.failed} failed</span>
                     `}
                 </span>
-            `}
-            ${!isExpanded && hasChildren && html`
-                <${ScopeActivityIcon} scopeId=${scopeId}
-                    scopeChildren=${scopeChildren} scopeNodes=${scopeNodes} />
             `}
         </div>
     `;

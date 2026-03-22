@@ -3,7 +3,7 @@
 import { h } from '../vendor/preact.module.js';
 import { useState, useCallback, useMemo } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { nodes, getStatusString, selectedNode, nodePanelOpen, graphPanelOpen, graphSnapshot, currentView } from '../store.js';
+import { nodes, getStatusString, selectedNode, nodePanelOpen, graphPanelOpen, graphSnapshot, currentView, launchTreeSelection } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -56,6 +56,11 @@ function QosBadges({ qos }) {
 
 /** Jump to a managed node in the left panel. */
 function jumpToNode(targetName) {
+    if (currentView.value === 'launch-tree') {
+        // On Launch page, select the node in the launch tree
+        launchTreeSelection.value = { type: 'node', name: targetName };
+        return;
+    }
     selectedNode.value = targetName;
     const po = currentView.value === 'graph' ? graphPanelOpen : nodePanelOpen;
     po.value = true;

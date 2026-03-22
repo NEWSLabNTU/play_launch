@@ -194,8 +194,7 @@ function ScopeDetail({ scopeId }) {
 
 // ── Node detail ──
 
-function NodeDetail({ name }) {
-    const [tab, setTab] = useState('stderr');
+function NodeDetail({ name, tab, setTab }) {
     const [nodeData, setNodeData] = useState(null);
 
     useEffect(() => {
@@ -269,6 +268,7 @@ function NodeDetail({ name }) {
 
 export function LaunchPanel() {
     const sel = launchTreeSelection.value;
+    const [nodeTab, setNodeTab] = useState('stderr');
 
     const close = useCallback(() => {
         launchTreeSelection.value = null;
@@ -325,7 +325,7 @@ export function LaunchPanel() {
             </div>
             ${sel.type === 'scope'
                 ? html`<${ScopeDetail} scopeId=${sel.id} key=${'scope-' + sel.id} />`
-                : html`<${NodeDetail} name=${sel.name} key=${'node-' + sel.name} />`
+                : html`<${NodeDetail} name=${sel.name} tab=${nodeTab} setTab=${setNodeTab} />`
             }
         </div>
     `;
