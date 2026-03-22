@@ -7,7 +7,7 @@ use pyo3::PyResult;
 /// This matches the Python parser's behavior of loading parameter files
 /// and extracting all parameters as individual key-value pairs.
 pub(crate) fn load_yaml_params(path: &str) -> PyResult<Vec<(String, String)>> {
-    use serde_yml::Value;
+    use serde_yaml_ng::Value;
 
     // Read YAML file
     let contents = std::fs::read_to_string(path).map_err(|e| {
@@ -18,7 +18,7 @@ pub(crate) fn load_yaml_params(path: &str) -> PyResult<Vec<(String, String)>> {
     })?;
 
     // Parse YAML
-    let yaml: Value = serde_yml::from_str(&contents).map_err(|e| {
+    let yaml: Value = serde_yaml_ng::from_str(&contents).map_err(|e| {
         pyo3::exceptions::PyValueError::new_err(format!(
             "Failed to parse YAML file {}: {}",
             path, e
@@ -71,11 +71,11 @@ pub(crate) fn load_yaml_params(path: &str) -> PyResult<Vec<(String, String)>> {
 /// ```
 /// Becomes: `[("namespace.param1", "value1"), ("namespace.nested.param2", "value2")]`
 pub(crate) fn flatten_yaml(
-    value: &serde_yml::Value,
+    value: &serde_yaml_ng::Value,
     prefix: &str,
     params: &mut Vec<(String, String)>,
 ) {
-    use serde_yml::Value;
+    use serde_yaml_ng::Value;
 
     match value {
         Value::Mapping(map) => {
@@ -110,8 +110,8 @@ pub(crate) fn flatten_yaml(
 /// Convert YAML value to string representation
 ///
 /// Handles booleans, numbers, strings, arrays, and null values
-pub(crate) fn yaml_value_to_string(value: &serde_yml::Value) -> String {
-    use serde_yml::Value;
+pub(crate) fn yaml_value_to_string(value: &serde_yaml_ng::Value) -> String {
+    use serde_yaml_ng::Value;
 
     match value {
         Value::Bool(b) => b.to_string(),
