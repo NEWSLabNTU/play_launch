@@ -12,8 +12,12 @@ use axum::{
     routing::{get, post},
 };
 use rust_embed::Embed;
-use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc};
-use std::sync::Mutex;
+use std::{
+    collections::HashSet,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
