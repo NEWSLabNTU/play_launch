@@ -13,7 +13,7 @@ use axum::{
 };
 use rust_embed::Embed;
 use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc};
-use tokio::sync::Mutex as TokioMutex;
+use std::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
@@ -39,7 +39,7 @@ pub struct WebState {
     #[allow(dead_code)]
     pub log_dir: PathBuf,
     /// Track nodes currently being operated on (to prevent racing conditions)
-    pub operations_in_progress: TokioMutex<HashSet<String>>,
+    pub operations_in_progress: Mutex<HashSet<String>>,
     /// Broadcaster for state events to SSE clients
     pub state_broadcaster: Arc<StateEventBroadcaster>,
     /// Diagnostic registry for storing diagnostic data
@@ -66,7 +66,7 @@ impl WebState {
         Self {
             member_handle,
             log_dir,
-            operations_in_progress: TokioMutex::new(HashSet::new()),
+            operations_in_progress: Mutex::new(HashSet::new()),
             state_broadcaster,
             diagnostic_registry,
             metrics_broadcaster,

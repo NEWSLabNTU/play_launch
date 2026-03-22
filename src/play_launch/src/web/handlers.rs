@@ -22,9 +22,9 @@ struct OperationGuard {
 
 impl OperationGuard {
     /// Try to acquire operation lock for a node
-    async fn try_acquire(node_name: String, state: Arc<WebState>) -> Result<Self, String> {
+    fn try_acquire(node_name: String, state: Arc<WebState>) -> Result<Self, String> {
         {
-            let mut ops = state.operations_in_progress.lock().await;
+            let mut ops = state.operations_in_progress.lock().unwrap();
             if ops.contains(&node_name) {
                 return Err(format!(
                     "Operation already in progress for node '{}'",
@@ -39,12 +39,8 @@ impl OperationGuard {
 
 impl Drop for OperationGuard {
     fn drop(&mut self) {
-        let node_name = self.node_name.clone();
-        let state = self.state.clone();
-        tokio::spawn(async move {
-            let mut ops = state.operations_in_progress.lock().await;
-            ops.remove(&node_name);
-        });
+        let mut ops = self.state.operations_in_progress.lock().unwrap();
+        ops.remove(&self.node_name);
     }
 }
 
@@ -171,7 +167,7 @@ pub async fn get_node(State(state): State<Arc<WebState>>, Path(name): Path<Strin
 
 /// Start a node
 pub async fn start_node(State(state): State<Arc<WebState>>, Path(name): Path<String>) -> Response {
-    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()) {
         Ok(guard) => guard,
         Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
@@ -199,7 +195,7 @@ pub async fn start_node(State(state): State<Arc<WebState>>, Path(name): Path<Str
 
 /// Stop a node
 pub async fn stop_node(State(state): State<Arc<WebState>>, Path(name): Path<String>) -> Response {
-    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()) {
         Ok(guard) => guard,
         Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
@@ -230,7 +226,7 @@ pub async fn restart_node(
     State(state): State<Arc<WebState>>,
     Path(name): Path<String>,
 ) -> Response {
-    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()) {
         Ok(guard) => guard,
         Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
@@ -258,7 +254,7 @@ pub async fn restart_node(
 
 /// Load a composable node (retry loading)
 pub async fn load_node(State(state): State<Arc<WebState>>, Path(name): Path<String>) -> Response {
-    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()) {
         Ok(guard) => guard,
         Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
@@ -294,7 +290,7 @@ pub async fn load_node(State(state): State<Arc<WebState>>, Path(name): Path<Stri
 
 /// Unload a composable node
 pub async fn unload_node(State(state): State<Arc<WebState>>, Path(name): Path<String>) -> Response {
-    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()) {
         Ok(guard) => guard,
         Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
@@ -333,7 +329,7 @@ pub async fn load_all_nodes(
     State(state): State<Arc<WebState>>,
     Path(name): Path<String>,
 ) -> Response {
-    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()) {
         Ok(guard) => guard,
         Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
@@ -368,7 +364,7 @@ pub async fn unload_all_nodes(
     State(state): State<Arc<WebState>>,
     Path(name): Path<String>,
 ) -> Response {
-    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()).await {
+    let _guard = match OperationGuard::try_acquire(name.clone(), state.clone()) {
         Ok(guard) => guard,
         Err(e) => return (StatusCode::CONFLICT, e).into_response(),
     };
