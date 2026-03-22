@@ -43,7 +43,10 @@ async fn graceful_kill(child: &mut tokio::process::Child, pid: u32, name: &str) 
         }
         Err(_) => {
             // 3. Timed out — escalate to SIGKILL
-            warn!("[{name}] Process did not exit within {}s, sending SIGKILL", GRACEFUL_SHUTDOWN_TIMEOUT.as_secs());
+            warn!(
+                "[{name}] Process did not exit within {}s, sending SIGKILL",
+                GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
+            );
             child.kill().await.ok();
             child.wait().await.ok();
         }
