@@ -1,3 +1,4 @@
+import logging
 import os
 
 from launch.actions.include_launch_description import IncludeLaunchDescription
@@ -7,6 +8,8 @@ from launch.launch_description_entity import LaunchDescriptionEntity
 from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions
 
 from ..launch_dump import LaunchDump, extract_package_from_path
+
+logger = logging.getLogger(__name__)
 
 
 def visit_include_launch_description(
@@ -18,7 +21,8 @@ def visit_include_launch_description(
     # Push scope for this include
     try:
         launch_file_path = include._get_launch_file()
-    except Exception:
+    except Exception as e:
+        logger.debug("Could not resolve include launch file path: %s", e)
         launch_file_path = None
     filename = os.path.basename(launch_file_path) if launch_file_path else "unknown"
     pkg = extract_package_from_path(launch_file_path) if launch_file_path else None
@@ -37,8 +41,8 @@ def visit_include_launch_description(
                 context, normalize_to_list_of_substitutions(arg_value)
             )
             include_args[resolved_name] = resolved_value
-        except Exception:
-            pass  # Best effort for args
+        except Exception as e:
+            logger.debug("Could not resolve include arg '%s': %s", arg_name, e)
 
     dump.push_scope(pkg, filename, ns, include_args)
 
