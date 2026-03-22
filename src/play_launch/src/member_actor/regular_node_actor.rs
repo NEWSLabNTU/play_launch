@@ -16,6 +16,47 @@ use std::{fs::File, io::Write, path::Path, process::ExitStatus, time::Duration};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
 
+/// Graceful shutdown timeout before escalating to SIGKILL.
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Send SIGTERM, wait up to 5s for graceful exit, then SIGKILL + wait.
+#[cfg(unix)]
+async fn graceful_kill(child: &mut tokio::process::Child, pid: u32, name: &str) {
+    use nix::{sys::signal, unistd::Pid};
+
+    // 1. SIGTERM — give the process a chance to clean up
+    debug!("[{name}] Sending SIGTERM to pid {pid}");
+    if let Err(e) = signal::kill(Pid::from_raw(pid as i32), signal::Signal::SIGTERM) {
+        warn!("[{name}] Failed to send SIGTERM: {e}, falling back to SIGKILL");
+        child.kill().await.ok();
+        child.wait().await.ok();
+        return;
+    }
+
+    // 2. Wait with timeout
+    match tokio::time::timeout(GRACEFUL_SHUTDOWN_TIMEOUT, child.wait()).await {
+        Ok(Ok(status)) => {
+            debug!("[{name}] Process exited gracefully: {status}");
+        }
+        Ok(Err(e)) => {
+            warn!("[{name}] Wait failed after SIGTERM: {e}");
+        }
+        Err(_) => {
+            // 3. Timed out — escalate to SIGKILL
+            warn!("[{name}] Process did not exit within {}s, sending SIGKILL", GRACEFUL_SHUTDOWN_TIMEOUT.as_secs());
+            child.kill().await.ok();
+            child.wait().await.ok();
+        }
+    }
+}
+
+#[cfg(not(unix))]
+async fn graceful_kill(child: &mut tokio::process::Child, _pid: u32, name: &str) {
+    debug!("[{name}] Killing process (non-Unix)");
+    child.kill().await.ok();
+    child.wait().await.ok();
+}
+
 /// Actor for regular ROS nodes and containers
 ///
 /// This actor manages the full lifecycle of a regular node:
@@ -388,11 +429,11 @@ impl RegularNodeActor {
             ControlEvent::Stop => {
                 debug!("[{}] Stop requested", self.name);
 
-                // Kill process if running
+                // Gracefully stop process if running
                 if let NodeState::Running { mut child, pid } =
                     std::mem::replace(&mut self.state, NodeState::Pending)
                 {
-                    child.kill().await.ok();
+                    graceful_kill(&mut child, pid, &self.name).await;
 
                     // Unregister PID
                     if let Some(ref registry) = self.process_registry
@@ -409,11 +450,11 @@ impl RegularNodeActor {
             ControlEvent::Restart => {
                 debug!("[{}] Restart requested", self.name);
 
-                // Kill process if running
+                // Gracefully stop process if running
                 if let NodeState::Running { mut child, pid } =
                     std::mem::replace(&mut self.state, NodeState::Pending)
                 {
-                    child.kill().await.ok();
+                    graceful_kill(&mut child, pid, &self.name).await;
 
                     // Unregister PID
                     if let Some(ref registry) = self.process_registry
