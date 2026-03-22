@@ -107,8 +107,11 @@ Last updated: 2026-03-22
 ### S11. YAML parser deprecated — RESOLVED
 
 - **File**: `src/play_launch_parser/.../Cargo.toml`
-- **Risk**: `serde_yaml` 0.9 is deprecated, had past CVEs.
-- **Fix**: Migrated to `serde_yml` 0.0.12 (drop-in replacement).
+- **Risk**: `serde_yaml` 0.9 deprecated, then `serde_yml` 0.0.12
+  (replacement) flagged as unsound/unmaintained (dependabot #16, #17).
+- **Fix**: Migrated to `serde_yaml_ng` 0.10 — maintained fork, no
+  `libyml` dependency. Both `serde_yml` and `libyml` removed from
+  the dependency tree.
 
 ### S12. Include path validation — RESOLVED
 

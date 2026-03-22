@@ -433,7 +433,7 @@ pub fn load_runtime_config(
     let mut config = if let Some(path) = config_path {
         let content = std::fs::read_to_string(path)
             .wrap_err_with(|| format!("Failed to read config file: {}", path.display()))?;
-        serde_yml::from_str::<RuntimeConfig>(&content)
+        serde_yaml_ng::from_str::<RuntimeConfig>(&content)
             .wrap_err_with(|| format!("Failed to parse config file: {}", path.display()))?
     } else {
         RuntimeConfig::default()
