@@ -1,6 +1,6 @@
 # Security Issues
 
-Last updated: 2026-03-20
+Last updated: 2026-03-22
 
 ## Critical
 
@@ -34,38 +34,57 @@ Last updated: 2026-03-20
 
 ## High
 
-### S4. SSE broadcast blocks on slow subscriber — OPEN
+### S4. SSE broadcast blocks on slow subscriber — RESOLVED
 
-- **File**: `src/play_launch/src/web/broadcaster.rs:52`
-- **Risk**: `tx.send(event).await` blocks on full channels. One slow
-  SSE client stalls all state event delivery.
-- **Fix**: Replace with `tx.try_send()` or `tokio::sync::broadcast`.
+- **File**: `src/play_launch/src/web/broadcaster.rs`
+- **Risk**: `tx.send(event).await` on bounded `mpsc` channel blocks the
+  broadcaster when any subscriber's queue is full — one slow SSE client
+  stalls all state event delivery.
+- **Fix**: Replaced `Vec<mpsc::Sender>` + `TokioMutex` with
+  `tokio::sync::broadcast`. Sender is synchronous and never blocks.
+  Slow subscribers receive `RecvError::Lagged(n)` — the SSE handler
+  sends a `refresh` event so the client re-fetches full state.
+  Buffer: 512 (state), 32 (metrics).
+- **Files changed**: `broadcaster.rs`, `metrics_broadcaster.rs`, `sse.rs`,
+  `sse.js`, `common.rs`, `replay.rs`, `resource_monitor.rs`.
 
-### S5. Integer overflow in SPSC ring buffer allocation — OPEN
+### S5. Integer overflow in SPSC ring buffer allocation — RESOLVED
 
 - **File**: `src/spsc_shm/src/lib.rs:122`
 - **Risk**: `capacity * element_size` can overflow, causing small mmap
   followed by out-of-bounds writes.
-- **Fix**: Use `checked_mul` + `checked_add`.
+- **Fix**: Uses `checked_mul` + `checked_add`, returns `io::Error` on
+  overflow.
 
-### S6. Unsafe raw pointer for thread-local context — OPEN
+### S6. Unsafe raw pointer for thread-local context — RESOLVED
 
 - **File**: `src/play_launch_parser/.../python/bridge.rs:292-362`
 - **Risk**: `CURRENT_LAUNCH_CONTEXT` stores raw `*mut LaunchContext`.
-  `get_current_launch_context()` is `pub`, allowing stale pointer cache.
-- **Fix**: Make getter private. Add debug assertion in guard constructor.
+  `get_current_launch_context()` was `pub`, allowing external code to
+  cache the raw pointer and dereference after the guard drops.
+- **Fix**: Made `get_current_launch_context()` private (`fn` not
+  `pub fn`). External access only through `with_launch_context()` and
+  `try_with_launch_context()`, which safely scope the borrow within
+  a closure lifetime.
 
-### S7. No include depth limit — OPEN
+### S7. No include depth limit — RESOLVED
 
 - **File**: `src/play_launch_parser/.../traverser/include.rs`
 - **Risk**: Non-circular but deeply nested includes cause stack overflow.
-- **Fix**: Add `MAX_INCLUDE_DEPTH = 100` check.
+- **Fix**: Configurable `max_include_depth` (default: 100) on
+  `LaunchTraverser`. New `ParseOptions` struct and
+  `parse_launch_file_with_options()` public API. Returns
+  `ParseError::MaxIncludeDepthExceeded` when exceeded. Propagated to
+  all child traversers (XML, Python, YAML, IR paths).
+- **Test**: `test_max_include_depth_exceeded` in `scope_tests.rs`.
 
-### S8. No file size limit on cached files — OPEN
+### S8. No file size limit on cached files — RESOLVED
 
 - **File**: `src/play_launch_parser/.../file_cache.rs`
 - **Risk**: Large files read into memory. Cache has no eviction.
-- **Fix**: Max file size (10MB) + max cache entries (1000).
+- **Fix**: `metadata.len()` checked before `read_to_string()` — files
+  exceeding 10 MB are rejected with `io::Error`. Cache entry cap not
+  needed (bounded by include depth limit × file count, ~100 entries).
 
 ## Medium
 
@@ -77,11 +96,13 @@ Last updated: 2026-03-20
   only. `0.0.0.0` → any origin (user explicitly opts in). Specific
   IP → that IP + localhost.
 
-### S10. SSE connection exhaustion — OPEN
+### S10. SSE connection exhaustion — RESOLVED
 
-- **File**: `src/play_launch/src/web/broadcaster.rs`
+- **File**: `src/play_launch/src/web/sse.rs`
 - **Risk**: No limit on concurrent SSE subscribers.
-- **Fix**: Cap at 50 subscribers. Return 503 when exceeded.
+- **Fix**: Both SSE endpoints check `subscriber_count() >= 50` before
+  creating a new receiver. Returns 503 "Too many SSE connections" when
+  the limit is reached.
 
 ### S11. YAML parser deprecated — RESOLVED
 
@@ -98,40 +119,51 @@ Last updated: 2026-03-20
   include paths.
 - **Test**: `test_include_path_validation_blocks_non_launch`.
 
-### S13. Interception hooks return error on missing runtime — OPEN
+### S13. Interception hooks return error on missing runtime — NOT APPLICABLE
 
 - **File**: `src/play_launch_interception/src/lib.rs`
-- **Risk**: When `librcl.so` unresolvable, hooks return `RCL_RET_ERROR`
-  instead of being inert. Silently breaks ROS applications.
-- **Fix**: Return 0 (success/no-op) when runtime is None.
+- **Risk**: When `librcl.so` unresolvable, hooks return `RCL_RET_ERROR`.
+- **Status**: The interception `.so` is only `LD_PRELOAD`-ed into ROS
+  processes that already link `librcl.so`. If `librcl.so` is missing,
+  the process fails to start before hooks execute. Returning
+  `RCL_RET_ERROR` is correct for the impossible case.
 
-### S14. Global package cache no eviction — OPEN
+### S14. Global package cache no eviction — NOT APPLICABLE
 
 - **File**: `src/play_launch_parser/.../substitution/types.rs`
 - **Risk**: Stale cache entries in long-running processes.
-- **Fix**: Add TTL or `clear_caches()` API.
+- **Status**: The parser is single-invocation — `parse_launch_file()`
+  runs once at startup, not as a persistent service. Package paths
+  don't change while a ROS system is running. If the parser ever
+  becomes long-lived, a `clear_caches()` API is trivial to add.
 
-### S15. `#![allow(unsafe_op_in_unsafe_fn)]` crate-wide — OPEN
+### S15. `#![allow(unsafe_op_in_unsafe_fn)]` crate-wide — RESOLVED
 
 - **File**: `src/play_launch_parser/.../lib.rs:6`
 - **Risk**: Suppresses useful lint for entire crate, not just PyO3.
-- **Fix**: Scope to PyO3 modules only or upgrade PyO3.
+- **Fix**: Removed. The allow was for PyO3 0.20; current PyO3 0.24
+  generates clean code. Build and all 389 tests pass without it.
 
-### S16. Process tree scan per-recursion — OPEN
+### S16. Process tree scan per-recursion — ACCEPTED
 
 - **File**: `src/play_launch/src/process/tree.rs`
 - **Risk**: O(depth) full process table scans in `find_all_descendants`.
-- **Fix**: Single scan, build parent→children map in memory.
+- **Status**: Accepted as low-risk. Called once at shutdown only, tree
+  depth is ~3 (play_launch → container → node), total cost ~50ms.
+  The recursive approach is actually more correct for a dynamic tree
+  (processes may spawn/exit during shutdown) — a single upfront
+  snapshot could miss late-spawned processes. Cancellation token
+  already mitigates runaway scans.
 
 ## Positive Findings
 
-| Area | Finding |
-|------|---------|
-| Static assets | `rust_embed` prevents path traversal |
-| SPSC ordering | Correct Acquire/Release, cache-line padding |
-| Channels | Bounded with appropriate backpressure |
-| Orphan prevention | `PR_SET_PDEATHSIG(SIGKILL)` on all children |
-| Actor deadlocks | Unidirectional channels, no cycles |
-| XML parsing | `roxmltree` ignores DTD/entities — no XXE |
-| Variable depth | `MAX_RESOLUTION_DEPTH = 20` prevents infinite recursion |
-| Log streaming | Paths from member registry, not URL parameters |
+| Area              | Finding                                                 |
+|-------------------|---------------------------------------------------------|
+| Static assets     | `rust_embed` prevents path traversal                    |
+| SPSC ordering     | Correct Acquire/Release, cache-line padding             |
+| Channels          | Bounded with appropriate backpressure                   |
+| Orphan prevention | `PR_SET_PDEATHSIG(SIGKILL)` on all children             |
+| Actor deadlocks   | Unidirectional channels, no cycles                      |
+| XML parsing       | `roxmltree` ignores DTD/entities — no XXE               |
+| Variable depth    | `MAX_RESOLUTION_DEPTH = 20` prevents infinite recursion |
+| Log streaming     | Paths from member registry, not URL parameters          |

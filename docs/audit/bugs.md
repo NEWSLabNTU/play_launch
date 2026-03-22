@@ -1,53 +1,41 @@
 # Bugs and Code Quality Issues
 
-Last updated: 2026-03-20
+Last updated: 2026-03-22
 
 ## Parser Bugs
 
-### B1. `push_ros_namespace` (underscore form) not handled — OPEN
+### B1. `push_ros_namespace` (underscore form) not handled — RESOLVED
 
 - **File**: `src/play_launch_parser/.../traverser/entity.rs`
 - **Severity**: Low
-- The XML parser handles `push-ros-namespace` (hyphenated) but treats
+- The XML parser handled `push-ros-namespace` (hyphenated) but treated
   `push_ros_namespace` (underscored) as unknown. Both are valid ROS 2
-  launch XML. Autoware uses the hyphenated form exclusively.
-- **Fix**: Add `"push_ros_namespace"` to the match arm.
+  launch XML.
+- **Fix**: Added `"push_ros_namespace"` to the match arm alongside
+  `"push-ros-namespace"`. Same for `pop_ros_namespace`.
 
-### B2. `<group ns="...">` is non-standard — REVISED
+### B2. `<group ns="...">` is non-standard — RESOLVED
 
-- **Severity**: Medium (was Low — now reclassified as non-standard)
-- Our Rust parser supports `<group ns="...">` as a namespace shorthand.
+- **Severity**: Medium (was Low — reclassified as non-standard)
+- Our Rust parser supported `<group ns="...">` as a namespace shorthand.
   **ROS 2 rejects this**: `ValueError: Unexpected attribute(s) in 'group': {'ns'}`.
   The only valid attributes on `<group>` are `if`, `unless`, and `scoped`.
-- **Impact**: Launch files using `<group ns="...">` work in play_launch
-  but fail in `ros2 launch`. This creates a portability trap.
-- **Fix options**:
-  1. Remove support (reject with clear error message)
-  2. Keep as documented play_launch extension (warn on use)
-- **Recommendation**: Option 2 — warn and document, since removing it
-  could break existing play_launch users who rely on it.
+- **Fix**: Dropped support. `GroupAction::namespace` is always `None`.
+  Groups now create anonymous scope entries (`origin: null`) when
+  `scoped="true"`. Namespace is set by `<push-ros-namespace>` inside
+  the group (standard ROS 2 pattern).
 
-### B3. `scoped="false"` attribute ignored — OPEN (NEW)
+### B3. `scoped="false"` attribute ignored — RESOLVED
 
 - **File**: `src/play_launch_parser/.../traverser/entity.rs`
 - **Severity**: Medium
-- The parser always calls `save_scope()`/`restore_scope()` for groups
-  regardless of the `scoped` attribute. When `scoped="false"`, namespace
-  changes should leak to subsequent siblings.
-- **Reproduction**:
-  ```xml
-  <group scoped="false">
-    <push-ros-namespace namespace="test"/>
-    <node pkg="demo" exec="a" name="inside"/>
-  </group>
-  <node pkg="demo" exec="b" name="outside"/>
-  <!-- Python: outside ns=/test (correct: namespace leaks) -->
-  <!-- Rust:   outside ns=None (wrong: namespace reverted) -->
-  ```
-- **Impact**: Nodes after an unscoped group get the wrong namespace.
-  Autoware does not use `scoped="false"`, so no current impact.
-- **Fix**: Check `scoped` attribute in `GroupAction`. Only call
-  `save_scope()`/`restore_scope()` when `scoped="true"` (default).
+- The parser always called `save_scope()`/`restore_scope()` for groups
+  regardless of the `scoped` attribute.
+- **Fix**: Conditional save/restore based on `group.scoped`. When
+  `scoped="false"`, namespace/env changes leak to subsequent siblings.
+  Group scope entry is only created for `scoped="true"`.
+- **Tests**: `test_scoped_false_namespace_leaks`,
+  `test_scoped_true_namespace_reverts` in `scope_tests.rs`.
 
 ### B4. `<push-ros-namespace>` is sequential, not group-level — DESIGN NOTE
 
@@ -61,80 +49,103 @@ Last updated: 2026-03-20
   node_after_push    ns=/late_ns   (correct)
   double_push        ns=/l1/l2     (correct: accumulates)
   ```
-- **Implication for group scopes**: A group scope created in Phase 30b
-  captures the namespace at the GROUP level (after `<group ns="...">`
-  resolution). For groups using `<push-ros-namespace>`, the namespace
-  is set sequentially INSIDE the group — the group scope doesn't
-  capture it because `<push-ros-namespace>` doesn't trigger
-  `group.namespace.is_some()`. This is correct: group scopes only
-  exist for the `ns` attribute form (which is non-standard anyway).
 
 ## Executor / Runtime Bugs
 
-### B5. Stop/Restart don't wait for child after kill — OPEN
+### B5. Stop/Restart send SIGKILL without graceful shutdown — RESOLVED
 
 - **File**: `src/play_launch/src/member_actor/regular_node_actor.rs`
-- **Severity**: Low
-- `child.kill()` without `child.wait()` in Stop and Restart handlers
-  creates a brief zombie until the Child handle is dropped.
-- **Fix**: Add `child.wait().await.ok()` after kill.
+- **Severity**: Medium (was Low)
+- Stop and Restart control events called `child.kill()` (SIGKILL)
+  directly — no graceful SIGTERM first. ROS nodes need time to
+  flush logs, save state, and deregister from DDS.
+- **Fix**: Added `graceful_kill()` function: SIGTERM → wait up to 5s
+  → SIGKILL + wait if still alive. Used by both Stop and Restart
+  handlers. Non-Unix fallback uses `child.kill()` directly.
 
-### B6. Zombie anchor process on panic — OPEN
+### B6. Zombie anchor process on panic — ACCEPTED
 
 - **File**: `src/play_launch/src/process/pgid.rs`
 - **Severity**: Low
 - Anchor process zombie leaked if task panics before `wait()`.
-- **Fix**: Wrap wait in a Drop guard.
+- **Status**: Accepted. The anchor runs `true` which exits in
+  microseconds — it's already a zombie before any panic could occur.
+  A single zombie consumes no resources (just a PID entry) and is
+  reaped by init when play_launch exits. The panic scenario is
+  unlikely (only a oneshot send + watch receive between spawn and
+  wait).
 
-### B7. `read_last_n_lines` reads entire file — OPEN
+### B7. `read_last_n_lines` reads entire file — RESOLVED
 
 - **File**: `src/play_launch/src/web/sse.rs`
 - **Severity**: Low
-- Reads whole file into memory then takes last N lines. OOM risk on
+- Read whole file into memory then took last N lines. OOM risk on
   large log files (e.g., noisy ROS node producing GB of stderr).
-- **Fix**: Reverse-seek approach.
+- **Fix**: `read_last_n_lines` now seeks to max(0, EOF - 2 MB) and
+  reads only the tail. Lines exceeding 8 KB are truncated with a
+  byte-count marker: `"... (truncated, N bytes total)"`. Same
+  truncation applied to live tailing in both log and metrics SSE
+  streams. Oversized `line_buf` is shrunk after each truncated read.
 
 ## Parser Code Quality
 
-### B8. `SystemTime::now().unwrap()` in anon substitution — OPEN
+### B8. `SystemTime::now().unwrap()` in anon substitution — ACCEPTED
 
 - **File**: `src/play_launch_parser/.../substitution/types.rs`
 - **Severity**: Low
-- Panics if system clock is before UNIX epoch. Extremely unlikely.
-- **Fix**: Use `.unwrap_or_default()`.
+- Panics if system clock is before UNIX epoch.
+- **Status**: Accepted. A pre-epoch clock would break the entire ROS
+  system (TF, logging, bag recording). The random component ensures
+  uniqueness regardless.
 
-### B9. No `$(command)` timeout — OPEN
+### B9. No `$(command)` timeout — RESOLVED
 
 - **File**: `src/play_launch_parser/.../substitution/types.rs`
 - **Severity**: Low
-- `Command::new("bash").output()` blocks indefinitely if the command
-  hangs. Timeouts can be worked around but add defense in depth.
+- `Command::new("bash").output()` blocked indefinitely if the command
+  hung (e.g., xacro on missing files).
+- **Fix**: Wrapped with GNU `timeout` command: SIGTERM after 30s,
+  SIGKILL after 5s grace period. Exit code 124 detected as timeout
+  with a clear error message. `timeout` handles process group cleanup.
+  No pipe deadlock since `output()` still drains pipes correctly.
 
 ## Python Parser Code Quality
 
-### B10. Broad exception swallowing in include args — OPEN
+### B10. Broad exception swallowing in include args — RESOLVED
 
 - **File**: `python/play_launch/dump/visitor/include_launch_description.py`
 - **Severity**: Low
-- `except Exception: pass` silently swallows arg resolution errors.
-- **Fix**: Log at debug level.
+- `except Exception: pass` silently swallowed arg resolution errors
+  and launch file path resolution errors.
+- **Fix**: Both `except Exception` handlers now log at `debug` level
+  with the exception message. Other broad exception handlers in
+  `node.py` and `composable_node_container.py` already logged at
+  `warning`/`error` level — left as-is.
 
-### B11. Private member access in visitor — OPEN
+### B11. Private member access in visitor — ACCEPTED
 
 - **File**: `python/play_launch/dump/visitor/node.py`
 - **Severity**: Low
 - Accesses `_Node__ros_arguments`, `_ExecuteLocal__respawn` etc.
   May break between ROS 2 distributions.
-- **Fix**: Add try/except guards. Document version dependency.
+- **Status**: Accepted. The Python parser intentionally reuses ROS
+  launch internals for compatibility. Private member access is the
+  only way to extract certain node properties. Breakage across
+  distributions is handled by testing against target ROS versions.
 
 ## Web UI Bugs
 
-### B12. OperationGuard Drop spawns detached task — OPEN
+### B12. OperationGuard Drop spawns detached task — RESOLVED
 
 - **File**: `src/play_launch/src/web/handlers.rs`
 - **Severity**: Low
-- Detached tokio task in Drop may not execute during shutdown.
-- **Status**: Acceptable — stale entries during shutdown are harmless.
+- `Drop` spawned a detached `tokio::spawn` to remove the entry from
+  `operations_in_progress` (a `tokio::Mutex<HashSet>`), which could
+  fail to execute during shutdown.
+- **Fix**: Replaced `tokio::Mutex` with `std::sync::Mutex`. The
+  critical sections are tiny (insert/remove on a HashSet, no `.await`
+  while held). `Drop` now synchronously locks and removes. No
+  detached task needed. `try_acquire` is no longer async.
 
 ## Resolved Bugs
 
@@ -179,29 +190,20 @@ group.
 
 ### How play_launch models groups
 
-- **Phase 30b**: Groups with `ns="..."` attribute create anonymous scope
-  entries (`origin: null`). This is a non-standard extension (B2).
+- **Phase 30b**: Groups with `scoped="true"` (default) create anonymous
+  scope entries (`origin: null`). The web UI derives group labels from
+  child scope namespaces (e.g., `group /sensing`).
+- **`<group ns="...">`**: Non-standard, support dropped (B2). ROS 2
+  rejects this attribute.
 - **`<push-ros-namespace>`**: Sequential action, not tied to groups.
   Does not create a scope entry. Namespace changes are reflected in
   the nodes that follow it.
-- **`scoped` attribute**: Currently ignored (B3). Our parser always
-  scopes. Fix requires checking the attribute before calling
-  `save_scope()`/`restore_scope()`.
+- **`scoped="false"`**: Namespace/env changes leak to siblings. No
+  group scope entry created (B3, fixed).
 
 ### Implications for the scope table
 
-Groups using `<push-ros-namespace>` (the standard pattern) do NOT
-create group scope entries. The namespace is accumulated sequentially
-and captured at include boundaries. This means:
-
-- For Autoware (all `<push-ros-namespace>`): 0 group scopes, as observed.
-- Group scopes only appear for the non-standard `<group ns="...">` form.
-- The `scoped="false"` bug (B3) could cause incorrect namespace
-  propagation but does not affect scope entries (scopes are informational).
-
-### Recommendations
-
-1. **B2**: Warn when `<group ns="...">` is used. Document as extension.
-2. **B3**: Fix `scoped` attribute handling — most impactful bug.
-3. **B4**: No action needed — sequential `<push-ros-namespace>` is
-   correct and matches ROS 2 behavior.
+Groups using `<push-ros-namespace>` (the standard pattern) create
+anonymous group scope entries when `scoped="true"`. The namespace is
+accumulated sequentially and captured at include boundaries. For
+Autoware: 86 group scopes + 83 file scopes = 169 total scopes.
