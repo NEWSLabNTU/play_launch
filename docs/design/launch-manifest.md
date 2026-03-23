@@ -88,8 +88,7 @@ semantics. QoS lives on the topic, the single source of truth.
 
 ```yaml
 # manifests/demo_nodes_cpp/talker_listener.launch.yaml
-topics:
-  chatter: std_msgs/msg/String
+version: 1
 
 nodes:
   talker:
@@ -97,317 +96,363 @@ nodes:
   listener:
     sub: [chatter]
 
-interface:
-  pub: [chatter]
+topics:
+  chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
+    sub: [listener/chatter]
+
+pub_groups:
+  output: [talker/chatter]
 ```
 
 ### Metadata
 
-Optional. Only meaningful in the top-level launch file's manifest.
-
 | Field              | Required | Description                                                        |
 |--------------------|----------|--------------------------------------------------------------------|
+| `version`          | yes      | Manifest format version (currently `1`)                            |
 | `exclude_patterns` | no       | Topic prefixes to ignore (default: `/rosout`, `/parameter_events`) |
-
-### Topics
-
-Topics are first-class entities declared with type and optional QoS.
-Two forms:
-
-```yaml
-topics:
-  # Shorthand: type only, ROS default QoS
-  cropped: sensor_msgs/msg/PointCloud2
-  filtered: sensor_msgs/msg/PointCloud2
-  objects: autoware_perception_msgs/msg/DetectedObjects
-
-  # Full form: type + explicit QoS
-  pointcloud:
-    type: sensor_msgs/msg/PointCloud2
-    qos:
-      reliability: best_effort
-      depth: 1
-```
-
-**QoS fields** (all optional — omitted fields use ROS defaults, not audited):
-
-| Field          | Values                               |
-|----------------|--------------------------------------|
-| `reliability`  | `reliable` \| `best_effort`          |
-| `durability`   | `volatile` \| `transient_local`      |
-| `depth`        | integer (history depth, keep\_last)  |
-| `history`      | `keep_last` \| `keep_all`            |
-| `deadline_ms`  | integer                              |
-| `lifespan_ms`  | integer                              |
-| `liveliness`   | `automatic` \| `manual_by_topic`     |
-
-All names are **relative** — the parser applies the namespace from the
-launch file's include context. Use absolute names (leading `/`) only for
-global topics like `/tf` or `/clock`.
-
-Every topic referenced by a node must be declared in the same manifest's
-`topics:` section or as an absolute topic from the runtime environment.
-
-### Services and Actions
-
-Same pattern as topics — declared with type, referenced by nodes.
-
-```yaml
-services:
-  configure: std_srvs/srv/SetBool
-
-actions:
-  navigate: nav2_msgs/action/NavigateToPose
-
-nodes:
-  driver:
-    srv: [configure]
-  controller:
-    cli: [configure]
-  navigator:
-    action_server: [navigate]
-  planner:
-    action_client: [navigate]
-```
 
 ### Nodes
 
-Nodes reference topics, services, and actions by name. All keys are optional.
+Nodes declare their **endpoints** — named pub/sub/service/action ports.
+Endpoint names are the node's pre-remap topic names (before launch file
+`<remap>` is applied). Each endpoint must have a corresponding
+`<remap from="...">` in the launch file; warn if missing.
 
 ```yaml
 nodes:
   cropbox_filter:
-    pub: [cropped]
-    sub: [pointcloud]
+    pub: [output]             # pre-remap pub endpoint names
+    sub: [input]              # pre-remap sub endpoint names
 
   fusion_node:
     pub: [fused_objects]
     sub: [lidar_objects, camera_objects]
 
+  driver:
+    pub: [pointcloud]
+    srv: [configure]          # service server endpoint
+    cli: [get_map]            # service client endpoint
+
   # Minimal — just registers the node's existence
   evaluator:
 ```
 
-Node names are relative (prefixed by the launch file's namespace context).
+Node names are relative (prefixed by the launch file's namespace).
+
+Endpoints are **not** topic names — they are the node's internal port
+names. The `topics:` section assigns real topic names and wires
+endpoints together.
 
 ### Composable Nodes
 
-Composable nodes (`<load_composable_node>`) appear as regular nodes in the
-manifest. The container relationship is a deployment detail — from the topic
-graph perspective, composable nodes publish and subscribe like any other node.
+Composable nodes appear as regular nodes. The container is a deployment
+detail — from the topic graph perspective, composable nodes publish and
+subscribe like any other node. When a composable node is loaded into a
+container declared in a different launch file, the node belongs to the
+manifest of the launch file that contains `<load_composable_node>`.
+
+### Topics
+
+Topics wire node endpoints together. Each topic declares its type,
+which endpoints publish to it, and which subscribe.
 
 ```yaml
-# This launch file declares a container and loads composable nodes into it.
-# Only the composable nodes need topic declarations — the container is a
-# process host with no topics of its own.
-nodes:
-  cropbox_filter:         # composable node, loaded into some_container
-    pub: [cropped]
-    sub: [pointcloud]
-  centerpoint:            # another composable node in the same container
-    sub: [cropped]
-    pub: [objects]
+topics:
+  # Full form: type + endpoints + optional QoS and contract
+  cropped:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [cropbox_filter/output]
+    sub: [ground_filter/input]
+    qos:
+      reliability: best_effort
+      depth: 1
+    contract:
+      rate_hz: 10
+      deadline_ms: 150
+
+  # Shorthand: type only (no wiring — for undeclared topic tolerance)
+  debug_output: sensor_msgs/msg/PointCloud2
 ```
 
-When a composable node is loaded into a container declared in a **different**
-launch file (common in Autoware), the node belongs to the manifest of the
-launch file that contains the `<load_composable_node>`, not the one that
-declares the container.
+Topic names are **relative** — the parser applies the namespace from
+the launch file's include context. Absolute names (leading `/`) are
+references to the runtime environment (e.g., `/tf`, `/clock`) and
+do not need local declaration.
 
-### Components
+**Undeclared topics**: if a node endpoint is not wired by any topic in
+the manifest, the auditor emits a warning (not an error). This allows
+gradual adoption — you don't have to declare every topic on day one.
 
-Components are optional groupings **within** a single manifest file. They
-correspond to `<group>` blocks in the launch file. For `<include>` blocks,
-the parser handles the nesting automatically by looking up the included
-launch file's manifest from the manifest directory.
+**QoS fields** (all optional — omitted = ROS defaults, not audited):
+
+| Field         | Values                              |
+|---------------|-------------------------------------|
+| `reliability` | `reliable` \| `best_effort`         |
+| `durability`  | `volatile` \| `transient_local`     |
+| `depth`       | integer (history depth, keep\_last) |
+| `history`     | `keep_last` \| `keep_all`           |
+| `deadline_ms` | integer                             |
+| `lifespan_ms` | integer                             |
+| `liveliness`  | `automatic` \| `manual_by_topic`    |
+
+**Topic contract** (channel-level timing, optional):
+
+| Field                   | Meaning                                               |
+|-------------------------|-------------------------------------------------------|
+| `rate_hz`               | Expected message frequency                            |
+| `deadline_ms`           | Max gap between consecutive messages                  |
+| `max_drop_ratio`        | Max fraction of messages lost over `window`           |
+| `max_consecutive_drops` | Alert after N consecutive missed messages             |
+| `window`                | Sliding window for drop ratio (message count)         |
+
+### Services and Actions
+
+Same pattern as topics — declared with type, wire endpoints.
 
 ```yaml
-# Components for <group> blocks within this launch file
-components:
-  lidar:
-    namespace: lidar
+services:
+  configure:
+    type: std_srvs/srv/SetBool
+    server: [driver/configure]
+    client: [controller/configure]
+
+actions:
+  navigate:
+    type: nav2_msgs/action/NavigateToPose
+    server: [navigator/navigate]
+    client: [planner/navigate]
+```
+
+### Endpoint Groups
+
+Endpoint groups aggregate node endpoints (and child scope groups) into
+named virtual endpoints on the scope. Parent scopes reference these
+groups to wire child scopes together.
+
+```yaml
+sub_groups:
+  input: [cropbox_filter/input]
+
+pub_groups:
+  output: [centerpoint/objects]
+  all_debug: [cropbox_filter/debug, ground_filter/debug]
+```
+
+**Cross-scope references**: groups can reference subscope groups:
+
+```yaml
+pub_groups:
+  all_detections:
+    - lidar_perception/output        # child scope's pub_group
+    - camera_perception/output       # another child's pub_group
+```
+
+**Constraint**: groups in the same scope cannot reference each other
+(prevents cycles). A group is a virtual endpoint on the scope — parent
+scopes access child content only through groups.
+
+### Groups (Subscopes)
+
+Groups represent `<group>` blocks (inline) or `<include>` files (separate
+manifests). Each group has its own namespace prefix (one
+`<push-ros-namespace>` per group). Groups have the same structure as
+a top-level manifest — they can contain nodes, topics, nested groups,
+and endpoint groups.
+
+```yaml
+groups:
+  # Loaded from separate manifest file (via <include>)
+  lidar_perception:
+
+  # Inline group (from <group> block with <push-ros-namespace>)
+  safety_group:
+    nodes:
+      emergency_stop:
+        pub: [stop_cmd]
+        sub: [diagnostics]
     topics:
-      cropped: sensor_msgs/msg/PointCloud2
-      objects: autoware_perception_msgs/msg/DetectedObjects
-    nodes:
-      cropbox_filter:
-        sub: [pointcloud]
-        pub: [cropped]
-      centerpoint:
-        sub: [cropped]
-        pub: [objects]
-    interface:
-      pub: [objects]
-
-  # Component without namespace (organizational grouping only)
-  fusion_group:
-    nodes:
-      fusion_node: ...
-    sync: ...
+      stop_command:
+        type: std_msgs/msg/Bool
+        pub: [emergency_stop/stop_cmd]
+    pub_groups:
+      commands: [emergency_stop/stop_cmd]
 ```
 
-**Namespace rules** (same as ROS 2):
-- `namespace:` is optional. If omitted, inherits parent's namespace.
-- Absolute (leading `/`): replaces parent namespace.
-- Relative: appended to parent namespace.
+### Global Topics
 
-### Interface
-
-The interface declares which topics cross the launch file's boundary.
-Topics are **internal by default**. The interface is what the parent launch
-file (the one that `<include>`s this one) can see.
+Absolute topic names (`/tf`, `/clock`) are references to the runtime
+environment. Any scope can reference them in topic `pub:`/`sub:` lists
+without local declaration. The top-level manifest can optionally
+constrain their type and QoS:
 
 ```yaml
-interface:
-  pub: [tracked_objects]
-  sub: [pointcloud, image]
-  srv: [configure]
+# Top-level manifest only
+global_topics:
+  /tf: { type: tf2_msgs/msg/TFMessage, qos: { reliability: reliable, depth: 100 } }
+  /clock: { type: rosgraph_msgs/msg/Clock }
 ```
 
-A simple list of topic names from the manifest's `topics:` section.
+If an inner launch file is launched directly (without the top-level),
+it can declare its own `global_topics:`.
 
-**Absolute topics** (`/tf`, `/clock`) are globally visible and do not need
-to be listed in the interface.
+### Node I/O Contract
 
-### Interface Accumulation
+The `io:` block on a node describes its **computation contract** — how
+it transforms inputs to outputs. It references the node's own endpoint
+names (from `pub:` / `sub:`). No redundancy — `io:` only adds timing
+and role annotations.
 
-When a launch file includes another launch file that has a manifest, the
-included manifest's interface topics that are not consumed within the parent
-**accumulate** to the parent's interface.
+#### Primitives
 
-```
-Parent launch file includes:
-  - sensing.launch.xml (ns: /sensing)     → interface.pub: [pointcloud]
-  - perception.launch.xml (ns: /perception) → interface.sub: [/sensing/pointcloud]
-                                              interface.pub: [tracked_objects]
+All fields optional — specify only what you want to audit.
 
-/sensing/pointcloud is published by sensing, subscribed by perception → internal
-/perception/tracked_objects is not consumed by any sibling → accumulates to parent
-```
+**1. Input roles** — annotate endpoints from the node's `sub:` list.
 
-**Rules:**
-1. Resolve each included manifest's interface topics with its namespace.
-2. An interface topic matched by a sibling (by resolved name) is **internal**.
-3. An unmatched interface topic **accumulates** to the parent's interface.
-4. Absolute topics accumulate unchanged at every level.
+| Per-input property | Values              | Default                    | Meaning                                                   |
+|--------------------|---------------------|----------------------------|-----------------------------------------------------------|
+| `role`             | `trigger` / `state` | `trigger`                  | Does arrival fire computation? State = read-latest.       |
+| `consume`          | integer             | 1                          | Messages consumed per firing (SDF-style rate).            |
+| `min_count`        | integer             | 1 for trigger, 0 for state | Readiness precondition — min messages before operational. |
 
-### Sync Policies
+Shorthand: `state: [...]` marks those sub endpoints as state.
+`required: [...]` marks state endpoints with `min_count: 1`.
 
-Declared inside components that contain multi-input fusion nodes.
+**2. Trigger** — what causes output to be produced.
 
-```yaml
-sync:
-  object_fusion:
-    inputs: [lidar_objects, camera_objects]
-    correlation: timestamp
-    tolerance_ms: 50
-    timeout_ms: 80
-    on_drop: propagate     # propagate | skip | best_effort
-```
+| Value              | Meaning                                               |
+|--------------------|-------------------------------------------------------|
+| `on_arrival`       | Any trigger-input arrival fires computation (default) |
+| `all_ready`        | All trigger-inputs must arrive before firing          |
+| `periodic: <hz>`   | Timer-driven at the given frequency                   |
 
-- **`propagate`**: if any input drops, discard all correlated messages.
-- **`skip`**: merge node skips that cycle, other branches unaffected.
-- **`best_effort`**: use whatever is available (may use stale data).
+**3. Correlation** — how multiple trigger-inputs are associated.
 
-### Requirements
+| Value       | Meaning                                        |
+|-------------|------------------------------------------------|
+| `timestamp` | Match by `header.stamp` within `tolerance_ms`  |
+| `latest`    | Always use most recent of each (no sync)       |
 
-Quality contracts for timing and reliability, specified at per-node and
-per-chain granularity. Based on AUTOSAR TIMEX semantics and CARET
-measurement definitions.
+**4. Timing** — bounds on trigger-to-output.
 
-See `docs/research/data-quality-semantics.md` for the full research survey.
+| Field          | Meaning                                           |
+|----------------|---------------------------------------------------|
+| `latency_ms`   | Max time from trigger to output publish           |
+| `freshness_ms` | Max age of input data at output time (event-time) |
 
-#### Per-node contracts
-
-Each node can declare an **assume-guarantee** timing contract:
+#### Examples
 
 ```yaml
 nodes:
+  # Simple pipe — endpoint names match sub:/pub:
   centerpoint:
-    sub: [no_ground]
+    sub: [pointcloud]
     pub: [objects]
-    requirements:
-      # Node latency: time from subscription callback to publish
-      # Measured as: t_publish - t_subscribe (CARET definition)
-      node_latency_ms: 30        # p99 budget
-      # Maximum consecutive callbacks that miss the deadline
-      max_deadline_misses: 3
+    io: { latency_ms: 30 }
+
+  # Fusion — all inputs must arrive, timestamp-correlated
+  fusion_node:
+    sub: [lidar_objects, camera_objects]
+    pub: [fused]
+    io:
+      trigger: all_ready
+      correlation: timestamp
+      tolerance_ms: 50
+      latency_ms: 20
+
+  # Timer-driven tracker — inputs are state
+  tracker:
+    sub: [fused]
+    pub: [tracked_objects]
+    io:
+      state: [fused]
+      trigger: { periodic: 10 }
+      freshness_ms: 200
+
+  # NDT with feedback cycle and map precondition
+  ndt_scan_matcher:
+    sub: [points_raw, ekf_pose]
+    pub: [ndt_pose]
+    io:
+      state: [ekf_pose]
+      required: [map]
+      latency_ms: 50
+
+  # Source — no inputs, periodic output
+  lidar_driver:
+    pub: [pointcloud]
+    io:
+      trigger: { periodic: 10 }
+
+  # Gateway — only deadline on outputs
+  vehicle_cmd_gate:
+    sub: [auto_control_cmd, remote_control_cmd]
+    pub: [control_cmd, gear_cmd]
+    io:
+      deadline_ms: 100
+
+  # Accumulator — consume 10 scans before firing
+  voxel_accumulator:
+    sub: [pointcloud]
+    pub: [dense_cloud]
+    io:
+      inputs:
+        pointcloud: { consume: 10 }
+      latency_ms: 500
 ```
 
-#### Per-chain contracts (latency chains)
+### Scope I/O Contract
 
-A latency chain defines an end-to-end path from stimulus to response,
-with two AUTOSAR TIMEX metrics:
+A scope contract describes the E2E timing of the entire launch file
+or group. It references the scope's own endpoint groups.
 
 ```yaml
-chains:
-  sensor_to_actuation:
-    description: "Lidar to vehicle control command"
-    stimulus: /sensing/pointcloud       # first topic
-    response: /control/command          # last topic
-    # MRT: worst-case time from new stimulus to first response
-    max_reaction_time_ms: 100
-    # MDA: max age of data used at response point
-    max_data_age_ms: 50
-    # Per-node budgets (optional, sum ≤ MRT)
-    node_budgets:
-      - node: /sensing/lidar/driver
-        budget_ms: 5
-      - node: /perception/centerpoint
-        budget_ms: 30
-      - node: /perception/tracker
-        budget_ms: 20
-      - node: /planning/motion_planner
-        budget_ms: 35
-      - node: /control/vehicle_cmd_gate
-        budget_ms: 10
+sub_groups:
+  input: [cropbox_filter/input]
+pub_groups:
+  output: [centerpoint/objects]
+
+io:
+  latency_ms: 50               # E2E: input group → output group
 ```
 
-**Fork-join composition**: at a merge point, the critical path is the
-slowest branch:
+**Composition**: parent scope budgets compose from children's contracts.
+Fork-join follows the critical path:
 
 ```
-MRT = sensing (5ms) + max(lidar (50ms), camera (30ms)) + fusion (20ms) + planning (100ms)
-    = 175ms
+perception.launch.xml
+  latency_ms: 85
+  = max(lidar:50, camera:30) + fusion:20 + tracker:15 - overlap
 ```
 
-#### Reliability contracts
+The scope tree from Phase 30 provides the composition hierarchy.
 
-```yaml
-reliability:
-  /sensing/pointcloud:
-    # Loss budget: fraction of published messages not received
-    # Measured as: 1 - (take_count / pub_count) via StatsPlugin
-    max_loss_ratio: 0.05           # 5% over sliding window
-    window_size: 100               # evaluate over last 100 messages
-    max_consecutive_drops: 2       # alert after 3 in a row
+### Measurement Sources
 
-  /planning/trajectory:
-    # Deadline: maximum inter-message interval
-    # Aligns with DDS deadline QoS but monitored per-chain
-    deadline_ms: 100
-    max_deadline_misses: 0         # zero tolerance for control topics
-```
-
-#### Measurement sources
-
-| Metric | Definition | Source |
-|--------|-----------|--------|
-| Node latency | `t_publish - t_subscribe` | RCL interception (frontier plugin timestamps) |
-| Communication latency | `t_sub_callback - t_publish` | RCL interception (monotonic timestamps) |
-| Chain MRT | Stimulus to first response | Frontier: sensor frontier vs control frontier |
-| Chain MDA | Data age at response | Frontier: response timestamp - data generation timestamp |
-| Loss ratio | `1 - take_count / pub_count` | Stats plugin per-topic counters |
-| Inter-message jitter | `var(t[n+1] - t[n])` | Stats plugin monotonic timestamps |
-| Deadline miss | `t[n+1] - t[n] > deadline` | Stats plugin |
+| Metric         | Definition                                        | Source                          |
+|----------------|---------------------------------------------------|---------------------------------|
+| Latency        | `mono_publish(output) - mono_take(trigger_input)` | RCL interception timestamps     |
+| Sync tolerance | `max(stamp_i) - min(stamp_i)`                     | RCL interception `header.stamp` |
+| Rate           | `mono_pub[n] - mono_pub[n-1]`                     | Stats plugin publish timestamps |
+| Freshness      | `mono_publish - stamp(oldest_input)`              | Frontier plugin                 |
+| Drop ratio     | `1 - output_count / input_count`                  | Stats plugin per-topic counters |
+| Deadline miss  | `t[n] - t[n-1] > deadline`                        | Stats plugin                    |
 
 All measurements use the existing Phase 29 interception infrastructure.
-No new hooks needed — `FrontierPlugin` and `StatsPlugin` already capture
-the required data.
+
+### Contract Theory
+
+The `io:` blocks (node-level) and `contract:` blocks (topic-level) form
+an assume-guarantee contract system. Node contracts compose to scope
+contracts via series/parallel rules. Topic contracts are the channel-
+level quality bounds.
+
+See `docs/design/contract-theory.md` for the full formalization.
 
 ## Pipeline Example
 
-Autoware-like perception pipeline with branches, merge, and sync.
+Autoware-like perception pipeline with branches, merge, and planning.
 
 ```
 sensing.launch.xml ──→ lidar_perception.launch.xml ──┐
@@ -431,156 +476,239 @@ manifests/
     └── planning_simulator.launch.yaml
 ```
 
-**`autoware_launch/planning_simulator.launch.yaml`**:
-```yaml
-exclude_patterns: [/rosout, /parameter_events]
-
-# Cross-launch-file topics declared here for QoS specification.
-# These are referenced by absolute name in child manifests.
-topics:
-  /tf:
-    type: tf2_msgs/msg/TFMessage
-    qos: { reliability: reliable, depth: 100 }
-
-interface:
-  pub: [/planning/trajectory]
-```
-
 **`tier4_sensing_launch/sensing.launch.yaml`**:
 ```yaml
-topics:
-  pointcloud: sensor_msgs/msg/PointCloud2
-  image: sensor_msgs/msg/Image
+version: 1
 
 nodes:
-  lidar/driver:
+  lidar_driver:
     pub: [pointcloud]
-  camera/driver:
+    io: { trigger: { periodic: 10 } }
+  camera_driver:
     pub: [image]
-
-interface:
-  pub: [pointcloud, image]
-
-requirements:
-  latency_ms: 5
-```
-
-**`tier4_perception_launch/perception.launch.yaml`**:
-```yaml
-# This launch file includes lidar_perception.launch.xml and
-# camera_perception.launch.xml via <include>. The parser looks up
-# their manifests automatically. Only inline content is declared here.
+    io: { trigger: { periodic: 30 } }
 
 topics:
-  fused:
-    type: autoware_perception_msgs/msg/DetectedObjects
-    qos: { reliability: reliable, depth: 1 }
-  tracked_objects:
-    type: autoware_perception_msgs/msg/TrackedObjects
-    qos: { reliability: reliable, depth: 1 }
+  pointcloud:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [lidar_driver/pointcloud]
+    contract: { rate_hz: 10 }
+  image:
+    type: sensor_msgs/msg/Image
+    pub: [camera_driver/image]
+    contract: { rate_hz: 30 }
 
-nodes:
-  fusion_node:
-    sub: [lidar/objects, camera/objects]
-    pub: [fused]
-  tracker:
-    sub: [fused]
-    pub: [tracked_objects]
-
-sync:
-  object_fusion:
-    inputs: [lidar/objects, camera/objects]
-    correlation: timestamp
-    tolerance_ms: 50
-    timeout_ms: 80
-    on_drop: propagate
-
-interface:
-  pub: [tracked_objects]
-
-requirements:
-  latency_ms: 80
+pub_groups:
+  pointcloud: [lidar_driver/pointcloud]
+  image: [camera_driver/image]
 ```
 
 **`tier4_perception_launch/lidar_perception.launch.yaml`**:
 ```yaml
-topics:
-  cropped: sensor_msgs/msg/PointCloud2
-  no_ground: sensor_msgs/msg/PointCloud2
-  objects:
-    type: autoware_perception_msgs/msg/DetectedObjects
-    qos: { reliability: best_effort, depth: 1 }
+version: 1
 
 nodes:
   cropbox_filter:
-    sub: [/sensing/pointcloud]
-    pub: [cropped]
+    pub: [output]
+    sub: [input]
+    io: { latency_ms: 5 }
   ground_filter:
-    sub: [cropped]
-    pub: [no_ground]
+    pub: [output]
+    sub: [input]
+    io: { latency_ms: 15 }
   centerpoint:
-    sub: [no_ground]
     pub: [objects]
+    sub: [pointcloud]
+    io: { latency_ms: 30 }
 
-interface:
-  pub: [objects]
+topics:
+  cropped:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [cropbox_filter/output]
+    sub: [ground_filter/input]
+  no_ground:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [ground_filter/output]
+    sub: [centerpoint/pointcloud]
+  detected_objects:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    pub: [centerpoint/objects]
+    contract: { rate_hz: 10, max_drop_ratio: 0.05 }
 
-requirements:
-  latency_ms: 50
+sub_groups:
+  input: [cropbox_filter/input]
+pub_groups:
+  output: [centerpoint/objects]
+
+io: { latency_ms: 50 }
 ```
 
 **`tier4_perception_launch/camera_perception.launch.yaml`**:
 ```yaml
-topics:
-  rectified: sensor_msgs/msg/Image
-  objects:
-    type: autoware_perception_msgs/msg/DetectedObjects2D
-    qos: { reliability: best_effort, depth: 1 }
+version: 1
 
 nodes:
   rectifier:
-    sub: [/sensing/image]
-    pub: [rectified]
+    pub: [output]
+    sub: [input]
+    io: { latency_ms: 5 }
   yolo:
-    sub: [rectified]
     pub: [objects]
+    sub: [input]
+    io: { latency_ms: 25 }
 
-interface:
-  pub: [objects]
+topics:
+  rectified:
+    type: sensor_msgs/msg/Image
+    pub: [rectifier/output]
+    sub: [yolo/input]
+  detected_objects:
+    type: autoware_perception_msgs/msg/DetectedObjects2D
+    pub: [yolo/objects]
 
-requirements:
-  latency_ms: 30
+sub_groups:
+  input: [rectifier/input]
+pub_groups:
+  output: [yolo/objects]
+
+io: { latency_ms: 30 }
+```
+
+**`tier4_perception_launch/perception.launch.yaml`**:
+```yaml
+version: 1
+
+groups:
+  lidar_perception:       # loaded from lidar_perception.launch.yaml
+  camera_perception:      # loaded from camera_perception.launch.yaml
+
+nodes:
+  fusion_node:
+    pub: [fused_objects]
+    sub: [lidar_objects, camera_objects]
+    io:
+      trigger: all_ready
+      correlation: timestamp
+      tolerance_ms: 50
+      latency_ms: 20
+  tracker:
+    pub: [tracked_objects]
+    sub: [fused]
+    io:
+      state: [fused]
+      trigger: { periodic: 10 }
+      freshness_ms: 200
+
+topics:
+  lidar_objects:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    pub: [lidar_perception/output]             # child pub_group
+    sub: [fusion_node/lidar_objects]
+  camera_objects:
+    type: autoware_perception_msgs/msg/DetectedObjects2D
+    pub: [camera_perception/output]            # child pub_group
+    sub: [fusion_node/camera_objects]
+  fused:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    pub: [fusion_node/fused_objects]
+    sub: [tracker/fused]
+    qos: { reliability: reliable, depth: 1 }
+  tracked:
+    type: autoware_perception_msgs/msg/TrackedObjects
+    pub: [tracker/tracked_objects]
+    contract: { rate_hz: 10 }
+
+sub_groups:
+  input:
+    - lidar_perception/input                   # child sub_groups
+    - camera_perception/input
+pub_groups:
+  output: [tracker/tracked_objects]
+
+io: { latency_ms: 85 }
 ```
 
 **`tier4_planning_launch/planning.launch.yaml`**:
 ```yaml
-topics:
-  predicted_objects:
-    type: autoware_perception_msgs/msg/PredictedObjects
-    qos: { reliability: reliable, depth: 1 }
-  trajectory: autoware_planning_msgs/msg/Trajectory
+version: 1
 
 nodes:
   prediction:
-    sub: [/perception/tracked_objects]
     pub: [predicted_objects]
+    sub: [tracked_objects]
+    io: { latency_ms: 35 }
   motion_planner:
-    sub: [predicted_objects]
     pub: [trajectory]
+    sub: [predicted_objects]
+    io: { latency_ms: 65 }
 
-interface:
-  pub: [trajectory]
+topics:
+  predicted:
+    type: autoware_perception_msgs/msg/PredictedObjects
+    pub: [prediction/predicted_objects]
+    sub: [motion_planner/predicted_objects]
+    qos: { reliability: reliable, depth: 1 }
+  trajectory:
+    type: autoware_planning_msgs/msg/Trajectory
+    pub: [motion_planner/trajectory]
 
-requirements:
-  latency_ms: 100
+sub_groups:
+  input: [prediction/tracked_objects]
+pub_groups:
+  output: [motion_planner/trajectory]
+
+io: { latency_ms: 100 }
+```
+
+**`autoware_launch/planning_simulator.launch.yaml`**:
+```yaml
+version: 1
+exclude_patterns: [/rosout, /parameter_events]
+
+global_topics:
+  /tf: { type: tf2_msgs/msg/TFMessage, qos: { reliability: reliable, depth: 100 } }
+  /clock: { type: rosgraph_msgs/msg/Clock }
+
+groups:
+  sensing:
+  perception:
+  planning:
+
+topics:
+  pointcloud:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [sensing/pointcloud]              # sensing's pub_group
+    sub: [perception/input]                # perception's sub_group (→lidar path)
+  image:
+    type: sensor_msgs/msg/Image
+    pub: [sensing/image]
+    sub: [perception/input]                # perception's sub_group (→camera path)
+  tracked_objects:
+    type: autoware_perception_msgs/msg/TrackedObjects
+    pub: [perception/output]
+    sub: [planning/input]
+  trajectory:
+    type: autoware_planning_msgs/msg/Trajectory
+    pub: [planning/output]
+
+pub_groups:
+  output: [planning/output]
 ```
 
 ### Latency Analysis
 
+Each scope's `io.latency_ms` is verified independently. The E2E
+critical path is derived from the scope tree:
+
 ```
-sensing (5ms) → max(lidar (50ms), camera (30ms)) → fusion (20ms) → planning (100ms)
-Critical path: 5 + 50 + 20 + 100 = 175ms
+sensing (source, 10 Hz)
+  → max(lidar_perception: 50ms, camera_perception: 30ms)
+  → fusion: 20ms + tracker (periodic, 10 Hz)
+  → planning: 100ms
+Critical path: 50 + 20 + 100 = 170ms (from pointcloud to trajectory)
 ```
+
+No user-defined chains — the scope hierarchy IS the chain structure.
 
 ## File Organization
 
@@ -629,9 +757,9 @@ include is processed normally without manifest auditing (partial coverage).
 Each manifest file describes **one launch file**. The file path within the
 manifest directory mirrors the ROS package structure:
 
-| Launch file | Manifest file |
-|---|---|
-| `camera_driver/camera_driver.launch.xml` | `camera_driver/camera_driver.launch.yaml` |
+| Launch file                                     | Manifest file                                    |
+|-------------------------------------------------|--------------------------------------------------|
+| `camera_driver/camera_driver.launch.xml`        | `camera_driver/camera_driver.launch.yaml`        |
 | `tier4_perception_launch/perception.launch.xml` | `tier4_perception_launch/perception.launch.yaml` |
 | `autoware_launch/planning_simulator.launch.xml` | `autoware_launch/planning_simulator.launch.yaml` |
 
@@ -650,29 +778,26 @@ The executor enables auditing only when the fields are present.
 Parser (with --manifest-dir)
   └── processes launch files + loads manifests → record.json
         ├── nodes, params, remaps, ...     (existing fields)
-        ├── topics: { ... }                (new — from manifests)
-        ├── services: { ... }              (new)
-        ├── actions: { ... }               (new)
-        └── manifest_sync: { ... }         (new — sync policies)
+        ├── manifest_topics: { ... }       (new — expected topic graph)
+        ├── manifest_services: { ... }     (new)
+        ├── node_contracts: { ... }        (new — per-node io)
+        └── topic_contracts: { ... }       (new — per-topic timing)
 
 Executor
   ├── record.json → spawn nodes            (existing)
-  └── record.json topics + GraphSnapshot → audit  (new, if fields present)
+  └── manifest fields + GraphSnapshot → audit  (new, if fields present)
 ```
 
 **New fields in record.json:**
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `topics` | map | Resolved topic name → `{ type, qos, publishers: [node_fqn], subscribers: [node_fqn] }` |
-| `services` | map | Resolved service name → `{ type, servers: [node_fqn], clients: [node_fqn] }` |
-| `actions` | map | Resolved action name → `{ type, servers: [node_fqn], clients: [node_fqn] }` |
-| `manifest_sync` | map | Sync policy name → `{ inputs, correlation, tolerance_ms, timeout_ms, on_drop }` |
-| `manifest_requirements` | map | Node FQN or manifest path → `{ latency_ms, drop_rate }` |
+| Field               | Type | Description                                                                 |
+|---------------------|------|-----------------------------------------------------------------------------|
+| `manifest_topics`   | map  | Resolved topic name → `{ type, qos, pub: [node_fqn], sub: [node_fqn] }`    |
+| `manifest_services` | map  | Resolved service name → `{ type, server: [node_fqn], client: [node_fqn] }` |
+| `node_contracts`    | map  | Node FQN → `{ trigger, correlation, latency_ms, ... }`                     |
+| `topic_contracts`   | map  | Resolved topic name → `{ rate_hz, deadline_ms, max_drop_ratio, ... }`      |
 
 These fields are populated by the parser when `--manifest-dir` is provided.
-Each node's existing record gains optional `pub`, `sub`, `srv`, `cli`,
-`action_server`, `action_client` lists (topic/service/action names).
 
 **Construction algorithm:**
 
@@ -741,7 +866,7 @@ Two-phase auditing, using the expected graph embedded in `record.json`:
 | Missing endpoint     | runtime | `info`   |
 | QoS mismatch         | runtime | `warn`   |
 | Latency exceeded     | runtime | `warn`   |
-| Sync violation        | runtime | `warn`   |
+| I/O contract violated | runtime | `warn`  |
 
 Output: terminal log, `GET /api/manifest/diff`, `play_log/<ts>/manifest_audit.json`.
 
@@ -752,18 +877,18 @@ Output: terminal log, `GET /api/manifest/diff`, `play_log/<ts>/manifest_audit.js
   ([spec](https://www.autosar.org/fileadmin/standards/R22-11/CP/AUTOSAR_TPS_TimingExtensions.pdf))
 - **CARET**: Chain-Aware ROS 2 Evaluation Tool for cause-effect chain latency.
   ([paper](https://www.researchgate.net/publication/369815699))
-- **Casini et al.** (ECRTS 2019): Response-time analysis of ROS 2 processing
-  chains under reservation-based scheduling.
 - **ROS 2 `message_filters`**: ApproximateTimeSynchronizer pivot algorithm.
   ([docs](https://docs.ros.org/en/humble/p/message_filters/doc/index.html))
-- **ros-plan**: System description format with sockets, links, and QoS.
-  ([repo](https://github.com/tnagyzambo/ros-plan))
+- **Prior art survey**: `docs/research/manifest-prior-art.md` — Jsonnet, CUE,
+  K8s reconciliation, protobuf contracts, system_modes, CARET, ros2-performance.
+- **Data quality semantics**: `docs/research/data-quality-semantics.md`
 
-## Non-Goals (v3)
+## Non-Goals (v4)
 
 - **Automatic manifest resolution** (sidecar, central store, AMENT_PREFIX_PATH
   lookup) — for now, `--manifest-dir` is the only mechanism.
 - **Blocking enforcement** via RCL interception (future).
-- **Drop propagation enforcement** at the middleware level (future).
+- **User-defined chains** — replaced by scope-level I/O contracts that
+  compose through the launch tree hierarchy.
 - **Semantic component extraction** (namespace-based splitting is mechanical;
   meaningful grouping is user-authored).
