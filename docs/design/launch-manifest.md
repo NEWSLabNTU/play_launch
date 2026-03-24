@@ -102,7 +102,7 @@ topics:
     pub: [talker/chatter]
     sub: [listener/chatter]
 
-pub_groups:
+exports:
   output: [talker/chatter]
 ```
 
@@ -156,7 +156,9 @@ manifest of the launch file that contains `<load_composable_node>`.
 ### Topics
 
 Topics wire node endpoints together. Each topic declares its type,
-which endpoints publish to it, and which subscribe.
+which endpoints publish to it, and which subscribe. Endpoints are
+referenced as `node/endpoint` or `include_name/export_or_import_name`
+for cross-scope wiring.
 
 ```yaml
 topics:
@@ -177,9 +179,7 @@ topics:
 ```
 
 Topic names are **relative** — the parser applies the namespace from
-the launch file's include context. Absolute names (leading `/`) are
-references to the runtime environment (e.g., `/tf`, `/clock`) and
-do not need local declaration.
+the include context. The real topic name becomes `<ns>/topic_name`.
 
 **Undeclared topics**: if a node endpoint is not wired by any topic in
 the manifest, the auditor emits a warning (not an error). This allows
@@ -225,49 +225,62 @@ actions:
     client: [planner/navigate]
 ```
 
-### Endpoint Groups
+### Imports and Exports
 
-Endpoint groups aggregate node endpoints (and child scope groups) into
-named virtual endpoints on the scope. Parent scopes reference these
-groups to wire child scopes together.
+Imports and exports are the scope's boundary — named groups of
+endpoints that parent scopes use to wire children together.
+
+- **`exports:`** — publisher endpoints this scope provides to its parent
+- **`imports:`** — subscriber endpoints this scope needs from its parent
 
 ```yaml
-sub_groups:
+imports:
   input: [cropbox_filter/input]
 
-pub_groups:
+exports:
   output: [centerpoint/objects]
   all_debug: [cropbox_filter/debug, ground_filter/debug]
 ```
 
-**Cross-scope references**: groups can reference subscope groups:
+**Cross-scope aggregation**: imports/exports can reference child
+scope's imports/exports:
 
 ```yaml
-pub_groups:
+imports:
+  input:
+    - lidar/input                    # child scope "lidar"'s import
+    - camera/input                   # child scope "camera"'s import
+
+exports:
   all_detections:
-    - lidar_perception/output        # child scope's pub_group
-    - camera_perception/output       # another child's pub_group
+    - lidar/output                   # child scope's export
+    - camera/output
 ```
 
-**Constraint**: groups in the same scope cannot reference each other
-(prevents cycles). A group is a virtual endpoint on the scope — parent
-scopes access child content only through groups.
+**Constraint**: imports/exports in the same scope cannot reference each
+other (prevents cycles). Deep paths (`lidar/cropbox_filter/output`)
+are allowed but imports/exports are preferred for encapsulation.
 
-### Groups (Subscopes)
+**Unresolved imports**: if a parent scope does not wire a child's import
+via a topic, the auditor warns "unresolved import."
 
-Groups represent `<group>` blocks (inline) or `<include>` files (separate
-manifests). Each group has its own namespace prefix (one
-`<push-ros-namespace>` per group). Groups have the same structure as
-a top-level manifest — they can contain nodes, topics, nested groups,
-and endpoint groups.
+### Includes
+
+Includes represent `<include>` (separate manifest) or `<group>` blocks
+(inline). The include **name is the ROS namespace** — it maps to the
+`<push-ros-namespace>` in the launch file.
 
 ```yaml
-groups:
-  # Loaded from separate manifest file (via <include>)
-  lidar_perception:
+includes:
+  # External — loaded from separate manifest file (via <include>)
+  lidar:
+    manifest: tier4_perception_launch/lidar_perception.launch.yaml
 
-  # Inline group (from <group> block with <push-ros-namespace>)
-  safety_group:
+  camera:
+    manifest: tier4_perception_launch/camera_perception.launch.yaml
+
+  # Inline — defined here (from <group> block)
+  safety:
     nodes:
       emergency_stop:
         pub: [stop_cmd]
@@ -276,26 +289,35 @@ groups:
       stop_command:
         type: std_msgs/msg/Bool
         pub: [emergency_stop/stop_cmd]
-    pub_groups:
+    exports:
       commands: [emergency_stop/stop_cmd]
 ```
+
+External includes use `manifest:` with `package/file.yaml` — resolved
+as `<manifest_dir>/package/file.yaml`.
+
+Inline includes have the same structure as a top-level manifest (minus
+`version:`). They can contain `nodes:`, `topics:`, `includes:`,
+`imports:`, `exports:`, and `io:`.
+
+Each include must correspond to exactly one `<push-ros-namespace>` in
+the launch file. Multiple `<push-ros-namespace>` in a single `<group>`
+is considered ill-formed.
 
 ### Global Topics
 
 Absolute topic names (`/tf`, `/clock`) are references to the runtime
 environment. Any scope can reference them in topic `pub:`/`sub:` lists
-without local declaration. The top-level manifest can optionally
-constrain their type and QoS:
+without local declaration. Optionally constrain their type and QoS:
 
 ```yaml
-# Top-level manifest only
 global_topics:
   /tf: { type: tf2_msgs/msg/TFMessage, qos: { reliability: reliable, depth: 100 } }
   /clock: { type: rosgraph_msgs/msg/Clock }
 ```
 
-If an inner launch file is launched directly (without the top-level),
-it can declare its own `global_topics:`.
+Any manifest can declare `global_topics:` — this allows inner launch
+files to be launched directly without the top-level manifest.
 
 ### Node I/O Contract
 
@@ -345,7 +367,7 @@ Shorthand: `state: [...]` marks those sub endpoints as state.
 
 ```yaml
 nodes:
-  # Simple pipe — endpoint names match sub:/pub:
+  # Simple pipe
   centerpoint:
     sub: [pointcloud]
     pub: [objects]
@@ -405,23 +427,23 @@ nodes:
 ### Scope I/O Contract
 
 A scope contract describes the E2E timing of the entire launch file
-or group. It references the scope's own endpoint groups.
+or include. It references the scope's own imports and exports.
 
 ```yaml
-sub_groups:
+imports:
   input: [cropbox_filter/input]
-pub_groups:
+exports:
   output: [centerpoint/objects]
 
 io:
-  latency_ms: 50               # E2E: input group → output group
+  latency_ms: 50               # E2E: imports → exports
 ```
 
 **Composition**: parent scope budgets compose from children's contracts.
 Fork-join follows the critical path:
 
 ```
-perception.launch.xml
+perception
   latency_ms: 85
   = max(lidar:50, camera:30) + fusion:20 + tracker:15 - overlap
 ```
@@ -498,7 +520,7 @@ topics:
     pub: [camera_driver/image]
     contract: { rate_hz: 30 }
 
-pub_groups:
+exports:
   pointcloud: [lidar_driver/pointcloud]
   image: [camera_driver/image]
 ```
@@ -535,9 +557,9 @@ topics:
     pub: [centerpoint/objects]
     contract: { rate_hz: 10, max_drop_ratio: 0.05 }
 
-sub_groups:
+imports:
   input: [cropbox_filter/input]
-pub_groups:
+exports:
   output: [centerpoint/objects]
 
 io: { latency_ms: 50 }
@@ -566,9 +588,9 @@ topics:
     type: autoware_perception_msgs/msg/DetectedObjects2D
     pub: [yolo/objects]
 
-sub_groups:
+imports:
   input: [rectifier/input]
-pub_groups:
+exports:
   output: [yolo/objects]
 
 io: { latency_ms: 30 }
@@ -578,9 +600,11 @@ io: { latency_ms: 30 }
 ```yaml
 version: 1
 
-groups:
-  lidar_perception:       # loaded from lidar_perception.launch.yaml
-  camera_perception:      # loaded from camera_perception.launch.yaml
+includes:
+  lidar:
+    manifest: tier4_perception_launch/lidar_perception.launch.yaml
+  camera:
+    manifest: tier4_perception_launch/camera_perception.launch.yaml
 
 nodes:
   fusion_node:
@@ -602,11 +626,11 @@ nodes:
 topics:
   lidar_objects:
     type: autoware_perception_msgs/msg/DetectedObjects
-    pub: [lidar_perception/output]             # child pub_group
+    pub: [lidar/output]                        # child's export
     sub: [fusion_node/lidar_objects]
   camera_objects:
     type: autoware_perception_msgs/msg/DetectedObjects2D
-    pub: [camera_perception/output]            # child pub_group
+    pub: [camera/output]                       # child's export
     sub: [fusion_node/camera_objects]
   fused:
     type: autoware_perception_msgs/msg/DetectedObjects
@@ -618,11 +642,11 @@ topics:
     pub: [tracker/tracked_objects]
     contract: { rate_hz: 10 }
 
-sub_groups:
+imports:
   input:
-    - lidar_perception/input                   # child sub_groups
-    - camera_perception/input
-pub_groups:
+    - lidar/input                              # child's import
+    - camera/input
+exports:
   output: [tracker/tracked_objects]
 
 io: { latency_ms: 85 }
@@ -652,9 +676,9 @@ topics:
     type: autoware_planning_msgs/msg/Trajectory
     pub: [motion_planner/trajectory]
 
-sub_groups:
+imports:
   input: [prediction/tracked_objects]
-pub_groups:
+exports:
   output: [motion_planner/trajectory]
 
 io: { latency_ms: 100 }
@@ -669,29 +693,32 @@ global_topics:
   /tf: { type: tf2_msgs/msg/TFMessage, qos: { reliability: reliable, depth: 100 } }
   /clock: { type: rosgraph_msgs/msg/Clock }
 
-groups:
+includes:
   sensing:
+    manifest: tier4_sensing_launch/sensing.launch.yaml
   perception:
+    manifest: tier4_perception_launch/perception.launch.yaml
   planning:
+    manifest: tier4_planning_launch/planning.launch.yaml
 
 topics:
   pointcloud:
     type: sensor_msgs/msg/PointCloud2
-    pub: [sensing/pointcloud]              # sensing's pub_group
-    sub: [perception/input]                # perception's sub_group (→lidar path)
+    pub: [sensing/pointcloud]              # sensing's export
+    sub: [perception/input]                # perception's import
   image:
     type: sensor_msgs/msg/Image
-    pub: [sensing/image]
-    sub: [perception/input]                # perception's sub_group (→camera path)
+    pub: [sensing/image]                   # sensing's export
+    sub: [perception/input]                # perception's import
   tracked_objects:
     type: autoware_perception_msgs/msg/TrackedObjects
-    pub: [perception/output]
-    sub: [planning/input]
+    pub: [perception/output]               # perception's export
+    sub: [planning/input]                  # planning's import
   trajectory:
     type: autoware_planning_msgs/msg/Trajectory
-    pub: [planning/output]
+    pub: [planning/output]                 # planning's export
 
-pub_groups:
+exports:
   output: [planning/output]
 ```
 
@@ -792,10 +819,11 @@ Executor
 
 | Field               | Type | Description                                                                 |
 |---------------------|------|-----------------------------------------------------------------------------|
-| `manifest_topics`   | map  | Resolved topic name → `{ type, qos, pub: [node_fqn], sub: [node_fqn] }`    |
-| `manifest_services` | map  | Resolved service name → `{ type, server: [node_fqn], client: [node_fqn] }` |
-| `node_contracts`    | map  | Node FQN → `{ trigger, correlation, latency_ms, ... }`                     |
-| `topic_contracts`   | map  | Resolved topic name → `{ rate_hz, deadline_ms, max_drop_ratio, ... }`      |
+| `manifest_topics`   | map  | Resolved topic name → `{ type, qos, pub: [node_fqn], sub: [node_fqn] }`     |
+| `manifest_services` | map  | Resolved service name → `{ type, server: [node_fqn], client: [node_fqn] }`  |
+| `node_contracts`    | map  | Node FQN → `{ trigger, correlation, latency_ms, state, required, ... }`     |
+| `topic_contracts`   | map  | Resolved topic name → `{ rate_hz, deadline_ms, max_drop_ratio, ... }`       |
+| `scope_contracts`   | map  | Scope ID → `{ latency_ms, imports: [...], exports: [...] }`                 |
 
 These fields are populated by the parser when `--manifest-dir` is provided.
 
@@ -857,16 +885,16 @@ Two-phase auditing, using the expected graph embedded in `record.json`:
 - Diffs actual graph vs expected graph
 - Catches topics created in code but not declared in manifests
 
-| Category             | Phase   | Severity |
-|----------------------|---------|----------|
-| QoS incompatible     | parse   | `error`  |
-| New topic            | runtime | `warn`   |
-| Missing topic        | runtime | `info` → `warn` after stabilization |
-| New endpoint         | runtime | `warn`   |
-| Missing endpoint     | runtime | `info`   |
-| QoS mismatch         | runtime | `warn`   |
-| Latency exceeded     | runtime | `warn`   |
-| I/O contract violated | runtime | `warn`  |
+| Category              | Phase   | Severity                            |
+|-----------------------|---------|-------------------------------------|
+| QoS incompatible      | parse   | `error`                             |
+| New topic             | runtime | `warn`                              |
+| Missing topic         | runtime | `info` → `warn` after stabilization |
+| New endpoint          | runtime | `warn`                              |
+| Missing endpoint      | runtime | `info`                              |
+| QoS mismatch          | runtime | `warn`                              |
+| Latency exceeded      | runtime | `warn`                              |
+| I/O contract violated | runtime | `warn`                              |
 
 Output: terminal log, `GET /api/manifest/diff`, `play_log/<ts>/manifest_audit.json`.
 
