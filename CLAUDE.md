@@ -149,8 +149,8 @@ Composable nodes don't have separate directories — metadata in parent containe
 ### Building & Testing
 - **ALWAYS** use `just build` (never `colcon build` directly)
 - **ALWAYS** use Bash tool's `timeout` parameter (never `timeout` command prefix)
-- Temp files in `tmp/` (gitignored), never `/tmp`
-- Create temp scripts with Write tool, never inline in Bash
+- Temp files in `tmp/` (gitignored), never `/tmp`. Avoid writing large shell scripts in Bash tool — create files using Write/Edit tool instead of `cat` + EOF heredoc.
+- **External source exploration**: download source repos to `external/` (gitignored) for deep exploration. Use `gh api` only for quick peeks or GitHub-specific features (issues, PRs, actions).
 - **Standalone crates** (outside the workspace, with their own `[workspace]` in Cargo.toml) must have a `/target/` `.gitignore` — e.g. `play_launch_interception`, `rcl_interception_sys`, `spsc_shm`
 
 ### Process Management
