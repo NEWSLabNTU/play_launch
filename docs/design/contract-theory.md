@@ -160,36 +160,19 @@ For $\epsilon = 0.01$: right-hand side $\approx 0.01$.
 be stricter than any individual node. Periodic nodes reset the
 consecutive chain; check each segment independently.
 
-#### Gilbert-Elliott model (bursty drops)
+#### Note: bursty drops
 
 The Bernoulli model assumes independent drops. In practice, DDS
 transport drops are often **bursty** due to network congestion,
-OS scheduling, or queue overflow. The Gilbert-Elliott model captures
-this with a two-state hidden Markov model:
+OS scheduling, or queue overflow. The Gilbert-Elliott model (a
+two-state HMM with Good/Bad states, mean burst length $= 1/r$)
+better captures this behavior, but its composition rules are
+complex (series produces a 4-state HMM, not another Gilbert-Elliott).
 
-- **Good state**: delivery rate $\approx 1$ (low loss)
-- **Bad state**: delivery rate $\approx 0$ (high loss)
-- Transition Good $\to$ Bad with probability $p$
-- Transition Bad $\to$ Good with probability $r$
-
-Steady-state: drop rate $= p / (p + r)$.
-Mean burst length $= 1/r$.
-
-Under this model, consecutive drops can be much longer than the
-Bernoulli prediction — a burst of $1/r$ messages is typical once
-the system enters the Bad state.
-
-**Implication**: The Bernoulli consecutive-drop check is
-**optimistic** for transport drops. For node-level drops (computation
-failures), Bernoulli is appropriate since failures are typically
-independent. For transport drops, the `max_consecutive` on topic
-`drop` should account for potential burst lengths from DDS
-congestion.
-
-The Gilbert-Elliott parameters $(p, r)$ can be estimated from
-runtime interception data by fitting observed drop sequences.
-This is a future enhancement — for Phase 31, the Bernoulli model
-is sufficient.
+For Phase 31, the static checker uses the Bernoulli model. The
+runtime monitor detects burstiness via diagnostics (see Burstiness
+Diagnostics below) and warns the user when the Bernoulli model
+is inadequate.
 
 ### Scope budget
 
@@ -321,6 +304,67 @@ assumption and guarantee violations independently:
 Runtime monitoring is sufficient for Phase 31. The path to static
 verification exists when needed (see `docs/design/contract-verification.md`).
 
+## Burstiness Diagnostics
+
+The static checker uses the Bernoulli model for drop composition.
+At runtime, the monitor detects whether observed drops are actually
+independent (Bernoulli-like) or bursty. This is computed always-on
+for all topics (negligible cost: ~5 ns/message, ~80 bytes/topic)
+but reported selectively.
+
+### Metrics
+
+**Lag-1 autocorrelation**: Given binary trace $x[t] \in \{0, 1\}$
+(1=delivered, 0=dropped):
+
+$$\rho_1 = \frac{\sum_{t=1}^{N-1} (x[t] - \bar{x})(x[t+1] - \bar{x})}{\sum_{t=1}^{N} (x[t] - \bar{x})^2}$$
+
+- $\rho_1 \approx 0$: independent drops (Bernoulli valid)
+- $\rho_1 > 0.05$ with $N > 1000$: significant burstiness
+
+**Dispersion index**: Divide trace into windows of size $W$ (default
+100). Count drops per window $d_i$:
+
+$$DI = \frac{\mathrm{Var}(d_i)}{E(d_i)}$$
+
+- $DI \approx 1$: Poisson-like (Bernoulli)
+- $DI > 1.5$: overdispersed (bursty)
+
+**Observed max run**: Longest consecutive drop sequence $L_{\max}$.
+Compare to Bernoulli prediction:
+
+$$E[L_{\max}^{\text{Bernoulli}}] \approx \frac{\ln(N \cdot (1-d))}{\ln(1/d)}$$
+
+If $L_{\max} \gg E[L_{\max}^{\text{Bernoulli}}]$, drops are burstier
+than the Bernoulli model predicts.
+
+**Estimated mean burst length** (reported only when $DI > 1.5$):
+
+$$\hat{r} = 1 - P(\text{drop} \mid \text{previous drop})$$
+
+$$\text{mean burst} = 1 / \hat{r}$$
+
+### Reporting
+
+The monitor always collects counters but reports selectively:
+
+1. **Declared topics** (have `drop:` in manifest): Full diagnostic
+   — rate check, consecutive check, burstiness, recommendation.
+2. **Undeclared topics with anomalies** (drop rate > 1%, or $DI > 2$,
+   or max run > 5): Discovery alerts with recommendation to add
+   a `drop:` declaration.
+3. **Undeclared topics with no issues**: Not shown.
+
+### Recommendations
+
+When burstiness is detected, the monitor suggests:
+
+- Increase `max_consecutive` budget (with suggested value from
+  observed burst lengths)
+- Investigate burst cause (CPU contention, DDS queue overflow)
+- Switch to RELIABLE QoS to prevent transport bursts
+- Add `drop:` declaration for undeclared topics
+
 ## Empirical Contract Derivation
 
 Capture mode (`--save-manifest-dir`) derives contracts from observed
@@ -341,6 +385,149 @@ For $N = 1000$ at $c = 0.99$: $P(\text{violation}) \leq 0.0046$.
 Capture provides a starting point. Users refine manually or tighten
 margins over time.
 
+## Appendix A: Drop Composition Derivation
+
+### A.1 Delivery Rate Composition
+
+Each node declares `drop: N_i / W_i`. Define **delivery rate**:
+
+$$\mathcal{R}_i = 1 - \frac{N_i}{W_i}$$
+
+For a series chain of independent components, a message must survive
+every stage. The chain delivery rate is the product:
+
+$$\mathcal{R}_{\text{chain}} = \prod_i \mathcal{R}_i$$
+
+In log form (convenient for implementation):
+
+$$\ln \mathcal{R}_{\text{chain}} = \sum_i \ln \mathcal{R}_i$$
+
+The scope declares `drop: N_s / W_s`. The check:
+
+$$\frac{N_s}{W_s} \geq 1 - \mathcal{R}_{\text{chain}}$$
+
+### A.2 Consecutive Drop: Derivation
+
+We model each message as an independent Bernoulli trial with drop
+probability $d = 1 - \mathcal{R}_{\text{chain}}$. We want the
+probability of seeing $K$ or more consecutive drops in $W$ messages.
+
+**Step 1: Counting run starts.** A run of $K$ consecutive drops can
+start at positions $1, 2, \ldots, W - K + 1$. There are $W - K + 1$
+possible starting positions.
+
+**Step 2: Per-position probability.** For a run starting at position
+$i$ (where $i > 1$):
+- Messages $i, i+1, \ldots, i+K-1$ must all drop: $d^K$
+- Message $i-1$ must NOT drop (otherwise the run started earlier): $(1-d)$
+- Combined: $d^K \cdot (1-d)$
+
+For $i = 1$, there is no preceding message, so the probability is
+$d^K$. Averaging over all positions gives approximately
+$d^K \cdot (1-d)$ per position.
+
+**Step 3: Poisson approximation.** When runs are rare events (small
+$d^K$), the number of runs of length $\geq K$ is approximately
+Poisson-distributed with mean:
+
+$$\lambda = (W - K + 1) \cdot d^K \cdot (1-d)$$
+
+The probability of at least one such run:
+
+$$P(\text{max run} \geq K) = 1 - P(\text{Poisson}(\lambda) = 0) = 1 - e^{-\lambda}$$
+
+Therefore:
+
+$$P(\text{max run} \geq K \mid W) \approx 1 - \exp\left(-(W - K + 1) \cdot d^K \cdot (1-d)\right)$$
+
+### A.3 Scope Consecutive Check
+
+The scope declares `max_consecutive: K_s` over window $W_s$.
+We require the probability of violation to be below confidence
+threshold $\epsilon$ (default 0.01):
+
+$$P(\text{max run} \geq K_s \mid W_s) \leq \epsilon$$
+
+Substituting and rearranging:
+
+$$1 - \exp(-(W_s - K_s + 1) \cdot d^{K_s} \cdot (1-d)) \leq \epsilon$$
+
+$$\exp(-(W_s - K_s + 1) \cdot d^{K_s} \cdot (1-d)) \geq 1 - \epsilon$$
+
+Taking $-\ln$ of both sides:
+
+$$(W_s - K_s + 1) \cdot d^{K_s} \cdot (1-d) \leq -\ln(1 - \epsilon)$$
+
+For $\epsilon = 0.01$: $-\ln(0.99) \approx 0.01$. The check becomes:
+
+$$(W_s - K_s + 1) \cdot d^{K_s} \cdot (1-d) \leq 0.01$$
+
+Additionally, the **necessary condition** must hold:
+$K_s \geq \max_i K_i$ — the scope can't be stricter than any
+individual node. Periodic nodes reset the consecutive chain;
+segments are checked independently.
+
+### A.4 Example: Three-Node Pipeline
+
+**Setup**: Three nodes, each `drop: 2/100`.
+
+Chain delivery rate:
+
+$$\mathcal{R}_{\text{chain}} = 0.98^3 = 0.9412$$
+
+Chain drop rate: $d = 1 - 0.9412 = 0.0588$.
+
+**Scope declares** `drop: 12/200, max_consecutive: 3`.
+
+**Rate check**:
+
+$$\frac{12}{200} = 0.06 \geq d = 0.0588 \quad \checkmark$$
+
+**Consecutive check** with $W_s = 200$, $K_s = 3$:
+
+$$(200 - 3 + 1) \times 0.0588^3 \times (1 - 0.0588) = 198 \times 0.000203 \times 0.9412 = 0.0379$$
+
+$0.0379 > 0.01$: **Fails.** Three consecutive drops are too likely
+(3.8% probability per window of 200 messages).
+
+**Try** `max_consecutive: 4`:
+
+$$198 \times 0.0588^4 \times 0.9412 = 198 \times 0.0000120 \times 0.9412 = 0.00223$$
+
+$0.00223 \leq 0.01$: **Passes.** Four consecutive drops are
+sufficiently unlikely (0.2% probability).
+
+The checker reports: "`max_consecutive: 3` is infeasible
+(p=0.038 > 0.01). Minimum feasible: `max_consecutive: 4` (p=0.002)."
+
+### A.5 Example: With Periodic Reset
+
+**Setup**: cropbox (`drop: 1/100`) → centerpoint (`drop: 2/100`) →
+tracker (periodic, `drop: 1/100`).
+
+**Pre-tracker segment**: $\mathcal{R} = 0.99 \times 0.98 = 0.9702$,
+$d = 0.0298$.
+
+**Post-tracker segment**: tracker is periodic, resets the consecutive
+chain. $d = 0.01$.
+
+Scope declares `max_consecutive: 3` over $W_s = 200$.
+
+**Pre-tracker check** ($d = 0.0298$, $K = 3$):
+
+$$198 \times 0.0298^3 \times 0.9702 = 198 \times 0.0000265 \times 0.9702 = 0.00508$$
+
+$0.00508 \leq 0.01$: **Passes.**
+
+**Post-tracker check** ($d = 0.01$, $K = 3$):
+
+$$198 \times 0.01^3 \times 0.99 = 198 \times 10^{-6} \times 0.99 = 0.000196$$
+
+$0.000196 \leq 0.01$: **Passes.**
+
+Both segments pass independently. The periodic node prevents
+upstream bursts from propagating.
+
 ## References
 
 - Benveniste et al., ["Contracts for System Design"](https://doi.org/10.1561/2500000017) (Foundations and Trends in EDA, 2018)
@@ -353,3 +540,6 @@ margins over time.
 - [SAE AS5506C](https://www.sae.org/standards/content/as5506c/) (AADL) — flow latency analysis
 - [AUTOSAR TIMEX R22-11](https://www.autosar.org/standards/r22-11) — event chain timing constraints
 - [CARET](https://github.com/tier4/caret) — Chain-Aware ROS 2 Evaluation Tool (see `docs/research/caret-analysis.md`)
+- Erdos & Renyi, "On a new law of large numbers" (*J. Analyse Math.* 1970) — longest runs in Bernoulli sequences
+- Schilling, ["The Longest Run of Heads"](https://doi.org/10.1080/07468342.1990.11973306) (*College Math. J.* 1990) — finite-W approximation
+- Gilbert, "Capacity of a Burst-Noise Channel" (*Bell System Technical J.* 1960) — burst error model

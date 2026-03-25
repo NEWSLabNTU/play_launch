@@ -524,8 +524,12 @@ The scope tree from Phase 30 provides the composition hierarchy.
 | Node drop  | `1 - output_count / input_count`                          | Stats plugin                |
 | Burst      | max consecutive missing outputs                           | Stats plugin                |
 | Xport drop | `1 - sub_take_count / pub_count`                          | Stats plugin                |
+| Burstiness | lag-1 autocorrelation, dispersion index, max run          | Stats plugin (always-on)    |
 
 All measurements use the existing Phase 29 interception infrastructure.
+Burstiness diagnostics are always-on (negligible cost) but reported
+selectively — full detail for topics with `drop:` declared, discovery
+alerts for undeclared topics with anomalies.
 
 ### Formal Foundations
 

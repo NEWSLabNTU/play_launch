@@ -417,7 +417,8 @@ Each monitor maps to a contract field:
 | `paths.*.max_age_ms`                     | `AgeMonitor` (static or header.stamp) |
 | topic `rate_hz` / endpoint `min_rate_hz` | `RateMonitor`                         |
 | endpoint `jitter_ms`                     | `JitterMonitor`                       |
-| `paths.*.drop` / topic `drop`            | `DropMonitor` (sliding window)        |
+| `paths.*.drop` / topic `drop`            | `DropMonitor` (sliding window)                             |
+| burstiness (always-on)                   | `BurstinessMonitor` (autocorrelation, dispersion, max run) |
 
 Data source: Phase 29 RCL interception events via SPSC ring buffer.
 
