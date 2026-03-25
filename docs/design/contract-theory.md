@@ -74,8 +74,9 @@ $$L_{\min}(A \to B \to C) = L_{\min}(A) + L(t_{AB}) + L_{\min}(B) + L(t_{BC}) + 
 
 Transport latency $L(t)$ is modeled but typically 0 for same-machine.
 
-Drop (log-sum approximation):
-$$\ln(1 - D_{\text{chain}}) = \sum_i \ln(1 - D_i)$$
+Delivery rate (see Drop Composition below):
+
+$$\mathcal{R}_{\text{chain}} = \prod_i \mathcal{R}_i$$
 
 Age: $A_{\max}(C) = A_{\max}(A) + L(t_{AB}) + L_{\max}(B) + L(t_{BC}) + L_{\max}(C)$
 
@@ -92,7 +93,7 @@ in →  │            ├→ C (W_C)
       └→ B (W_B) →┘
 ```
 
-Rate: $R = \min(R_A, R_B)$
+Rate: $R_{\text{rate}} = \min(R_A, R_B)$
 
 Drop: all drop causes (upstream propagation, correlation mismatch,
 computation failure) are combined into the node's single `drop:` value.
@@ -109,9 +110,86 @@ $$L_{\min}(\text{through periodic}) = L_{\min}(\text{upstream}) + C$$
 Best case: timer fires right as state updates (zero wait).
 Worst case: state arrives just after timer, waits full period.
 
-Rate through periodic: $R_{\text{out}} = 1000 / P$ (independent
+Rate through periodic: $R_{\text{rate}} = 1000 / P$ (independent
 of upstream). The path's `max_age_ms` constrains how old the
 original source data can be at the output.
+
+Periodic nodes **reset** the consecutive drop chain — upstream
+consecutive drops don't propagate because the timer fires regardless.
+
+### Drop Composition
+
+Define **delivery rate** $\mathcal{R} = 1 - d$ where $d = N/W$ is
+the drop rate from the manifest's `drop: N / W` declaration.
+
+#### Series drop rate
+
+$$\mathcal{R}_{\text{chain}} = \prod_i \mathcal{R}_i$$
+
+In log form:
+
+$$\ln \mathcal{R}_{\text{chain}} = \sum_i \ln \mathcal{R}_i$$
+
+**Scope check**: given scope declares `drop: N_s / W_s`:
+
+$$1 - N_s / W_s \leq \mathcal{R}_{\text{chain}}$$
+
+Each node declares its own $N_i / W_i$ with its own window size.
+The checker converts to per-message probability, composes, and
+checks against the scope's declared window.
+
+#### Consecutive drop composition
+
+Given chain delivery rate $\mathcal{R}_{\text{chain}}$, the
+probability of a run of $K$ or more consecutive drops in a window
+of $W$ messages (Poisson approximation of the Erdos-Renyi longest
+run distribution):
+
+$$P(\text{max run} \geq K \mid W) \approx 1 - \exp\left(-(W - K + 1) \cdot (1 - \mathcal{R})^K \cdot \mathcal{R}\right)$$
+
+where $\mathcal{R} = \mathcal{R}_{\text{chain}}$.
+
+**Scope check**: given scope declares `max_consecutive: K_s` and
+window $W_s$, verify at confidence $\epsilon = 0.01$:
+
+$$(W_s - K_s + 1) \cdot (1 - \mathcal{R})^{K_s} \cdot \mathcal{R} \leq -\ln(1 - \epsilon)$$
+
+For $\epsilon = 0.01$: right-hand side $\approx 0.01$.
+
+**Necessary condition**: $K_s \geq \max_i K_i$ — the scope can't
+be stricter than any individual node. Periodic nodes reset the
+consecutive chain; check each segment independently.
+
+#### Gilbert-Elliott model (bursty drops)
+
+The Bernoulli model assumes independent drops. In practice, DDS
+transport drops are often **bursty** due to network congestion,
+OS scheduling, or queue overflow. The Gilbert-Elliott model captures
+this with a two-state hidden Markov model:
+
+- **Good state**: delivery rate $\approx 1$ (low loss)
+- **Bad state**: delivery rate $\approx 0$ (high loss)
+- Transition Good $\to$ Bad with probability $p$
+- Transition Bad $\to$ Good with probability $r$
+
+Steady-state: drop rate $= p / (p + r)$.
+Mean burst length $= 1/r$.
+
+Under this model, consecutive drops can be much longer than the
+Bernoulli prediction — a burst of $1/r$ messages is typical once
+the system enters the Bad state.
+
+**Implication**: The Bernoulli consecutive-drop check is
+**optimistic** for transport drops. For node-level drops (computation
+failures), Bernoulli is appropriate since failures are typically
+independent. For transport drops, the `max_consecutive` on topic
+`drop` should account for potential burst lengths from DDS
+congestion.
+
+The Gilbert-Elliott parameters $(p, r)$ can be estimated from
+runtime interception data by fitting observed drop sequences.
+This is a future enhancement — for Phase 31, the Bernoulli model
+is sufficient.
 
 ### Scope budget
 
