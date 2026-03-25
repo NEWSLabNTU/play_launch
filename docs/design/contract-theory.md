@@ -92,7 +92,11 @@ in →  │            ├→ C (W_C)
       └→ B (W_B) →┘
 ```
 
-Rate: $R = \min(R_A, R_B)$. Drop: lumped into node's `drop:`.
+Rate: $R = \min(R_A, R_B)$
+
+Drop: all drop causes (upstream propagation, correlation mismatch,
+computation failure) are combined into the node's single `drop:` value.
+
 Age: $A_{\max} = \max(A_{\max}(A), A_{\max}(B)) + L_{\max}(C)$
 
 ### Periodic (timer-driven)
@@ -114,7 +118,7 @@ original source data can be at the output.
 A scope's `paths.*.max_latency_ms` must be $\geq$ the critical path
 through its internal dataflow graph:
 
-$$\text{scope.paths.*.max\_latency\_ms} \geq \text{longest\_path}(\text{imports} \to \text{exports})$$
+$$L_{\max}(\sigma) \geq \operatorname{longest\text{-}path}(\text{imports} \to \text{exports})$$
 
 The critical path is the longest-weight path in a DAG — computable
 in $O(|V|+|E|)$ via topological sort + dynamic programming.
@@ -163,15 +167,15 @@ the same scope or an ancestor scope.
 
 ### 2. Scope max budget validity
 
-$$\text{scope.paths.*.max\_latency\_ms} \geq \text{critical\_path}_{\max}(\text{internal\_graph})$$
+$$L_{\max}(\sigma) \geq \operatorname{critical\text{-}path}_{\max}(\text{G})$$
 
 ### 3. Scope min bound validity (if declared)
 
-$$\text{scope.paths.*.min\_latency\_ms} \leq \text{critical\_path}_{\min}(\text{internal\_graph})$$
+$$L_{\min}(\sigma) \leq \operatorname{critical\text{-}path}_{\min}(\text{G})$$
 
 ### 4. Age budget validity (if declared)
 
-$$\text{scope.paths.*.max\_age\_ms} \geq \sum L_{\max}(p_i) + \sum L(t_j)$$
+$$A_{\max}(\sigma) \geq \sum L_{\max}(p_i) + \sum L(t_j)$$
 
 along the causal chain from source to scope export.
 
@@ -181,7 +185,7 @@ $$\forall (\text{pub}, \text{sub}) \text{ on same topic}: \quad \text{pub.reliab
 
 ### 6. Rate hierarchy
 
-$$\text{pub.min\_rate\_hz} \geq \text{topic.rate\_hz} \geq \max(\text{sub.min\_rate\_hz})$$
+$$R_{\min}(\text{pub}) \geq R(\text{topic}) \geq \max(R_{\min}(\text{sub}))$$
 
 ### 7. Endpoint uniqueness
 
@@ -211,20 +215,20 @@ assumption and guarantee violations independently:
 
 ### What the monitor checks
 
-| Manifest field                 | Monitor logic                                                     | Data source             |
-|--------------------------------|-------------------------------------------------------------------|-------------------------|
-| `paths.*.max_latency_ms`          | $t_{\text{pub}} - t_{\text{take}}(\text{trigger}) \leq L$        | Interception timestamps |
-| `paths.*.min_latency_ms`      | $L_{\text{actual}} \geq L_{\min}$ (anomaly if below)              | Interception timestamps |
-| `paths.*.max_age_ms`          | $t_{\text{pub}} - t_{\text{creation}}(\text{source}) \leq A$     | Static or header.stamp  |
-| `paths.*.correlation`         | $\max(\text{stamp}_i) - \min(\text{stamp}_i) \leq \tau$          | Interception            |
-| topic `rate_hz`               | $t_{\text{pub}}[n] - t_{\text{pub}}[n-1] \approx 1/R$            | Stats plugin            |
-| endpoint `min_rate_hz`        | actual rate $\geq R_{\min}$                                       | Stats plugin            |
-| endpoint `max_rate_hz`        | actual rate $\leq R_{\max}$                                       | Stats plugin            |
-| endpoint `jitter_ms`          | $|t[n] - t[n-1] - P| \leq J$                                     | Stats plugin            |
-| `paths.*.drop` ($N/W$)        | $\text{drops in window } W \leq N$                                | Stats plugin            |
-| `paths.*.drop.max_consecutive` | $\text{consecutive drops} \leq K$                                | Stats plugin            |
-| topic `drop` ($N/W$)          | $\text{transport drops in window } W \leq N$                      | Stats plugin            |
-| srv endpoint `max_latency_ms`     | $t_{\text{response}} - t_{\text{request}} \leq L$                 | Interception            |
+| Manifest field                 | Monitor logic                                                | Data source             |
+|--------------------------------|--------------------------------------------------------------|-------------------------|---------|--------------|
+| `paths.*.max_latency_ms`       | $t_{\text{pub}} - t_{\text{take}}(\text{trigger}) \leq L$    | Interception timestamps |
+| `paths.*.min_latency_ms`       | $L_{\text{actual}} \geq L_{\min}$ (anomaly if below)         | Interception timestamps |
+| `paths.*.max_age_ms`           | $t_{\text{pub}} - t_{\text{creation}}(\text{source}) \leq A$ | Static or header.stamp  |
+| `paths.*.correlation`          | $\max(\text{stamp}_i) - \min(\text{stamp}_i) \leq \tau$      | Interception            |
+| topic `rate_hz`                | $t_{\text{pub}}[n] - t_{\text{pub}}[n-1] \approx 1/R$        | Stats plugin            |
+| endpoint `min_rate_hz`         | actual rate $\geq R_{\min}$                                  | Stats plugin            |
+| endpoint `max_rate_hz`         | actual rate $\leq R_{\max}$                                  | Stats plugin            |
+| endpoint `jitter_ms`           | $                                                            | t[n] - t[n-1] - P       | \leq J$ | Stats plugin |
+| `paths.*.drop` ($N/W$)         | $\text{drops in window } W \leq N$                           | Stats plugin            |
+| `paths.*.drop.max_consecutive` | $\text{consecutive drops} \leq K$                            | Stats plugin            |
+| topic `drop` ($N/W$)           | $\text{transport drops in window } W \leq N$                 | Stats plugin            |
+| srv endpoint `max_latency_ms`  | $t_{\text{response}} - t_{\text{request}} \leq L$            | Interception            |
 
 ### Monitoring vs Static Verification
 
@@ -261,10 +265,13 @@ margins over time.
 
 ## References
 
-- Benveniste et al., "Contracts for System Design" (Foundations and Trends, 2018)
-- de Alfaro & Henzinger, "Interface Automata" (POPL 2001)
-- Henzinger & Matic, "Timed Interfaces" (EMSOFT 2006)
-- Leucker & Schallhart, "A Brief Account of Runtime Verification" (JLAP 2009)
-- Casini et al., "Response-Time Analysis of ROS 2 Processing Chains" (ECRTS 2019)
-- SAE AS5506C (AADL) — flow latency analysis
-- AUTOSAR TIMEX R22-11 — event chain timing constraints
+- Benveniste et al., ["Contracts for System Design"](https://doi.org/10.1561/2500000017) (Foundations and Trends in EDA, 2018)
+- de Alfaro & Henzinger, ["Interface Automata"](https://doi.org/10.1145/366927.366984) (POPL 2001)
+- Henzinger & Matic, ["Timed Interfaces"](https://doi.org/10.1145/1176887.1176896) (EMSOFT 2006)
+- Leucker & Schallhart, ["A Brief Account of Runtime Verification"](https://doi.org/10.1016/j.jlap.2008.08.004) (JLAP 2009)
+- Casini et al., ["Response-Time Analysis of ROS 2 Processing Chains"](https://doi.org/10.4230/LIPIcs.ECRTS.2019.6) (ECRTS 2019)
+- Feiertag et al., ["A Framework for Measuring Data Age"](https://doi.org/10.1109/ETFA.2009.5347tried) (ETFA 2009)
+- Becker et al., ["End-to-End Timing Analysis of Cause-Effect Chains"](https://doi.org/10.4230/LIPIcs.ECRTS.2017.9) (ECRTS 2017)
+- [SAE AS5506C](https://www.sae.org/standards/content/as5506c/) (AADL) — flow latency analysis
+- [AUTOSAR TIMEX R22-11](https://www.autosar.org/standards/r22-11) — event chain timing constraints
+- [CARET](https://github.com/tier4/caret) — Chain-Aware ROS 2 Evaluation Tool (see `docs/research/caret-analysis.md`)

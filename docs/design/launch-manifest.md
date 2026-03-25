@@ -514,16 +514,16 @@ The scope tree from Phase 30 provides the composition hierarchy.
 
 ### Measurement Sources
 
-| Metric     | Definition                              | Source                      |
-|------------|-----------------------------------------|-----------------------------|
-| Latency    | `t_pub - t_take(trigger_input)`         | RCL interception timestamps |
-| Sync       | `max(stamp_i) - min(stamp_i)`           | RCL interception stamps     |
-| Rate       | `t_pub[n] - t_pub[n-1]`                | Stats plugin                |
-| Jitter     | `|interval - 1/rate_hz|`               | Stats plugin                |
-| Age        | sum of chain latencies (static) or `t_pub - header.stamp` | Static / interception |
-| Node drop  | `1 - output_count / input_count`        | Stats plugin                |
-| Burst      | max consecutive missing outputs         | Stats plugin                |
-| Xport drop | `1 - sub_take_count / pub_count`        | Stats plugin                |
+| Metric     | Definition                                                | Source                      |
+|------------|-----------------------------------------------------------|-----------------------------|
+| Latency    | `t_pub - t_take(trigger_input)`                           | RCL interception timestamps |
+| Sync       | `max(stamp_i) - min(stamp_i)`                             | RCL interception stamps     |
+| Rate       | `t_pub[n] - t_pub[n-1]`                                   | Stats plugin                |
+| Jitter     | `|interval - 1/rate_hz|`                                  | Stats plugin                |
+| Age        | sum of chain latencies (static) or `t_pub - header.stamp` | Static / interception       |
+| Node drop  | `1 - output_count / input_count`                          | Stats plugin                |
+| Burst      | max consecutive missing outputs                           | Stats plugin                |
+| Xport drop | `1 - sub_take_count / pub_count`                          | Stats plugin                |
 
 All measurements use the existing Phase 29 interception infrastructure.
 

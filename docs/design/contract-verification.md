@@ -359,28 +359,28 @@ src/manifest/
 
 ## Crate Choices
 
-| Concern | Crate | Why |
-|---------|-------|-----|
-| YAML parsing with spans | `yaml-rust2` | `MarkedYaml` gives line/col per node |
-| Diagnostic rendering | `codespan-reporting` | Multi-file, FileId-based, stable, used by naga/Deno |
-| Error types | `thiserror` | Already in our deps |
-| Graph analysis | `petgraph` | Critical path, cycle detection |
-| SMT interaction (opt.) | `rsmt2` or `easy-smt` | Pipe SMT-LIB2 to Z3 subprocess |
+| Concern                 | Crate                 | Why                                                 |
+|-------------------------|-----------------------|-----------------------------------------------------|
+| YAML parsing with spans | `yaml-rust2`          | `MarkedYaml` gives line/col per node                |
+| Diagnostic rendering    | `codespan-reporting`  | Multi-file, FileId-based, stable, used by naga/Deno |
+| Error types             | `thiserror`           | Already in our deps                                 |
+| Graph analysis          | `petgraph`            | Critical path, cycle detection                      |
+| SMT interaction (opt.)  | `rsmt2` or `easy-smt` | Pipe SMT-LIB2 to Z3 subprocess                      |
 
 ## Tiered Implementation
 
 ### Tier 1: Graph algorithms (implement now)
 
-| Check | Algorithm | Complexity |
-|-------|-----------|------------|
-| Critical path (E2E latency) | Topo sort + DP longest path | $O(V+E)$ |
-| Scope budget validity | Tree walk: children max/sum ≤ parent | $O(V)$ |
-| Cycle detection | `is_cyclic_directed()` / `tarjan_scc()` | $O(V+E)$ |
-| Unreachable nodes | `has_path_connecting()` | $O(V+E)$ |
-| QoS compatibility | Direct comparison per topic | $O(E)$ |
-| Type consistency | String equality per topic | $O(E)$ |
-| Import/export completeness | Set difference | $O(V)$ |
-| Rate feasibility | Arithmetic per topic | $O(E)$ |
+| Check                       | Algorithm                               | Complexity |
+|-----------------------------|-----------------------------------------|------------|
+| Critical path (E2E latency) | Topo sort + DP longest path             | $O(V+E)$   |
+| Scope budget validity       | Tree walk: children max/sum ≤ parent    | $O(V)$     |
+| Cycle detection             | `is_cyclic_directed()` / `tarjan_scc()` | $O(V+E)$   |
+| Unreachable nodes           | `has_path_connecting()`                 | $O(V+E)$   |
+| QoS compatibility           | Direct comparison per topic             | $O(E)$     |
+| Type consistency            | String equality per topic               | $O(E)$     |
+| Import/export completeness  | Set difference                          | $O(V)$     |
+| Rate feasibility            | Arithmetic per topic                    | $O(E)$     |
 
 This covers ~95% of contract checking with zero new dependencies
 beyond `petgraph` (likely already in the dependency tree).
@@ -410,14 +410,14 @@ impl LatencyMonitor {
 
 Each monitor maps to a contract field:
 
-| Contract field | Monitor |
-|---------------|---------|
-| `paths.*.max_latency_ms` | `LatencyMonitor` |
-| `paths.*.min_latency_ms` | `LatencyAnomalyMonitor` |
-| `paths.*.max_age_ms` | `AgeMonitor` (static or header.stamp) |
-| topic `rate_hz` / endpoint `min_rate_hz` | `RateMonitor` |
-| endpoint `jitter_ms` | `JitterMonitor` |
-| `paths.*.drop` / topic `drop` | `DropMonitor` (sliding window) |
+| Contract field                           | Monitor                               |
+|------------------------------------------|---------------------------------------|
+| `paths.*.max_latency_ms`                 | `LatencyMonitor`                      |
+| `paths.*.min_latency_ms`                 | `LatencyAnomalyMonitor`               |
+| `paths.*.max_age_ms`                     | `AgeMonitor` (static or header.stamp) |
+| topic `rate_hz` / endpoint `min_rate_hz` | `RateMonitor`                         |
+| endpoint `jitter_ms`                     | `JitterMonitor`                       |
+| `paths.*.drop` / topic `drop`            | `DropMonitor` (sliding window)        |
 
 Data source: Phase 29 RCL interception events via SPSC ring buffer.
 
