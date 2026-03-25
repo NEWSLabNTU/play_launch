@@ -118,7 +118,7 @@ original source data can be at the output.
 A scope's `paths.*.max_latency_ms` must be $\geq$ the critical path
 through its internal dataflow graph:
 
-$$L_{\max}(\sigma) \geq \operatorname{longest\text{-}path}(\text{imports} \to \text{exports})$$
+$$L_{\max}(\sigma) \geq \mathrm{longestPath}(\text{imports} \to \text{exports})$$
 
 The critical path is the longest-weight path in a DAG — computable
 in $O(|V|+|E|)$ via topological sort + dynamic programming.
@@ -167,11 +167,11 @@ the same scope or an ancestor scope.
 
 ### 2. Scope max budget validity
 
-$$L_{\max}(\sigma) \geq \operatorname{critical\text{-}path}_{\max}(\text{G})$$
+$$L_{\max}(\sigma) \geq \mathrm{criticalPath}_{\max}(\text{G})$$
 
 ### 3. Scope min bound validity (if declared)
 
-$$L_{\min}(\sigma) \leq \operatorname{critical\text{-}path}_{\min}(\text{G})$$
+$$L_{\min}(\sigma) \leq \mathrm{criticalPath}_{\min}(\text{G})$$
 
 ### 4. Age budget validity (if declared)
 
@@ -216,7 +216,7 @@ assumption and guarantee violations independently:
 ### What the monitor checks
 
 | Manifest field                 | Monitor logic                                                | Data source             |
-|--------------------------------|--------------------------------------------------------------|-------------------------|---------|--------------|
+|--------------------------------|--------------------------------------------------------------|-------------------------|
 | `paths.*.max_latency_ms`       | $t_{\text{pub}} - t_{\text{take}}(\text{trigger}) \leq L$    | Interception timestamps |
 | `paths.*.min_latency_ms`       | $L_{\text{actual}} \geq L_{\min}$ (anomaly if below)         | Interception timestamps |
 | `paths.*.max_age_ms`           | $t_{\text{pub}} - t_{\text{creation}}(\text{source}) \leq A$ | Static or header.stamp  |
@@ -224,7 +224,7 @@ assumption and guarantee violations independently:
 | topic `rate_hz`                | $t_{\text{pub}}[n] - t_{\text{pub}}[n-1] \approx 1/R$        | Stats plugin            |
 | endpoint `min_rate_hz`         | actual rate $\geq R_{\min}$                                  | Stats plugin            |
 | endpoint `max_rate_hz`         | actual rate $\leq R_{\max}$                                  | Stats plugin            |
-| endpoint `jitter_ms`           | $                                                            | t[n] - t[n-1] - P       | \leq J$ | Stats plugin |
+| endpoint `jitter_ms`           | $\lvert t[n] - t[n-1] - P \rvert \leq J$                    | Stats plugin            |
 | `paths.*.drop` ($N/W$)         | $\text{drops in window } W \leq N$                           | Stats plugin            |
 | `paths.*.drop.max_consecutive` | $\text{consecutive drops} \leq K$                            | Stats plugin            |
 | topic `drop` ($N/W$)           | $\text{transport drops in window } W \leq N$                 | Stats plugin            |
