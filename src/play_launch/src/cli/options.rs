@@ -95,6 +95,12 @@ pub enum Command {
         play_launch context record.json --node /perception/centerpoint\n  \
         play_launch context record.json --launch tier4_system_launch system.launch.xml")]
     Context(ContextArgs),
+
+    /// Check manifest contracts against a launch file
+    #[command(after_help = "Examples:\n  \
+        play_launch check --manifest-dir manifests/ autoware_launch planning_simulator.launch.xml\n  \
+        play_launch check --manifest-dir manifests/ /path/to/launch.py arg:=value")]
+    Check(CheckArgs),
 }
 
 /// Arguments for the context extraction command
@@ -122,6 +128,28 @@ pub struct ContextArgs {
     /// Print the launch include tree
     #[arg(long)]
     pub tree: bool,
+}
+
+/// Arguments for `play_launch check`
+#[derive(Args)]
+pub struct CheckArgs {
+    /// Package name or path to launch file
+    pub package_or_path: String,
+
+    /// Launch file name (if package_or_path is a package name)
+    pub launch_file: Option<String>,
+
+    /// Launch arguments in KEY:=VALUE format
+    #[arg(trailing_var_arg = true)]
+    pub launch_arguments: Vec<String>,
+
+    /// Directory containing per-launch-file manifests (<pkg>/<stem>.yaml)
+    #[arg(long, value_name = "PATH")]
+    pub manifest_dir: PathBuf,
+
+    /// Output format: terminal (default, with source excerpts) or json
+    #[arg(long, default_value = "terminal")]
+    pub format: String,
 }
 
 /// Arguments for launching a launch file
