@@ -10,3 +10,6 @@
 [submodule "src/vendor/rcl_interception_sys"]
 	path = src/vendor/rcl_interception_sys
 	url = https://github.com/jerry73204/rcl_interception_sys.git
+[submodule "src/ros-launch-manifest"]
+	path = src/ros-launch-manifest
+	url = https://github.com/NEWSLabNTU/ros-launch-manifest.git
