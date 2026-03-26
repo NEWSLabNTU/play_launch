@@ -15,6 +15,7 @@ use tracing::{debug, info, warn};
 
 /// A loaded and resolved manifest bound to a specific scope.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used by 31.5 runtime monitors and 31.6 audit
 pub struct ResolvedManifest {
     /// Scope ID this manifest is bound to.
     pub scope_id: usize,
@@ -34,6 +35,7 @@ pub struct ResolvedManifest {
 
 /// Resolved topic entry with fully-qualified names.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used by 31.5 runtime monitors and 31.6 audit
 pub struct ResolvedTopic {
     /// Fully-qualified topic name (with namespace prefix).
     pub fqn: String,
@@ -55,6 +57,7 @@ pub struct ResolvedTopic {
 
 /// Resolved node path entry.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields used by 31.5 runtime monitors
 pub struct ResolvedNodePath {
     /// Fully-qualified node name.
     pub node_fqn: String,
