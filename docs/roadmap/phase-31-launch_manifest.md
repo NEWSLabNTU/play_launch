@@ -1,144 +1,250 @@
 # Phase 31: Launch Manifest
 
-**Status**: Planned
-**Priority**: High (System Observability / Graph Validation)
-**Dependencies**: Phase 30 (Launch Tree Scoping — scope table in record.json), Phase 25 (GraphSnapshot)
+**Status**: In progress (31.1–31.3 complete: types, checker, fixtures — 64 tests passing)
+**Priority**: High
+**Dependencies**: Phase 30 (scope table), Phase 29 (RCL interception)
+**Repo**: `src/ros-launch-manifest/` (workspace with multiple crates)
+
+Design docs:
+- `docs/design/launch-manifest.md` — manifest format specification
+- `docs/design/contract-theory.md` — formal contract theory
+- `docs/design/contract-verification.md` — implementation tooling
+- `docs/research/caret-analysis.md` — CARET causal model analysis
+- `docs/research/io-contract-prior-art.md` — prior art survey
+- `docs/research/manifest-prior-art.md` — tool survey
 
 ---
 
-## Overview
+## 31.1: Manifest types crate
 
-Manifest files describe the expected communication graph (topics, services,
-actions, QoS, timing contracts) per launch file. This phase implements the
-manifest crate and integrates it with the parser and executor.
+**Crate**: `ros-launch-manifest-types` in `src/ros-launch-manifest/`
 
-Design docs:
-- `docs/design/launch-manifest.md` — manifest format
-- `docs/design/rcl-interception.md` — graph discovery evolution
+Parse manifest YAML into typed AST with source spans.
 
-## Work Items
+- [ ] Cargo.toml: `yaml-rust2`, `thiserror`, `serde` (for output)
+- [x] `types.rs`: core types (14 types)
+  - `Manifest`, `NodeDecl`, `EndpointProps`, `SrvEndpointProps`
+  - `TopicDecl`, `ServiceDecl`, `ActionDecl`
+  - `IncludeDecl` (External/Inline), `QosDecl`
+  - `PathDecl`, `DropSpec`, `DropCount`, `GlobalTopicDecl`
+- [x] `span.rs`: `Spanned<T>` wrapper, `line_starts()`, `line_col_to_offset()`
+- [x] `parse.rs`: yaml-rust2 → `Manifest`
+  - Plain list vs map form for endpoints
+  - `drop: N / W` string parsing + full form
+  - Shorthand topic form (type only)
+  - External/inline include parsing
+- [x] Unit tests: 18 tests (round-trip, shorthand, edge cases, drops, includes)
+- [x] Validate: endpoint name uniqueness per node (at parse time)
 
-### 31.1: Manifest crate — types + parsing
+## 31.2: Static checker crate
 
-- [ ] Create `src/play_launch_manifest/Cargo.toml` (serde, serde_yaml,
-  indexmap)
-- [ ] `types.rs`: `Manifest`, `TopicDecl` (shorthand + full), `NodeDecl`,
-  `ComponentDecl`, `InterfaceDecl`, `SyncPolicy`, `Requirements`, `QosDecl`
-- [ ] Handle `pub` keyword: `#[serde(rename = "pub")]`
-- [ ] Handle shorthand: `#[serde(untagged)]` for `TopicDecl`
-- [ ] `Manifest::from_yaml(path)` and `Manifest::to_yaml()`
-- [ ] Unit tests: round-trip, shorthand, edge cases
-- [ ] Add crate to workspace
+**Crate**: `ros-launch-manifest-check` in `src/ros-launch-manifest/`
 
-### 31.2: Graph construction + validation
+Graph algorithms + constraint checking with diagnostic output.
 
-- [ ] `resolve.rs`: namespace resolution (relative → absolute)
-- [ ] `graph.rs`: `ExpectedGraphBuilder` → `ExpectedGraph`
-- [ ] Topic name matching: group publishers/subscribers by resolved name
-- [ ] Type consistency: endpoints on same topic must agree
-- [ ] `accumulate.rs`: interface accumulation rules
-- [ ] `qos.rs`: QoS compatibility checks (reliability, durability)
-- [ ] Unit tests for each module
+- [x] `graph.rs`: build dataflow graph from manifest (petgraph DiGraph)
+  - Nodes + child scopes as vertices
+  - Topic wiring as edges (endpoint reference resolution)
+- [x] `rules/` directory with `ValidationRule` trait + 9 rules:
+  - `endpoint_unique.rs`: names unique per node
+  - `wiring.rs`: path endpoints wired by topics, imports resolved
+  - `qos_compat.rs`: QoS values valid (reliability, durability)
+  - `rate_hierarchy.rs`: pub.min_rate_hz >= topic.rate_hz >= max(sub.min_rate_hz)
+  - `rate_chain.rs`: export rates achievable from upstream
+  - `scope_budget.rs`: scope latency >= node sum, age >= latency
+  - `causal_dag.rs`: dataflow graph acyclic (petgraph)
+  - `drop_rate.rs`: delivery rate composition (product/log-sum), scope check
+  - `drop_consecutive.rs`: Erdos-Renyi Poisson check at epsilon=0.01 + necessary condition
+- [x] `check.rs`: CheckContext, Diagnostic, Severity, run_checks()
+- [x] `emit/terminal.rs`: simple stderr diagnostic output
+- [ ] `emit/diagnostic.rs`: codespan-reporting with source spans (deferred)
+- [ ] `emit/formal.rs`: Unicode mathematical notation (deferred)
+- [x] Integration tests: 18 tests (clean, violations, pipeline)
+- [x] Full fixture set (31.3)
 
-### 31.3: Test fixtures
+## 31.3: Test fixtures
 
-- [ ] `tests/fixtures/manifest_simple/` — clean audit
-- [ ] `tests/fixtures/manifest_deviation/` — intentional mismatches
-- [ ] `tests/fixtures/manifest_qos/` — QoS validation
-- [ ] `tests/fixtures/manifest_composable/` — composable nodes
-- [ ] `tests/fixtures/manifest_multi_include/` — multi-file manifests
+- [x] `tests/fixtures/manifest_simple/` — talker/listener, clean (2 tests)
+- [x] `tests/fixtures/manifest_pipeline/` — perception pipeline: lidar + camera + fusion + tracker (3 tests)
+- [x] `tests/fixtures/manifest_ndt/` — NDT with state, required, feedback cycle, services (4 tests)
+- [x] `tests/fixtures/manifest_periodic/` — timer-driven nodes with empty-input paths (3 tests)
+- [x] `tests/fixtures/manifest_violations/` — intentional violations for all 9 rules (8 tests)
+- [x] `tests/fixtures/manifest_multi_scope/` — nested inline includes with imports/exports wiring (3 tests)
+- [x] Cross-fixture round-trip test (1 test)
+- [x] Bug fix: graph builder now skips `state: true` subscriber edges (feedback loops ≠ causal cycles)
 
-### 31.4: Parser integration (Path A)
+## 31.4: Parser integration
 
-- [ ] Add `--manifest-dir <path>` CLI flag
-- [ ] `ManifestLoader`: dir lookup by `(pkg, file_stem)` + cache
-- [ ] At each `<include>`, load manifest using scope table's `(pkg, file)`
+**In**: `src/play_launch_parser/`
+
+Load manifests alongside launch file parsing.
+
+- [ ] Add `--manifest-dir <path>` to `ParseOptions`
+- [ ] `ManifestLoader`: lookup `<manifest_dir>/pkg/file.yaml`, cache loaded manifests
+- [ ] At each `<include>`, load manifest using scope table's (pkg, file)
 - [ ] Resolve manifest names using scope's namespace
-- [ ] Build `ExpectedGraph` incrementally during traversal
-- [ ] Parse-time validation: QoS compat, type consistency
-- [ ] Embed `ExpectedGraph` in record.json
-- [ ] Integration test: parse with manifests, verify output
+- [ ] Run static checks (31.2) during parsing
+- [ ] Embed results in record.json:
+  - `manifest_topics`: resolved topic name → {type, qos, pub, sub}
+  - `node_paths`: node FQN → {paths with constraints}
+  - `topic_rates`: topic → {rate_hz, drop}
+  - `scope_paths`: scope ID → {paths with constraints}
+- [ ] Report violations via codespan-reporting diagnostics
+- [ ] Integration test: parse Autoware with manifests
 
-### 31.5: Post-hoc integration (Path B)
+## 31.5: Runtime monitors
 
-- [ ] Standalone: `play_launch manifest-check record.json --manifest-dir dir/`
-- [ ] Join manifests to record via scope table's `(pkg, file)` keys
-- [ ] Build `ExpectedGraph` from manifests + scope namespaces
-- [ ] Output: audit report (static, no runtime needed)
+**In**: `src/play_launch/`
 
-### 31.6: Executor audit
+Check contracts against RCL interception data at runtime.
 
-- [ ] `audit.rs`: `diff(expected, actual) → AuditReport`
-- [ ] Deviation types: new/missing topic, new/missing endpoint, QoS mismatch
-- [ ] Integrate into coordinator: periodic audit after stabilization
+- [ ] `LatencyMonitor`: per-path, check t_pub - t_take <= max_latency_ms
+- [ ] `LatencyAnomalyMonitor`: per-path, flag t_pub - t_take < min_latency_ms
+- [ ] `RateMonitor`: per-endpoint, check actual rate in [min_rate_hz, max_rate_hz]
+- [ ] `JitterMonitor`: per-endpoint, check |interval - period| <= jitter_ms
+- [ ] `DropMonitor`: per-path and per-topic, sliding window N/W count
+- [ ] `AgeMonitor`: per-path, static bound check + header.stamp where available
+- [ ] `BurstinessMonitor`: always-on per-topic
+  - Lag-1 autocorrelation
+  - Dispersion index (window=100)
+  - Observed max run vs Bernoulli expected
+  - Estimated mean burst length (when DI > 1.5)
+- [ ] 4-way diagnosis: (assumption ok/violated) × (guarantee ok/violated)
+- [ ] Wire monitors to interception consumer task (Phase 29 SPSC events)
 - [ ] Write `manifest_audit.json` to play_log on shutdown
-- [ ] Log deviations via `warn!` / `info!` / `error!`
 - [ ] Integration test: launch with manifest, verify audit output
 
-### 31.7: Capture
+## 31.6: Executor audit (graph diff)
 
-- [ ] `--save-manifest-dir <path>` CLI flag
+**In**: `src/play_launch/`
+
+Periodically diff expected graph vs runtime GraphSnapshot.
+
+- [ ] `audit.rs`: `diff(expected, actual) → AuditReport`
+- [ ] Deviation types: new topic, missing topic, new endpoint, missing endpoint, QoS mismatch, type mismatch
+- [ ] Stabilization period: escalate "missing topic" from info → warn after N seconds
+- [ ] Integrate into coordinator: periodic audit (every 5s after stabilization)
+- [ ] Log deviations: warn!/info!
+- [ ] API endpoint: `GET /api/manifest/diff`
+- [ ] Integration test: launch with manifest, inject deviation, verify detection
+
+## 31.7: Capture
+
+**In**: `src/play_launch/`
+
+Snapshot runtime graph into per-launch-file manifests.
+
+- [ ] Add `--save-manifest-dir <path>` CLI flag
 - [ ] Use scope table to partition runtime graph by launch file
+- [ ] For each scope: collect nodes, their pub/sub endpoints, topics
 - [ ] Strip namespace prefix (scope provides the prefix)
-- [ ] Infer interface from unmatched topics
+- [ ] Infer imports/exports from unmatched endpoints
+- [ ] Derive rate_hz from observed rates, drop from observed drops
 - [ ] Write per-launch-file YAML to manifest dir
 - [ ] Integration test: capture → audit round-trip (zero deviations)
 
-### 31.8: Context extraction + manifest
+## 31.8: CLI tools
 
-- [ ] Extend `play_launch context` (Phase 30.4) with `--manifest-dir`
-- [ ] Output includes manifest-derived context: expected topics, QoS,
-  timing contracts, interface role
-- [ ] `run-isolated` subcommand: generate standalone launch + input stubs
+- [ ] `play_launch manifest check record.json --manifest-dir dir/`
+  - Post-hoc static check without running the system
+- [ ] `play_launch manifest capture --manifest-dir dir/`
+  - Save current runtime graph as manifests (requires running system)
+- [ ] `play_launch manifest diff record.json --manifest-dir dir/`
+  - Show expected vs actual differences
+- [ ] `play_launch context --manifest-dir dir/`
+  - Extend Phase 30 context tool with manifest-derived info
 
-## Dependency Graph
+---
+
+## Crate Structure
 
 ```
-Phase 30 (scoping)      Phase 31.1-31.3 (manifest crate)
-  │                       │
-  v                       │
-Phase 30.3 (executor)     │     ← can develop in parallel
-  │                       │
-  └──────────┬────────────┘
-             v
-Phase 31.4-31.8 (integration)
+src/ros-launch-manifest/
+├── Cargo.toml                    # workspace
+├── types/
+│   ├── Cargo.toml                # ros-launch-manifest-types
+│   └── src/
+│       ├── lib.rs
+│       ├── types.rs              # Manifest, NodeDecl, TopicDecl, PathDecl, ...
+│       ├── span.rs               # Spanned<T>, marker→offset
+│       └── parse.rs              # yaml-rust2 → Manifest
+├── check/
+│   ├── Cargo.toml                # ros-launch-manifest-check
+│   └── src/
+│       ├── lib.rs
+│       ├── graph.rs              # petgraph dataflow graph
+│       ├── check.rs              # CheckContext, run_rules()
+│       ├── rules/
+│       │   ├── mod.rs            # ValidationRule trait, default_rules()
+│       │   ├── wiring.rs
+│       │   ├── scope_budget.rs
+│       │   ├── age_budget.rs
+│       │   ├── qos_compat.rs
+│       │   ├── rate_hierarchy.rs
+│       │   ├── rate_chain.rs
+│       │   ├── causal_dag.rs
+│       │   ├── endpoint_unique.rs
+│       │   ├── drop_rate.rs
+│       │   └── drop_consecutive.rs
+│       └── emit/
+│           ├── mod.rs
+│           ├── diagnostic.rs     # codespan-reporting
+│           └── formal.rs         # Unicode math notation
+└── tests/
+    └── fixtures/
 ```
+
+Dependencies:
+
+| Crate | Dependencies |
+|-------|-------------|
+| types | yaml-rust2, thiserror, serde |
+| check | types, petgraph, codespan-reporting |
+| play_launch_parser | types (for loading manifests during parsing) |
+| play_launch | types, check (for runtime monitoring + audit) |
+
+---
+
+## Phase Order
+
+```
+31.1 (types) ──→ 31.2 (checker) ──→ 31.3 (fixtures)
+                                         │
+31.1 ──→ 31.4 (parser integration) ──────┤
+                                         │
+         31.5 (runtime monitors) ────────┤
+                                         │
+         31.6 (executor audit) ──────────┤
+                                         │
+         31.7 (capture) ─────────────────┤
+                                         │
+         31.8 (CLI tools) ───────────────┘
+```
+
+31.1 and 31.2 can start immediately (no play_launch dependency).
+31.4-31.8 depend on 31.1 types and integrate into play_launch.
+
+---
 
 ## Verification
 
 ```bash
-just build-rust
-cargo test -p play_launch_manifest
-just test
-just test-all
+# Crate tests
+cargo test -p ros-launch-manifest-types
+cargo test -p ros-launch-manifest-check
 
+# Parser integration
+just test
+
+# Full integration
 play_launch launch demo_nodes_cpp talker_listener.launch.xml \
     --manifest-dir tests/fixtures/manifest_simple/manifests
 
-play_launch manifest-check record.json --manifest-dir manifests/
+# Post-hoc check
+play_launch manifest check record.json --manifest-dir manifests/
 
-play_launch context autoware_launch planning_simulator.launch.xml \
-    --node /perception/lidar/centerpoint \
-    --manifest-dir manifests/
+# Capture round-trip
+play_launch launch autoware_launch planning_simulator.launch.xml \
+    --save-manifest-dir /tmp/manifests
+play_launch manifest check record.json --manifest-dir /tmp/manifests
 ```
-
-## Key Design Decisions
-
-1. **Separate crate**: manifest types shared between parser and executor.
-   Enables standalone tooling.
-
-2. **Two integration paths**: Path A (parse-time) for early validation.
-   Path B (post-hoc) for standalone tooling. Both use the scope table
-   from Phase 30 as the join key.
-
-3. **Scope table is the bridge**: manifests are keyed by `(pkg, file)`.
-   The scope table maps `(pkg, file)` → namespace + context. Joining them
-   is a table lookup.
-
-4. **Per-launch-file manifests**: reusable across namespace contexts.
-   The parser applies namespace from the scope.
-
-5. **Topics as first-class entities**: type + QoS on the topic.
-   Connection by name matching (same as ROS 2).
-
-6. **`--manifest-dir` CLI flag**: explicit, no auto-resolution in v1.
