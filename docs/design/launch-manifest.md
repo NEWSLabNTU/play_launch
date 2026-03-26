@@ -42,24 +42,7 @@ across different namespace contexts.
 5. **Paths** — named causal relations (input→output) with timing
    constraints. Declared on nodes and scopes.
 
-```
-  Manifest for perception.launch.xml
-  (loaded with namespace: /perception)
-  ┌────────────────────────────────────────────────────┐
-  │                                                    │
-  │  ┌──────────────┐  cropped  ┌──────────────┐      │
-  │  │ cropbox      │──────────→│ centerpoint  │      │
-  │  │  sub:[input] │           │  pub:[objects]│      │
-  │  └──────────────┘           └──────────────┘      │
-  │       ↑                          │                │
-  │   imports.input             exports.output        │
-  └───────┬──────────────────────────┬────────────────┘
-          │                          │
-     parent wires via topic    parent wires via topic
-```
-
-Topics wire endpoints explicitly. Imports/exports define the scope
-boundary — parent scopes connect them via topic declarations.
+![Manifest for perception.launch.xml](img/manifest-perception.svg)
 
 ## Format
 
@@ -166,26 +149,26 @@ nodes:
 
 **Subscriber endpoint properties** (all optional):
 
-| Field            | Meaning                                            |
-|------------------|----------------------------------------------------|
-| `min_rate_hz`    | Floor — "I need at least this rate"                |
+| Field            | Meaning                                               |
+|------------------|-------------------------------------------------------|
+| `min_rate_hz`    | Floor — "I need at least this rate"                   |
 | `max_rate_hz`    | Ceiling — "I can't process faster" (burst prevention) |
-| `state: true`    | Read-latest, not causal (breaks feedback cycles)   |
-| `required: true` | Must receive at least once before operational      |
+| `state: true`    | Read-latest, not causal (breaks feedback cycles)      |
+| `required: true` | Must receive at least once before operational         |
 
 **Publisher endpoint properties** (all optional):
 
-| Field          | Meaning                                          |
-|----------------|--------------------------------------------------|
-| `min_rate_hz`  | Floor — "I produce at least this fast"           |
-| `max_rate_hz`  | Ceiling — "something is wrong if faster"         |
-| `jitter_ms`    | Max deviation from ideal period (timer-driven)   |
+| Field         | Meaning                                        |
+|---------------|------------------------------------------------|
+| `min_rate_hz` | Floor — "I produce at least this fast"         |
+| `max_rate_hz` | Ceiling — "something is wrong if faster"       |
+| `jitter_ms`   | Max deviation from ideal period (timer-driven) |
 
 **Service endpoint properties** (all optional):
 
-| Field          | Meaning                                          |
-|----------------|--------------------------------------------------|
-| `max_latency_ms`   | Max request-to-response time                     |
+| Field            | Meaning                      |
+|------------------|------------------------------|
+| `max_latency_ms` | Max request-to-response time |
 
 ### Composable Nodes
 
