@@ -1,6 +1,6 @@
 # Phase 31: Launch Manifest
 
-**Status**: In progress (31.1–31.4c complete: types, checker, fixtures, executor loading, integration tests, source spans — 99 tests)
+**Status**: In progress (31.1–31.5 complete: types, checker, fixtures, executor loading, integration tests, source spans, static check CLI — 110 tests)
 **Priority**: High
 **Dependencies**: Phase 30 (scope table), Phase 29 (RCL interception)
 **Repo**: `src/ros-launch-manifest/` (workspace with multiple crates)
@@ -235,7 +235,40 @@ while enabling source-level diagnostics.
 - [ ] Wire codespan emitter into `manifest_loader.rs` log output (currently logs
       via `tracing::warn!` — codespan rendering deferred to CLI tool in 31.8)
 
-## 31.5: Runtime monitors
+## 31.5: Static check CLI
+
+**In**: `src/play_launch/`
+
+`play_launch manifest check` — post-hoc static checking without running the system.
+Uses scope table from record.json + manifest YAML files. Renders diagnostics with
+codespan-reporting source excerpts.
+
+- [x] Add `Manifest` subcommand to CLI: `play_launch manifest <subcommand>`
+  - `ManifestArgs` with `ManifestSubcommand::Check(ManifestCheckArgs)`
+  - Dispatch in `main.rs`, handler in `commands/manifest.rs`
+- [x] `play_launch manifest check record.json --manifest-dir dir/`
+  - Load record.json → scope table
+  - Load manifests per scope (reuse `manifest_loader::load_manifests()`)
+  - Run static checks with spans
+  - Render diagnostics with codespan-reporting (`emit::diagnostic::emit_diagnostics()`)
+  - Per-scope summary (N manifests checked, N clean, N with errors)
+  - Exit code 1 if any errors, 0 if clean
+- [x] `play_launch manifest check --manifest path/to/single.yaml`
+  - Check a single manifest file without record.json (no namespace resolution)
+  - Useful for authoring and CI validation
+- [x] `--format` flag: `terminal` (default, codespan with source excerpts) or `json`
+  (machine-readable with byte spans)
+- [x] Integration tests (`tests/tests/manifest_check.rs`, 11 tests):
+  - Clean manifests exit 0 (simple, pipeline, NDT, periodic)
+  - Violations manifest exits nonzero
+  - Stderr contains rule IDs (qos-compat, rate-hierarchy, causal-dag)
+  - Stderr contains filename with line numbers (codespan output)
+  - JSON format: valid array with rule/severity/message/path/span fields
+  - Clean JSON: empty array
+  - Missing file: nonzero exit
+  - No args: nonzero exit
+
+## 31.6: Runtime monitors
 
 **In**: `src/play_launch/`
 
@@ -257,7 +290,7 @@ Check contracts against RCL interception data at runtime.
 - [ ] Write `manifest_audit.json` to play_log on shutdown
 - [ ] Integration test: launch with manifest, verify audit output
 
-## 31.6: Executor audit (graph diff)
+## 31.7: Executor audit (graph diff)
 
 **In**: `src/play_launch/`
 
@@ -271,7 +304,7 @@ Periodically diff expected graph vs runtime GraphSnapshot.
 - [ ] API endpoint: `GET /api/manifest/diff`
 - [ ] Integration test: launch with manifest, inject deviation, verify detection
 
-## 31.7: Capture
+## 31.8: Capture
 
 **In**: `src/play_launch/`
 
@@ -286,10 +319,10 @@ Snapshot runtime graph into per-launch-file manifests.
 - [ ] Write per-launch-file YAML to manifest dir
 - [ ] Integration test: capture → audit round-trip (zero deviations)
 
-## 31.8: CLI tools
+## 31.9: Runtime CLI tools
 
-- [ ] `play_launch manifest check record.json --manifest-dir dir/`
-  - Post-hoc static check without running the system
+Depends on 31.6–31.8 (runtime features must exist before CLI exposes them).
+
 - [ ] `play_launch manifest capture --manifest-dir dir/`
   - Save current runtime graph as manifests (requires running system)
 - [ ] `play_launch manifest diff record.json --manifest-dir dir/`
@@ -357,25 +390,22 @@ The manifest crates are a standalone workspace (`src/ros-launch-manifest/`).
 31.1 (types) ──→ 31.2 (checker) ──→ 31.3 (fixtures)
                                          │
          31.4  (executor loading) ───────┤
-                                         │
          31.4a (integration tests) ──────┤
-                                         │
          31.4b (autoware-contract repo) ─┤  ← separate repo, parallel work
-                                         │
          31.4c (source spans + report) ──┤
                                          │
-         31.5  (runtime monitors) ───────┤
+         31.5  (static check CLI) ───────┤  ← next: usable without runtime
                                          │
-         31.6  (executor audit) ─────────┤
-                                         │
-         31.7  (capture) ────────────────┤
-                                         │
-         31.8  (CLI tools) ──────────────┘
+         31.6  (runtime monitors) ───────┤
+         31.7  (executor audit) ─────────┤
+         31.8  (capture) ────────────────┤
+         31.9  (runtime CLI tools) ──────┘
 ```
 
 31.1–31.4c are complete (manifest crates + executor loading + integration tests + source spans).
 31.4b is parallel work in a separate repo.
-31.5–31.8 integrate runtime monitoring into play_launch.
+31.5 is next — static check CLI, usable without running the system.
+31.6–31.9 integrate runtime monitoring into play_launch.
 
 ---
 
@@ -384,17 +414,24 @@ The manifest crates are a standalone workspace (`src/ros-launch-manifest/`).
 ```bash
 # Manifest crate tests (standalone, no ROS env needed)
 cd src/ros-launch-manifest
-cargo test -p ros-launch-manifest-types    # 18 tests
-cargo test -p ros-launch-manifest-check    # 46 tests (3 graph + 18 checker + 25 fixture)
+cargo test -p ros-launch-manifest-types    # 24 tests
+cargo test -p ros-launch-manifest-check    # 54 tests (7 unit + 22 checker + 25 fixture)
 
-# Executor integration
+# Executor manifest loader tests
+cd src/play_launch
+cargo test manifest_loader                 # 21 tests
+
+# Static check — single manifest (no record.json needed)
+play_launch manifest check --manifest path/to/manifest.yaml
+
+# Static check — per-scope via record.json
+play_launch manifest check record.json --manifest-dir manifests/
+
+# Executor integration (runtime)
 play_launch launch demo_nodes_cpp talker_listener.launch.xml \
     --manifest-dir tests/fixtures/manifest_simple/
 
-# Post-hoc check
-play_launch manifest check record.json --manifest-dir manifests/
-
-# Capture round-trip
+# Capture round-trip (runtime)
 play_launch launch autoware_launch planning_simulator.launch.xml \
     --save-manifest-dir /tmp/manifests
 play_launch manifest check record.json --manifest-dir /tmp/manifests

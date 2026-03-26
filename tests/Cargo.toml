@@ -44,6 +44,10 @@ path = "tests/parallel_loading.rs"
 name = "interception"
 path = "tests/interception.rs"
 
+[[test]]
+name = "manifest_check"
+path = "tests/manifest_check.rs"
+
 [dependencies]
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }

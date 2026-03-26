@@ -70,6 +70,9 @@ fn main() -> eyre::Result<()> {
         cli::options::Command::Context(args) => {
             commands::handle_context(args)?;
         }
+        cli::options::Command::Check(args) => {
+            commands::handle_check_manifest(args)?;
+        }
     }
 
     Ok(())
