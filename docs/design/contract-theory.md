@@ -93,10 +93,15 @@ in →  │            ├→ C (W_C)
       └→ B (W_B) →┘
 ```
 
-Rate: $R_{\text{rate}} = \min(R_A, R_B)$
+Note: $L_{\min}$ also uses $\max$ — the barrier waits for the slowest
+branch even in the best case.
 
-Drop: all drop causes (upstream propagation, correlation mismatch,
-computation failure) are combined into the node's single `drop:` value.
+Rate: $f = \min(f_A, f_B)$
+
+Drop: barrier drop composition is **not checked statically** — the
+user declares total observed drops on the barrier node, combining
+all causes (upstream propagation, correlation mismatch, computation
+failure) into the node's single `drop:` value.
 
 Age: $A_{\max} = \max(A_{\max}(A), A_{\max}(B)) + L_{\max}(C)$
 
@@ -110,7 +115,7 @@ $$L_{\min}(\text{through periodic}) = L_{\min}(\text{upstream}) + C$$
 Best case: timer fires right as state updates (zero wait).
 Worst case: state arrives just after timer, waits full period.
 
-Rate through periodic: $R_{\text{rate}} = 1000 / P$ (independent
+Rate through periodic: $f = 1000 / P$ (independent
 of upstream). The path's `max_age_ms` constrains how old the
 original source data can be at the output.
 

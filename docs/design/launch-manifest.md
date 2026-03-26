@@ -467,6 +467,7 @@ nodes:
         input: sensor_points
         output: [ndt_pose]
         max_latency_ms: 50
+        min_latency_ms: 10        # < 10ms is suspicious (stale cache?)
         drop:
           max_count: 10 / 100
           max_consecutive: 5
@@ -499,6 +500,7 @@ paths:
     input: raw_data
     output: [detections]
     max_latency_ms: 50
+    max_age_ms: 120              # from original sensor to scope export
 ```
 
 **Composition**: parent scope budgets compose from children's paths.
