@@ -73,24 +73,33 @@ Graph algorithms + constraint checking with diagnostic output.
 - [x] Cross-fixture round-trip test (1 test)
 - [x] Bug fix: graph builder now skips `state: true` subscriber edges (feedback loops ≠ causal cycles)
 
-## 31.4: Parser integration
+## 31.4: Manifest loading in executor
 
-**In**: `src/play_launch_parser/`
+**In**: `src/play_launch/`
 
-Load manifests alongside launch file parsing.
+Load and resolve manifests at executor startup using the scope table from record.json.
+The parser stays decoupled — it produces the scope table, the executor applies manifests.
 
-- [ ] Add `--manifest-dir <path>` to `ParseOptions`
-- [ ] `ManifestLoader`: lookup `<manifest_dir>/pkg/file.yaml`, cache loaded manifests
-- [ ] At each `<include>`, load manifest using scope table's (pkg, file)
-- [ ] Resolve manifest names using scope's namespace
-- [ ] Run static checks (31.2) during parsing
-- [ ] Embed results in record.json:
+**Rationale**: The parser (`play_launch_parser`) is a standalone workspace with its own
+`[workspace]` in Cargo.toml. Adding a path dependency to `ros-launch-manifest-types` would
+require `..` relative paths across workspace boundaries. Since the executor already has the
+full scope table (pkg, file, ns, args, parent) from record.json, it can resolve manifests
+without the parser knowing about them.
+
+- [ ] Add `--manifest-dir <path>` to executor CLI options
+- [ ] `ManifestLoader` in `src/play_launch/src/ros/manifest_loader.rs`:
+  - Lookup `<manifest_dir>/{pkg}/{file}.yaml` for each file scope
+  - Cache loaded manifests by scope ID
+  - Apply scope `ns` prefix to manifest's relative topic/node names
+  - Resolve imports/exports by walking scope parent chain
+- [ ] Run static checks (31.2) on each loaded manifest at startup
+- [ ] Build resolved manifest index:
   - `manifest_topics`: resolved topic name → {type, qos, pub, sub}
   - `node_paths`: node FQN → {paths with constraints}
   - `topic_rates`: topic → {rate_hz, drop}
   - `scope_paths`: scope ID → {paths with constraints}
-- [ ] Report violations via codespan-reporting diagnostics
-- [ ] Integration test: parse Autoware with manifests
+- [ ] Log check diagnostics (warnings/errors) at startup
+- [ ] Integration test: load manifests for Autoware scopes, verify resolution
 
 ## 31.5: Runtime monitors
 
@@ -200,8 +209,11 @@ Dependencies:
 |-------|-------------|
 | types | yaml-rust2, thiserror, serde |
 | check | types, petgraph, codespan-reporting |
-| play_launch_parser | types (for loading manifests during parsing) |
-| play_launch | types, check (for runtime monitoring + audit) |
+| play_launch_parser | *(none — parser stays decoupled)* |
+| play_launch | types, check (manifest loading, runtime monitoring, audit) |
+
+The manifest crates are a standalone workspace (`src/ros-launch-manifest/`).
+`play_launch` adds path dependencies to them. The parser never imports manifest types.
 
 ---
 
@@ -210,7 +222,7 @@ Dependencies:
 ```
 31.1 (types) ──→ 31.2 (checker) ──→ 31.3 (fixtures)
                                          │
-31.1 ──→ 31.4 (parser integration) ──────┤
+         31.4 (executor loading) ────────┤
                                          │
          31.5 (runtime monitors) ────────┤
                                          │
@@ -221,24 +233,22 @@ Dependencies:
          31.8 (CLI tools) ───────────────┘
 ```
 
-31.1 and 31.2 can start immediately (no play_launch dependency).
-31.4-31.8 depend on 31.1 types and integrate into play_launch.
+31.1–31.3 are complete (standalone manifest crates, no play_launch dependency).
+31.4–31.8 integrate into play_launch using scope table from record.json.
 
 ---
 
 ## Verification
 
 ```bash
-# Crate tests
-cargo test -p ros-launch-manifest-types
-cargo test -p ros-launch-manifest-check
+# Manifest crate tests (standalone, no ROS env needed)
+cd src/ros-launch-manifest
+cargo test -p ros-launch-manifest-types    # 18 tests
+cargo test -p ros-launch-manifest-check    # 46 tests (3 graph + 18 checker + 25 fixture)
 
-# Parser integration
-just test
-
-# Full integration
+# Executor integration
 play_launch launch demo_nodes_cpp talker_listener.launch.xml \
-    --manifest-dir tests/fixtures/manifest_simple/manifests
+    --manifest-dir tests/fixtures/manifest_simple/
 
 # Post-hoc check
 play_launch manifest check record.json --manifest-dir manifests/

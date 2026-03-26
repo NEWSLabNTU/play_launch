@@ -177,6 +177,21 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         launch_dump.load_node.len()
     );
 
+    // Load manifests if --manifest-dir is specified
+    let _manifest_index = if let Some(ref manifest_dir) = common.manifest_dir {
+        debug!("Loading manifests from: {}", manifest_dir.display());
+        let index = crate::ros::manifest_loader::load_manifests(&launch_dump, manifest_dir)?;
+        if index.total_errors > 0 {
+            warn!(
+                "Manifest static checks found {} error(s) — contracts may not hold",
+                index.total_errors
+            );
+        }
+        Some(index)
+    } else {
+        None
+    };
+
     // Prepare directories
     debug!("Creating log directories...");
     let log_dir = create_log_dir(&common.log_dir)?;

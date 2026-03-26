@@ -271,6 +271,11 @@ pub struct CommonOptions {
     /// Use 0.0.0.0:8080 to expose to network (insecure, use with caution).
     #[arg(long, value_name = "IP:PORT", default_value = "127.0.0.1:8080")]
     pub web_addr: String,
+
+    /// Directory containing per-launch-file topic manifests for contract checking.
+    /// Manifests are looked up as <manifest-dir>/<pkg>/<file>.yaml for each scope.
+    #[arg(long, value_name = "PATH")]
+    pub manifest_dir: Option<PathBuf>,
 }
 
 impl Default for CommonOptions {
@@ -290,6 +295,7 @@ impl Default for CommonOptions {
             disable_respawn: false,
             container_mode: ContainerMode::Isolated,
             web_addr: "127.0.0.1:8080".to_string(),
+            manifest_dir: None,
         }
     }
 }
