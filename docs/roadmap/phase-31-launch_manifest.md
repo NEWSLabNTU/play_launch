@@ -1,6 +1,6 @@
 # Phase 31: Launch Manifest
 
-**Status**: In progress (31.1–31.4a complete: types, checker, fixtures, executor loading, integration tests — 85 tests)
+**Status**: In progress (31.1–31.4c complete: types, checker, fixtures, executor loading, integration tests, source spans — 99 tests)
 **Priority**: High
 **Dependencies**: Phase 30 (scope table), Phase 29 (RCL interception)
 **Repo**: `src/ros-launch-manifest/` (workspace with multiple crates)
@@ -57,7 +57,7 @@ Graph algorithms + constraint checking with diagnostic output.
   - `drop_consecutive.rs`: Erdos-Renyi Poisson check at epsilon=0.01 + necessary condition
 - [x] `check.rs`: CheckContext, Diagnostic, Severity, run_checks()
 - [x] `emit/terminal.rs`: simple stderr diagnostic output
-- [ ] `emit/diagnostic.rs`: codespan-reporting with source spans (deferred)
+- [x] `emit/diagnostic.rs`: codespan-reporting with source spans (done in 31.4c)
 - [ ] `emit/formal.rs`: Unicode mathematical notation (deferred)
 - [x] Integration tests: 18 tests (clean, violations, pipeline)
 - [x] Full fixture set (31.3)
@@ -184,6 +184,57 @@ autoware-contract/
       --manifest-dir ~/repos/autoware-contract/` — load all manifests, verify resolution
       against live Autoware graph
 
+## 31.4c: Source span tracing and diagnostic reporting
+
+**In**: `src/ros-launch-manifest/`
+
+Wire source byte spans from YAML parsing through to diagnostic output so errors
+point at the exact line/column in the manifest file. Currently the parser discards
+yaml-rust2's `Marker` positions and diagnostics carry string paths (e.g.,
+`"nodes.ndt.paths.main"`) instead of byte ranges.
+
+**Parser: SpanIndex via MarkedEventReceiver (`types/src/span.rs`)**
+
+Instead of migrating all AST nodes to `Spanned<T>`, a `SpanIndex` replays the
+yaml-rust2 event parser (`MarkedEventReceiver`) to build a `HashMap<dot_path, Range<usize>>`
+mapping YAML key paths to byte offsets. This keeps the existing parser untouched
+while enabling source-level diagnostics.
+
+- [x] `SpanIndex::build(source)` — event-driven span collection via `SpanReceiver`
+- [x] `SpanReceiver` implements `MarkedEventReceiver` — tracks mapping keys, nesting,
+      sequences; records byte offset for each key using `Marker::index()`
+- [x] `parse_manifest_with_spans()` / `parse_manifest_str_with_spans()` — new entry
+      points returning `ParseResult { manifest, source, spans }`
+- [x] 7 unit tests: simple keys, nested topics, byte offset correctness, QoS nesting,
+      paths, empty input
+
+**Diagnostic: byte spans (`check/src/check.rs`)**
+- [x] `Diagnostic.span: Option<Range<usize>>` — byte range in source text
+- [x] `CheckContext.spans: Option<SpanIndex>` — auto-resolves path→span on `emit()`
+- [x] `run_checks_with_spans(manifest, spans)` — new entry point
+- [x] All 9 rules automatically get spans via `CheckContext::emit()` path lookup
+      (no per-rule changes needed — path strings already match SpanIndex keys)
+- [x] 4 integration tests: QoS span, rate-hierarchy span, scope-budget span,
+      no-spans-without-index
+
+**Emitter: codespan-reporting (`check/src/emit/diagnostic.rs`)**
+- [x] Added `codespan-reporting = "0.11"` dependency
+- [x] `emit_diagnostics(result, filename, source)` — renders to stderr with
+      `ColorChoice::Auto` (isatty detection)
+- [x] `emit_diagnostics_to(writer, result, filename, source)` — generic writer
+- [x] `emit_diagnostics_to_string()` — for testing
+- [x] Maps `Diagnostic` → codespan `Diagnostic<()>` with primary label at span
+- [x] Falls back to notes with YAML path when span is absent
+- [x] 4 unit tests: QoS violation with line numbers, rate hierarchy with span,
+      no-span fallback, clean manifest empty output
+
+**Integration**
+- [x] `manifest_loader.rs` uses `parse_manifest_with_spans()` and
+      `run_checks_with_spans()` — diagnostics carry byte spans
+- [x] `ResolvedManifest.source: String` stored for downstream codespan output
+- [ ] Wire codespan emitter into `manifest_loader.rs` log output (currently logs
+      via `tracing::warn!` — codespan rendering deferred to CLI tool in 31.8)
+
 ## 31.5: Runtime monitors
 
 **In**: `src/play_launch/`
@@ -258,8 +309,8 @@ src/ros-launch-manifest/
 │   └── src/
 │       ├── lib.rs
 │       ├── types.rs              # Manifest, NodeDecl, TopicDecl, PathDecl, ...
-│       ├── span.rs               # Spanned<T>, marker→offset
-│       └── parse.rs              # yaml-rust2 → Manifest
+│       ├── span.rs               # Spanned<T>, SpanIndex, MarkedEventReceiver
+│       └── parse.rs              # yaml-rust2 → Manifest (with_spans variants)
 ├── check/
 │   ├── Cargo.toml                # ros-launch-manifest-check
 │   └── src/
@@ -311,6 +362,8 @@ The manifest crates are a standalone workspace (`src/ros-launch-manifest/`).
                                          │
          31.4b (autoware-contract repo) ─┤  ← separate repo, parallel work
                                          │
+         31.4c (source spans + report) ──┤
+                                         │
          31.5  (runtime monitors) ───────┤
                                          │
          31.6  (executor audit) ─────────┤
@@ -320,8 +373,8 @@ The manifest crates are a standalone workspace (`src/ros-launch-manifest/`).
          31.8  (CLI tools) ──────────────┘
 ```
 
-31.1–31.4 are complete (standalone manifest crates + executor loading).
-31.4a–31.4b are test/validation phases before runtime integration.
+31.1–31.4c are complete (manifest crates + executor loading + integration tests + source spans).
+31.4b is parallel work in a separate repo.
 31.5–31.8 integrate runtime monitoring into play_launch.
 
 ---
