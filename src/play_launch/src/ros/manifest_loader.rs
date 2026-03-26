@@ -423,14 +423,17 @@ mod tests {
         }
     }
 
+    // ── General cases ──
+
     #[test]
-    fn test_load_simple_manifest() {
+    fn test_single_scope_single_manifest() {
         let dump = make_dump(vec![scope(0, "manifest_simple", "manifest.launch.xml", "", None)]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
         assert_eq!(index.manifests.len(), 1);
         assert!(index.manifests.contains_key(&0));
         assert_eq!(index.manifests[&0].manifest.nodes.len(), 2);
+        assert_eq!(index.total_errors, 0);
 
         // Topics resolved with "/" prefix
         assert!(index.topics.contains_key("/chatter"), "topics: {:?}", index.topics.keys().collect::<Vec<_>>());
@@ -438,93 +441,346 @@ mod tests {
         assert_eq!(chatter.msg_type, "std_msgs/msg/String");
         assert_eq!(chatter.publishers, vec!["/talker/chatter"]);
         assert_eq!(chatter.subscribers, vec!["/listener/chatter"]);
+        assert_eq!(chatter.scope_id, 0);
     }
 
     #[test]
-    fn test_load_with_namespace() {
-        let dump = make_dump(vec![scope(0, "manifest_simple", "manifest.launch.xml", "/demo", None)]);
+    fn test_multiple_scopes_no_collision() {
+        let dump = make_dump(vec![
+            scope(0, "manifest_simple", "manifest.launch.xml", "/a", None),
+            scope(1, "manifest_simple", "manifest.launch.xml", "/b", Some(0)),
+        ]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
-        assert!(index.topics.contains_key("/demo/chatter"),
-            "expected /demo/chatter, got: {:?}", index.topics.keys().collect::<Vec<_>>());
-        assert_eq!(index.topics["/demo/chatter"].publishers, vec!["/demo/talker/chatter"]);
+        assert_eq!(index.manifests.len(), 2);
+        // Same manifest loaded under different namespaces — topics don't collide
+        assert!(index.topics.contains_key("/a/chatter"));
+        assert!(index.topics.contains_key("/b/chatter"));
+        assert_ne!(
+            index.topics["/a/chatter"].scope_id,
+            index.topics["/b/chatter"].scope_id,
+        );
     }
 
     #[test]
-    fn test_load_violations_has_errors() {
+    fn test_deep_namespace_prefixing() {
+        let dump = make_dump(vec![scope(
+            0, "manifest_pipeline", "manifest.launch.xml",
+            "/planning/scenario_planning/lane_driving/motion_planning", None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let deep_ns = "/planning/scenario_planning/lane_driving/motion_planning";
+        let expected_topic = format!("{deep_ns}/cropped_points");
+        assert!(
+            index.topics.contains_key(&expected_topic),
+            "expected {expected_topic}, got: {:?}", index.topics.keys().collect::<Vec<_>>()
+        );
+        let topic = &index.topics[&expected_topic];
+        assert_eq!(topic.publishers, vec![format!("{deep_ns}/cropbox/cropped_points")]);
+
+        // Node paths also qualified
+        let fqns: Vec<&str> = index.node_paths.iter().map(|p| p.node_fqn.as_str()).collect();
+        assert!(fqns.contains(&format!("{deep_ns}/cropbox").as_str()), "fqns: {fqns:?}");
+    }
+
+    #[test]
+    fn test_violations_warn_not_fail() {
+        // Manifest with errors should still be loaded — errors counted but not fatal
         let dump = make_dump(vec![scope(0, "manifest_violations", "manifest.launch.xml", "", None)]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
         assert!(index.total_errors >= 5, "expected >=5 errors, got {}", index.total_errors);
         assert!(index.total_warnings > 0);
+        // Manifest IS loaded despite errors
+        assert_eq!(index.manifests.len(), 1);
+        assert!(!index.topics.is_empty(), "topics should still be resolved");
     }
 
     #[test]
-    fn test_load_missing_manifest_skipped() {
+    fn test_missing_manifest_silently_skipped() {
         let dump = make_dump(vec![scope(0, "no_such_pkg", "no_such.launch.xml", "", None)]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
         assert!(index.manifests.is_empty());
         assert_eq!(index.total_errors, 0);
+        assert!(index.topics.is_empty());
     }
 
     #[test]
-    fn test_load_group_scope_skipped() {
-        let dump = make_dump(vec![ScopeEntry {
-            id: 0,
-            origin: None,
-            ns: "/group".to_string(),
-            args: HashMap::new(),
-            parent: None,
-        }]);
-        let index = load_manifests(&dump, &fixture_dir()).unwrap();
-        assert!(index.manifests.is_empty());
-    }
-
-    #[test]
-    fn test_load_pipeline_node_paths() {
-        let dump = make_dump(vec![scope(0, "manifest_pipeline", "manifest.launch.xml", "/perception", None)]);
-        let index = load_manifests(&dump, &fixture_dir()).unwrap();
-
-        // 4 nodes with 1 path each + fusion has 1 path = 4 total
-        assert!(index.node_paths.len() >= 4, "expected >=4 node paths, got {}", index.node_paths.len());
-
-        let fqns: Vec<&str> = index.node_paths.iter().map(|p| p.node_fqn.as_str()).collect();
-        assert!(fqns.contains(&"/perception/cropbox"), "fqns: {fqns:?}");
-        assert!(fqns.contains(&"/perception/tracker"), "fqns: {fqns:?}");
-
-        // Scope-level paths
-        assert!(index.scope_paths.contains_key(&0));
-    }
-
-    #[test]
-    fn test_load_multiple_scopes() {
+    fn test_mixed_scopes_some_with_some_without() {
+        // Mix of scopes: some with manifests, some without, some group scopes
         let dump = make_dump(vec![
             scope(0, "manifest_simple", "manifest.launch.xml", "", None),
-            scope(1, "manifest_pipeline", "manifest.launch.xml", "/perception", Some(0)),
+            // Group scope (no origin)
+            ScopeEntry { id: 1, origin: None, ns: "/system".to_string(), args: HashMap::new(), parent: Some(0) },
+            // File scope with no matching manifest
+            scope(2, "nonexistent_pkg", "missing.launch.xml", "/system", Some(1)),
+            // Another valid manifest
+            scope(3, "manifest_ndt", "manifest.launch.xml", "/localization", Some(0)),
         ]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
+        // Only 2 manifests loaded (simple + ndt), group skipped, missing skipped
         assert_eq!(index.manifests.len(), 2);
+        assert!(index.manifests.contains_key(&0));
+        assert!(index.manifests.contains_key(&3));
         assert!(index.topics.contains_key("/chatter"));
-        assert!(index.topics.contains_key("/perception/cropped_points"));
-    }
-
-    #[test]
-    fn test_load_ndt_clean() {
-        let dump = make_dump(vec![scope(0, "manifest_ndt", "manifest.launch.xml", "/localization", None)]);
-        let index = load_manifests(&dump, &fixture_dir()).unwrap();
-
-        assert_eq!(index.total_errors, 0, "NDT should be clean");
         assert!(index.topics.contains_key("/localization/ndt_pose"));
     }
 
+    // ── Autoware edge cases ──
+
     #[test]
-    fn test_load_periodic_clean() {
-        let dump = make_dump(vec![scope(0, "manifest_periodic", "manifest.launch.xml", "/control", None)]);
+    fn test_same_file_multiple_invocations_different_namespaces() {
+        // Mirrors Autoware: load_topic_state_monitor.launch.xml included 10 times
+        // under /system with different topic args. Each gets its own scope ID.
+        let dump = make_dump(vec![
+            scope(0, "manifest_simple", "manifest.launch.xml", "/system/topic_monitor_1", None),
+            scope(1, "manifest_simple", "manifest.launch.xml", "/system/topic_monitor_2", None),
+            scope(2, "manifest_simple", "manifest.launch.xml", "/system/topic_monitor_3", None),
+            scope(3, "manifest_simple", "manifest.launch.xml", "/system/topic_monitor_4", None),
+            scope(4, "manifest_simple", "manifest.launch.xml", "/system/topic_monitor_5", None),
+        ]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
-        assert_eq!(index.total_errors, 0, "periodic should be clean");
-        assert_eq!(index.manifests[&0].manifest.nodes.len(), 3);
+        // All 5 invocations load successfully
+        assert_eq!(index.manifests.len(), 5);
+        // Each has its own topic with distinct namespace
+        for i in 1..=5 {
+            let key = format!("/system/topic_monitor_{i}/chatter");
+            assert!(index.topics.contains_key(&key), "missing {key}");
+            assert_eq!(index.topics[&key].scope_id, i - 1);
+        }
+        // 5 scopes × 1 topic = 5 distinct topic entries
+        let chatter_topics: Vec<_> = index.topics.keys().filter(|k| k.ends_with("/chatter")).collect();
+        assert_eq!(chatter_topics.len(), 5);
+    }
+
+    #[test]
+    fn test_group_scopes_interleaved_with_file_scopes() {
+        // Mirrors Autoware: group scopes (origin: None) wrap includes for namespace context
+        // Pattern: root → group(/system) → file(/system) → group(/system) → file(/system)
+        let dump = make_dump(vec![
+            scope(0, "manifest_simple", "manifest.launch.xml", "/", None),
+            // Group scope wrapping the system namespace
+            ScopeEntry { id: 1, origin: None, ns: "/system".to_string(), args: HashMap::new(), parent: Some(0) },
+            scope(2, "manifest_ndt", "manifest.launch.xml", "/system/localization", Some(1)),
+            // Another group scope
+            ScopeEntry { id: 3, origin: None, ns: "/perception".to_string(), args: HashMap::new(), parent: Some(0) },
+            scope(4, "manifest_pipeline", "manifest.launch.xml", "/perception", Some(3)),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        // 3 file scopes loaded, 2 group scopes skipped
+        assert_eq!(index.manifests.len(), 3);
+        assert!(index.manifests.contains_key(&0)); // root
+        assert!(index.manifests.contains_key(&2)); // NDT under /system/localization
+        assert!(index.manifests.contains_key(&4)); // pipeline under /perception
+        assert!(!index.manifests.contains_key(&1)); // group skipped
+        assert!(!index.manifests.contains_key(&3)); // group skipped
+
+        assert!(index.topics.contains_key("/chatter")); // root
+        assert!(index.topics.contains_key("/system/localization/ndt_pose")); // NDT
+        assert!(index.topics.contains_key("/perception/cropped_points")); // pipeline
+    }
+
+    #[test]
+    fn test_deep_nesting_resolves_from_own_scope() {
+        // Mirrors Autoware: depth-16 nesting. Each scope resolves manifest from its own
+        // (pkg, file), not from ancestors. Namespace is the scope's ns field.
+        let dump = make_dump(vec![
+            scope(0, "manifest_simple", "manifest.launch.xml", "/", None),
+            ScopeEntry { id: 1, origin: None, ns: "/".to_string(), args: HashMap::new(), parent: Some(0) },
+            scope(2, "nonexistent", "tier1.launch.xml", "/", Some(1)),
+            ScopeEntry { id: 3, origin: None, ns: "/planning".to_string(), args: HashMap::new(), parent: Some(2) },
+            scope(4, "nonexistent", "tier2.launch.xml", "/planning", Some(3)),
+            ScopeEntry { id: 5, origin: None, ns: "/planning/scenario".to_string(), args: HashMap::new(), parent: Some(4) },
+            scope(6, "nonexistent", "tier3.launch.xml", "/planning/scenario", Some(5)),
+            ScopeEntry { id: 7, origin: None, ns: "/planning/scenario/lane".to_string(), args: HashMap::new(), parent: Some(6) },
+            scope(8, "nonexistent", "tier4.launch.xml", "/planning/scenario/lane", Some(7)),
+            ScopeEntry { id: 9, origin: None, ns: "/planning/scenario/lane/motion".to_string(), args: HashMap::new(), parent: Some(8) },
+            // Deep leaf scope — this is the one that has a manifest
+            scope(10, "manifest_periodic", "manifest.launch.xml", "/planning/scenario/lane/motion", Some(9)),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        // Only scope 0 (simple) and scope 10 (periodic) have manifests
+        assert_eq!(index.manifests.len(), 2);
+        assert!(index.manifests.contains_key(&0));
+        assert!(index.manifests.contains_key(&10));
+
+        // Deep scope resolves with its own namespace, not ancestors'
+        let deep_topic = "/planning/scenario/lane/motion/control_cmd";
+        assert!(
+            index.topics.contains_key(deep_topic),
+            "expected {deep_topic}, got: {:?}", index.topics.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(index.topics[deep_topic].scope_id, 10);
+    }
+
+    #[test]
+    fn test_scopes_without_entities_still_load_manifests() {
+        // Mirrors Autoware: 108/169 scopes have zero entities. Manifests are loaded
+        // and checked for pre-validation even if no nodes reference this scope.
+        use super::super::launch_dump::NodeRecord;
+
+        let mut dump = make_dump(vec![
+            scope(0, "manifest_simple", "manifest.launch.xml", "", None),
+            scope(1, "manifest_pipeline", "manifest.launch.xml", "/perception", Some(0)),
+        ]);
+        // Only add a node to scope 0, scope 1 has no entities
+        dump.node.push(NodeRecord {
+            executable: "talker".to_string(),
+            package: Some("demo_nodes_cpp".to_string()),
+            name: Some("talker".to_string()),
+            namespace: None,
+            exec_name: Some("talker".to_string()),
+            params: vec![],
+            params_files: vec![],
+            remaps: vec![],
+            ros_args: None,
+            args: None,
+            cmd: vec![],
+            env: None,
+            respawn: None,
+            respawn_delay: None,
+            global_params: None,
+            scope: Some(0),
+        });
+
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        // Both manifests loaded, even though scope 1 has no entities
+        assert_eq!(index.manifests.len(), 2);
+        assert!(index.manifests.contains_key(&1));
+        assert!(!index.topics.is_empty());
+    }
+
+    #[test]
+    fn test_large_argument_sets_dont_affect_resolution() {
+        // Mirrors Autoware: root scope has 174 args. Args are scope metadata,
+        // not used by manifest loader.
+        let mut s = scope(0, "manifest_simple", "manifest.launch.xml", "", None);
+        for i in 0..200 {
+            s.args.insert(format!("arg_{i}"), format!("value_{i}"));
+        }
+        let dump = make_dump(vec![s]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        assert_eq!(index.manifests.len(), 1);
+        assert!(index.topics.contains_key("/chatter"));
+    }
+
+    #[test]
+    fn test_root_scope_slash_namespace() {
+        // topic "chatter" at ns="/" should become "/chatter", not "//chatter"
+        let dump = make_dump(vec![scope(0, "manifest_simple", "manifest.launch.xml", "/", None)]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        assert!(index.topics.contains_key("/chatter"), "topics: {:?}", index.topics.keys().collect::<Vec<_>>());
+        // Ensure no double-slash
+        for key in index.topics.keys() {
+            assert!(!key.contains("//"), "double slash in topic FQN: {key}");
+        }
+        for path in &index.node_paths {
+            assert!(!path.node_fqn.contains("//"), "double slash in node FQN: {}", path.node_fqn);
+        }
+    }
+
+    #[test]
+    fn test_all_fixtures_load_without_panic() {
+        // Smoke test: every fixture loads and resolves under various namespaces
+        let fixtures = [
+            "manifest_simple", "manifest_pipeline", "manifest_ndt",
+            "manifest_periodic", "manifest_violations", "manifest_multi_scope",
+        ];
+        let namespaces = ["", "/", "/ns", "/a/b/c/d/e"];
+        for (i, fixture) in fixtures.iter().enumerate() {
+            for (j, ns) in namespaces.iter().enumerate() {
+                let id = i * namespaces.len() + j;
+                let dump = make_dump(vec![scope(id, fixture, "manifest.launch.xml", ns, None)]);
+                let index = load_manifests(&dump, &fixture_dir()).unwrap();
+                assert!(index.manifests.len() <= 1, "fixture {fixture} at ns {ns}: unexpected manifest count");
+                // No double-slashes in any resolved name
+                for key in index.topics.keys() {
+                    assert!(!key.contains("//"), "{fixture}@{ns}: double slash in {key}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_pipeline_full_resolution() {
+        // Comprehensive check of pipeline manifest: nodes, topics, paths, imports, exports
+        let dump = make_dump(vec![scope(0, "manifest_pipeline", "manifest.launch.xml", "/perception", None)]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        assert_eq!(index.total_errors, 0, "pipeline should be clean");
+
+        // 4 nodes, each with 1 path
+        let fqns: Vec<&str> = index.node_paths.iter().map(|p| p.node_fqn.as_str()).collect();
+        assert!(fqns.contains(&"/perception/cropbox"));
+        assert!(fqns.contains(&"/perception/ground_filter"));
+        assert!(fqns.contains(&"/perception/fusion"));
+        assert!(fqns.contains(&"/perception/tracker"));
+
+        // 5 topics
+        assert_eq!(index.topics.len(), 5);
+        assert!(index.topics.contains_key("/perception/cropped_points"));
+        assert!(index.topics.contains_key("/perception/no_ground_points"));
+        assert!(index.topics.contains_key("/perception/camera_detections"));
+        assert!(index.topics.contains_key("/perception/fused_objects"));
+        assert!(index.topics.contains_key("/perception/tracked_objects"));
+
+        // Scope paths
+        assert!(index.scope_paths.contains_key(&0));
+        let scope_paths = &index.scope_paths[&0];
+        assert_eq!(scope_paths.len(), 1);
+        assert_eq!(scope_paths[0].0, "perception");
+    }
+
+    #[test]
+    fn test_ndt_state_and_required_resolution() {
+        let dump = make_dump(vec![scope(0, "manifest_ndt", "manifest.launch.xml", "/loc", None)]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        assert_eq!(index.total_errors, 0);
+
+        // Topics with full namespace
+        assert!(index.topics.contains_key("/loc/downsampled_points"));
+        assert!(index.topics.contains_key("/loc/ndt_pose"));
+        assert!(index.topics.contains_key("/loc/ekf_initial_pose"));
+
+        // Node paths
+        let ndt_paths: Vec<_> = index.node_paths.iter()
+            .filter(|p| p.node_fqn == "/loc/ndt_scan_matcher")
+            .collect();
+        assert_eq!(ndt_paths.len(), 1);
+        assert_eq!(ndt_paths[0].path_name, "main");
+        assert_eq!(ndt_paths[0].path.max_latency_ms, Some(30.0));
+
+        // EKF has 2 paths
+        let ekf_paths: Vec<_> = index.node_paths.iter()
+            .filter(|p| p.node_fqn == "/loc/ekf_localizer")
+            .collect();
+        assert_eq!(ekf_paths.len(), 2);
+    }
+
+    #[test]
+    fn test_periodic_empty_input_paths() {
+        let dump = make_dump(vec![scope(0, "manifest_periodic", "manifest.launch.xml", "/ctrl", None)]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        assert_eq!(index.total_errors, 0);
+
+        // All 3 nodes have periodic paths with empty input
+        for np in &index.node_paths {
+            assert!(
+                np.path.input.is_empty(),
+                "node {} path {} should have empty input (periodic)",
+                np.node_fqn, np.path_name
+            );
+        }
     }
 }
