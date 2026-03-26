@@ -1,6 +1,6 @@
 # Phase 31: Launch Manifest
 
-**Status**: In progress (31.1–31.3 complete: types, checker, fixtures — 64 tests passing)
+**Status**: In progress (31.1–31.4a complete: types, checker, fixtures, executor loading, integration tests — 85 tests)
 **Priority**: High
 **Dependencies**: Phase 30 (scope table), Phase 29 (RCL interception)
 **Repo**: `src/ros-launch-manifest/` (workspace with multiple crates)
@@ -86,20 +86,103 @@ require `..` relative paths across workspace boundaries. Since the executor alre
 full scope table (pkg, file, ns, args, parent) from record.json, it can resolve manifests
 without the parser knowing about them.
 
-- [ ] Add `--manifest-dir <path>` to executor CLI options
-- [ ] `ManifestLoader` in `src/play_launch/src/ros/manifest_loader.rs`:
-  - Lookup `<manifest_dir>/{pkg}/{file}.yaml` for each file scope
-  - Cache loaded manifests by scope ID
-  - Apply scope `ns` prefix to manifest's relative topic/node names
-  - Resolve imports/exports by walking scope parent chain
-- [ ] Run static checks (31.2) on each loaded manifest at startup
-- [ ] Build resolved manifest index:
-  - `manifest_topics`: resolved topic name → {type, qos, pub, sub}
-  - `node_paths`: node FQN → {paths with constraints}
-  - `topic_rates`: topic → {rate_hz, drop}
-  - `scope_paths`: scope ID → {paths with constraints}
-- [ ] Log check diagnostics (warnings/errors) at startup
-- [ ] Integration test: load manifests for Autoware scopes, verify resolution
+- [x] Add `--manifest-dir <path>` to executor CLI options (`CommonOptions`)
+- [x] `ManifestLoader` in `src/play_launch/src/ros/manifest_loader.rs`:
+  - Lookup `<manifest_dir>/{pkg}/{stem}.yaml` for each file scope (strips `.launch.xml`/`.launch.py`)
+  - Cache loaded manifests by scope ID (`ManifestIndex`)
+  - Apply scope `ns` prefix to manifest's relative topic/node names (`qualify_name`, `qualify_endpoint_ref`)
+  - Scopes without manifests silently skipped (incremental adoption)
+- [x] Run static checks (31.2) on each loaded manifest at startup
+- [x] Build resolved manifest index (`ManifestIndex`):
+  - `topics`: resolved topic FQN → {type, qos, pub, sub, rate_hz, drop}
+  - `node_paths`: node FQN + path name + PathDecl
+  - `scope_paths`: scope ID → named paths
+- [x] Log check diagnostics (errors as `warn!`, warnings as `debug!`)
+- [x] 14 tests (5 unit + 9 integration using fixture YAML files)
+- [x] Fix: manifest crate `edition.workspace = true` → `edition = "2024"` for cross-workspace compatibility
+- [ ] Integration test: load manifests for Autoware scopes, verify resolution (deferred — requires real Autoware manifests)
+
+## 31.4a: Manifest integration tests
+
+Integration tests exercising the full manifest loading pipeline (scope table → manifest
+resolution → static checks → resolved index). Tests use synthetic scope tables paired with
+the 31.3 fixture manifests. Covers general cases and Autoware-observed edge cases.
+
+**General cases (6 tests):**
+- [x] Single scope, single manifest — load, resolve names, verify topic FQNs
+- [x] Multiple scopes — each scope loads its own manifest, topics don't collide
+- [x] Scope with deep namespace — `/planning/scenario_planning/lane_driving` prefixing
+- [x] Manifest with violations — errors counted but loading proceeds (warn, not fail)
+- [x] Manifest not found — scope silently skipped, no error
+- [x] Mixed scopes — some with manifests, some without, some group scopes
+
+**Autoware-observed edge cases (6 tests, from 169-scope, 48-package launch tree):**
+- [x] Same (pkg, file) included multiple times with different namespaces — like
+      `load_topic_state_monitor.launch.xml` ×10 under `/system`. Each gets its own
+      resolved topic set with distinct namespace prefixes. Manifests are loaded once per
+      scope ID, not deduplicated.
+- [x] Group scopes (origin: None) interleaved with file scopes — groups are skipped,
+      their child file scopes still resolve correctly
+- [x] Deep nesting (depth 16) — scope at depth N resolves manifest from its own
+      `(pkg, file)`, not from ancestors. Namespace comes from scope's `ns` field, not
+      accumulated from parent chain.
+- [x] Scopes without entities (108/169 in Autoware) — manifest loaded and checked even
+      if no nodes reference this scope (useful for pre-validation)
+- [x] Large argument sets — scopes with 100+ args don't affect manifest resolution
+      (args are scope metadata, not used by manifest loader)
+- [x] Root scope at namespace "/" — topic `chatter` becomes `/chatter`, not `//chatter`
+
+**Additional coverage (9 tests):**
+- [x] All 6 fixtures × 4 namespace variants — smoke test, no panics, no double-slashes
+- [x] Pipeline full resolution — all 4 nodes, 5 topics, scope paths verified
+- [x] NDT state/required — 2 EKF paths, max_latency_ms values, topic FQNs
+- [x] Periodic empty-input paths — all 3 nodes verified as timer-driven
+
+## 31.4b: Autoware manifest files
+
+**Repo**: `~/repos/autoware-contract/` (separate repository)
+
+Per-launch-file manifest YAML files for Autoware, organized by package. These are
+hand-authored contracts describing the expected communication graph, timing, and QoS.
+
+**Layout**:
+```
+autoware-contract/
+├── README.md
+├── autoware_launch/
+│   ├── planning_simulator.yaml     # root manifest
+│   └── autoware.yaml
+├── tier4_perception_launch/
+│   ├── perception.yaml
+│   └── obstacle_segmentation.yaml
+├── tier4_planning_launch/
+│   └── planning.yaml
+├── tier4_control_launch/
+│   └── control.yaml
+├── tier4_localization_launch/
+│   └── localization.yaml
+├── tier4_system_launch/
+│   └── system.yaml
+└── ...
+```
+
+**Work items:**
+- [ ] Create repo at `~/repos/autoware-contract/` with README
+- [ ] Inventory: list all 48 packages × launch files from Autoware scope table, identify
+      which scopes have entities (61/169) and prioritize those for manifest authoring
+- [ ] Perception manifests: `tier4_perception_launch/` — lidar pipeline, camera pipeline,
+      fusion, tracking (highest value: complex timing contracts)
+- [ ] Localization manifests: `tier4_localization_launch/` — NDT, EKF, twist filter
+      (high value: feedback loops with state endpoints, periodic EKF)
+- [ ] Planning manifests: `tier4_planning_launch/` — mission, behavior, motion planning
+      (medium: deep nesting, many state reads)
+- [ ] Control manifests: `tier4_control_launch/` — trajectory follower, vehicle interface
+      (medium: periodic controllers, jitter constraints)
+- [ ] System manifests: `tier4_system_launch/` — state monitors ×10 (tests same-file
+      multi-invocation pattern)
+- [ ] Integration test: `play_launch launch autoware_launch planning_simulator.launch.xml
+      --manifest-dir ~/repos/autoware-contract/` — load all manifests, verify resolution
+      against live Autoware graph
 
 ## 31.5: Runtime monitors
 
@@ -222,19 +305,24 @@ The manifest crates are a standalone workspace (`src/ros-launch-manifest/`).
 ```
 31.1 (types) ──→ 31.2 (checker) ──→ 31.3 (fixtures)
                                          │
-         31.4 (executor loading) ────────┤
+         31.4  (executor loading) ───────┤
                                          │
-         31.5 (runtime monitors) ────────┤
+         31.4a (integration tests) ──────┤
                                          │
-         31.6 (executor audit) ──────────┤
+         31.4b (autoware-contract repo) ─┤  ← separate repo, parallel work
                                          │
-         31.7 (capture) ─────────────────┤
+         31.5  (runtime monitors) ───────┤
                                          │
-         31.8 (CLI tools) ───────────────┘
+         31.6  (executor audit) ─────────┤
+                                         │
+         31.7  (capture) ────────────────┤
+                                         │
+         31.8  (CLI tools) ──────────────┘
 ```
 
-31.1–31.3 are complete (standalone manifest crates, no play_launch dependency).
-31.4–31.8 integrate into play_launch using scope table from record.json.
+31.1–31.4 are complete (standalone manifest crates + executor loading).
+31.4a–31.4b are test/validation phases before runtime integration.
+31.5–31.8 integrate runtime monitoring into play_launch.
 
 ---
 
