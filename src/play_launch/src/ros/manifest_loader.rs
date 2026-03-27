@@ -6,7 +6,9 @@
 
 use super::launch_dump::{LaunchDump, ScopeEntry};
 use ros_launch_manifest_check::{Diagnostic, Severity, run_checks_with_spans};
-use ros_launch_manifest_types::{Manifest, parse_manifest_with_spans};
+use ros_launch_manifest_types::{
+    Manifest, parse_manifest_with_spans, resolve_args, substitute_manifest,
+};
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
@@ -138,8 +140,39 @@ pub fn load_manifests(
             }
         };
 
-        let manifest = parsed.manifest;
         let source = parsed.source;
+
+        // Resolve args: merge scope args over manifest defaults, then substitute $(var ...)
+        let manifest = if parsed.manifest.args.is_empty() {
+            parsed.manifest
+        } else {
+            let resolved_args = match resolve_args(&parsed.manifest.args, &scope.args) {
+                Ok(a) => a,
+                Err(e) => {
+                    warn!(
+                        "Failed to resolve args for scope {} ({}/{}): {}",
+                        scope.id,
+                        scope.pkg().unwrap_or("?"),
+                        scope.file().unwrap_or("?"),
+                        e
+                    );
+                    continue;
+                }
+            };
+            match substitute_manifest(&parsed.manifest, &resolved_args) {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!(
+                        "Failed to substitute args for scope {} ({}/{}): {}",
+                        scope.id,
+                        scope.pkg().unwrap_or("?"),
+                        scope.file().unwrap_or("?"),
+                        e
+                    );
+                    continue;
+                }
+            }
+        };
 
         // Run static checks with span resolution
         let check_result = run_checks_with_spans(&manifest, parsed.spans);
@@ -1021,5 +1054,60 @@ mod tests {
                 np.path_name
             );
         }
+    }
+
+    // ── Args and substitution ──
+
+    #[test]
+    fn test_args_with_defaults_resolved() {
+        // manifest_args fixture has args with defaults — they resolve even without scope args
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_args",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        assert_eq!(index.manifests.len(), 1);
+        // Default values should be substituted into topic types
+        let input_topic = &index.topics["/input_data"];
+        assert_eq!(input_topic.msg_type, "/default/input");
+        let output_topic = &index.topics["/output_data"];
+        assert_eq!(output_topic.msg_type, "/default/output");
+    }
+
+    #[test]
+    fn test_args_overridden_by_scope() {
+        let mut s = scope(0, "manifest_args", "manifest.launch.xml", "", None);
+        s.args
+            .insert("input_topic".into(), "sensor_msgs/msg/PointCloud2".into());
+        s.args
+            .insert("output_topic".into(), "autoware_msgs/msg/Objects".into());
+        let dump = make_dump(vec![s]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        assert_eq!(index.manifests.len(), 1);
+        // Scope args should override manifest defaults
+        let input_topic = &index.topics["/input_data"];
+        assert_eq!(input_topic.msg_type, "sensor_msgs/msg/PointCloud2");
+        let output_topic = &index.topics["/output_data"];
+        assert_eq!(output_topic.msg_type, "autoware_msgs/msg/Objects");
+    }
+
+    #[test]
+    fn test_args_no_args_section_still_works() {
+        // manifest_simple has no args: section — should work as before
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_simple",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+        assert_eq!(index.manifests.len(), 1);
+        assert!(index.topics.contains_key("/chatter"));
     }
 }
