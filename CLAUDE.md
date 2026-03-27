@@ -225,7 +225,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 - **Design docs**: `docs/design/` — active design documents:
   - `container-isolation.md` — why containers, Linux isolation, RMW consequences
   - `context-unification.md` — parser LaunchContext unification (Phase 17)
-  - `launch-manifest.md` — launch manifest format: topics, services, QoS, timing contracts (Phase 31)
+  - Manifest design docs moved to `src/ros-launch-manifest/docs/` (Phase 31)
   - `rcl-interception.md` — RCL interception architecture + graph discovery evolution
   - `record-format.md` — record.json format: current fields + Phase 30 extensions (scopes)
   - `parser-context.md` — parser LaunchContext: scope chain, namespacing, captures

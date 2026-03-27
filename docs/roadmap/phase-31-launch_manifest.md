@@ -5,13 +5,16 @@
 **Dependencies**: Phase 30 (scope table), Phase 29 (RCL interception)
 **Repo**: `src/ros-launch-manifest/` (workspace with multiple crates)
 
-Design docs:
-- `docs/design/launch-manifest.md` — manifest format specification
-- `docs/design/contract-theory.md` — formal contract theory
-- `docs/design/contract-verification.md` — implementation tooling
-- `docs/research/caret-analysis.md` — CARET causal model analysis
-- `docs/research/io-contract-prior-art.md` — prior art survey
-- `docs/research/manifest-prior-art.md` — tool survey
+Design docs (in `src/ros-launch-manifest/docs/`):
+- `launch-manifest.md` — manifest format specification
+- `contract-theory.md` — formal contract theory
+- `contract-verification.md` — implementation tooling
+- `design-issues.md` — open design issues (conditions, service contracts)
+
+Research docs (in `docs/research/`):
+- `caret-analysis.md` — CARET causal model analysis
+- `io-contract-prior-art.md` — prior art survey
+- `manifest-prior-art.md` — tool survey
 
 ---
 
@@ -140,49 +143,9 @@ the 31.3 fixture manifests. Covers general cases and Autoware-observed edge case
 
 ## 31.4b: Autoware manifest files
 
-**Repo**: `~/repos/autoware-contract/` (separate repository)
-
-Per-launch-file manifest YAML files for Autoware, organized by package. These are
-hand-authored contracts describing the expected communication graph, timing, and QoS.
-
-**Layout**:
-```
-autoware-contract/
-├── README.md
-├── autoware_launch/
-│   ├── planning_simulator.yaml     # root manifest
-│   └── autoware.yaml
-├── tier4_perception_launch/
-│   ├── perception.yaml
-│   └── obstacle_segmentation.yaml
-├── tier4_planning_launch/
-│   └── planning.yaml
-├── tier4_control_launch/
-│   └── control.yaml
-├── tier4_localization_launch/
-│   └── localization.yaml
-├── tier4_system_launch/
-│   └── system.yaml
-└── ...
-```
-
-**Work items:**
-- [ ] Create repo at `~/repos/autoware-contract/` with README
-- [ ] Inventory: list all 48 packages × launch files from Autoware scope table, identify
-      which scopes have entities (61/169) and prioritize those for manifest authoring
-- [ ] Perception manifests: `tier4_perception_launch/` — lidar pipeline, camera pipeline,
-      fusion, tracking (highest value: complex timing contracts)
-- [ ] Localization manifests: `tier4_localization_launch/` — NDT, EKF, twist filter
-      (high value: feedback loops with state endpoints, periodic EKF)
-- [ ] Planning manifests: `tier4_planning_launch/` — mission, behavior, motion planning
-      (medium: deep nesting, many state reads)
-- [ ] Control manifests: `tier4_control_launch/` — trajectory follower, vehicle interface
-      (medium: periodic controllers, jitter constraints)
-- [ ] System manifests: `tier4_system_launch/` — state monitors ×10 (tests same-file
-      multi-invocation pattern)
-- [ ] Integration test: `play_launch launch autoware_launch planning_simulator.launch.xml
-      --manifest-dir ~/repos/autoware-contract/` — load all manifests, verify resolution
-      against live Autoware graph
+**Repo**: `~/repos/autoware-contract/` (separate repository, self-contained docs)
+**Status**: Complete — 36 manifests, all refined with source traceability.
+See `~/repos/autoware-contract/docs/roadmap.md` for per-file status.
 
 ## 31.4c: Source span tracing and diagnostic reporting
 
