@@ -7,7 +7,7 @@
 use super::launch_dump::{LaunchDump, ScopeEntry};
 use ros_launch_manifest_check::{Diagnostic, Severity, run_checks_with_spans};
 use ros_launch_manifest_types::{
-    Manifest, parse_manifest_with_spans, resolve_args, substitute_manifest,
+    Manifest, filter_manifest, parse_manifest_with_spans, resolve_args, substitute_manifest,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -173,6 +173,10 @@ pub fn load_manifests(
                 }
             }
         };
+
+        // Filter entities by if:/unless: conditions (after substitution)
+        let mut manifest = manifest;
+        filter_manifest(&mut manifest);
 
         // Run static checks with span resolution
         let check_result = run_checks_with_spans(&manifest, parsed.spans);
@@ -1109,5 +1113,71 @@ mod tests {
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
         assert_eq!(index.manifests.len(), 1);
         assert!(index.topics.contains_key("/chatter"));
+    }
+
+    // ── Conditions ──
+
+    #[test]
+    fn test_conditions_default_args() {
+        // With default args: use_feature_a=true, use_feature_b=false, sensor_model=velodyne
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_conditions",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        assert_eq!(index.manifests.len(), 1);
+        let m = &index.manifests[&0].manifest;
+
+        // always_present, feature_a_node, sensor_specific should be present
+        assert!(m.nodes.contains_key("always_present"));
+        assert!(m.nodes.contains_key("feature_a_node"));
+        assert!(m.nodes.contains_key("sensor_specific"));
+        // feature_b_node excluded (use_feature_b=false)
+        assert!(!m.nodes.contains_key("feature_b_node"));
+        // legacy_node excluded (unless: use_feature_a which is true)
+        assert!(!m.nodes.contains_key("legacy_node"));
+
+        // Topics: always_topic + feature_a_topic present, feature_b_topic excluded
+        assert!(index.topics.contains_key("/always_topic"));
+        assert!(index.topics.contains_key("/feature_a_topic"));
+        assert!(!index.topics.contains_key("/feature_b_topic"));
+    }
+
+    #[test]
+    fn test_conditions_overridden_args() {
+        // Override: use_feature_a=false, use_feature_b=true
+        let mut s = scope(0, "manifest_conditions", "manifest.launch.xml", "", None);
+        s.args.insert("use_feature_a".into(), "false".into());
+        s.args.insert("use_feature_b".into(), "true".into());
+        let dump = make_dump(vec![s]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let m = &index.manifests[&0].manifest;
+
+        // feature_a_node excluded, feature_b_node included, legacy_node included (unless false)
+        assert!(m.nodes.contains_key("always_present"));
+        assert!(!m.nodes.contains_key("feature_a_node"));
+        assert!(m.nodes.contains_key("feature_b_node"));
+        assert!(m.nodes.contains_key("legacy_node"));
+        // sensor_specific still present (sensor_model default = velodyne)
+        assert!(m.nodes.contains_key("sensor_specific"));
+    }
+
+    #[test]
+    fn test_conditions_sensor_model_mismatch() {
+        // Override sensor_model to something other than velodyne
+        let mut s = scope(0, "manifest_conditions", "manifest.launch.xml", "", None);
+        s.args.insert("sensor_model".into(), "hesai".into());
+        let dump = make_dump(vec![s]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let m = &index.manifests[&0].manifest;
+
+        // sensor_specific excluded (hesai != velodyne)
+        assert!(!m.nodes.contains_key("sensor_specific"));
     }
 }
