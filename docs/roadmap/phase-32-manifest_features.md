@@ -1,6 +1,6 @@
 # Phase 32: Manifest Format Features
 
-**Status**: Not started
+**Status**: Complete (32.1–32.6 done, 32.4 dropped)
 **Priority**: High
 **Dependencies**: Phase 31 (manifest crates, static check CLI)
 **Repo**: `src/ros-launch-manifest/` (types + check crates)
@@ -69,67 +69,97 @@ Enables exact topic name matching when topic names depend on launch arguments.
 Add `if:` and `unless:` to manifest entities. Enables conditional nodes and
 topics based on launch arguments.
 
-**Types crate:**
-- [ ] 32.3.1: Add `if_condition: Option<String>` and `unless_condition: Option<String>`
-  to `NodeDecl`, `TopicDecl`, `ServiceDecl`, `PathDecl`, `IncludeDecl`
-  - YAML keys: `if:`, `unless:`
-  - Parser: extract before other fields
-- [ ] 32.3.2: Condition evaluator
-  - Boolean form: bare substitution → compare to `"true"`
-  - Expression form: `value == value`, `value != value`, `and`, `or`, parentheses
-  - All comparisons are string equality
-  - `evaluate_condition(expr: &str) -> Result<bool>`
-- [ ] 32.3.3: Filter function: remove entities where condition is false
-  - `filter_by_conditions(manifest: &mut Manifest)` — removes nodes, topics,
-    services, paths, includes where `if:` is false or `unless:` is true
-- [ ] 32.3.4: Unit tests for condition evaluation
-  - Boolean: `"true"` → true, `"false"` → false, `""` → false
-  - Comparison: `"a" == "a"` → true, `"a" != "b"` → true
-  - Compound: `"true" and "true"` → true, `"true" or "false"` → true
-  - `unless:` inversion
-- [ ] 32.3.5: Integration tests: manifest with conditional nodes, checked with
-  different arg sets producing different entity sets
+**Types crate (`cond.rs`):**
+- [x] 32.3.1: Add `if_condition: Option<String>` and `unless_condition: Option<String>`
+  to `NodeDecl`, `TopicDecl`, `ServiceDecl`, `ActionDecl`, `PathDecl`
+  - YAML keys: `if:`, `unless:` (via `#[serde(rename)]`)
+  - Parser: `yaml_string(yaml, "if")` / `yaml_string(yaml, "unless")` on all entity parsers
+- [x] 32.3.2: Condition evaluator (`cond::evaluate`)
+  - Boolean form: bare string → `"true"` = true, else false
+  - Expression form: recursive descent parser for `==`, `!=`, `and`, `or`, parentheses
+  - Quoted and bare word values, all string comparison
+  - `cond::should_include(if_cond, unless_cond) -> bool`
+- [x] 32.3.3: Filter function (`cond::filter_manifest`)
+  - Removes nodes, topics, services, actions, paths where condition is false
+  - Also filters node-level paths
+- [x] 32.3.4: Unit tests (19 tests in `cond::tests`)
+  - Boolean: true, false, empty, arbitrary strings
+  - Comparison: ==, !=, bare words, quoted strings
+  - Compound: and, or, parentheses, mixed
+  - should_include: no conditions, if true/false, unless true/false, both
+  - filter_manifest: 5 nodes + 2 topics filtered by if/unless
+- [x] 32.3.5: Integration tests (3 tests in `manifest_loader::tests`)
+  - Default args: feature_a included, feature_b excluded, legacy excluded, sensor_specific included
+  - Overridden args: feature_a excluded, feature_b included, legacy included
+  - Sensor model mismatch: sensor_specific excluded
+- [x] Substitution engine updated to resolve `$(var ...)` in if/unless condition strings
+- [x] Test fixture: `tests/fixtures/manifest_conditions/manifest.yaml`
 
 **Manifest loader:**
-- [ ] 32.3.6: Run condition filtering after substitution, before namespace resolution
-  - Pipeline: args merge → substitute → filter conditions → namespace → check
+- [x] 32.3.6: Run condition filtering after substitution, before namespace resolution
+  - Pipeline: parse → resolve args → substitute → **filter conditions** → check → namespace → index
 
-## 32.4: Import Topic Mapping
+## ~~32.4: Import Topic Mapping~~ — Dropped
 
-Add `topic:` field to imports for explicit topic name mapping.
+~~Add `topic:` field to imports for explicit topic name mapping.~~
 
-**Types crate:**
-- [ ] 32.4.1: Change `imports` from `BTreeMap<String, Vec<String>>` to support
-  both short form (`[endpoints]`) and long form (`{ topic: ..., endpoints: [...] }`)
-  - New type: `ImportDecl` (enum: list or struct)
-- [ ] 32.4.2: Parser handles both forms
-- [ ] 32.4.3: Unit tests for both import forms
-
-**Manifest loader:**
-- [ ] 32.4.4: Resolve `$(var ...)` in import `topic:` field
-- [ ] 32.4.5: Use resolved topic name for wiring verification
+**Dropped**: The parent manifest's `topics:` section already wires child imports
+to actual topic names via `sub: [child_scope/import_group]`. The child import
+only needs to declare the scope boundary — the resolved topic name is the
+parent's responsibility. Adding `topic:` to imports would be redundant.
 
 ## 32.5: Service Static Checks
 
 Add static validation rules for service wiring and type compatibility.
 
-**Checker crate:**
-- [ ] 32.5.1: `service_wiring` rule: every `cli:` endpoint on a node must have a
-  matching entry in `services:` with a `server:` list (within scope or imported)
-- [ ] 32.5.2: `service_type` rule: client and server on the same `services:` entry
-  must reference the same service type
-- [ ] 32.5.3: Unit tests: missing server, type mismatch, clean wiring
-- [ ] 32.5.4: Fixture: add service violations to `manifest_violations/`
+**Checker crate (2 new rules, total 11):**
+- [x] 32.5.1: `service_wiring` rule (`service_wiring.rs`): every `cli:` endpoint
+  on a node must have a matching `services:` entry with a non-empty `server:` list
+- [x] 32.5.2: `service_type` rule (`service_type.rs`):
+  - Service must have a `type` declared (error if empty)
+  - Server refs must exist as `srv:` on their nodes (warning if not)
+  - Client refs must exist as `cli:` on their nodes (warning if not)
+- [x] 32.5.3: Unit tests in checker_tests.rs (4 tests):
+  - Clean service wiring (no diagnostics)
+  - Missing server (warning from service-wiring)
+  - Missing service type (error from service-type)
+  - Server not on node (warning from service-type)
+- [x] 32.5.4: Fixture violations updated:
+  - `orphan_client` node with `cli: { missing_service: {} }` (no matching server)
+  - `typeless_service` in `services:` with no type
+- [x] Fixture tests (2 tests): `fixture_violations_service_wiring`, `fixture_violations_service_type`
 
 ## 32.6: Update launch-manifest.md
 
-Rewrite the design doc to incorporate all changes from 32.1–32.5.
+Update the design doc to incorporate all changes from 32.1–32.5.
 
-- [ ] 32.6.1: Add `args:` section with examples
-- [ ] 32.6.2: Add `if:`/`unless:` section with examples
-- [ ] 32.6.3: Update imports section with `topic:` field
-- [ ] 32.6.4: Update all examples to use current naming conventions
-- [ ] 32.6.5: Remove stale content (parser loading, old paths, etc.)
+- [x] 32.6.1: Add `args:` section with examples (done during 32.2)
+- [x] 32.6.2: Add `if:`/`unless:` section with examples (done during 32.3)
+- [x] ~~32.6.3: Update imports section with `topic:` field~~ (dropped with 32.4)
+- [x] 32.6.4: Update concepts list (5 → 7: added args, conditions), add quick
+  example with args + conditions, add 11-rule validation table
+- [x] 32.6.5: Stale content already fixed in 32.1 (parser loading, cross-refs,
+  file naming, endpoint description, service max_response_ms)
+
+## 32.7: Test Coverage Gaps
+
+Fill test gaps identified after 32.1–32.6.
+
+**Manifest crate fixture tests (`fixture_tests.rs`):**
+- [x] 32.7.1: Added `manifest_args/` and `manifest_conditions/` to `all_fixtures_round_trip`
+- [x] 32.7.2: `fixture_args_parses` + `fixture_args_clean` — verify args parsed, checker clean
+- [x] 32.7.3: `fixture_conditions_parses` + `fixture_conditions_filter_with_defaults` —
+  verify conditions parsed, filtered correctly with resolve+substitute+filter pipeline
+
+**Checker integration tests (`checker_tests.rs`):**
+- [x] 32.7.4: `test_args_conditions_combined` — manifest with `$(var ...)` in `if:` and
+  topic type, checked in two configurations (sensor enabled/disabled), verifying
+  nodes survive or are filtered and checker reports no errors in both cases
+
+**CLI integration tests (`tests/tests/manifest_check.rs`):**
+- [x] ~~32.7.5–32.7.6~~ — Not needed. CLI requires a launch file; args/conditions are
+  exercised through manifest_loader integration tests with synthetic scope tables.
+  The CLI flow is already covered by existing tests.
 
 ---
 
