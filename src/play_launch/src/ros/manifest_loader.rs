@@ -1063,8 +1063,27 @@ mod tests {
     // ── Args and substitution ──
 
     #[test]
-    fn test_args_with_defaults_resolved() {
-        // manifest_args fixture has args with defaults — they resolve even without scope args
+    fn test_args_resolved_from_scope() {
+        // All args are mandatory — must be provided by scope args
+        let mut s = scope(0, "manifest_args", "manifest.launch.xml", "", None);
+        s.args
+            .insert("input_topic".into(), "/resolved/input".into());
+        s.args
+            .insert("output_topic".into(), "/resolved/output".into());
+        s.args.insert("node_enabled".into(), "true".into());
+        let dump = make_dump(vec![s]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        assert_eq!(index.manifests.len(), 1);
+        let input_topic = &index.topics["/input_data"];
+        assert_eq!(input_topic.msg_type, "/resolved/input");
+        let output_topic = &index.topics["/output_data"];
+        assert_eq!(output_topic.msg_type, "/resolved/output");
+    }
+
+    #[test]
+    fn test_args_missing_from_scope_skips_manifest() {
+        // Scope args don't include required args — manifest should be skipped (warned)
         let dump = make_dump(vec![scope(
             0,
             "manifest_args",
@@ -1074,30 +1093,8 @@ mod tests {
         )]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
-        assert_eq!(index.manifests.len(), 1);
-        // Default values should be substituted into topic types
-        let input_topic = &index.topics["/input_data"];
-        assert_eq!(input_topic.msg_type, "/default/input");
-        let output_topic = &index.topics["/output_data"];
-        assert_eq!(output_topic.msg_type, "/default/output");
-    }
-
-    #[test]
-    fn test_args_overridden_by_scope() {
-        let mut s = scope(0, "manifest_args", "manifest.launch.xml", "", None);
-        s.args
-            .insert("input_topic".into(), "sensor_msgs/msg/PointCloud2".into());
-        s.args
-            .insert("output_topic".into(), "autoware_msgs/msg/Objects".into());
-        let dump = make_dump(vec![s]);
-        let index = load_manifests(&dump, &fixture_dir()).unwrap();
-
-        assert_eq!(index.manifests.len(), 1);
-        // Scope args should override manifest defaults
-        let input_topic = &index.topics["/input_data"];
-        assert_eq!(input_topic.msg_type, "sensor_msgs/msg/PointCloud2");
-        let output_topic = &index.topics["/output_data"];
-        assert_eq!(output_topic.msg_type, "autoware_msgs/msg/Objects");
+        // Manifest skipped because required args are missing
+        assert!(index.manifests.is_empty());
     }
 
     #[test]
@@ -1119,14 +1116,12 @@ mod tests {
 
     #[test]
     fn test_conditions_default_args() {
-        // With default args: use_feature_a=true, use_feature_b=false, sensor_model=velodyne
-        let dump = make_dump(vec![scope(
-            0,
-            "manifest_conditions",
-            "manifest.launch.xml",
-            "",
-            None,
-        )]);
+        // Provide scope args matching the "default" Autoware configuration
+        let mut s = scope(0, "manifest_conditions", "manifest.launch.xml", "", None);
+        s.args.insert("use_feature_a".into(), "true".into());
+        s.args.insert("use_feature_b".into(), "false".into());
+        s.args.insert("sensor_model".into(), "velodyne".into());
+        let dump = make_dump(vec![s]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
         assert_eq!(index.manifests.len(), 1);
@@ -1153,6 +1148,7 @@ mod tests {
         let mut s = scope(0, "manifest_conditions", "manifest.launch.xml", "", None);
         s.args.insert("use_feature_a".into(), "false".into());
         s.args.insert("use_feature_b".into(), "true".into());
+        s.args.insert("sensor_model".into(), "velodyne".into());
         let dump = make_dump(vec![s]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
@@ -1163,14 +1159,16 @@ mod tests {
         assert!(!m.nodes.contains_key("feature_a_node"));
         assert!(m.nodes.contains_key("feature_b_node"));
         assert!(m.nodes.contains_key("legacy_node"));
-        // sensor_specific still present (sensor_model default = velodyne)
+        // sensor_specific still present (sensor_model=velodyne)
         assert!(m.nodes.contains_key("sensor_specific"));
     }
 
     #[test]
     fn test_conditions_sensor_model_mismatch() {
-        // Override sensor_model to something other than velodyne
+        // Override sensor_model to something other than velodyne — all 3 args required
         let mut s = scope(0, "manifest_conditions", "manifest.launch.xml", "", None);
+        s.args.insert("use_feature_a".into(), "true".into());
+        s.args.insert("use_feature_b".into(), "false".into());
         s.args.insert("sensor_model".into(), "hesai".into());
         let dump = make_dump(vec![s]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
