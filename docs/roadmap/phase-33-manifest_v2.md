@@ -1,6 +1,6 @@
 # Phase 33: Manifest Format v2
 
-**Status**: In progress (33.1–33.2 complete)
+**Status**: In progress (33.1–33.3 complete)
 **Priority**: Medium
 **Dependencies**: Phase 32 (args, conditions, service checks)
 **Design**: `src/ros-launch-manifest/docs/design-issues.md` #11–14
@@ -89,12 +89,14 @@ Breaking change: replace `imports:`/`exports:` with top-level `pub:`/`sub:`/
 
 Add `type: bool` and `choices: [...]` to arg declarations.
 
-- [ ] 33.3.1: Change `args` from `Vec<String>` to `Vec<ArgDecl>` where
-  `ArgDecl` supports free string, bool, and choices variants
-- [ ] 33.3.2: Parser handles: bare name (free), `{ type: bool }`, `{ choices: [a, b] }`
-- [ ] 33.3.3: Validate arg values against declared type in `resolve_args`
-  (error if bool arg gets non-bool value, enum arg gets unlisted value)
-- [ ] 33.3.4: Tests for type validation
+- [x] 33.3.1: Changed `args` from `Vec<String>` to `BTreeMap<String, ArgDecl>`
+  where `ArgDecl` enum: `String` (default), `Bool`, `Choices(Vec<String>)`
+- [x] 33.3.2: Parser handles: bare name/null (free), `{ type: bool }`,
+  `{ choices: [a, b] }`, list form (all free)
+- [x] 33.3.3: `resolve_args` validates values: bool arg rejects non-bool,
+  choices arg rejects unlisted values (`InvalidArgValue` error)
+- [x] 33.3.4: 5 new tests: bool valid/invalid, choices valid/invalid, parse typed YAML
+- [x] 33.3.5: `ArgDecl::valid_values()` → `Option<Vec<&str>>` for enumeration
 
 ## 33.4: Dangling Entity Checks
 
