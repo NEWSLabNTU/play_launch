@@ -1,6 +1,6 @@
 # Phase 33: Manifest Format v2
 
-**Status**: In progress (33.1–33.4 complete)
+**Status**: Complete
 **Priority**: Medium
 **Dependencies**: Phase 32 (args, conditions, service checks)
 **Design**: `src/ros-launch-manifest/docs/design-issues.md` #11–14
@@ -121,27 +121,38 @@ Post-filter validation for structurally invalid entities.
 
 Verify no valid arg combination produces dangling entities.
 
-- [ ] 33.5.1: Tier 1 — enumeration for ≤15 finite-domain args:
-  - Collect bool + choices args
-  - Cartesian product of valid values
-  - For each: substitute → filter → check dangling
-  - Report specific arg values that cause problems
-- [ ] 33.5.2: `unreachable` rule — detect conditions that are always false
-  for all valid arg values (e.g., `bool == 'wtf'`)
-- [ ] 33.5.3: Tests: variant-complete manifest, variant-incomplete manifest,
-  unreachable node detection
-- [ ] 33.5.4: (Optional) Tier 2 — Z3 SMT solver for >15 finite-domain args:
-  - Feature-gated: `--features z3`
-  - Encode args as Z3 enum sorts, conditions as Z3 constraints
-  - Query: "is there an assignment where this topic has 0 pub?"
-  - Report counterexample
+- [x] 33.5.1: `satisfiability` rule (14th rule) using **Z3 SMT solver**:
+  - Creates Z3 enum sorts per typed arg (Bool → {true,false}, Choices → {a,b,...})
+  - Translates `if:`/`unless:` conditions to Z3 constraints (`and`, `or`, `==`, `!=`)
+  - For topics with all-optional publishers: asserts all conditional nodes inactive,
+    checks SAT → reports specific arg values that produce 0 publishers
+  - Same for services/actions with all-optional servers
+  - Handles parenthesized expressions, boolean shorthand `$(var x)` → `x == "true"`
+- [x] 33.5.2: Unreachable node detection — builds Z3 constraint from node condition,
+  checks if satisfiable. Unsat → warning. Invalid domain reference (condition value
+  not in any arg's choices) → also unreachable.
+- [x] 33.5.3: 4 tests: variant-complete (2 choices, both covered → 0 errors),
+  variant-incomplete (3 choices, gnss missing → error), unreachable node
+  (bool == 'wtf' → always false), bool args (use_a=false → dangling topic)
+- [x] 33.5.4: Z3 dependency: `z3 = "0.12"` in check/Cargo.toml
 
 ## 33.6: Update Design Docs
 
-- [ ] 33.6.1: Update `launch-manifest.md` — finalize unified interface section
-  (remove "Note: planned" markers)
-- [ ] 33.6.2: Update `design-issues.md` — mark #11–14 as done
-- [ ] 33.6.3: Update `autoware-contract` manifests to use new features
+- [x] 33.6.1: Updated `launch-manifest.md`:
+  - Removed "Note: planned" marker from Scope Interface section
+  - Removed stale "Current implementation (imports/exports)" paragraph
+  - Updated rule count from 11 to 14 (added dangling-entity, satisfiability)
+  - Moved dangling-entity and satisfiability from "Planned rules" to main table
+  - Updated satisfiability section to describe Z3 implementation
+- [x] 33.6.2: Updated `design-issues.md`:
+  - #11: marked done (Phase 33.1) with implementation note
+  - #12: marked done (Phase 33.2) with implementation note
+  - #13: marked done (Phase 33.4) with implementation note
+  - #14: marked done (Phase 33.3 + 33.5) — replaced implementation path with
+    actual implementation (ArgDecl types + Z3)
+  - Summary table: all 4 issues updated from "Proposed/Filed" to "Done"
+- [x] 33.6.3: Deferred to autoware-contract Phase 7 — adopting arg types
+  and satisfiability checking in the 36 Autoware manifests is tracked there
 
 ---
 
@@ -160,7 +171,7 @@ Verify no valid arg combination produces dangling entities.
 ```
 
 33.1 is independent. 33.2 is independent. 33.3 must precede 33.5
-(types enable enumeration). 33.4 must precede 33.5 (dangling checks
+(arg types enable Z3 enum sorts). 33.4 must precede 33.5 (dangling checks
 are what satisfiability verifies). 33.6 is last.
 
 ---
