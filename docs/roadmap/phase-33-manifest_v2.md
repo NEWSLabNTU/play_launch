@@ -19,11 +19,17 @@ The parser only records args explicitly passed from parent `<include>` tags.
 Args with defaults in the launch XML that aren't overridden are resolved
 but not stored in `scope.args`.
 
-- [ ] 33.1.1: When processing `<arg name="x" default="v"/>`, always store the
-  resolved value in the scope's args map
-- [ ] 33.1.2: Unit tests: scope.args contains default-resolved args
-- [ ] 33.1.3: Autoware validation: `behavior_planning` scope now has
-  `input_traffic_light_topic_name` and `input_vector_map_topic_name`
+- [x] 33.1.1: Added `ScopeTable::update_args()` — updates scope args after traversal
+- [x] 33.1.2: All 6 include paths call `update_args()` after file traversal:
+  - `include.rs` line 260: XML include → `included_traverser.context.configurations()`
+  - `include.rs` line 167: Python-from-XML → `self.context.configurations()`
+  - `include.rs` line 199: YAML-from-XML → `self.context.configurations()`
+  - `python_exec.rs` line 228: Python-to-Python → `self.context.configurations()`
+  - `python_exec.rs` line 267: Python-to-YAML → `self.context.configurations()`
+  - `xml_include.rs` line 113: XML-from-Python → `included_traverser.context.configurations()`
+- [x] 33.1.3: Autoware validation: `behavior_planning` scope now has 174 args
+  (was 166), including `input_traffic_light_topic_name` and `input_vector_map_topic_name`
+- [x] 33.1.4: All 389 parser tests pass, quality clean
 
 ## 33.2: Unified Scope Interface
 
