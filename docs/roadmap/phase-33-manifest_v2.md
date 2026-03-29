@@ -1,6 +1,6 @@
 # Phase 33: Manifest Format v2
 
-**Status**: In progress (33.1–33.3 complete)
+**Status**: In progress (33.1–33.4 complete)
 **Priority**: Medium
 **Dependencies**: Phase 32 (args, conditions, service checks)
 **Design**: `src/ros-launch-manifest/docs/design-issues.md` #11–14
@@ -105,13 +105,14 @@ Add `type: bool` and `choices: [...]` to arg declarations.
 
 Post-filter validation for structurally invalid entities.
 
-- [ ] 33.4.1: `dangling_entity` rule: topics with 0 pub (warning), services
-  with 0 server (error), actions with 0 server (error)
-- [ ] 33.4.2: Empty entity removal: topics with 0 pub + 0 sub, services
-  with 0 server + 0 client
-- [ ] 33.4.3: Empty scope group removal in `cleanup_dangling_refs`
-- [ ] 33.4.4: Tests for each dangling case
-- [ ] 33.4.5: Fixture with conditional nodes that create dangling topics
+- [x] 33.4.1: `dangling_entity` rule (13th rule): topics 0 pub (warn), 0 sub
+  (warn), services 0 server (error), actions 0 server (error)
+- [x] 33.4.2: Empty entity removal in `cleanup_dangling_refs`: topics 0 pub + 0 sub,
+  services 0 server + 0 client, actions same
+- [x] 33.4.3: Scope group `?` cleanup + empty group removal for all 6 scope fields
+- [x] 33.4.4: 6 new tests (4 checker: no-pub/no-sub/no-server/empty-removed,
+  2 cond: empty-topic-removed, empty-scope-group-removed)
+- [x] 33.4.5: Existing filter_manifest test updated (topics need pub/sub to survive)
 
 ## 33.5: Satisfiability Checking
 
