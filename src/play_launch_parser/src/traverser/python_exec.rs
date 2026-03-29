@@ -222,6 +222,10 @@ impl LaunchTraverser {
                                 }
                             }
 
+                            // Update scope args with all resolved configurations
+                            let final_args = self.context.configurations();
+                            self.scope_table.update_args(child_scope_id, final_args);
+
                             self.current_scope_id = prev_scope_id;
                             result
                         }
@@ -253,6 +257,10 @@ impl LaunchTraverser {
                             self.current_scope_id = child_scope_id;
 
                             let result = self.process_yaml_launch_file(&resolved_include_path);
+
+                            // Update scope args with all resolved configurations
+                            let final_args = self.context.configurations();
+                            self.scope_table.update_args(child_scope_id, final_args);
 
                             self.current_scope_id = prev_scope_id;
                             result

@@ -535,3 +535,60 @@ fn test_max_include_depth_exceeded() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn test_scope_args_include_defaults() {
+    use play_launch_parser::parse_launch_file;
+    use std::collections::HashMap;
+
+    // Parse a launch file that includes a child with <arg default="..."/>
+    // The child's default args should appear in the child scope's args
+    let fixture_dir = format!("{}/tests/fixtures/launch", env!("CARGO_MANIFEST_DIR"));
+    let launch_file = format!("{}/test_scope_args.launch.xml", fixture_dir);
+    let path = std::path::Path::new(&launch_file);
+
+    if !path.exists() {
+        eprintln!("Skipping: fixture not found: {}", launch_file);
+        return;
+    }
+
+    let record = parse_launch_file(path, HashMap::new()).unwrap();
+
+    // Should have at least 2 scopes: root + child include
+    assert!(
+        record.scopes.len() >= 2,
+        "expected at least 2 scopes, got {}",
+        record.scopes.len()
+    );
+
+    // Find the child scope (the included file)
+    let child = record.scopes.iter().find(|s| {
+        s.file()
+            .is_some_and(|f| f.contains("child_with_arg_defaults"))
+    });
+    assert!(child.is_some(), "should have child scope for included file");
+    let child = child.unwrap();
+
+    // Verify: arg passed from parent is present
+    assert_eq!(
+        child.args.get("passed_arg").map(|s| s.as_str()),
+        Some("from_parent"),
+        "passed_arg should be 'from_parent', got: {:?}",
+        child.args.get("passed_arg")
+    );
+
+    // Verify: arg with default (NOT passed from parent) is present
+    assert_eq!(
+        child.args.get("child_default_arg").map(|s| s.as_str()),
+        Some("default_value"),
+        "child_default_arg should be 'default_value', got: {:?}",
+        child.args.get("child_default_arg")
+    );
+
+    assert_eq!(
+        child.args.get("child_topic_name").map(|s| s.as_str()),
+        Some("/child/default/topic"),
+        "child_topic_name should be '/child/default/topic', got: {:?}",
+        child.args.get("child_topic_name")
+    );
+}

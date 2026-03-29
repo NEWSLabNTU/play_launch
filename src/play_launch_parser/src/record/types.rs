@@ -98,6 +98,14 @@ impl ScopeTable {
         id
     }
 
+    /// Update the args of an existing scope entry.
+    /// Called after traversal to include args resolved from defaults.
+    pub fn update_args(&mut self, id: usize, args: HashMap<String, String>) {
+        if let Some(entry) = self.entries.get_mut(id) {
+            entry.args = args;
+        }
+    }
+
     pub fn get(&self, id: usize) -> Option<&ScopeEntry> {
         self.entries.get(id)
     }

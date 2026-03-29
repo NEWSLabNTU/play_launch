@@ -1,0 +1,12 @@
+<launch>
+  <!-- These args have defaults and are NOT passed from the parent -->
+  <arg name="child_default_arg" default="default_value"/>
+  <arg name="child_topic_name" default="/child/default/topic"/>
+
+  <!-- This arg IS passed from the parent -->
+  <arg name="passed_arg"/>
+
+  <node pkg="demo_nodes_cpp" exec="talker" name="child_talker">
+    <param name="topic_name" value="$(var child_topic_name)"/>
+  </node>
+</launch>

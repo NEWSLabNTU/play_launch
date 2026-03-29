@@ -109,6 +109,11 @@ impl LaunchTraverser {
         // Take back the scope table
         self.scope_table = std::mem::take(&mut included_traverser.scope_table);
 
+        // Update scope args with all resolved configurations (includes defaults
+        // from <arg default="..."/> that were processed during traversal)
+        let final_args = included_traverser.context.configurations();
+        self.scope_table.update_args(child_scope_id, final_args);
+
         // CRITICAL: Merge global parameters from included file back to parent context
         // SetParameter actions in Python files (called from XML includes) write to the
         // child context. We must propagate them back so into_record_json() can find them.

@@ -161,6 +161,10 @@ impl LaunchTraverser {
                         }
                     }
 
+                    // Update scope args with all resolved configurations
+                    let final_args = self.context.configurations();
+                    self.scope_table.update_args(child_scope_id, final_args);
+
                     self.current_scope_id = prev_scope_id;
                     return result;
                 }
@@ -188,6 +192,10 @@ impl LaunchTraverser {
                     self.current_scope_id = child_scope_id;
 
                     let result = self.process_yaml_launch_file(&resolved_path);
+
+                    // Update scope args with all resolved configurations
+                    let final_args = self.context.configurations();
+                    self.scope_table.update_args(child_scope_id, final_args);
 
                     self.current_scope_id = prev_scope_id;
                     return result;
@@ -256,6 +264,11 @@ impl LaunchTraverser {
 
         // Take back the scope table (child may have added entries from nested includes)
         self.scope_table = std::mem::take(&mut included_traverser.scope_table);
+
+        // Update scope args with all resolved configurations (includes defaults
+        // from <arg default="..."/> that were processed during traversal)
+        let final_args = included_traverser.context.configurations();
+        self.scope_table.update_args(child_scope_id, final_args);
 
         // Merge records from included file into current records
         self.records.extend(included_traverser.records);
