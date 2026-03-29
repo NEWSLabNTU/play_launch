@@ -1,6 +1,6 @@
 # Phase 33: Manifest Format v2
 
-**Status**: Not started
+**Status**: In progress (33.1–33.2 complete)
 **Priority**: Medium
 **Dependencies**: Phase 32 (args, conditions, service checks)
 **Design**: `src/ros-launch-manifest/docs/design-issues.md` #11–14
@@ -33,24 +33,54 @@ but not stored in `scope.args`.
 
 ## 33.2: Unified Scope Interface
 
-**In**: `src/ros-launch-manifest/` (types + check)
+**In**: `src/ros-launch-manifest/` (types + check + play_launch)
 **Design issue**: #12
 
-Replace `imports:`/`exports:` with top-level `pub:`/`sub:`/`srv:`/`cli:`
-(and `action_server:`/`action_client:`) on the manifest.
+Breaking change: replace `imports:`/`exports:` with top-level `pub:`/`sub:`/
+`srv:`/`cli:` (and `action_server:`/`action_client:`).
 
-- [ ] 33.2.1: Add `pub`, `sub`, `srv`, `cli`, `action_server`, `action_client`
-  fields to `Manifest` type (same type as current `imports`/`exports`:
-  `BTreeMap<String, Vec<String>>`)
-- [ ] 33.2.2: Parser handles both old (`imports:`/`exports:`) and new
-  (`pub:`/`sub:`/etc.) forms — backward compatible
-- [ ] 33.2.3: Update `wiring` rule to check new fields
-- [ ] 33.2.4: Update `service-wiring` rule to skip `cli:` endpoints in
-  scope-level `cli:` groups (parent handles wiring)
-- [ ] 33.2.5: Update `cleanup_dangling_refs` to handle scope-level groups
-- [ ] 33.2.6: Update substitution engine to walk new fields
-- [ ] 33.2.7: Tests for new scope interface
-- [ ] 33.2.8: Update `manifest_loader` namespace resolution for new fields
+**Types crate (`types.rs`):**
+- [x] 33.2.1: Removed `imports` and `exports` from `Manifest`
+- [x] 33.2.2: Added scope interface fields: `scope_pub`, `scope_sub`, `scope_srv`,
+  `scope_cli`, `action_server`, `action_client` (serde renamed to `pub`/`sub`/etc.)
+
+**Parser (`parse.rs`):**
+- [x] 33.2.3: Removed `parse_groups(doc, "imports")` / `parse_groups(doc, "exports")`
+- [x] 33.2.4: Added parsing for `pub:`, `sub:`, `srv:`, `cli:`, `action_server:`,
+  `action_client:` at top level
+
+**Substitution engine (`subst.rs`):**
+- [x] 33.2.5: Walks all 6 new scope interface fields
+
+**Condition filter (`cond.rs`):**
+- [x] 33.2.6: `cleanup_dangling_refs` already handles scope fields (no change needed —
+  it only cleans topic/service endpoint lists, not scope groups directly)
+
+**Checker rules:**
+- [x] 33.2.7: `wiring` rule updated — uses `scope_sub` instead of `imports`
+- [x] 33.2.8: `rate_chain` rule updated — uses `scope_pub` instead of `exports`
+- [x] 33.2.9: `service-wiring` — no change needed (already checks scope-level services)
+- [x] 33.2.10: `optional-ref` — no change needed (only checks topic/service refs)
+
+**Graph builder (`graph.rs`):**
+- [x] 33.2.11: No change needed — graph uses includes for scope vertices, not imports/exports
+
+**Manifest loader (`manifest_loader.rs`):**
+- [x] 33.2.12: No change needed — loader doesn't reference imports/exports directly
+- [x] 33.2.13: No change needed
+
+**Test fixtures (all 8 updated):**
+- [x] 33.2.14–33.2.21: All fixture YAMLs updated (`imports:` → `sub:`, `exports:` → `pub:`)
+
+**Tests:**
+- [x] 33.2.22: All checker_tests.rs inline YAML updated
+- [x] 33.2.23: All fixture_tests.rs assertions updated (`.imports` → `.scope_sub`, etc.)
+- [x] 33.2.24: Manifest loader tests — no changes needed
+- [x] 33.2.25: 124 manifest + 27 loader + 390 parser tests pass, quality clean
+
+**Autoware contract** (`~/repos/autoware-contract/`):
+- [x] 33.2.26: Updated all 36 manifests: `imports:` → `sub:`, `exports:` → `pub:`
+- [x] 33.2.27: End-to-end: 45 loaded, 0 errors, 149 warnings (unchanged)
 
 ## 33.3: Arg Type Declarations
 
