@@ -72,6 +72,36 @@ pub fn register_modules(py: Python) -> PyResult<()> {
     launch_actions.add_class::<actions::ResetLaunchConfigurations>()?;
     launch_actions.add_class::<actions::UnsetLaunchConfiguration>()?;
 
+    // EmitEvent and launch.events.Shutdown are defined as pure Python classes
+    // so that Python subclasses (like SSv2's ShutdownOnce) can use super().__init__()
+    // normally. PyO3 #[pyclass] maps #[new] to __new__, not __init__, which breaks
+    // the super().__init__(**kwargs) pattern.
+    let locals = pyo3::types::PyDict::new(py);
+    py.run(
+        c"
+class EmitEvent:
+    def __init__(self, *, event=None, **kwargs):
+        pass
+    def __repr__(self):
+        return 'EmitEvent(...)'
+
+class _ShutdownEvent:
+    def __init__(self, *args, **kwargs):
+        pass
+    def __repr__(self):
+        return 'Shutdown()'
+",
+        None,
+        Some(&locals),
+    )?;
+    let emit_event_class = locals.get_item("EmitEvent")?.unwrap();
+    launch_actions.add("EmitEvent", &emit_event_class)?;
+
+    // Create launch.events submodule (stub event classes for import compatibility)
+    let launch_events = PyModule::new(py, "launch.events")?;
+    let shutdown_event_class = locals.get_item("_ShutdownEvent")?.unwrap();
+    launch_events.add("Shutdown", &shutdown_event_class)?;
+
     // Create launch.substitutions submodule
     let launch_subs = PyModule::new(py, "launch.substitutions")?;
     launch_subs.add_class::<substitutions::LaunchConfiguration>()?;
@@ -175,6 +205,7 @@ pub fn register_modules(py: Python) -> PyResult<()> {
 
     // Add submodules to parent module as attributes
     launch_mod.add_submodule(&launch_actions)?;
+    launch_mod.add_submodule(&launch_events)?;
     launch_mod.add_submodule(&launch_subs)?;
     launch_mod.add_submodule(&launch_conditions)?;
     launch_mod.add_submodule(&launch_event_handlers)?;
@@ -260,6 +291,7 @@ pub fn register_modules(py: Python) -> PyResult<()> {
         "launch.utilities",
         "launch.utilities.type_utils",
         "launch.some_substitutions_type",
+        "launch.events",
         "launch_ros",
         "launch_ros.actions",
         "launch_ros.descriptions",
@@ -281,6 +313,7 @@ pub fn register_modules(py: Python) -> PyResult<()> {
 
     modules.set_item("launch", &launch_mod)?;
     modules.set_item("launch.actions", &launch_actions)?;
+    modules.set_item("launch.events", &launch_events)?;
     modules.set_item("launch.substitutions", &launch_subs)?;
     modules.set_item("launch.conditions", &launch_conditions)?;
     modules.set_item("launch.event_handlers", &launch_event_handlers)?;

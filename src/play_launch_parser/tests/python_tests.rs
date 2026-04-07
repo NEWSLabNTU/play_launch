@@ -2725,3 +2725,120 @@ fn test_python_include_yaml() {
         );
     }
 }
+
+/// Test that EmitEvent can be imported from launch.actions
+#[test]
+fn test_emit_event_import() {
+    let _guard = python_test_guard();
+
+    let launch_content = r#"
+from launch import LaunchDescription
+from launch.actions import EmitEvent
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(
+            package='demo_nodes_cpp',
+            executable='talker',
+            name='emit_event_test_node'
+        ),
+    ])
+"#;
+
+    let temp_file = write_temp_launch_file(launch_content);
+    let result = parse_launch_file(temp_file.path(), HashMap::new());
+
+    assert!(
+        result.is_ok(),
+        "Parsing should succeed when EmitEvent is imported: {:?}",
+        result.err()
+    );
+
+    let record = result.unwrap();
+    let json = serde_json::to_value(&record).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "emit_event_test_node");
+}
+
+/// Test that launch.events.Shutdown (the event, not the action) can be imported
+#[test]
+fn test_launch_events_shutdown_import() {
+    let _guard = python_test_guard();
+
+    let launch_content = r#"
+from launch import LaunchDescription
+from launch.events import Shutdown as ShutdownEvent
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(
+            package='demo_nodes_cpp',
+            executable='talker',
+            name='shutdown_event_test_node'
+        ),
+    ])
+"#;
+
+    let temp_file = write_temp_launch_file(launch_content);
+    let result = parse_launch_file(temp_file.path(), HashMap::new());
+
+    assert!(
+        result.is_ok(),
+        "Parsing should succeed when launch.events.Shutdown is imported: {:?}",
+        result.err()
+    );
+
+    let record = result.unwrap();
+    let json = serde_json::to_value(&record).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(
+        nodes[0]["name"].as_str().unwrap(),
+        "shutdown_event_test_node"
+    );
+}
+
+/// Test the SSv2 ShutdownOnce pattern: subclass EmitEvent with a ShutdownEvent
+#[test]
+fn test_emit_event_subclass_shutdown_once() {
+    let _guard = python_test_guard();
+
+    let launch_content = r#"
+from launch import LaunchDescription
+from launch.actions import EmitEvent
+from launch.events import Shutdown as ShutdownEvent
+from launch_ros.actions import Node
+
+class ShutdownOnce(EmitEvent):
+    def __init__(self, *, reason='reason not given', **kwargs):
+        super().__init__(event=ShutdownEvent(reason=reason), **kwargs)
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(
+            package='demo_nodes_cpp',
+            executable='talker',
+            name='ssv2_pattern_node',
+            on_exit=[ShutdownOnce(reason='node exited')],
+        ),
+    ])
+"#;
+
+    let temp_file = write_temp_launch_file(launch_content);
+    let result = parse_launch_file(temp_file.path(), HashMap::new());
+
+    assert!(
+        result.is_ok(),
+        "Parsing should succeed with SSv2 ShutdownOnce pattern: {:?}",
+        result.err()
+    );
+
+    let record = result.unwrap();
+    let json = serde_json::to_value(&record).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "ssv2_pattern_node");
+}

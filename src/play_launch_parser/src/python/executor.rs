@@ -61,9 +61,9 @@ if not any(isinstance(f, LaunchModuleBlocker) for f in sys.meta_path):
 # Keep our registered top-level and submodule mocks
 our_mocks = {
     'launch', 'launch.actions', 'launch.substitutions', 'launch.conditions',
-    'launch.event_handlers', 'launch.launch_description_sources', 'launch.frontend',
-    'launch.frontend.type_utils', 'launch.utilities', 'launch.utilities.type_utils',
-    'launch.some_substitutions_type',
+    'launch.event_handlers', 'launch.events', 'launch.launch_description_sources',
+    'launch.frontend', 'launch.frontend.type_utils', 'launch.utilities',
+    'launch.utilities.type_utils', 'launch.some_substitutions_type',
     'launch_ros', 'launch_ros.actions', 'launch_ros.descriptions',
     'launch_ros.substitutions', 'launch_ros.parameter_descriptions', 'launch_ros.utilities',
     'launch_xml', 'launch_xml.launch_description_sources',
