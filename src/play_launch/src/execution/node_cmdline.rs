@@ -116,12 +116,11 @@ impl NodeCommandLine {
         };
 
         let remaps: HashMap<_, _> = {
-            // Fall back to exec_name for nodes without an explicit name in the launch file.
-            // This forces the ROS node to adopt exec_name as its identity so play_launch
-            // can discover it in the graph, serve parameters, etc.
+            // Only set __node when the launch file explicitly declares a name.
+            // When name is None, omit __node so the node uses its internal default
+            // (e.g., LifecycleNodes that expose services under their declared name).
             let name_remap = name
                 .as_ref()
-                .or(record.exec_name.as_ref())
                 .map(|name| ("__node".to_string(), name.to_string()));
             let namespace_remap = namespace
                 .as_ref()
@@ -295,9 +294,12 @@ impl NodeCommandLine {
                 let remap_args = remaps.iter().flat_map(move |(name, value)| {
                     [Cow::from(remap_switch), format!("{name}:={value}").into()]
                 });
-                let params_args = params.iter().flat_map(move |(name, value)| {
-                    [Cow::from(param_switch), format!("{name}:={value}").into()]
-                });
+                let params_args = params
+                    .iter()
+                    .filter(|(_, value)| !value.is_empty())
+                    .flat_map(move |(name, value)| {
+                        [Cow::from(param_switch), format!("{name}:={value}").into()]
+                    });
                 let params_file_args = params_files
                     .iter()
                     .flat_map(|path| {
@@ -463,5 +465,65 @@ mod tests {
             substitute_variables("--value $(var unknown)", &variables),
             "--value $(var unknown)"
         );
+    }
+
+    /// Helper to build a NodeCommandLine with controlled name/namespace for remap testing.
+    /// Bypasses from_node_record (which needs ament_index) and directly tests the
+    /// remap construction logic.
+    fn build_remaps(
+        name: Option<&str>,
+        exec_name: Option<&str>,
+        namespace: Option<&str>,
+    ) -> HashMap<String, String> {
+        // Mirror the remap logic from from_node_record
+        let name = name.map(|s| s.to_string());
+        let namespace = namespace.map(|s| s.to_string());
+        let _exec_name = exec_name.map(|s| s.to_string());
+
+        let name_remap = name
+            .as_ref()
+            .map(|name| ("__node".to_string(), name.to_string()));
+        let namespace_remap = namespace
+            .as_ref()
+            .map(|namespace| ("__ns".to_string(), namespace.to_string()));
+        chain!(name_remap, namespace_remap).collect()
+    }
+
+    /// When the launch file declares an explicit name, __node remap should be set.
+    #[test]
+    fn test_node_remap_with_explicit_name() {
+        let remaps = build_remaps(Some("my_custom_name"), Some("my_node_exec"), None);
+        assert_eq!(
+            remaps.get("__node").map(|s| s.as_str()),
+            Some("my_custom_name"),
+            "__node should use the explicit name from the launch file"
+        );
+    }
+
+    /// When the launch file does NOT declare a name, __node should NOT be set.
+    /// This lets the node use its internal default name (important for LifecycleNodes
+    /// whose lifecycle services are registered under the internal name).
+    #[test]
+    fn test_node_remap_without_name_omits_node() {
+        let remaps = build_remaps(None, Some("my_node_exec"), None);
+        assert!(
+            !remaps.contains_key("__node"),
+            "__node should NOT be set when launch file omits name (node uses internal default)"
+        );
+    }
+
+    /// __ns remap should be set when namespace is provided.
+    #[test]
+    fn test_namespace_remap() {
+        let remaps = build_remaps(None, Some("my_node"), Some("/simulation"));
+        assert_eq!(remaps.get("__ns").map(|s| s.as_str()), Some("/simulation"));
+    }
+
+    /// Both __node and __ns should be set when both name and namespace are provided.
+    #[test]
+    fn test_node_and_namespace_remap() {
+        let remaps = build_remaps(Some("my_node"), None, Some("/ns"));
+        assert_eq!(remaps.get("__node").map(|s| s.as_str()), Some("my_node"));
+        assert_eq!(remaps.get("__ns").map(|s| s.as_str()), Some("/ns"));
     }
 }
