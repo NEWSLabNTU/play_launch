@@ -4,7 +4,7 @@ play_launch - ROS2 Launch Inspection Tool
 Records and replays ROS 2 launch file executions for performance analysis.
 """
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 
 from play_launch.cli import main
 

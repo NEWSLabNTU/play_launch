@@ -1101,6 +1101,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashlink"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea0b22561a9c04a7cb1a302c013e0259cd3b4bb619f145b32f72b8b4bcbed230"
+dependencies = [
+ "hashbrown 0.16.1",
+]
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1748,7 +1757,7 @@ checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
 name = "play_launch"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "async-stream",
  "axum",
@@ -1795,6 +1804,7 @@ dependencies = [
  "tracing-subscriber",
  "ts-rs",
  "which",
+ "yaml-rust2 0.11.0",
 ]
 
 [[package]]
@@ -1824,6 +1834,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "shlex",
  "tempfile",
  "thiserror 1.0.69",
 ]
@@ -2104,7 +2115,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
- "yaml-rust2",
+ "yaml-rust2 0.9.0",
 ]
 
 [[package]]
@@ -3398,7 +3409,18 @@ checksum = "2a1a1c0bc9823338a3bdf8c61f994f23ac004c6fa32c08cd152984499b445e8d"
 dependencies = [
  "arraydeque",
  "encoding_rs",
- "hashlink",
+ "hashlink 0.9.1",
+]
+
+[[package]]
+name = "yaml-rust2"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "631a50d867fafb7093e709d75aaee9e0e0d5deb934021fcea25ac2fe09edc51e"
+dependencies = [
+ "arraydeque",
+ "encoding_rs",
+ "hashlink 0.11.0",
 ]
 
 [[package]]
