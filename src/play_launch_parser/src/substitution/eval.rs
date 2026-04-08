@@ -14,23 +14,57 @@ use crate::error::SubstitutionError;
 pub(crate) fn evaluate_expression(expr: &str) -> Result<String, SubstitutionError> {
     let expr = expr.trim();
 
-    // Strip outer quote wrapping from XML attribute patterns:
-    //   $(eval &quot;...&quot;)  → outer double quotes from XML &quot; escaping
-    //   $(eval '...')         → outer single quotes used in XML attributes
+    // Handle outer quote wrapping from XML attribute patterns:
+    //   $(eval &quot;...&quot;)  → outer "..." from XML &quot; escaping
+    //   $(eval '...')         → outer '...' used in XML attributes
     //
-    // Only strip if the inner content has no unescaped instances of the same
-    // quote character, confirming the outer quotes are wrappers not Python literals.
-    // Escaped quotes (\' or \") don't count as breaking the wrapper.
+    // Strip only if the opening quote's matching close is the LAST character.
+    // This distinguishes wrapper quotes from Python string literals:
+    //   "'a' == 'b'"  → first " matches last " (no " in between) → strip
+    //   "'[..] ' + '""]'"  → first ' has matching ' after ']' (not last) → don't strip...
+    //   Actually we need: first quote's matching close = last char.
+    //
+    // For double quotes: strip if inner content has no unescaped double quotes.
+    // For single quotes: strip if inner content has no unescaped single quotes
+    //   AND the expression doesn't look like Python single-quoted strings
+    //   (e.g., 'foo' + 'bar' starts with ' but is not a wrapper).
+    //
+    // Handle outer quote wrapping from XML $(eval) patterns:
+    //   $(eval &quot;...&quot;)  → outer "..." wrapping inner '...' Python expressions
+    //   $(eval '&quot;...&quot;') → outer '...' wrapping inner "..." Python expressions
+    //
+    // Strip outer quotes when the inner content uses the OTHER quote type.
+    // Don't strip when inner uses the SAME quote (e.g., 'foo' + 'bar' or "" + "").
     let expr = if expr.len() >= 2 {
-        let (first, last) = (expr.as_bytes()[0], expr.as_bytes()[expr.len() - 1]);
-        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+        let first = expr.as_bytes()[0];
+        let last = expr.as_bytes()[expr.len() - 1];
+        let other_quote = if first == b'"' { b'\'' } else { b'"' };
+
+        if (first == b'"' || first == b'\'') && first == last {
             let inner = &expr[1..expr.len() - 1];
-            let quote = first as char;
-            // Check if inner content has unescaped instances of the same quote
-            let has_unescaped = inner
-                .char_indices()
-                .any(|(i, c)| c == quote && (i == 0 || inner.as_bytes()[i - 1] != b'\\'));
-            if !has_unescaped { inner } else { expr }
+            let inner_trimmed = inner.trim();
+
+            if inner_trimmed.is_empty() {
+                // Empty quotes like '' or "" — don't strip
+                expr
+            } else if inner_trimmed.as_bytes()[0] == other_quote {
+                // Inner starts with the other quote type → outer is a wrapper
+                // e.g., "'a' == 'b'" or '"api"=="api"'
+                inner
+            } else if !inner.contains(first as char) {
+                // Inner has no instances of the same quote → safe to strip
+                inner
+            } else if first == b'"' {
+                // Outer " with inner " → ambiguous. Try unstripped first.
+                match python_eval_fallback(expr) {
+                    Ok(result) => return Ok(result),
+                    Err(_) => inner,
+                }
+            } else {
+                // Outer ' with inner ' → Python string expressions like 'a' + 'b'
+                // Don't strip — these are Python string literals, not XML wrappers.
+                expr
+            }
         } else {
             expr
         }
