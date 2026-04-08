@@ -40,8 +40,28 @@ impl DeclareLaunchArgument {
         use crate::python::bridge::with_launch_context;
 
         // Convert default_value PyObject to string (may be string, substitution, or list)
+        // Special case: when default_value is a LaunchConfiguration with the same name,
+        // we need to call perform() to resolve it using the LaunchConfiguration's own
+        // stored default (not the context lookup, which would be circular).
         let default_str = default_value
-            .map(|dv| Self::pyobject_to_string(py, &dv))
+            .map(|dv| {
+                let obj_ref = dv.bind(py);
+                let type_name = obj_ref
+                    .get_type()
+                    .name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_default();
+                if type_name == "LaunchConfiguration" {
+                    // Try perform() which handles self-referencing defaults
+                    let context = crate::python::api::utils::create_launch_context(py)?;
+                    if let Ok(result) = obj_ref.call_method1("perform", (context,))
+                        && let Ok(s) = result.extract::<String>()
+                    {
+                        return Ok(s);
+                    }
+                }
+                Self::pyobject_to_string(py, &dv)
+            })
             .transpose()?;
 
         // Register the default value in LaunchContext if not already set

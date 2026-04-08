@@ -46,6 +46,18 @@ impl LaunchConfiguration {
                     .map_or_else(|_| format!("{:?}", obj), |s| s.to_string())
             })
         });
+
+        // Register default in LaunchContext so it's available for variable substitution.
+        // Only set if not already present (CLI args and DeclareLaunchArgument take precedence).
+        if let Some(ref default_val) = default {
+            use crate::python::bridge::with_launch_context;
+            with_launch_context(|ctx| {
+                if ctx.get_configuration(&variable_name).is_none() {
+                    ctx.set_configuration(variable_name.clone(), default_val.clone());
+                }
+            });
+        }
+
         Self {
             variable_name,
             default,
@@ -70,8 +82,20 @@ impl LaunchConfiguration {
 
         // Get value from LaunchContext (already resolves nested substitutions)
         let result = with_launch_context(|ctx| {
+            let self_ref = format!("$(var {})", self.variable_name);
             if let Some(value) = ctx.get_configuration(&self.variable_name) {
-                value
+                // If the context value is a circular self-reference like $(var same_name),
+                // fall through to the default instead of returning the unresolved substitution.
+                if value == self_ref {
+                    if let Some(ref default) = self.default {
+                        resolve_substitution_string(default, ctx)
+                            .unwrap_or_else(|_| default.clone())
+                    } else {
+                        value
+                    }
+                } else {
+                    value
+                }
             } else if let Some(ref default) = self.default {
                 // Resolve nested substitutions in the default value
                 resolve_substitution_string(default, ctx).unwrap_or_else(|_| default.clone())
