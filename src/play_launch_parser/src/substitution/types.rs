@@ -327,7 +327,7 @@ pub fn resolve_substitutions(
 
 #[cfg(test)]
 mod tests {
-    use super::{super::eval::is_string_concatenation, *};
+    use super::*;
 
     /// Ensure command substitutions are enabled for tests (they are by default).
     fn enable_commands() {
@@ -797,10 +797,11 @@ mod tests {
 
     #[test]
     fn test_eval_division() {
+        // Python's / always returns float (10/2 → 5.0)
         let sub = Substitution::Eval(vec![Substitution::Text("10 / 2".to_string())]);
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "5");
+        assert_eq!(result, "5.0");
     }
 
     #[test]
@@ -1172,15 +1173,5 @@ mod tests {
         let context = LaunchContext::new();
         let result = sub.resolve(&context).unwrap();
         assert_eq!(result, "content");
-    }
-
-    #[test]
-    fn test_is_string_concatenation() {
-        assert!(is_string_concatenation("'a' + 'b'"));
-        assert!(is_string_concatenation("\"a\" + \"b\""));
-        assert!(is_string_concatenation("'[' + 'Module, ' + ']'"));
-        assert!(!is_string_concatenation("1 + 2"));
-        assert!(!is_string_concatenation("(3 + 4) * 2"));
-        assert!(!is_string_concatenation("'hello'"));
     }
 }
