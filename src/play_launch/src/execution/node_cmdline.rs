@@ -18,6 +18,9 @@ pub struct NodeCommandLine {
     pub remaps: HashMap<String, String>,
     pub params: HashMap<String, String>,
     pub params_files: HashSet<PathBuf>,
+    /// Overrides YAML file written from inline params (global + node-specific).
+    /// Rendered as the last `--params-file` so it overrides all earlier files.
+    pub overrides_file: Option<PathBuf>,
     pub log_level: Option<String>,
     pub log_config_file: Option<PathBuf>,
     pub rosout_logs: Option<bool>,
@@ -59,6 +62,73 @@ fn substitute_variables(text: &str, variables: &HashMap<String, String>) -> Stri
     }
 
     result
+}
+
+/// Serialize parameters into a ROS 2 YAML params file format.
+/// Uses `/**:` wildcard namespace so params apply regardless of node name/namespace.
+/// Values are written unquoted unless they contain YAML special characters.
+fn params_to_yaml(params: &HashMap<String, String>) -> String {
+    use std::fmt::Write;
+
+    let mut yaml = String::from("/**:\n  ros__parameters:\n");
+    let mut sorted: Vec<_> = params.iter().collect();
+    sorted.sort_by_key(|(k, _)| *k);
+    for (name, value) in sorted {
+        // Skip empty values — they'd produce invalid YAML
+        if value.is_empty() {
+            continue;
+        }
+        let _ = writeln!(yaml, "    {name}: {}", yaml_safe_value(value));
+    }
+    yaml
+}
+
+/// Make a YAML value safe by quoting strings that contain special characters.
+/// Array values like `[*]` need element-level quoting: `["*"]`.
+fn yaml_safe_value(value: &str) -> String {
+    // Check if value is an array like [a, b, c]
+    if value.starts_with('[') && value.ends_with(']') {
+        let inner = &value[1..value.len() - 1];
+        if inner.is_empty() {
+            return value.to_string();
+        }
+        // Quote each element that needs it
+        let elements: Vec<String> = inner
+            .split(',')
+            .map(|e| {
+                let trimmed = e.trim();
+                if needs_yaml_quoting(trimmed) {
+                    format!("\"{}\"", trimmed)
+                } else {
+                    trimmed.to_string()
+                }
+            })
+            .collect();
+        return format!("[{}]", elements.join(", "));
+    }
+
+    // Scalar value — quote if needed
+    if needs_yaml_quoting(value) {
+        format!("\"{}\"", value)
+    } else {
+        value.to_string()
+    }
+}
+
+/// Check if a YAML value needs quoting.
+/// Values with YAML special characters (anchors, aliases, tags, etc.) must be quoted.
+fn needs_yaml_quoting(value: &str) -> bool {
+    value.contains('*')
+        || value.contains('&')
+        || value.contains('!')
+        || value.contains('{')
+        || value.contains('}')
+        || value.contains('#')
+        || value.contains('|')
+        || value.contains('>')
+        || value.contains('%')
+        || value.contains('@')
+        || value.contains('`')
 }
 
 impl NodeCommandLine {
@@ -143,7 +213,7 @@ impl NodeCommandLine {
         };
 
         // Build params: global_params first, then node-specific params (so node-specific can override)
-        let params: HashMap<_, _> = {
+        let all_params: HashMap<_, _> = {
             let global = global_params
                 .iter()
                 .flatten()
@@ -167,6 +237,20 @@ impl NodeCommandLine {
             })
             .try_collect()?;
 
+        // Write all inline params to overrides.yaml instead of passing them as -p flags.
+        // This avoids rcl's argument parser limitations (e.g., "::" in param names,
+        // empty values) and matches the official launch's approach of using temp YAML files.
+        // Stored separately and rendered as the last --params-file so it overrides all earlier files.
+        let overrides_file = if !all_params.is_empty() {
+            let overrides_path = params_files_dir.join("overrides.yaml");
+            let yaml = params_to_yaml(&all_params);
+            fs::write(&overrides_path, yaml)
+                .wrap_err_with(|| format!("unable to write {}", overrides_path.display()))?;
+            Some(overrides_path)
+        } else {
+            None
+        };
+
         let env: HashMap<_, _> = env
             .as_ref()
             .map(|vec| {
@@ -180,8 +264,9 @@ impl NodeCommandLine {
             command,
             user_args,
             remaps,
-            params,
+            params: HashMap::new(), // All params written to overrides.yaml
             params_files,
+            overrides_file,
             log_level: None,
             log_config_file: None,
             rosout_logs: None,
@@ -222,6 +307,7 @@ impl NodeCommandLine {
             remaps: HashMap::new(),
             params: HashMap::new(),
             params_files: HashSet::new(),
+            overrides_file: None,
             log_level: None,
             log_config_file: None,
             rosout_logs: None,
@@ -239,6 +325,7 @@ impl NodeCommandLine {
             remaps,
             params,
             params_files,
+            overrides_file,
             log_level,
             log_config_file,
             rosout_logs,
@@ -250,6 +337,7 @@ impl NodeCommandLine {
         let has_ros_args = !(remaps.is_empty()
             && params.is_empty()
             && params_files.is_empty()
+            && overrides_file.is_none()
             && log_level.is_none()
             && log_config_file.is_none()
             && rosout_logs.is_none()
@@ -308,10 +396,10 @@ impl NodeCommandLine {
                 let params_args = params
                     .iter()
                     .filter(|(name, value)| {
-                        // Skip empty values (rcl can't parse "-p name:=")
-                        // Skip names with "::" (rcl can't parse them in -p syntax;
-                        // they come from SSv2 params yaml with ROS message type paths
-                        // like "sensor_msgs::msg::Imu.angular_velocity")
+                        // Skip empty values — rcl rejects bare "-p name:="
+                        // Skip names with "::" — rcl's parser treats "::" as a
+                        // separator token, not a literal. These params are already
+                        // loaded via --params-file so the inline -p is redundant.
                         !value.is_empty() && !name.contains("::")
                     })
                     .flat_map(move |(name, value)| {
@@ -326,6 +414,18 @@ impl NodeCommandLine {
                         ["--params-file", path_str]
                     })
                     .map(Cow::from);
+                // overrides.yaml comes last so it overrides all earlier --params-file entries
+                let overrides_file_args = overrides_file
+                    .as_ref()
+                    .map(|path| {
+                        let path_str = path
+                            .to_str()
+                            .expect("overrides file path contains invalid UTF-8");
+                        ["--params-file", path_str]
+                    })
+                    .into_iter()
+                    .flatten()
+                    .map(Cow::from);
 
                 chain!(
                     [Cow::from("--ros-args")],
@@ -337,6 +437,7 @@ impl NodeCommandLine {
                     remap_args,
                     params_args,
                     params_file_args,
+                    overrides_file_args,
                 )
             })
             .into_iter()
@@ -421,6 +522,7 @@ mod tests {
             remaps: HashMap::from([("a".to_string(), "b".to_string())]),
             params: HashMap::new(),
             params_files: HashSet::new(),
+            overrides_file: None,
             log_level: None,
             log_config_file: None,
             rosout_logs: None,
@@ -443,6 +545,7 @@ mod tests {
             remaps: HashMap::new(),
             params: HashMap::new(),
             params_files: HashSet::new(),
+            overrides_file: None,
             log_level: None,
             log_config_file: None,
             rosout_logs: None,
@@ -573,5 +676,162 @@ mod tests {
         let remaps = build_remaps(Some("my_node"), None, Some("/ns"));
         assert_eq!(remaps.get("__node").map(|s| s.as_str()), Some("my_node"));
         assert_eq!(remaps.get("__ns").map(|s| s.as_str()), Some("/ns"));
+    }
+
+    /// Parameters with "::" in names should be excluded from -p args.
+    /// rcl's parser treats "::" as a separator token, causing parse failures.
+    /// These params are loaded via --params-file instead.
+    #[test]
+    fn test_params_with_double_colon_excluded() {
+        let cmdline = NodeCommandLine {
+            command: vec!["cmd".to_string()],
+            user_args: vec![],
+            remaps: HashMap::new(),
+            params: HashMap::from([
+                ("normal_param".to_string(), "1.0".to_string()),
+                (
+                    "sensor_msgs::msg::Imu.angular_velocity.y".to_string(),
+                    "0.0".to_string(),
+                ),
+            ]),
+            params_files: HashSet::new(),
+            overrides_file: None,
+            log_level: None,
+            log_config_file: None,
+            rosout_logs: None,
+            stdout_logs: None,
+            enclave: None,
+            env: HashMap::new(),
+        };
+        let result = cmdline.to_cmdline(false);
+        assert!(
+            result.contains(&"normal_param:=1.0".to_string()),
+            "Normal params should be included"
+        );
+        assert!(
+            !result.iter().any(|a| a.contains("sensor_msgs::msg")),
+            "Params with :: should be excluded from -p args"
+        );
+    }
+
+    /// Parameters with empty values should be excluded from -p args.
+    /// rcl rejects bare "-p name:=" without a value.
+    #[test]
+    fn test_params_with_empty_value_excluded() {
+        let cmdline = NodeCommandLine {
+            command: vec!["cmd".to_string()],
+            user_args: vec![],
+            remaps: HashMap::new(),
+            params: HashMap::from([
+                ("has_value".to_string(), "true".to_string()),
+                ("empty_value".to_string(), "".to_string()),
+            ]),
+            params_files: HashSet::new(),
+            overrides_file: None,
+            log_level: None,
+            log_config_file: None,
+            rosout_logs: None,
+            stdout_logs: None,
+            enclave: None,
+            env: HashMap::new(),
+        };
+        let result = cmdline.to_cmdline(false);
+        assert!(
+            result.contains(&"has_value:=true".to_string()),
+            "Params with values should be included"
+        );
+        assert!(
+            !result.iter().any(|a| a.contains("empty_value")),
+            "Params with empty values should be excluded"
+        );
+    }
+
+    /// params_to_yaml produces valid ROS 2 YAML format with /** wildcard namespace.
+    #[test]
+    fn test_params_to_yaml_basic() {
+        let params = HashMap::from([
+            ("use_sim_time".to_string(), "true".to_string()),
+            ("frequency".to_string(), "10.0".to_string()),
+        ]);
+        let yaml = params_to_yaml(&params);
+        assert!(yaml.starts_with("/**:\n  ros__parameters:\n"));
+        assert!(yaml.contains("    frequency: 10.0\n"));
+        assert!(yaml.contains("    use_sim_time: true\n"));
+    }
+
+    /// params_to_yaml handles :: in parameter names (the whole reason for this feature).
+    #[test]
+    fn test_params_to_yaml_with_double_colon() {
+        let params = HashMap::from([(
+            "sensor_msgs::msg::Imu.angular_velocity.y".to_string(),
+            "0.0".to_string(),
+        )]);
+        let yaml = params_to_yaml(&params);
+        assert!(yaml.contains("    sensor_msgs::msg::Imu.angular_velocity.y: 0.0\n"));
+    }
+
+    /// params_to_yaml skips empty values.
+    #[test]
+    fn test_params_to_yaml_skips_empty() {
+        let params = HashMap::from([
+            ("good".to_string(), "1".to_string()),
+            ("empty".to_string(), "".to_string()),
+        ]);
+        let yaml = params_to_yaml(&params);
+        assert!(yaml.contains("    good: 1\n"));
+        assert!(!yaml.contains("empty"));
+    }
+
+    /// params_to_yaml produces sorted output for deterministic results.
+    #[test]
+    fn test_params_to_yaml_sorted() {
+        let params = HashMap::from([
+            ("zebra".to_string(), "z".to_string()),
+            ("alpha".to_string(), "a".to_string()),
+            ("middle".to_string(), "m".to_string()),
+        ]);
+        let yaml = params_to_yaml(&params);
+        let alpha_pos = yaml.find("alpha").unwrap();
+        let middle_pos = yaml.find("middle").unwrap();
+        let zebra_pos = yaml.find("zebra").unwrap();
+        assert!(alpha_pos < middle_pos);
+        assert!(middle_pos < zebra_pos);
+    }
+
+    /// overrides.yaml is rendered as the last --params-file in the command line.
+    #[test]
+    fn test_overrides_file_comes_last() {
+        let cmdline = NodeCommandLine {
+            command: vec!["cmd".to_string()],
+            user_args: vec![],
+            remaps: HashMap::new(),
+            params: HashMap::new(),
+            params_files: HashSet::from([PathBuf::from("/tmp/0.yaml")]),
+            overrides_file: Some(PathBuf::from("/tmp/overrides.yaml")),
+            log_level: None,
+            log_config_file: None,
+            rosout_logs: None,
+            stdout_logs: None,
+            enclave: None,
+            env: HashMap::new(),
+        };
+        let result = cmdline.to_cmdline(false);
+        // Find positions of --params-file args
+        let params_file_positions: Vec<_> = result
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.ends_with(".yaml"))
+            .map(|(i, a)| (i, a.clone()))
+            .collect();
+        assert_eq!(params_file_positions.len(), 2);
+        // overrides.yaml must be the last one
+        assert!(
+            params_file_positions
+                .last()
+                .unwrap()
+                .1
+                .contains("overrides"),
+            "overrides.yaml should be the last --params-file"
+        );
     }
 }
