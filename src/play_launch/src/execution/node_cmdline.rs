@@ -30,16 +30,27 @@ pub struct NodeCommandLine {
 fn substitute_variables(text: &str, variables: &HashMap<String, String>) -> String {
     let mut result = text.to_string();
 
-    // Pattern: $(var name) or $(var name)
+    // Pattern: $(var name)
     // Use regex-free approach for simplicity and performance
-    while let Some(start) = result.find("$(var ") {
-        if let Some(end) = result[start..].find(')') {
-            let var_name = &result[start + 6..start + end].trim();
-            if let Some(value) = variables.get(*var_name) {
-                result.replace_range(start..start + end + 1, value);
+    let mut search_from = 0;
+    while let Some(offset) = result[search_from..].find("$(var ") {
+        let start = search_from + offset;
+        if let Some(end_offset) = result[start..].find(')') {
+            let end = start + end_offset;
+            let var_name = result[start + 6..end].trim();
+            let pattern = &result[start..=end];
+            if let Some(value) = variables.get(var_name) {
+                // Skip self-referencing values (e.g., global_frame_rate = "$(var global_frame_rate)")
+                if value == pattern {
+                    search_from = end + 1;
+                    continue;
+                }
+                let value = value.clone();
+                result.replace_range(start..=end, &value);
+                // Don't advance search_from — the replacement might contain more $(var)
             } else {
-                // Variable not found - leave it as is and move past it to avoid infinite loop
-                break;
+                // Variable not found — skip past it
+                search_from = end + 1;
             }
         } else {
             // No closing parenthesis found
@@ -296,7 +307,13 @@ impl NodeCommandLine {
                 });
                 let params_args = params
                     .iter()
-                    .filter(|(_, value)| !value.is_empty())
+                    .filter(|(name, value)| {
+                        // Skip empty values (rcl can't parse "-p name:=")
+                        // Skip names with "::" (rcl can't parse them in -p syntax;
+                        // they come from SSv2 params yaml with ROS message type paths
+                        // like "sensor_msgs::msg::Imu.angular_velocity")
+                        !value.is_empty() && !name.contains("::")
+                    })
                     .flat_map(move |(name, value)| {
                         [Cow::from(param_switch), format!("{name}:={value}").into()]
                     });
@@ -464,6 +481,37 @@ mod tests {
         assert_eq!(
             substitute_variables("--value $(var unknown)", &variables),
             "--value $(var unknown)"
+        );
+    }
+
+    /// Self-referencing variables should be skipped, not loop infinitely.
+    /// SSv2's Rust parser generates variables like `global_frame_rate = "$(var global_frame_rate)"`
+    /// when LaunchConfiguration defaults aren't fully resolved.
+    #[test]
+    fn test_substitute_variables_self_referencing() {
+        let mut variables = HashMap::new();
+        variables.insert(
+            "global_frame_rate".to_string(),
+            "$(var global_frame_rate)".to_string(),
+        );
+        variables.insert("timeout".to_string(), "180".to_string());
+
+        // Self-referencing variable should be left as-is (not infinite loop)
+        assert_eq!(
+            substitute_variables("--rate $(var global_frame_rate)", &variables),
+            "--rate $(var global_frame_rate)"
+        );
+
+        // Non-self-referencing variable should still resolve
+        assert_eq!(
+            substitute_variables("--timeout $(var timeout)", &variables),
+            "--timeout 180"
+        );
+
+        // Mixed: one self-referencing, one normal
+        assert_eq!(
+            substitute_variables("$(var global_frame_rate) $(var timeout)", &variables),
+            "$(var global_frame_rate) 180"
         );
     }
 
