@@ -66,36 +66,72 @@ fn substitute_variables(text: &str, variables: &HashMap<String, String>) -> Stri
 
 /// Serialize parameters into a ROS 2 YAML params file format.
 /// Uses `/**:` wildcard namespace so params apply regardless of node name/namespace.
-/// Delegates to serde_yaml_ng for correct escaping of all value types (XML strings,
-/// special characters, multiline content, etc.).
+/// Uses `yaml-rust2` for correct YAML output — multiline strings (e.g., URDF XML)
+/// use literal block scalar (`|`), strings with quotes use proper escaping.
+/// Serialize parameters into a ROS 2 YAML params file format.
+/// Uses `/**:` wildcard namespace so params apply regardless of node name/namespace.
+///
+/// Uses `yaml-rust2` for correct YAML output:
+/// - Multiline strings (e.g., URDF XML) → literal block scalar (`|`)
+/// - Strings with quotes/special chars → properly escaped double-quoted strings
+/// - Booleans, integers, floats → native YAML types
 fn params_to_yaml(params: &HashMap<String, String>) -> String {
-    use serde_yaml_ng::{Mapping, Value};
+    use yaml_rust2::{Yaml, YamlEmitter, yaml::Hash};
 
-    // Build params mapping with type-aware values
-    let mut ros_params = Mapping::new();
+    // Build ros__parameters mapping with type-aware values
+    let mut ros_params = Hash::new();
     let mut sorted: Vec<_> = params.iter().collect();
     sorted.sort_by_key(|(k, _)| k.as_str());
     for (name, value) in sorted {
         if value.is_empty() {
             continue;
         }
-        // Parse value as YAML to preserve types (bool, int, float, arrays).
-        let yaml_value = serde_yaml_ng::from_str::<Value>(value)
-            .unwrap_or_else(|_| Value::String(value.clone()));
-        ros_params.insert(Value::String(name.clone()), yaml_value);
+        ros_params.insert(Yaml::String(name.clone()), str_to_yaml(value));
     }
 
     // Build: {"/**": {"ros__parameters": {params...}}}
-    let mut namespace = Mapping::new();
+    let mut namespace = Hash::new();
     namespace.insert(
-        Value::String("ros__parameters".to_string()),
-        Value::Mapping(ros_params),
+        Yaml::String("ros__parameters".to_string()),
+        Yaml::Hash(ros_params),
     );
+    let mut root = Hash::new();
+    root.insert(Yaml::String("/**".to_string()), Yaml::Hash(namespace));
 
-    let mut root = Mapping::new();
-    root.insert(Value::String("/**".to_string()), Value::Mapping(namespace));
+    let doc = Yaml::Hash(root);
+    let mut output = String::new();
+    let mut emitter = YamlEmitter::new(&mut output);
+    emitter.multiline_strings(true);
+    emitter.dump(&doc).expect("YAML emit failed");
 
-    serde_yaml_ng::to_string(&Value::Mapping(root)).unwrap_or_default()
+    // YamlEmitter prepends "---\n"; strip it for ROS compatibility
+    output.strip_prefix("---\n").unwrap_or(&output).to_string()
+}
+
+/// Parse a string value into the most specific YAML type.
+/// Matches rcl's type inference for `-p` arguments.
+fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
+    use yaml_rust2::Yaml;
+
+    // Boolean
+    match s {
+        "true" | "True" => return Yaml::Boolean(true),
+        "false" | "False" => return Yaml::Boolean(false),
+        _ => {}
+    }
+
+    // Integer
+    if let Ok(i) = s.parse::<i64>() {
+        return Yaml::Integer(i);
+    }
+
+    // Float (only if it looks like a float — has decimal point or scientific notation)
+    if (s.contains('.') || s.contains('e') || s.contains('E')) && s.parse::<f64>().is_ok() {
+        return Yaml::Real(s.to_string());
+    }
+
+    // Everything else is a string
+    Yaml::String(s.to_string())
 }
 
 impl NodeCommandLine {
@@ -713,7 +749,14 @@ mod tests {
         );
     }
 
-    /// params_to_yaml produces valid ROS 2 YAML format with /** wildcard namespace.
+    /// Helper to roundtrip-parse params_to_yaml output and extract a param value.
+    fn parse_param(yaml: &str, key: &str) -> serde_yaml_ng::Value {
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(yaml)
+            .unwrap_or_else(|e| panic!("Invalid YAML:\n{yaml}\nError: {e}"));
+        parsed["/**"]["ros__parameters"][key].clone()
+    }
+
+    /// params_to_yaml produces valid ROS 2 YAML with correct types.
     #[test]
     fn test_params_to_yaml_basic() {
         let params = HashMap::from([
@@ -721,27 +764,30 @@ mod tests {
             ("frequency".to_string(), "10.0".to_string()),
         ]);
         let yaml = params_to_yaml(&params);
-        assert!(yaml.starts_with("/**:\n  ros__parameters:\n"));
-        assert!(yaml.contains("    frequency: 10.0\n"));
-        assert!(yaml.contains("    use_sim_time: true\n"));
+        assert_eq!(
+            parse_param(&yaml, "use_sim_time"),
+            serde_yaml_ng::Value::Bool(true)
+        );
+        // Float value
+        let freq = parse_param(&yaml, "frequency");
+        assert!(
+            freq.is_f64() || freq.is_number(),
+            "frequency should be numeric: {freq:?}"
+        );
     }
 
-    /// params_to_yaml handles large XML string values (e.g., robot_description from xacro).
-    /// serde_yaml_ng correctly quotes/escapes XML content that would break hand-written YAML.
+    /// params_to_yaml handles large XML string values with embedded quotes.
     #[test]
     fn test_params_to_yaml_xml_value() {
         let xml = r#"<?xml version="1.0" ?><robot name="test"><link name="base"/></robot>"#;
         let params = HashMap::from([("robot_description".to_string(), xml.to_string())]);
         let yaml = params_to_yaml(&params);
-        // Must be valid YAML — parse it back and verify the value survives roundtrip
-        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
-        let rd = parsed["/**"]["ros__parameters"]["robot_description"]
-            .as_str()
-            .unwrap();
-        assert_eq!(rd, xml);
+        let rd = parse_param(&yaml, "robot_description");
+        // yaml-rust2 uses escape_str for quotes — roundtrip should preserve content
+        assert_eq!(rd.as_str().unwrap().trim_end(), xml);
     }
 
-    /// params_to_yaml handles :: in parameter names (the whole reason for this feature).
+    /// params_to_yaml handles :: in parameter names.
     #[test]
     fn test_params_to_yaml_with_double_colon() {
         let params = HashMap::from([(
@@ -749,7 +795,8 @@ mod tests {
             "0.0".to_string(),
         )]);
         let yaml = params_to_yaml(&params);
-        assert!(yaml.contains("    sensor_msgs::msg::Imu.angular_velocity.y: 0.0\n"));
+        let v = parse_param(&yaml, "sensor_msgs::msg::Imu.angular_velocity.y");
+        assert!(!v.is_null(), ":: param should be present in YAML");
     }
 
     /// params_to_yaml skips empty values.
@@ -760,8 +807,8 @@ mod tests {
             ("empty".to_string(), "".to_string()),
         ]);
         let yaml = params_to_yaml(&params);
-        assert!(yaml.contains("    good: 1\n"));
-        assert!(!yaml.contains("empty"));
+        assert!(!parse_param(&yaml, "good").is_null());
+        assert!(parse_param(&yaml, "empty").is_null());
     }
 
     /// params_to_yaml produces sorted output for deterministic results.

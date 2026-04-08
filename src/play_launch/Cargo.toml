@@ -64,6 +64,7 @@ async-stream = "0.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 which = "6.0"
 pyo3 = { version = "0.24", features = ["auto-initialize", "py-clone"] }
+yaml-rust2 = "0.11.0"
 
 [build-dependencies]
 pkg-config = "0.3"
