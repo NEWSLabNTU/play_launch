@@ -66,69 +66,36 @@ fn substitute_variables(text: &str, variables: &HashMap<String, String>) -> Stri
 
 /// Serialize parameters into a ROS 2 YAML params file format.
 /// Uses `/**:` wildcard namespace so params apply regardless of node name/namespace.
-/// Values are written unquoted unless they contain YAML special characters.
+/// Delegates to serde_yaml_ng for correct escaping of all value types (XML strings,
+/// special characters, multiline content, etc.).
 fn params_to_yaml(params: &HashMap<String, String>) -> String {
-    use std::fmt::Write;
+    use serde_yaml_ng::{Mapping, Value};
 
-    let mut yaml = String::from("/**:\n  ros__parameters:\n");
+    // Build params mapping with type-aware values
+    let mut ros_params = Mapping::new();
     let mut sorted: Vec<_> = params.iter().collect();
-    sorted.sort_by_key(|(k, _)| *k);
+    sorted.sort_by_key(|(k, _)| k.as_str());
     for (name, value) in sorted {
-        // Skip empty values — they'd produce invalid YAML
         if value.is_empty() {
             continue;
         }
-        let _ = writeln!(yaml, "    {name}: {}", yaml_safe_value(value));
-    }
-    yaml
-}
-
-/// Make a YAML value safe by quoting strings that contain special characters.
-/// Array values like `[*]` need element-level quoting: `["*"]`.
-fn yaml_safe_value(value: &str) -> String {
-    // Check if value is an array like [a, b, c]
-    if value.starts_with('[') && value.ends_with(']') {
-        let inner = &value[1..value.len() - 1];
-        if inner.is_empty() {
-            return value.to_string();
-        }
-        // Quote each element that needs it
-        let elements: Vec<String> = inner
-            .split(',')
-            .map(|e| {
-                let trimmed = e.trim();
-                if needs_yaml_quoting(trimmed) {
-                    format!("\"{}\"", trimmed)
-                } else {
-                    trimmed.to_string()
-                }
-            })
-            .collect();
-        return format!("[{}]", elements.join(", "));
+        // Parse value as YAML to preserve types (bool, int, float, arrays).
+        let yaml_value = serde_yaml_ng::from_str::<Value>(value)
+            .unwrap_or_else(|_| Value::String(value.clone()));
+        ros_params.insert(Value::String(name.clone()), yaml_value);
     }
 
-    // Scalar value — quote if needed
-    if needs_yaml_quoting(value) {
-        format!("\"{}\"", value)
-    } else {
-        value.to_string()
-    }
-}
+    // Build: {"/**": {"ros__parameters": {params...}}}
+    let mut namespace = Mapping::new();
+    namespace.insert(
+        Value::String("ros__parameters".to_string()),
+        Value::Mapping(ros_params),
+    );
 
-/// Check if a YAML value needs quoting.
-/// Values with YAML special characters (anchors, aliases, tags, etc.) must be quoted.
-fn needs_yaml_quoting(value: &str) -> bool {
-    value.contains('*')
-        || value.contains('&')
-        || value.contains('!')
-        || value.contains('{')
-        || value.contains('}')
-        || value.contains('#')
-        || value.contains('|')
-        || value.contains('>')
-        || value.contains('%')
-        || value.contains('@')
-        || value.contains('`')
+    let mut root = Mapping::new();
+    root.insert(Value::String("/**".to_string()), Value::Mapping(namespace));
+
+    serde_yaml_ng::to_string(&Value::Mapping(root)).unwrap_or_default()
 }
 
 impl NodeCommandLine {
@@ -757,6 +724,21 @@ mod tests {
         assert!(yaml.starts_with("/**:\n  ros__parameters:\n"));
         assert!(yaml.contains("    frequency: 10.0\n"));
         assert!(yaml.contains("    use_sim_time: true\n"));
+    }
+
+    /// params_to_yaml handles large XML string values (e.g., robot_description from xacro).
+    /// serde_yaml_ng correctly quotes/escapes XML content that would break hand-written YAML.
+    #[test]
+    fn test_params_to_yaml_xml_value() {
+        let xml = r#"<?xml version="1.0" ?><robot name="test"><link name="base"/></robot>"#;
+        let params = HashMap::from([("robot_description".to_string(), xml.to_string())]);
+        let yaml = params_to_yaml(&params);
+        // Must be valid YAML — parse it back and verify the value survives roundtrip
+        let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+        let rd = parsed["/**"]["ros__parameters"]["robot_description"]
+            .as_str()
+            .unwrap();
+        assert_eq!(rd, xml);
     }
 
     /// params_to_yaml handles :: in parameter names (the whole reason for this feature).
