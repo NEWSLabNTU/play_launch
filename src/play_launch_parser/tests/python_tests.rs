@@ -2842,3 +2842,77 @@ def generate_launch_description():
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0]["name"].as_str().unwrap(), "ssv2_pattern_node");
 }
+
+/// Test Command substitution in Python launch files.
+/// The real ROS 2 Command accepts SomeSubstitutionsType; our mock expects a list.
+#[test]
+fn test_python_command_substitution() {
+    let _guard = python_test_guard();
+
+    let launch_content = r#"
+from launch import LaunchDescription
+from launch.substitutions import Command
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(
+            package='demo_nodes_cpp',
+            executable='talker',
+            name=Command(['echo py_cmd_result']),
+        ),
+    ])
+"#;
+
+    let temp_file = write_temp_launch_file(launch_content);
+    let result = parse_launch_file(temp_file.path(), HashMap::new());
+
+    assert!(
+        result.is_ok(),
+        "Should parse Python Command substitution: {:?}",
+        result.err()
+    );
+
+    let record = result.unwrap();
+    let json = serde_json::to_value(&record).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "py_cmd_result");
+}
+
+/// Test Command substitution with multiple list elements in Python.
+/// Each element becomes a part of the command string joined by spaces.
+#[test]
+fn test_python_command_substitution_multi_parts() {
+    let _guard = python_test_guard();
+
+    let launch_content = r#"
+from launch import LaunchDescription
+from launch.substitutions import Command
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(
+            package='demo_nodes_cpp',
+            executable='talker',
+            name=Command(['printf', ' %s-%s foo bar']),
+        ),
+    ])
+"#;
+
+    let temp_file = write_temp_launch_file(launch_content);
+    let result = parse_launch_file(temp_file.path(), HashMap::new());
+
+    assert!(
+        result.is_ok(),
+        "Should parse Python Command with list parts: {:?}",
+        result.err()
+    );
+
+    let record = result.unwrap();
+    let json = serde_json::to_value(&record).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "foo-bar");
+}

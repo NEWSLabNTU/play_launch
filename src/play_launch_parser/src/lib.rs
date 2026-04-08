@@ -947,8 +947,10 @@ test_node:
 
     #[test]
     fn test_command_with_pipe() {
+        // Pipes require a shell — use bash -c explicitly, matching how
+        // ROS 2 users would write this (shlex::split doesn't interpret |).
         let xml = r#"<launch>
-            <node pkg="demo_nodes_cpp" exec="talker" name="$(command echo test | tr a-z A-Z)" />
+            <node pkg="demo_nodes_cpp" exec="talker" name="$(command bash -c 'echo test | tr a-z A-Z')" />
         </launch>"#;
 
         let mut file = NamedTempFile::new().unwrap();

@@ -1232,3 +1232,161 @@ fn test_xml_include_yaml_preset_then_use() {
         "Variable from YAML preset should resolve in XML scope"
     );
 }
+
+/// Test $(command ...) substitution with an unquoted command
+#[test]
+fn test_command_substitution_unquoted() {
+    let xml = r#"<launch>
+    <let name="val" value="$(command echo hello)"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(var val)"/>
+</launch>"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(xml.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "Should parse: {:?}", result.err());
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "hello");
+}
+
+/// Test $(command '...') with single-quoted command argument.
+/// The parser's extract_first_quoted_arg strips the outer quotes (matching ROS 2's
+/// Lark grammar), then shlex::split tokenizes the unquoted command for direct exec.
+#[test]
+fn test_command_substitution_single_quoted() {
+    let xml = r#"<launch>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(command 'echo hello_sq')"/>
+</launch>"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(xml.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "Should parse: {:?}", result.err());
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "hello_sq");
+}
+
+/// Test $(command "...") with double-quoted command argument.
+#[test]
+fn test_command_substitution_double_quoted() {
+    // XML attribute uses single-quote delimiters so double quotes are literal inside
+    let xml = r#"<launch>
+    <node pkg="demo_nodes_cpp" exec="talker" name='$(command "echo hello_dq")'/>
+</launch>"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(xml.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "Should parse: {:?}", result.err());
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "hello_dq");
+}
+
+/// Test $(command 'cmd with spaces' 'warn') — quoted command + error mode
+#[test]
+fn test_command_substitution_quoted_with_error_mode() {
+    let xml = r#"<launch>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(command 'echo warn_test' 'warn')"/>
+</launch>"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(xml.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "Should parse: {:?}", result.err());
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "warn_test");
+}
+
+/// Test $(command ...) with multiple arguments.
+#[test]
+fn test_command_substitution_with_args() {
+    let xml = r#"<launch>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(command echo -n hello_args)"/>
+</launch>"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(xml.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "Should parse: {:?}", result.err());
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "hello_args");
+}
+
+/// Test $(command ...) failure produces an error, not a crash.
+#[test]
+fn test_command_substitution_failure() {
+    let xml = r#"<launch>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(command false)"/>
+</launch>"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(xml.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_err(), "Command 'false' should produce an error");
+}
+
+/// Test $(command ...) with concatenation — command output used in a larger string.
+#[test]
+fn test_command_substitution_concatenated() {
+    let xml = r#"<launch>
+    <node pkg="demo_nodes_cpp" exec="talker" name="prefix_$(command echo middle)_suffix"/>
+</launch>"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(xml.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "Should parse: {:?}", result.err());
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "prefix_middle_suffix");
+}
+
+/// Test $(command ...) used in a <let> + node attribute — verifies command output
+/// flows through variable resolution into node fields.
+#[test]
+fn test_command_substitution_in_let_and_node() {
+    let xml = r#"<launch>
+    <let name="config" value="$(command echo /opt/config)"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(var config)"/>
+</launch>"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(xml.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "Should parse: {:?}", result.err());
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "/opt/config");
+}

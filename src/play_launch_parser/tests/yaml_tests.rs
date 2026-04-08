@@ -1799,3 +1799,67 @@ fn test_yaml_include_python() {
         );
     }
 }
+
+/// Test $(command ...) substitution in YAML launch files
+#[test]
+fn test_yaml_command_substitution() {
+    let file = write_yaml(
+        r#"launch:
+- let:
+    name: cmd_val
+    value: "$(command echo yaml_cmd_result)"
+- node:
+    pkg: demo_nodes_cpp
+    exec: talker
+    name: "$(var cmd_val)"
+"#,
+    );
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "Should parse: {:?}", result.err());
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "yaml_cmd_result");
+}
+
+/// Test $(command ...) with multiple args in YAML
+#[test]
+fn test_yaml_command_substitution_multi_args() {
+    let file = write_yaml(
+        r#"launch:
+- node:
+    pkg: demo_nodes_cpp
+    exec: talker
+    name: "$(command printf '%s_%s' foo bar)"
+"#,
+    );
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "Should parse: {:?}", result.err());
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "foo_bar");
+}
+
+/// Test $(command ...) concatenated with other text in YAML
+#[test]
+fn test_yaml_command_substitution_concat() {
+    let file = write_yaml(
+        r#"launch:
+- node:
+    pkg: demo_nodes_cpp
+    exec: talker
+    name: "pre_$(command echo mid)_post"
+"#,
+    );
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "Should parse: {:?}", result.err());
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "pre_mid_post");
+}

@@ -126,9 +126,11 @@ fn parse_substitutions_recursive(input: &str) -> Result<Vec<Substitution>> {
 }
 
 /// Extract the first quoted argument from a string like "'cmd' 'warn'"
-/// Returns the content of the first quoted string without the quotes.
-/// If there are TWO quoted strings, returns only the first one.
-/// If there is only ONE quoted string or unquoted text, returns everything.
+/// Returns the content of the first quoted string without the quotes,
+/// matching ROS 2's Lark grammar which strips quotes at the argument level.
+/// If there are TWO quoted strings, returns only the first one (unquoted).
+/// If there is only ONE quoted string, returns its content (unquoted).
+/// If unquoted text, returns everything as-is.
 fn extract_first_quoted_arg(input: &str) -> &str {
     let trimmed = input.trim();
 
@@ -148,11 +150,12 @@ fn extract_first_quoted_arg(input: &str) -> &str {
                 // There's a second quoted argument, so only return the first
                 return first_quoted_content;
             }
-            // Otherwise return the full input (handles single quoted arg)
+            // Single quoted arg — return content without quotes
+            return first_quoted_content;
         }
     }
 
-    // Return the full string (handles unquoted args or single quoted args)
+    // Return the full string (handles unquoted args)
     trimmed
 }
 

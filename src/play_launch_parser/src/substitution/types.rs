@@ -237,6 +237,23 @@ fn execute_command(cmd: &str, error_mode: &CommandErrorMode) -> Result<String, S
         cmd
     );
 
+    // Use shlex::split() for POSIX shell-style word splitting, matching ROS 2's
+    // Command substitution which uses Python's shlex.split() + subprocess.run(list).
+    // This correctly handles quoted arguments, e.g.:
+    //   'xacro /path/to/file arg:=val'  →  ["xacro", "/path/to/file", "arg:=val"]
+    let args = shlex::split(cmd.trim()).ok_or_else(|| {
+        SubstitutionError::CommandFailed(format!(
+            "Failed to parse command '{}': unclosed quote",
+            cmd
+        ))
+    })?;
+    if args.is_empty() {
+        return Err(SubstitutionError::CommandFailed(format!(
+            "Empty command in $(command {})",
+            cmd
+        )));
+    }
+
     // Wrap with `timeout` to prevent indefinite hangs (e.g., xacro on missing files).
     // `timeout` handles cleanup: SIGTERM after COMMAND_TIMEOUT_SECS, SIGKILL after
     // COMMAND_KILL_AFTER_SECS grace period. Exit code 124 = timed out.
@@ -244,9 +261,7 @@ fn execute_command(cmd: &str, error_mode: &CommandErrorMode) -> Result<String, S
     let output = Command::new("timeout")
         .arg(format!("--kill-after={}", COMMAND_KILL_AFTER_SECS))
         .arg(COMMAND_TIMEOUT_SECS.to_string())
-        .arg("bash")
-        .arg("-c")
-        .arg(cmd)
+        .args(&args)
         .output()
         .map_err(|e| {
             SubstitutionError::CommandFailed(format!("Failed to execute '{}': {}", cmd, e))
@@ -570,8 +585,11 @@ mod tests {
     fn test_command_env_access() {
         enable_commands();
         unsafe { std::env::set_var("TEST_CMD_VAR", "test_value") };
+        // Direct exec (no shell) passes $VAR literally, matching ROS 2's
+        // subprocess.run(shlex.split(cmd)) which also doesn't expand shell vars.
+        // Use printenv to read the env var without shell expansion.
         let sub = Substitution::Command {
-            cmd: vec![Substitution::Text("echo $TEST_CMD_VAR".to_string())],
+            cmd: vec![Substitution::Text("printenv TEST_CMD_VAR".to_string())],
             error_mode: CommandErrorMode::Strict,
         };
         let context = LaunchContext::new();
@@ -961,8 +979,12 @@ mod tests {
     #[test]
     fn test_command_warn_mode_continues_on_error() {
         enable_commands();
+        // Use bash -c to test shell constructs that produce stdout then fail.
+        // Direct exec doesn't support && — we explicitly invoke bash here.
         let sub = Substitution::Command {
-            cmd: vec![Substitution::Text("echo output && exit 1".to_string())],
+            cmd: vec![Substitution::Text(
+                "bash -c 'echo output && exit 1'".to_string(),
+            )],
             error_mode: CommandErrorMode::Warn,
         };
         let context = LaunchContext::new();
@@ -977,7 +999,9 @@ mod tests {
     fn test_command_ignore_mode_continues_on_error() {
         enable_commands();
         let sub = Substitution::Command {
-            cmd: vec![Substitution::Text("echo output && exit 1".to_string())],
+            cmd: vec![Substitution::Text(
+                "bash -c 'echo output && exit 1'".to_string(),
+            )],
             error_mode: CommandErrorMode::Ignore,
         };
         let context = LaunchContext::new();
@@ -1006,6 +1030,105 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(result.unwrap(), "success");
         }
+    }
+
+    // shlex splitting edge cases — these test execute_command directly
+    #[test]
+    fn test_command_shlex_unquoted_with_args() {
+        // After parser quote-stripping, command arrives unquoted at execute_command.
+        // shlex::split splits by whitespace, producing ["echo", "shlex_result"].
+        enable_commands();
+        let sub = Substitution::Command {
+            cmd: vec![Substitution::Text("echo shlex_result".to_string())],
+            error_mode: CommandErrorMode::Strict,
+        };
+        let context = LaunchContext::new();
+        let result = sub.resolve(&context).unwrap();
+        assert_eq!(result, "shlex_result");
+    }
+
+    #[test]
+    fn test_command_shlex_args_with_spaces() {
+        // Arguments containing spaces must be quoted
+        enable_commands();
+        let sub = Substitution::Command {
+            cmd: vec![Substitution::Text("echo 'hello world'".to_string())],
+            error_mode: CommandErrorMode::Strict,
+        };
+        let context = LaunchContext::new();
+        let result = sub.resolve(&context).unwrap();
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_command_shlex_mixed_quotes() {
+        // Double quotes inside single-quoted region are literal
+        enable_commands();
+        let sub = Substitution::Command {
+            cmd: vec![Substitution::Text(r#"echo 'say "hi"'"#.to_string())],
+            error_mode: CommandErrorMode::Strict,
+        };
+        let context = LaunchContext::new();
+        let result = sub.resolve(&context).unwrap();
+        assert_eq!(result, r#"say "hi""#);
+    }
+
+    #[test]
+    fn test_command_shlex_backslash_escape() {
+        // Backslash outside quotes escapes the next character
+        enable_commands();
+        let sub = Substitution::Command {
+            cmd: vec![Substitution::Text(r"echo hello\ world".to_string())],
+            error_mode: CommandErrorMode::Strict,
+        };
+        let context = LaunchContext::new();
+        let result = sub.resolve(&context).unwrap();
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_command_shlex_unclosed_quote_error() {
+        enable_commands();
+        let sub = Substitution::Command {
+            cmd: vec![Substitution::Text("echo 'unclosed".to_string())],
+            error_mode: CommandErrorMode::Strict,
+        };
+        let context = LaunchContext::new();
+        let result = sub.resolve(&context);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("unclosed quote"),
+            "Error should mention unclosed quote"
+        );
+    }
+
+    #[test]
+    fn test_command_shlex_empty_string_error() {
+        enable_commands();
+        let sub = Substitution::Command {
+            cmd: vec![Substitution::Text("   ".to_string())],
+            error_mode: CommandErrorMode::Strict,
+        };
+        let context = LaunchContext::new();
+        let result = sub.resolve(&context);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Empty command"),
+            "Error should mention empty command"
+        );
+    }
+
+    #[test]
+    fn test_command_shlex_multiple_args() {
+        // Multiple arguments with various quoting styles
+        enable_commands();
+        let sub = Substitution::Command {
+            cmd: vec![Substitution::Text("printf '%s-%s' foo bar".to_string())],
+            error_mode: CommandErrorMode::Strict,
+        };
+        let context = LaunchContext::new();
+        let result = sub.resolve(&context).unwrap();
+        assert_eq!(result, "foo-bar");
     }
 
     // String concatenation tests
