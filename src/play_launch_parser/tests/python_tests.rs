@@ -2801,7 +2801,7 @@ def generate_launch_description():
     );
 }
 
-/// Test the SSv2 ShutdownOnce pattern: subclass EmitEvent with a ShutdownEvent
+/// Test subclassing EmitEvent with on_exit handler (common pattern for coordinated shutdown)
 #[test]
 fn test_emit_event_subclass_shutdown_once() {
     let _guard = python_test_guard();
@@ -2821,7 +2821,7 @@ def generate_launch_description():
         Node(
             package='demo_nodes_cpp',
             executable='talker',
-            name='ssv2_pattern_node',
+            name='emit_event_subclass_node',
             on_exit=[ShutdownOnce(reason='node exited')],
         ),
     ])
@@ -2832,7 +2832,7 @@ def generate_launch_description():
 
     assert!(
         result.is_ok(),
-        "Parsing should succeed with SSv2 ShutdownOnce pattern: {:?}",
+        "Parsing should succeed with EmitEvent subclass pattern: {:?}",
         result.err()
     );
 
@@ -2840,7 +2840,10 @@ def generate_launch_description():
     let json = serde_json::to_value(&record).unwrap();
     let nodes = json["node"].as_array().unwrap();
     assert_eq!(nodes.len(), 1);
-    assert_eq!(nodes[0]["name"].as_str().unwrap(), "ssv2_pattern_node");
+    assert_eq!(
+        nodes[0]["name"].as_str().unwrap(),
+        "emit_event_subclass_node"
+    );
 }
 
 /// Test Command substitution in Python launch files.
@@ -2915,4 +2918,48 @@ def generate_launch_description():
     let nodes = json["node"].as_array().unwrap();
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0]["name"].as_str().unwrap(), "foo-bar");
+}
+
+/// Test LaunchConfiguration with boolean default value.
+/// ROS 2 accepts SomeSubstitutionsType which includes bool; our mock must too.
+#[test]
+fn test_launch_configuration_bool_default() {
+    let _guard = python_test_guard();
+
+    let launch_content = r#"
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument('record', default_value='false'),
+        DeclareLaunchArgument('flag', default_value='true'),
+        Node(
+            package='demo_nodes_cpp',
+            executable='talker',
+            name='bool_default_node',
+            parameters=[{
+                'record': LaunchConfiguration('record', default=False),
+                'flag': LaunchConfiguration('flag', default=True),
+            }],
+        ),
+    ])
+"#;
+
+    let temp_file = write_temp_launch_file(launch_content);
+    let result = parse_launch_file(temp_file.path(), HashMap::new());
+
+    assert!(
+        result.is_ok(),
+        "Should parse LaunchConfiguration with bool default: {:?}",
+        result.err()
+    );
+
+    let record = result.unwrap();
+    let json = serde_json::to_value(&record).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["name"].as_str().unwrap(), "bool_default_node");
 }

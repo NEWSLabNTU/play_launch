@@ -453,5 +453,5 @@ impl Shutdown {
 }
 
 // EmitEvent is defined as a pure Python class (not a Rust pyclass) so that
-// Python subclasses like SSv2's ShutdownOnce can call super().__init__() normally.
+// Python subclasses can call super().__init__() normally.
 // See register_emit_event_class() in mod.rs.

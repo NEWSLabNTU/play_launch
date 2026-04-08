@@ -73,8 +73,8 @@ pub fn register_modules(py: Python) -> PyResult<()> {
     launch_actions.add_class::<actions::UnsetLaunchConfiguration>()?;
 
     // EmitEvent and launch.events.Shutdown are defined as pure Python classes
-    // so that Python subclasses (like SSv2's ShutdownOnce) can use super().__init__()
-    // normally. PyO3 #[pyclass] maps #[new] to __new__, not __init__, which breaks
+    // so that Python subclasses can call super().__init__() normally.
+    // PyO3 #[pyclass] maps #[new] to __new__, not __init__, which breaks
     // the super().__init__(**kwargs) pattern.
     let locals = pyo3::types::PyDict::new(py);
     py.run(
@@ -98,9 +98,45 @@ class _ShutdownEvent:
     launch_actions.add("EmitEvent", &emit_event_class)?;
 
     // Create launch.events submodule (stub event classes for import compatibility)
+    // Used by launch files that import:
+    //   from launch.events import Shutdown as ShutdownEvent
     let launch_events = PyModule::new(py, "launch.events")?;
     let shutdown_event_class = locals.get_item("_ShutdownEvent")?.unwrap();
     launch_events.add("Shutdown", &shutdown_event_class)?;
+    // Set __path__ so Python recognizes launch.events as a package (enables submodule imports)
+    launch_events.setattr(
+        "__path__",
+        pyo3::types::PyList::new(py, Vec::<String>::new())?,
+    )?;
+
+    // Create launch.events.process submodule with ProcessExited stub
+    let launch_events_process = PyModule::new(py, "launch.events.process")?;
+    py.run(
+        c"
+class ProcessExited:
+    def __init__(self, *args, **kwargs):
+        pass
+",
+        None,
+        Some(&locals),
+    )?;
+    let process_exited_class = locals.get_item("ProcessExited")?.unwrap();
+    launch_events_process.add("ProcessExited", &process_exited_class)?;
+    launch_events.add_submodule(&launch_events_process)?;
+
+    // Create launch.launch_context submodule with LaunchContext stub
+    let launch_context_mod = PyModule::new(py, "launch.launch_context")?;
+    py.run(
+        c"
+class LaunchContext:
+    def __init__(self, *args, **kwargs):
+        pass
+",
+        None,
+        Some(&locals),
+    )?;
+    let launch_context_class = locals.get_item("LaunchContext")?.unwrap();
+    launch_context_mod.add("LaunchContext", &launch_context_class)?;
 
     // Create launch.substitutions submodule
     let launch_subs = PyModule::new(py, "launch.substitutions")?;
@@ -292,6 +328,8 @@ class _ShutdownEvent:
         "launch.utilities.type_utils",
         "launch.some_substitutions_type",
         "launch.events",
+        "launch.events.process",
+        "launch.launch_context",
         "launch_ros",
         "launch_ros.actions",
         "launch_ros.descriptions",
@@ -314,6 +352,8 @@ class _ShutdownEvent:
     modules.set_item("launch", &launch_mod)?;
     modules.set_item("launch.actions", &launch_actions)?;
     modules.set_item("launch.events", &launch_events)?;
+    modules.set_item("launch.events.process", &launch_events_process)?;
+    modules.set_item("launch.launch_context", &launch_context_mod)?;
     modules.set_item("launch.substitutions", &launch_subs)?;
     modules.set_item("launch.conditions", &launch_conditions)?;
     modules.set_item("launch.event_handlers", &launch_event_handlers)?;
