@@ -26,7 +26,18 @@ pub(crate) fn convert_parameters_to_ros(
 /// This function mimics the behavior of ROS2 CLI's get_parameter_value() which uses
 /// yaml.safe_load() to determine parameter types. This allows proper handling of
 /// array parameters like [1, 2, 3] (integer_array) or [0.1, 0.2] (double_array).
+///
+/// Values may contain unresolved Python string expressions from `$(eval ...)` in launch XML
+/// (e.g., `"'[module1, ' + ']'"`). These are evaluated via PyO3 before YAML parsing.
 fn parse_parameter_value(value: &str) -> Result<rcl_interfaces::msg::ParameterValue> {
+    // Evaluate Python string expressions (from $(eval ...) in launch XML)
+    let resolved = if value.contains("' + '") || (value.starts_with("'") && value.ends_with("'")) {
+        crate::execution::node_cmdline::eval_python_str(value).unwrap_or_else(|| value.to_string())
+    } else {
+        value.to_string()
+    };
+    let value = resolved.as_str();
+
     // Parse value as YAML to determine type
     let yaml_value: serde_yaml_ng::Value = match serde_yaml_ng::from_str(value) {
         Ok(v) => v,

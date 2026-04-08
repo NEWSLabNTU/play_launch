@@ -108,8 +108,10 @@ fn params_to_yaml(params: &HashMap<String, String>) -> String {
     output.strip_prefix("---\n").unwrap_or(&output).to_string()
 }
 
-/// Parse a string value into the most specific YAML type.
-/// Matches rcl's type inference for `-p` arguments.
+/// Parse a resolved parameter value string into the most specific YAML type.
+/// Values in record.json are already fully resolved by the parser — no Python
+/// expressions remain. This function only does type inference matching rcl's
+/// behavior for `-p` arguments: bool, integer, float, or string.
 fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
     use yaml_rust2::Yaml;
 
@@ -132,6 +134,15 @@ fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
 
     // Everything else is a string
     Yaml::String(s.to_string())
+}
+
+/// Evaluate a Python string expression and return the result.
+/// Used for values from `$(eval ...)` in launch XML that produce string concatenations
+/// like `"'[module1, ' + 'module2, ' + ']'"`.
+pub(crate) fn eval_python_str(expr: &str) -> Option<String> {
+    use pyo3::prelude::*;
+    let code = std::ffi::CString::new(expr).ok()?;
+    Python::with_gil(|py| py.eval(&code, None, None).ok()?.extract::<String>().ok())
 }
 
 impl NodeCommandLine {
