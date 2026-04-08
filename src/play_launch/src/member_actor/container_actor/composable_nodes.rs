@@ -99,7 +99,7 @@ impl ContainerActor {
     /// Handle a completed LoadNode service call.
     pub(super) async fn handle_load_completion(&mut self, completion: LoadCompletion) {
         let composable_name = &completion.composable_name;
-        let _has_event_sub = self.component_event_sub.is_some();
+        let has_event_sub = self.component_event_sub.is_some();
 
         let Some(entry) = self.composable_nodes.get_mut(composable_name) else {
             warn!(
@@ -113,36 +113,43 @@ impl ContainerActor {
             Ok(response) if response.success => {
                 entry.unique_id = Some(response.unique_id);
 
-                // Transition to Loaded on service success regardless of event subscription.
-                // ComponentEvent may arrive later as a duplicate (handled by state guard),
-                // but relying solely on it causes flaky "pending" states when DDS drops events.
-                if matches!(entry.state, ComposableState::Loading { .. }) {
-                    entry.state = ComposableState::Loaded {
-                        unique_id: response.unique_id,
-                    };
-                    entry.load_started_at = None;
-
-                    debug!(
-                        "{}: Successfully loaded composable node '{}' (unique_id: {})",
-                        self.name, composable_name, response.unique_id
-                    );
-
-                    self.shared_state.insert(
-                        composable_name.clone(),
-                        super::super::web_query::MemberState::Loaded {
+                if !has_event_sub {
+                    // Stock container: service response is the only signal, treat as loaded.
+                    if matches!(entry.state, ComposableState::Loading { .. }) {
+                        entry.state = ComposableState::Loaded {
                             unique_id: response.unique_id,
-                        },
-                    );
+                        };
+                        entry.load_started_at = None;
 
-                    let _ = self
-                        .state_tx
-                        .send(StateEvent::LoadSucceeded {
-                            name: composable_name.clone(),
-                            full_node_name: response.full_node_name.clone(),
-                            unique_id: response.unique_id,
-                        })
-                        .await;
+                        debug!(
+                            "{}: Successfully loaded composable node '{}' (unique_id: {})",
+                            self.name, composable_name, response.unique_id
+                        );
+
+                        self.shared_state.insert(
+                            composable_name.clone(),
+                            super::super::web_query::MemberState::Loaded {
+                                unique_id: response.unique_id,
+                            },
+                        );
+
+                        let _ = self
+                            .state_tx
+                            .send(StateEvent::LoadSucceeded {
+                                name: composable_name.clone(),
+                                full_node_name: response.full_node_name.clone(),
+                                unique_id: response.unique_id,
+                            })
+                            .await;
+                    }
                 }
+                // play_launch_container (with event sub): service responds immediately
+                // before fork+exec completes. The real result arrives via ComponentEvent.
+                // State stays Loading; ComponentEvent transitions to Loaded or Failed.
+                //
+                // NOTE: DDS may drop the ComponentEvent, leaving the node stuck in Loading.
+                // The existing 10s timeout fallback (in component_events.rs) promotes
+                // stuck nodes to Loaded. This is a known DDS limitation.
             }
             Ok(response) => {
                 // LoadNode returned failure
