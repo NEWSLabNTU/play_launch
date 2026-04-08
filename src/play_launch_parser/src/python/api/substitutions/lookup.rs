@@ -34,9 +34,18 @@ impl LaunchConfiguration {
     #[pyo3(signature = (variable_name, *, default=None, **_kwargs))]
     fn new(
         variable_name: String,
-        default: Option<String>,
+        default: Option<PyObject>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
+        // Accept str, bool, or any type — convert to string for storage.
+        // ROS 2 accepts SomeSubstitutionsType which includes bool, list, etc.
+        let default = default.map(|obj| {
+            Python::with_gil(|py| {
+                obj.bind(py)
+                    .str()
+                    .map_or_else(|_| format!("{:?}", obj), |s| s.to_string())
+            })
+        });
         Self {
             variable_name,
             default,
