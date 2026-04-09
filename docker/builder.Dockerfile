@@ -51,7 +51,9 @@ RUN apt-get update && \
       ros-humble-demo-nodes-cpp \
       ros-humble-composition \
       ros-humble-ament-cpplint \
-      ros-humble-ament-clang-format && \
+      ros-humble-ament-clang-format \
+      libclang-dev \
+      libz3-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
