@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "src/play_launch_parser"
+    "crates/*",
 ]
 
 # Development profile with release optimizations but debug info enabled
