@@ -87,7 +87,9 @@ jobs:
               ros-humble-test-msgs \
               ros-humble-rclcpp-components \
               ros-humble-class-loader \
-              ros-humble-ament-index-cpp
+              ros-humble-ament-index-cpp \
+              libclang-dev \
+              libz3-dev
 
             # Install Rust
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
