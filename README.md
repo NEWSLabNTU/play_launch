@@ -6,6 +6,13 @@ Record, replay, and analyze ROS 2 launch executions with resource monitoring and
 
 ## Installation
 
+Requires Ubuntu 22.04+ with ROS 2 (Humble or Jazzy), Python 3.10+, and:
+
+```bash
+sudo apt install libz3-dev
+sudo apt install ros-${ROS_DISTRO}-rclcpp-components ros-${ROS_DISTRO}-class-loader
+```
+
 Install from PyPI:
 
 ```bash
@@ -234,17 +241,67 @@ play_launch plot --list-metrics
 
 ## Development
 
-See [CLAUDE.md](CLAUDE.md) for development guidelines and architecture details.
+### Prerequisites
+
+- ROS 2 (Humble on Ubuntu 22.04, Jazzy on 24.04)
+- Rust toolchain (stable)
+- Python 3.10+
+- [just](https://github.com/casey/just) command runner
+- [cargo-nextest](https://nexte.st/) test runner
+- [uv](https://github.com/astral-sh/uv) Python package manager
+
+### Install Dependencies
 
 ```bash
-# Run checks (clippy + rustfmt + ruff + cpplint + clang-format)
-just check
+just install-deps
+```
 
-# Format code
-just format
+This installs `colcon-cargo-ros2` and runs `rosdep install` for all ROS dependencies.
 
-# Run tests
-just test
+### Build
+
+```bash
+just build          # Full build: colcon + interception .so + wheel
+just build-cpp      # C++ only (msgs + container)
+just build-rust     # Rust only (assumes C++ install/ exists)
+just build-wheel    # Bundle + wheel only (no colcon rebuild)
+```
+
+Optional: enable I/O monitoring (requires sudo):
+
+```bash
+just setcap-io-helper
+```
+
+### Run
+
+```bash
+just run launch <package> <launch_file> [arguments...]
+just run run <package> <executable> [arguments...]
+```
+
+### Test
+
+```bash
+just test               # Parser unit + fast integration (~3s)
+just test-all           # Parser unit + all integration (~30s)
+just test-unit          # Parser unit tests only
+just test-integration   # All integration tests
+just test-autoware      # Autoware integration tests
+```
+
+### Code Quality
+
+```bash
+just check      # clippy + rustfmt + ruff + cpplint + clang-format
+just format     # Auto-format Rust + Python + C++
+just quality    # Format then check
+```
+
+### Install Wheel Locally
+
+```bash
+just install-wheel
 ```
 
 ## License
