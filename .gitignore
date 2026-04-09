@@ -17,7 +17,7 @@ wheels/
 *.swo
 
 # Added by cargo
-/target
+**/target
 
 # Created by colcon build
 /build/

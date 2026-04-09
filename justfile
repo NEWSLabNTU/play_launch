@@ -21,8 +21,8 @@ install-deps:
     rosdep update
     rosdep install --from-paths src --ignore-src -r -y
 
-# Build all packages (Rust + colcon)
-build: build-rust build-colcon
+# Build all packages (Rust + colcon + Python wheel)
+build: build-rust build-colcon build-python
 
 # Build all packages with colcon
 build-colcon:
@@ -175,6 +175,23 @@ test-autoware:
 
 # Compare Rust and Python parser outputs for Autoware (alias for test-autoware)
 compare-autoware: test-autoware
+
+# Build Python extension module and wheel
+build-python:
+    #!/usr/bin/env bash
+    set -e
+    cd crates/python
+    uv sync
+    uv run maturin develop --release
+    rm -f target/wheels/*.whl
+    uv run maturin build --release
+    echo ""
+    echo "Wheel:"
+    ls -1 target/wheels/*.whl
+
+# Test Python bindings (import + smoke test)
+test-python:
+    cd crates/python && uv run python -c "import play_launch_parser; print(f'play_launch_parser {play_launch_parser.__version__}'); print('OK')"
 
 # Benchmark Rust parser performance with Autoware
 benchmark-autoware:
