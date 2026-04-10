@@ -28,7 +28,7 @@ dashmap = "6.1"
 diagnostic_msgs = "*"
 eyre = "0.6.12"
 play_launch_msgs = "*"
-play_launch_parser = { path = "../play_launch_parser/src/play_launch_parser" }
+play_launch_parser = { path = "../play_launch_parser/crates/play_launch_parser" }
 ros-launch-manifest-types = { path = "../ros-launch-manifest/types" }
 ros-launch-manifest-check = { path = "../ros-launch-manifest/check" }
 spsc_shm = { path = "../spsc_shm" }
