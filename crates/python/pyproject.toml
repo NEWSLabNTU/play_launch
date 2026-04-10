@@ -22,11 +22,12 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
-[dependency-groups]
-dev = ["maturin>=1.0,<2.0"]
+[project.scripts]
+play-launch-parser = "play_launch_parser._cli:main"
 
 [project.urls]
 Repository = "https://github.com/NEWSLabNTU/play_launch_parser"
 
 [tool.maturin]
 manifest-path = "Cargo.toml"
+python-source = "."

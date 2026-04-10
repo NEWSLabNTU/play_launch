@@ -181,17 +181,23 @@ build-python:
     #!/usr/bin/env bash
     set -e
     cd crates/python
-    uv sync
-    uv run maturin develop --release
+    if [ ! -d .venv ]; then
+        python3 -m venv .venv
+        .venv/bin/pip install maturin
+    fi
+    .venv/bin/maturin develop --release
     rm -f target/wheels/*.whl
-    uv run maturin build --release
+    .venv/bin/maturin build --release
     echo ""
     echo "Wheel:"
     ls -1 target/wheels/*.whl
 
 # Test Python bindings (import + smoke test)
 test-python:
-    cd crates/python && uv run python -c "import play_launch_parser; print(f'play_launch_parser {play_launch_parser.__version__}'); print('OK')"
+    #!/usr/bin/env bash
+    set -e
+    cd crates/python
+    .venv/bin/python -c "import play_launch_parser; print(f'play_launch_parser {play_launch_parser.__version__}'); print('OK')"
 
 # Benchmark Rust parser performance with Autoware
 benchmark-autoware:

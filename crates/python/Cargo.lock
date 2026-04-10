@@ -371,6 +371,7 @@ dependencies = [
 name = "play_launch_parser_python"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "play_launch_parser",
  "pyo3",
  "pythonize",

@@ -16,3 +16,4 @@ play_launch_parser = { path = "../play_launch_parser" }
 pyo3 = { version = "0.24", features = ["extension-module"] }
 pythonize = "0.24"
 serde_json = "1"
+clap = { version = "4.0", features = ["derive"] }
