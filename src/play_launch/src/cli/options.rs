@@ -150,6 +150,11 @@ pub struct CheckArgs {
     /// Output format: terminal (default, with source excerpts) or json
     #[arg(long, default_value = "terminal")]
     pub format: String,
+
+    /// Show only diagnostics from these rules. Repeat to allow multiple.
+    /// Example: --rule satisfiability --rule consistency
+    #[arg(long, value_name = "RULE_ID")]
+    pub rule: Vec<String>,
 }
 
 /// Arguments for launching a launch file

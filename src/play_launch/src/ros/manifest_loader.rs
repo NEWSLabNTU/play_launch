@@ -508,8 +508,15 @@ fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestI
 
         if let Some(existing) = index.topics.get_mut(&fqn) {
             // Merge with existing declaration — validate agreement
-            merge_topic(existing, scope, topic_name, topic_decl,
-                        publishers, subscribers, &mut index.merge_diagnostics);
+            merge_topic(
+                existing,
+                scope,
+                topic_name,
+                topic_decl,
+                publishers,
+                subscribers,
+                &mut index.merge_diagnostics,
+            );
         } else {
             index.topics.insert(
                 fqn.clone(),
@@ -567,7 +574,10 @@ fn merge_topic(
                 severity: Severity::Error,
                 message: format!(
                     "topic '{}' rate_hz mismatch: {} (existing) vs {} in scope {} ({}/{})",
-                    existing.fqn, a, b, scope.id,
+                    existing.fqn,
+                    a,
+                    b,
+                    scope.id,
                     scope.pkg().unwrap_or("?"),
                     scope.file().unwrap_or("?"),
                 ),
@@ -587,7 +597,10 @@ fn merge_topic(
                 severity: Severity::Error,
                 message: format!(
                     "topic '{}' max_transport_ms mismatch: {} vs {} in scope {} ({}/{})",
-                    existing.fqn, a, b, scope.id,
+                    existing.fqn,
+                    a,
+                    b,
+                    scope.id,
                     scope.pkg().unwrap_or("?"),
                     scope.file().unwrap_or("?"),
                 ),
@@ -607,7 +620,8 @@ fn merge_topic(
                 severity: Severity::Error,
                 message: format!(
                     "topic '{}' qos mismatch in scope {} ({}/{})",
-                    existing.fqn, scope.id,
+                    existing.fqn,
+                    scope.id,
                     scope.pkg().unwrap_or("?"),
                     scope.file().unwrap_or("?"),
                 ),
@@ -676,7 +690,10 @@ fn resolve_services(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifes
                     severity: Severity::Error,
                     message: format!(
                         "service '{}' type mismatch: '{}' vs '{}' in scope {} ({}/{})",
-                        existing.fqn, existing.srv_type, service_decl.srv_type, scope.id,
+                        existing.fqn,
+                        existing.srv_type,
+                        service_decl.srv_type,
+                        scope.id,
                         scope.pkg().unwrap_or("?"),
                         scope.file().unwrap_or("?"),
                     ),
@@ -739,16 +756,8 @@ fn resolve_scope_paths(manifest: &Manifest, scope: &ScopeEntry, index: &mut Mani
     let ns = &scope.ns;
 
     for (path_name, decl) in &manifest.paths {
-        let input_topics: Vec<String> = decl
-            .input
-            .iter()
-            .map(|t| qualify_name(ns, t))
-            .collect();
-        let output_topics: Vec<String> = decl
-            .output
-            .iter()
-            .map(|t| qualify_name(ns, t))
-            .collect();
+        let input_topics: Vec<String> = decl.input.iter().map(|t| qualify_name(ns, t)).collect();
+        let output_topics: Vec<String> = decl.output.iter().map(|t| qualify_name(ns, t)).collect();
 
         index.scope_paths.push(ResolvedScopePath {
             scope_id: scope.id,
@@ -1620,8 +1629,20 @@ mod tests {
     fn test_cross_scope_merge_compatible_types() {
         // Two scopes declare the same topic with matching types — should merge cleanly.
         let dump = make_dump(vec![
-            scope(0, "manifest_consistency_pub", "manifest.launch.xml", "", None),
-            scope(1, "manifest_consistency_sub", "manifest.launch.xml", "", Some(0)),
+            scope(
+                0,
+                "manifest_consistency_pub",
+                "manifest.launch.xml",
+                "",
+                None,
+            ),
+            scope(
+                1,
+                "manifest_consistency_sub",
+                "manifest.launch.xml",
+                "",
+                Some(0),
+            ),
         ]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
@@ -1660,8 +1681,20 @@ mod tests {
     fn test_cross_scope_merge_type_mismatch() {
         // Two scopes declare the same topic with DIFFERENT types — consistency error.
         let dump = make_dump(vec![
-            scope(0, "manifest_consistency_pub", "manifest.launch.xml", "", None),
-            scope(1, "manifest_consistency_bad", "manifest.launch.xml", "", Some(0)),
+            scope(
+                0,
+                "manifest_consistency_pub",
+                "manifest.launch.xml",
+                "",
+                None,
+            ),
+            scope(
+                1,
+                "manifest_consistency_bad",
+                "manifest.launch.xml",
+                "",
+                Some(0),
+            ),
         ]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 
@@ -1725,8 +1758,20 @@ mod tests {
     fn test_cross_scope_dangling_resolved_when_publisher_present() {
         // Same as above, but with the publisher manifest also loaded — no warning.
         let dump = make_dump(vec![
-            scope(0, "manifest_consistency_pub", "manifest.launch.xml", "", None),
-            scope(1, "manifest_consistency_sub", "manifest.launch.xml", "", Some(0)),
+            scope(
+                0,
+                "manifest_consistency_pub",
+                "manifest.launch.xml",
+                "",
+                None,
+            ),
+            scope(
+                1,
+                "manifest_consistency_sub",
+                "manifest.launch.xml",
+                "",
+                Some(0),
+            ),
         ]);
         let index = load_manifests(&dump, &fixture_dir()).unwrap();
 

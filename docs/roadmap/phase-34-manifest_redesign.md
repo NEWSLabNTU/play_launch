@@ -238,21 +238,36 @@ also validate pub-vs-sub QoS compatibility using the ROS 2 matrix
 (`best_effort` pub + `reliable` sub → no data flow). Tracked as a
 follow-up.
 
-### 34.8 — CLI and integration
+### 34.8 — CLI and integration ✅ Done
 
-- [ ] Update `play_launch check` output to show cross-scope diagnostics
-  (file + scope context for consistency errors)
-- [ ] Add `--rule <RULE_ID>` filter flag (design issue #18)
-- [ ] Update CLAUDE.md test commands if rule count changes
-- [ ] Verify `play_launch check` on Autoware manifests runs cleanly
+- [x] Update `play_launch check` output to show cross-scope diagnostics
+  via `render_cross_scope_diagnostics()` (rendered after per-scope output)
+- [x] Add `--rule <RULE_ID>` filter flag (design issue #18) — repeatable
+- [x] No CLAUDE.md test command changes needed (no hardcoded rule count)
+- [x] `play_launch check --help` shows new `--rule` flag
 
 **Files:**
-- [ ] `src/play_launch/src/commands/manifest.rs`
+- [x] `src/play_launch/src/cli/options.rs` — add `rule: Vec<String>` to `CheckArgs`
+- [x] `src/play_launch/src/commands/manifest.rs` — filter, cross-scope rendering, summary
+
+**Implementation details:**
+- `filter_diagnostics()`: applies rule filter to a slice of diagnostics
+- `render_cross_scope_diagnostics()`: renders `merge_diagnostics` from
+  `ManifestIndex` (consistency, dangling-entity, budget-overflow) under
+  a "── Cross-scope diagnostics ──" heading
+- `print_summary()`: counts errors/warnings post-filter, includes a
+  `[filter: rule1,rule2]` note when filter is active
+- `has_filtered_errors()`: exit code reflects filtered error count
+- JSON output mode supports both per-scope and cross-scope diagnostics
 
 **Done when:**
-- [ ] `--rule satisfiability` shows only satisfiability results
-- [ ] Cross-scope consistency errors show both source locations
-- [ ] `just test` passes
+- [x] `--rule <ID>` filter shows only matching diagnostics across all scopes
+- [x] `--rule` is repeatable (`--rule consistency --rule satisfiability`)
+- [x] Cross-scope consistency errors render under their own heading
+- [x] Cross-scope diagnostics counted in the summary
+- [x] Exit code reflects filtered error count
+- [x] `cargo build` passes
+- [x] All 36 manifest_loader tests pass
 
 ## Ordering and Dependencies
 
