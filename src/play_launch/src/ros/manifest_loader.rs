@@ -324,7 +324,15 @@ pub fn load_manifests(
 /// - Services with 0 servers across the entire tree (dangling client)
 /// - Cross-scope path budget-overflow (parent vs child paths matched
 ///   by resolved (input, output) topics)
+/// - Critical-path latency for each scope path (Phase 35.3/35.4):
+///   builds the global dataflow graph, traces actual paths between
+///   scope-path input and output topics within the scope subtree,
+///   and reports if declared latency is less than the critical path.
+/// - Rate hierarchy on merged topics (Phase 35.5): publisher
+///   `min_rate_hz` from one scope vs subscriber `min_rate_hz` in another.
 fn run_cross_scope_checks(index: &mut ManifestIndex) {
+    use super::manifest_graph::build_global_graph;
+
     // Dangling topic: 0 publishers across the merged tree
     for (fqn, topic) in &index.topics {
         if topic.publishers.is_empty() && !topic.subscribers.is_empty() {
@@ -364,6 +372,180 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // scope declare paths with the same resolved (input, output) topics,
     // the child's max_latency_ms must not exceed the ancestor's.
     check_path_budget_overflow(index);
+
+    // Build the global dataflow graph once and reuse it for the
+    // critical-path and rate-hierarchy checks.
+    let graph = build_global_graph(index);
+
+    // Critical-path latency check via the global dataflow graph.
+    check_scope_path_critical_path(index, &graph);
+
+    // Cross-scope rate hierarchy: publisher rate vs subscriber demand
+    // even when pub and sub live in different manifests.
+    check_cross_scope_rate_hierarchy(index, &graph);
+}
+
+/// Build the global dataflow graph and verify each scope path's
+/// declared `max_latency_ms` against the critical path between its
+/// input and output topics within the scope's subtree.
+///
+/// This is the topology-aware replacement for the per-manifest
+/// `scope-budget` sum check (which was incorrect for parallel branches).
+fn check_scope_path_critical_path(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    use super::manifest_graph::{critical_path, subgraph_for_scope_path, subtree_scope_ids};
+
+    // Snapshot scope paths to avoid borrow conflict with merge_diagnostics.
+    let scope_paths = index.scope_paths.clone();
+
+    for scope_path in &scope_paths {
+        let Some(declared) = scope_path.path.max_latency_ms else {
+            continue;
+        };
+
+        let subtree = subtree_scope_ids(index, scope_path.scope_id);
+        let subgraph = subgraph_for_scope_path(
+            graph,
+            subtree,
+            &scope_path.input_topics,
+            &scope_path.output_topics,
+        );
+
+        let Some(cp) = critical_path(&subgraph) else {
+            continue;
+        };
+
+        if cp.total_ms > declared {
+            index.merge_diagnostics.push(Diagnostic {
+                rule_id: "scope-budget".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "scope path '{}' (scope {}) max_latency_ms ({}) is less than \
+                     critical path: {} = {}ms",
+                    scope_path.path_name,
+                    scope_path.scope_id,
+                    declared,
+                    cp.nodes.join(" → "),
+                    cp.total_ms,
+                ),
+                path: format!("paths.{}", scope_path.path_name),
+                span: None,
+            });
+        }
+    }
+}
+
+/// Verify the rate hierarchy across merged topics.
+///
+/// For each topic with `rate_hz` declared:
+/// - Each publisher endpoint's `min_rate_hz` must be >= `rate_hz`
+///   (publisher must produce at least as fast as the channel rate)
+/// - The effective delivery rate `rate_hz * (1 - max_drop_rate)` must
+///   be >= each subscriber endpoint's `min_rate_hz` (subscriber demand)
+///
+/// Looks up endpoint properties via the global graph's `GlobalNode` map,
+/// which carries each node's pub/sub `EndpointProps`. This makes the
+/// check work across scopes — a publisher's rate from `localization.yaml`
+/// is checked against a subscriber's demand in `control.yaml`.
+fn check_cross_scope_rate_hierarchy(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    // Snapshot topic FQNs to avoid borrow conflict with merge_diagnostics.
+    let topics: Vec<(String, ResolvedTopic)> = index
+        .topics
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    for (fqn, topic) in &topics {
+        let Some(rate) = topic.rate_hz else {
+            continue;
+        };
+
+        // Compute effective delivery after max_drop_rate
+        let drop_rate = topic
+            .drop
+            .as_ref()
+            .and_then(|d| d.max_count.as_ref())
+            .map(|c| c.drop_rate())
+            .unwrap_or(0.0);
+        let effective_delivery = rate * (1.0 - drop_rate);
+
+        // Check each publisher endpoint's min_rate_hz against rate_hz
+        for pub_ref in &topic.publishers {
+            let Some((node_fqn, ep_name)) = split_endpoint_ref_for_check(pub_ref) else {
+                continue;
+            };
+            let Some(node) = graph.nodes.get(&node_fqn) else {
+                continue;
+            };
+            let Some(props) = node.publishers.get(&ep_name) else {
+                continue;
+            };
+            let Some(pub_min) = props.min_rate_hz else {
+                continue;
+            };
+            if pub_min < rate {
+                index.merge_diagnostics.push(Diagnostic {
+                    rule_id: "rate-hierarchy".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "topic '{fqn}' rate_hz ({rate}) > publisher '{pub_ref}' \
+                         min_rate_hz ({pub_min}) — publisher cannot sustain channel rate"
+                    ),
+                    path: format!("topics.{fqn}.rate_hz"),
+                    span: None,
+                });
+            }
+        }
+
+        // Check effective delivery against each subscriber's min_rate_hz
+        for sub_ref in &topic.subscribers {
+            let Some((node_fqn, ep_name)) = split_endpoint_ref_for_check(sub_ref) else {
+                continue;
+            };
+            let Some(node) = graph.nodes.get(&node_fqn) else {
+                continue;
+            };
+            let Some(props) = node.subscribers.get(&ep_name) else {
+                continue;
+            };
+            // Skip state subscribers — they read latest, no rate guarantee needed
+            if props.state.unwrap_or(false) {
+                continue;
+            }
+            let Some(sub_min) = props.min_rate_hz else {
+                continue;
+            };
+            if effective_delivery < sub_min {
+                index.merge_diagnostics.push(Diagnostic {
+                    rule_id: "rate-hierarchy".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "topic '{fqn}' effective delivery rate ({effective_delivery:.2} \
+                         = {rate} × (1 - {drop_rate:.3})) < subscriber '{sub_ref}' \
+                         min_rate_hz ({sub_min})"
+                    ),
+                    path: format!("topics.{fqn}.rate_hz"),
+                    span: None,
+                });
+            }
+        }
+    }
+}
+
+/// Split an endpoint FQN like `/ns/node/endpoint` into `(node_fqn, endpoint_name)`.
+fn split_endpoint_ref_for_check(ep_ref: &str) -> Option<(String, String)> {
+    let pos = ep_ref.rfind('/')?;
+    let node = &ep_ref[..pos];
+    let ep = &ep_ref[pos + 1..];
+    if node.is_empty() || ep.is_empty() {
+        return None;
+    }
+    Some((node.to_string(), ep.to_string()))
 }
 
 /// Match scope paths across the scope tree by resolved (input, output)
@@ -1926,5 +2108,232 @@ mod tests {
             .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("/shared_data"))
             .collect();
         assert!(dangling.is_empty());
+    }
+
+    // ── Phase 35: critical-path / graph-aware budget checks ──
+
+    #[test]
+    fn test_global_graph_builds_for_pipeline() {
+        use super::super::manifest_graph::build_global_graph;
+
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_pipeline",
+            "manifest.launch.xml",
+            "/perception",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+        let graph = build_global_graph(&index);
+
+        // 4 nodes from the pipeline fixture
+        assert_eq!(graph.nodes.len(), 4);
+        assert!(graph.nodes.contains_key("/perception/cropbox"));
+        assert!(graph.nodes.contains_key("/perception/ground_filter"));
+        assert!(graph.nodes.contains_key("/perception/fusion"));
+        assert!(graph.nodes.contains_key("/perception/tracker"));
+
+        // Edges exist (one per pub-sub pair on each topic)
+        assert!(!graph.edges.is_empty(), "expected edges in pipeline graph");
+
+        // Topic publisher/subscriber lookup
+        assert!(graph.topic_publishers.contains_key("/perception/cropped_points"));
+        assert!(graph.topic_subscribers.contains_key("/perception/cropped_points"));
+    }
+
+    #[test]
+    fn test_critical_path_parallel_takes_max_not_sum() {
+        // Parallel pipeline:
+        //   in → lidar (50ms) → fusion (20ms) → out
+        //   in → camera (30ms) ↗
+        // Critical path = max(50, 30) + 20 = 70ms (NOT sum 100ms)
+        // The fixture declares max_latency_ms: 70 — should pass cleanly.
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_parallel_pipeline",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        // The declared 70ms == critical path, so no scope-budget warning.
+        let budget_warnings: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "scope-budget")
+            .collect();
+        assert!(
+            budget_warnings.is_empty(),
+            "expected no scope-budget warnings for parallel pipeline at exact \
+             critical path budget, got: {budget_warnings:?}"
+        );
+    }
+
+    #[test]
+    fn test_critical_path_diagnostic_when_budget_too_tight() {
+        use super::super::manifest_graph::{
+            build_global_graph, critical_path, subgraph_for_scope_path, subtree_scope_ids,
+        };
+
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_parallel_pipeline",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+        let graph = build_global_graph(&index);
+
+        let subtree = subtree_scope_ids(&index, 0);
+        let subgraph = subgraph_for_scope_path(
+            &graph,
+            subtree,
+            &["/sensor/raw".to_string()],
+            &["/perception/fused_objects".to_string()],
+        );
+
+        let cp = critical_path(&subgraph).expect("critical path should exist");
+
+        // Should be 70 (max(50, 30) + 20), NOT 100 (sum)
+        assert!(
+            (cp.total_ms - 70.0).abs() < 0.001,
+            "expected critical path 70ms, got {}",
+            cp.total_ms
+        );
+        // Path should include the slowest branch (lidar) and fusion
+        assert!(
+            cp.nodes.iter().any(|n| n.contains("lidar_detector")),
+            "critical path should pass through lidar (slower branch): {:?}",
+            cp.nodes
+        );
+        assert!(
+            cp.nodes.iter().any(|n| n.contains("fusion")),
+            "critical path should reach fusion sink: {:?}",
+            cp.nodes
+        );
+    }
+
+    // ── Phase 35.5: cross-scope rate hierarchy ──
+
+    #[test]
+    fn test_cross_scope_rate_publisher_too_slow() {
+        // Pub min_rate_hz=5 in one scope, topic rate_hz=10 → error.
+        let dump = make_dump(vec![
+            scope(0, "manifest_rate_pub_slow", "manifest.launch.xml", "", None),
+            scope(
+                1,
+                "manifest_rate_sub_demand",
+                "manifest.launch.xml",
+                "",
+                Some(0),
+            ),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let rate_errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "rate-hierarchy")
+            .collect();
+
+        // Two errors expected:
+        //   1. pub min_rate_hz (5) < topic rate_hz (10)
+        //   2. effective delivery (10) < sub min_rate_hz (8) — actually 10 >= 8, OK
+        // Wait — effective delivery is 10 with no drop, sub demands 8, so OK.
+        // Only the publisher error should fire.
+        assert!(
+            rate_errors.iter().any(|d| d.message.contains("publisher cannot sustain")),
+            "expected publisher rate error, got: {rate_errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_cross_scope_rate_publisher_only_no_error() {
+        // Just the publisher manifest — no subscriber demand to check.
+        // Pub min_rate_hz=5, channel rate_hz=10 still triggers the
+        // pub-vs-channel error (publisher can't sustain).
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_rate_pub_slow",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let rate_errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "rate-hierarchy")
+            .collect();
+
+        // The pub-vs-channel error fires regardless of subscribers
+        assert!(
+            rate_errors.iter().any(|d| d.message.contains("publisher cannot sustain")),
+            "expected pub rate error, got: {rate_errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_cross_scope_rate_subscriber_only_no_error() {
+        // Sub demands 8 Hz but no publisher in the merged tree.
+        // The dangling-entity check fires, but rate-hierarchy can't
+        // check publisher rate (none exists).
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_rate_sub_demand",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let rate_errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "rate-hierarchy")
+            .collect();
+        assert!(
+            rate_errors.is_empty(),
+            "expected no rate errors when no publisher exists, got: {rate_errors:?}"
+        );
+
+        // dangling-entity warning IS expected
+        let dangling: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("/shared_stream"))
+            .collect();
+        assert_eq!(dangling.len(), 1);
+    }
+
+    #[test]
+    fn test_subtree_scope_ids_includes_descendants() {
+        use super::super::manifest_graph::subtree_scope_ids;
+
+        // Build a 3-level scope tree: 0 → 1 → 2
+        let dump = make_dump(vec![
+            scope(0, "manifest_simple", "manifest.launch.xml", "/", None),
+            scope(1, "manifest_simple", "manifest.launch.xml", "/a", Some(0)),
+            scope(2, "manifest_simple", "manifest.launch.xml", "/a/b", Some(1)),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let subtree_of_0 = subtree_scope_ids(&index, 0);
+        assert!(subtree_of_0.contains(&0));
+        assert!(subtree_of_0.contains(&1));
+        assert!(subtree_of_0.contains(&2));
+
+        let subtree_of_1 = subtree_scope_ids(&index, 1);
+        assert!(!subtree_of_1.contains(&0));
+        assert!(subtree_of_1.contains(&1));
+        assert!(subtree_of_1.contains(&2));
+
+        let subtree_of_2 = subtree_scope_ids(&index, 2);
+        assert!(!subtree_of_2.contains(&0));
+        assert!(!subtree_of_2.contains(&1));
+        assert!(subtree_of_2.contains(&2));
     }
 }
