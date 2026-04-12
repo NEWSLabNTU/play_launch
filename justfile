@@ -67,6 +67,15 @@ test:
         just test-autoware
     fi
 
+    # Run Python integration tests if venv exists
+    if [ -d "crates/python/.venv" ]; then
+        echo ""
+        echo "========================================="
+        echo "Running Python integration tests..."
+        echo "========================================="
+        just test-python
+    fi
+
     echo ""
     echo "========================================="
     echo "✓ All tests passed!"
@@ -183,7 +192,7 @@ build-python:
     cd crates/python
     if [ ! -d .venv ]; then
         python3 -m venv .venv
-        .venv/bin/pip install maturin
+        .venv/bin/pip install maturin pytest
     fi
     .venv/bin/maturin develop --release
     rm -f target/wheels/*.whl
@@ -192,12 +201,12 @@ build-python:
     echo "Wheel:"
     ls -1 target/wheels/*.whl
 
-# Test Python bindings (import + smoke test)
+# Test Python bindings (pytest)
 test-python:
     #!/usr/bin/env bash
     set -e
     cd crates/python
-    .venv/bin/python -c "import play_launch_parser; print(f'play_launch_parser {play_launch_parser.__version__}'); print('OK')"
+    .venv/bin/python -m pytest -v
 
 # Benchmark Rust parser performance with Autoware
 benchmark-autoware:
