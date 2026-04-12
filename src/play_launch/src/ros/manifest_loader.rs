@@ -95,6 +95,26 @@ pub struct ResolvedNodePath {
     pub scope_id: usize,
 }
 
+/// Resolved scope-level path with topic names as input/output.
+///
+/// Scope paths declare an end-to-end timing budget across the scope's
+/// subtree. Input and output are topic names (relative or absolute);
+/// the checker resolves them using the scope's namespace.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ResolvedScopePath {
+    /// Scope ID this path belongs to.
+    pub scope_id: usize,
+    /// Path name (local to the scope).
+    pub path_name: String,
+    /// Resolved input topic FQNs (entry points).
+    pub input_topics: Vec<String>,
+    /// Resolved output topic FQNs (exit points).
+    pub output_topics: Vec<String>,
+    /// The original path declaration (latency, drops, correlation, etc.).
+    pub path: ros_launch_manifest_types::PathDecl,
+}
+
 /// The complete resolved manifest index for the launch tree.
 #[derive(Debug, Default)]
 pub struct ManifestIndex {
@@ -106,8 +126,10 @@ pub struct ManifestIndex {
     pub services: BTreeMap<String, ResolvedService>,
     /// All resolved node paths.
     pub node_paths: Vec<ResolvedNodePath>,
-    /// Scope-level paths by scope ID.
-    pub scope_paths: HashMap<usize, Vec<(String, ros_launch_manifest_types::PathDecl)>>,
+    /// Resolved scope-level paths (input/output as resolved topic FQNs).
+    pub scope_paths: Vec<ResolvedScopePath>,
+    /// Parent scope ID for each scope (from launch tree). None for root.
+    pub scope_parents: HashMap<usize, Option<usize>>,
     /// Cross-scope consistency diagnostics (collected after merge).
     pub merge_diagnostics: Vec<Diagnostic>,
     /// Total errors across all manifests.
@@ -128,6 +150,12 @@ pub fn load_manifests(
     let mut index = ManifestIndex::default();
     let mut loaded = 0usize;
     let mut skipped = 0usize;
+
+    // Snapshot scope tree (parent links) for cross-scope checks.
+    // Includes all scopes (file and group), not just those with manifests.
+    for scope in &launch_dump.scopes {
+        index.scope_parents.insert(scope.id, scope.parent);
+    }
 
     for scope in &launch_dump.scopes {
         if !scope.is_file_scope() {
@@ -294,7 +322,8 @@ pub fn load_manifests(
 /// After all manifests are loaded and merged, this checks for:
 /// - Topics with 0 publishers across the entire tree (dangling sub)
 /// - Services with 0 servers across the entire tree (dangling client)
-/// - Rate hierarchy on merged topics (publisher rate vs subscriber demand)
+/// - Cross-scope path budget-overflow (parent vs child paths matched
+///   by resolved (input, output) topics)
 fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // Dangling topic: 0 publishers across the merged tree
     for (fqn, topic) in &index.topics {
@@ -330,6 +359,109 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
             });
         }
     }
+
+    // Cross-scope path budget-overflow: when a child scope and an ancestor
+    // scope declare paths with the same resolved (input, output) topics,
+    // the child's max_latency_ms must not exceed the ancestor's.
+    check_path_budget_overflow(index);
+}
+
+/// Match scope paths across the scope tree by resolved (input, output)
+/// topic identity. When a parent and child both declare a path with
+/// the same boundaries, the child's budget must not exceed the parent's.
+fn check_path_budget_overflow(index: &mut ManifestIndex) {
+    // Build a parent-chain lookup: for each scope ID, the set of all
+    // ancestor scope IDs (transitive parents).
+    let mut ancestors_of: HashMap<usize, Vec<usize>> = HashMap::new();
+    for resolved in index.manifests.values() {
+        let chain = ancestor_chain(index, resolved.scope_id);
+        ancestors_of.insert(resolved.scope_id, chain);
+    }
+
+    // Snapshot scope paths to avoid borrow conflicts
+    let paths: Vec<ResolvedScopePath> = index.scope_paths.clone();
+
+    // For each pair (child, ancestor) of paths with matching (input, output),
+    // verify child budget ≤ ancestor budget.
+    for child in &paths {
+        let Some(child_lat) = child.path.max_latency_ms else {
+            continue;
+        };
+        let Some(ancestors) = ancestors_of.get(&child.scope_id) else {
+            continue;
+        };
+        for ancestor in &paths {
+            if !ancestors.contains(&ancestor.scope_id) {
+                continue;
+            }
+            let Some(ancestor_lat) = ancestor.path.max_latency_ms else {
+                continue;
+            };
+            if !path_endpoints_match(child, ancestor) {
+                continue;
+            }
+            if child_lat > ancestor_lat {
+                index.merge_diagnostics.push(Diagnostic {
+                    rule_id: "budget-overflow".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "scope path '{}' (scope {}) max_latency_ms ({}) exceeds ancestor \
+                         path '{}' (scope {}) max_latency_ms ({}) — child budget cannot \
+                         exceed parent budget on the same (input, output) topics",
+                        child.path_name,
+                        child.scope_id,
+                        child_lat,
+                        ancestor.path_name,
+                        ancestor.scope_id,
+                        ancestor_lat,
+                    ),
+                    path: format!("paths.{}", child.path_name),
+                    span: None,
+                });
+            }
+        }
+    }
+}
+
+/// Build the ancestor chain for a scope ID by walking parent links.
+/// Returns scope IDs from immediate parent to root (excluding the scope itself).
+fn ancestor_chain(index: &ManifestIndex, scope_id: usize) -> Vec<usize> {
+    let mut chain = Vec::new();
+    let mut current = scope_id;
+    while let Some(parent_opt) = index.scope_parents.get(&current) {
+        match parent_opt {
+            Some(parent_id) => {
+                chain.push(*parent_id);
+                current = *parent_id;
+            }
+            None => break,
+        }
+    }
+    chain
+}
+
+/// Check if two scope paths have matching resolved (input, output) topics.
+fn path_endpoints_match(a: &ResolvedScopePath, b: &ResolvedScopePath) -> bool {
+    if a.scope_id == b.scope_id {
+        return false;
+    }
+    if a.input_topics.len() != b.input_topics.len() {
+        return false;
+    }
+    if a.output_topics.len() != b.output_topics.len() {
+        return false;
+    }
+    for t in &a.input_topics {
+        if !b.input_topics.contains(t) {
+            return false;
+        }
+    }
+    for t in &a.output_topics {
+        if !b.output_topics.contains(t) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Resolve the manifest file path for a given scope.
@@ -600,18 +732,32 @@ fn resolve_node_paths(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manif
 }
 
 /// Resolve scope-level path declarations.
+///
+/// Scope path `input:`/`output:` are topic names (relative or absolute).
+/// Resolves each one using the scope's namespace via `qualify_name()`.
 fn resolve_scope_paths(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
-    if manifest.paths.is_empty() {
-        return;
+    let ns = &scope.ns;
+
+    for (path_name, decl) in &manifest.paths {
+        let input_topics: Vec<String> = decl
+            .input
+            .iter()
+            .map(|t| qualify_name(ns, t))
+            .collect();
+        let output_topics: Vec<String> = decl
+            .output
+            .iter()
+            .map(|t| qualify_name(ns, t))
+            .collect();
+
+        index.scope_paths.push(ResolvedScopePath {
+            scope_id: scope.id,
+            path_name: path_name.clone(),
+            input_topics,
+            output_topics,
+            path: decl.clone(),
+        });
     }
-
-    let paths: Vec<(String, ros_launch_manifest_types::PathDecl)> = manifest
-        .paths
-        .iter()
-        .map(|(name, decl)| (name.clone(), decl.clone()))
-        .collect();
-
-    index.scope_paths.insert(scope.id, paths);
 }
 
 /// Prefix a relative name with the scope namespace.
@@ -1279,10 +1425,13 @@ mod tests {
         assert!(index.topics.contains_key("/perception/tracked_objects"));
 
         // Scope paths
-        assert!(index.scope_paths.contains_key(&0));
-        let scope_paths = &index.scope_paths[&0];
-        assert_eq!(scope_paths.len(), 1);
-        assert_eq!(scope_paths[0].0, "perception");
+        let scope0_paths: Vec<&ResolvedScopePath> = index
+            .scope_paths
+            .iter()
+            .filter(|p| p.scope_id == 0)
+            .collect();
+        assert_eq!(scope0_paths.len(), 1);
+        assert_eq!(scope0_paths[0].path_name, "perception");
     }
 
     #[test]
@@ -1594,6 +1743,116 @@ mod tests {
             dangling_warnings.is_empty(),
             "expected no dangling-entity warnings, got: {dangling_warnings:?}"
         );
+    }
+
+    #[test]
+    fn test_path_budget_overflow_child_exceeds_parent() {
+        // Parent scope path: 100ms. Child scope path with same input/output: 200ms → error.
+        let dump = make_dump(vec![
+            scope(0, "manifest_path_parent", "manifest.launch.xml", "", None),
+            scope(
+                1,
+                "manifest_path_child_overflow",
+                "manifest.launch.xml",
+                "",
+                Some(0),
+            ),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let overflow_errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "budget-overflow")
+            .collect();
+        assert_eq!(
+            overflow_errors.len(),
+            1,
+            "expected 1 budget-overflow error, got: {overflow_errors:?}"
+        );
+        let err = overflow_errors[0];
+        assert_eq!(err.severity, Severity::Error);
+        assert!(err.message.contains("max_latency_ms"));
+        assert!(err.message.contains("200"));
+        assert!(err.message.contains("100"));
+    }
+
+    #[test]
+    fn test_path_budget_child_within_parent_ok() {
+        // Parent path: 100ms. Child path with same input/output: 50ms → OK.
+        let dump = make_dump(vec![
+            scope(0, "manifest_path_parent", "manifest.launch.xml", "", None),
+            scope(
+                1,
+                "manifest_path_child_ok",
+                "manifest.launch.xml",
+                "",
+                Some(0),
+            ),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let overflow_errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "budget-overflow")
+            .collect();
+        assert!(
+            overflow_errors.is_empty(),
+            "expected no budget-overflow errors, got: {overflow_errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_path_budget_unrelated_scopes_no_overflow() {
+        // Two unrelated scopes (no parent-child relationship) declaring paths
+        // with the same boundaries should NOT trigger budget-overflow,
+        // because the rule applies only along the scope tree.
+        let dump = make_dump(vec![
+            scope(0, "manifest_path_parent", "manifest.launch.xml", "", None),
+            // Sibling scope (parent = None, not descendant of scope 0)
+            scope(
+                1,
+                "manifest_path_child_overflow",
+                "manifest.launch.xml",
+                "",
+                None,
+            ),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let overflow_errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "budget-overflow")
+            .collect();
+        assert!(
+            overflow_errors.is_empty(),
+            "expected no budget-overflow errors for unrelated scopes, got: {overflow_errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_path_resolved_topic_names() {
+        // Verify scope path input/output topics are resolved to FQNs.
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_path_parent",
+            "manifest.launch.xml",
+            "/perception",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let scope_path = index
+            .scope_paths
+            .iter()
+            .find(|p| p.scope_id == 0 && p.path_name == "pipeline")
+            .expect("pipeline path should be present");
+
+        // Absolute names pass through unchanged
+        assert_eq!(scope_path.input_topics, vec!["/sensor/raw"]);
+        assert_eq!(scope_path.output_topics, vec!["/perception/objects"]);
     }
 
     #[test]
