@@ -91,7 +91,6 @@ def run_rust_parser(launch_file: Path, paths: Dict) -> Dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=60,
-            cwd="/tmp"
         )
 
         if result.returncode != 0:
@@ -99,15 +98,13 @@ def run_rust_parser(launch_file: Path, paths: Dict) -> Dict[str, Any]:
             print(result.stderr[-1000:])  # Last 1000 chars
             return None
 
-        # record.json is created in the cwd (/tmp)
-        record_file = Path("/tmp/record.json")
-        if not record_file.exists():
-            print(f"{Colors.RED}Error: record.json not found at {record_file}{Colors.END}")
+        # CLI outputs JSON to stdout
+        if not result.stdout.strip():
+            print(f"{Colors.RED}Error: no output from Rust parser{Colors.END}")
             print(f"Rust stderr: {result.stderr[-500:]}")
             return None
 
-        with open(record_file) as f:
-            return json.load(f)
+        return json.loads(result.stdout)
 
     except subprocess.TimeoutExpired:
         print(f"{Colors.RED}Rust parser timed out{Colors.END}")
@@ -120,8 +117,10 @@ def run_python_dump(launch_file: Path, paths: Dict) -> Dict[str, Any]:
     """Run Python dump_launch and return the record.json output."""
     print(f"{Colors.BLUE}Running Python dump_launch...{Colors.END}")
 
-    # Write Python output to tmp file
-    python_output = Path("/tmp/python_dump_output.json")
+    import tempfile
+    # Write Python output to an isolated temp directory
+    tmpdir = tempfile.mkdtemp(prefix="play_launch_compare_")
+    python_output = Path(tmpdir) / "python_dump_output.json"
 
     autoware_ws = paths['autoware_ws']
 
@@ -163,7 +162,7 @@ def run_python_dump(launch_file: Path, paths: Dict) -> Dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=60,
-            cwd="/tmp"
+            cwd=tmpdir
         )
 
         if result.returncode != 0:

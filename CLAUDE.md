@@ -171,14 +171,34 @@ Rules:
 - Multiple files in sequence
 - Temporary test scripts
 
-### Test Organization
-
-**Test Structure** (Session 12 - Reorganized):
-
-Test files are organized by category in `src/play_launch_parser/tests/`:
+### Crate Layout
 
 ```
-src/play_launch_parser/tests/
+play_launch_parser/
+├── crates/
+│   ├── play_launch_parser/     # Rust library + CLI binary
+│   │   ├── src/lib.rs          # pub fn parse_launch_file(...)
+│   │   └── src/main.rs         # CLI: play_launch_parser launch|file
+│   └── python/                 # PyO3 extension module (excluded from workspace)
+│       ├── Cargo.toml          # cdylib, own [workspace], pyo3 extension-module
+│       ├── src/lib.rs          # #[pymodule] + _cli_main()
+│       ├── pyproject.toml      # maturin build config
+│       ├── play_launch_parser/ # Python source (__init__.py, _cli.py, stubs)
+│       └── examples/           # Usage examples
+├── src/python_dump/            # Python fallback parser (not a Rust crate)
+├── Cargo.toml                  # workspace: members = [crates/play_launch_parser]
+│                               # exclude = [crates/python]
+└── justfile
+```
+
+**Key**: The `crates/python/` extension crate is **excluded** from the parser workspace because PyO3 `extension-module` and `auto-initialize` are mutually exclusive features. It has its own `[workspace]` marker and is built independently by maturin.
+
+### Test Organization
+
+Test files are organized by category in `crates/play_launch_parser/tests/`:
+
+```
+crates/play_launch_parser/tests/
 ├── edge_cases.rs           # Edge case tests (18 tests)
 ├── xml_tests.rs            # XML parsing tests (25 tests)
 ├── yaml_tests.rs           # YAML launch file tests (50 tests)
@@ -191,11 +211,11 @@ src/play_launch_parser/tests/
     └── includes/           # Files to be included by tests
 ```
 
-**Test Fixtures Location**: `src/play_launch_parser/tests/fixtures/`
+**Test Fixtures Location**: `crates/play_launch_parser/tests/fixtures/`
 - Helper functions use `env!("CARGO_MANIFEST_DIR")/tests/fixtures/launch`
 - Fixtures are self-contained within the crate
 
-**Total Test Count**: 371 tests without IR (237 unit + 18 edge + 25 XML + 50 YAML + 38 Python + 3 performance). With `--features ir`: 413 tests (+22 IR + 20 IR-eval).
+**Total Test Count**: 413 tests with `--features ir` (371 without IR).
 
 ### Python Test Requirements
 
@@ -230,23 +250,26 @@ See `src/play_launch_parser/tests/python_tests.rs` for examples.
 ## Common Commands
 
 ```bash
-# Run ALL tests (Rust + comparison + Autoware if available)
-just test
+# Build everything (Rust + colcon + Python wheel)
+just build
 
-# Run only Rust unit tests (371 tests; 413 with --features ir)
-just test-rust
+# Build Rust only
+just build-rust
 
-# Run comparison tests (Rust vs Python parser)
-just test-compare
-
-# Run Autoware validation tests
-just test-autoware
-
-# Run colcon tests (ROS 2 integration tests)
-just test-colcon
+# Build Python wheel (creates venv in crates/python/.venv if needed)
+just build-python
 
 # Run all quality checks (linters + Rust tests)
 just quality
+
+# Run only Rust unit tests (413 with --features ir)
+just test-rust
+
+# Run Python smoke test
+just test-python
+
+# Run ALL tests (Rust + comparison + Autoware if available)
+just test
 
 # Run linters and formatters
 just check
@@ -254,19 +277,15 @@ just check
 # Format code
 just format
 
-# Build the project
-just build
-
 # Clean artifacts
 just clean
 ```
 
-**Test Organization**:
-- `just test` - Runs ALL tests in the project (recommended for CI/validation)
-- `just test-rust` - Fast Rust unit tests only (recommended during development)
-- `just test-compare` - Comparison tests between Rust and Python parsers
-- `just test-autoware` - Full Autoware validation (requires Autoware symlink)
-- `just quality` - Linters + Rust tests (recommended before commits)
+**Build notes**:
+- `just build` includes `build-rust build-colcon build-python`
+- `just build-python` creates a venv with system Python, installs maturin, builds the wheel
+- The wheel path is printed at the end of `build-python`
+- The Python venv (`crates/python/.venv`) uses system Python to avoid version mismatches with PyO3's `auto-initialize` in the parser crate
 
 ## Before Completing a Task
 
@@ -299,234 +318,49 @@ After creating/modifying `.envrc`, run `direnv allow` to enable it.
 **Goal**: Fast Rust implementation of ROS 2 launch file parser to replace slow Python `dump_launch`
 
 **Current Status**: ✅ **PRODUCTION READY** - Autoware Compatibility Complete
-- **Test Coverage**: 371 tests passing (413 with `--features ir`, ~95% code coverage)
-- **Feature Completion**: 95% (Phase 5 complete, Phase 6 planned, **Phase 7 roadmap ready**)
-- **Autoware Compatibility**: ✅ **100%** - Full planning_simulator test passes (46 nodes, 15 containers, 54 composable nodes)
-- **Performance**: ~5s to parse full Autoware launch tree (vs ~10-15s with Python)
-  - **Phase 7 Target**: <1s (5-7x improvement planned)
+- **Test Coverage**: 413 tests passing (with `--features ir`)
+- **Autoware Compatibility**: ✅ **100%** (46 nodes, 15 containers, 54 composable nodes)
+- **Python bindings**: ✅ `pip install play-launch-parser` (Phase 9 complete)
+- **CLI**: ✅ `play-launch-parser` with `--format json|summary|names`
 
 ### Current Capabilities
 
-- ✅ Complete XML launch file parsing
-- ✅ All core substitutions (`$(var)`, `$(env)`, `$(find-pkg-share)`, etc.)
-- ✅ Eval expressions (arithmetic & string comparisons)
-- ✅ Python launch file support (complete core + extended API)
+- ✅ Complete XML / Python / YAML launch file parsing
+- ✅ All core substitutions, eval expressions, conditions
 - ✅ Container and composable node support (XML + Python)
-- ✅ YAML launch file support
-- ✅ Boolean attribute substitutions (respawn, respawn_delay)
-- ✅ Python API: launch, launch_ros, launch_xml, launch.frontend, launch.utilities
+- ✅ Launch tree scoping (which file defines each node)
+- ✅ Python bindings (`parse_file()`, `parse_package()`) via PyO3 + maturin
+- ✅ CLI with JSON / summary / names output formats
+- ✅ Type stubs (`.pyi`) for IDE autocompletion
 - ✅ Autoware production workload validated
 
-### Next Phase: Performance Optimization (Phase 7)
+### Completed Phases
 
-**Status**: 📋 Planned (comprehensive roadmap created in Session 12)
-
-**Goal**: Achieve **5-7x performance improvement** for complex launch files
-
-**Current Performance**: ~5s for Autoware planning_simulator.launch.xml
-**Target Performance**: <1s (5-7x improvement)
-
-**Three-Phase Approach**:
-
-1. **Phase 7.1: DashMap Caching** (2-3 days, Low Risk, **Highest Impact**)
-   - Package resolution cache: 80-95% improvement for lookups
-   - File content cache: 30-50% improvement for repeated includes
-   - Python mutex upgrade (parking_lot): 15-25% improvement
-   - **Expected**: Autoware ~5s → ~3s (60-80% improvement)
-
-2. **Phase 7.2: Hybrid Arc + Local Context** (1 week, Medium Risk, **Enables Parallelization**)
-   - Standard compiler pattern (used by V8, Python, Rust compiler, LLVM)
-   - Parent scope frozen in `Arc<ParentScope>`, child has local HashMap
-   - 500-1000x faster context creation (O(1) vs O(n))
-   - **Expected**: Autoware ~3s → ~2s (20-40% improvement + thread-safe for Phase 7.3)
-
-3. **Phase 7.3: rayon Parallel Processing** (2-3 days, Low Risk, **Final Multiplier**)
-   - Work-stealing threadpool (NOT async, NOT manual task queue)
-   - Change `.iter()` to `.par_iter()` for include processing
-   - rayon implements dynamic task spawning automatically
-   - **Expected**: Autoware ~2s → ~1s (2.1x improvement on 8 cores)
-
-**Why These Approaches**:
-- **DashMap over LRU+RwLock**: 7.5x vs 1.3x speedup on 8 threads, lock-free reads
-- **Hybrid context over simple Arc or CoW**: Standard compiler pattern, natural scope semantics, enables parallelization
-- **rayon over async**: Workload is 80%+ CPU-bound after caching, no tokio overhead, proven and simple
-
-**Key Dependencies**:
-```toml
-dashmap = "5.5"           # Concurrent HashMap
-parking_lot = "0.12"      # Faster mutexes
-rayon = "1.8"             # Parallel processing
-lru = "0.12"              # LRU cache (optional)
-```
-
-**Analysis Documents** (created Session 12, in `/tmp/`):
-- `optimization_opportunities.md` - Complete 8-category analysis (800+ lines)
-- `context_cloning_best_practices.md` - 4 compiler patterns compared
-- `parallelism_strategy_analysis.md` - Async vs rayon vs task queue
-- `cache_strategy_dashmap.md` - DashMap vs LRU detailed comparison
+- **Phase 7**: Performance optimization (DashMap caching, hybrid context, rayon parallelization) — see `docs/roadmap/phase-7-performance_optimization.md`
+- **Phase 8**: ROS API completeness (50/56 features, 89% coverage) — see `docs/roadmap/phase-8-ros_api_completeness.md`
+- **Phase 9**: Python bindings & CLI (PyO3 + maturin, `parse_file()`/`parse_package()`, `--format json|summary|names`, type stubs) — see `docs/roadmap/phase-9-python_bindings_and_cli.md`
 
 ### Detailed Documentation
 
 For detailed information, see:
 - **Feature tracking**: `docs/feature_list.md`
 - **Implementation status**: `docs/roadmap/implementation_status.md`
-- **Phase 5 roadmap**: `docs/roadmap/phase-5-python_support.md`
-- **Phase 7 roadmap**: `docs/roadmap/phase-7-performance_optimization.md` ⭐
-- **Test organization**: `tests/README.md`
+- **Python bindings & CLI**: `docs/roadmap/phase-9-python_bindings_and_cli.md`
+- **Phase 7 roadmap**: `docs/roadmap/phase-7-performance_optimization.md`
 
-### Quick Reference
+### Key Architectural Notes
 
-**Test Count Baseline**: 371 tests (237 unit + 18 edge + 25 XML + 50 YAML + 38 Python + 3 performance). IR tests (`--features ir`): +22 IR + 20 IR-eval = 413 total.
-
-**Key Architectural Notes**:
 - Substitution system uses recursive `Vec<Substitution>` for nesting
 - Parser uses character-by-character parsing with depth counting
 - Include arguments use `Vec` (not `HashMap`) to preserve order
 - Python API uses capture-on-construction pattern
+- Python extension crate (`crates/python/`) is excluded from workspace — PyO3 `extension-module` vs `auto-initialize` conflict
+- The extension crate's venv must use system Python (same version PyO3 links against in the parser crate)
 
-See implementation docs for detailed architecture and design decisions.
+## ROS 2 Include Scoping Behavior
 
-## Recent Session Work (Latest)
+**Critical**: YAML and XML includes have different scoping semantics:
+- **XML includes**: isolated child scope (safe for parallel processing)
+- **YAML includes**: modify parent scope directly (must be sequential)
 
-### Session 12: Test Organization, Documentation & Optimization Planning ✅
-
-**Work Completed**:
-
-**Part 1: Test Organization & Documentation**
-1. ✅ Cleaned up debug code - Converted all `eprintln!` to structured logging (`log::trace!`, `log::debug!`, `log::error!`)
-2. ✅ Fixed test script bugs - `compare_rust_python.py` now correctly validates all metrics including node count adjustments for containers
-3. ✅ Created comprehensive edge case tests - 4 new fixtures testing Autoware-derived patterns (OpaqueFunction conditional logic, list concatenation, ParameterFile, nested substitutions)
-4. ✅ Reorganized test structure:
-   - Moved fixtures from `/tests/fixtures` to `/src/play_launch_parser/tests/fixtures`
-   - Split 2191-line `integration_tests.rs` into 3 focused files:
-     - `xml_tests.rs` (20 tests, 36KB)
-     - `python_tests.rs` (15 tests, 35KB)
-     - `integration_tests.rs` (3 performance tests, 3.5KB)
-5. ✅ Fixed Python test race conditions - Added `python_test_guard()` to serialize Python tests and prevent global state contamination
-6. ✅ Updated documentation:
-   - `docs/feature_list.md` - Added edge case testing section, test coverage matrix, and Autoware validation results
-   - Test counts updated to 260 total tests
-   - Rewrote `README.md` in minimalist style (266 lines → 70 lines)
-   - Revised justfile test recipes for better workflow
-
-**Part 2: Performance Optimization Analysis**
-7. ✅ Comprehensive optimization analysis - Identified 8 major categories with 5-7x total improvement potential
-8. ✅ Created Phase 7 roadmap - Detailed 3-4 week implementation plan with code examples and success criteria
-9. ✅ Context cloning best practices - Analyzed 4 compiler approaches, recommended Hybrid Arc + Local pattern
-10. ✅ Parallelism strategy analysis - Compared async vs rayon vs manual task queue, recommended rayon (Approach 2)
-11. ✅ Cache strategy documentation - DashMap vs LRU analysis for different cache types
-
-**Key Technical Decisions**:
-- **Logging**: All debug output now uses proper log levels for RUST_LOG control
-- **Test Serialization**: Python tests run sequentially to avoid race conditions in global capture storage
-- **Test Organization**: Logical separation of XML, Python, and performance tests
-- **Context Pattern**: Hybrid Arc + Local (used by V8, Python, Rust compiler, LLVM) - 500-1000x faster child creation
-- **Parallelization**: rayon threadpool (NOT async) - 80%+ CPU-bound workload, work-stealing queue
-- **Caching**: DashMap for bounded caches (packages, files, commands), thread_local LRU for unbounded (substitutions)
-
-**Documentation Created**:
-- `/tmp/test_coverage_update.md` - Comprehensive test coverage documentation
-- `/tmp/optimization_opportunities.md` - Complete 8-category optimization analysis (800+ lines)
-- `/tmp/context_cloning_best_practices.md` - Compiler pattern analysis (4 approaches)
-- `/tmp/parallelism_strategy_analysis.md` - Async vs rayon vs task queue comparison
-- `/tmp/cache_strategy_dashmap.md` - DashMap vs LRU detailed comparison
-- `/tmp/package_resolution_context_analysis.md` - Context awareness analysis
-- `docs/roadmap/phase-7-performance_optimization.md` - Implementation roadmap with tasks and code examples
-- Edge case test fixtures validating Autoware patterns
-
-**Validation**:
-- ✅ 413 tests passing (218 unit + 18 edge + 20 XML + 15 Python + 3 performance + 6 base)
-- ✅ 100% Autoware compatibility maintained (46 nodes, 15 containers, 54 composable nodes)
-- ✅ Zero clippy warnings
-- ✅ All quality checks passing
-
-**Next Phase Preview**: Phase 7 Performance Optimization
-- **Goal**: 5-7x improvement (Autoware: ~5s → ~0.7-1s)
-- **Phase 7.1**: DashMap caching (60-80% improvement in 2-3 days)
-- **Phase 7.2**: Hybrid Arc + Local context (20-40% improvement in 1 week)
-- **Phase 7.3**: rayon parallelization (2.1x improvement in 2-3 days)
-- **Phase 7.4**: Additional optimizations (+10-20% in 1 week)
-
-## ROS 2 Include Scoping Behavior (Session 13 Findings)
-
-### Critical Discovery: YAML vs XML Include Semantics
-
-**Problem Identified**: Parallel include processing broke YAML preset files in Autoware.
-
-**Root Cause**: ROS 2 has different scoping semantics for YAML vs XML includes:
-
-#### XML Includes (Isolated Scope)
-- Create child context: `include_context = self.context.child()`
-- Variables declared inside stay in child scope
-- Context changes are discarded after processing
-- **Safe for parallel processing** ✅
-
-#### YAML Includes (Parent Scope Modification)
-- Modify parent context directly: `self.process_yaml_launch_file()`
-- Variables declared are visible to subsequent includes
-- Used for preset files that declare configuration variables
-- **Must be processed sequentially** ⚠️
-
-### Real-World Example from Autoware
-
-```xml
-<!-- tier4_planning_component.launch.xml -->
-<include file=".../preset/default_preset.yaml"/>  <!-- Declares velocity_smoother_type -->
-
-<include file=".../planning.launch.xml">
-  <arg name="param" value="...$(var velocity_smoother_type)..."/>  <!-- Uses it -->
-</include>
-```
-
-If processed in parallel:
-- YAML modifies clone context (discarded) ✗
-- XML sees original context (missing variable) ✗
-- Result: "Undefined variable: velocity_smoother_type"
-
-If processed sequentially:
-- YAML modifies self.context ✓
-- XML sees updated self.context ✓
-- Result: Variable resolved correctly
-
-### Implementation Solution
-
-**Code Change** (src/lib.rs:624-680):
-- Detect YAML includes during batch collection
-- Process any collected XML includes in parallel
-- Process YAML include sequentially
-- Break batching to restart after YAML
-
-**Result**:
-- XML includes: parallel for performance
-- YAML includes: sequential for correctness
-- Maintains both performance and correctness
-
-### ROS 2 Documentation Analysis
-
-**Official Docs Reviewed**:
-- [ROS 2 Launch XML Format](https://design.ros2.org/articles/roslaunch_xml.html)
-- [ROS 2 Launch System](https://design.ros2.org/articles/roslaunch.html)
-- [Using Python, XML, and YAML for ROS 2 Launch Files](https://docs.ros.org/en/foxy/How-To-Guides/Launch-file-different-formats.html)
-
-**Key Findings**:
-1. XML format doc: "included launch file description has its own scope"
-2. Main launch doc: "Changes to the local state by included launch descriptions persist"
-3. **YAML scoping behavior is completely undocumented** ❌
-
-**Observed Behavior** (reverse-engineered from Autoware):
-- YAML preset files modify parent context
-- Subsequent includes see YAML-declared variables
-- This is critical for Autoware's preset system to work
-
-**Documentation Created**:
-- `docs/include_scoping_behavior.md` - Comprehensive analysis with sources
-
-### Key Takeaway for Development
-
-When implementing include processing:
-1. ✅ XML includes can be parallelized safely
-2. ⚠️ YAML includes must respect execution order
-3. ⚠️ Include arg values may reference variables from previous YAML includes
-4. ✅ Don't assume all includes can be parallelized - check file type
-
-This behavior is essential for Autoware compatibility and likely affects other large ROS 2 projects using preset files.
+This is undocumented in ROS 2 but essential for Autoware's preset system. See `docs/include_scoping_behavior.md`.
