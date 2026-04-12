@@ -287,6 +287,33 @@ just clean
 - The wheel path is printed at the end of `build-python`
 - The Python venv (`crates/python/.venv`) uses system Python to avoid version mismatches with PyO3's `auto-initialize` in the parser crate
 
+### CLI
+
+Two binaries with identical functionality:
+
+- **Rust binary** (`play_launch_parser`): built by `just build-rust`, lives at `target/dev-release/play_launch_parser`
+- **Python entry point** (`play-launch-parser`): installed by `just build-python` into `crates/python/.venv/bin/`
+
+```bash
+# Parse by file path (JSON to stdout)
+play_launch_parser file /path/to/launch.xml
+
+# Parse by ROS package name
+play_launch_parser launch <package> <file>
+
+# Pass launch arguments
+play_launch_parser file /path/to/launch.xml vehicle_model:=sample
+
+# Output formats
+play_launch_parser file /path/to/launch.xml --format summary   # human-readable table
+play_launch_parser file /path/to/launch.xml --format names     # one FQN per line
+
+# Write to file instead of stdout
+play_launch_parser file /path/to/launch.xml -o record.json
+```
+
+Exit codes: `0` success, `1` parse error, `2` file/package not found.
+
 ## Before Completing a Task
 
 Checklist:
