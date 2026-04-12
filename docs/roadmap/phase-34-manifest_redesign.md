@@ -200,21 +200,43 @@ cross-scope merge logic to validate.
 - [x] `max_transport_ms` included in `scope-budget` sum check
 - [x] All 36 manifest_loader tests pass (32 + 4 new path tests)
 
-### 34.7 — QoS compatibility rule
+### 34.7 — QoS compatibility rule ✅ Done
 
-- [ ] Add `qos_match.rs` — check publisher QoS against subscriber QoS
-  on merged topics using ROS 2 compatibility matrix
-- [ ] `best_effort` pub + `reliable` sub → error
-- [ ] `volatile` pub + `transient_local` sub → error
-- [ ] Add to `default_rules()` in `rules/mod.rs`
+The original design issue (#45) called for a "best_effort pub + reliable
+sub" check. In the current manifest model where topic QoS is a single
+channel-level profile shared by both sides, this matrix check is **moot**
+— both sides agree by construction. The cross-scope `consistency` rule
+catches the case where two scopes declare the same topic with different
+QoS values (Phase 34.5).
+
+What `qos-match` *can* usefully catch is **structural validity** of a
+single QoS profile that `qos-compat` doesn't check:
+
+- [x] Add `qos_match.rs` — structural validity + DDS pitfall detection
+- [x] `depth: 0` → error (cannot buffer any messages)
+- [x] `keep_all` + `depth` → warning (depth ignored when history is keep_all)
+- [x] `best_effort` + `transient_local` → warning (late joiners cannot
+  receive historical data over best_effort)
+- [x] Add to `default_rules()` in `rules/mod.rs`
 
 **Files:**
-- [ ] `check/src/rules/qos_match.rs` (new)
-- [ ] `check/src/rules/mod.rs`
+- [x] `check/src/rules/qos_match.rs` (new)
+- [x] `check/src/rules/mod.rs`
 
 **Done when:**
-- [ ] `manifest_qos_match` fixture: compatible QoS passes, incompatible errors
-- [ ] Rule fires on merged topics (pub in one scope, sub in another)
+- [x] depth=0 produces error
+- [x] keep_all + depth produces warning
+- [x] best_effort + transient_local produces warning
+- [x] reliable + transient_local + keep_last + depth>0 (canonical "deliver to
+  late joiners" pattern) produces no diagnostics
+- [x] Topic without QoS declaration produces no qos-match diagnostics
+- [x] All tests pass (66 checker tests, 5 new for qos-match)
+
+**Note on per-endpoint QoS:** if future versions add per-endpoint QoS
+overrides on `EndpointProps`, the qos-match rule should be extended to
+also validate pub-vs-sub QoS compatibility using the ROS 2 matrix
+(`best_effort` pub + `reliable` sub → no data flow). Tracked as a
+follow-up.
 
 ### 34.8 — CLI and integration
 
