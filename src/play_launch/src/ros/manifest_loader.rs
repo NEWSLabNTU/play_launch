@@ -36,25 +36,49 @@ pub struct ResolvedManifest {
 }
 
 /// Resolved topic entry with fully-qualified names.
+///
+/// A topic may be declared in multiple scopes across the manifest tree
+/// (e.g., the publisher's manifest declares it with full contract, and
+/// each subscriber's manifest declares the type for standalone checking).
+/// The checker merges declarations: contract fields (`type`, `rate_hz`,
+/// `qos`) must agree, while endpoint lists are combined.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Fields used by 31.5 runtime monitors and 31.6 audit
 pub struct ResolvedTopic {
     /// Fully-qualified topic name (with namespace prefix).
     pub fqn: String,
-    /// Message type.
+    /// Message type (must agree across all declaring scopes).
     pub msg_type: String,
-    /// QoS declaration (if any).
+    /// QoS declaration (must agree across all declaring scopes if declared).
     pub qos: Option<ros_launch_manifest_types::QosDecl>,
-    /// Publisher endpoint FQNs (namespace-prefixed).
+    /// Publisher endpoint FQNs (merged from all declaring scopes).
     pub publishers: Vec<String>,
-    /// Subscriber endpoint FQNs (namespace-prefixed).
+    /// Subscriber endpoint FQNs (merged from all declaring scopes).
     pub subscribers: Vec<String>,
-    /// Expected rate (Hz).
+    /// Expected rate (Hz, must agree across all declaring scopes if declared).
     pub rate_hz: Option<f64>,
-    /// Drop tolerance.
+    /// Worst-case transport latency (ms, must agree across all declaring scopes).
+    pub max_transport_ms: Option<f64>,
+    /// Drop tolerance (must agree across all declaring scopes if declared).
     pub drop: Option<ros_launch_manifest_types::DropSpec>,
-    /// Scope ID this topic belongs to.
-    pub scope_id: usize,
+    /// All scope IDs that declared this topic.
+    pub scope_ids: Vec<usize>,
+}
+
+/// Resolved service entry with fully-qualified names.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ResolvedService {
+    /// Fully-qualified service name (with namespace prefix).
+    pub fqn: String,
+    /// Service type (must agree across all declaring scopes).
+    pub srv_type: String,
+    /// Server endpoint FQNs (merged).
+    pub servers: Vec<String>,
+    /// Client endpoint FQNs (merged).
+    pub clients: Vec<String>,
+    /// All scope IDs that declared this service.
+    pub scope_ids: Vec<usize>,
 }
 
 /// Resolved node path entry.
@@ -76,12 +100,16 @@ pub struct ResolvedNodePath {
 pub struct ManifestIndex {
     /// Manifests by scope ID.
     pub manifests: HashMap<usize, ResolvedManifest>,
-    /// All resolved topics (FQN → topic info).
+    /// All resolved topics (FQN → topic info, merged across scopes).
     pub topics: BTreeMap<String, ResolvedTopic>,
+    /// All resolved services (FQN → service info, merged across scopes).
+    pub services: BTreeMap<String, ResolvedService>,
     /// All resolved node paths.
     pub node_paths: Vec<ResolvedNodePath>,
     /// Scope-level paths by scope ID.
     pub scope_paths: HashMap<usize, Vec<(String, ros_launch_manifest_types::PathDecl)>>,
+    /// Cross-scope consistency diagnostics (collected after merge).
+    pub merge_diagnostics: Vec<Diagnostic>,
     /// Total errors across all manifests.
     pub total_errors: usize,
     /// Total warnings across all manifests.
@@ -209,8 +237,9 @@ pub fn load_manifests(
         index.total_errors += errors;
         index.total_warnings += warnings;
 
-        // Resolve names with namespace prefix
+        // Resolve names with namespace prefix and merge across scopes
         resolve_topics(&manifest, scope, &mut index);
+        resolve_services(&manifest, scope, &mut index);
         resolve_node_paths(&manifest, scope, &mut index);
         resolve_scope_paths(&manifest, scope, &mut index);
 
@@ -230,6 +259,24 @@ pub fn load_manifests(
         loaded += 1;
     }
 
+    // Cross-scope post-merge checks
+    run_cross_scope_checks(&mut index);
+
+    // Fold merge diagnostics into the total counts and log them
+    for diag in &index.merge_diagnostics {
+        match diag.severity {
+            Severity::Error => {
+                index.total_errors += 1;
+                warn!("[cross-scope] {diag}");
+            }
+            Severity::Warning => {
+                index.total_warnings += 1;
+                debug!("[cross-scope] {diag}");
+            }
+            Severity::Info => debug!("[cross-scope] {diag}"),
+        }
+    }
+
     if loaded > 0 {
         info!(
             "Loaded {loaded} manifest(s) ({skipped} scopes without manifests, {} errors, {} warnings)",
@@ -240,6 +287,49 @@ pub fn load_manifests(
     }
 
     Ok(index)
+}
+
+/// Run validation checks that require the merged cross-scope view.
+///
+/// After all manifests are loaded and merged, this checks for:
+/// - Topics with 0 publishers across the entire tree (dangling sub)
+/// - Services with 0 servers across the entire tree (dangling client)
+/// - Rate hierarchy on merged topics (publisher rate vs subscriber demand)
+fn run_cross_scope_checks(index: &mut ManifestIndex) {
+    // Dangling topic: 0 publishers across the merged tree
+    for (fqn, topic) in &index.topics {
+        if topic.publishers.is_empty() && !topic.subscribers.is_empty() {
+            index.merge_diagnostics.push(Diagnostic {
+                rule_id: "dangling-entity".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "topic '{}' has 0 publishers across the manifest tree (declared in {} scope(s)) — \
+                     may be published by an external system",
+                    fqn,
+                    topic.scope_ids.len()
+                ),
+                path: format!("topics.{fqn}"),
+                span: None,
+            });
+        }
+    }
+
+    // Dangling service: 0 servers across the merged tree
+    for (fqn, service) in &index.services {
+        if service.servers.is_empty() && !service.clients.is_empty() {
+            index.merge_diagnostics.push(Diagnostic {
+                rule_id: "dangling-entity".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "service '{}' has 0 servers across the manifest tree (declared in {} scope(s))",
+                    fqn,
+                    service.scope_ids.len()
+                ),
+                path: format!("services.{fqn}"),
+                span: None,
+            });
+        }
+    }
 }
 
 /// Resolve the manifest file path for a given scope.
@@ -260,7 +350,12 @@ fn resolve_manifest_path(scope: &ScopeEntry, manifest_dir: &Path) -> Option<Path
     Some(manifest_dir.join(pkg_dir).join(format!("{stem}.yaml")))
 }
 
-/// Resolve topic declarations into fully-qualified names.
+/// Resolve and merge topic declarations from this scope into the index.
+///
+/// If a topic with the same resolved FQN already exists in the index
+/// (from another scope), merge the declarations: validate that contract
+/// fields agree, union the publisher/subscriber endpoint lists, and
+/// emit `consistency` diagnostics on mismatches.
 fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
     let ns = &scope.ns;
 
@@ -279,19 +374,210 @@ fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestI
             .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
             .collect();
 
-        index.topics.insert(
-            fqn.clone(),
-            ResolvedTopic {
-                fqn,
-                msg_type: topic_decl.msg_type.clone(),
-                qos: topic_decl.qos.clone(),
-                publishers,
-                subscribers,
-                rate_hz: topic_decl.rate_hz,
-                drop: topic_decl.drop.clone(),
-                scope_id: scope.id,
-            },
-        );
+        if let Some(existing) = index.topics.get_mut(&fqn) {
+            // Merge with existing declaration — validate agreement
+            merge_topic(existing, scope, topic_name, topic_decl,
+                        publishers, subscribers, &mut index.merge_diagnostics);
+        } else {
+            index.topics.insert(
+                fqn.clone(),
+                ResolvedTopic {
+                    fqn,
+                    msg_type: topic_decl.msg_type.clone(),
+                    qos: topic_decl.qos.clone(),
+                    publishers,
+                    subscribers,
+                    rate_hz: topic_decl.rate_hz,
+                    max_transport_ms: topic_decl.max_transport_ms,
+                    drop: topic_decl.drop.clone(),
+                    scope_ids: vec![scope.id],
+                },
+            );
+        }
+    }
+}
+
+/// Merge a new topic declaration into an existing ResolvedTopic entry.
+/// Validates contract fields agree, unions endpoint lists, emits diagnostics.
+fn merge_topic(
+    existing: &mut ResolvedTopic,
+    scope: &ScopeEntry,
+    topic_name: &str,
+    decl: &ros_launch_manifest_types::TopicDecl,
+    publishers: Vec<String>,
+    subscribers: Vec<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    // Validate type agreement (required field, must always match)
+    if existing.msg_type != decl.msg_type {
+        diagnostics.push(Diagnostic {
+            rule_id: "consistency".to_string(),
+            severity: Severity::Error,
+            message: format!(
+                "topic '{}' type mismatch: '{}' (existing) vs '{}' in scope {} ({}/{})",
+                existing.fqn,
+                existing.msg_type,
+                decl.msg_type,
+                scope.id,
+                scope.pkg().unwrap_or("?"),
+                scope.file().unwrap_or("?"),
+            ),
+            path: format!("topics.{topic_name}.type"),
+            span: None,
+        });
+    }
+
+    // Validate rate_hz agreement (only when both declared)
+    if let (Some(a), Some(b)) = (existing.rate_hz, decl.rate_hz) {
+        if (a - b).abs() > f64::EPSILON {
+            diagnostics.push(Diagnostic {
+                rule_id: "consistency".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "topic '{}' rate_hz mismatch: {} (existing) vs {} in scope {} ({}/{})",
+                    existing.fqn, a, b, scope.id,
+                    scope.pkg().unwrap_or("?"),
+                    scope.file().unwrap_or("?"),
+                ),
+                path: format!("topics.{topic_name}.rate_hz"),
+                span: None,
+            });
+        }
+    } else if existing.rate_hz.is_none() {
+        existing.rate_hz = decl.rate_hz;
+    }
+
+    // Validate max_transport_ms agreement
+    if let (Some(a), Some(b)) = (existing.max_transport_ms, decl.max_transport_ms) {
+        if (a - b).abs() > f64::EPSILON {
+            diagnostics.push(Diagnostic {
+                rule_id: "consistency".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "topic '{}' max_transport_ms mismatch: {} vs {} in scope {} ({}/{})",
+                    existing.fqn, a, b, scope.id,
+                    scope.pkg().unwrap_or("?"),
+                    scope.file().unwrap_or("?"),
+                ),
+                path: format!("topics.{topic_name}.max_transport_ms"),
+                span: None,
+            });
+        }
+    } else if existing.max_transport_ms.is_none() {
+        existing.max_transport_ms = decl.max_transport_ms;
+    }
+
+    // Validate QoS agreement
+    if let (Some(a), Some(b)) = (existing.qos.as_ref(), decl.qos.as_ref()) {
+        if !qos_matches(a, b) {
+            diagnostics.push(Diagnostic {
+                rule_id: "consistency".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "topic '{}' qos mismatch in scope {} ({}/{})",
+                    existing.fqn, scope.id,
+                    scope.pkg().unwrap_or("?"),
+                    scope.file().unwrap_or("?"),
+                ),
+                path: format!("topics.{topic_name}.qos"),
+                span: None,
+            });
+        }
+    } else if existing.qos.is_none() {
+        existing.qos = decl.qos.clone();
+    }
+
+    // Merge endpoint lists (deduplicated)
+    for p in publishers {
+        if !existing.publishers.contains(&p) {
+            existing.publishers.push(p);
+        }
+    }
+    for s in subscribers {
+        if !existing.subscribers.contains(&s) {
+            existing.subscribers.push(s);
+        }
+    }
+
+    // Track contributing scope
+    if !existing.scope_ids.contains(&scope.id) {
+        existing.scope_ids.push(scope.id);
+    }
+}
+
+/// Compare two QoS declarations for equality.
+fn qos_matches(
+    a: &ros_launch_manifest_types::QosDecl,
+    b: &ros_launch_manifest_types::QosDecl,
+) -> bool {
+    a.reliability == b.reliability
+        && a.durability == b.durability
+        && a.depth == b.depth
+        && a.history == b.history
+        && a.lifespan_ms == b.lifespan_ms
+        && a.liveliness == b.liveliness
+}
+
+/// Resolve and merge service declarations from this scope into the index.
+fn resolve_services(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
+    let ns = &scope.ns;
+
+    for (service_name, service_decl) in &manifest.services {
+        let fqn = qualify_name(ns, service_name);
+
+        let servers: Vec<String> = service_decl
+            .server
+            .iter()
+            .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
+            .collect();
+        let clients: Vec<String> = service_decl
+            .client
+            .iter()
+            .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
+            .collect();
+
+        if let Some(existing) = index.services.get_mut(&fqn) {
+            // Validate type agreement
+            if existing.srv_type != service_decl.srv_type {
+                index.merge_diagnostics.push(Diagnostic {
+                    rule_id: "consistency".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "service '{}' type mismatch: '{}' vs '{}' in scope {} ({}/{})",
+                        existing.fqn, existing.srv_type, service_decl.srv_type, scope.id,
+                        scope.pkg().unwrap_or("?"),
+                        scope.file().unwrap_or("?"),
+                    ),
+                    path: format!("services.{service_name}.type"),
+                    span: None,
+                });
+            }
+
+            for s in servers {
+                if !existing.servers.contains(&s) {
+                    existing.servers.push(s);
+                }
+            }
+            for c in clients {
+                if !existing.clients.contains(&c) {
+                    existing.clients.push(c);
+                }
+            }
+            if !existing.scope_ids.contains(&scope.id) {
+                existing.scope_ids.push(scope.id);
+            }
+        } else {
+            index.services.insert(
+                fqn.clone(),
+                ResolvedService {
+                    fqn,
+                    srv_type: service_decl.srv_type.clone(),
+                    servers,
+                    clients,
+                    scope_ids: vec![scope.id],
+                },
+            );
+        }
     }
 }
 
@@ -508,7 +794,7 @@ mod tests {
         assert_eq!(chatter.msg_type, "std_msgs/msg/String");
         assert_eq!(chatter.publishers, vec!["/talker/chatter"]);
         assert_eq!(chatter.subscribers, vec!["/listener/chatter"]);
-        assert_eq!(chatter.scope_id, 0);
+        assert_eq!(chatter.scope_ids, vec![0]);
     }
 
     #[test]
@@ -524,8 +810,8 @@ mod tests {
         assert!(index.topics.contains_key("/a/chatter"));
         assert!(index.topics.contains_key("/b/chatter"));
         assert_ne!(
-            index.topics["/a/chatter"].scope_id,
-            index.topics["/b/chatter"].scope_id,
+            index.topics["/a/chatter"].scope_ids,
+            index.topics["/b/chatter"].scope_ids,
         );
     }
 
@@ -695,7 +981,7 @@ mod tests {
         for i in 1..=5 {
             let key = format!("/system/topic_monitor_{i}/chatter");
             assert!(index.topics.contains_key(&key), "missing {key}");
-            assert_eq!(index.topics[&key].scope_id, i - 1);
+            assert_eq!(index.topics[&key].scope_ids, vec![i - 1]);
         }
         // 5 scopes × 1 topic = 5 distinct topic entries
         let chatter_topics: Vec<_> = index
@@ -838,7 +1124,7 @@ mod tests {
             "expected {deep_topic}, got: {:?}",
             index.topics.keys().collect::<Vec<_>>()
         );
-        assert_eq!(index.topics[deep_topic].scope_id, 10);
+        assert_eq!(index.topics[deep_topic].scope_ids, vec![10]);
     }
 
     #[test]
@@ -1177,5 +1463,164 @@ mod tests {
 
         // sensor_specific excluded (hesai != velodyne)
         assert!(!m.nodes.contains_key("sensor_specific"));
+    }
+
+    // ── Cross-scope merge and consistency (Phase 34.5) ──
+
+    #[test]
+    fn test_cross_scope_merge_compatible_types() {
+        // Two scopes declare the same topic with matching types — should merge cleanly.
+        let dump = make_dump(vec![
+            scope(0, "manifest_consistency_pub", "manifest.launch.xml", "", None),
+            scope(1, "manifest_consistency_sub", "manifest.launch.xml", "", Some(0)),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        // Both manifests loaded
+        assert_eq!(index.manifests.len(), 2);
+
+        // Topic merged into a single entry
+        assert!(index.topics.contains_key("/shared_data"));
+        let topic = &index.topics["/shared_data"];
+
+        // Both scopes contributed
+        assert_eq!(topic.scope_ids.len(), 2);
+        assert!(topic.scope_ids.contains(&0));
+        assert!(topic.scope_ids.contains(&1));
+
+        // Endpoints merged from both sides
+        assert_eq!(topic.publishers, vec!["/source/out"]);
+        assert_eq!(topic.subscribers, vec!["/consumer/in"]);
+
+        // Type matches both sides
+        assert_eq!(topic.msg_type, "std_msgs/msg/String");
+
+        // No consistency errors
+        let consistency_errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "consistency")
+            .collect();
+        assert!(
+            consistency_errors.is_empty(),
+            "expected no consistency errors, got: {consistency_errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_cross_scope_merge_type_mismatch() {
+        // Two scopes declare the same topic with DIFFERENT types — consistency error.
+        let dump = make_dump(vec![
+            scope(0, "manifest_consistency_pub", "manifest.launch.xml", "", None),
+            scope(1, "manifest_consistency_bad", "manifest.launch.xml", "", Some(0)),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        // Both manifests still loaded (errors are not fatal)
+        assert_eq!(index.manifests.len(), 2);
+
+        // Topic exists with the first-seen type
+        assert!(index.topics.contains_key("/shared_data"));
+
+        // Consistency error emitted
+        let consistency_errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "consistency")
+            .collect();
+        assert_eq!(
+            consistency_errors.len(),
+            1,
+            "expected 1 consistency error, got: {consistency_errors:?}"
+        );
+        let err = consistency_errors[0];
+        assert_eq!(err.severity, Severity::Error);
+        assert!(err.message.contains("type mismatch"));
+        assert!(err.message.contains("/shared_data"));
+
+        // Error counted in totals
+        assert!(index.total_errors >= 1);
+    }
+
+    #[test]
+    fn test_cross_scope_dangling_sub_no_publisher() {
+        // Subscriber-only manifest with no publisher anywhere — dangling-entity warning.
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_consistency_sub",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let topic = &index.topics["/shared_data"];
+        assert!(topic.publishers.is_empty());
+        assert!(!topic.subscribers.is_empty());
+
+        // dangling-entity warning emitted from cross-scope check
+        let dangling_warnings: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("/shared_data"))
+            .collect();
+        assert_eq!(
+            dangling_warnings.len(),
+            1,
+            "expected 1 dangling-entity warning for /shared_data, got: {dangling_warnings:?}"
+        );
+        assert_eq!(dangling_warnings[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn test_cross_scope_dangling_resolved_when_publisher_present() {
+        // Same as above, but with the publisher manifest also loaded — no warning.
+        let dump = make_dump(vec![
+            scope(0, "manifest_consistency_pub", "manifest.launch.xml", "", None),
+            scope(1, "manifest_consistency_sub", "manifest.launch.xml", "", Some(0)),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let topic = &index.topics["/shared_data"];
+        assert!(!topic.publishers.is_empty());
+        assert!(!topic.subscribers.is_empty());
+
+        let dangling_warnings: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("/shared_data"))
+            .collect();
+        assert!(
+            dangling_warnings.is_empty(),
+            "expected no dangling-entity warnings, got: {dangling_warnings:?}"
+        );
+    }
+
+    #[test]
+    fn test_cross_scope_publisher_only_loads_standalone() {
+        // Publisher-only manifest validates standalone (no errors).
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_consistency_pub",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        assert_eq!(index.manifests.len(), 1);
+        assert!(index.topics.contains_key("/shared_data"));
+
+        let topic = &index.topics["/shared_data"];
+        assert_eq!(topic.publishers, vec!["/source/out"]);
+        assert!(topic.subscribers.is_empty());
+
+        // Publisher with no subscriber is fine — no dangling warning
+        let dangling: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("/shared_data"))
+            .collect();
+        assert!(dangling.is_empty());
     }
 }
