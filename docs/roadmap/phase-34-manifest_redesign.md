@@ -169,25 +169,36 @@ cross-scope merge logic to validate.
 - [x] publisher with no subscriber is OK (no dangling)
 - [x] All 32 manifest_loader tests pass (27 existing + 5 new cross-scope tests)
 
-### 34.6 — Scope path budget checks with topic-name input/output
+### 34.6 — Scope path budget checks with topic-name input/output ✅ Done
 
-- [ ] Scope path `input:`/`output:` resolved as topic names using `qualify_name()`
-- [ ] Checker traces dataflow between resolved input/output topics,
-  considering only nodes within the scope's subtree
-- [ ] `budget-overflow`: when parent and child scopes declare paths with
-  the same resolved (input, output) topics, child budget ≤ parent budget
-- [ ] `scope-budget` sum check includes `max_transport_ms` from topics on the path
+- [x] Scope path `input:`/`output:` resolved as topic names using `qualify_name()`
+- [x] New `ResolvedScopePath` struct stores resolved input/output FQNs
+- [x] `scope_paths: Vec<ResolvedScopePath>` (was `HashMap<usize, Vec<...>>`)
+- [x] `scope_parents: HashMap<usize, Option<usize>>` for ancestor lookup
+- [x] `budget-overflow`: cross-scope check matches paths by resolved
+  (input, output) topics + ancestor relationship; child budget ≤ parent budget
+- [x] `scope-budget` sum check includes `max_transport_ms` from topics in scope
+- [ ] Dataflow tracing between input/output topics — deferred (algorithm
+  underspecified, see issue #43)
 
 **Files:**
-- [ ] `src/play_launch/src/ros/manifest_loader.rs` — resolve scope path topic names
-- [ ] `check/src/rules/scope_budget.rs` — updated sum check
-- [ ] `check/src/graph.rs` — scope path tracing with topic-name boundaries
+- [x] `src/play_launch/src/ros/manifest_loader.rs` — resolve scope path
+  topic names, parent chain tracking, cross-scope budget-overflow check
+- [x] `check/src/rules/scope_budget.rs` — sum check with `max_transport_ms`
+- [ ] `check/src/graph.rs` — scope path tracing (deferred with #43)
+
+**Test fixtures created:**
+- [x] `manifest_path_parent/` — parent scope with E2E path budget
+- [x] `manifest_path_child_ok/` — child with same boundaries, tighter budget
+- [x] `manifest_path_child_overflow/` — child with same boundaries, larger budget
 
 **Done when:**
-- [ ] Scope paths with relative topic names resolve correctly
-- [ ] Scope paths with absolute topic names pass through
-- [ ] Parent/child path budget-overflow detected on matching (input, output) pairs
-- [ ] `max_transport_ms` included in sum check
+- [x] Scope paths with relative topic names resolve correctly
+- [x] Scope paths with absolute topic names pass through unchanged
+- [x] Parent/child path budget-overflow detected on matching (input, output) pairs
+- [x] Unrelated scopes (sibling) with matching paths do NOT trigger overflow
+- [x] `max_transport_ms` included in `scope-budget` sum check
+- [x] All 36 manifest_loader tests pass (32 + 4 new path tests)
 
 ### 34.7 — QoS compatibility rule
 
