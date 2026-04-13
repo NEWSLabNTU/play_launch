@@ -1607,13 +1607,15 @@ mod tests {
         assert!(fqns.contains(&"/perception/fusion"));
         assert!(fqns.contains(&"/perception/tracker"));
 
-        // 5 topics
-        assert_eq!(index.topics.len(), 5);
+        // 6 topics: 5 relative + 1 absolute (/sensing/lidar/pointcloud)
+        assert_eq!(index.topics.len(), 6);
         assert!(index.topics.contains_key("/perception/cropped_points"));
         assert!(index.topics.contains_key("/perception/no_ground_points"));
         assert!(index.topics.contains_key("/perception/camera_detections"));
         assert!(index.topics.contains_key("/perception/fused_objects"));
         assert!(index.topics.contains_key("/perception/tracked_objects"));
+        // Absolute key passes through unchanged regardless of scope ns
+        assert!(index.topics.contains_key("/sensing/lidar/pointcloud"));
 
         // Scope paths
         let scope0_paths: Vec<&ResolvedScopePath> = index
@@ -2137,8 +2139,16 @@ mod tests {
         assert!(!graph.edges.is_empty(), "expected edges in pipeline graph");
 
         // Topic publisher/subscriber lookup
-        assert!(graph.topic_publishers.contains_key("/perception/cropped_points"));
-        assert!(graph.topic_subscribers.contains_key("/perception/cropped_points"));
+        assert!(
+            graph
+                .topic_publishers
+                .contains_key("/perception/cropped_points")
+        );
+        assert!(
+            graph
+                .topic_subscribers
+                .contains_key("/perception/cropped_points")
+        );
     }
 
     #[test]
@@ -2244,7 +2254,9 @@ mod tests {
         // Wait — effective delivery is 10 with no drop, sub demands 8, so OK.
         // Only the publisher error should fire.
         assert!(
-            rate_errors.iter().any(|d| d.message.contains("publisher cannot sustain")),
+            rate_errors
+                .iter()
+                .any(|d| d.message.contains("publisher cannot sustain")),
             "expected publisher rate error, got: {rate_errors:?}"
         );
     }
@@ -2271,7 +2283,9 @@ mod tests {
 
         // The pub-vs-channel error fires regardless of subscribers
         assert!(
-            rate_errors.iter().any(|d| d.message.contains("publisher cannot sustain")),
+            rate_errors
+                .iter()
+                .any(|d| d.message.contains("publisher cannot sustain")),
             "expected pub rate error, got: {rate_errors:?}"
         );
     }

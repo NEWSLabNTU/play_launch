@@ -128,28 +128,39 @@ Built a directed graph from the merged topic/service index:
 - [x] Subscriber-only manifest produces no rate error (publisher absent)
 - [x] All 43 manifest_loader tests pass (was 40, +3 new)
 
-### 35.6 — Migrate existing fixtures to ROS topic names
+### 35.6 — Migrate existing fixtures to ROS topic names ✅ Done
 
-Cosmetic but important: existing fixtures use abstract topic keys that
-work via relative resolution. Update them to use realistic ROS names so
-the docs and reality match.
+All existing fixtures already use valid ROS-style relative names
+(`chatter`, `cropped_points`, `ndt_pose`, etc.) that resolve correctly
+via `qualify_name()`. The Phase 34/35 additions established 9 fixtures
+using absolute keys for cross-scope patterns, exceeding the "3 fixtures"
+target:
 
-- [ ] Update `manifest_simple/manifest.yaml`: `chatter` → keep (it's
-  a valid relative name)
-- [ ] Update `manifest_pipeline/manifest.yaml`: ROS-style names
-- [ ] Update `manifest_ndt/manifest.yaml`: realistic Autoware NDT topic
-  names like `/localization/pose_estimator/pose`
-- [ ] Update `manifest_periodic/manifest.yaml`
-- [ ] Update `manifest_multi_scope/manifest.yaml`
-- [ ] Update `manifest_violations/manifest.yaml`
-- [ ] Update other fixtures as needed
-- [ ] Update test assertions accordingly
+**Cross-scope absolute-key fixtures (from Phase 34/35):**
+- [x] `manifest_consistency_pub/sub/bad` — `/shared_data`
+- [x] `manifest_path_parent/child_ok/child_overflow` — `/sensor/raw`, `/perception/objects`
+- [x] `manifest_parallel_pipeline` — `/sensor/raw`, `/perception/lidar_objects`, etc.
+- [x] `manifest_rate_pub_slow/rate_sub_demand` — `/shared_stream`
+
+**Existing fixtures migrated in this phase:**
+- [x] `manifest_pipeline/manifest.yaml` — added `/sensing/lidar/pointcloud`
+  absolute input, fixed scope path to use a topic name
+- [x] `manifest_ndt/manifest.yaml` — migrated external topics to absolute
+  keys: `/sensing/lidar/pointcloud`, `/sensing/imu/imu_raw`,
+  `/map/pointcloud_map`. Fixed scope path to use topic names.
+
+**Left as-is** (functional with relative keys, no migration needed):
+- `manifest_simple` (`chatter` is a valid relative name)
+- `manifest_args`, `manifest_conditions`, `manifest_control_conditional`,
+  `manifest_satisfiability`, `manifest_service_scope`, `manifest_periodic`,
+  `manifest_multi_scope`, `manifest_violations` — all use valid
+  ROS-style relative names
 
 **Done when:**
-- [ ] All fixtures use either valid ROS-style relative names or
-  absolute names
-- [ ] All tests pass
-- [ ] At least 3 fixtures use absolute names for cross-scope subscriptions
+- [x] All fixtures use valid ROS-style relative or absolute names
+- [x] All tests pass (225 total)
+- [x] 11 fixtures demonstrate absolute keys for cross-scope patterns
+  (9 from Phase 34/35 + 2 migrated in 35.6)
 
 ### 35.7 — Add planned 34.x fixtures
 
