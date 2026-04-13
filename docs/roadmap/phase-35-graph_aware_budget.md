@@ -162,32 +162,56 @@ target:
 - [x] 11 fixtures demonstrate absolute keys for cross-scope patterns
   (9 from Phase 34/35 + 2 migrated in 35.6)
 
-### 35.7 — Add planned 34.x fixtures
+### 35.7 — Add planned 34.x fixtures ✅ Done
 
-Three fixtures planned for Phase 34 but not created:
+- [x] `manifest_parallel_pipeline/` — already created in Phase 35.1–35.4
+  (fork-join with lidar/camera → fusion, critical path = 70ms)
+- [x] `manifest_standalone/` — sub-only topic with type, validates
+  standalone without cross-scope merge. Subscribes to
+  `/localization/kinematic_state` (absolute) with `max_age_ms: 100`.
+- [x] `manifest_qos_match/` — exercises all qos-match rule cases:
+  - `/map/vector_map` — canonical reliable + transient_local + keep_last
+    + depth:1 (no diagnostic)
+  - `/telemetry/depth_zero` — depth:0 with keep_last (error)
+  - `/sensor/best_effort_transient` — best_effort + transient_local (warning)
+  - `/debug/keep_all_with_depth` — keep_all + depth set (warning)
 
-- [ ] `manifest_standalone/` — leaf manifest with sub-only topic + type
-  declaration, validates standalone without cross-scope merge
-- [ ] `manifest_qos_match/` — fixture exercising the qos-match rule
-  end-to-end (depth=0 error, keep_all+depth warning, etc.)
-- [ ] `manifest_parallel_pipeline/` — fork-join topology for testing
-  35.3/35.4 critical-path computation
+**Integration tests added (8):**
+- [x] `fixture_standalone_parses_and_validates`
+- [x] `fixture_standalone_no_per_manifest_errors`
+- [x] `fixture_standalone_subscriber_max_age_ms`
+- [x] `fixture_qos_match_parses`
+- [x] `fixture_qos_match_depth_zero_error`
+- [x] `fixture_qos_match_best_effort_transient_local_warning`
+- [x] `fixture_qos_match_keep_all_with_depth_warning`
+- [x] `fixture_qos_match_canonical_vector_map_clean`
+
+All three fixtures added to `all_fixtures_round_trip`.
 
 **Done when:**
-- [ ] Each fixture has corresponding integration tests
-- [ ] Tests pass
+- [x] Each fixture has corresponding integration tests
+- [x] All 56 fixture tests pass (was 48, +8)
+- [x] All 233 total tests pass
 
-### 35.8 — Close out resolved design issues
+### 35.8 — Close out resolved design issues ✅ Done
 
-- [ ] Mark issue #18 done in `design-issues.md` (CLI `--rule` filter
-  was implemented in Phase 34.8)
-- [ ] Mark issue #42 partially-resolved if topology-aware check is done
-- [ ] Mark issue #43 done if dataflow tracing is implemented
-- [ ] Update summary table
+- [x] Mark issue #18 done — CLI `--rule` filter implemented in 34.8
+- [x] Mark issue #42 done — topology-aware critical-path in 35.1–35.4
+- [x] Mark issue #43 done — scope path tracing algorithm specified and
+  implemented in 35.1–35.4 (see `manifest_graph.rs`)
+- [x] Update summary table to show only actually-open issues
+- [x] Add a "Recently resolved" table mapping each resolved issue to
+  its implementing phase
+
+**Remaining open issues** (all require format extensions, tracked
+for future phases):
+- #44: `max_transport_ms` per-subscriber (format extension)
+- #45: QoS pub/sub compatibility check (needs per-endpoint QoS)
+- #49: Lifecycle nodes (format extension)
 
 **Done when:**
-- [ ] `design-issues.md` reflects current state
-- [ ] Open issues count matches reality
+- [x] `design-issues.md` reflects current state
+- [x] Open issues count matches reality (3 open, was 6)
 
 ## Ordering and Dependencies
 
