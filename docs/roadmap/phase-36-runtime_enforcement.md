@@ -180,13 +180,40 @@ Four tests, all passing:
 - `enforce_off_skips_rule_engine` — `--enforce-rules=off`; verifies no jsonl file is produced.
 - `block_unauthorized_endpoints_writes_allowlist_file` — `--block-unauthorized-endpoints`; verifies `play_log/<ts>/expected_graph.txt` is written with the declared FQNs.
 
-### Known gap: topic-name expansion in the `.so`
+### Topic-name expansion in the `.so` (done)
 
-The `.so`'s `rcl_publisher_init` / `rcl_subscription_init` hooks receive the topic name as the caller passed it to rcl — for `demo_nodes_cpp::talker`, that turns out to be bare `chatter` rather than `/pure_test/chatter` (rclcpp doesn't expand the name before reaching `rcl_publisher_init` in this code path). The interception layer hashes whatever string it sees, so the consumer's `topic_hash_to_fqn` map (built from manifest FQNs like `/pure_test/chatter`) doesn't match.
+`rcl_publisher_init` / `rcl_subscription_init` hooks receive the topic
+name as the caller passed it — for `demo_nodes_cpp::talker`, that's
+bare `chatter`. To make the consumer-side `topic_hash_to_fqn` map
+match manifest-declared absolute FQNs, the `.so` expands the topic
+before hashing.
 
-Effect: `consistency-runtime`, `qos-match-runtime`, `rate-hierarchy-runtime`, `max-age-runtime`, `drop-rate-runtime`, and `max-latency-runtime` may miss declared topics if the publisher's topic name isn't pre-expanded by the calling library. `graph-deviation-runtime` still fires correctly because it matches against the same un-expanded hash.
+Implementation:
 
-Follow-up (Phase 36.4): in the `.so` hook, call `rcl_expand_topic_name(topic_name, node_name, node_namespace, ...)` (or equivalent) to normalize before hashing. This wasn't in the v1 scope because most cases the smoke test exercises hit the un-expanded path, which the unit-test layer (synthetic events with pre-computed hashes) sidesteps.
+- `rcl_node_get_name` and `rcl_node_get_namespace` resolved via dlsym
+  alongside the other rcl symbols (optional — `Originals.node_get_name`
+  / `node_get_namespace` are `Option<FnRclNodeGetX>` so non-ROS
+  processes degrade gracefully).
+- `expand_topic_name(originals, node, raw_topic)` in `lib.rs` applies
+  the simplified ROS 2 topic-name resolution rules:
+  - Absolute (`/...`) → unchanged.
+  - `~` prefix → `<node_ns>/<node_name>/<rest>`.
+  - Relative → `<node_ns>/<topic>`.
+  Falls back to the raw topic string if the node accessors are
+  unavailable or fail (defensive — preserves Phase 29's inert-mode
+  guarantees).
+- Both rcl init hooks now call `expand_topic_name(...)` and use the
+  expanded form for `register_publisher`/`register_subscription` and
+  the topic_hash passed to plugins.
+
+Advanced rcl substitutions (`{var}`, `{ns}`, etc.) are not supported —
+they're rare in practice and would need parsing the full
+`rcutils_string_map_t` substitution table. Document as future work
+if a real workload hits them.
+
+Smoke test verifies the fix: `consistency_runtime_fires_when_type_mismatch_real_launch`
+declares `/pure_test/chatter` in the manifest and expects
+`consistency-runtime` to fire on the exact FQN.
 
 ### 36.4 CLI: enforce flag — done
 

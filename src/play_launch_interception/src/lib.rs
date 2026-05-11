@@ -56,6 +56,10 @@ struct Originals {
     publish: FnRclPublish,
     subscription_init: FnRclSubscriptionInit,
     take: FnRclTake,
+    /// Node accessors for topic-name expansion (Phase 36 polish).
+    /// Optional because resolution can fail in non-ROS processes.
+    node_get_name: Option<FnRclNodeGetName>,
+    node_get_namespace: Option<FnRclNodeGetNamespace>,
     /// RMW-layer originals (Phase 36.1). Optional — resolved separately
     /// from rcl symbols because the rmw symbols live in
     /// `librmw_implementation.so`, which may not be loaded under
@@ -103,6 +107,25 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         return None;
     }
 
+    // Optional node accessors — may be missing in non-ROS processes
+    // (in that case topic-name expansion silently skips).
+    let node_get_name =
+        unsafe { libc::dlsym(source, c"rcl_node_get_name".as_ptr()) };
+    let node_get_namespace =
+        unsafe { libc::dlsym(source, c"rcl_node_get_namespace".as_ptr()) };
+    let node_get_name = if node_get_name.is_null() {
+        None
+    } else {
+        Some(unsafe { std::mem::transmute::<*mut c_void, FnRclNodeGetName>(node_get_name) })
+    };
+    let node_get_namespace = if node_get_namespace.is_null() {
+        None
+    } else {
+        Some(unsafe {
+            std::mem::transmute::<*mut c_void, FnRclNodeGetNamespace>(node_get_namespace)
+        })
+    };
+
     Some(Originals {
         publisher_init: unsafe {
             std::mem::transmute::<*mut c_void, FnRclPublisherInit>(publisher_init)
@@ -112,8 +135,69 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
             std::mem::transmute::<*mut c_void, FnRclSubscriptionInit>(subscription_init)
         },
         take: unsafe { std::mem::transmute::<*mut c_void, FnRclTake>(take) },
+        node_get_name,
+        node_get_namespace,
         rmw: None, // resolved separately in try_resolve_originals
     })
+}
+
+/// Expand a topic name to its fully-qualified form.
+///
+/// Mirrors the ROS 2 topic-name resolution rules (simplified — we
+/// don't support advanced `{var}` substitutions, which are rare and
+/// would require parsing the full rcl substitution map):
+///
+/// - Absolute (`/...`) — return unchanged.
+/// - `~` prefix — replace with `<node_ns>/<node_name>`.
+/// - Relative — prepend `<node_ns>/`.
+///
+/// Falls back to the raw `topic` string if the node accessors are
+/// missing or fail.
+fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str) -> String {
+    if topic.starts_with('/') {
+        return topic.to_string();
+    }
+    let (Some(get_name), Some(get_ns)) =
+        (originals.node_get_name, originals.node_get_namespace)
+    else {
+        return topic.to_string();
+    };
+    if node.is_null() {
+        return topic.to_string();
+    }
+    let name_ptr = unsafe { get_name(node) };
+    let ns_ptr = unsafe { get_ns(node) };
+    if name_ptr.is_null() || ns_ptr.is_null() {
+        return topic.to_string();
+    }
+    let name = unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy();
+    let ns = unsafe { CStr::from_ptr(ns_ptr) }.to_string_lossy();
+
+    // ~ -> <ns>/<name>/<rest>
+    if let Some(rest) = topic.strip_prefix('~').and_then(|r| r.strip_prefix('/')) {
+        let ns = ns.trim_end_matches('/');
+        return if ns.is_empty() {
+            format!("/{name}/{rest}")
+        } else {
+            format!("{ns}/{name}/{rest}")
+        };
+    }
+    if topic == "~" {
+        let ns = ns.trim_end_matches('/');
+        return if ns.is_empty() {
+            format!("/{name}")
+        } else {
+            format!("{ns}/{name}")
+        };
+    }
+
+    // Relative — prepend node namespace.
+    let ns = ns.trim_end_matches('/');
+    if ns.is_empty() {
+        format!("/{topic}")
+    } else {
+        format!("{ns}/{topic}")
+    }
 }
 
 /// Try to resolve original rcl function pointers.
@@ -317,9 +401,14 @@ pub unsafe extern "C" fn rcl_publisher_init(
         unsafe { (rt.originals.publisher_init)(publisher, node, type_support, topic_name, options) };
 
     if ret == 0 && !rt.plugins.is_empty() {
-        let topic = unsafe { CStr::from_ptr(topic_name) }
+        let raw_topic = unsafe { CStr::from_ptr(topic_name) }
             .to_string_lossy()
             .into_owned();
+        // Phase 36 polish: expand to FQN so the consumer-side
+        // RuleEngine's topic_hash_to_fqn map matches manifest-declared
+        // absolute names. Without this, bare names like "chatter" never
+        // match `/<ns>/chatter` declarations.
+        let topic = expand_topic_name(&rt.originals, node, &raw_topic);
         let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
         let type_hash = unsafe { introspection::find_type_identity(type_support) }
             .map(|id| registry::fnv1a(id.as_bytes()));
@@ -420,9 +509,10 @@ pub unsafe extern "C" fn rcl_subscription_init(
     };
 
     if ret == 0 && !rt.plugins.is_empty() {
-        let topic = unsafe { CStr::from_ptr(topic_name) }
+        let raw_topic = unsafe { CStr::from_ptr(topic_name) }
             .to_string_lossy()
             .into_owned();
+        let topic = expand_topic_name(&rt.originals, node, &raw_topic);
         let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
         let type_hash = unsafe { introspection::find_type_identity(type_support) }
             .map(|id| registry::fnv1a(id.as_bytes()));

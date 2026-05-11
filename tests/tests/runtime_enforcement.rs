@@ -172,20 +172,14 @@ fn read_violations(path: &Path) -> Vec<serde_json::Value> {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Smoke test: RuleEngine writes `runtime_violations.jsonl` with at
-/// least one entry for a real launch.
-///
-/// Note: the `.so`'s `rcl_publisher_init` hook reads `topic_name`
-/// before rcl applies node-namespace expansion, so it emits bare
-/// `chatter` rather than `/pure_test/chatter`. The consumer-side
-/// FQN matching therefore can't tie `consistency-runtime` to the
-/// manifest's `/pure_test/chatter` decl reliably across all RMWs.
-/// Tracked as Phase 36 follow-up — for now assert only that the
-/// violations file is produced and contains some rule (typically
-/// graph-deviation-runtime fires because of the unexpanded name
-/// mismatch).
+/// Manifest declares `/pure_test/chatter` with the WRONG msg type
+/// (Int32 vs the actual String). Phase 36 polish ensures the `.so`
+/// expands bare `chatter` to `/pure_test/chatter` via `rcl_node_*`
+/// accessors before hashing, so the consumer-side FQN matching ties
+/// the runtime type-hash to the manifest decl and fires
+/// `consistency-runtime`.
 #[test]
-fn runtime_violations_jsonl_written_on_real_launch() {
+fn consistency_runtime_fires_when_type_mismatch_real_launch() {
     let env = fixtures::install_env();
     if env.is_empty() {
         eprintln!("skip: ROS env not available");
@@ -197,33 +191,29 @@ fn runtime_violations_jsonl_written_on_real_launch() {
         work_dir.path(),
         r#"topics:
   /pure_test/chatter:
-    type: std_msgs/msg/String
+    type: std_msgs/msg/Int32
     pub: [talker/chatter]
     sub: [listener/chatter]
 "#,
     );
 
     let res = run_with_manifest(&manifest_dir, "warn", &[], Duration::from_secs(3));
-    let play_log = res.path().join("play_log/latest");
-    let viol_path = play_log.join("runtime_violations.jsonl");
+    let viol_path = res
+        .path()
+        .join("play_log/latest/runtime_violations.jsonl");
     assert!(
         wait_for_file(&viol_path, Duration::from_secs(3)),
-        "runtime_violations.jsonl not written at {}",
-        viol_path.display()
+        "runtime_violations.jsonl not written"
     );
 
     let violations = read_violations(&viol_path);
     assert!(
-        !violations.is_empty(),
-        "expected at least one violation entry; got empty file"
+        violations.iter().any(|v| {
+            v["rule_id"].as_str() == Some("consistency-runtime")
+                && v["fqn"].as_str() == Some("/pure_test/chatter")
+        }),
+        "expected consistency-runtime on /pure_test/chatter; got: {violations:?}"
     );
-    for v in &violations {
-        let rule = v["rule_id"].as_str().unwrap_or("");
-        assert!(
-            rule.ends_with("-runtime"),
-            "every entry should be a runtime rule, got rule_id={rule:?}"
-        );
-    }
 }
 
 /// Manifest declares no `topics:` block at all. Every PublisherInit /
