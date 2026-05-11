@@ -130,6 +130,11 @@ pub struct ManifestIndex {
     pub scope_paths: Vec<ResolvedScopePath>,
     /// Parent scope ID for each scope (from launch tree). None for root.
     pub scope_parents: HashMap<usize, Option<usize>>,
+    /// Externally-provided topics, keyed by FQN. Built from every
+    /// manifest's `external_topics:` block plus per-topic `external:`
+    /// flags. Each entry records which side of the topic is provided
+    /// by an external system. `dangling-entity` skips that side.
+    pub externals: BTreeMap<String, ros_launch_manifest_types::ExternalSide>,
     /// Cross-scope consistency diagnostics (collected after merge).
     pub merge_diagnostics: Vec<Diagnostic>,
     /// Total errors across all manifests.
@@ -234,8 +239,16 @@ pub fn load_manifests(
         let mut manifest = manifest;
         filter_manifest(&mut manifest);
 
-        // Run static checks with span resolution
-        let check_result = run_checks_with_spans(&manifest, parsed.spans);
+        // Run static checks with span resolution.
+        // Drop per-manifest `dangling-entity` and `service-wiring`
+        // diagnostics — when running in cross-scope mode (load_manifests),
+        // the cross-scope index is the authoritative source for those
+        // checks. Per-manifest emission produces O(n) duplicate warnings
+        // for legitimate sub-only / pub-only / cross-scope-served entries.
+        let mut check_result = run_checks_with_spans(&manifest, parsed.spans);
+        check_result
+            .diagnostics
+            .retain(|d| d.rule_id != "dangling-entity" && d.rule_id != "service-wiring");
 
         // Log diagnostics
         for diag in &check_result.diagnostics {
@@ -332,16 +345,49 @@ pub fn load_manifests(
 ///   `min_rate_hz` from one scope vs subscriber `min_rate_hz` in another.
 fn run_cross_scope_checks(index: &mut ManifestIndex) {
     use super::manifest_graph::build_global_graph;
+    use ros_launch_manifest_types::ExternalSide;
+
+    // Build the merged externals map from every loaded manifest's
+    // top-level `external_topics:` block plus any per-topic `external:`
+    // flag on individual topic decls. Keys are resolved FQNs (qualified
+    // by the declaring scope's namespace).
+    collect_externals(index);
+
+    // Cross-check external_topics type against internal topic type.
+    // When both an `external_topics:` entry and a `topics:` entry of
+    // the same FQN exist with `type:` set, they must agree.
+    check_external_topic_consistency(index);
 
     // Dangling topic: 0 publishers across the merged tree
     for (fqn, topic) in &index.topics {
+        let ext = index.externals.get(fqn).copied();
         if topic.publishers.is_empty() && !topic.subscribers.is_empty() {
+            if matches!(ext, Some(ExternalSide::Pub | ExternalSide::Both)) {
+                continue;
+            }
             index.merge_diagnostics.push(Diagnostic {
                 rule_id: "dangling-entity".to_string(),
                 severity: Severity::Warning,
                 message: format!(
                     "topic '{}' has 0 publishers across the manifest tree (declared in {} scope(s)) — \
                      may be published by an external system",
+                    fqn,
+                    topic.scope_ids.len()
+                ),
+                path: format!("topics.{fqn}"),
+                span: None,
+            });
+        }
+        if !topic.publishers.is_empty() && topic.subscribers.is_empty() {
+            if matches!(ext, Some(ExternalSide::Sub | ExternalSide::Both)) {
+                continue;
+            }
+            index.merge_diagnostics.push(Diagnostic {
+                rule_id: "dangling-entity".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "topic '{}' has 0 subscribers across the manifest tree (declared in {} scope(s)) — \
+                     may be consumed by an external system",
                     fqn,
                     topic.scope_ids.len()
                 ),
@@ -383,6 +429,12 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // Cross-scope rate hierarchy: publisher rate vs subscriber demand
     // even when pub and sub live in different manifests.
     check_cross_scope_rate_hierarchy(index, &graph);
+
+    // Cross-scope QoS pub/sub compatibility: every (pub, sub) edge in
+    // the merged graph runs through the DDS offered ≥ requested matrix
+    // (Issue #45). Per-endpoint QoS overrides are overlaid on the
+    // topic-level default before comparison.
+    check_cross_scope_qos_match(index, &graph);
 }
 
 /// Build the global dataflow graph and verify each scope path's
@@ -537,6 +589,75 @@ fn check_cross_scope_rate_hierarchy(
     }
 }
 
+/// Cross-check `external_topics:` entries against the merged
+/// `index.topics`. When an external entry declares a `type:` that
+/// disagrees with an internal `topics:` declaration of the same FQN,
+/// emit a `consistency` error.
+fn check_external_topic_consistency(index: &mut ManifestIndex) {
+    let mut diags = Vec::new();
+    for resolved in index.manifests.values() {
+        let ns = &resolved.ns;
+        for (key, decl) in &resolved.manifest.external_topics {
+            let Some(ext_type) = &decl.msg_type else {
+                continue;
+            };
+            let fqn = qualify_name(ns, key);
+            let Some(internal) = index.topics.get(&fqn) else {
+                continue;
+            };
+            if internal.msg_type != *ext_type {
+                diags.push(Diagnostic {
+                    rule_id: "consistency".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "topic '{fqn}' external_topics type '{ext_type}' (in scope {}) \
+                         disagrees with internal type '{}'",
+                        resolved.scope_id, internal.msg_type
+                    ),
+                    path: format!("external_topics.{key}.type"),
+                    span: None,
+                });
+            }
+        }
+    }
+    index.merge_diagnostics.extend(diags);
+}
+
+/// Build the merged `externals` map from every loaded manifest's
+/// top-level `external_topics:` block and per-topic `external:` flag.
+/// Keys are qualified to FQN against the declaring scope's namespace.
+/// When the same FQN is declared multiple times with different sides,
+/// the more permissive side wins (`Both` ≥ either single side).
+fn collect_externals(index: &mut ManifestIndex) {
+    use ros_launch_manifest_types::ExternalSide;
+    let mut externals: BTreeMap<String, ExternalSide> = BTreeMap::new();
+
+    let merge = |externals: &mut BTreeMap<String, ExternalSide>, fqn: String, side: ExternalSide| {
+        let merged = match externals.get(&fqn).copied() {
+            None => side,
+            Some(existing) if existing == side => existing,
+            Some(_) => ExternalSide::Both,
+        };
+        externals.insert(fqn, merged);
+    };
+
+    for resolved in index.manifests.values() {
+        let ns = &resolved.ns;
+        for (key, decl) in &resolved.manifest.external_topics {
+            let fqn = qualify_name(ns, key);
+            merge(&mut externals, fqn, decl.side);
+        }
+        for (key, topic) in &resolved.manifest.topics {
+            if let Some(side) = topic.external {
+                let fqn = qualify_name(ns, key);
+                merge(&mut externals, fqn, side);
+            }
+        }
+    }
+
+    index.externals = externals;
+}
+
 /// Split an endpoint FQN like `/ns/node/endpoint` into `(node_fqn, endpoint_name)`.
 fn split_endpoint_ref_for_check(ep_ref: &str) -> Option<(String, String)> {
     let pos = ep_ref.rfind('/')?;
@@ -546,6 +667,123 @@ fn split_endpoint_ref_for_check(ep_ref: &str) -> Option<(String, String)> {
         return None;
     }
     Some((node.to_string(), ep.to_string()))
+}
+
+/// Cross-scope QoS pub/sub compatibility check (Issue #45).
+///
+/// For every merged topic, walk every (publisher, subscriber) pair,
+/// compute the effective QoS for each endpoint by overlaying its
+/// per-endpoint override on the topic-level default, and apply the
+/// DDS offered ≥ requested matrix on `reliability` and `durability`.
+/// A field is checked only when both sides have it specified —
+/// unspecified fields are skipped (no implicit ROS 2 default is
+/// assumed).
+fn check_cross_scope_qos_match(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    use ros_launch_manifest_types::QosDecl;
+
+    // Snapshot topics to avoid borrow conflict with merge_diagnostics.
+    let topics: Vec<(String, ResolvedTopic)> = index
+        .topics
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    for (fqn, topic) in &topics {
+        let topic_qos = topic.qos.as_ref();
+
+        // Resolve every publisher endpoint to (ref, effective_qos).
+        let mut pubs: Vec<(String, QosDecl)> = Vec::new();
+        for pub_ref in &topic.publishers {
+            let Some((node_fqn, ep_name)) = split_endpoint_ref_for_check(pub_ref) else {
+                continue;
+            };
+            let ep_qos = graph
+                .nodes
+                .get(&node_fqn)
+                .and_then(|n| n.publishers.get(&ep_name))
+                .and_then(|p| p.qos.as_ref());
+            pubs.push((pub_ref.clone(), QosDecl::effective(topic_qos, ep_qos)));
+        }
+
+        let mut subs: Vec<(String, QosDecl)> = Vec::new();
+        for sub_ref in &topic.subscribers {
+            let Some((node_fqn, ep_name)) = split_endpoint_ref_for_check(sub_ref) else {
+                continue;
+            };
+            let ep_qos = graph
+                .nodes
+                .get(&node_fqn)
+                .and_then(|n| n.subscribers.get(&ep_name))
+                .and_then(|p| p.qos.as_ref());
+            subs.push((sub_ref.clone(), QosDecl::effective(topic_qos, ep_qos)));
+        }
+
+        for (pub_ref, pub_qos) in &pubs {
+            for (sub_ref, sub_qos) in &subs {
+                if let (Some(pub_rel), Some(sub_rel)) =
+                    (pub_qos.reliability.as_deref(), sub_qos.reliability.as_deref())
+                    && !reliability_compatible(pub_rel, sub_rel)
+                {
+                    index.merge_diagnostics.push(Diagnostic {
+                        rule_id: "qos-match".to_string(),
+                        severity: Severity::Error,
+                        message: format!(
+                            "incompatible QoS on topic '{fqn}' field 'reliability': \
+                             pub '{pub_ref}' offers '{pub_rel}', sub '{sub_ref}' \
+                             requests '{sub_rel}'"
+                        ),
+                        path: format!("topics.{fqn}.qos.reliability"),
+                        span: None,
+                    });
+                }
+
+                if let (Some(pub_dur), Some(sub_dur)) =
+                    (pub_qos.durability.as_deref(), sub_qos.durability.as_deref())
+                    && !durability_compatible(pub_dur, sub_dur)
+                {
+                    index.merge_diagnostics.push(Diagnostic {
+                        rule_id: "qos-match".to_string(),
+                        severity: Severity::Error,
+                        message: format!(
+                            "incompatible QoS on topic '{fqn}' field 'durability': \
+                             pub '{pub_ref}' offers '{pub_dur}', sub '{sub_ref}' \
+                             requests '{sub_dur}'"
+                        ),
+                        path: format!("topics.{fqn}.qos.durability"),
+                        span: None,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// DDS reliability compatibility — offered must be at least as strong
+/// as requested. `reliable` ≥ `best_effort`. Unknown values pass; the
+/// per-manifest `qos-compat` rule reports invalid value tokens.
+fn reliability_compatible(pub_v: &str, sub_v: &str) -> bool {
+    match (pub_v, sub_v) {
+        ("reliable", "reliable") => true,
+        ("reliable", "best_effort") => true,
+        ("best_effort", "reliable") => false,
+        ("best_effort", "best_effort") => true,
+        _ => true,
+    }
+}
+
+/// DDS durability compatibility — offered must be at least as strong
+/// as requested. `transient_local` ≥ `volatile`. Unknown values pass.
+fn durability_compatible(pub_v: &str, sub_v: &str) -> bool {
+    match (pub_v, sub_v) {
+        ("transient_local", "transient_local") => true,
+        ("transient_local", "volatile") => true,
+        ("volatile", "transient_local") => false,
+        ("volatile", "volatile") => true,
+        _ => true,
+    }
 }
 
 /// Match scope paths across the scope tree by resolved (input, output)
@@ -2086,7 +2324,13 @@ mod tests {
 
     #[test]
     fn test_cross_scope_publisher_only_loads_standalone() {
-        // Publisher-only manifest validates standalone (no errors).
+        // Publisher-only manifest validates standalone (no errors). The
+        // cross-scope `dangling-entity` rule emits a "no subscribers"
+        // warning for the unconsumed topic — this is expected and the
+        // user is meant to suppress it via `external_topics: { ...:
+        // external: sub }` when the consumer is intentionally outside
+        // the tree. Test asserts: no errors, exactly one warning, and
+        // the topic is recorded with no subscribers.
         let dump = make_dump(vec![scope(
             0,
             "manifest_consistency_pub",
@@ -2103,13 +2347,63 @@ mod tests {
         assert_eq!(topic.publishers, vec!["/source/out"]);
         assert!(topic.subscribers.is_empty());
 
-        // Publisher with no subscriber is fine — no dangling warning
+        let errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "expected no errors on publisher-only standalone manifest, got: {errors:?}"
+        );
+        let no_sub_warnings: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| {
+                d.rule_id == "dangling-entity"
+                    && d.message.contains("/shared_data")
+                    && d.message.contains("0 subscribers")
+            })
+            .collect();
+        assert_eq!(
+            no_sub_warnings.len(),
+            1,
+            "expected exactly one 'no subscribers' warning on /shared_data, got: {no_sub_warnings:?}"
+        );
+    }
+
+    #[test]
+    fn test_external_topics_suppresses_dangling_pub() {
+        use ros_launch_manifest_types::ExternalSide;
+        // A manifest declaring an external producer should not emit
+        // a dangling-entity warning for that topic's missing pub side.
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_external_pub",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        // The fixture must declare /external/in as an external pub
+        // topic AND a subscriber that wires it locally; this confirms
+        // the external mark suppresses what would otherwise be a
+        // "no publishers" warning.
+        assert_eq!(
+            index.externals.get("/external/in"),
+            Some(&ExternalSide::Pub),
+            "externals map should record /external/in as external pub"
+        );
         let dangling: Vec<_> = index
             .merge_diagnostics
             .iter()
-            .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("/shared_data"))
+            .filter(|d| d.rule_id == "dangling-entity" && d.message.contains("/external/in"))
             .collect();
-        assert!(dangling.is_empty());
+        assert!(
+            dangling.is_empty(),
+            "external pub mark should suppress dangling-entity, got: {dangling:?}"
+        );
     }
 
     // ── Phase 35: critical-path / graph-aware budget checks ──
@@ -2222,6 +2516,150 @@ mod tests {
             cp.nodes.iter().any(|n| n.contains("fusion")),
             "critical path should reach fusion sink: {:?}",
             cp.nodes
+        );
+    }
+
+    #[test]
+    fn test_critical_path_mixed_transport_per_subscriber_override() {
+        // Issue #44 — per-subscriber max_transport_ms override.
+        //
+        // Topology has two parallel branches that join at fusion. Topic
+        // default transport is 10ms. The lidar branch overrides to 0ms
+        // on the subscriber (intra-process collocation); the camera
+        // branch inherits the 10ms default (network bridge).
+        //
+        // Critical path with the override:
+        //   lidar:  50 + 0  + 20 = 70
+        //   camera: 30 + 10 + 20 = 60
+        //   max = 70
+        //
+        // Without per-sub override the lidar branch would be
+        // 50 + 10 + 20 = 80, which would inflate the budget by 10ms.
+        use super::super::manifest_graph::{
+            build_global_graph, critical_path, subgraph_for_scope_path, subtree_scope_ids,
+        };
+
+        let dump = make_dump(vec![scope(
+            0,
+            "manifest_mixed_transport",
+            "manifest.launch.xml",
+            "",
+            None,
+        )]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+        let graph = build_global_graph(&index);
+
+        // Inspect the lidar→fusion edge to confirm the override is applied.
+        let lidar_edge = graph
+            .edges
+            .iter()
+            .find(|e| {
+                e.from.contains("lidar_detector")
+                    && e.to.contains("fusion")
+                    && e.sub_endpoint == "lidar"
+            })
+            .expect("lidar→fusion edge missing");
+        assert_eq!(
+            lidar_edge.max_transport_ms,
+            Some(0.0),
+            "lidar→fusion edge should use sub-endpoint override (0ms), got {:?}",
+            lidar_edge.max_transport_ms
+        );
+
+        // Camera edge should inherit the topic default.
+        let camera_edge = graph
+            .edges
+            .iter()
+            .find(|e| {
+                e.from.contains("camera_detector")
+                    && e.to.contains("fusion")
+                    && e.sub_endpoint == "camera"
+            })
+            .expect("camera→fusion edge missing");
+        assert_eq!(
+            camera_edge.max_transport_ms,
+            Some(10.0),
+            "camera→fusion edge should inherit topic default (10ms), got {:?}",
+            camera_edge.max_transport_ms
+        );
+
+        // Critical path should reflect the per-sub override → 70ms.
+        let subtree = subtree_scope_ids(&index, 0);
+        let subgraph = subgraph_for_scope_path(
+            &graph,
+            subtree,
+            &["/sensor/raw".to_string()],
+            &["/perception/fused_objects".to_string()],
+        );
+        let cp = critical_path(&subgraph).expect("critical path should exist");
+        assert!(
+            (cp.total_ms - 70.0).abs() < 0.001,
+            "expected critical path 70ms (lidar 50 + 0 transport + fusion 20), \
+             got {}",
+            cp.total_ms
+        );
+        assert!(
+            cp.nodes.iter().any(|n| n.contains("lidar_detector")),
+            "critical path should pass through the lidar branch (slowest with \
+             override), got: {:?}",
+            cp.nodes
+        );
+
+        // The declared 70ms scope budget matches the critical path → no
+        // scope-budget warning expected.
+        let budget_warnings: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "scope-budget")
+            .collect();
+        assert!(
+            budget_warnings.is_empty(),
+            "expected no scope-budget warnings at exact critical path budget, \
+             got: {budget_warnings:?}"
+        );
+    }
+
+    #[test]
+    fn test_cross_scope_qos_match_pubsub_mismatch() {
+        // Issue #45 — cross-scope qos-match.
+        //
+        // Pub scope declares topic with `reliability: best_effort`. Sub
+        // scope declares per-endpoint override `reliability: reliable`.
+        // After cross-scope merge:
+        //   effective pub qos = best_effort (inherits topic default)
+        //   effective sub qos = reliable     (endpoint override)
+        // Pub offered (best_effort) < sub requested (reliable) → error.
+        let dump = make_dump(vec![
+            scope(
+                0,
+                "manifest_qos_match_pubsub_pub",
+                "manifest.launch.xml",
+                "",
+                None,
+            ),
+            scope(
+                1,
+                "manifest_qos_match_pubsub_sub",
+                "manifest.launch.xml",
+                "",
+                Some(0),
+            ),
+        ]);
+        let index = load_manifests(&dump, &fixture_dir()).unwrap();
+
+        let qos_errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "qos-match")
+            .collect();
+
+        assert!(
+            qos_errors
+                .iter()
+                .any(|d| d.message.contains("reliability")
+                    && d.message.contains("best_effort")
+                    && d.message.contains("reliable")),
+            "expected cross-scope reliability mismatch error, got: {qos_errors:?}"
         );
     }
 
