@@ -8,6 +8,7 @@ mod monitoring;
 mod process;
 mod python;
 mod ros;
+mod runtime_enforcement;
 mod util;
 mod web;
 

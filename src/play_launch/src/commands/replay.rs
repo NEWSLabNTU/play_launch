@@ -428,6 +428,36 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     let ComposableNodeContextSet { load_node_contexts } =
         prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?;
 
+    // Phase 36.7: write the topic-FQN allowlist file when
+    // `--block-unauthorized-endpoints` is set. Children's
+    // `rcl_publisher_init` and `rcl_subscription_init` hooks refuse
+    // topics not in this file.
+    let allowlist_file: Option<std::path::PathBuf> =
+        if common.block_unauthorized_endpoints && _manifest_index.is_some() {
+            let idx = _manifest_index.as_ref().unwrap();
+            let path = log_dir.join("expected_graph.txt");
+            let mut contents = String::with_capacity(idx.topics.len() * 32);
+            contents.push_str("# Phase 36.7 allowlist — every topic FQN authorized in this launch\n");
+            for fqn in idx.topics.keys() {
+                contents.push_str(fqn);
+                contents.push('\n');
+            }
+            for fqn in idx.externals.keys() {
+                contents.push_str(fqn);
+                contents.push('\n');
+            }
+            std::fs::write(&path, contents).wrap_err("write allowlist file")?;
+            info!(
+                "Blocking enforcement: allowlist written to {} ({} topics + {} externals)",
+                path.display(),
+                idx.topics.len(),
+                idx.externals.len()
+            );
+            Some(path)
+        } else {
+            None
+        };
+
     // Setup interception if enabled (Phase 29)
     let mut interception_consumers: Vec<crate::interception::ChildConsumer> = Vec::new();
     let _interception_so_path = if runtime_config.interception.enabled {
@@ -440,6 +470,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
                         &mut ctx.cmdline.env,
                         &so_path,
                         &runtime_config.interception,
+                        allowlist_file.as_deref(),
                     ) {
                         Ok(consumer) => interception_consumers.push(consumer),
                         Err(e) => warn!("Interception setup failed for node: {:#}", e),
@@ -451,6 +482,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
                         &mut ctx.node_context.cmdline.env,
                         &so_path,
                         &runtime_config.interception,
+                        allowlist_file.as_deref(),
                     ) {
                         Ok(consumer) => interception_consumers.push(consumer),
                         Err(e) => warn!("Interception setup failed for container: {:#}", e),
@@ -780,11 +812,113 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 
     // Spawn interception consumer task if we have consumers (Phase 29)
     if !interception_consumers.is_empty() {
+        // Phase 36.3: construct RuleEngine if --manifest-dir was given
+        // and --enforce-rules is not Off. The engine observes every
+        // event the listener dispatches.
+        let rule_engine = match (
+            _manifest_index.as_ref(),
+            common.enforce_rules,
+        ) {
+            (Some(idx), mode)
+                if !matches!(mode, crate::cli::options::EnforceMode::Off) =>
+            {
+                Some(crate::runtime_enforcement::RuleEngine::new(
+                    std::sync::Arc::new(idx.clone()),
+                    mode,
+                    &log_dir,
+                ))
+            }
+            _ => None,
+        };
+
+        // Phase 36.6.1: wire lifecycle transition-event subscriptions
+        // for every lifecycle node declared in the manifest tree.
+        // Updates flow through an unbounded mpsc channel into the
+        // interception listener, which applies them to the RuleEngine
+        // before each event-drain pass.
+        let (lifecycle_tx, lifecycle_rx) = tokio::sync::mpsc::unbounded_channel::<(
+            String,
+            crate::runtime_enforcement::LifecycleState,
+        )>();
+        let lifecycle_node_fqns: Vec<String> = rule_engine
+            .as_ref()
+            .map(|re| re.lifecycle_node_fqns())
+            .unwrap_or_default();
+        // Subscription handles are stored as opaque `Box<dyn Any>` so
+        // they live for the duration of replay without leaking the
+        // generic-parameter list into this scope.
+        let mut _lifecycle_subs: Vec<Box<dyn std::any::Any + Send + Sync>> = Vec::new();
+        if !lifecycle_node_fqns.is_empty()
+            && let Some(ros_node) = shared_ros_node_for_params.as_ref()
+        {
+            for fqn in &lifecycle_node_fqns {
+                let topic = format!("{}/transition_event", fqn.trim_end_matches('/'));
+                let fqn_owned = fqn.clone();
+                let tx = lifecycle_tx.clone();
+                match ros_node.create_subscription(
+                    topic.as_str(),
+                    move |msg: lifecycle_msgs::msg::TransitionEvent| {
+                        // goal_state.id matches lifecycle_msgs/msg/State::PRIMARY_STATE_*.
+                        let st = match msg.goal_state.id {
+                            1 => crate::runtime_enforcement::LifecycleState::Unconfigured,
+                            2 => crate::runtime_enforcement::LifecycleState::Inactive,
+                            3 => crate::runtime_enforcement::LifecycleState::Active,
+                            4 => crate::runtime_enforcement::LifecycleState::Finalized,
+                            _ => crate::runtime_enforcement::LifecycleState::Unknown,
+                        };
+                        let _ = tx.send((fqn_owned.clone(), st));
+                    },
+                ) {
+                    Ok(sub) => {
+                        debug!("Subscribed to {} for lifecycle gating", topic);
+                        _lifecycle_subs.push(Box::new(sub));
+                    }
+                    Err(e) => warn!(
+                        "Failed to subscribe to {} for lifecycle gating: {:#}",
+                        topic, e
+                    ),
+                }
+            }
+        }
+        drop(lifecycle_tx); // keep only senders inside callbacks alive
+
+        // Phase 36.4: in Strict mode, spawn a watcher task that polls
+        // the engine's `strict_violated` flag and triggers shutdown on
+        // first hit. The flag is also flipped under Warn mode but only
+        // Strict listens for it.
+        let strict_handle = rule_engine.as_ref().and_then(|re| {
+            matches!(common.enforce_rules, crate::cli::options::EnforceMode::Strict)
+                .then(|| re.strict_violated_handle())
+        });
+        if let Some(handle) = strict_handle {
+            let shutdown_tx_strict = shutdown_tx.clone();
+            let strict_watch_task = tokio::spawn(async move {
+                let poll_interval = tokio::time::Duration::from_millis(100);
+                loop {
+                    tokio::time::sleep(poll_interval).await;
+                    if handle.load(std::sync::atomic::Ordering::Acquire) {
+                        warn!(
+                            "[runtime] Strict enforcement violated — initiating shutdown"
+                        );
+                        let _ = shutdown_tx_strict.send(true);
+                        break;
+                    }
+                }
+                Ok::<(), eyre::Error>(())
+            });
+            named_tasks.push(NamedTask {
+                name: "runtime_strict_watch",
+                task: strict_watch_task,
+            });
+        }
+
         let interception_task = tokio::spawn(crate::interception::run_interception_task(
             interception_consumers,
             log_dir.clone(),
             runtime_config.interception.clone(),
             shutdown_signal.clone(),
+            rule_engine,
+            Some(lifecycle_rx),
         ));
         named_tasks.push(NamedTask {
             name: "interception",

@@ -37,4 +37,44 @@ pub(crate) trait InterceptionPlugin: Send + Sync {
     /// Called on every `rcl_take` (hot path). `stamp` is `None` if the
     /// message has no `header.stamp`.
     fn on_take(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>);
+
+    // -----------------------------------------------------------------
+    // RMW-layer hooks (Phase 36.1). Default no-op so existing plugins
+    // (FrontierPlugin, StatsPlugin) compile unchanged. New plugins
+    // (QosNegotiationPlugin, DropMonitorPlugin) override these.
+    // -----------------------------------------------------------------
+
+    /// Called once per `rmw_create_publisher` (cold path).
+    ///
+    /// `qos` is the parsed policy (reliability, durability, history,
+    /// depth, liveliness). `qos_hash` is a stable hash of the raw QoS
+    /// bytes useful for fast profile-equality checks.
+    fn on_rmw_publisher_created(
+        &self,
+        _rmw_pub_handle: usize,
+        _topic: &str,
+        _topic_hash: u64,
+        _qos_hash: u64,
+        _qos: Option<&rcl_interception_sys::qos::RmwQosProfile>,
+    ) {
+    }
+
+    /// Called once per `rmw_create_subscription` (cold path).
+    fn on_rmw_subscription_created(
+        &self,
+        _rmw_sub_handle: usize,
+        _topic: &str,
+        _topic_hash: u64,
+        _qos_hash: u64,
+        _qos: Option<&rcl_interception_sys::qos::RmwQosProfile>,
+    ) {
+    }
+
+    /// Called on every `rmw_publish` (hot path). Lower-level than
+    /// `on_publish` — sees the DDS write, not the rcl message.
+    fn on_rmw_publish(&self, _rmw_pub_handle: usize, _monotonic_ns: u64) {}
+
+    /// Called on every `rmw_take_with_info` (hot path). `taken` reflects
+    /// whether a sample was actually available.
+    fn on_rmw_take(&self, _rmw_sub_handle: usize, _monotonic_ns: u64, _taken: bool) {}
 }

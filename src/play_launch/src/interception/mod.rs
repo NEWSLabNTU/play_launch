@@ -32,6 +32,15 @@ pub enum EventKind {
     SubscriptionInit = 1,
     Publish = 2,
     Take = 3,
+    /// Phase 36.2: rmw_create_publisher event with parsed QoS profile.
+    /// Field overload: `_pad[0]` = reliability, `_pad[1]` = durability,
+    /// `_pad[2]` = history, `stamp_sec` = liveliness, `stamp_nanosec`
+    /// = depth, `handle` = rmw_publisher_t*, `topic_hash` = topic FQN
+    /// hash.
+    QosDeclaredPub = 4,
+    /// Phase 36.2: rmw_create_subscription event with parsed QoS profile.
+    /// Same field overload as `QosDeclaredPub`.
+    QosDeclaredSub = 5,
 }
 
 /// Interception event (40 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -119,6 +128,7 @@ pub fn setup_child_interception(
     env: &mut HashMap<String, String>,
     so_path: &Path,
     config: &InterceptionSettings,
+    allowlist_path: Option<&Path>,
 ) -> eyre::Result<ChildConsumer> {
     let (shm_fd, event_fd) =
         spsc_shm::create::<InterceptionEvent>(config.ring_capacity).wrap_err("spsc_shm::create")?;
@@ -143,6 +153,20 @@ pub fn setup_child_interception(
         "PLAY_LAUNCH_INTERCEPTION_EVENT_FD".to_string(),
         event_fd.to_string(),
     );
+
+    // Phase 36.7: when blocking is enabled, inject the allowlist path
+    // and the block flag. Children's `rcl_publisher_init` /
+    // `rcl_subscription_init` hooks refuse topics not in the file.
+    if let Some(path) = allowlist_path {
+        env.insert(
+            "PLAY_LAUNCH_INTERCEPTION_GRAPH_FILE".to_string(),
+            path.display().to_string(),
+        );
+        env.insert(
+            "PLAY_LAUNCH_INTERCEPTION_BLOCK_GRAPH".to_string(),
+            "1".to_string(),
+        );
+    }
 
     Ok(ChildConsumer {
         consumer,
@@ -178,11 +202,20 @@ struct TopicStats {
 ///
 /// Polls all child consumers at 10ms intervals, aggregates frontier and stats
 /// data, and writes summary files on shutdown.
+///
+/// Phase 36.3: when `rule_engine` is `Some`, every event is also fed
+/// to the runtime enforcement engine. The engine writes violations to
+/// `<log_dir>/runtime_violations.jsonl` and flags `strict_violated`
+/// in `EnforceMode::Strict` so the caller can trigger shutdown.
 pub async fn run_interception_task(
     mut consumers: Vec<ChildConsumer>,
     log_dir: PathBuf,
     config: InterceptionSettings,
     mut shutdown_signal: tokio::sync::watch::Receiver<bool>,
+    mut rule_engine: Option<crate::runtime_enforcement::RuleEngine>,
+    mut lifecycle_rx: Option<
+        tokio::sync::mpsc::UnboundedReceiver<(String, crate::runtime_enforcement::LifecycleState)>,
+    >,
 ) -> eyre::Result<()> {
     debug!(
         "Interception task started ({} consumers, frontier={}, stats={})",
@@ -198,6 +231,16 @@ pub async fn run_interception_task(
     let poll_interval = tokio::time::Duration::from_millis(10);
 
     loop {
+        // Drain any pending lifecycle updates first so subsequent rule
+        // observations see the latest state.
+        if let Some(rx) = lifecycle_rx.as_mut() {
+            while let Ok((fqn, state)) = rx.try_recv() {
+                if let Some(re) = rule_engine.as_mut() {
+                    re.set_lifecycle_state(&fqn, state);
+                }
+            }
+        }
+
         tokio::select! {
             _ = tokio::time::sleep(poll_interval) => {
                 // Drain all consumers
@@ -209,6 +252,9 @@ pub async fn run_interception_task(
                             event.kind, event.topic_hash, event.stamp_sec, event.stamp_nanosec, event.handle, event.monotonic_ns
                         );
                         process_event(&event, &config, &mut frontiers, &mut stats);
+                        if let Some(re) = rule_engine.as_mut() {
+                            re.observe(&event);
+                        }
                     }
                 }
             }
@@ -225,7 +271,14 @@ pub async fn run_interception_task(
         while let Some(event) = child.consumer.pop() {
             total_events += 1;
             process_event(&event, &config, &mut frontiers, &mut stats);
+            if let Some(re) = rule_engine.as_mut() {
+                re.observe(&event);
+            }
         }
+    }
+
+    if let Some(re) = rule_engine.as_mut() {
+        re.flush();
     }
 
     // Close fds
@@ -290,6 +343,11 @@ fn process_event(
         }
         EventKind::PublisherInit | EventKind::SubscriptionInit => {
             // Init events don't affect frontier/stats aggregation
+        }
+        EventKind::QosDeclaredPub | EventKind::QosDeclaredSub => {
+            // Phase 36.2: forwarded to the RuleEngine (Phase 36.3) by
+            // the dispatcher in commands/replay.rs. Not aggregated
+            // into frontier or stats summaries.
         }
     }
 }

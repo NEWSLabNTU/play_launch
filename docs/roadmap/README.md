@@ -37,6 +37,7 @@ Completed phase docs are in `archive/`.
 | 30 | Launch Tree Scoping | ✅ | 2026-03-19 |
 | 30b | Group Scopes | ✅ | 2026-03-20 |
 | 31 | Launch Manifest | 📋 Planned | — |
+| 36 | Runtime Enforcement | ✅ 36.1–36.7 | 2026-05-11 |
 
 ---
 
@@ -79,6 +80,12 @@ Per-launch-file manifest system. Describes expected communication graph: topics,
 
 See [phase-31-launch_manifest.md](./phase-31-launch_manifest.md).
 Design: [docs/design/launch-manifest.md](../design/launch-manifest.md).
+
+### Phase 36: Runtime Enforcement (in progress)
+
+Closes the static → runtime contract loop. Extends Phase 29 LD_PRELOAD interception with an RMW-layer hook set (36.1 in progress) and adds a `RuleEngine` consumer that evaluates manifest contracts against live traffic (36.3). Also: QoS-negotiation visibility (36.2), `--enforce-rules` CLI flag (36.4), `GraphPlugin v2` warn-only (36.5), lifecycle-aware gating (36.6), and optional v3 blocking enforcement (36.7).
+
+See [phase-36-runtime_enforcement.md](./phase-36-runtime_enforcement.md).
 
 ---
 

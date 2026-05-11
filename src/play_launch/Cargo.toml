@@ -26,6 +26,7 @@ composition_interfaces = "*"
 csv = "1.3"
 dashmap = "6.1"
 diagnostic_msgs = "*"
+lifecycle_msgs = "*"
 eyre = "0.6.12"
 play_launch_msgs = "*"
 play_launch_parser = { path = "../play_launch_parser/crates/play_launch_parser" }

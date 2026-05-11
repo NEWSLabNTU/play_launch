@@ -309,6 +309,36 @@ pub struct CommonOptions {
     /// Manifests are looked up as <manifest-dir>/<pkg>/<file>.yaml for each scope.
     #[arg(long, value_name = "PATH")]
     pub manifest_dir: Option<PathBuf>,
+
+    /// Runtime enforcement mode for manifest contracts (Phase 36.3).
+    /// Requires `--manifest-dir`. Off: no runtime checks. Warn: log
+    /// violations. Strict: exit non-zero on first violation. RecordOnly:
+    /// collect events without evaluating rules.
+    #[arg(long, value_enum, default_value = "warn")]
+    pub enforce_rules: EnforceMode,
+
+    /// Phase 36.7: block unauthorized publisher/subscription creation
+    /// at the rcl layer. Requires `--manifest-dir`. The set of allowed
+    /// topic FQNs is written from the merged ManifestIndex and passed
+    /// to every child via env var. Hooked rcl init calls for topics
+    /// not in the set return `RCL_RET_TOPIC_INVALID` (1004) — the
+    /// publisher/subscription is never created. Off by default
+    /// because nodes that don't handle init failure may crash.
+    #[arg(long, default_value_t = false)]
+    pub block_unauthorized_endpoints: bool,
+}
+
+/// Runtime enforcement mode for manifest contracts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum EnforceMode {
+    /// Skip runtime checks entirely.
+    Off,
+    /// Log violations to `play_log/<ts>/runtime_violations.jsonl`. Never exit early.
+    Warn,
+    /// First violation triggers shutdown and non-zero exit (CI mode).
+    Strict,
+    /// Collect events without evaluating rules. For offline analysis.
+    RecordOnly,
 }
 
 impl Default for CommonOptions {
@@ -329,6 +359,8 @@ impl Default for CommonOptions {
             container_mode: ContainerMode::Isolated,
             web_addr: "127.0.0.1:8080".to_string(),
             manifest_dir: None,
+            enforce_rules: EnforceMode::Warn,
+            block_unauthorized_endpoints: false,
         }
     }
 }
