@@ -116,7 +116,7 @@ pub struct ResolvedScopePath {
 }
 
 /// The complete resolved manifest index for the launch tree.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ManifestIndex {
     /// Manifests by scope ID.
     pub manifests: HashMap<usize, ResolvedManifest>,
