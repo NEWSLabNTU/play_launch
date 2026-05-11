@@ -109,6 +109,14 @@ fn render_scope_diagnostics(
             // then filter rules.
             if let Ok(parsed) = parse_manifest_str_with_spans(&resolved.source) {
                 let mut check_result = run_checks_with_spans(&parsed.manifest, parsed.spans);
+                // Suppress per-manifest `dangling-entity` and
+                // `service-wiring` warnings — the cross-scope merge in
+                // `manifest_loader` is authoritative when running with
+                // `--manifest-dir`. Per-manifest emission creates O(n)
+                // duplicates for legitimate cross-scope endpoints.
+                check_result
+                    .diagnostics
+                    .retain(|d| d.rule_id != "dangling-entity" && d.rule_id != "service-wiring");
                 if let Some(set) = rule_filter {
                     check_result
                         .diagnostics

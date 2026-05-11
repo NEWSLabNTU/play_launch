@@ -136,19 +136,26 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
         // Create one edge per (pub, sub) pair.
         for (pub_node, _pub_ep) in &pub_node_eps {
             for (sub_node, sub_ep) in &sub_node_eps {
-                let is_state = graph
+                let sub_props = graph
                     .nodes
                     .get(sub_node)
-                    .and_then(|n| n.subscribers.get(sub_ep))
-                    .and_then(|props| props.state)
-                    .unwrap_or(false);
+                    .and_then(|n| n.subscribers.get(sub_ep));
+                let is_state = sub_props.and_then(|p| p.state).unwrap_or(false);
+                // Per-subscriber transport latency override (Issue #44):
+                // the same ROS topic can have heterogeneous transport across
+                // subscribers (intra-process ~0ms vs cross-network ~10ms).
+                // Prefer the sub endpoint's value; fall back to the topic
+                // default; otherwise the edge contributes 0.
+                let max_transport_ms = sub_props
+                    .and_then(|p| p.max_transport_ms)
+                    .or(topic.max_transport_ms);
 
                 let edge = GlobalEdge {
                     from: pub_node.clone(),
                     to: sub_node.clone(),
                     topic: topic_fqn.clone(),
                     sub_endpoint: sub_ep.clone(),
-                    max_transport_ms: topic.max_transport_ms,
+                    max_transport_ms,
                     is_state,
                 };
                 let idx = graph.edges.len();
