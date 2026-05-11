@@ -12,22 +12,27 @@ pub(crate) struct Stamp {
 
 /// Internal trait for interception plugins.
 pub(crate) trait InterceptionPlugin: Send + Sync {
-    /// Called once per publisher creation (cold path).
+    /// Called once per publisher creation (cold path). `type_hash` is
+    /// the fnv1a hash of the runtime message type identity
+    /// (`"pkg/msg/Name"`), or `None` if introspection isn't available.
     fn on_publisher_init(
         &self,
         handle: usize,
         topic: &str,
         topic_hash: u64,
         stamp_offset: Option<usize>,
+        type_hash: Option<u64>,
     );
 
-    /// Called once per subscription creation (cold path).
+    /// Called once per subscription creation (cold path). See
+    /// [`on_publisher_init`] for the `type_hash` semantics.
     fn on_subscription_init(
         &self,
         handle: usize,
         topic: &str,
         topic_hash: u64,
         stamp_offset: Option<usize>,
+        type_hash: Option<u64>,
     );
 
     /// Called on every `rcl_publish` (hot path). `stamp` is `None` if the

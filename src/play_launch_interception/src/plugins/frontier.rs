@@ -212,6 +212,7 @@ impl InterceptionPlugin for FrontierPlugin {
         _topic: &str,
         topic_hash: u64,
         stamp_offset: Option<usize>,
+        _type_hash: Option<u64>,
     ) {
         if stamp_offset.is_some() {
             // Pre-create the frontier entry for this topic.
@@ -225,6 +226,7 @@ impl InterceptionPlugin for FrontierPlugin {
         _topic: &str,
         _topic_hash: u64,
         _stamp_offset: Option<usize>,
+        _type_hash: Option<u64>,
     ) {
         // No-op for subscriptions — frontier is only tracked on publish side.
     }
@@ -458,12 +460,12 @@ mod tests {
         let hash = 0xAAAA;
 
         // Init with stamp_offset -> frontier should be pre-created.
-        plugin.on_publisher_init(0x100, "/chatter", hash, Some(16));
+        plugin.on_publisher_init(0x100, "/chatter", hash, Some(16), None);
         assert!(plugin.frontiers.read().contains_key(&hash));
 
         // Init without stamp_offset -> no frontier entry.
         let hash2 = 0xBBBB;
-        plugin.on_publisher_init(0x200, "/no_stamp", hash2, None);
+        plugin.on_publisher_init(0x200, "/no_stamp", hash2, None, None);
         assert!(!plugin.frontiers.read().contains_key(&hash2));
 
         unsafe {

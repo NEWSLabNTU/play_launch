@@ -10,9 +10,10 @@ pub(crate) fn dispatch_publisher_init(
     topic: &str,
     topic_hash: u64,
     stamp_offset: Option<usize>,
+    type_hash: Option<u64>,
 ) {
     for p in plugins {
-        p.on_publisher_init(handle, topic, topic_hash, stamp_offset);
+        p.on_publisher_init(handle, topic, topic_hash, stamp_offset, type_hash);
     }
 }
 
@@ -24,9 +25,10 @@ pub(crate) fn dispatch_subscription_init(
     topic: &str,
     topic_hash: u64,
     stamp_offset: Option<usize>,
+    type_hash: Option<u64>,
 ) {
     for p in plugins {
-        p.on_subscription_init(handle, topic, topic_hash, stamp_offset);
+        p.on_subscription_init(handle, topic, topic_hash, stamp_offset, type_hash);
     }
 }
 

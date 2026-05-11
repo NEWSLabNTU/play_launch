@@ -67,6 +67,18 @@ struct TopicRuntimeState {
     /// Highest header.stamp seen on a publish (for max-age check).
     latest_stamp_sec: i32,
     latest_stamp_nanosec: u32,
+    /// Per-subscriber take count, indexed by rcl subscription handle.
+    /// Used by `drop-rate-runtime` to compute per-sub delivery ratio.
+    sub_take_count: HashMap<u64, u64>,
+    /// Observed runtime msg-type identifier per endpoint
+    /// (FNV1A of "pkg/msg/Name" — derived from rosidl introspection
+    /// when init events ship `type_hash` in their overloaded slots).
+    /// Used by `consistency-runtime`.
+    endpoint_type_hash: HashMap<u64, u64>,
+    /// Latest publish monotonic_ns for the most recent header.stamp
+    /// observed. Used by `max-latency-runtime` to time the stamp from
+    /// pipeline input to output.
+    last_pub_for_stamp: HashMap<u64, u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -230,6 +242,17 @@ impl RuleEngine {
                 if event.stamp_sec != 0 || event.stamp_nanosec != 0 {
                     entry.latest_stamp_sec = event.stamp_sec;
                     entry.latest_stamp_nanosec = event.stamp_nanosec;
+                    // Record (stamp → publish monotonic_ns) for
+                    // max-latency tracking. Bounded to last ~512
+                    // unique stamps to cap memory.
+                    let stamp_key = pack_stamp(event.stamp_sec, event.stamp_nanosec);
+                    if entry.last_pub_for_stamp.len() >= 512 {
+                        // Drop oldest by clearing — simple bound; rule
+                        // tolerates loss because it only matters when
+                        // the downstream stamp is still recent.
+                        entry.last_pub_for_stamp.clear();
+                    }
+                    entry.last_pub_for_stamp.insert(stamp_key, event.monotonic_ns);
                 }
                 // Rate-hierarchy check fires periodically — every 1024
                 // publishes is enough to dampen evaluation overhead.
@@ -237,14 +260,55 @@ impl RuleEngine {
                     drop_borrow(&mut self.state);
                     self.check_rate_hierarchy(event.topic_hash, event.monotonic_ns);
                 }
+                // max-latency-runtime: on every publish, check any
+                // scope path whose output is this topic.
+                drop_borrow(&mut self.state);
+                self.check_max_latency(
+                    event.topic_hash,
+                    event.stamp_sec,
+                    event.stamp_nanosec,
+                    event.monotonic_ns,
+                );
             }
             EventKind::Take => {
-                // max-age check: now - header.stamp at take. We don't
-                // have a wall-clock view here, only monotonic. Use
-                // `latest_stamp_*` against the publishing side as a
-                // rough approximation — the proper implementation
-                // requires the rmw_take_with_info SOURCE_TIMESTAMP
-                // field. Deferred to 36.3.1 follow-up.
+                // Per-sub take count for drop-rate-runtime.
+                *entry.sub_take_count.entry(event.handle).or_insert(0) += 1;
+                let take_count = *entry.sub_take_count.get(&event.handle).unwrap_or(&0);
+
+                // max-age-runtime: compute now - header.stamp on the
+                // system clock and check against the subscriber's
+                // declared `max_age_ms`. Approximation: SystemTime::now()
+                // is read here rather than at the in-kernel take
+                // moment, so we may overstate age by the listener's
+                // poll lag (default 10ms). Acceptable for warn-only
+                // monitoring on budgets typically ≥100ms.
+                if event.stamp_sec != 0 || event.stamp_nanosec != 0 {
+                    if let Ok(now) = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                    {
+                        let stamp_ns = (event.stamp_sec as i128) * 1_000_000_000
+                            + (event.stamp_nanosec as i128);
+                        let now_ns = now.as_nanos() as i128;
+                        let age_ns = now_ns - stamp_ns;
+                        if age_ns > 0 {
+                            drop_borrow(&mut self.state);
+                            self.check_max_age(
+                                event.topic_hash,
+                                event.handle,
+                                (age_ns / 1_000_000) as f64,
+                                event.monotonic_ns,
+                            );
+                        }
+                    }
+                }
+
+                // drop-rate-runtime: per-sub check fires every 256
+                // takes — bounded overhead, enough samples for a
+                // stable ratio.
+                if take_count.is_multiple_of(256) {
+                    drop_borrow(&mut self.state);
+                    self.check_drop_rate(event.topic_hash, event.handle, event.monotonic_ns);
+                }
             }
             EventKind::QosDeclaredPub => {
                 let snap = QosSnapshot {
@@ -271,6 +335,17 @@ impl RuleEngine {
                 self.check_qos_match(event.topic_hash, event.monotonic_ns);
             }
             EventKind::PublisherInit | EventKind::SubscriptionInit => {
+                // Decode the runtime msg-type hash carried via the
+                // overloaded stamp slots (Phase 36 consistency-runtime).
+                // 0 = type unknown (introspection unavailable).
+                let runtime_type_hash =
+                    ((event.stamp_sec as u32 as u64) << 32) | (event.stamp_nanosec as u64);
+                if runtime_type_hash != 0 {
+                    entry.endpoint_type_hash.insert(event.handle, runtime_type_hash);
+                    drop_borrow(&mut self.state);
+                    self.check_consistency(event.topic_hash, runtime_type_hash, event.monotonic_ns);
+                }
+
                 // Phase 36.5: graph-deviation-runtime — fires when the
                 // endpoint's topic hash isn't recognized by the manifest
                 // tree (neither in `topics:` nor in `external_topics:`).
@@ -424,6 +499,222 @@ impl RuleEngine {
         }
     }
 
+    /// `max-age-runtime` — observed `now - header.stamp` vs declared
+    /// `EndpointProps.max_age_ms` on the consuming subscriber endpoint.
+    /// Lifecycle-gated: skips if the consumer node isn't currently
+    /// enforceable.
+    fn check_max_age(
+        &mut self,
+        topic_hash: u64,
+        sub_handle: u64,
+        age_ms: f64,
+        ts: u64,
+    ) {
+        let _ = sub_handle; // handle map not yet wired to manifest sub refs
+        let Some(fqn) = self.topic_hash_to_fqn.get(&topic_hash).cloned() else {
+            return;
+        };
+        let Some(topic) = self.index.topics.get(&fqn) else {
+            return;
+        };
+        // For each subscriber endpoint, look up its declared `max_age_ms`
+        // and report if exceeded. Without per-endpoint runtime
+        // identity, fire one violation per (topic, declared sub) pair.
+        let mut to_emit: Vec<String> = Vec::new();
+        for sub_ref in &topic.subscribers {
+            let (node_fqn, ep_name) = match split_endpoint_ref(sub_ref) {
+                Some(v) => v,
+                None => continue,
+            };
+            if !self.is_node_enforceable(&node_fqn) {
+                continue;
+            }
+            for resolved in self.index.manifests.values() {
+                for (node_name, node) in &resolved.manifest.nodes {
+                    if qualify(&resolved.ns, node_name) != node_fqn {
+                        continue;
+                    }
+                    if let Some(props) = node.subscribers.get(&ep_name)
+                        && let Some(max) = props.max_age_ms
+                        && age_ms > max
+                    {
+                        to_emit.push(format!(
+                            "topic '{fqn}' subscriber '{sub_ref}' observed age {:.1} ms \
+                             > declared max_age_ms ({max})",
+                            age_ms
+                        ));
+                    }
+                }
+            }
+        }
+        for message in to_emit {
+            self.emit(
+                "max-age-runtime".to_string(),
+                Severity::Error,
+                fqn.clone(),
+                message,
+                ts,
+            );
+        }
+    }
+
+    /// `drop-rate-runtime` — observed (pub - take) / pub ratio for one
+    /// subscriber endpoint, vs declared `topic.drop.max_count` rate.
+    fn check_drop_rate(&mut self, topic_hash: u64, sub_handle: u64, ts: u64) {
+        let _ = sub_handle;
+        let Some(fqn) = self.topic_hash_to_fqn.get(&topic_hash).cloned() else {
+            return;
+        };
+        let Some(topic) = self.index.topics.get(&fqn) else {
+            return;
+        };
+        let Some(drop) = &topic.drop else {
+            return;
+        };
+        let Some(max_count) = &drop.max_count else {
+            return;
+        };
+        let max_rate = max_count.drop_rate();
+
+        let Some(st) = self.state.get(&topic_hash) else {
+            return;
+        };
+        if st.pub_count == 0 {
+            return;
+        }
+        // Sum per-sub take counts and take the max ratio across subs.
+        // Worst-case sub = most lossy receiver.
+        let mut worst_ratio: f64 = 0.0;
+        for take_count in st.sub_take_count.values() {
+            if *take_count > st.pub_count {
+                continue;
+            }
+            let lost = st.pub_count - *take_count;
+            let ratio = lost as f64 / st.pub_count as f64;
+            if ratio > worst_ratio {
+                worst_ratio = ratio;
+            }
+        }
+        if worst_ratio > max_rate {
+            let message = format!(
+                "topic '{fqn}' observed drop rate {:.3} > declared max ({:.3})",
+                worst_ratio, max_rate
+            );
+            self.emit(
+                "drop-rate-runtime".to_string(),
+                Severity::Error,
+                fqn,
+                message,
+                ts,
+            );
+        }
+    }
+
+    /// `max-latency-runtime` — for every scope path whose output topic
+    /// is `topic_hash` and whose declared `max_latency_ms` is set,
+    /// look up the most recent publish on the input topic that carried
+    /// the same stamp. Latency = current_monotonic_ns − input_pub_monotonic_ns.
+    fn check_max_latency(
+        &mut self,
+        output_topic_hash: u64,
+        stamp_sec: i32,
+        stamp_nanosec: u32,
+        ts: u64,
+    ) {
+        if stamp_sec == 0 && stamp_nanosec == 0 {
+            return;
+        }
+        let Some(output_fqn) = self.topic_hash_to_fqn.get(&output_topic_hash).cloned() else {
+            return;
+        };
+        let stamp_key = pack_stamp(stamp_sec, stamp_nanosec);
+
+        // Collect candidate scope paths whose output matches this topic
+        // before recursing into &mut self for emit.
+        let scope_paths = self.index.scope_paths.clone();
+        let mut to_emit: Vec<(String, String)> = Vec::new();
+        for sp in &scope_paths {
+            if !sp.output_topics.iter().any(|t| t == &output_fqn) {
+                continue;
+            }
+            let Some(max) = sp.path.max_latency_ms else {
+                continue;
+            };
+            for input_fqn in &sp.input_topics {
+                let input_hash = fnv1a(input_fqn.as_bytes());
+                let Some(st) = self.state.get(&input_hash) else {
+                    continue;
+                };
+                let Some(input_pub_ns) = st.last_pub_for_stamp.get(&stamp_key).copied() else {
+                    continue;
+                };
+                if ts <= input_pub_ns {
+                    continue;
+                }
+                let latency_ms = (ts - input_pub_ns) as f64 / 1_000_000.0;
+                if latency_ms > max {
+                    to_emit.push((
+                        format!(
+                            "scope path '{}' (input '{}' → output '{}'): observed latency \
+                             {:.2} ms > declared max ({})",
+                            sp.path_name, input_fqn, output_fqn, latency_ms, max
+                        ),
+                        output_fqn.clone(),
+                    ));
+                }
+            }
+        }
+        for (message, fqn) in to_emit {
+            self.emit(
+                "max-latency-runtime".to_string(),
+                Severity::Error,
+                fqn,
+                message,
+                ts,
+            );
+        }
+    }
+
+    /// `consistency-runtime` — runtime msg-type hash from introspection
+    /// vs declared `type:` in the manifest.
+    fn check_consistency(&mut self, topic_hash: u64, runtime_type_hash: u64, ts: u64) {
+        let Some(fqn) = self.topic_hash_to_fqn.get(&topic_hash).cloned() else {
+            return;
+        };
+        let declared_type = if let Some(topic) = self.index.topics.get(&fqn) {
+            Some(topic.msg_type.clone())
+        } else if let Some(ext) = self.index.externals.get(&fqn) {
+            // ExternalSide doesn't carry the type — fetch via topic
+            // lookup or skip. Skip to avoid false positives.
+            let _ = ext;
+            None
+        } else {
+            None
+        };
+        let Some(declared) = declared_type else {
+            return;
+        };
+        if declared.starts_with("TODO/") {
+            return;
+        }
+        let declared_hash = fnv1a(declared.as_bytes());
+        if declared_hash == runtime_type_hash {
+            return;
+        }
+        let message = format!(
+            "topic '{fqn}' runtime msg type (hash {:#x}) disagrees with declared '{declared}' \
+             (hash {:#x})",
+            runtime_type_hash, declared_hash
+        );
+        self.emit(
+            "consistency-runtime".to_string(),
+            Severity::Error,
+            fqn,
+            message,
+            ts,
+        );
+    }
+
     /// Emit a violation. Idempotent — duplicate `(rule_id, fqn)` pairs
     /// are silently suppressed after the first occurrence.
     fn emit(
@@ -495,6 +786,14 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x100000001B3);
     }
     hash
+}
+
+/// Pack a `header.stamp` into a u64 key for the per-stamp publish
+/// monotonic_ns map. Combines sec×1e9 + nsec into a single nanosecond
+/// timestamp.
+#[inline]
+fn pack_stamp(sec: i32, nsec: u32) -> u64 {
+    (sec as u32 as u64) * 1_000_000_000 + (nsec as u64)
 }
 
 fn split_endpoint_ref(ep_ref: &str) -> Option<(String, String)> {
@@ -778,6 +1077,136 @@ mod tests {
             re.violation_count, 0,
             "lifecycle gate should suppress rate-hierarchy violation"
         );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn consistency_runtime_fires_on_type_mismatch() {
+        use crate::interception::{EventKind, InterceptionEvent};
+        use crate::ros::manifest_loader::ResolvedTopic;
+
+        let mut index = ManifestIndex::default();
+        let fqn = "/chatter".to_string();
+        index.topics.insert(
+            fqn.clone(),
+            ResolvedTopic {
+                fqn: fqn.clone(),
+                msg_type: "std_msgs/msg/String".to_string(),
+                publishers: vec!["/talker/out".to_string()],
+                subscribers: vec![],
+                rate_hz: None,
+                qos: None,
+                max_transport_ms: None,
+                drop: None,
+                scope_ids: vec![0],
+            },
+        );
+
+        let tmp = std::env::temp_dir().join(format!(
+            "play_launch_consistency_test_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Warn, &tmp);
+
+        // Send a PublisherInit with the wrong runtime type hash —
+        // declared is std_msgs/msg/String. Use a deliberately wrong
+        // hash that won't collide.
+        let wrong_hash: u64 = 0xDEAD_BEEF_DEAD_BEEF;
+        let event = InterceptionEvent {
+            kind: EventKind::PublisherInit,
+            _pad: [0; 3],
+            topic_hash: fnv1a(fqn.as_bytes()),
+            stamp_sec: (wrong_hash >> 32) as i32,
+            stamp_nanosec: (wrong_hash & 0xFFFF_FFFF) as u32,
+            handle: 0xAA,
+            monotonic_ns: 1_000_000,
+        };
+        re.observe(&event);
+        re.flush();
+
+        assert!(re.violation_count >= 1);
+        let contents = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(contents.contains("consistency-runtime"), "{contents}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn max_age_runtime_fires_when_stamp_too_old() {
+        use crate::interception::{EventKind, InterceptionEvent};
+        use crate::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
+        use ros_launch_manifest_types::{Manifest, NodeDecl};
+
+        // Build manifest: subscriber declares max_age_ms=10.
+        let mut nodes = std::collections::BTreeMap::new();
+        let mut sub_node = NodeDecl::default();
+        let mut sub_props = ros_launch_manifest_types::EndpointProps::default();
+        sub_props.max_age_ms = Some(10.0);
+        sub_node.subscribers.insert("in".to_string(), sub_props);
+        nodes.insert("listener".to_string(), sub_node);
+
+        let manifest = Manifest {
+            version: 1,
+            nodes,
+            ..Default::default()
+        };
+        let resolved = ResolvedManifest {
+            scope_id: 0,
+            pkg: None,
+            file: String::new(),
+            ns: "/".to_string(),
+            manifest,
+            source: String::new(),
+            diagnostics: vec![],
+        };
+        let mut index = ManifestIndex::default();
+        index.manifests.insert(0, resolved);
+        let fqn = "/chatter".to_string();
+        index.topics.insert(
+            fqn.clone(),
+            ResolvedTopic {
+                fqn: fqn.clone(),
+                msg_type: "std_msgs/msg/String".to_string(),
+                publishers: vec![],
+                subscribers: vec!["/listener/in".to_string()],
+                rate_hz: None,
+                qos: None,
+                max_transport_ms: None,
+                drop: None,
+                scope_ids: vec![0],
+            },
+        );
+
+        let tmp = std::env::temp_dir().join(format!(
+            "play_launch_max_age_test_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Warn, &tmp);
+
+        // Take event carrying a stamp 1 second in the past — older
+        // than max_age_ms=10ms.
+        let one_second_ago = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .saturating_sub(std::time::Duration::from_secs(1));
+        let event = InterceptionEvent {
+            kind: EventKind::Take,
+            _pad: [0; 3],
+            topic_hash: fnv1a(fqn.as_bytes()),
+            stamp_sec: one_second_ago.as_secs() as i32,
+            stamp_nanosec: one_second_ago.subsec_nanos(),
+            handle: 0x1,
+            monotonic_ns: 1_000_000,
+        };
+        re.observe(&event);
+        re.flush();
+
+        assert!(re.violation_count >= 1);
+        let contents = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(contents.contains("max-age-runtime"), "{contents}");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

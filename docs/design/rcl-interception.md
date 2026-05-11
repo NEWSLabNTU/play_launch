@@ -222,19 +222,27 @@ Note: `PublisherInit`/`SubscriptionInit` event kinds already exist in the
 Beyond event-driven detection, the interception layer can perform audit
 **inside the hooked process** — enabling blocking enforcement.
 
-### Warn-only (v2)
+### Warn-only (v2) — implemented in Phase 36.5
 
-The `GraphPlugin` receives the expected graph (via shared memory or
-serialized in an env var). On `rcl_publisher_init`, it checks whether the
-topic is in the expected graph. If not, it writes a warning event to the
-SPSC ring. play_launch logs the deviation. The publisher is still created.
+Implemented as a consumer-side rule (`graph-deviation-runtime`) inside
+`RuleEngine`, not a separate `.so` plugin: the existing `StatsPlugin`
+already emits `PublisherInit` / `SubscriptionInit` events with topic
+hash, and `RuleEngine` compares every hash against
+`topic_hash_to_fqn` built from `ManifestIndex.topics` ∪
+`ManifestIndex.externals`. Mismatch → JSONL violation.
 
-### Blocking enforcement (v3)
+### Blocking enforcement (v3) — implemented in Phase 36.7
 
-The hook can return `RCL_RET_ERROR` from `rcl_publisher_init` to prevent
-unauthorized publishers from being created. The node receives an error
-from `rcl_publisher_init` and handles it (or crashes, depending on the
-node's error handling).
+`rcl_publisher_init` and `rcl_subscription_init` return
+`RCL_RET_TOPIC_INVALID` (1004) for topics not on the allowlist. The
+allowlist is a `HashSet<u64>` of fnv1a-hashed topic FQNs, loaded once
+on first hook invocation from `PLAY_LAUNCH_INTERCEPTION_GRAPH_FILE`
+when `PLAY_LAUNCH_INTERCEPTION_BLOCK_GRAPH=1`. The original rcl
+function is **not** called for blocked topics — the endpoint is
+never created.
+
+See `src/play_launch_interception/src/allowlist.rs` for the parser
+and `commands/replay.rs` for the file-write + env-injection wiring.
 
 ```rust
 // In the rcl_publisher_init hook (future)
@@ -266,12 +274,21 @@ path (v2) provides most of the value without the risk.
 
 ## Migration Path
 
-| Version | Graph discovery | Audit location | Enforcement |
-|---------|----------------|----------------|-------------|
-| v1 (Phase 30) | Polling via `GraphSnapshot` | play_launch executor | Warn-only |
-| v2 (future) | `GraphPlugin` via SPSC events | play_launch consumer | Warn-only, instant |
-| v3 (future) | `GraphPlugin` | In-process (interception .so) | Blocking |
+| Version | Graph discovery | Audit location | Enforcement | Status |
+|---------|----------------|----------------|-------------|--------|
+| v1 (Phase 30) | Polling via `GraphSnapshot` | play_launch executor | Warn-only | Done |
+| v2 (Phase 36.5) | `PublisherInit` / `SubscriptionInit` SPSC events vs `ManifestIndex.topic_hash_to_fqn` (built from `topics:` + `external_topics:`) | play_launch consumer (`RuleEngine.observe`) | Warn-only (`graph-deviation-runtime`), instant | Done |
+| v3 (Phase 36.7) | Allowlist file written from `ManifestIndex` to `play_log/<ts>/expected_graph.txt`; loaded into `OnceLock<HashSet<u64>>` in the .so | In-process (interception .so), gated by `PLAY_LAUNCH_INTERCEPTION_BLOCK_GRAPH=1` | Blocking — `rcl_publisher_init` / `rcl_subscription_init` return `RCL_RET_TOPIC_INVALID` (1004) for unauthorized topics | Done |
 
-Each version builds on the previous. The `InterceptionPlugin` trait and
-SPSC pipeline are already in place from Phase 29 — adding `GraphPlugin` is
-a new plugin module, not an architectural change.
+v2 is implemented inside `RuleEngine` rather than as a separate `.so`
+plugin because the existing `StatsPlugin` already emits the necessary
+init events; no new in-process plugin was needed. v3's allowlist gate
+in the `.so` is the only piece that lives below `rcl` for blocking.
+
+Activation of v3 requires the operator to opt in via
+`--block-unauthorized-endpoints` on `play_launch launch`. The replay
+command writes the allowlist file and injects the two env vars
+(`PLAY_LAUNCH_INTERCEPTION_GRAPH_FILE` + `PLAY_LAUNCH_INTERCEPTION_BLOCK_GRAPH=1`)
+into every child via `setup_child_interception`. Default off because
+nodes that don't handle `RCL_RET_TOPIC_INVALID` gracefully may crash;
+operators should run warn-only (v2) first.

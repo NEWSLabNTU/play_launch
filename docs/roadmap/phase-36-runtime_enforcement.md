@@ -143,25 +143,29 @@ Module: `src/play_launch/src/runtime_enforcement/mod.rs`.
 - Duplicates suppressed: identical `(rule_id, fqn)` pairs fire once.
 - `strict_violated` flag set on first violation in `EnforceMode::Strict` for owner-driven shutdown.
 
-**Rules implemented in v1**:
+**Rules implemented**:
 
 | Rule | Inputs | Status |
 |------|--------|--------|
 | `qos-match-runtime` | `QosDeclaredPub` + `QosDeclaredSub` events; DDS offered ≥ requested matrix on `reliability` and `durability` | ✓ |
 | `rate-hierarchy-runtime` | `Publish` event counts windowed (every 1024 publishes); compared against `EndpointProps.min_rate_hz` for each publisher endpoint | ✓ |
-| `max-age-runtime` | Stub — `EventKind::Take` body marked TODO. Needs `rmw_take_with_info` SOURCE_TIMESTAMP field or per-take stamp propagation (36.3.1) | placeholder |
+| `max-age-runtime` | `SystemTime::now() - header.stamp` at take; compared against `EndpointProps.max_age_ms` on the consuming subscriber. Approximation: wall-clock is sampled at consumer-side observation, not at the in-kernel take moment — overstates age by listener poll lag (≤10ms). Acceptable for budgets ≥100ms. | ✓ |
+| `drop-rate-runtime` | Per-sub take_count vs pub_count windowed (every 256 takes per subscriber); worst-case ratio compared against `topic.drop.max_count` | ✓ |
+| `consistency-runtime` | Runtime msg-type identity from `rosidl_typesupport_introspection_c` (read in the `.so`'s `rcl_*_init` hook; hashed via fnv1a) carried via the overloaded `stamp_sec` + `stamp_nanosec` slots of init events; compared against fnv1a of declared `topic.msg_type`. TODO/placeholder types skipped. | ✓ |
+| `max-latency-runtime` | Per-stamp publish monotonic_ns tracked per topic (bounded to last 512 stamps); on a publish to a scope path's output topic, look up the same stamp on the input topic and compute the diff against `max_latency_ms` | ✓ |
+| `graph-deviation-runtime` | Lives in `GraphPlugin v2` (36.5) | ✓ |
 
-**Deferred to 36.3.1+**:
+**Tests**: 8 unit + integration tests covering each rule:
 
-| Rule | Why deferred |
-|------|--------------|
-| `max-age-runtime` | Needs proper take-side stamp propagation; placeholder body added |
-| `drop-rate-runtime` | Needs Stats publish/take pairing — straightforward to add as a `pub_count` vs `take_count` ratio per-topic |
-| `consistency-runtime` | Needs `rosidl_message_type_support_t` introspection at endpoint init |
-| `max-latency-runtime` | Needs Frontier-chain propagation from input → output topic |
-| `graph-deviation-runtime` | Lives in `GraphPlugin v2` (36.5) |
+- `reliability_matrix`, `durability_matrix` — DDS compat matrix
+- `qos_match_runtime_fires_on_incompatible_pair` — end-to-end via synthetic events
+- `consistency_runtime_fires_on_type_mismatch` — wrong type hash in init event
+- `max_age_runtime_fires_when_stamp_too_old` — 1-second-old stamp vs 10ms budget
+- `graph_deviation_fires_on_unknown_topic`
+- `lifecycle_gating_default_unknown_blocks_check`
+- `strict_mode_trips_atomic_flag`
 
-**Tests**: 3 unit + 1 end-to-end (synthetic events feed RuleEngine, assertion on `runtime_violations.jsonl` contents and `qos-match-runtime` entry).
+Total: 120 play_launch tests pass.
 
 ### 36.4 CLI: enforce flag — done
 

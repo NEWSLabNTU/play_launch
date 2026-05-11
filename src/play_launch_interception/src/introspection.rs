@@ -32,6 +32,59 @@ unsafe fn find_header_offset(members: *const MessageMembers) -> Option<usize> {
     None
 }
 
+/// Extract the message type identity as `"pkg/msg/Name"` from
+/// `type_support`. Used by the consistency-runtime rule (Phase 36) to
+/// compare the actual runtime type against the manifest's declared
+/// `type:`. Returns `None` if introspection isn't available.
+///
+/// # Safety
+///
+/// Same preconditions as [`find_stamp_offset`].
+pub unsafe fn find_type_identity(
+    type_support: *const rosidl_message_type_support_t,
+) -> Option<String> {
+    unsafe {
+        try_type_identity(type_support, TYPESUPPORT_INTROSPECTION_C_IDENTIFIER).or_else(|| {
+            try_type_identity(type_support, TYPESUPPORT_INTROSPECTION_CPP_IDENTIFIER)
+        })
+    }
+}
+
+/// Read `message_namespace_` and `message_name_` from the introspection
+/// MessageMembers struct via the given identifier.
+///
+/// # Safety
+///
+/// `type_support` must be a valid, non-null pointer.
+unsafe fn try_type_identity(
+    type_support: *const rosidl_message_type_support_t,
+    identifier: &[u8],
+) -> Option<String> {
+    let ts = unsafe { &*type_support };
+    let func = ts.func?;
+    let handle = unsafe { func(type_support, identifier.as_ptr() as *const c_char) };
+    if handle.is_null() {
+        return None;
+    }
+    let data = unsafe { (*handle).data };
+    if data.is_null() {
+        return None;
+    }
+    let members = unsafe { &*(data as *const MessageMembers) };
+    if members.message_namespace_.is_null() || members.message_name_.is_null() {
+        return None;
+    }
+    let ns_bytes = unsafe { CStr::from_ptr(members.message_namespace_) }.to_bytes();
+    let name_bytes = unsafe { CStr::from_ptr(members.message_name_) }.to_bytes();
+
+    // The namespace from introspection uses "__" instead of "/" — e.g.
+    // "std_msgs__msg" → "std_msgs/msg". Normalise back to the canonical
+    // "pkg/msg/Name" form used in manifests.
+    let ns = String::from_utf8_lossy(ns_bytes).replace("__", "/");
+    let name = String::from_utf8_lossy(name_bytes);
+    Some(format!("{ns}/{name}"))
+}
+
 /// Resolve the byte offset of `header.stamp` within messages published or
 /// received through `type_support`.
 ///

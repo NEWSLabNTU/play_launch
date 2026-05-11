@@ -30,13 +30,18 @@ impl InterceptionPlugin for StatsPlugin {
         _topic: &str,
         topic_hash: u64,
         _stamp_offset: Option<usize>,
+        type_hash: Option<u64>,
     ) {
+        // Init events have no stamp; reuse the stamp_sec / stamp_nanosec
+        // slots to carry the runtime msg-type hash (Phase 36 consistency
+        // rule). 0 means "type unknown — introspection unavailable".
+        let th = type_hash.unwrap_or(0);
         let event = InterceptionEvent {
             kind: EventKind::PublisherInit,
             _pad: [0; 3],
             topic_hash,
-            stamp_sec: 0,
-            stamp_nanosec: 0,
+            stamp_sec: (th >> 32) as i32,
+            stamp_nanosec: (th & 0xFFFF_FFFF) as u32,
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
         };
@@ -49,13 +54,15 @@ impl InterceptionPlugin for StatsPlugin {
         _topic: &str,
         topic_hash: u64,
         _stamp_offset: Option<usize>,
+        type_hash: Option<u64>,
     ) {
+        let th = type_hash.unwrap_or(0);
         let event = InterceptionEvent {
             kind: EventKind::SubscriptionInit,
             _pad: [0; 3],
             topic_hash,
-            stamp_sec: 0,
-            stamp_nanosec: 0,
+            stamp_sec: (th >> 32) as i32,
+            stamp_nanosec: (th & 0xFFFF_FFFF) as u32,
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
         };
@@ -149,13 +156,15 @@ mod tests {
     fn publisher_init_writes_event() {
         let (plugin, mut consumer, shm_fd, event_fd) = setup();
 
-        plugin.on_publisher_init(0x300, "/chatter", 0xCCCC, Some(16));
+        plugin.on_publisher_init(0x300, "/chatter", 0xCCCC, Some(16), Some(0xABCD_1234_5678));
 
         let ev = consumer.pop().expect("should receive init event");
         assert_eq!(ev.kind, EventKind::PublisherInit);
         assert_eq!(ev.topic_hash, 0xCCCC);
         assert_eq!(ev.handle, 0x300);
-        assert_eq!(ev.stamp_sec, 0);
+        // type_hash 0xABCD_1234_5678 splits across stamp_sec/stamp_nanosec
+        let combined = ((ev.stamp_sec as u32 as u64) << 32) | (ev.stamp_nanosec as u64);
+        assert_eq!(combined, 0xABCD_1234_5678);
 
         unsafe {
             libc::close(shm_fd);
@@ -167,7 +176,7 @@ mod tests {
     fn subscription_init_writes_event() {
         let (plugin, mut consumer, shm_fd, event_fd) = setup();
 
-        plugin.on_subscription_init(0x400, "/listener", 0xDDDD, Some(8));
+        plugin.on_subscription_init(0x400, "/listener", 0xDDDD, Some(8), None);
 
         let ev = consumer.pop().expect("should receive init event");
         assert_eq!(ev.kind, EventKind::SubscriptionInit);

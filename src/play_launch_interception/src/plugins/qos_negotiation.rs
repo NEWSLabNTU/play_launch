@@ -57,6 +57,7 @@ impl InterceptionPlugin for QosNegotiationPlugin {
         _topic: &str,
         _topic_hash: u64,
         _stamp_offset: Option<usize>,
+        _type_hash: Option<u64>,
     ) {
     }
 
@@ -66,6 +67,7 @@ impl InterceptionPlugin for QosNegotiationPlugin {
         _topic: &str,
         _topic_hash: u64,
         _stamp_offset: Option<usize>,
+        _type_hash: Option<u64>,
     ) {
     }
 

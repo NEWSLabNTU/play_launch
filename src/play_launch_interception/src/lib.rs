@@ -321,6 +321,8 @@ pub unsafe extern "C" fn rcl_publisher_init(
             .to_string_lossy()
             .into_owned();
         let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
+        let type_hash = unsafe { introspection::find_type_identity(type_support) }
+            .map(|id| registry::fnv1a(id.as_bytes()));
 
         // Register in the shared registry (used for hot-path lookups).
         registry::register_publisher(publisher as usize, &topic, stamp_offset);
@@ -332,6 +334,7 @@ pub unsafe extern "C" fn rcl_publisher_init(
             &topic,
             topic_hash,
             stamp_offset,
+            type_hash,
         );
     }
 
@@ -421,6 +424,8 @@ pub unsafe extern "C" fn rcl_subscription_init(
             .to_string_lossy()
             .into_owned();
         let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
+        let type_hash = unsafe { introspection::find_type_identity(type_support) }
+            .map(|id| registry::fnv1a(id.as_bytes()));
 
         // Register in the shared registry.
         registry::register_subscription(subscription as usize, &topic, stamp_offset);
@@ -432,6 +437,7 @@ pub unsafe extern "C" fn rcl_subscription_init(
             &topic,
             topic_hash,
             stamp_offset,
+            type_hash,
         );
     }
 
