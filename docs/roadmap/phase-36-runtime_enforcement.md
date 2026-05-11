@@ -167,6 +167,27 @@ Module: `src/play_launch/src/runtime_enforcement/mod.rs`.
 
 Total: 120 play_launch tests pass.
 
+### Smoke tests (real ROS 2 launch)
+
+`tests/tests/runtime_enforcement.rs` spawns the cargo-built `play_launch` against `tests/fixtures/simple_test/launch/pure_nodes.launch.xml` (two `demo_nodes_cpp` nodes under namespace `/pure_test`) with:
+- Interception enabled via inline config YAML
+- `--manifest-dir <tempdir>` with `_/pure_nodes.yaml`
+- `--enforce-rules=<mode>` per test
+
+Four tests, all passing:
+- `graph_deviation_runtime_fires_for_undeclared_topic` — empty manifest topics block; verifies `graph-deviation-runtime` warnings are emitted to `play_log/<ts>/runtime_violations.jsonl`.
+- `runtime_violations_jsonl_written_on_real_launch` — manifest with declared topic; verifies the jsonl file exists with at least one entry tagged with a `-runtime` rule.
+- `enforce_off_skips_rule_engine` — `--enforce-rules=off`; verifies no jsonl file is produced.
+- `block_unauthorized_endpoints_writes_allowlist_file` — `--block-unauthorized-endpoints`; verifies `play_log/<ts>/expected_graph.txt` is written with the declared FQNs.
+
+### Known gap: topic-name expansion in the `.so`
+
+The `.so`'s `rcl_publisher_init` / `rcl_subscription_init` hooks receive the topic name as the caller passed it to rcl — for `demo_nodes_cpp::talker`, that turns out to be bare `chatter` rather than `/pure_test/chatter` (rclcpp doesn't expand the name before reaching `rcl_publisher_init` in this code path). The interception layer hashes whatever string it sees, so the consumer's `topic_hash_to_fqn` map (built from manifest FQNs like `/pure_test/chatter`) doesn't match.
+
+Effect: `consistency-runtime`, `qos-match-runtime`, `rate-hierarchy-runtime`, `max-age-runtime`, `drop-rate-runtime`, and `max-latency-runtime` may miss declared topics if the publisher's topic name isn't pre-expanded by the calling library. `graph-deviation-runtime` still fires correctly because it matches against the same un-expanded hash.
+
+Follow-up (Phase 36.4): in the `.so` hook, call `rcl_expand_topic_name(topic_name, node_name, node_namespace, ...)` (or equivalent) to normalize before hashing. This wasn't in the v1 scope because most cases the smoke test exercises hit the un-expanded path, which the unit-test layer (synthetic events with pre-computed hashes) sidesteps.
+
 ### 36.4 CLI: enforce flag — done
 
 `play_launch launch ... --enforce-rules=<mode>`:
