@@ -452,6 +452,32 @@ unsafe fn resolve_rmw_from(source: *mut c_void) -> Option<RmwOriginals> {
     })
 }
 
+/// One-shot debug dump: append `hash<TAB>topic<TAB>side\n` to a per-pid
+/// TSV under the directory named by `PLAY_LAUNCH_INTERCEPTION_DEBUG_TOPICS_DIR`.
+/// No-op when the env var is unset. Used to map graph-deviation hashes
+/// back to topic strings when auditing manifest coverage.
+fn debug_topic_name(hash: u64, topic: &str, side: &str) {
+    use std::io::Write;
+    use std::sync::OnceLock;
+    static FILE: OnceLock<Option<parking_lot::Mutex<std::fs::File>>> = OnceLock::new();
+    let cell = FILE.get_or_init(|| {
+        let dir = std::env::var("PLAY_LAUNCH_INTERCEPTION_DEBUG_TOPICS_DIR").ok()?;
+        let pid = std::process::id();
+        let path = std::path::PathBuf::from(dir).join(format!("topics.{pid}.tsv"));
+        std::fs::create_dir_all(path.parent()?).ok()?;
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok()?;
+        Some(parking_lot::Mutex::new(f))
+    });
+    if let Some(m) = cell.as_ref() {
+        let mut f = m.lock();
+        let _ = writeln!(f, "{hash:#x}\t{topic}\t{side}");
+    }
+}
+
 /// Try to open the shared memory ring buffer from `PLAY_LAUNCH_INTERCEPTION_SHM_FD`.
 fn try_open_producer() -> Option<Arc<Mutex<Producer<InterceptionEvent>>>> {
     let fd_str = std::env::var("PLAY_LAUNCH_INTERCEPTION_SHM_FD").ok()?;
@@ -581,6 +607,7 @@ pub unsafe extern "C" fn rcl_publisher_init(
         registry::register_publisher(publisher as usize, &topic, stamp_offset);
 
         let topic_hash = registry::fnv1a(topic.as_bytes());
+        debug_topic_name(topic_hash, &topic, "pub");
         plugin_dispatch::dispatch_publisher_init(
             &rt.plugins,
             publisher as usize,
@@ -685,6 +712,7 @@ pub unsafe extern "C" fn rcl_subscription_init(
         registry::register_subscription(subscription as usize, &topic, stamp_offset);
 
         let topic_hash = registry::fnv1a(topic.as_bytes());
+        debug_topic_name(topic_hash, &topic, "sub");
         plugin_dispatch::dispatch_subscription_init(
             &rt.plugins,
             subscription as usize,
