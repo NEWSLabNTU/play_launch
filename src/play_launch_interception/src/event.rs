@@ -55,6 +55,18 @@ pub enum EventKind {
     ///   `stamp_sec` = total_count (saturating cast from usize),
     ///   `stamp_nanosec` = total_count_change (saturating cast from usize).
     MessageLost = 12,
+    /// Ships a chunk of a topic FQN string from the .so to the consumer
+    /// so graph-deviation-runtime messages can show real topic names
+    /// instead of hashes. Each chunk carries 24 bytes of payload; long
+    /// names span multiple chunks ordered by `chunk_idx`. Field overload:
+    ///   `_pad[0]` = chunk_idx (u8, 0-based),
+    ///   `_pad[1]` = total_chunks (u8, 1-based),
+    ///   `_pad[2]` = bytes valid in this chunk's payload (1-24),
+    ///   `topic_hash` = FQN hash (chunks group by this),
+    ///   `stamp_sec`, `stamp_nanosec`, `handle`, `monotonic_ns` reinterpreted
+    ///   as 24 raw bytes of UTF-8 payload (little-endian byte order on the
+    ///   producer matches the consumer because both run on the same host).
+    TopicNameDeclared = 13,
 }
 
 /// A single interception event (40 bytes, `#[repr(C)]`).
@@ -107,6 +119,30 @@ mod tests {
         assert_eq!(e.topic_hash, 0x1234_5678_9ABC_DEF0);
         assert_eq!(e.stamp_sec, liveliness::AUTOMATIC);
         assert_eq!(e.stamp_nanosec, 5);
+    }
+
+    #[test]
+    fn topic_name_chunk_roundtrip_full() {
+        let payload = b"/abcd/efgh/ijkl/mnop/qrst"; // 25 bytes — last is dropped
+        let e = InterceptionEvent::topic_name_chunk(0x1234, 0, 2, &payload[..24]);
+        let (idx, total, n, buf) = e.decode_topic_name_chunk();
+        assert_eq!(idx, 0);
+        assert_eq!(total, 2);
+        assert_eq!(n, 24);
+        assert_eq!(&buf[..24], &payload[..24]);
+    }
+
+    #[test]
+    fn topic_name_chunk_roundtrip_short() {
+        let e = InterceptionEvent::topic_name_chunk(0xdeadbeef, 1, 2, b"tail");
+        let (idx, total, n, buf) = e.decode_topic_name_chunk();
+        assert_eq!(idx, 1);
+        assert_eq!(total, 2);
+        assert_eq!(n, 4);
+        assert_eq!(&buf[..4], b"tail");
+        // Padding bytes should be zero.
+        assert_eq!(&buf[4..], &[0u8; 20][..]);
+        assert_eq!(e.kind, EventKind::TopicNameDeclared);
     }
 
     #[test]
@@ -258,6 +294,65 @@ impl InterceptionEvent {
             handle,
             monotonic_ns: monotonic_ns(),
         }
+    }
+}
+
+/// Chunk size used by `topic_name_chunk` — the 24-byte payload region
+/// of the `InterceptionEvent` (stamp_sec + stamp_nanosec + handle +
+/// monotonic_ns = 24 bytes).
+pub const TOPIC_NAME_CHUNK_BYTES: usize = 24;
+
+impl InterceptionEvent {
+    /// Build a `TopicNameDeclared` event carrying one chunk of a topic
+    /// FQN string. `payload` must be ≤ 24 bytes; shorter slices are
+    /// zero-padded. The whole event is a normal 40-byte
+    /// `InterceptionEvent` so it goes through the same SPSC ring.
+    #[inline]
+    pub fn topic_name_chunk(
+        topic_hash: u64,
+        chunk_idx: u8,
+        total_chunks: u8,
+        payload: &[u8],
+    ) -> Self {
+        debug_assert!(payload.len() <= TOPIC_NAME_CHUNK_BYTES);
+        let mut buf = [0u8; TOPIC_NAME_CHUNK_BYTES];
+        let n = payload.len().min(TOPIC_NAME_CHUNK_BYTES);
+        buf[..n].copy_from_slice(&payload[..n]);
+        // Reinterpret the 24-byte buffer as the four fields. SAFETY:
+        // `buf` is exactly 24 bytes and the four fields share the same
+        // 24-byte layout per `#[repr(C)]`. Endianness is host-native;
+        // .so + play_launch always run on the same host.
+        let stamp_sec = i32::from_ne_bytes(buf[0..4].try_into().unwrap());
+        let stamp_nanosec = u32::from_ne_bytes(buf[4..8].try_into().unwrap());
+        let handle = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
+        let monotonic_ns = u64::from_ne_bytes(buf[16..24].try_into().unwrap());
+        Self {
+            kind: EventKind::TopicNameDeclared,
+            _pad: [chunk_idx, total_chunks, n as u8],
+            topic_hash,
+            stamp_sec,
+            stamp_nanosec,
+            handle,
+            monotonic_ns,
+        }
+    }
+
+    /// Inverse of `topic_name_chunk`: copy the 24-byte payload back out
+    /// into a fixed buffer plus the chunk metadata. Returns
+    /// `(chunk_idx, total_chunks, byte_count, payload_buffer)`.
+    #[inline]
+    pub fn decode_topic_name_chunk(&self) -> (u8, u8, usize, [u8; TOPIC_NAME_CHUNK_BYTES]) {
+        let mut buf = [0u8; TOPIC_NAME_CHUNK_BYTES];
+        buf[0..4].copy_from_slice(&self.stamp_sec.to_ne_bytes());
+        buf[4..8].copy_from_slice(&self.stamp_nanosec.to_ne_bytes());
+        buf[8..16].copy_from_slice(&self.handle.to_ne_bytes());
+        buf[16..24].copy_from_slice(&self.monotonic_ns.to_ne_bytes());
+        (
+            self._pad[0],
+            self._pad[1],
+            self._pad[2] as usize,
+            buf,
+        )
     }
 }
 

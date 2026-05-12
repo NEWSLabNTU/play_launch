@@ -142,6 +142,51 @@ pub struct RuleEngine {
     /// Tracked once per `rule_id+fqn` to suppress repeated identical
     /// violations from spamming the log.
     seen: HashMap<(String, String), u64>,
+    /// Buffer for in-flight `TopicNameDeclared` chunks keyed by
+    /// topic_hash. Each entry holds the expected `total_chunks` and the
+    /// chunks received so far. On completion the assembled FQN is
+    /// inserted into `discovered_names` for use by violation messages.
+    topic_name_chunks: HashMap<u64, TopicNameAssembly>,
+    /// Runtime-discovered topic FQNs (one entry per unique topic_hash
+    /// announced by the .so). Used only to render nicer messages —
+    /// kept SEPARATE from `topic_hash_to_fqn` so the membership check
+    /// for graph-deviation-runtime continues to reflect manifest
+    /// declarations only.
+    discovered_names: HashMap<u64, String>,
+}
+
+/// In-flight reassembly state for a `TopicNameDeclared` stream.
+struct TopicNameAssembly {
+    total: u8,
+    parts: Vec<Option<Vec<u8>>>,
+}
+
+impl TopicNameAssembly {
+    fn new(total: u8) -> Self {
+        Self {
+            total,
+            parts: vec![None; total as usize],
+        }
+    }
+
+    fn add(&mut self, idx: u8, bytes: &[u8]) {
+        if (idx as usize) < self.parts.len() && self.parts[idx as usize].is_none() {
+            self.parts[idx as usize] = Some(bytes.to_vec());
+        }
+    }
+
+    fn assembled(&self) -> Option<String> {
+        if self.parts.iter().any(|p| p.is_none()) {
+            return None;
+        }
+        let mut out = Vec::with_capacity(self.total as usize * 24);
+        for p in &self.parts {
+            if let Some(bytes) = p {
+                out.extend_from_slice(bytes);
+            }
+        }
+        String::from_utf8(out).ok()
+    }
 }
 
 impl RuleEngine {
@@ -186,6 +231,8 @@ impl RuleEngine {
             violation_count: 0,
             strict_violated: Arc::new(AtomicBool::new(false)),
             seen: HashMap::new(),
+            topic_name_chunks: HashMap::new(),
+            discovered_names: HashMap::new(),
         }
     }
 
@@ -334,6 +381,25 @@ impl RuleEngine {
                 drop_borrow(&mut self.state);
                 self.check_qos_match(event.topic_hash, event.monotonic_ns);
             }
+            EventKind::TopicNameDeclared => {
+                // Reassemble multi-chunk topic-name announcement.
+                let (idx, total, n, buf) = decode_topic_name_chunk(event);
+                let entry = self
+                    .topic_name_chunks
+                    .entry(event.topic_hash)
+                    .or_insert_with(|| TopicNameAssembly::new(total.max(1)));
+                if entry.total != total.max(1) {
+                    // Mismatched total — discard and restart. Should never
+                    // happen since the .so sends a coherent sequence per
+                    // topic_hash; treat defensively.
+                    *entry = TopicNameAssembly::new(total.max(1));
+                }
+                entry.add(idx, &buf[..n]);
+                if let Some(fqn) = entry.assembled() {
+                    self.discovered_names.entry(event.topic_hash).or_insert(fqn);
+                    self.topic_name_chunks.remove(&event.topic_hash);
+                }
+            }
             EventKind::OfferedQosIncompatible | EventKind::RequestedQosIncompatible => {
                 // Phase 36 DDS events: the DDS layer reported an
                 // incompatible QoS match on this topic. Emit a
@@ -381,17 +447,18 @@ impl RuleEngine {
                     } else {
                         "subscription"
                     };
-                    // Use the hex hash as FQN placeholder — the
-                    // .so doesn't ship topic strings on hot events.
-                    // Endpoint-creation events also don't carry the
-                    // topic string today (only the hash). The
-                    // GraphDeviation message identifies the endpoint
-                    // by hash; operators can grep their manifests if
-                    // needed.
-                    let fqn = format!("(unknown hash {:#x})", event.topic_hash);
+                    // Prefer the reassembled FQN from the
+                    // `TopicNameDeclared` chunks if one has arrived;
+                    // otherwise fall back to the bare hash so the
+                    // violation still records the endpoint.
+                    let fqn = self
+                        .discovered_names
+                        .get(&event.topic_hash)
+                        .cloned()
+                        .unwrap_or_else(|| format!("(unknown hash {:#x})", event.topic_hash));
                     let message = format!(
-                        "unknown topic at {kind} creation — no manifest declares this \
-                         FQN (hash {:#x}); add to `topics:` or `external_topics:`",
+                        "unknown topic at {kind} creation — no manifest declares '{fqn}' \
+                         (hash {:#x}); add to `topics:` or `external_topics:`",
                         event.topic_hash
                     );
                     self.emit(
@@ -1008,6 +1075,21 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 #[inline]
 fn pack_stamp(sec: i32, nsec: u32) -> u64 {
     (sec as u32 as u64) * 1_000_000_000 + (nsec as u64)
+}
+
+/// Mirror of `play_launch_interception::event::InterceptionEvent::decode_topic_name_chunk`
+/// — the .so and play_launch are separate crates so the binary-level
+/// layout is shared but the helper isn't reachable. Both sides use
+/// host-native byte order so a direct copy of the numeric fields is
+/// safe.
+#[inline]
+fn decode_topic_name_chunk(event: &InterceptionEvent) -> (u8, u8, usize, [u8; 24]) {
+    let mut buf = [0u8; 24];
+    buf[0..4].copy_from_slice(&event.stamp_sec.to_ne_bytes());
+    buf[4..8].copy_from_slice(&event.stamp_nanosec.to_ne_bytes());
+    buf[8..16].copy_from_slice(&event.handle.to_ne_bytes());
+    buf[16..24].copy_from_slice(&event.monotonic_ns.to_ne_bytes());
+    (event._pad[0], event._pad[1], event._pad[2] as usize, buf)
 }
 
 fn split_endpoint_ref(ep_ref: &str) -> Option<(String, String)> {

@@ -183,6 +183,27 @@ pub fn lookup_event(event_ptr: usize) -> Option<EventBinding> {
     EVENT_REGISTRY.read().get(&event_ptr).copied()
 }
 
+// ---------------------------------------------------------------------------
+// Topic-name emission dedupe (Phase 36)
+// ---------------------------------------------------------------------------
+//
+// We ship each topic FQN string from the .so to the consumer exactly
+// once per (topic_hash) per process via TopicNameDeclared chunks. Track
+// which hashes we've already emitted so repeated rcl_*_init calls on
+// the same topic don't flood the ring.
+
+use std::collections::HashSet;
+
+static TOPIC_NAME_EMITTED: LazyLock<RwLock<HashSet<u64>>> =
+    LazyLock::new(|| RwLock::new(HashSet::new()));
+
+/// Returns true if this is the first time we've seen `topic_hash` in
+/// this process. On `true`, the caller should emit the topic name to
+/// the SPSC ring. Idempotent on subsequent calls with the same hash.
+pub fn mark_topic_name_for_emission(topic_hash: u64) -> bool {
+    TOPIC_NAME_EMITTED.write().insert(topic_hash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

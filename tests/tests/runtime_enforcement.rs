@@ -244,6 +244,14 @@ fn graph_deviation_runtime_fires_for_undeclared_topic() {
             .any(|v| v["rule_id"].as_str() == Some("graph-deviation-runtime")),
         "expected graph-deviation-runtime; got: {violations:?}"
     );
+    // Phase 36 polish: the .so ships TopicNameDeclared chunks so
+    // graph-deviation messages now carry the real FQN string instead
+    // of falling back to `(unknown hash ...)`.
+    assert!(
+        violations.iter().any(|v| v["rule_id"].as_str() == Some("graph-deviation-runtime")
+            && v["fqn"].as_str().map(|s| s.starts_with("/")).unwrap_or(false)),
+        "expected at least one graph-deviation FQN to be a real topic path; got: {violations:?}"
+    );
 }
 
 /// `--enforce-rules=off` short-circuits the RuleEngine — no jsonl

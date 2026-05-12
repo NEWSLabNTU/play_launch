@@ -55,6 +55,11 @@ pub enum EventKind {
     LivelinessChanged = 11,
     /// Phase 36 DDS events: subscription lost message(s).
     MessageLost = 12,
+    /// Phase 36 polish: chunk of a topic FQN string. `_pad[0]` =
+    /// chunk_idx, `_pad[1]` = total_chunks, `_pad[2]` = byte_count,
+    /// `topic_hash` = FQN hash, four numeric fields reinterpreted as
+    /// 24 raw payload bytes (see `event::topic_name_chunk`).
+    TopicNameDeclared = 13,
 }
 
 /// Interception event (40 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -369,9 +374,10 @@ fn process_event(
         | EventKind::RequestedDeadlineMissed
         | EventKind::LivelinessLost
         | EventKind::LivelinessChanged
-        | EventKind::MessageLost => {
-            // Phase 36 DDS events: forwarded to the RuleEngine. Not
-            // aggregated into frontier or stats summaries.
+        | EventKind::MessageLost
+        | EventKind::TopicNameDeclared => {
+            // Phase 36: forwarded to the RuleEngine. Not aggregated
+            // into frontier or stats summaries.
         }
     }
 }
