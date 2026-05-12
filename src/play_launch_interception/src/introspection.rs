@@ -77,10 +77,13 @@ unsafe fn try_type_identity(
     let ns_bytes = unsafe { CStr::from_ptr(members.message_namespace_) }.to_bytes();
     let name_bytes = unsafe { CStr::from_ptr(members.message_name_) }.to_bytes();
 
-    // The namespace from introspection uses "__" instead of "/" — e.g.
-    // "std_msgs__msg" → "std_msgs/msg". Normalise back to the canonical
-    // "pkg/msg/Name" form used in manifests.
-    let ns = String::from_utf8_lossy(ns_bytes).replace("__", "/");
+    // The namespace from introspection uses "__" (C identifier) or "::"
+    // (C++ identifier) instead of "/" — e.g. "std_msgs__msg" or
+    // "std_msgs::msg" both → "std_msgs/msg". Normalise back to the
+    // canonical "pkg/msg/Name" form used in manifests.
+    let ns = String::from_utf8_lossy(ns_bytes)
+        .replace("__", "/")
+        .replace("::", "/");
     let name = String::from_utf8_lossy(name_bytes);
     Some(format!("{ns}/{name}"))
 }
