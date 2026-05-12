@@ -723,7 +723,7 @@ dependencies = [
 
 [[package]]
 name = "diagnostic_msgs"
-version = "4.9.1"
+version = "4.9.0"
 dependencies = [
  "rosidl_runtime_rs",
  "std_msgs",
@@ -1449,6 +1449,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lifecycle_msgs"
+version = "1.2.2"
+dependencies = [
+ "rosidl_runtime_rs",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1774,6 +1781,7 @@ dependencies = [
  "humantime-serde",
  "itertools 0.13.0",
  "libc",
+ "lifecycle_msgs",
  "mime_guess",
  "nix",
  "notify",
@@ -2403,7 +2411,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "std_msgs"
-version = "4.9.1"
+version = "4.9.0"
 dependencies = [
  "builtin_interfaces",
  "rosidl_runtime_rs",
@@ -3478,7 +3486,7 @@ version = "0.9.3"
 
 [[patch.unused]]
 name = "geometry_msgs"
-version = "4.9.1"
+version = "4.9.0"
 
 [[patch.unused]]
 name = "rosgraph_msgs"

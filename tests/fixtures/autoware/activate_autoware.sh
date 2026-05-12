@@ -22,8 +22,3 @@ export EXPECTED_NODES=34
 export EXPECTED_CONTAINERS=15
 export EXPECTED_LOAD_NODES=70
 
-# source ~/repos/autoware/2025.02-ws/install/setup.bash
-# export EXPECTED_NODES=46
-# export EXPECTED_CONTAINERS=15
-# export EXPECTED_LOAD_NODES=54
-

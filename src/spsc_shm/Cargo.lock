@@ -29,7 +29,7 @@ version = "1.2.2"
 
 [[patch.unused]]
 name = "diagnostic_msgs"
-version = "4.9.1"
+version = "4.9.0"
 
 [[patch.unused]]
 name = "example_interfaces"
@@ -37,7 +37,7 @@ version = "0.9.3"
 
 [[patch.unused]]
 name = "geometry_msgs"
-version = "4.9.1"
+version = "4.9.0"
 
 [[patch.unused]]
 name = "play_launch_msgs"
@@ -53,7 +53,7 @@ version = "1.2.2"
 
 [[patch.unused]]
 name = "std_msgs"
-version = "4.9.1"
+version = "4.9.0"
 
 [[patch.unused]]
 name = "test_msgs"
