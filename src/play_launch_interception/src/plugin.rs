@@ -82,4 +82,25 @@ pub(crate) trait InterceptionPlugin: Send + Sync {
     /// Called on every `rmw_take_with_info` (hot path). `taken` reflects
     /// whether a sample was actually available.
     fn on_rmw_take(&self, _rmw_sub_handle: usize, _monotonic_ns: u64, _taken: bool) {}
+
+    /// Called when `rmw_take_event` returns a sample. `event_type` is
+    /// the `rmw_event_type_t` discriminant. `status_ptr` points to the
+    /// caller-allocated status struct (cast based on event_type):
+    ///   - LIVELINESS_CHANGED → `RmwLivelinessChangedStatus`
+    ///   - LIVELINESS_LOST → `RmwLivelinessLostStatus`
+    ///   - REQUESTED_DEADLINE_MISSED / OFFERED_DEADLINE_MISSED →
+    ///     `RmwDeadlineMissedStatus`
+    ///   - REQUESTED_QOS_INCOMPATIBLE / OFFERED_QOS_INCOMPATIBLE →
+    ///     `RmwQosIncompatibleEventStatus`
+    ///   - MESSAGE_LOST → `RmwMessageLostStatus`
+    ///
+    /// The pointer is valid for the duration of the call.
+    fn on_rmw_dds_event(
+        &self,
+        _entity_ptr: usize,
+        _topic_hash: u64,
+        _event_type: i32,
+        _status_ptr: *const u8,
+    ) {
+    }
 }

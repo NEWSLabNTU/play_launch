@@ -41,6 +41,20 @@ pub enum EventKind {
     /// Phase 36.2: rmw_create_subscription event with parsed QoS profile.
     /// Same field overload as `QosDeclaredPub`.
     QosDeclaredSub = 5,
+    /// Phase 36 DDS events: publisher's offered QoS was incompatible.
+    OfferedQosIncompatible = 6,
+    /// Phase 36 DDS events: subscription's requested QoS was incompatible.
+    RequestedQosIncompatible = 7,
+    /// Phase 36 DDS events: publisher missed offered deadline.
+    OfferedDeadlineMissed = 8,
+    /// Phase 36 DDS events: subscription missed requested deadline.
+    RequestedDeadlineMissed = 9,
+    /// Phase 36 DDS events: publisher's liveliness lost.
+    LivelinessLost = 10,
+    /// Phase 36 DDS events: subscription saw liveliness change.
+    LivelinessChanged = 11,
+    /// Phase 36 DDS events: subscription lost message(s).
+    MessageLost = 12,
 }
 
 /// Interception event (40 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -348,6 +362,16 @@ fn process_event(
             // Phase 36.2: forwarded to the RuleEngine (Phase 36.3) by
             // the dispatcher in commands/replay.rs. Not aggregated
             // into frontier or stats summaries.
+        }
+        EventKind::OfferedQosIncompatible
+        | EventKind::RequestedQosIncompatible
+        | EventKind::OfferedDeadlineMissed
+        | EventKind::RequestedDeadlineMissed
+        | EventKind::LivelinessLost
+        | EventKind::LivelinessChanged
+        | EventKind::MessageLost => {
+            // Phase 36 DDS events: forwarded to the RuleEngine. Not
+            // aggregated into frontier or stats summaries.
         }
     }
 }

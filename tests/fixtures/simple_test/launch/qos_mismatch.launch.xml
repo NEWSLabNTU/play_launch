@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- Smoke test for Phase 36 DDS events.
+
+     Publisher advertises BEST_EFFORT reliability; subscriber requests
+     RELIABLE. DDS discovery flags the pair as incompatible and fires
+     OFFERED_QOS_INCOMPATIBLE on the publisher side and
+     REQUESTED_QOS_INCOMPATIBLE on the subscriber side.
+
+     Both nodes are pure rclpy scripts launched as raw executables —
+     keeps the test self-contained (no need to register a ROS package).
+-->
+<launch>
+  <executable cmd="python3 $(dirname)/../scripts/qos_mismatch_pub.py" output="screen"/>
+  <executable cmd="python3 $(dirname)/../scripts/qos_mismatch_sub.py" output="screen"/>
+</launch>

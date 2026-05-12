@@ -269,6 +269,95 @@ fn enforce_off_skips_rule_engine() {
     );
 }
 
+/// Two rclpy nodes with mismatched reliability QoS trigger DDS
+/// `OFFERED_QOS_INCOMPATIBLE` / `REQUESTED_QOS_INCOMPATIBLE` events.
+/// The new RuleEngine path turns each into a `qos-match-runtime`
+/// violation. The smoke test asserts at least one such violation
+/// appears in `runtime_violations.jsonl`.
+#[test]
+fn qos_match_runtime_fires_on_dds_incompatibility() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+
+    let work_dir = tempfile::TempDir::new().expect("tempdir");
+    let so_path = interception_so_path();
+
+    // Allow both bare and absolute forms of the topic — the python
+    // scripts use the relative name `qos_test`, which rcl expands to
+    // `/qos_test` once node namespaces are applied.
+    let manifest_dir = work_dir.path().join("manifests");
+    let pkg_dir = manifest_dir.join("_");
+    std::fs::create_dir_all(&pkg_dir).expect("create pkg manifest dir");
+    std::fs::write(
+        pkg_dir.join("qos_mismatch.yaml"),
+        "version: 1\nnodes:\n  qos_mismatch_pub:\n    pub:\n      qos_test: {}\n  qos_mismatch_sub:\n    sub:\n      qos_test: {}\ntopics:\n  /qos_test:\n    type: std_msgs/msg/String\n    pub: [qos_mismatch_pub/qos_test]\n    sub: [qos_mismatch_sub/qos_test]\n",
+    )
+    .expect("write manifest");
+
+    let config_path = work_dir.path().join("interception_on.yaml");
+    std::fs::write(
+        &config_path,
+        "interception:\n  enabled: true\n  frontier: true\n  stats: true\n  ring_capacity: 4096\n",
+    )
+    .expect("write config");
+
+    let mut cmd = play_launch_cmd_with_cargo(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--disable-web-ui",
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        "--container-mode",
+        "stock",
+        "--config",
+        config_path.to_str().unwrap(),
+        "--manifest-dir",
+        manifest_dir.to_str().unwrap(),
+        "--enforce-rules",
+        "warn",
+    ]);
+    let launch = fixtures::test_workspace_path("simple_test")
+        .join("launch/qos_mismatch.launch.xml");
+    cmd.arg(launch.to_str().unwrap());
+    cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", &so_path);
+    cmd.env("RUST_LOG", "play_launch=warn");
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let proc = ManagedProcess::spawn(&mut cmd).expect("spawn play_launch");
+    let play_log = work_dir.path().join("play_log/latest");
+    fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
+    // DDS discovery + incompatible QoS event delivery typically takes
+    // a couple of seconds even on loopback. Hold the run for 6s.
+    std::thread::sleep(Duration::from_secs(6));
+    drop(proc);
+    std::thread::sleep(Duration::from_millis(800));
+
+    let viol_path = work_dir
+        .path()
+        .join("play_log/latest/runtime_violations.jsonl");
+    assert!(
+        wait_for_file(&viol_path, Duration::from_secs(3)),
+        "runtime_violations.jsonl not written at {}",
+        viol_path.display()
+    );
+    let violations = read_violations(&viol_path);
+    assert!(
+        violations.iter().any(|v| {
+            v["rule_id"].as_str() == Some("qos-match-runtime")
+                && v["message"]
+                    .as_str()
+                    .map(|s| s.contains("DDS reported incompatible QoS"))
+                    .unwrap_or(false)
+        }),
+        "expected DDS qos-match-runtime violation; got: {violations:?}"
+    );
+}
+
 /// Blocking mode (`--block-unauthorized-endpoints`) writes
 /// `expected_graph.txt`. The allowlist parser is exercised by
 /// in-process unit tests; here we just confirm the file appears

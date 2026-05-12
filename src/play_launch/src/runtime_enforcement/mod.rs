@@ -334,6 +334,29 @@ impl RuleEngine {
                 drop_borrow(&mut self.state);
                 self.check_qos_match(event.topic_hash, event.monotonic_ns);
             }
+            EventKind::OfferedQosIncompatible | EventKind::RequestedQosIncompatible => {
+                // Phase 36 DDS events: the DDS layer reported an
+                // incompatible QoS match on this topic. Emit a
+                // `qos-match-runtime` violation tagged with the source
+                // side so operators can distinguish offered vs
+                // requested incompatibility. The static check covers
+                // declared QoS; this catches mismatches that only
+                // surface once DDS discovery completes.
+                drop_borrow(&mut self.state);
+                self.emit_dds_qos_incompatible(event);
+            }
+            EventKind::OfferedDeadlineMissed | EventKind::RequestedDeadlineMissed => {
+                drop_borrow(&mut self.state);
+                self.emit_dds_deadline_missed(event);
+            }
+            EventKind::LivelinessLost | EventKind::LivelinessChanged => {
+                drop_borrow(&mut self.state);
+                self.emit_dds_liveliness(event);
+            }
+            EventKind::MessageLost => {
+                drop_borrow(&mut self.state);
+                self.emit_dds_message_lost(event);
+            }
             EventKind::PublisherInit | EventKind::SubscriptionInit => {
                 // Decode the runtime msg-type hash carried via the
                 // overloaded stamp slots (Phase 36 consistency-runtime).
@@ -760,6 +783,197 @@ impl RuleEngine {
                 let _ = w.flush();
             }
         }
+    }
+
+    /// Emit a DDS-event violation. Unlike [`emit`], these are NOT
+    /// deduplicated by `(rule_id, fqn)` — each fire of `total_count_change`
+    /// represents new occurrences inside the DDS implementation, so we
+    /// want one violation per emission.
+    fn emit_repeatable(
+        &mut self,
+        rule_id: String,
+        severity: Severity,
+        fqn: String,
+        message: String,
+        timestamp_ns: u64,
+    ) {
+        self.violation_count += 1;
+        if matches!(self.mode, EnforceMode::Strict) {
+            self.strict_violated.store(true, Ordering::Release);
+        }
+        let v = RuntimeViolation {
+            rule_id,
+            severity,
+            fqn,
+            message,
+            timestamp_ns,
+        };
+        warn!("[runtime] {} ({})", v.message, v.rule_id);
+        if matches!(self.mode, EnforceMode::Warn | EnforceMode::Strict) {
+            if self.violations_out.is_none() {
+                if let Some(dir) = self.violations_path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                if let Ok(f) = File::create(&self.violations_path) {
+                    self.violations_out = Some(BufWriter::new(f));
+                }
+            }
+            if let Some(w) = self.violations_out.as_mut()
+                && let Ok(line) = serde_json::to_string(&v)
+            {
+                let _ = writeln!(w, "{line}");
+                let _ = w.flush();
+            }
+        }
+    }
+
+    /// Resolve `topic_hash` → FQN string. Falls back to `(unknown hash 0x…)`
+    /// when the manifest tree didn't declare the topic.
+    fn resolve_fqn(&self, topic_hash: u64) -> String {
+        self.topic_hash_to_fqn
+            .get(&topic_hash)
+            .cloned()
+            .unwrap_or_else(|| format!("(unknown hash {:#x})", topic_hash))
+    }
+
+    /// Map `rmw_qos_policy_kind_t` bitmask to a short policy name for
+    /// the `qos-match-runtime` message body.
+    fn policy_kind_name(kind: i32) -> &'static str {
+        match kind {
+            x if x == (1 << 0) => "INVALID",
+            x if x == (1 << 1) => "DURABILITY",
+            x if x == (1 << 2) => "DEADLINE",
+            x if x == (1 << 3) => "LIVELINESS",
+            x if x == (1 << 4) => "RELIABILITY",
+            x if x == (1 << 5) => "HISTORY",
+            x if x == (1 << 6) => "LIFESPAN",
+            x if x == (1 << 7) => "DEPTH",
+            x if x == (1 << 8) => "LIVELINESS_LEASE_DURATION",
+            x if x == (1 << 9) => "AVOID_ROS_NAMESPACE_CONVENTIONS",
+            _ => "UNKNOWN",
+        }
+    }
+
+    fn emit_dds_qos_incompatible(&mut self, event: &InterceptionEvent) {
+        // Only emit when there's actually a delta — DDS may surface
+        // status reads with `total_count_change == 0` (rare but
+        // possible after reading the same status twice).
+        if event.stamp_nanosec == 0 {
+            return;
+        }
+        let fqn = self.resolve_fqn(event.topic_hash);
+        let kind_bytes = [event._pad[0], event._pad[1]];
+        let policy_kind = i16::from_le_bytes(kind_bytes) as i32;
+        let side = if matches!(event.kind, EventKind::OfferedQosIncompatible) {
+            "offered"
+        } else {
+            "requested"
+        };
+        let msg = format!(
+            "DDS reported incompatible QoS on {fqn} ({side} side): {} new mismatch(es) on policy {} (total {})",
+            event.stamp_nanosec,
+            Self::policy_kind_name(policy_kind),
+            event.stamp_sec,
+        );
+        self.emit_repeatable(
+            "qos-match-runtime".to_string(),
+            Severity::Error,
+            fqn,
+            msg,
+            event.monotonic_ns,
+        );
+    }
+
+    fn emit_dds_deadline_missed(&mut self, event: &InterceptionEvent) {
+        if event.stamp_nanosec == 0 {
+            return;
+        }
+        let fqn = self.resolve_fqn(event.topic_hash);
+        let side = if matches!(event.kind, EventKind::OfferedDeadlineMissed) {
+            "publisher"
+        } else {
+            "subscription"
+        };
+        let msg = format!(
+            "DDS deadline missed on {fqn} ({side} side): {} new miss(es), total {}",
+            event.stamp_nanosec, event.stamp_sec,
+        );
+        self.emit_repeatable(
+            "deadline-runtime".to_string(),
+            Severity::Warning,
+            fqn,
+            msg,
+            event.monotonic_ns,
+        );
+    }
+
+    fn emit_dds_liveliness(&mut self, event: &InterceptionEvent) {
+        let fqn = self.resolve_fqn(event.topic_hash);
+        match event.kind {
+            EventKind::LivelinessLost => {
+                if event.stamp_nanosec == 0 {
+                    return;
+                }
+                let msg = format!(
+                    "DDS liveliness lost on {fqn} (publisher): {} new loss(es), total {}",
+                    event.stamp_nanosec, event.stamp_sec,
+                );
+                self.emit_repeatable(
+                    "liveliness-runtime".to_string(),
+                    Severity::Error,
+                    fqn,
+                    msg,
+                    event.monotonic_ns,
+                );
+            }
+            EventKind::LivelinessChanged => {
+                // Only emit on transitions to or from not-alive.
+                let alive_change = event._pad[0] as i8 as i32;
+                let not_alive_change = event._pad[1] as i8 as i32;
+                if not_alive_change == 0 && alive_change == 0 {
+                    return;
+                }
+                let alive = event.stamp_sec;
+                let not_alive = event.stamp_nanosec as i32;
+                let msg = format!(
+                    "DDS liveliness changed on {fqn} (subscription): alive={} (Δ{}) not_alive={} (Δ{})",
+                    alive, alive_change, not_alive, not_alive_change,
+                );
+                // Only flag as a violation when publishers transitioned
+                // into the not-alive state. Pure recoveries (alive++,
+                // not_alive--) are logged as warnings still since the
+                // topic graph changed shape — operators usually want to
+                // know.
+                let _ = alive_change;
+                let _ = not_alive_change;
+                self.emit_repeatable(
+                    "liveliness-runtime".to_string(),
+                    Severity::Warning,
+                    fqn,
+                    msg,
+                    event.monotonic_ns,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn emit_dds_message_lost(&mut self, event: &InterceptionEvent) {
+        if event.stamp_nanosec == 0 {
+            return;
+        }
+        let fqn = self.resolve_fqn(event.topic_hash);
+        let msg = format!(
+            "DDS dropped messages on {fqn}: {} new loss(es), total {}",
+            event.stamp_nanosec, event.stamp_sec,
+        );
+        self.emit_repeatable(
+            "drop-rate-runtime".to_string(),
+            Severity::Warning,
+            fqn,
+            msg,
+            event.monotonic_ns,
+        );
     }
 
     /// Final flush — call before dropping.

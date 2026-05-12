@@ -122,6 +122,67 @@ pub fn lookup_subscription_full(ptr: usize) -> Option<(u64, Option<usize>)> {
     Some((record.topic_hash, record.stamp_offset))
 }
 
+// ---------------------------------------------------------------------------
+// RMW entity registries (Phase 36 DDS events)
+// ---------------------------------------------------------------------------
+//
+// rcl handles (`rcl_publisher_t*`, `rcl_subscription_t*`) are distinct
+// from rmw handles (`rmw_publisher_t*`, `rmw_subscription_t*`). The DDS
+// event hooks see only rmw handles. Track topic_hash by rmw ptr so
+// `rmw_take_event` can correlate to a topic.
+
+static RMW_PUB_REGISTRY: LazyLock<RwLock<HashMap<usize, u64>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+static RMW_SUB_REGISTRY: LazyLock<RwLock<HashMap<usize, u64>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+pub fn register_rmw_publisher(ptr: usize, topic_hash: u64) {
+    RMW_PUB_REGISTRY.write().insert(ptr, topic_hash);
+}
+
+pub fn register_rmw_subscription(ptr: usize, topic_hash: u64) {
+    RMW_SUB_REGISTRY.write().insert(ptr, topic_hash);
+}
+
+pub fn lookup_rmw_publisher(ptr: usize) -> Option<u64> {
+    RMW_PUB_REGISTRY.read().get(&ptr).copied()
+}
+
+pub fn lookup_rmw_subscription(ptr: usize) -> Option<u64> {
+    RMW_SUB_REGISTRY.read().get(&ptr).copied()
+}
+
+// ---------------------------------------------------------------------------
+// DDS event handle registry — maps `rmw_event_t*` to entity ptr + side
+// ---------------------------------------------------------------------------
+
+/// Which side of a topic an event was registered against. Used by
+/// `rmw_take_event` to look up topic_hash via the right rmw registry.
+#[derive(Clone, Copy, Debug)]
+pub enum EventSide {
+    Publisher,
+    Subscription,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EventBinding {
+    pub side: EventSide,
+    pub entity_ptr: usize,
+    pub event_type: i32,
+}
+
+static EVENT_REGISTRY: LazyLock<RwLock<HashMap<usize, EventBinding>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+pub fn register_event(event_ptr: usize, binding: EventBinding) {
+    EVENT_REGISTRY.write().insert(event_ptr, binding);
+}
+
+pub fn lookup_event(event_ptr: usize) -> Option<EventBinding> {
+    EVENT_REGISTRY.read().get(&event_ptr).copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -20,6 +20,41 @@ pub enum EventKind {
     /// Phase 36.2: rmw_create_subscription fired. Same field overload as
     /// `QosDeclaredPub` with `handle` = rmw_subscription_t*.
     QosDeclaredSub = 5,
+    /// DDS event: publisher's offered QoS was found incompatible with a
+    /// requesting subscription. Field overload:
+    ///   `handle` = rmw_publisher_t*,
+    ///   `stamp_sec` = total_count (i32),
+    ///   `stamp_nanosec` = total_count_change as u32,
+    ///   `_pad[0..2]` = last_policy_kind low 16 bits (little endian),
+    ///   `_pad[2]` = 0 (unused).
+    OfferedQosIncompatible = 6,
+    /// DDS event: subscription's requested QoS was found incompatible.
+    /// Same field overload as `OfferedQosIncompatible` with
+    /// `handle` = rmw_subscription_t*.
+    RequestedQosIncompatible = 7,
+    /// DDS event: publisher missed its offered deadline. Field overload:
+    ///   `handle` = rmw_publisher_t*,
+    ///   `stamp_sec` = total_count,
+    ///   `stamp_nanosec` = total_count_change as u32.
+    OfferedDeadlineMissed = 8,
+    /// DDS event: subscription missed its requested deadline. Same as
+    /// `OfferedDeadlineMissed` with `handle` = rmw_subscription_t*.
+    RequestedDeadlineMissed = 9,
+    /// DDS event: publisher's liveliness was lost. Same as
+    /// `OfferedDeadlineMissed` with `handle` = rmw_publisher_t*.
+    LivelinessLost = 10,
+    /// DDS event: subscription saw a liveliness change. Field overload:
+    ///   `handle` = rmw_subscription_t*,
+    ///   `stamp_sec` = alive_count,
+    ///   `stamp_nanosec` = not_alive_count as u32,
+    ///   `_pad[0]` = alive_count_change signed-clamped to i8,
+    ///   `_pad[1]` = not_alive_count_change signed-clamped to i8.
+    LivelinessChanged = 11,
+    /// DDS event: subscription lost message(s). Field overload:
+    ///   `handle` = rmw_subscription_t*,
+    ///   `stamp_sec` = total_count (saturating cast from usize),
+    ///   `stamp_nanosec` = total_count_change (saturating cast from usize).
+    MessageLost = 12,
 }
 
 /// A single interception event (40 bytes, `#[repr(C)]`).
@@ -120,6 +155,106 @@ impl InterceptionEvent {
             topic_hash,
             stamp_sec: liveliness,
             stamp_nanosec: depth,
+            handle,
+            monotonic_ns: monotonic_ns(),
+        }
+    }
+}
+
+impl InterceptionEvent {
+    /// Build an `OfferedQosIncompatible` or `RequestedQosIncompatible`
+    /// event. Encodes total counts in stamp fields, policy kind in pad.
+    #[inline]
+    pub fn qos_incompatible(
+        kind: EventKind,
+        handle: u64,
+        topic_hash: u64,
+        total_count: i32,
+        total_count_change: i32,
+        last_policy_kind: i32,
+    ) -> Self {
+        debug_assert!(matches!(
+            kind,
+            EventKind::OfferedQosIncompatible | EventKind::RequestedQosIncompatible
+        ));
+        let kind_bytes = (last_policy_kind as u16).to_le_bytes();
+        Self {
+            kind,
+            _pad: [kind_bytes[0], kind_bytes[1], 0],
+            topic_hash,
+            stamp_sec: total_count,
+            stamp_nanosec: total_count_change as u32,
+            handle,
+            monotonic_ns: monotonic_ns(),
+        }
+    }
+
+    /// Build a deadline-missed or liveliness-lost event (simple
+    /// `total_count + total_count_change` payload).
+    #[inline]
+    pub fn deadline_or_liveliness_lost(
+        kind: EventKind,
+        handle: u64,
+        topic_hash: u64,
+        total_count: i32,
+        total_count_change: i32,
+    ) -> Self {
+        debug_assert!(matches!(
+            kind,
+            EventKind::OfferedDeadlineMissed
+                | EventKind::RequestedDeadlineMissed
+                | EventKind::LivelinessLost
+        ));
+        Self {
+            kind,
+            _pad: [0; 3],
+            topic_hash,
+            stamp_sec: total_count,
+            stamp_nanosec: total_count_change as u32,
+            handle,
+            monotonic_ns: monotonic_ns(),
+        }
+    }
+
+    /// Build a `LivelinessChanged` event.
+    #[inline]
+    pub fn liveliness_changed(
+        handle: u64,
+        topic_hash: u64,
+        alive_count: i32,
+        not_alive_count: i32,
+        alive_count_change: i32,
+        not_alive_count_change: i32,
+    ) -> Self {
+        Self {
+            kind: EventKind::LivelinessChanged,
+            _pad: [
+                (alive_count_change.clamp(-128, 127) as i8) as u8,
+                (not_alive_count_change.clamp(-128, 127) as i8) as u8,
+                0,
+            ],
+            topic_hash,
+            stamp_sec: alive_count,
+            stamp_nanosec: not_alive_count as u32,
+            handle,
+            monotonic_ns: monotonic_ns(),
+        }
+    }
+
+    /// Build a `MessageLost` event from `usize` counters.
+    #[inline]
+    pub fn message_lost(
+        handle: u64,
+        topic_hash: u64,
+        total_count: usize,
+        total_count_change: usize,
+    ) -> Self {
+        Self {
+            kind: EventKind::MessageLost,
+            _pad: [0; 3],
+            topic_hash,
+            stamp_sec: total_count.min(i32::MAX as usize) as i32,
+            stamp_nanosec: total_count_change.min(u32::MAX as usize) as u32,
             handle,
             monotonic_ns: monotonic_ns(),
         }

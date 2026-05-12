@@ -74,6 +74,11 @@ struct RmwOriginals {
     create_subscription: FnRmwCreateSubscription,
     publish: FnRmwPublish,
     take_with_info: FnRmwTakeWithInfo,
+    /// DDS event API (Phase 36 DDS events). Optional — if any symbol is
+    /// missing the rmw event hooks pass through with no dispatch.
+    publisher_event_init: Option<FnRmwPublisherEventInit>,
+    subscription_event_init: Option<FnRmwSubscriptionEventInit>,
+    take_event: Option<FnRmwTakeEvent>,
 }
 
 struct Runtime {
@@ -281,6 +286,36 @@ unsafe fn resolve_rmw_from(source: *mut c_void) -> Option<RmwOriginals> {
         return None;
     }
 
+    // Optional DDS event symbols — may not be present in older RMW
+    // implementations. Hooks degrade to pass-through when missing.
+    let publisher_event_init =
+        unsafe { libc::dlsym(source, c"rmw_publisher_event_init".as_ptr()) };
+    let subscription_event_init =
+        unsafe { libc::dlsym(source, c"rmw_subscription_event_init".as_ptr()) };
+    let take_event = unsafe { libc::dlsym(source, c"rmw_take_event".as_ptr()) };
+
+    let publisher_event_init = if publisher_event_init.is_null() {
+        None
+    } else {
+        Some(unsafe {
+            std::mem::transmute::<*mut c_void, FnRmwPublisherEventInit>(publisher_event_init)
+        })
+    };
+    let subscription_event_init = if subscription_event_init.is_null() {
+        None
+    } else {
+        Some(unsafe {
+            std::mem::transmute::<*mut c_void, FnRmwSubscriptionEventInit>(
+                subscription_event_init,
+            )
+        })
+    };
+    let take_event = if take_event.is_null() {
+        None
+    } else {
+        Some(unsafe { std::mem::transmute::<*mut c_void, FnRmwTakeEvent>(take_event) })
+    };
+
     Some(RmwOriginals {
         create_publisher: unsafe {
             std::mem::transmute::<*mut c_void, FnRmwCreatePublisher>(create_publisher)
@@ -292,6 +327,9 @@ unsafe fn resolve_rmw_from(source: *mut c_void) -> Option<RmwOriginals> {
         take_with_info: unsafe {
             std::mem::transmute::<*mut c_void, FnRmwTakeWithInfo>(take_with_info)
         },
+        publisher_event_init,
+        subscription_event_init,
+        take_event,
     })
 }
 
@@ -330,6 +368,13 @@ fn build_plugins() -> Vec<Box<dyn InterceptionPlugin>> {
         plugins.push(Box::new(
             plugins::qos_negotiation::QosNegotiationPlugin::new(prod.clone()),
         ));
+    }
+
+    // DdsEventsPlugin (Phase 36 DDS events): requires shared memory.
+    if let Some(ref prod) = producer {
+        plugins.push(Box::new(plugins::dds_events::DdsEventsPlugin::new(
+            prod.clone(),
+        )));
     }
 
     plugins
@@ -654,6 +699,7 @@ pub unsafe extern "C" fn rmw_create_publisher(
             .to_string_lossy()
             .into_owned();
         let topic_hash = registry::fnv1a(topic.as_bytes());
+        registry::register_rmw_publisher(ret as usize, topic_hash);
         let qos_hash = unsafe { hash_qos_profile(qos_profile) };
         let parsed_qos = unsafe { parse_qos_profile(qos_profile) };
         for p in &rt.plugins {
@@ -697,6 +743,7 @@ pub unsafe extern "C" fn rmw_create_subscription(
             .to_string_lossy()
             .into_owned();
         let topic_hash = registry::fnv1a(topic.as_bytes());
+        registry::register_rmw_subscription(ret as usize, topic_hash);
         let qos_hash = unsafe { hash_qos_profile(qos_profile) };
         let parsed_qos = unsafe { parse_qos_profile(qos_profile) };
         for p in &rt.plugins {
@@ -792,6 +839,151 @@ pub unsafe extern "C" fn rmw_take_with_info(
         for p in &rt.plugins {
             p.on_rmw_take(subscription as usize, ts, was_taken);
         }
+    }
+
+    ret
+}
+
+// ---------------------------------------------------------------------------
+// DDS event hooks (Phase 36 DDS events)
+// ---------------------------------------------------------------------------
+//
+// The rmw event API has three calls of interest:
+//
+//   rmw_publisher_event_init(event, publisher, event_type)
+//   rmw_subscription_event_init(event, subscription, event_type)
+//   rmw_take_event(event, event_info, taken)
+//
+// We hook all three to:
+//   1. record (event_ptr → entity_ptr + event_type) at init time
+//   2. decode the status struct payload at take time
+//   3. dispatch via the InterceptionPlugin trait so DdsEventsPlugin
+//      can push events to the SPSC ring.
+//
+// rclcpp executors poll events via `rmw_take_event` whenever the user
+// has registered a QoS event callback. We piggyback on these calls —
+// passive observation, zero polling thread.
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for `rmw_publisher_event_init`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rmw_publisher_event_init(
+    rmw_event: *mut rmw_event_t,
+    publisher: *const rmw_publisher_t,
+    event_type: i32,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return 1;
+    };
+    let Some(ref rmw) = rt.originals.rmw else {
+        return 1;
+    };
+    let Some(init) = rmw.publisher_event_init else {
+        return 1;
+    };
+
+    let ret = unsafe { init(rmw_event, publisher, event_type) };
+
+    if ret == 0 && !rmw_event.is_null() {
+        registry::register_event(
+            rmw_event as usize,
+            registry::EventBinding {
+                side: registry::EventSide::Publisher,
+                entity_ptr: publisher as usize,
+                event_type,
+            },
+        );
+    }
+
+    ret
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for `rmw_subscription_event_init`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rmw_subscription_event_init(
+    rmw_event: *mut rmw_event_t,
+    subscription: *const rmw_subscription_t,
+    event_type: i32,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return 1;
+    };
+    let Some(ref rmw) = rt.originals.rmw else {
+        return 1;
+    };
+    let Some(init) = rmw.subscription_event_init else {
+        return 1;
+    };
+
+    let ret = unsafe { init(rmw_event, subscription, event_type) };
+
+    if ret == 0 && !rmw_event.is_null() {
+        registry::register_event(
+            rmw_event as usize,
+            registry::EventBinding {
+                side: registry::EventSide::Subscription,
+                entity_ptr: subscription as usize,
+                event_type,
+            },
+        );
+    }
+
+    ret
+}
+
+/// # Safety
+///
+/// Called by the dynamic linker as an override for `rmw_take_event`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rmw_take_event(
+    event_handle: *const rmw_event_t,
+    event_info: *mut c_void,
+    taken: *mut bool,
+) -> rcl_ret_t {
+    let Some(rt) = runtime() else {
+        return 1;
+    };
+    let Some(ref rmw) = rt.originals.rmw else {
+        return 1;
+    };
+    let Some(take_event) = rmw.take_event else {
+        return 1;
+    };
+
+    let ret = unsafe { take_event(event_handle, event_info, taken) };
+
+    if ret != 0 || rt.plugins.is_empty() || event_info.is_null() {
+        return ret;
+    }
+    let was_taken = !taken.is_null() && unsafe { *taken };
+    if !was_taken {
+        return ret;
+    }
+    let Some(binding) = registry::lookup_event(event_handle as usize) else {
+        return ret;
+    };
+
+    // Resolve topic_hash from rmw entity registry.
+    let topic_hash = match binding.side {
+        registry::EventSide::Publisher => registry::lookup_rmw_publisher(binding.entity_ptr),
+        registry::EventSide::Subscription => {
+            registry::lookup_rmw_subscription(binding.entity_ptr)
+        }
+    };
+    let Some(topic_hash) = topic_hash else {
+        return ret;
+    };
+
+    for p in &rt.plugins {
+        p.on_rmw_dds_event(
+            binding.entity_ptr,
+            topic_hash,
+            binding.event_type,
+            event_info as *const u8,
+        );
     }
 
     ret

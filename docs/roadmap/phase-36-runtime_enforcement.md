@@ -130,7 +130,47 @@ Existing FrontierPlugin and StatsPlugin pick up the new defaults (no-op) and sta
 - Consumer `EventKind` enum in `play_launch::interception` extended with the two new variants. `process_event` ignores them (they flow through to the RuleEngine in 36.3).
 
 **Pending in 36.2**:
-- DDS QoS event callbacks. The .so can register a participant-level listener via `rmw_*_event` APIs (some RMWs expose these) and forward `OFFERED_INCOMPATIBLE_QOS`, `DEADLINE_MISSED`, `LIVELINESS_LOST`, `SAMPLE_LOST` as SPSC events. Defer until the RuleEngine (36.3) is in place to consume them.
+- ~~DDS QoS event callbacks.~~ Done — see 36.8 below.
+
+### 36.8 DDS event callbacks — done
+
+The DDS layer surfaces async events (incompatible QoS, deadline missed, liveliness lost/changed, message lost) via the `rmw_event_t` API. We piggyback on the polling that rclcpp / rclpy already does — when a user registers a QoS event callback (or rclpy installs its default incompatible-QoS callback), the executor wakes up and calls `rmw_take_event`. We hook three rmw symbols:
+
+- `rmw_publisher_event_init(event, publisher, event_type)` — bind event handle to (entity, event_type)
+- `rmw_subscription_event_init(event, subscription, event_type)` — same for subscriptions
+- `rmw_take_event(event, event_info, taken)` — after the original returns OK with `taken=true`, decode the status struct based on the bound event_type and push to the SPSC ring
+
+No polling thread, no participation in DDS waitsets. Pure passive observation. If the application's executor never polls a particular event, we never see it — operators who care about catching DDS events must register an event callback (rclpy installs default callbacks for `*_INCOMPATIBLE_QOS`, so the most common cases work out of the box).
+
+**FFI** in `src/vendor/rcl_interception_sys/`:
+- `opaque.rs::rmw_event_t` — layout-aware view exposing the `event_type` field
+- `events.rs` (new) — status struct layouts (`RmwQosIncompatibleEventStatus`, `RmwDeadlineMissedStatus`, `RmwLivelinessChangedStatus`, `RmwLivelinessLostStatus`, `RmwMessageLostStatus`) + `event_type` discriminant constants + `qos_policy_kind` bitmask constants
+- `fn_types.rs` — `FnRmwPublisherEventInit`, `FnRmwSubscriptionEventInit`, `FnRmwTakeEvent`
+
+**Hooks** in `src/play_launch_interception/src/lib.rs`:
+- `rmw_publisher_event_init` / `rmw_subscription_event_init` register `(rmw_event_t*, side, entity_ptr, event_type)` in the new event registry
+- `rmw_create_publisher` / `rmw_create_subscription` now also register the rmw entity ptr → topic_hash mapping (separate from rcl entity registry, since rcl and rmw handles are distinct)
+- `rmw_take_event` looks up the binding, resolves topic_hash from the rmw entity registry, and dispatches `on_rmw_dds_event(entity_ptr, topic_hash, event_type, status_ptr)`
+
+**Plugin** in `src/play_launch_interception/src/plugins/dds_events.rs`:
+- `DdsEventsPlugin` decodes the status struct per event_type and emits one of 7 new event variants:
+  - `OfferedQosIncompatible = 6`, `RequestedQosIncompatible = 7` — payload: total_count, total_count_change, last_policy_kind
+  - `OfferedDeadlineMissed = 8`, `RequestedDeadlineMissed = 9` — payload: total_count, total_count_change
+  - `LivelinessLost = 10` — same as deadline-missed
+  - `LivelinessChanged = 11` — payload: alive_count, not_alive_count, alive_count_change (i8), not_alive_count_change (i8)
+  - `MessageLost = 12` — payload: total_count (saturating), total_count_change (saturating)
+- Plugin activated alongside StatsPlugin and QosNegotiationPlugin whenever a shared memory producer exists.
+
+**Consumer** in `src/play_launch/src/runtime_enforcement/mod.rs`:
+- `observe()` extended with 7 new match arms calling new `emit_dds_*` methods.
+- Skips dedup (uses `emit_repeatable`) since each event carries a real delta — we want one violation line per occurrence.
+- Maps:
+  - `OfferedQosIncompatible` / `RequestedQosIncompatible` → `qos-match-runtime` (Error)
+  - `OfferedDeadlineMissed` / `RequestedDeadlineMissed` → `deadline-runtime` (Warning)
+  - `LivelinessLost` / `LivelinessChanged` (when not_alive_change ≠ 0) → `liveliness-runtime` (Warning/Error)
+  - `MessageLost` → `drop-rate-runtime` (Warning)
+
+**Smoke test**: `qos_match_runtime_fires_on_dds_incompatibility` in `tests/tests/runtime_enforcement.rs`. Two rclpy nodes — one publisher with `BEST_EFFORT` reliability, one subscription with `RELIABLE`. DDS discovery flags incompatibility; rclpy's default incompatible-qos callback drives `rmw_take_event` polling; the runtime path emits `qos-match-runtime` with a `DDS reported incompatible QoS` message. Test asserts the violation lands in `runtime_violations.jsonl`.
 
 ### 36.3 RuleEngine in play_launch — done
 
