@@ -69,6 +69,14 @@ struct Originals {
     get_default_allocator: Option<FnRcutilsGetDefaultAllocator>,
     string_map_init: Option<FnRcutilsStringMapInit>,
     string_map_fini: Option<FnRcutilsStringMapFini>,
+    /// Post-expansion remap. Applies the node's `--remap` rules so the
+    /// final topic_name matches what rmw_create_publisher sees and what
+    /// `ros2 topic list` reports. Without this the interceptor would
+    /// hash pre-remap names that differ from the manifest's declared
+    /// FQNs. Optional — falls back to expansion-only if missing.
+    node_get_options: Option<FnRclNodeGetOptions>,
+    get_global_arguments: Option<FnRclGetGlobalArguments>,
+    remap_topic_name: Option<FnRclRemapTopicName>,
     /// RMW-layer originals (Phase 36.1). Optional — resolved separately
     /// from rcl symbols because the rmw symbols live in
     /// `librmw_implementation.so`, which may not be loaded under
@@ -171,6 +179,24 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
             }
         };
 
+    // Optional remap support.
+    let node_opts = unsafe { libc::dlsym(source, c"rcl_node_get_options".as_ptr()) };
+    let global_args =
+        unsafe { libc::dlsym(source, c"rcl_get_global_arguments".as_ptr()) };
+    let remap = unsafe { libc::dlsym(source, c"rcl_remap_topic_name".as_ptr()) };
+    let (node_get_options, get_global_arguments, remap_topic_name) =
+        if node_opts.is_null() || global_args.is_null() || remap.is_null() {
+            (None, None, None)
+        } else {
+            unsafe {
+                (
+                    Some(std::mem::transmute::<*mut c_void, FnRclNodeGetOptions>(node_opts)),
+                    Some(std::mem::transmute::<*mut c_void, FnRclGetGlobalArguments>(global_args)),
+                    Some(std::mem::transmute::<*mut c_void, FnRclRemapTopicName>(remap)),
+                )
+            }
+        };
+
     Some(Originals {
         publisher_init: unsafe {
             std::mem::transmute::<*mut c_void, FnRclPublisherInit>(publisher_init)
@@ -187,6 +213,9 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         get_default_allocator,
         string_map_init,
         string_map_fini,
+        node_get_options,
+        get_global_arguments,
+        remap_topic_name,
         rmw: None, // resolved separately in try_resolve_originals
     })
 }
@@ -232,11 +261,14 @@ fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str
     let name = unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy();
     let ns = unsafe { CStr::from_ptr(ns_ptr) }.to_string_lossy();
 
-    // Strategy 2: full rcl expansion if all helpers present.
+    // Strategy 2: full rcl expansion + remap if all helpers present.
     if let Some(expanded) =
         try_rcl_expand(originals, topic, name.as_ref(), ns.as_ref())
     {
-        return expanded;
+        // Apply launch-time `--remap` rules if available, otherwise
+        // fall back to the bare expansion.
+        return try_rcl_remap(originals, node, &expanded, name.as_ref(), ns.as_ref())
+            .unwrap_or(expanded);
     }
 
     // Strategy 3: hand-rolled fallback for the common cases.
@@ -263,6 +295,77 @@ fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str
     } else {
         format!("{ns}/{topic}")
     }
+}
+
+/// Apply the node's launch-time `--remap` rules to an already-expanded
+/// topic name. Returns `Some(remapped)` only when a rule matched; on
+/// no-match, error, or missing FFI symbols returns `None` (caller
+/// falls back to the expanded form). Mirrors what `rcl_publisher_init`
+/// does internally before handing the name to rmw, so the interceptor
+/// hashes the same canonical FQN that `ros2 topic list` reports.
+fn try_rcl_remap(
+    originals: &Originals,
+    node: *const rcl_node_t,
+    expanded: &str,
+    node_name: &str,
+    node_ns: &str,
+) -> Option<String> {
+    let get_options = originals.node_get_options?;
+    let get_global = originals.get_global_arguments?;
+    let remap = originals.remap_topic_name?;
+    let get_alloc = originals.get_default_allocator?;
+    if node.is_null() {
+        return None;
+    }
+
+    let topic_c = std::ffi::CString::new(expanded).ok()?;
+    let name_c = std::ffi::CString::new(node_name).ok()?;
+    let ns_c = std::ffi::CString::new(node_ns).ok()?;
+
+    // SAFETY: all five FFI pointers are dlsym'd rcl/rcutils symbols.
+    // The node pointer is the one passed to rcl_publisher_init by the
+    // application, so it's a valid initialised rcl_node_t. The
+    // allocator is a default rcutils_allocator_t (no state).
+    let result = unsafe {
+        let options = get_options(node);
+        if options.is_null() {
+            return None;
+        }
+        let local_args: *const rcl_arguments_t = &(*options).arguments;
+        let global_args = if (*options).use_global_arguments {
+            get_global()
+        } else {
+            std::ptr::null()
+        };
+        let allocator = get_alloc();
+        let mut out_ptr: *mut c_char = std::ptr::null_mut();
+        let ret = remap(
+            local_args,
+            global_args,
+            topic_c.as_ptr(),
+            name_c.as_ptr(),
+            ns_c.as_ptr(),
+            allocator,
+            &mut out_ptr,
+        );
+        if ret == 0 && !out_ptr.is_null() {
+            let remapped = CStr::from_ptr(out_ptr).to_string_lossy().into_owned();
+            if let Some(dealloc) = allocator.deallocate {
+                dealloc(out_ptr as *mut std::ffi::c_void, allocator.state);
+            }
+            // rcl_remap_topic_name returns RCL_RET_OK with the same
+            // string when no rule applied — treat as "no remap" so the
+            // caller uses the cheaper expanded form.
+            if remapped == expanded {
+                None
+            } else {
+                Some(remapped)
+            }
+        } else {
+            None
+        }
+    };
+    result
 }
 
 /// Call `rcl_expand_topic_name` if all the helper symbols are resolved.
