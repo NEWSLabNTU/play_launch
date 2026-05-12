@@ -60,6 +60,15 @@ struct Originals {
     /// Optional because resolution can fail in non-ROS processes.
     node_get_name: Option<FnRclNodeGetName>,
     node_get_namespace: Option<FnRclNodeGetNamespace>,
+    /// Full rcl topic-name expansion (handles `{node}`, `{ns}`,
+    /// `{namespace}` substitutions in addition to the simple cases).
+    /// Optional — all five must be present together; if any is missing
+    /// we fall back to the hand-rolled expansion below.
+    expand_topic_name: Option<FnRclExpandTopicName>,
+    get_default_topic_name_substitutions: Option<FnRclGetDefaultTopicNameSubstitutions>,
+    get_default_allocator: Option<FnRcutilsGetDefaultAllocator>,
+    string_map_init: Option<FnRcutilsStringMapInit>,
+    string_map_fini: Option<FnRcutilsStringMapFini>,
     /// RMW-layer originals (Phase 36.1). Optional — resolved separately
     /// from rcl symbols because the rmw symbols live in
     /// `librmw_implementation.so`, which may not be loaded under
@@ -131,6 +140,37 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         })
     };
 
+    // Optional rcl/rcutils helpers for full `{node}` / `{ns}` /
+    // `{namespace}` topic substitution. All five must be resolved
+    // together; otherwise we fall back to the hand-rolled expansion.
+    let expand = unsafe { libc::dlsym(source, c"rcl_expand_topic_name".as_ptr()) };
+    let default_subs = unsafe {
+        libc::dlsym(source, c"rcl_get_default_topic_name_substitutions".as_ptr())
+    };
+    let alloc = unsafe { libc::dlsym(source, c"rcutils_get_default_allocator".as_ptr()) };
+    let map_init = unsafe { libc::dlsym(source, c"rcutils_string_map_init".as_ptr()) };
+    let map_fini = unsafe { libc::dlsym(source, c"rcutils_string_map_fini".as_ptr()) };
+    let (expand_topic_name, get_default_topic_name_substitutions, get_default_allocator, string_map_init, string_map_fini) =
+        if expand.is_null() || default_subs.is_null() || alloc.is_null() || map_init.is_null() || map_fini.is_null() {
+            (None, None, None, None, None)
+        } else {
+            unsafe {
+                (
+                    Some(std::mem::transmute::<*mut c_void, FnRclExpandTopicName>(expand)),
+                    Some(std::mem::transmute::<
+                        *mut c_void,
+                        FnRclGetDefaultTopicNameSubstitutions,
+                    >(default_subs)),
+                    Some(std::mem::transmute::<
+                        *mut c_void,
+                        FnRcutilsGetDefaultAllocator,
+                    >(alloc)),
+                    Some(std::mem::transmute::<*mut c_void, FnRcutilsStringMapInit>(map_init)),
+                    Some(std::mem::transmute::<*mut c_void, FnRcutilsStringMapFini>(map_fini)),
+                )
+            }
+        };
+
     Some(Originals {
         publisher_init: unsafe {
             std::mem::transmute::<*mut c_void, FnRclPublisherInit>(publisher_init)
@@ -142,22 +182,36 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         take: unsafe { std::mem::transmute::<*mut c_void, FnRclTake>(take) },
         node_get_name,
         node_get_namespace,
+        expand_topic_name,
+        get_default_topic_name_substitutions,
+        get_default_allocator,
+        string_map_init,
+        string_map_fini,
         rmw: None, // resolved separately in try_resolve_originals
     })
 }
 
 /// Expand a topic name to its fully-qualified form.
 ///
-/// Mirrors the ROS 2 topic-name resolution rules (simplified — we
-/// don't support advanced `{var}` substitutions, which are rare and
-/// would require parsing the full rcl substitution map):
+/// Resolution strategy (in order):
 ///
-/// - Absolute (`/...`) — return unchanged.
-/// - `~` prefix — replace with `<node_ns>/<node_name>`.
-/// - Relative — prepend `<node_ns>/`.
+/// 1. Already absolute (`/...`) — return unchanged. No FFI needed.
+/// 2. **rcl path** — if all five rcl/rcutils helpers are resolved
+///    (`rcl_expand_topic_name`, `rcl_get_default_topic_name_substitutions`,
+///    `rcutils_get_default_allocator`, `rcutils_string_map_init/fini`)
+///    and `node_get_name` / `node_get_namespace` are available, build a
+///    substitution map and call `rcl_expand_topic_name`. This covers
+///    `{node}`, `{ns}`, `{namespace}` plus any user substitutions
+///    registered with rcl. The advantage over the hand-rolled path is
+///    that it stays in lockstep with rcl's actual resolution rules.
+/// 3. **Hand-rolled fallback** — simple case coverage:
+///    - `~` prefix → `<node_ns>/<node_name>`
+///    - relative → prepend `<node_ns>/`.
 ///
-/// Falls back to the raw `topic` string if the node accessors are
-/// missing or fail.
+/// On any rcl-path error (allocation failure, validation error, unknown
+/// substitution) we fall through to the hand-rolled fallback so a
+/// malformed name doesn't kill the interceptor — the caller's own
+/// `rcl_publisher_init` will surface the same validation error.
 fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str) -> String {
     if topic.starts_with('/') {
         return topic.to_string();
@@ -178,7 +232,14 @@ fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str
     let name = unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy();
     let ns = unsafe { CStr::from_ptr(ns_ptr) }.to_string_lossy();
 
-    // ~ -> <ns>/<name>/<rest>
+    // Strategy 2: full rcl expansion if all helpers present.
+    if let Some(expanded) =
+        try_rcl_expand(originals, topic, name.as_ref(), ns.as_ref())
+    {
+        return expanded;
+    }
+
+    // Strategy 3: hand-rolled fallback for the common cases.
     if let Some(rest) = topic.strip_prefix('~').and_then(|r| r.strip_prefix('/')) {
         let ns = ns.trim_end_matches('/');
         return if ns.is_empty() {
@@ -196,13 +257,71 @@ fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str
         };
     }
 
-    // Relative — prepend node namespace.
     let ns = ns.trim_end_matches('/');
     if ns.is_empty() {
         format!("/{topic}")
     } else {
         format!("{ns}/{topic}")
     }
+}
+
+/// Call `rcl_expand_topic_name` if all the helper symbols are resolved.
+/// Returns `Some(fqn)` on success, `None` on any error (caller falls
+/// back to the hand-rolled path).
+fn try_rcl_expand(
+    originals: &Originals,
+    topic: &str,
+    node_name: &str,
+    node_ns: &str,
+) -> Option<String> {
+    let expand = originals.expand_topic_name?;
+    let default_subs = originals.get_default_topic_name_substitutions?;
+    let get_alloc = originals.get_default_allocator?;
+    let map_init = originals.string_map_init?;
+    let map_fini = originals.string_map_fini?;
+
+    let topic_c = std::ffi::CString::new(topic).ok()?;
+    let name_c = std::ffi::CString::new(node_name).ok()?;
+    let ns_c = std::ffi::CString::new(node_ns).ok()?;
+
+    // SAFETY: All five functions are dlsym'd rcl/rcutils symbols. The
+    // allocator and string_map values are zero/default-initialized
+    // before use; fini is called unconditionally in the cleanup path.
+    let result = unsafe {
+        let allocator = get_alloc();
+        let mut map = crate::rcutils_string_map_t {
+            impl_: std::ptr::null_mut(),
+        };
+        if map_init(&mut map, 0, allocator) != 0 {
+            return None;
+        }
+        let default_ret = default_subs(&mut map);
+        let out = if default_ret == 0 {
+            let mut out_ptr: *mut c_char = std::ptr::null_mut();
+            let ret = expand(
+                topic_c.as_ptr(),
+                name_c.as_ptr(),
+                ns_c.as_ptr(),
+                &map,
+                allocator,
+                &mut out_ptr,
+            );
+            if ret == 0 && !out_ptr.is_null() {
+                let expanded = CStr::from_ptr(out_ptr).to_string_lossy().into_owned();
+                if let Some(dealloc) = allocator.deallocate {
+                    dealloc(out_ptr as *mut std::ffi::c_void, allocator.state);
+                }
+                Some(expanded)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let _ = map_fini(&mut map);
+        out
+    };
+    result
 }
 
 /// Try to resolve original rcl function pointers.
