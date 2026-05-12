@@ -43,6 +43,12 @@ pub(crate) trait InterceptionPlugin: Send + Sync {
     /// message has no `header.stamp`.
     fn on_take(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>);
 
+    /// Called once per (topic_hash, type_identity) pair the .so resolves
+    /// via introspection. `type_identity` is the canonical
+    /// `"pkg/msg/Name"` string. Default no-op so existing plugins
+    /// (Frontier, Stats) compile unchanged.
+    fn on_type_identity_resolved(&self, _topic_hash: u64, _type_identity: &str) {}
+
     // -----------------------------------------------------------------
     // RMW-layer hooks (Phase 36.1). Default no-op so existing plugins
     // (FrontierPlugin, StatsPlugin) compile unchanged. New plugins

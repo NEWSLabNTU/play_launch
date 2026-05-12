@@ -67,6 +67,11 @@ pub enum EventKind {
     ///   as 24 raw bytes of UTF-8 payload (little-endian byte order on the
     ///   producer matches the consumer because both run on the same host).
     TopicNameDeclared = 13,
+    /// Ships a chunk of a runtime msg-type identity string
+    /// (`"pkg/msg/Name"`) keyed by `topic_hash`. Same chunking + field
+    /// overload as `TopicNameDeclared`. Lets the consumer build a
+    /// `topic_hash → type_string` map for audit + contract backfill.
+    TypeNameDeclared = 14,
 }
 
 /// A single interception event (40 bytes, `#[repr(C)]`).
@@ -303,17 +308,22 @@ impl InterceptionEvent {
 pub const TOPIC_NAME_CHUNK_BYTES: usize = 24;
 
 impl InterceptionEvent {
-    /// Build a `TopicNameDeclared` event carrying one chunk of a topic
-    /// FQN string. `payload` must be ≤ 24 bytes; shorter slices are
-    /// zero-padded. The whole event is a normal 40-byte
-    /// `InterceptionEvent` so it goes through the same SPSC ring.
+    /// Build a `TopicNameDeclared` or `TypeNameDeclared` event carrying
+    /// one chunk of a string payload. `payload` must be ≤ 24 bytes;
+    /// shorter slices are zero-padded. The whole event is a normal
+    /// 40-byte `InterceptionEvent` so it goes through the same SPSC ring.
     #[inline]
-    pub fn topic_name_chunk(
+    pub fn name_chunk(
+        kind: EventKind,
         topic_hash: u64,
         chunk_idx: u8,
         total_chunks: u8,
         payload: &[u8],
     ) -> Self {
+        debug_assert!(matches!(
+            kind,
+            EventKind::TopicNameDeclared | EventKind::TypeNameDeclared
+        ));
         debug_assert!(payload.len() <= TOPIC_NAME_CHUNK_BYTES);
         let mut buf = [0u8; TOPIC_NAME_CHUNK_BYTES];
         let n = payload.len().min(TOPIC_NAME_CHUNK_BYTES);
@@ -327,7 +337,7 @@ impl InterceptionEvent {
         let handle = u64::from_ne_bytes(buf[8..16].try_into().unwrap());
         let monotonic_ns = u64::from_ne_bytes(buf[16..24].try_into().unwrap());
         Self {
-            kind: EventKind::TopicNameDeclared,
+            kind,
             _pad: [chunk_idx, total_chunks, n as u8],
             topic_hash,
             stamp_sec,
@@ -335,6 +345,23 @@ impl InterceptionEvent {
             handle,
             monotonic_ns,
         }
+    }
+
+    /// Back-compat alias for the `TopicNameDeclared` constructor.
+    #[inline]
+    pub fn topic_name_chunk(
+        topic_hash: u64,
+        chunk_idx: u8,
+        total_chunks: u8,
+        payload: &[u8],
+    ) -> Self {
+        Self::name_chunk(
+            EventKind::TopicNameDeclared,
+            topic_hash,
+            chunk_idx,
+            total_chunks,
+            payload,
+        )
     }
 
     /// Inverse of `topic_name_chunk`: copy the 24-byte payload back out

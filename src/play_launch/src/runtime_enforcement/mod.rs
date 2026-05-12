@@ -153,6 +153,13 @@ pub struct RuleEngine {
     /// for graph-deviation-runtime continues to reflect manifest
     /// declarations only.
     discovered_names: HashMap<u64, String>,
+    /// Per-topic_hash reassembly buffer for `TypeNameDeclared` chunks.
+    /// Distinct from `topic_name_chunks` because both event kinds key
+    /// on `topic_hash` and a single topic emits both a name and a type.
+    type_name_chunks: HashMap<u64, TopicNameAssembly>,
+    /// Runtime-discovered msg-type identity per topic_hash. Dumped to
+    /// `play_log/<ts>/discovered_topic_types.tsv` on flush.
+    discovered_types: HashMap<u64, String>,
 }
 
 /// In-flight reassembly state for a `TopicNameDeclared` stream.
@@ -233,6 +240,8 @@ impl RuleEngine {
             seen: HashMap::new(),
             topic_name_chunks: HashMap::new(),
             discovered_names: HashMap::new(),
+            type_name_chunks: HashMap::new(),
+            discovered_types: HashMap::new(),
         }
     }
 
@@ -398,6 +407,23 @@ impl RuleEngine {
                 if let Some(fqn) = entry.assembled() {
                     self.discovered_names.entry(event.topic_hash).or_insert(fqn);
                     self.topic_name_chunks.remove(&event.topic_hash);
+                }
+            }
+            EventKind::TypeNameDeclared => {
+                // Same chunk encoding as TopicNameDeclared but stores
+                // into discovered_types for audit + contract backfill.
+                let (idx, total, n, buf) = decode_topic_name_chunk(event);
+                let entry = self
+                    .type_name_chunks
+                    .entry(event.topic_hash)
+                    .or_insert_with(|| TopicNameAssembly::new(total.max(1)));
+                if entry.total != total.max(1) {
+                    *entry = TopicNameAssembly::new(total.max(1));
+                }
+                entry.add(idx, &buf[..n]);
+                if let Some(type_id) = entry.assembled() {
+                    self.discovered_types.entry(event.topic_hash).or_insert(type_id);
+                    self.type_name_chunks.remove(&event.topic_hash);
                 }
             }
             EventKind::OfferedQosIncompatible | EventKind::RequestedQosIncompatible => {
@@ -1048,10 +1074,32 @@ impl RuleEngine {
         if let Some(w) = self.violations_out.as_mut() {
             let _ = w.flush();
         }
+        // Dump runtime-discovered (topic, type) pairs alongside the
+        // violations jsonl. Useful for auditing manifest coverage and
+        // backfilling missing `type:` fields on `external_topics:`
+        // declarations.
+        if let Some(dir) = self.violations_path.parent() {
+            let tsv_path = dir.join("discovered_topic_types.tsv");
+            let mut lines: Vec<String> = Vec::with_capacity(self.discovered_types.len());
+            for (hash, ty) in &self.discovered_types {
+                let topic = self
+                    .discovered_names
+                    .get(hash)
+                    .cloned()
+                    .or_else(|| self.topic_hash_to_fqn.get(hash).cloned())
+                    .unwrap_or_else(|| format!("hash:{hash:#x}"));
+                lines.push(format!("{topic}\t{ty}"));
+            }
+            lines.sort();
+            if !lines.is_empty() {
+                let _ = std::fs::create_dir_all(dir);
+                let _ = std::fs::write(&tsv_path, lines.join("\n") + "\n");
+            }
+        }
         debug!(
-            "RuleEngine flushed: {} violation(s), output={}",
+            "RuleEngine flushed: {} violation(s), {} discovered topic-type pair(s)",
             self.violation_count,
-            self.violations_path.display()
+            self.discovered_types.len(),
         );
     }
 }

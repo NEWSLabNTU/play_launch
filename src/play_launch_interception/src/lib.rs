@@ -587,13 +587,18 @@ pub unsafe extern "C" fn rcl_publisher_init(
         // match `/<ns>/chatter` declarations.
         let topic = expand_topic_name(&rt.originals, node, &raw_topic);
         let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
-        let type_hash = unsafe { introspection::find_type_identity(type_support) }
-            .map(|id| registry::fnv1a(id.as_bytes()));
+        let type_identity = unsafe { introspection::find_type_identity(type_support) };
+        let type_hash = type_identity.as_deref().map(|id| registry::fnv1a(id.as_bytes()));
 
         // Register in the shared registry (used for hot-path lookups).
         registry::register_publisher(publisher as usize, &topic, stamp_offset);
 
         let topic_hash = registry::fnv1a(topic.as_bytes());
+        if let Some(id) = type_identity.as_deref() {
+            for p in &rt.plugins {
+                p.on_type_identity_resolved(topic_hash, id);
+            }
+        }
         plugin_dispatch::dispatch_publisher_init(
             &rt.plugins,
             publisher as usize,
@@ -691,13 +696,18 @@ pub unsafe extern "C" fn rcl_subscription_init(
             .into_owned();
         let topic = expand_topic_name(&rt.originals, node, &raw_topic);
         let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
-        let type_hash = unsafe { introspection::find_type_identity(type_support) }
-            .map(|id| registry::fnv1a(id.as_bytes()));
+        let type_identity = unsafe { introspection::find_type_identity(type_support) };
+        let type_hash = type_identity.as_deref().map(|id| registry::fnv1a(id.as_bytes()));
 
         // Register in the shared registry.
         registry::register_subscription(subscription as usize, &topic, stamp_offset);
 
         let topic_hash = registry::fnv1a(topic.as_bytes());
+        if let Some(id) = type_identity.as_deref() {
+            for p in &rt.plugins {
+                p.on_type_identity_resolved(topic_hash, id);
+            }
+        }
         plugin_dispatch::dispatch_subscription_init(
             &rt.plugins,
             subscription as usize,

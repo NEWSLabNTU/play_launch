@@ -204,6 +204,15 @@ pub fn mark_topic_name_for_emission(topic_hash: u64) -> bool {
     TOPIC_NAME_EMITTED.write().insert(topic_hash)
 }
 
+static TYPE_NAME_EMITTED: LazyLock<RwLock<HashSet<u64>>> =
+    LazyLock::new(|| RwLock::new(HashSet::new()));
+
+/// Same as [`mark_topic_name_for_emission`] but for the runtime msg-type
+/// identity string keyed by `topic_hash`.
+pub fn mark_type_name_for_emission(topic_hash: u64) -> bool {
+    TYPE_NAME_EMITTED.write().insert(topic_hash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
