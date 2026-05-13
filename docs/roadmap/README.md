@@ -87,6 +87,12 @@ Closes the static → runtime contract loop. Extends Phase 29 LD_PRELOAD interce
 
 See [phase-36-runtime_enforcement.md](./phase-36-runtime_enforcement.md).
 
+### Phase 37: Crate Split + Boundary Cleanup (planned)
+
+Refactor monolithic `play_launch` (~19k LOC) into 6 focused crates with sharp interfaces between executor, checker, enforcement, and parser. Driven by [`docs/design/architecture-review.md`](../design/architecture-review.md). Seven sub-phases: 37.1 `play_launch_interception_types`, 37.2 `play_launch_record_format`, 37.3 trait-ify ManifestIndex, 37.4 per-subcommand CLI args, 37.5 `play_launch_manifest_index` + `play_launch_enforcement`, 37.6 `play_launch_executor`, 37.7 `play_launch_web`.
+
+See [phase-37-crate_split.md](./phase-37-crate_split.md).
+
 ---
 
 ## Reference
