@@ -519,6 +519,7 @@ fn test_max_include_depth_exceeded() {
     // With max_include_depth=1, a→b is ok (depth 0), but b→c exceeds limit (depth 1)
     let opts = ParseOptions {
         max_include_depth: 1,
+        ..ParseOptions::default()
     };
     let result = parse_launch_file_with_options(&a, HashMap::new(), opts);
     assert!(result.is_err(), "should fail with depth limit 2");

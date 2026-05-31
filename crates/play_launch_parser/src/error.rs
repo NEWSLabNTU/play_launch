@@ -46,6 +46,13 @@ pub enum ParseError {
     )]
     MaxIncludeDepthExceeded { max: usize, file: String },
 
+    /// Cyclic include chain (only raised when `ParseOptions.strict_includes` is
+    /// `true`; the default behavior is to log a warning and skip the cycle).
+    /// `chain` is the existing include stack rendered as `a → b → c`; `file` is
+    /// the canonicalized path that closes the cycle.
+    #[error("Cyclic include detected: '{file}' is already in the include chain ({chain} → {file})")]
+    CircularInclude { file: String, chain: String },
+
     #[error("Python error: {0}")]
     PythonError(String),
 }

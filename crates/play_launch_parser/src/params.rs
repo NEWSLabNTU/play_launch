@@ -125,18 +125,17 @@ fn resolve_yaml_substitutions(
     context: &LaunchContext,
 ) -> Result<(), ParseError> {
     match value {
-        Value::String(s) => {
-            // Check if the string contains substitutions (starts with $)
-            if s.contains('$') {
-                // Parse and resolve the substitution
-                let subs = crate::substitution::parse_substitutions(s)?;
-                let resolved = resolve_substitutions(&subs, context)
-                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+        // Check if the string contains substitutions (starts with $)
+        Value::String(s) if s.contains('$') => {
+            // Parse and resolve the substitution
+            let subs = crate::substitution::parse_substitutions(s)?;
+            let resolved = resolve_substitutions(&subs, context)
+                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
 
-                // Try to convert the resolved string to the appropriate YAML type
-                *value = string_to_yaml_value(&resolved);
-            }
+            // Try to convert the resolved string to the appropriate YAML type
+            *value = string_to_yaml_value(&resolved);
         }
+        Value::String(_) => {}
         Value::Mapping(map) => {
             // Recursively process all values in the mapping
             for (_, v) in map.iter_mut() {

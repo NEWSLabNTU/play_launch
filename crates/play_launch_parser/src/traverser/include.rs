@@ -58,8 +58,26 @@ impl LaunchTraverser {
             .canonicalize()
             .unwrap_or_else(|_| resolved_path.clone());
 
-        // Check for circular includes in the current include chain
+        // Check for circular includes in the current include chain. The
+        // default behavior is "warn and skip" to preserve compatibility with
+        // every existing `play_launch` caller (Autoware in particular ships
+        // launches that re-include `_common.launch.xml` from sibling
+        // packages); strict callers (orchestration planners, lint passes) opt
+        // in to a hard error via `ParseOptions.strict_includes` to surface a
+        // diagnostic instead of silently dropping the branch.
         if self.include_chain.contains(&canonical_path) {
+            if self.strict_includes {
+                let chain = self
+                    .include_chain
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" → ");
+                return Err(ParseError::CircularInclude {
+                    file: canonical_path.display().to_string(),
+                    chain,
+                });
+            }
             log::warn!("Circular include detected: {}", canonical_path.display());
             return Ok(()); // Skip circular includes
         }
@@ -254,6 +272,7 @@ impl LaunchTraverser {
             context: include_context,
             include_chain: child_chain,
             max_include_depth: self.max_include_depth,
+            strict_includes: self.strict_includes,
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),

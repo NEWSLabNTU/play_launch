@@ -98,6 +98,7 @@ impl LaunchTraverser {
             context: include_context,
             include_chain: self.include_chain.clone(),
             max_include_depth: self.max_include_depth,
+            strict_includes: self.strict_includes,
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),

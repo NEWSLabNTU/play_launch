@@ -36,12 +36,22 @@ pub const DEFAULT_MAX_INCLUDE_DEPTH: usize = 100;
 pub struct ParseOptions {
     /// Maximum allowed include nesting depth (default: 100).
     pub max_include_depth: usize,
+
+    /// Raise [`error::ParseError::CircularInclude`] on a cyclic `<include>`
+    /// chain instead of the default behavior (log a warning and skip the
+    /// cycle). Off by default so that existing callers — `play_launch`
+    /// foremost — retain their tolerant-include semantics; opt-in callers
+    /// (orchestration planners, lint passes) can flip it to `true` to make
+    /// cycles a hard error. Mirrors how `MaxIncludeDepthExceeded` is already
+    /// surfaced.
+    pub strict_includes: bool,
 }
 
 impl Default for ParseOptions {
     fn default() -> Self {
         Self {
             max_include_depth: DEFAULT_MAX_INCLUDE_DEPTH,
+            strict_includes: false,
         }
     }
 }
@@ -54,6 +64,10 @@ pub struct LaunchTraverser {
     pub(crate) include_chain: Vec<PathBuf>,
     /// Maximum allowed include nesting depth
     pub(crate) max_include_depth: usize,
+    /// When `true`, a cyclic include returns `ParseError::CircularInclude`
+    /// instead of the default warn-and-skip behavior. See
+    /// [`ParseOptions::strict_includes`].
+    pub(crate) strict_includes: bool,
     /// Temporary storage for records during XML parsing
     pub(crate) records: Vec<record::NodeRecord>,
     pub(crate) containers: Vec<record::ComposableNodeContainerRecord>,
@@ -80,6 +94,7 @@ impl LaunchTraverser {
             context,
             include_chain: Vec::new(),
             max_include_depth: options.max_include_depth,
+            strict_includes: options.strict_includes,
             records: Vec::new(),
             containers: Vec::new(),
             load_nodes: Vec::new(),

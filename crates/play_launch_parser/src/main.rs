@@ -1,7 +1,9 @@
 //! play_launch_parser CLI
 
 use clap::{Parser, Subcommand, ValueEnum};
-use play_launch_parser::{parse_launch_file, record::RecordJson};
+use play_launch_parser::{
+    DEFAULT_MAX_INCLUDE_DEPTH, ParseOptions, parse_launch_file_with_options, record::RecordJson,
+};
 use std::{
     collections::HashMap,
     io::{self, Write},
@@ -32,6 +34,21 @@ struct Cli {
     /// Write output to file instead of stdout
     #[arg(short, long, global = true)]
     output: Option<PathBuf>,
+
+    /// Maximum allowed `<include>` nesting depth. Past this the parser
+    /// returns `MaxIncludeDepthExceeded` (non-zero exit). Default keeps the
+    /// library default — generous enough to never false-positive on
+    /// Autoware (deepest ~10 levels), tight enough to bound stack usage.
+    #[arg(long, global = true, default_value_t = DEFAULT_MAX_INCLUDE_DEPTH)]
+    max_include_depth: usize,
+
+    /// Treat a cyclic `<include>` chain as a hard error instead of
+    /// the default warn-and-skip. Off by default so existing callers
+    /// (`play_launch` foremost) keep their tolerant semantics; opt-in
+    /// orchestration / lint flows turn this on to surface a clean
+    /// `CircularInclude` diagnostic.
+    #[arg(long, global = true)]
+    strict_includes: bool,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -223,8 +240,14 @@ fn main() {
         }
     };
 
-    // Parse
-    let record = match parse_launch_file(&launch_path, cli_args) {
+    // Parse — thread the new CLI knobs through `ParseOptions` so the same
+    // invocation can opt into stricter include semantics without changing
+    // the default for every other caller.
+    let parse_options = ParseOptions {
+        max_include_depth: cli.max_include_depth,
+        strict_includes: cli.strict_includes,
+    };
+    let record = match parse_launch_file_with_options(&launch_path, cli_args, parse_options) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {}", e);
