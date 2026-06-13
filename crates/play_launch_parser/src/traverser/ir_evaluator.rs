@@ -306,6 +306,7 @@ fn ir_to_node_action(kind: &ActionKind) -> NodeAction {
             args,
             respawn,
             respawn_delay,
+            machine,
         } => NodeAction {
             package: package.parts.clone(),
             executable: executable.parts.clone(),
@@ -325,6 +326,7 @@ fn ir_to_node_action(kind: &ActionKind) -> NodeAction {
             output: None,
             respawn: respawn.as_ref().map(|r| r.parts.clone()),
             respawn_delay: respawn_delay.as_ref().map(|r| r.parts.clone()),
+            machine: machine.as_ref().map(|m| m.parts.clone()),
         },
         _ => unreachable!("ir_to_node_action called with non-SpawnNode"),
     }

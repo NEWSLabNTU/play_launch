@@ -1390,3 +1390,39 @@ fn test_command_substitution_in_let_and_node() {
     let nodes = json["node"].as_array().unwrap();
     assert_eq!(nodes[0]["name"].as_str().unwrap(), "/opt/config");
 }
+
+#[test]
+fn test_node_machine_attr_recorded() {
+    // `<node machine="…">` (ROS 2 multi-host launch) surfaces on the node
+    // record; a node without it omits the field entirely (additive/skip-none).
+    let xml = r#"<launch>
+        <node pkg="demo" exec="talker" name="t1" machine="robot1" />
+        <node pkg="demo" exec="talker" name="t2" />
+    </launch>"#;
+
+    let mut file = NamedTempFile::new().unwrap();
+    file.write_all(xml.as_bytes()).unwrap();
+    file.flush().unwrap();
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(result.is_ok(), "should parse: {result:?}");
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 2);
+
+    let with_machine = nodes
+        .iter()
+        .find(|n| n["name"].as_str() == Some("t1"))
+        .expect("t1");
+    assert_eq!(with_machine["machine"].as_str(), Some("robot1"));
+
+    let without = nodes
+        .iter()
+        .find(|n| n["name"].as_str() == Some("t2"))
+        .expect("t2");
+    assert!(
+        without.get("machine").is_none(),
+        "machine should be omitted when absent (skip_serializing_if), got {:?}",
+        without.get("machine")
+    );
+}

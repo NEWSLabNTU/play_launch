@@ -189,6 +189,7 @@ impl LifecycleNode {
             executable: self.executable.clone(),
             name: self.name.clone(),
             namespace: full_namespace,
+            machine: None, // Python lifecycle Node() machine kwarg unsupported (deferred)
             parameters: parsed_params,
             params_files,
             remappings: parsed_remaps,

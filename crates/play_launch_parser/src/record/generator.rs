@@ -284,6 +284,13 @@ impl CommandGenerator {
             None
         };
 
+        // `<node machine="…">` — resolve the multi-host target host (211.F).
+        let machine = node
+            .machine
+            .as_ref()
+            .map(|m| resolve_substitutions(m, context))
+            .transpose()?;
+
         // Build command using already-resolved values (matching Python parser behavior)
         let cmd = Self::build_node_command(
             &package,
@@ -304,6 +311,7 @@ impl CommandGenerator {
             exec_name: Some(executable.clone()),
             executable,
             global_params,
+            machine,
             name,
             namespace,
             package: Some(package),
@@ -459,6 +467,7 @@ impl CommandGenerator {
             exec_name: name.clone(),
             executable: cmd_str,
             global_params,
+            machine: None, // raw executables aren't ROS-machine-routed
             name,
             namespace: None, // Executables don't have namespaces
             package: None,   // Executables don't have packages
@@ -496,6 +505,7 @@ mod tests {
             output: None,
             respawn: None,
             respawn_delay: None,
+            machine: None,
         };
 
         let context = LaunchContext::new();
@@ -528,6 +538,7 @@ mod tests {
             output: None,
             respawn: None,
             respawn_delay: None,
+            machine: None,
         };
 
         let context = LaunchContext::new();
@@ -555,6 +566,7 @@ mod tests {
             output: None,
             respawn: None,
             respawn_delay: None,
+            machine: None,
         };
 
         let context = LaunchContext::new();

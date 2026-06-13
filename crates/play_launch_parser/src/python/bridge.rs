@@ -36,6 +36,7 @@ impl NodeCapture {
             exec_name: Some(self.executable.clone()), // exec_name = executable name
             executable: self.executable.clone(),
             global_params: global_params.clone(),
+            machine: self.machine.clone(),
             name: self.name.clone(),
             namespace: self.namespace.clone(),
             package: Some(self.package.clone()),

@@ -22,6 +22,8 @@ pub struct NodeAction {
     pub output: Option<String>,
     pub respawn: Option<Vec<Substitution>>,
     pub respawn_delay: Option<Vec<Substitution>>,
+    /// `<node machine="…">` — target host for ROS 2 multi-host launch.
+    pub machine: Option<Vec<Substitution>>,
 }
 
 impl NodeAction {
@@ -51,6 +53,12 @@ impl NodeAction {
 
         let namespace = entity
             .optional_attr_str("namespace")?
+            .map(|s| parse_substitutions(&s))
+            .transpose()?;
+
+        // `<node machine="…">` — ROS 2 multi-host launch target host.
+        let machine = entity
+            .optional_attr_str("machine")?
             .map(|s| parse_substitutions(&s))
             .transpose()?;
 
@@ -113,6 +121,7 @@ impl NodeAction {
                 .optional_attr_str("respawn_delay")?
                 .map(|s| parse_substitutions(&s))
                 .transpose()?,
+            machine,
         })
     }
 
@@ -136,6 +145,14 @@ impl NodeAction {
             .namespace
             .as_ref()
             .map(|ns| resolve_substitutions(ns, context))
+            .transpose()
+            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+
+        // Resolve `machine` (multi-host target host).
+        let machine = self
+            .machine
+            .as_ref()
+            .map(|m| resolve_substitutions(m, context))
             .transpose()
             .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
 
@@ -188,6 +205,7 @@ impl NodeAction {
             executable,
             name,
             namespace,
+            machine,
             parameters,
             params_files,
             remappings,
