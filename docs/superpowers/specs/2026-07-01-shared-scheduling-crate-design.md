@@ -69,7 +69,7 @@ intent to co-locate a shared schema crate next to `ros-launch-manifest-types`
 **Name:** `ros-launch-manifest-sched`
 **Location:** `src/ros-launch-manifest/` workspace in `play_launch`, sibling
 to `types` and `check`.
-**Deps:** `serde`, `thiserror` only. Pure host code, no `no_std`, no
+**Deps:** `serde`, `thiserror`, `toml`. Pure host code, no `no_std`, no
 runtime deps — same constraints `nros-orchestration-ir` satisfies today.
 **Distribution:** authored in `play_launch`; `nano-ros` vendors it via git
 submodule (same as `ros-launch-manifest` already) and pins the commit in

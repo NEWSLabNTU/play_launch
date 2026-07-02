@@ -14,18 +14,19 @@ use crate::ros::launch_dump::LaunchDump;
 /// The `posix` target key — Linux RT placement sub-table.
 const TARGET: &str = "posix";
 
-/// Resolve a scope id to its namespace path (falls back to `/`).
-fn scope_ns(dump: &LaunchDump, scope: Option<usize>) -> String {
-    let by_id: HashMap<usize, &str> =
-        dump.scopes.iter().map(|s| (s.id, s.ns.as_str())).collect();
-    scope
-        .and_then(|id| by_id.get(&id).copied())
-        .unwrap_or("/")
-        .to_string()
+/// Effective namespace: the record's own namespace if non-empty, else the scope's ns.
+fn effective_ns(own: Option<&str>, scope: Option<usize>, by_id: &HashMap<usize, &str>) -> String {
+    let own = own.map(str::trim).filter(|s| !s.is_empty() && *s != "/");
+    let ns = own
+        .or_else(|| scope.and_then(|id| by_id.get(&id).copied()))
+        .unwrap_or("/");
+    // normalize to a single leading slash, no trailing slash
+    let t = ns.trim_matches('/');
+    if t.is_empty() { "/".to_string() } else { format!("/{t}") }
 }
 
 /// Join a namespace with a bare node name into a fully-qualified name.
-fn join_fqn(ns: &str, bare: &str) -> String {
+pub(crate) fn join_fqn(ns: &str, bare: &str) -> String {
     if bare.starts_with('/') {
         bare.to_string()
     } else if ns == "/" || ns.is_empty() {
@@ -36,9 +37,15 @@ fn join_fqn(ns: &str, bare: &str) -> String {
 }
 
 /// Flatten a launch dump into the resolver's dependency-free node view.
-/// Regular nodes and containers are both scheduled units on Linux.
+/// Regular nodes, containers, and composable nodes are all scheduled units on Linux:
+/// under isolated container mode each composable is a fork+exec process.
 pub fn sched_nodes_from_dump(dump: &LaunchDump) -> Vec<SchedNode> {
+    // Build scope-id → namespace map once; avoids O(N*M) per-record lookups.
+    let by_id: HashMap<usize, &str> =
+        dump.scopes.iter().map(|s| (s.id, s.ns.as_str())).collect();
+
     let mut out = Vec::new();
+
     for n in &dump.node {
         let bare = n
             .name
@@ -48,19 +55,37 @@ pub fn sched_nodes_from_dump(dump: &LaunchDump) -> Vec<SchedNode> {
         if bare.is_empty() {
             continue;
         }
-        let ns = scope_ns(dump, n.scope);
+        let ns = effective_ns(n.namespace.as_deref(), n.scope, &by_id);
         out.push(SchedNode {
             name: join_fqn(&ns, &bare),
             scope: ns,
         });
     }
+
     for c in &dump.container {
-        let ns = scope_ns(dump, c.scope);
+        if c.name.is_empty() {
+            continue;
+        }
+        let ns = effective_ns(Some(c.namespace.as_str()), c.scope, &by_id);
         out.push(SchedNode {
             name: join_fqn(&ns, &c.name),
             scope: ns,
         });
     }
+
+    for lc in &dump.load_node {
+        if lc.node_name.is_empty() {
+            continue;
+        }
+        // Under isolated container mode each composable is a fork+exec process,
+        // so it is a schedulable unit and must be selectable.
+        let ns = effective_ns(Some(lc.namespace.as_str()), lc.scope, &by_id);
+        out.push(SchedNode {
+            name: join_fqn(&ns, &lc.node_name),
+            scope: ns,
+        });
+    }
+
     out
 }
 
@@ -94,7 +119,7 @@ pub fn check_sched(dump: &LaunchDump, sched_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ros::launch_dump::{NodeRecord, ScopeEntry};
+    use crate::ros::launch_dump::{ComposableNodeRecord, NodeRecord, ScopeEntry};
 
     // Minimal NodeRecord/ScopeEntry construction: use serde_json to avoid
     // enumerating every field of these large records by hand.
@@ -130,5 +155,54 @@ mod tests {
         assert_eq!(nodes[0].scope, "/localization");
         // Silence unused-import lint in case NodeRecord/ScopeEntry drift.
         let _ = (std::any::type_name::<NodeRecord>(), std::any::type_name::<ScopeEntry>());
+    }
+
+    #[test]
+    fn includes_composable_nodes_and_uses_node_namespace() {
+        // Node with an explicit namespace "/explicit" in scope 0 (scope ns = "/"):
+        // effective_ns must prefer the node's own namespace over scope ns.
+        // load_node entry with namespace "/composed": must appear in result.
+        let json = serde_json::json!({
+            "node": [{
+                "executable": "some_exec",
+                "name": "ndt_localizer",
+                "exec_name": "ndt_localizer",
+                "namespace": "/explicit",
+                "params_files": [],
+                "cmd": [],
+                "scope": 0
+            }],
+            "load_node": [{
+                "package": "my_pkg",
+                "plugin": "my_pkg::MyNode",
+                "target_container_name": "my_container",
+                "node_name": "my_node",
+                "namespace": "/composed",
+                "scope": 0
+            }],
+            "container": [],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [
+                {"id": 0, "ns": "/", "parent": null}
+            ]
+        });
+        let dump: LaunchDump = serde_json::from_value(json).expect("valid LaunchDump");
+        let nodes = sched_nodes_from_dump(&dump);
+
+        assert_eq!(nodes.len(), 2, "expected node + composable");
+
+        // Node with explicit namespace "/explicit" (scope ns is "/") → own ns wins.
+        let n = nodes.iter().find(|n| n.name.contains("ndt_localizer")).unwrap();
+        assert_eq!(n.name, "/explicit/ndt_localizer");
+        assert_eq!(n.scope, "/explicit");
+
+        // Composable node with namespace "/composed".
+        let c = nodes.iter().find(|n| n.name.contains("my_node")).unwrap();
+        assert_eq!(c.name, "/composed/my_node");
+        assert_eq!(c.scope, "/composed");
+
+        // Silence unused-import lint.
+        let _ = std::any::type_name::<ComposableNodeRecord>();
     }
 }
