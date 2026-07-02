@@ -49,6 +49,10 @@ The parser tracks which launch file each node originates from via a **scope tabl
 
 The parser includes an optional IR layer (`--features ir` on the parser crate) that preserves the full launch structure (conditions, substitution expressions, groups, includes) without evaluating. IR types: `src/play_launch_parser/.../ir.rs`. IR tests: `cargo test -p play_launch_parser --features ir`.
 
+### Scheduling Spec
+
+- **Scheduling spec** (`src/ros-launch-manifest/sched/`): portable tier/deadline/binding schema shared with nano-ros. Generic layer carries no priority numbers; per-platform placement in `[tiers.X.<target>]` (posix = Linux RT). `play_launch check --sched <file.toml>` validates for `posix` (validate-now; apply-later is phase 2). See `src/ros-launch-manifest/docs/scheduling.md`.
+
 ## Installation & Usage
 
 ```sh
