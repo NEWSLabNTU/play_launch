@@ -32,6 +32,7 @@ play_launch_msgs = "*"
 play_launch_parser = { path = "../play_launch_parser/crates/play_launch_parser" }
 ros-launch-manifest-types = { path = "../ros-launch-manifest/types" }
 ros-launch-manifest-check = { path = "../ros-launch-manifest/check" }
+ros-launch-manifest-sched = { path = "../ros-launch-manifest/sched" }
 spsc_shm = { path = "../spsc_shm" }
 futures = "0.3.30"
 glob = "0.3"

@@ -34,6 +34,11 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
         dump.load_node.len(),
     );
 
+    // Optional: validate the shared scheduling spec (Linux = validate-now).
+    if let Some(sched_path) = &args.sched {
+        crate::ros::sched_loader::check_sched(&dump, sched_path)?;
+    }
+
     // Load and check manifests
     let index = manifest_loader::load_manifests(&dump, &args.manifest_dir)?;
 
