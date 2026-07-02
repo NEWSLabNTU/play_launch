@@ -147,6 +147,11 @@ pub struct CheckArgs {
     #[arg(long, value_name = "PATH")]
     pub manifest_dir: PathBuf,
 
+    /// Path to a system scheduling spec (TOML). When given, `check` also
+    /// resolves + validates tier assignments for the `posix` (Linux RT) target.
+    #[arg(long)]
+    pub sched: Option<std::path::PathBuf>,
+
     /// Output format: terminal (default, with source excerpts) or json
     #[arg(long, default_value = "terminal")]
     pub format: String,
