@@ -1,7 +1,7 @@
 # Shared Scheduling Crate — Design
 
 **Date:** 2026-07-01
-**Status:** Approved (design), pending implementation plan
+**Status:** Implemented (Linux side) + merged to `main`. This doc is updated to reflect as-built where the implementation refined the original design (resolver signature, conflict semantics).
 **Repos:** `play_launch` (Linux) + `nano-ros` (RTOS)
 
 ## Goal
@@ -145,20 +145,23 @@ key; no new `linux` key).
 resolve(
   tiers: &BTreeMap<String, TierDef>,
   assigns: &[AssignRule],
-  scope_table: &ScopeTable,     // from record.json
-  nodes: &[NodeName],           // all nodes in the system
+  nodes: &[SchedNode],          // { name: FQN, scope: namespace } — scope carried inline
   target: &str,                 // "posix" | "freertos" | ...
 ) -> Result<ResolvedTierTable, SchedError>
 ```
 
-Reuses the shape of `nros-orchestration-ir::resolve_tiers`. The difference is
-how the node→tier map is built: instead of per-node callback-group
-declarations from package metadata, it is computed from `[[assign]]`
-selectors against the `record.json` scope table.
+`SchedNode { name, scope }` is dependency-free: each node carries its own
+fully-qualified name and namespace inline, so the crate needs no `ScopeTable`
+type and never links `play_launch_parser`. The caller builds the `Vec<SchedNode>`
+its own way (play_launch: from the `record.json` node/container/load_node arrays;
+nano-ros: from the same record it already obtains via the parser binary). The
+node→tier map is then computed from `[[assign]]` selectors over that list.
 
 **Selector precedence:** explicit `nodes` match > `scope` subtree match >
-synthesized `default` tier. A node matched by two rules of different tiers is
-a conflict error.
+synthesized `default` tier. Precedence resolves *cross-level* clashes silently
+(an explicit `nodes` rule beats a `scope` rule for the same node — no error).
+A *same-level* clash — a node claimed by two `nodes` rules, or by two `scope`
+rules, for different tiers — is a `NodeMatchedByMultipleTiers` error.
 
 Output: for each populated tier, look up the `target` platform sub-table,
 carry the generic policy fields through, resolve the platform numbers, sort
@@ -172,17 +175,17 @@ single synthesized `default` tier (priority 0, no platform lookup needed).
 - `UnknownTier` — an `[[assign]]` names a tier with no `[tiers.<name>]`.
 - `UnknownNodeSelector` — an `assign.nodes` entry matches no node in
   `record.json`.
-- `UnknownScopeSelector` — an `assign.scope` matches no scope in the scope
-  table.
+- `UnknownScopeSelector` — an `assign.scope` matches no node's scope.
 - `NodeMatchedByMultipleTiers { node, tier_a, tier_b }` — replaces v1
-  `NodeSpansTiers`; a node resolved to two different tiers.
+  `NodeSpansTiers`; a node resolved to two different tiers at the *same*
+  precedence level (node-vs-node or scope-vs-scope).
 - `MissingPlatformSpec { tier, target }` — populated tier lacks the
   `[tiers.<tier>.<target>]` sub-table for the resolve target.
 
 ## Consumers
 
-Both link the crate; `nano-ros` also feeds it a scope table it already
-obtains from the parser binary.
+Both link the crate and feed it a `Vec<SchedNode>` they build from the
+`record.json` they already obtain from the parser binary.
 
 ### nano-ros (RTOS)
 
@@ -194,8 +197,11 @@ scattered `[package.metadata.nros.node].callback_groups` +
 
 ### play_launch (Linux) — validate now, apply later
 
-- **Now:** `play_launch check` parses the system TOML + `record.json`,
-  resolves for `target = "posix"`, runs all checks, reports diagnostics.
+- **Now:** `play_launch check --sched <file.toml>` parses the system TOML +
+  `record.json`, flattens node/container/**composable** records into
+  `Vec<SchedNode>` (`sched_loader::sched_nodes_from_dump`, using each record's
+  own namespace for the FQN and the scope-table `ns` as fallback), resolves for
+  `target = "posix"`, runs all checks, prints the resolved table.
   **No change to how nodes are spawned.**
 - **Phase 2 (documented, not built):** an apply-layer consumes the `posix`
   `ResolvedTier` and applies `sched_setscheduler` (SCHED_FIFO/RR from
@@ -212,7 +218,7 @@ scattered `[package.metadata.nros.node].callback_groups` +
   `board_path_for` + any `nano-ros`-only glue.
 - `nano-ros` switches authoring from per-package callback groups to the
   central `[[assign]]` table; the `resolve_tiers` call site swaps to the new
-  `resolve` signature (scope-table-driven).
+  `resolve` signature (driven by a `Vec<SchedNode>` built from `record.json`).
 - `play_launch` gains the crate as a path dep and wires the `check` command.
 
 ## Non-goals (v1)
