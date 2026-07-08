@@ -89,6 +89,25 @@ pub fn sched_nodes_from_dump(dump: &LaunchDump) -> Vec<SchedNode> {
     out
 }
 
+/// FQNs of composable (load_node) records — the units v1 cannot schedule.
+///
+/// Not yet called outside tests + `sched_plan` (actor wiring is a later
+/// phase-38 task); allowed dead in non-consumer builds.
+#[allow(dead_code)]
+pub fn composable_fqns(dump: &LaunchDump) -> std::collections::HashSet<String> {
+    let by_id: HashMap<usize, &str> =
+        dump.scopes.iter().map(|s| (s.id, s.ns.as_str())).collect();
+
+    dump.load_node
+        .iter()
+        .filter(|lc| !lc.node_name.is_empty())
+        .map(|lc| {
+            let ns = effective_ns(Some(lc.namespace.as_str()), lc.scope, &by_id);
+            join_fqn(&ns, &lc.node_name)
+        })
+        .collect()
+}
+
 /// Load the scheduling TOML, resolve for `posix`, and print the resolved table.
 pub fn check_sched(dump: &LaunchDump, sched_path: &Path) -> Result<()> {
     let text = std::fs::read_to_string(sched_path)
@@ -204,5 +223,40 @@ mod tests {
 
         // Silence unused-import lint.
         let _ = std::any::type_name::<ComposableNodeRecord>();
+    }
+
+    #[test]
+    fn composable_fqns_includes_load_node_excludes_regular_node() {
+        let json = serde_json::json!({
+            "node": [{
+                "executable": "some_exec",
+                "name": "ndt_localizer",
+                "exec_name": "ndt_localizer",
+                "namespace": "/explicit",
+                "params_files": [],
+                "cmd": [],
+                "scope": 0
+            }],
+            "load_node": [{
+                "package": "my_pkg",
+                "plugin": "my_pkg::MyNode",
+                "target_container_name": "my_container",
+                "node_name": "my_node",
+                "namespace": "/composed",
+                "scope": 0
+            }],
+            "container": [],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [
+                {"id": 0, "ns": "/", "parent": null}
+            ]
+        });
+        let dump: LaunchDump = serde_json::from_value(json).expect("valid LaunchDump");
+        let composables = composable_fqns(&dump);
+
+        assert!(composables.contains("/composed/my_node"));
+        assert!(!composables.contains("/explicit/ndt_localizer"));
+        assert_eq!(composables.len(), 1);
     }
 }
