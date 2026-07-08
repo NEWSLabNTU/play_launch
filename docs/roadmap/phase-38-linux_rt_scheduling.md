@@ -1,6 +1,6 @@
 # Phase 38: Linux Real-Time Scheduling Apply-Layer
 
-**Status:** 📋 Planned
+**Status:** ✅ v1 (38.1–38.8) + 38.9 composable scheduling complete
 **Design of record:** [docs/superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md)
 **Builds on:** shared scheduling crate `ros-launch-manifest-sched` + `play_launch check --sched` (validate-now), already on `main`. Crate design: [docs/superpowers/specs/2026-07-01-shared-scheduling-crate-design.md](../superpowers/specs/2026-07-01-shared-scheduling-crate-design.md).
 
@@ -44,9 +44,13 @@ apply_tier(pid, &AppliedTier)               execution/sched_apply.rs
 post-spawn (re-applied on respawn because the hook is on the spawn path).
 
 **Composables:** in `isolated` mode each composable is a `component_node`
-process whose PID lives only in the C++ container manager (`ComponentEvent.msg`
-has no `pid`). v1 does **not** schedule composables; a composable assigned a
-non-`default` tier warns at plan-build. See 38.9 (fast-follow).
+process. **As of 38.9 these are scheduled**: `ComponentEvent` carries the child
+`pid`, and the container actor applies the composable's resolved tier on
+`LOADED`. In `observable`/`stock` modes composables are in-process (no separate
+PID) and are not individually schedulable — the LOADED apply is guarded on
+`event.pid > 0`, so those modes skip it. (Original v1, 38.1–38.8, applied only
+to regular nodes + containers and warned on composables; 38.9 removed that
+limitation.)
 
 **Mechanisms (v1):** `SCHED_FIFO`/`SCHED_RR` + priority + core affinity.
 `SCHED_DEADLINE` deferred (a `time_triggered` tier warns).
@@ -127,13 +131,25 @@ privileged, `chrt -p <pid>` / `/proc/<pid>/stat` shows the policy for a
 targeted node; when unprivileged, the warn-path hint appears and the run still
 completes. Use `ManagedProcess` + unique `ROS_DOMAIN_ID` fixture patterns.
 
-### 38.9 Composable scheduling — fast-follow (planned, after v1)
+### 38.9 Composable scheduling — done
 
-Extend `ComponentEvent.msg` with `int32 pid` (C++ already holds `child_pid` at
-fork, `clone_isolated_component_manager.cpp:580`); Rust's `component_events.rs`
-matches by `full_node_name` and calls `apply_tier(pid, ..)` on `LOADED`. Event-
-driven, no polling. Touches C++/msgs + colcon rebuild — deliberately separated
-from the all-Rust v1.
+`ComponentEvent.msg` gained `int32 pid`, populated at LOADED/CRASHED in
+`clone_isolated_component_manager.cpp` (captured before the `child` move).
+Each composable's `AppliedTier` is resolved at the builder (same `fqn_for`
+key as `SchedPlan`) and stored on `ComposableNodeMetadata.sched`; the
+container actor's LOADED handler applies it via the entry (matched by
+`unique_id`), guarded on `sched_mode != Off && event.pid > 0`. Event-driven,
+no polling. Verified end-to-end on a ROS host (`tests/tests/sched_apply.rs::composable_scheduling_engages_on_isolated_container`).
+
+**v1 strict boundary:** unlike regular nodes/containers (whose strict apply
+failure aborts the run), a *per-composable* strict apply failure mid-run logs
+at `error!` and leaves that composable running unscheduled — it does not tear
+down the container. This is narrow: build-time config validation
+(`SchedPlan::build`) + the pre-spawn `CAP_SYS_NICE` preflight already catch the
+deterministic and permission causes before any composable loads, leaving only
+an unusual per-process EPERM (e.g. composable-specific rlimit). A hard
+coordinated shutdown from the async ComponentEvent handler is deferred (would
+be a 38.10).
 
 ## Order and dependencies
 

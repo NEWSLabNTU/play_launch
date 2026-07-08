@@ -1,7 +1,7 @@
 # Linux Scheduling Apply-Layer — Design
 
 **Date:** 2026-07-06
-**Status:** Approved (design), pending implementation plan
+**Status:** Implemented (38.1–38.8) + composable scheduling (38.9) — see `docs/roadmap/phase-38-linux_rt_scheduling.md`. NOTE: the "no composable-node scheduling" non-goal below was v1-only; 38.9 lifted it (composables are scheduled in `isolated` mode via `ComponentEvent.pid`).
 **Repo:** `play_launch` (Linux)
 **Builds on:** `ros-launch-manifest-sched` crate + `check --sched` (validate-now).
 Design of record for the spec itself:

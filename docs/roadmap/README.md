@@ -38,7 +38,7 @@ Completed phase docs are in `archive/`.
 | 30b | Group Scopes | ✅ | 2026-03-20 |
 | 31 | Launch Manifest | 📋 Planned | — |
 | 36 | Runtime Enforcement | ✅ 36.1–36.7 | 2026-05-11 |
-| 38 | Linux RT Scheduling Apply-Layer | 📋 Planned | — |
+| 38 | Linux RT Scheduling Apply-Layer | ✅ 38.1–38.9 | 2026-07-06 |
 
 ---
 
@@ -94,7 +94,7 @@ Refactor monolithic `play_launch` (~19k LOC) into 6 focused crates with sharp in
 
 See [phase-37-crate_split.md](./phase-37-crate_split.md).
 
-### Phase 38: Linux RT Scheduling Apply-Layer (planned)
+### Phase 38: Linux RT Scheduling Apply-Layer (complete)
 
 Turns the shared scheduling spec (`ros-launch-manifest-sched` + `check --sched`, already on `main`) from validate-now into apply. During replay, sets `SCHED_FIFO`/`SCHED_RR` + priority + CPU affinity per spawned node/container process by PID from the resolved `posix` tier. New `--sched <file.toml>` + `--sched-apply {off,warn,strict}` (default warn), `CAP_SYS_NICE` preflight. Composable scheduling (extend `ComponentEvent.msg` with pid) is a fast-follow (38.9); `SCHED_DEADLINE` deferred.
 
