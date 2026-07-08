@@ -78,21 +78,28 @@ impl SchedPlan {
             }
 
             let policy = SchedPolicy::from_sched_class(tier.sched_class.as_deref());
-            let priority = tier.priority as i32;
 
             // Deterministic config validation, done here (build time) rather
             // than at apply time (actor hook, after spawn): a malformed spec
             // is a spec bug, not a runtime/permission condition, so it must
             // hard-error BEFORE any process is spawned, uniformly in ALL
             // apply modes (including `Off`/`Warn` — this is not a
-            // strict-only check).
-            if matches!(policy, SchedPolicy::Fifo | SchedPolicy::Rr) && !(1..=99).contains(&priority)
+            // strict-only check). Validate the raw `i64` priority (which is
+            // deliberately wide to admit RTOS negative coop priorities) BEFORE
+            // narrowing to `i32`, so a pathological value can't slip through
+            // via truncation.
+            if matches!(policy, SchedPolicy::Fifo | SchedPolicy::Rr)
+                && !(1..=99).contains(&tier.priority)
             {
                 eyre::bail!(
-                    "tier '{}': RT priority {priority} out of range 1..=99",
-                    tier.name
+                    "tier '{}': RT priority {} out of range 1..=99",
+                    tier.name,
+                    tier.priority
                 );
             }
+
+            // Safe: validated to 1..=99 for RT policies; Other ignores priority.
+            let priority = tier.priority as i32;
 
             if let Some(c) = tier.core
                 && c as usize >= ncpu
@@ -269,6 +276,30 @@ nodes = ["/control/ndt_localizer"]
                 msg.contains("control") && msg.contains("priority") && msg.contains("0"),
                 "expected a message naming the tier and the bad priority, got: {msg}"
             );
+        });
+    }
+
+    #[test]
+    fn rejects_rt_priority_that_only_looks_valid_after_i32_truncation() {
+        // 2^32 + 20 truncates to 20 (in range) as i32, but the raw i64 is
+        // nonsensical and must be rejected — guards against validating the
+        // narrowed value instead of the authored one.
+        let dump = dump_with_node_and_composable();
+        let toml = r#"
+[tiers.control]
+class = "real_time"
+
+[tiers.control.posix]
+priority = 4294967316
+sched_class = "SCHED_FIFO"
+
+[[assign]]
+tier = "control"
+nodes = ["/control/ndt_localizer"]
+"#;
+        with_temp_toml(toml, |path| {
+            let _ = SchedPlan::build(&dump, path, SchedApplyMode::Warn)
+                .expect_err("i64 priority 2^32+20 must be rejected, not truncated to 20");
         });
     }
 
