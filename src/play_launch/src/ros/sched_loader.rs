@@ -36,6 +36,13 @@ pub(crate) fn join_fqn(ns: &str, bare: &str) -> String {
     }
 }
 
+/// Core of `fqn_for`, parameterized on an already-built scope-id -> namespace
+/// map so repeated calls (e.g. once per record) don't each rebuild it.
+fn fqn_with(by_id: &HashMap<usize, &str>, namespace: Option<&str>, bare: &str, scope: Option<usize>) -> String {
+    let ns = effective_ns(namespace, scope, by_id);
+    join_fqn(&ns, bare)
+}
+
 /// Fully-qualified name for a record, using its own namespace (fallback: scope ns).
 ///
 /// This is the single source of truth for FQN computation: both
@@ -45,11 +52,14 @@ pub(crate) fn join_fqn(ns: &str, bare: &str) -> String {
 /// silently miss. Callers pass the record's own `namespace` (may be `None`
 /// or empty), its bare `name`, and its `scope` id; the scope's namespace is
 /// used as a fallback when the record has no namespace of its own.
+///
+/// Builds the scope-id -> namespace map once per call; callers that need the
+/// FQN for many records from the same dump (e.g. `sched_nodes_from_dump`)
+/// should build the map once themselves and call `fqn_with` directly instead.
 pub fn fqn_for(dump: &LaunchDump, namespace: Option<&str>, bare_name: &str, scope: Option<usize>) -> String {
     let by_id: HashMap<usize, &str> =
         dump.scopes.iter().map(|s| (s.id, s.ns.as_str())).collect();
-    let ns = effective_ns(namespace, scope, &by_id);
-    join_fqn(&ns, bare_name)
+    fqn_with(&by_id, namespace, bare_name, scope)
 }
 
 /// Flatten a launch dump into the resolver's dependency-free node view.
@@ -73,7 +83,7 @@ pub fn sched_nodes_from_dump(dump: &LaunchDump) -> Vec<SchedNode> {
         }
         let ns = effective_ns(n.namespace.as_deref(), n.scope, &by_id);
         out.push(SchedNode {
-            name: fqn_for(dump, n.namespace.as_deref(), &bare, n.scope),
+            name: fqn_with(&by_id, n.namespace.as_deref(), &bare, n.scope),
             scope: ns,
         });
     }
@@ -84,7 +94,7 @@ pub fn sched_nodes_from_dump(dump: &LaunchDump) -> Vec<SchedNode> {
         }
         let ns = effective_ns(Some(c.namespace.as_str()), c.scope, &by_id);
         out.push(SchedNode {
-            name: fqn_for(dump, Some(c.namespace.as_str()), &c.name, c.scope),
+            name: fqn_with(&by_id, Some(c.namespace.as_str()), &c.name, c.scope),
             scope: ns,
         });
     }
@@ -97,7 +107,7 @@ pub fn sched_nodes_from_dump(dump: &LaunchDump) -> Vec<SchedNode> {
         // so it is a schedulable unit and must be selectable.
         let ns = effective_ns(Some(lc.namespace.as_str()), lc.scope, &by_id);
         out.push(SchedNode {
-            name: fqn_for(dump, Some(lc.namespace.as_str()), &lc.node_name, lc.scope),
+            name: fqn_with(&by_id, Some(lc.namespace.as_str()), &lc.node_name, lc.scope),
             scope: ns,
         });
     }

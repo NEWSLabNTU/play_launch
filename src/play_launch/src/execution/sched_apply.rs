@@ -89,12 +89,34 @@ pub enum SchedApplyError {
 /// Map the current `errno` (via `std::io::Error::last_os_error()`) to a
 /// [`SchedApplyError`] for a given syscall name. `priority` is the value
 /// that was attempted (used only to annotate `InvalidPriority` on `EINVAL`).
+///
+/// Only appropriate for the policy/priority syscall (`sched_setscheduler`):
+/// an `EINVAL` there really does mean "priority rejected". Affinity errors
+/// go through [`map_affinity_errno`] instead, since `EINVAL` there means
+/// something else entirely (bad core id / cpu mask), not a bad priority.
 fn map_errno(pid: u32, call: &'static str, priority: i32) -> SchedApplyError {
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
     match errno {
         libc::EPERM => SchedApplyError::PermissionDenied { pid },
         libc::EINVAL => SchedApplyError::InvalidPriority { pid, priority },
         _ => SchedApplyError::Syscall { pid, call, errno },
+    }
+}
+
+/// Map the current `errno` for a failed `sched_setaffinity` call. Unlike
+/// [`map_errno`], `EINVAL` here is NOT a priority problem (affinity has no
+/// priority concept) — it means the given CPU mask was invalid (e.g. no bits
+/// corresponding to an online CPU), so it falls through to `Syscall` like
+/// any other unrecognized errno.
+fn map_affinity_errno(pid: u32) -> SchedApplyError {
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    match errno {
+        libc::EPERM => SchedApplyError::PermissionDenied { pid },
+        _ => SchedApplyError::Syscall {
+            pid,
+            call: "sched_setaffinity",
+            errno,
+        },
     }
 }
 
@@ -155,7 +177,7 @@ pub fn apply_tier(pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
             );
 
             if ret == -1 {
-                return Err(map_errno(pid, "sched_setaffinity", tier.priority));
+                return Err(map_affinity_errno(pid));
             }
         }
     }
@@ -312,6 +334,47 @@ mod tests {
             let tier = other_tier(Some(0));
             let result = apply_tier(pid, &tier);
             assert_eq!(result, Ok(()));
+        });
+    }
+
+    #[test]
+    fn affinity_failure_never_reports_invalid_priority() {
+        // `AppliedTier` is constructed directly (not via `SchedPlan::build`)
+        // because the FIX-1 build-time validation added in `sched_plan.rs`
+        // would reject an out-of-range core before this could reach
+        // `apply_tier` at all. This test targets `apply_tier` in isolation.
+        //
+        // `core = CPU_SETSIZE - 1` (1023) is within the fixed-size
+        // `cpu_set_t` bitmask (so `CPU_SET` itself can't panic on an
+        // out-of-bounds array index) but is not a CPU that exists on any
+        // real machine, so the kernel rejects the resulting mask (no bits
+        // corresponding to an online CPU) with `EINVAL`.
+        with_sleep_child(|pid| {
+            let tier = AppliedTier {
+                policy: SchedPolicy::Other,
+                priority: 0,
+                core: Some(1023),
+                tier_name: "test".to_string(),
+            };
+
+            let err = apply_tier(pid, &tier)
+                .expect_err("setting affinity to a nonexistent CPU should fail");
+
+            match err {
+                SchedApplyError::Syscall { call, .. } => {
+                    assert_eq!(call, "sched_setaffinity");
+                }
+                SchedApplyError::PermissionDenied { .. } => {
+                    // Acceptable: an unprivileged environment could plausibly
+                    // deny the affinity syscall outright before EINVAL comes
+                    // into play. Either way, never `InvalidPriority`.
+                }
+                SchedApplyError::InvalidPriority { .. } => {
+                    panic!(
+                        "affinity failure must never be reported as InvalidPriority, got {err:?}"
+                    );
+                }
+            }
         });
     }
 }
