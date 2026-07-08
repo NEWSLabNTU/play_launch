@@ -93,6 +93,17 @@ setcap-io-helper:
     getcap install/play_launch/lib/play_launch/play_launch_io_helper
     echo "✓ I/O helper ready (reapply after rebuild)"
 
+# Apply CAP_SYS_NICE to the main play_launch binary so --sched can apply RT scheduling (requires sudo)
+setcap-sched:
+    #!/bin/bash
+    if [ ! -f install/play_launch/lib/play_launch/play_launch ]; then
+        echo "Error: play_launch not found. Run 'just build' first."
+        exit 1
+    fi
+    sudo setcap cap_sys_nice+ep install/play_launch/lib/play_launch/play_launch
+    getcap install/play_launch/lib/play_launch/play_launch
+    echo "✓ play_launch can apply RT scheduling (reapply after rebuild)"
+
 # Verify I/O helper capability status
 verify-io-helper:
     #!/bin/bash

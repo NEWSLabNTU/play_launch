@@ -63,6 +63,53 @@ pub fn handle_setcap_io_helper() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Handle the 'setcap-sched' subcommand.
+///
+/// Grants `CAP_SYS_NICE` to the main `play_launch` binary so `--sched` can set
+/// `SCHED_FIFO`/`SCHED_RR` priority + CPU affinity on spawned processes without
+/// running as root. The capability goes on THIS binary (the one that calls
+/// `sched_setscheduler`), unlike `setcap-io-helper` which targets the helper.
+pub fn handle_setcap_sched() -> eyre::Result<()> {
+    // The running executable is the play_launch binary that applies scheduling.
+    // Canonicalize so setcap targets the real ELF file, not a symlink/wrapper.
+    let bin = std::env::current_exe()
+        .wrap_err("Failed to resolve the play_launch binary path")?
+        .canonicalize()
+        .wrap_err("Failed to canonicalize the play_launch binary path")?;
+
+    println!("Setting CAP_SYS_NICE on {}", bin.display());
+    println!("This requires sudo privileges.\n");
+
+    let status = process::Command::new("sudo")
+        .args(["setcap", "cap_sys_nice+ep"])
+        .arg(&bin)
+        .status()
+        .wrap_err("Failed to run setcap")?;
+
+    if !status.success() {
+        eyre::bail!("Failed to set capability");
+    }
+
+    let output = process::Command::new("getcap")
+        .arg(&bin)
+        .output()
+        .wrap_err("Failed to run getcap")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    if stdout.contains("cap_sys_nice") {
+        println!("\n✓ play_launch can now apply RT scheduling: {}", stdout.trim());
+        println!("\nNote: Rerun this command after rebuilding/upgrading play_launch.");
+    } else {
+        eyre::bail!(
+            "Capability may not have been set correctly. Output: {}",
+            stdout
+        );
+    }
+
+    Ok(())
+}
+
 /// Handle the 'verify-io-helper' subcommand
 pub fn handle_verify_io_helper() -> eyre::Result<()> {
     let io_helper = find_io_helper_path()?;

@@ -14,7 +14,7 @@ pub(crate) mod signal_handler;
 // Re-export command handlers
 pub use context::handle_context;
 pub use dump::handle_dump;
-pub use io_helper::{handle_setcap_io_helper, handle_verify_io_helper};
+pub use io_helper::{handle_setcap_io_helper, handle_setcap_sched, handle_verify_io_helper};
 pub use launch::handle_launch;
 pub use manifest::handle_check_manifest;
 pub use plot::handle_plot;

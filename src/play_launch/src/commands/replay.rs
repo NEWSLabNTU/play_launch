@@ -513,7 +513,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         if common.sched_apply != crate::execution::sched_apply::SchedApplyMode::Off
             && !crate::execution::sched_apply::has_sched_privilege()
         {
-            let msg = "scheduling: CAP_SYS_NICE or root required to apply; run `setcap cap_sys_nice+ep <play_launch binary>` or run as root";
+            let msg = "scheduling: CAP_SYS_NICE or root required to apply; run `play_launch setcap-sched` (grants cap_sys_nice+ep) or run as root";
             if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
                 eyre::bail!("{msg}");
             }

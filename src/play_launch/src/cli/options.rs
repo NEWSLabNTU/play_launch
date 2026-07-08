@@ -91,6 +91,11 @@ pub enum Command {
     #[command(name = "verify-io-helper")]
     VerifyIoHelper,
 
+    /// Set CAP_SYS_NICE on the play_launch binary so `--sched` can apply RT
+    /// scheduling (SCHED_FIFO/RR + affinity) without root (requires sudo)
+    #[command(name = "setcap-sched")]
+    SetcapSched,
+
     /// Extract per-node or per-launch-file context from record.json
     #[command(after_help = "Examples:\n  \
         play_launch context record.json --tree\n  \
