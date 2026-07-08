@@ -1,6 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+use crate::execution::sched_apply::SchedApplyMode;
+
 /// Parser backend selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ParserBackend {
@@ -331,6 +333,20 @@ pub struct CommonOptions {
     /// because nodes that don't handle init failure may crash.
     #[arg(long, default_value_t = false)]
     pub block_unauthorized_endpoints: bool,
+
+    /// Phase 38: path to a system scheduling spec (TOML). When set, replay
+    /// resolves it for the `posix` target and (per `--sched-apply`) applies
+    /// SCHED_FIFO/RR + priority + CPU affinity to each spawned node/container
+    /// process. Same file `play_launch check --sched` validates.
+    #[arg(long, value_name = "PATH")]
+    pub sched: Option<PathBuf>,
+
+    /// Phase 38: how to apply the scheduling spec. `off` = resolve + report
+    /// only (no syscalls). `warn` = apply, log a warning and continue on
+    /// failure. `strict` = abort the run on any capability/apply failure.
+    /// Only meaningful with `--sched`.
+    #[arg(long, value_enum, default_value = "warn")]
+    pub sched_apply: SchedApplyMode,
 }
 
 /// Runtime enforcement mode for manifest contracts.
@@ -366,6 +382,8 @@ impl Default for CommonOptions {
             manifest_dir: None,
             enforce_rules: EnforceMode::Warn,
             block_unauthorized_endpoints: false,
+            sched: None,
+            sched_apply: SchedApplyMode::Warn,
         }
     }
 }
