@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 31 phases total; 25 complete, 2 in progress, 4 planned.
+Started October 2025. 32 phases total; 25 complete, 2 in progress, 5 planned.
 
 Completed phase docs are in `archive/`.
 
@@ -38,6 +38,7 @@ Completed phase docs are in `archive/`.
 | 30b | Group Scopes | ✅ | 2026-03-20 |
 | 31 | Launch Manifest | 📋 Planned | — |
 | 36 | Runtime Enforcement | ✅ 36.1–36.7 | 2026-05-11 |
+| 38 | Linux RT Scheduling Apply-Layer | 📋 Planned | — |
 
 ---
 
@@ -92,6 +93,13 @@ See [phase-36-runtime_enforcement.md](./phase-36-runtime_enforcement.md).
 Refactor monolithic `play_launch` (~19k LOC) into 6 focused crates with sharp interfaces between executor, checker, enforcement, and parser. Driven by [`docs/design/architecture-review.md`](../design/architecture-review.md). Seven sub-phases: 37.1 `play_launch_interception_types`, 37.2 `play_launch_record_format`, 37.3 trait-ify ManifestIndex, 37.4 per-subcommand CLI args, 37.5 `play_launch_manifest_index` + `play_launch_enforcement`, 37.6 `play_launch_executor`, 37.7 `play_launch_web`.
 
 See [phase-37-crate_split.md](./phase-37-crate_split.md).
+
+### Phase 38: Linux RT Scheduling Apply-Layer (planned)
+
+Turns the shared scheduling spec (`ros-launch-manifest-sched` + `check --sched`, already on `main`) from validate-now into apply. During replay, sets `SCHED_FIFO`/`SCHED_RR` + priority + CPU affinity per spawned node/container process by PID from the resolved `posix` tier. New `--sched <file.toml>` + `--sched-apply {off,warn,strict}` (default warn), `CAP_SYS_NICE` preflight. Composable scheduling (extend `ComponentEvent.msg` with pid) is a fast-follow (38.9); `SCHED_DEADLINE` deferred.
+
+See [phase-38-linux_rt_scheduling.md](./phase-38-linux_rt_scheduling.md).
+Design: [docs/superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md).
 
 ---
 
