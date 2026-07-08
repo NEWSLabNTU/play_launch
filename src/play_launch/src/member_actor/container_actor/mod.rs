@@ -75,6 +75,8 @@ pub struct ComposableNodeMetadata {
     pub auto_load: bool,
     /// Output directory for per-node logging (isolated mode)
     pub output_dir: PathBuf,
+    /// Phase 38.9: resolved posix scheduling for this composable (None = no tier).
+    pub sched: Option<crate::execution::sched_apply::AppliedTier>,
 }
 
 /// Entry for a composable node managed by this container (Phase 12)
@@ -486,7 +488,8 @@ impl ContainerActor {
         debug!("{}: Container running with PID {}", self.name, pid);
 
         // Phase 38: apply resolved Linux scheduling to the container process
-        // itself (composable nodes loaded into it are not scheduled in v1).
+        // itself. Composable nodes loaded into it are scheduled separately,
+        // per-process, on LOADED (phase 38.9, see component_events.rs).
         // Runs on every entry to Running, so respawns re-apply automatically.
         if self.config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
             && let Some(tier) = &self.config.sched

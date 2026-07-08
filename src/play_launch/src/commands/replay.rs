@@ -628,8 +628,21 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     for context in load_node_contexts {
         // Use the composable node name from record.json directly
         let member_name = context.record.node_name.clone();
+
+        // Phase 38.9: resolve this composable's tier at the builder (Option B) —
+        // no FQN recompute at apply time, no C++/Rust FQN-format dependency.
+        let composable_tier = sched_plan.as_ref().and_then(|p| {
+            let fqn = crate::ros::sched_loader::fqn_for(
+                &launch_dump,
+                Some(&context.record.namespace),
+                &context.record.node_name,
+                context.record.scope,
+            );
+            p.for_fqn(&fqn).cloned()
+        });
+
         // Auto-load enabled by default for all composable nodes
-        builder.add_composable_node(member_name, context, true);
+        builder.add_composable_node(member_name, context, true, composable_tier);
     }
 
     // Now spawn all actors at once and get handle + runner

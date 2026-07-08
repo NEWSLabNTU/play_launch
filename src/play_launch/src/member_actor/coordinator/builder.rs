@@ -40,6 +40,8 @@ struct ComposableNodeDefinition {
     auto_load: bool,
     target_container_name: String, // Will be matched with container during spawn()
     metadata: MemberMetadata,
+    /// Phase 38.9: resolved posix scheduling for this composable (None = no tier).
+    sched: Option<crate::execution::sched_apply::AppliedTier>,
 }
 
 /// Builder for collecting member definitions before spawning
@@ -143,6 +145,7 @@ impl MemberCoordinatorBuilder {
         name: String,
         context: crate::execution::context::ComposableNodeContext,
         auto_load: bool,
+        sched: Option<crate::execution::sched_apply::AppliedTier>,
     ) {
         let target_container_name = context.record.target_container_name.clone();
 
@@ -167,6 +170,7 @@ impl MemberCoordinatorBuilder {
             auto_load,
             target_container_name,
             metadata,
+            sched,
         });
     }
 
@@ -397,6 +401,7 @@ impl MemberCoordinatorBuilder {
                             extra_args,
                             auto_load: def.auto_load,
                             output_dir: def.context.output_dir.clone(),
+                            sched: def.sched.clone(),
                         };
 
                     // Add composable node to container

@@ -65,6 +65,41 @@ impl ContainerActor {
                 self.name, composable_name, event.unique_id
             );
 
+            // Phase 38.9: apply resolved Linux scheduling to this composable's
+            // own process, now that ComponentEvent carries its pid. Observable/
+            // stock mode and LOAD_FAILED events carry pid 0, hence the guard.
+            if self.config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
+                && event.pid > 0
+                && let Some(tier) = entry.metadata.sched.as_ref()
+            {
+                match crate::execution::sched_apply::apply_tier(event.pid as u32, tier) {
+                    Ok(()) => debug!(
+                        "{}: applied tier '{}' to composable '{}' (pid {})",
+                        self.name, tier.tier_name, composable_name, event.pid
+                    ),
+                    Err(e) => {
+                        // v1: a per-composable failure does not hard-abort the
+                        // container mid-run (config errors already fail at
+                        // SchedPlan::build; missing CAP is caught by the
+                        // pre-spawn preflight). Strict logs loudly; Warn logs
+                        // a warning.
+                        if self.config.sched_mode
+                            == crate::execution::sched_apply::SchedApplyMode::Strict
+                        {
+                            error!(
+                                "{}: STRICT sched apply failed for composable '{}' (pid {}): {}",
+                                self.name, composable_name, event.pid, e
+                            );
+                        } else {
+                            warn!(
+                                "{}: sched apply failed for composable '{}' (pid {}): {}",
+                                self.name, composable_name, event.pid, e
+                            );
+                        }
+                    }
+                }
+            }
+
             // Update shared state for Web UI
             self.shared_state.insert(
                 composable_name.clone(),

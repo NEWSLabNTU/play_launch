@@ -3,9 +3,10 @@
 //!
 //! `SchedPlan::build` is the bridge between the crate's tier-centric
 //! `ResolvedTierTable` (tier -> members) and the actor system's node-centric
-//! view (FQN -> knobs). It also surfaces two kinds of "not applied in v1"
-//! warnings: `time_triggered` tiers (no `SCHED_DEADLINE` support yet) and
-//! composable (load_node) members (no per-process scheduling target yet).
+//! view (FQN -> knobs). It also surfaces a "not applied in v1" warning for
+//! `time_triggered` tiers (no `SCHED_DEADLINE` support yet). Composable
+//! (load_node) members ARE scheduled (phase 38.9) — they're resolved into
+//! `by_fqn` like any other member, with no warning.
 //!
 //! Public items here are not yet called outside this module (actor wiring
 //! is a later phase-38 task), hence the blanket `dead_code` allow — mirrors
@@ -20,7 +21,7 @@ use ros_launch_manifest_sched::{DEFAULT_TIER, parse_system_sched, resolve};
 
 use crate::execution::sched_apply::{AppliedTier, SchedApplyMode, SchedPolicy};
 use crate::ros::launch_dump::LaunchDump;
-use crate::ros::sched_loader::{composable_fqns, sched_nodes_from_dump};
+use crate::ros::sched_loader::sched_nodes_from_dump;
 
 /// The `posix` target key — Linux RT placement sub-table.
 const TARGET: &str = "posix";
@@ -48,8 +49,6 @@ impl SchedPlan {
         let nodes = sched_nodes_from_dump(dump);
         let table = resolve(&sched.tiers, &sched.assign, &nodes, TARGET)
             .map_err(|e| eyre::eyre!("scheduling resolve error: {e}"))?;
-
-        let composables = composable_fqns(dump);
 
         // Number of online CPUs, computed once. Used to bound-check `core`
         // below. Falls back to 1 if unavailable, which conservatively
@@ -118,13 +117,6 @@ impl SchedPlan {
             };
 
             for fqn in &tier.members {
-                if composables.contains(fqn) {
-                    let msg = format!(
-                        "composable `{fqn}`: Linux scheduling not applied in v1 (tracked for phase 38.9)"
-                    );
-                    tracing::warn!("{msg}");
-                    warnings.push(msg);
-                }
                 by_fqn.insert(fqn.clone(), applied.clone());
             }
         }
@@ -204,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_regular_node_into_applied_tier() {
+    fn resolves_regular_node_and_composable_into_applied_tier_with_no_warning() {
         let dump = dump_with_node_and_composable();
         let toml = r#"
 [tiers.control]
@@ -228,11 +220,17 @@ nodes = ["/control/ndt_localizer", "/control/my_node"]
             assert_eq!(applied.priority, 80);
             assert_eq!(applied.tier_name, "control");
 
+            // Composables are now scheduled like any other member (phase
+            // 38.9): present in the plan, no "not applied" warning.
+            let composable_applied = plan
+                .for_fqn("/control/my_node")
+                .expect("composable should be in plan");
+            assert_eq!(composable_applied.policy, SchedPolicy::Fifo);
+            assert_eq!(composable_applied.priority, 80);
+
             assert!(
-                plan.warnings
-                    .iter()
-                    .any(|w| w.contains("/control/my_node")),
-                "expected a warning mentioning the composable FQN, got: {:?}",
+                plan.warnings.is_empty(),
+                "expected no warnings, got: {:?}",
                 plan.warnings
             );
         });
