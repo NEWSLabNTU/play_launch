@@ -36,6 +36,22 @@ pub(crate) fn join_fqn(ns: &str, bare: &str) -> String {
     }
 }
 
+/// Fully-qualified name for a record, using its own namespace (fallback: scope ns).
+///
+/// This is the single source of truth for FQN computation: both
+/// `sched_nodes_from_dump` (building the resolver's node view) and the
+/// actor-wiring build sites (looking up a member's resolved tier in
+/// `SchedPlan`) must agree on the same FQN for the same record, or lookups
+/// silently miss. Callers pass the record's own `namespace` (may be `None`
+/// or empty), its bare `name`, and its `scope` id; the scope's namespace is
+/// used as a fallback when the record has no namespace of its own.
+pub fn fqn_for(dump: &LaunchDump, namespace: Option<&str>, bare_name: &str, scope: Option<usize>) -> String {
+    let by_id: HashMap<usize, &str> =
+        dump.scopes.iter().map(|s| (s.id, s.ns.as_str())).collect();
+    let ns = effective_ns(namespace, scope, &by_id);
+    join_fqn(&ns, bare_name)
+}
+
 /// Flatten a launch dump into the resolver's dependency-free node view.
 /// Regular nodes, containers, and composable nodes are all scheduled units on Linux:
 /// under isolated container mode each composable is a fork+exec process.
@@ -57,7 +73,7 @@ pub fn sched_nodes_from_dump(dump: &LaunchDump) -> Vec<SchedNode> {
         }
         let ns = effective_ns(n.namespace.as_deref(), n.scope, &by_id);
         out.push(SchedNode {
-            name: join_fqn(&ns, &bare),
+            name: fqn_for(dump, n.namespace.as_deref(), &bare, n.scope),
             scope: ns,
         });
     }
@@ -68,7 +84,7 @@ pub fn sched_nodes_from_dump(dump: &LaunchDump) -> Vec<SchedNode> {
         }
         let ns = effective_ns(Some(c.namespace.as_str()), c.scope, &by_id);
         out.push(SchedNode {
-            name: join_fqn(&ns, &c.name),
+            name: fqn_for(dump, Some(c.namespace.as_str()), &c.name, c.scope),
             scope: ns,
         });
     }
@@ -81,7 +97,7 @@ pub fn sched_nodes_from_dump(dump: &LaunchDump) -> Vec<SchedNode> {
         // so it is a schedulable unit and must be selectable.
         let ns = effective_ns(Some(lc.namespace.as_str()), lc.scope, &by_id);
         out.push(SchedNode {
-            name: join_fqn(&ns, &lc.node_name),
+            name: fqn_for(dump, Some(lc.namespace.as_str()), &lc.node_name, lc.scope),
             scope: ns,
         });
     }
