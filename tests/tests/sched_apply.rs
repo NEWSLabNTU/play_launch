@@ -78,19 +78,18 @@ fn host_has_sched_privilege() -> bool {
     false
 }
 
-/// Spawn `play_launch launch` for the `simple_test` pure_nodes fixture with
-/// `--sched <sched_path> --sched-apply <mode>`, redirecting stdout/stderr to
-/// files under `work_dir` (a fresh temp directory, so `play_log/latest`
-/// doesn't collide with other tests running concurrently against the same
-/// fixture). Returns the spawned guard plus the stdout/stderr paths.
-fn spawn_sched_launch(
+/// Spawn `play_launch launch` for the given launch file with `--sched
+/// <sched_path> --sched-apply <mode>`, redirecting stdout/stderr to files
+/// under `work_dir` (a fresh temp directory, so `play_log/latest` doesn't
+/// collide with other tests running concurrently against the same fixture).
+/// Returns the spawned guard plus the stdout/stderr paths.
+fn spawn_sched_launch_for(
     env: &std::collections::HashMap<String, String>,
     work_dir: &std::path::Path,
     sched_path: &std::path::Path,
+    launch: &std::path::Path,
     mode: &str,
 ) -> (ManagedProcess, std::path::PathBuf, std::path::PathBuf) {
-    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
-
     let stdout_path = work_dir.join("stdout.log");
     let stderr_path = work_dir.join("stderr.log");
     let stdout_file = std::fs::File::create(&stdout_path).expect("failed to create stdout file");
@@ -118,6 +117,43 @@ fn spawn_sched_launch(
 
     let proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
     (proc, stdout_path, stderr_path)
+}
+
+/// Convenience wrapper of [`spawn_sched_launch_for`] for the `simple_test`
+/// pure_nodes fixture (used by the pre-existing warn/strict tests below).
+fn spawn_sched_launch(
+    env: &std::collections::HashMap<String, String>,
+    work_dir: &std::path::Path,
+    sched_path: &std::path::Path,
+    mode: &str,
+) -> (ManagedProcess, std::path::PathBuf, std::path::PathBuf) {
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
+    spawn_sched_launch_for(env, work_dir, sched_path, &launch, mode)
+}
+
+/// Wait until `output_path` contains at least `count` lines matching any of
+/// `patterns`, or until `timeout` elapses. Returns the number of matching
+/// lines found. Mirrors `wait_for_pattern` in `container_events.rs`.
+fn wait_for_pattern(
+    output_path: &std::path::Path,
+    patterns: &[&str],
+    count: usize,
+    timeout: Duration,
+) -> usize {
+    let start = std::time::Instant::now();
+    let mut found = 0;
+    while start.elapsed() < timeout {
+        std::thread::sleep(Duration::from_secs(1));
+        let content = std::fs::read_to_string(output_path).unwrap_or_default();
+        found = content
+            .lines()
+            .filter(|l| patterns.iter().any(|p| l.contains(p)))
+            .count();
+        if found >= count {
+            return found;
+        }
+    }
+    found
 }
 
 /// `--sched-apply warn`: the run must reach steady state (same process count
@@ -223,4 +259,80 @@ fn sched_apply_strict_aborts_before_spawn_when_unprivileged() {
         stderr.to_lowercase().contains("cap_sys_nice"),
         "expected a 'cap_sys_nice' hint in strict-abort stderr:\n{stderr}"
     );
+}
+
+/// Phase 38.9: composable-node processes (not just top-level nodes/containers)
+/// must go through the RT apply path. `container_events` (`--container-mode`
+/// defaults to `isolated`) launches 1 container + 2 composable nodes
+/// (Talker, Listener); each composable is its own fork+exec'd process with
+/// its own pid, delivered via `ComponentEvent::LOADED`. On LOADED, the
+/// container actor (`container_actor/component_events.rs`) looks up the
+/// composable's resolved tier and calls `apply_tier(event.pid, tier)`:
+/// - unprivileged host (EPERM): `warn!("{name}: sched apply failed for
+///   composable '{composable}' (pid {pid}): {err}")`
+/// - privileged host: `debug!("{name}: applied tier '{tier}' to composable
+///   '{composable}' (pid {pid})")` — hence `RUST_LOG=play_launch=debug` in
+///   `spawn_sched_launch_for`.
+///
+/// Asserting on either line (tolerant of host privilege, same pattern as
+/// `sched_apply_warn_engages_and_launch_succeeds` above) proves a
+/// per-composable pid was delivered, a tier was resolved for it via
+/// `scope = "/"`, and `apply_tier` was actually invoked for that composable
+/// — the thing that is new in 38.9, as opposed to the pre-38.9 behavior of
+/// only scheduling the container process itself.
+#[test]
+fn composable_scheduling_engages_on_isolated_container() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("container_events")
+        .join("launch/container_events.launch.xml");
+
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let sched_path = write_sched_toml(tmp.path());
+
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let (_proc, stdout_path, stderr_path) =
+        spawn_sched_launch_for(&env, work_tmp.path(), &sched_path, &launch, "warn");
+
+    // Wait for both composables to report LOADED before inspecting the
+    // apply-layer evidence — the ComponentEvent (and thus the apply_tier
+    // call) fires as part of handling that event.
+    let loaded = wait_for_pattern(
+        &stdout_path,
+        &["ComponentEvent LOADED", "LoadSucceeded"],
+        2,
+        Duration::from_secs(30),
+    );
+
+    let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    let combined = format!("{stdout}\n{stderr}");
+
+    assert!(
+        loaded >= 2,
+        "expected 2 LOADED events for the container_events fixture (talker, \
+         listener), found {loaded}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+    );
+
+    // Find the specific composable apply/warn line (verbatim), rather than a
+    // loose substring match, so the assertion can only pass if a
+    // per-composable apply attempt was actually logged.
+    let composable_line = combined.lines().find(|l| {
+        let ll = l.to_lowercase();
+        (ll.contains("applied tier") && ll.contains("to composable"))
+            || ll.contains("sched apply failed for composable")
+    });
+
+    assert!(
+        composable_line.is_some(),
+        "expected a per-composable sched apply line (either \"applied tier \
+         '...' to composable '...'\" on a privileged host, or \"sched apply \
+         failed for composable '...'\" on an unprivileged host) in combined \
+         output:\n{combined}"
+    );
+    eprintln!(
+        "matched composable apply line: {}",
+        composable_line.unwrap()
+    );
+
+    // _proc dropped here — ManagedProcess::drop kills the process group.
 }
