@@ -48,6 +48,10 @@ path = "tests/interception.rs"
 name = "manifest_check"
 path = "tests/manifest_check.rs"
 
+[[test]]
+name = "sched_apply"
+path = "tests/sched_apply.rs"
+
 [dependencies]
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
