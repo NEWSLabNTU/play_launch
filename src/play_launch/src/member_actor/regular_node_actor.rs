@@ -181,6 +181,28 @@ impl RegularNodeActor {
             warn!("[{}] Failed to write PID file: {}", self.name, e);
         }
 
+        // Phase 38: apply resolved Linux scheduling (policy/priority/affinity) to
+        // the freshly spawned PID. Strictly post-spawn — never touches exec/spawn.
+        if self.config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
+            && let Some(tier) = &self.config.sched
+        {
+            match crate::execution::sched_apply::apply_tier(pid, tier) {
+                Ok(()) => debug!(
+                    "[{}] applied tier '{}' (pid {})",
+                    self.name, tier.tier_name, pid
+                ),
+                Err(e) => {
+                    if self.config.sched_mode == crate::execution::sched_apply::SchedApplyMode::Strict
+                    {
+                        self.transition_to_failed(format!("sched apply failed: {e}"))
+                            .await?;
+                        return Err(eyre::eyre!("sched apply failed for {}: {e}", self.name));
+                    }
+                    warn!("[{}] sched apply failed (pid {}): {}", self.name, pid, e);
+                }
+            }
+        }
+
         // Transition to Running state
         self.state = NodeState::Running { child, pid };
 

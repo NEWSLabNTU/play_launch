@@ -485,6 +485,22 @@ impl ContainerActor {
     async fn handle_running(&mut self, mut child: tokio::process::Child, pid: u32) -> Result<bool> {
         debug!("{}: Container running with PID {}", self.name, pid);
 
+        // Phase 38: apply resolved Linux scheduling to the container process
+        // itself (composable nodes loaded into it are not scheduled in v1).
+        // Runs on every entry to Running, so respawns re-apply automatically.
+        if self.config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
+            && let Some(tier) = &self.config.sched
+            && let Err(e) = crate::execution::sched_apply::apply_tier(pid, tier)
+        {
+            if self.config.sched_mode == crate::execution::sched_apply::SchedApplyMode::Strict {
+                return Err(eyre::eyre!(
+                    "sched apply failed for container {}: {e}",
+                    self.name
+                ));
+            }
+            warn!("{}: sched apply failed (pid {}): {}", self.name, pid, e);
+        }
+
         let mut loading_timeout_interval = tokio::time::interval(LOADING_CHECK_INTERVAL);
         loading_timeout_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // Skip the first immediate tick

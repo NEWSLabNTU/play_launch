@@ -194,6 +194,25 @@ async fn run_direct(
     // Prepare node execution contexts
     let pure_node_contexts = prepare_node_contexts(launch_dump, &node_log_dir)?;
 
+    // Phase 38: resolve the scheduling spec (if any) once, before spawning any
+    // member. Preflight checks CAP_SYS_NICE/root so Strict mode can bail early
+    // rather than mid-spawn.
+    let sched_plan = if let Some(path) = &common.sched {
+        let plan = crate::execution::sched_plan::SchedPlan::build(launch_dump, path, common.sched_apply)?;
+        if common.sched_apply != crate::execution::sched_apply::SchedApplyMode::Off
+            && !crate::execution::sched_apply::has_sched_privilege()
+        {
+            let msg = "scheduling: CAP_SYS_NICE or root required to apply; run `setcap cap_sys_nice+ep <play_launch binary>` or run as root";
+            if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
+                eyre::bail!("{msg}");
+            }
+            tracing::warn!("{msg}; scheduling will not be applied");
+        }
+        Some(std::sync::Arc::new(plan))
+    } else {
+        None
+    };
+
     // Create MemberCoordinatorBuilder
     let mut builder = MemberCoordinatorBuilder::new();
 
@@ -217,6 +236,16 @@ async fn run_direct(
             max_respawn_attempts: None,
             output_dir: context.output_dir.clone(),
             pgid: Some(pgid),
+            sched: sched_plan.as_ref().and_then(|p| {
+                let fqn = crate::ros::sched_loader::fqn_for(
+                    launch_dump,
+                    context.record.namespace.as_deref(),
+                    &member_name,
+                    context.record.scope,
+                );
+                p.for_fqn(&fqn).cloned()
+            }),
+            sched_mode: common.sched_apply,
         };
 
         // Add to builder

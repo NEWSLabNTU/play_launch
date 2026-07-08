@@ -21,6 +21,10 @@ pub struct ActorConfig {
     pub output_dir: PathBuf,
     /// Process group ID for spawned processes
     pub pgid: Option<i32>,
+    /// Phase 38: resolved posix scheduling for THIS member (None = no tier / not applied).
+    pub sched: Option<crate::execution::sched_apply::AppliedTier>,
+    /// Phase 38: how to apply (Off short-circuits the actor hook).
+    pub sched_mode: crate::execution::sched_apply::SchedApplyMode,
 }
 
 /// State machine for a regular node or container

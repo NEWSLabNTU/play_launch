@@ -505,6 +505,25 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         None
     };
 
+    // Phase 38: resolve the scheduling spec (if any) once, before spawning any
+    // member. Preflight checks CAP_SYS_NICE/root so Strict mode can bail early
+    // rather than mid-spawn.
+    let sched_plan = if let Some(path) = &common.sched {
+        let plan = crate::execution::sched_plan::SchedPlan::build(&launch_dump, path, common.sched_apply)?;
+        if common.sched_apply != crate::execution::sched_apply::SchedApplyMode::Off
+            && !crate::execution::sched_apply::has_sched_privilege()
+        {
+            let msg = "scheduling: CAP_SYS_NICE or root required to apply; run `setcap cap_sys_nice+ep <play_launch binary>` or run as root";
+            if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
+                eyre::bail!("{msg}");
+            }
+            tracing::warn!("{msg}; scheduling will not be applied");
+        }
+        Some(std::sync::Arc::new(plan))
+    } else {
+        None
+    };
+
     // Create MemberCoordinatorBuilder for collecting member definitions
     debug!("Creating MemberCoordinatorBuilder...");
     let mut builder = crate::member_actor::MemberCoordinatorBuilder::new();
@@ -539,6 +558,16 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             max_respawn_attempts: None,
             output_dir: context.output_dir.clone(),
             pgid: Some(pgid),
+            sched: sched_plan.as_ref().and_then(|p| {
+                let fqn = crate::ros::sched_loader::fqn_for(
+                    &launch_dump,
+                    context.record.namespace.as_deref(),
+                    &member_name,
+                    context.record.scope,
+                );
+                p.for_fqn(&fqn).cloned()
+            }),
+            sched_mode: common.sched_apply,
         };
 
         builder.add_regular_node(
@@ -568,6 +597,16 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             max_respawn_attempts: None,
             output_dir: context.node_context.output_dir.clone(),
             pgid: Some(pgid),
+            sched: sched_plan.as_ref().and_then(|p| {
+                let fqn = crate::ros::sched_loader::fqn_for(
+                    &launch_dump,
+                    context.node_context.record.namespace.as_deref(),
+                    &member_name,
+                    context.node_context.record.scope,
+                );
+                p.for_fqn(&fqn).cloned()
+            }),
+            sched_mode: common.sched_apply,
         };
 
         // Add container (oneshot receiver is ignored since composable nodes will be matched internally)
