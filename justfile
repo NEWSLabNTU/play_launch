@@ -89,12 +89,25 @@ run *ARGS:
 # RT scheduling (--sched) requires running play_launch as root: `sudo -E play_launch ...`
 setcap:
     #!/bin/bash
-    if [ ! -f install/play_launch/lib/play_launch/play_launch_io_helper ]; then
+    set -e
+    main=install/play_launch/lib/play_launch/play_launch
+    helper=install/play_launch/lib/play_launch/play_launch_io_helper
+
+    if [ ! -f "$helper" ]; then
         echo "Error: play_launch_io_helper not found. Run 'just build' first."
         exit 1
     fi
-    sudo setcap cap_sys_ptrace+ep install/play_launch/lib/play_launch/play_launch_io_helper
-    getcap install/play_launch/lib/play_launch/play_launch_io_helper
+
+    # Self-heal: a capability on the main binary is ALWAYS wrong (AT_SECURE would
+    # make the loader ignore LD_LIBRARY_PATH and it could not find its ROS libs).
+    if [ -f "$main" ] && [ -n "$(getcap "$main" 2>/dev/null)" ]; then
+        echo "! main binary has file capabilities — removing (they break ROS lib loading)"
+        sudo setcap -r "$main"
+        echo "  removed."
+    fi
+
+    sudo setcap cap_sys_ptrace+ep "$helper"
+    getcap "$helper"
     echo "✓ I/O helper ready (reapply after rebuild)"
     echo "  RT scheduling (--sched) needs root: sudo -E play_launch launch ..."
 
@@ -138,6 +151,56 @@ verify:
     fi
 
     exit $ok
+
+# Prove RT scheduling actually applies: launch as root with --sched, then chrt/taskset each node.
+# Requires sudo. Note: sudo strips LD_* even with -E, so LD_LIBRARY_PATH is re-injected via `env`.
+verify-sched-rt:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    source install/setup.bash
+
+    toml=$(mktemp /tmp/pl_sched_XXXXXX.toml)
+    printf '%s\n' \
+      '[tiers.rt]' \
+      'class = "real_time"' \
+      '[tiers.rt.posix]' \
+      'priority = 20' \
+      'sched_class = "SCHED_FIFO"' \
+      'core = 0' \
+      '[[assign]]' \
+      'tier = "rt"' \
+      'scope = "/"' > "$toml"
+    echo "=== sched spec ==="; cat "$toml"
+
+    logdir=$(mktemp -d /tmp/pl_rt_log_XXXXXX)
+    echo; echo "=== launching as root with --sched (running ~8s) ==="
+    sudo -E env LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+      install/play_launch/lib/play_launch/play_launch launch \
+        tests/fixtures/simple_test/launch/pure_nodes.launch.xml \
+        --sched "$toml" --sched-apply warn \
+        --log-dir "$logdir" --disable-web-ui --disable-diagnostics >/dev/null 2>&1 &
+    pl=$!
+    sleep 8
+
+    echo; echo "=== did the kernel actually get the policy? ==="
+    found=0
+    for f in "$logdir"/latest/node/*/pid; do
+        [ -f "$f" ] || continue
+        name=$(basename "$(dirname "$f")")
+        pid=$(cat "$f")
+        pol=$(chrt -p "$pid" 2>/dev/null | sed -n 's/.*policy: //p')
+        pri=$(chrt -p "$pid" 2>/dev/null | sed -n 's/.*priority: //p')
+        aff=$(taskset -cp "$pid" 2>/dev/null | sed -n 's/.*list: //p')
+        printf '  %-22s pid=%-7s policy=%-12s prio=%-3s cpu=%s\n' "$name" "$pid" "${pol:-?}" "${pri:-?}" "${aff:-?}"
+        found=1
+    done
+    [ "$found" = 1 ] || echo "  (no pid files under $logdir/latest/node/ — did nodes start?)"
+
+    sudo kill -TERM -"$(ps -o pgid= -p $pl | tr -d ' ')" 2>/dev/null || true
+    wait $pl 2>/dev/null || true
+    rm -f "$toml"
+    echo; echo "Expected: policy=SCHED_FIFO  prio=20  cpu=0"
 
 # Clean build artifacts
 clean:

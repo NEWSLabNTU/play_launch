@@ -61,6 +61,27 @@ fn find_io_helper_path() -> eyre::Result<PathBuf> {
 pub fn handle_setcap() -> eyre::Result<()> {
     println!("This requires sudo privileges.\n");
 
+    // Self-heal: a file capability on the main binary is ALWAYS wrong (it sets
+    // AT_SECURE, the loader drops LD_LIBRARY_PATH, and the ROS libs vanish).
+    // Strip it so a previously-broken install is repaired by running `setcap`.
+    if let Ok(bin) = std::env::current_exe().and_then(|p| p.canonicalize())
+        && let Ok(output) = process::Command::new("getcap").arg(&bin).output()
+        && String::from_utf8_lossy(&output.stdout).contains("cap_")
+    {
+        println!(
+            "! main binary has file capabilities — removing (they break ROS library loading)"
+        );
+        let status = process::Command::new("sudo")
+            .args(["setcap", "-r"])
+            .arg(&bin)
+            .status()
+            .wrap_err("Failed to run setcap -r on the main binary")?;
+        if !status.success() {
+            eyre::bail!("Failed to remove capabilities from {}", bin.display());
+        }
+        println!("  removed.\n");
+    }
+
     let io_helper = find_io_helper_path()?;
 
     println!("Setting CAP_SYS_PTRACE on {}", io_helper.display());
