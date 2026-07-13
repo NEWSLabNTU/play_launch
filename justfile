@@ -113,11 +113,12 @@ verify:
             echo "✗ play_launch has no capabilities set"
             echo "  Run 'just setcap' to enable RT scheduling"
             ok=1
-        elif echo "$cap" | grep -q "cap_sys_nice+ep"; then
+        elif echo "$cap" | grep -qE "cap_sys_nice[=+]ep"; then
+            # getcap prints "=ep" while setcap takes "+ep" — accept both.
             echo "✓ play_launch can apply RT scheduling: $cap"
         else
             echo "⚠ play_launch has unexpected capabilities: $cap"
-            echo "  Expected: cap_sys_nice+ep"
+            echo "  Expected: cap_sys_nice=ep"
             echo "  Run 'just setcap' to fix"
             ok=1
         fi
@@ -132,11 +133,12 @@ verify:
             echo "✗ I/O helper has no capabilities set"
             echo "  Run 'just setcap' to enable I/O monitoring for privileged processes"
             ok=1
-        elif echo "$cap" | grep -q "cap_sys_ptrace+ep"; then
+        elif echo "$cap" | grep -qE "cap_sys_ptrace[=+]ep"; then
+            # getcap prints "=ep" while setcap takes "+ep" — accept both.
             echo "✓ I/O helper ready: $cap"
         else
             echo "⚠ I/O helper has unexpected capabilities: $cap"
-            echo "  Expected: cap_sys_ptrace+ep"
+            echo "  Expected: cap_sys_ptrace=ep"
             echo "  Run 'just setcap' to fix"
             ok=1
         fi
