@@ -1,9 +1,9 @@
 //! Command handlers
 
 pub(crate) mod common;
+pub mod capabilities;
 pub mod context;
 pub mod dump;
-pub mod io_helper;
 pub mod launch;
 pub mod manifest;
 pub mod plot;
@@ -12,9 +12,9 @@ pub mod run;
 pub(crate) mod signal_handler;
 
 // Re-export command handlers
+pub use capabilities::{handle_setcap, handle_verify};
 pub use context::handle_context;
 pub use dump::handle_dump;
-pub use io_helper::{handle_setcap_io_helper, handle_setcap_sched, handle_verify_io_helper};
 pub use launch::handle_launch;
 pub use manifest::handle_check_manifest;
 pub use plot::handle_plot;

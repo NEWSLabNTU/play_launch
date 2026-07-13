@@ -82,50 +82,67 @@ run *ARGS:
     source install/setup.bash
     ros2 run play_launch play_launch {{ARGS}}
 
-# Apply CAP_SYS_PTRACE to I/O helper (requires sudo)
-setcap-io-helper:
-    #!/bin/bash
-    if [ ! -f install/play_launch/lib/play_launch/play_launch_io_helper ]; then
-        echo "Error: play_launch_io_helper not found. Run 'just build' first."
-        exit 1
-    fi
-    sudo setcap cap_sys_ptrace+ep install/play_launch/lib/play_launch/play_launch_io_helper
-    getcap install/play_launch/lib/play_launch/play_launch_io_helper
-    echo "✓ I/O helper ready (reapply after rebuild)"
-
-# Apply CAP_SYS_NICE to the main play_launch binary so --sched can apply RT scheduling (requires sudo)
-setcap-sched:
+# Apply CAP_SYS_NICE to the main play_launch binary and CAP_SYS_PTRACE to the I/O helper (requires sudo)
+setcap:
     #!/bin/bash
     if [ ! -f install/play_launch/lib/play_launch/play_launch ]; then
         echo "Error: play_launch not found. Run 'just build' first."
         exit 1
     fi
+    if [ ! -f install/play_launch/lib/play_launch/play_launch_io_helper ]; then
+        echo "Error: play_launch_io_helper not found. Run 'just build' first."
+        exit 1
+    fi
     sudo setcap cap_sys_nice+ep install/play_launch/lib/play_launch/play_launch
+    sudo setcap cap_sys_ptrace+ep install/play_launch/lib/play_launch/play_launch_io_helper
     getcap install/play_launch/lib/play_launch/play_launch
-    echo "✓ play_launch can apply RT scheduling (reapply after rebuild)"
+    getcap install/play_launch/lib/play_launch/play_launch_io_helper
+    echo "✓ play_launch can apply RT scheduling and I/O monitoring (reapply after rebuild)"
 
-# Verify I/O helper capability status
-verify-io-helper:
+# Verify capability status for both the main binary and the I/O helper
+verify:
     #!/bin/bash
+    ok=0
+
+    if [ ! -f install/play_launch/lib/play_launch/play_launch ]; then
+        echo "✗ play_launch not found. Run 'just build' first."
+        ok=1
+    else
+        cap=$(getcap install/play_launch/lib/play_launch/play_launch 2>/dev/null)
+        if [ -z "$cap" ]; then
+            echo "✗ play_launch has no capabilities set"
+            echo "  Run 'just setcap' to enable RT scheduling"
+            ok=1
+        elif echo "$cap" | grep -q "cap_sys_nice+ep"; then
+            echo "✓ play_launch can apply RT scheduling: $cap"
+        else
+            echo "⚠ play_launch has unexpected capabilities: $cap"
+            echo "  Expected: cap_sys_nice+ep"
+            echo "  Run 'just setcap' to fix"
+            ok=1
+        fi
+    fi
+
     if [ ! -f install/play_launch/lib/play_launch/play_launch_io_helper ]; then
         echo "✗ I/O helper not found. Run 'just build' first."
-        exit 1
+        ok=1
+    else
+        cap=$(getcap install/play_launch/lib/play_launch/play_launch_io_helper 2>/dev/null)
+        if [ -z "$cap" ]; then
+            echo "✗ I/O helper has no capabilities set"
+            echo "  Run 'just setcap' to enable I/O monitoring for privileged processes"
+            ok=1
+        elif echo "$cap" | grep -q "cap_sys_ptrace+ep"; then
+            echo "✓ I/O helper ready: $cap"
+        else
+            echo "⚠ I/O helper has unexpected capabilities: $cap"
+            echo "  Expected: cap_sys_ptrace+ep"
+            echo "  Run 'just setcap' to fix"
+            ok=1
+        fi
     fi
 
-    cap=$(getcap install/play_launch/lib/play_launch/play_launch_io_helper 2>/dev/null)
-    if [ -z "$cap" ]; then
-        echo "✗ I/O helper has no capabilities set"
-        echo "  Run 'just setcap-io-helper' to enable I/O monitoring for privileged processes"
-        exit 1
-    elif echo "$cap" | grep -q "cap_sys_ptrace+ep"; then
-        echo "✓ I/O helper ready: $cap"
-        exit 0
-    else
-        echo "⚠ I/O helper has unexpected capabilities: $cap"
-        echo "  Expected: cap_sys_ptrace+ep"
-        echo "  Run 'just setcap-io-helper' to fix"
-        exit 1
-    fi
+    exit $ok
 
 # Clean build artifacts
 clean:

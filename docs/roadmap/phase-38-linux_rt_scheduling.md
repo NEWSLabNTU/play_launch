@@ -114,13 +114,13 @@ reconstructs an FQN.
 
 Once at replay/run start (only if `--sched` set, mode ≠ `Off`):
 `has_sched_privilege()`. Missing + `warn` → single `warn!` with a hint to run
-`play_launch setcap-sched`; apply still attempted. Missing + `strict` → abort
+`play_launch setcap`; apply still attempted. Missing + `strict` → abort
 before spawning. Per-process: `warn` → log + continue; `strict` → abort the run.
 
-**Granting the capability:** `play_launch setcap-sched` runs `sudo setcap
+**Granting the capability:** `play_launch setcap` runs `sudo setcap
 cap_sys_nice+ep` on the main `play_launch` binary (the process that calls
-`sched_setscheduler`) — mirrors `setcap-io-helper` but targets the main binary,
-not the helper. Also available as `just setcap-sched`. Reapply after any
+`sched_setscheduler`) and `sudo setcap cap_sys_ptrace+ep` on the I/O helper
+binary in one command. Also available as `just setcap`. Reapply after any
 rebuild/upgrade (setcap is on the ELF file).
 
 ### 38.7 Absorb latent `ProcessConfig::apply` (planned)

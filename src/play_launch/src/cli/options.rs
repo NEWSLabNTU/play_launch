@@ -83,18 +83,15 @@ pub enum Command {
         play_launch plot --metrics cpu memory")]
     Plot(PlotArgs),
 
-    /// Set CAP_SYS_PTRACE capability on I/O helper binary (requires sudo)
-    #[command(name = "setcap-io-helper")]
-    SetcapIoHelper,
+    /// Grant the capabilities play_launch needs: CAP_SYS_NICE on the main
+    /// binary (for `--sched` RT scheduling) and CAP_SYS_PTRACE on the I/O
+    /// helper (for per-process I/O monitoring). Requires sudo.
+    #[command(name = "setcap")]
+    Setcap,
 
-    /// Check if I/O helper has required capabilities
-    #[command(name = "verify-io-helper")]
-    VerifyIoHelper,
-
-    /// Set CAP_SYS_NICE on the play_launch binary so `--sched` can apply RT
-    /// scheduling (SCHED_FIFO/RR + affinity) without root (requires sudo)
-    #[command(name = "setcap-sched")]
-    SetcapSched,
+    /// Check whether the required capabilities are set (see `setcap`)
+    #[command(name = "verify")]
+    Verify,
 
     /// Extract per-node or per-launch-file context from record.json
     #[command(after_help = "Examples:\n  \

@@ -19,10 +19,10 @@ Install from PyPI:
 pip install play_launch
 ```
 
-Optional: Enable I/O monitoring (requires sudo):
+Optional: Grant capabilities for RT scheduling (`--sched`) and I/O monitoring (requires sudo):
 
 ```bash
-play_launch setcap-io-helper
+play_launch setcap
 ```
 
 ## Quick Start
@@ -267,10 +267,10 @@ just build-rust     # Rust only (assumes C++ install/ exists)
 just build-wheel    # Bundle + wheel only (no colcon rebuild)
 ```
 
-Optional: enable I/O monitoring (requires sudo):
+Optional: grant capabilities for RT scheduling and I/O monitoring (requires sudo):
 
 ```bash
-just setcap-io-helper
+just setcap
 ```
 
 ### Run

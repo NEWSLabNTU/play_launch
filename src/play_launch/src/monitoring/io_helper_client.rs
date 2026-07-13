@@ -326,7 +326,7 @@ fn check_helper_capabilities(path: &Path) -> Result<()> {
             if !stdout.contains("cap_sys_ptrace") {
                 warn!("Helper binary does not have CAP_SYS_PTRACE capability set.");
                 warn!("I/O monitoring for privileged processes will not work.");
-                warn!("Run: sudo setcap cap_sys_ptrace+ep {:?}", path);
+                warn!("Run: play_launch setcap (grants cap_sys_ptrace+ep to {:?})", path);
             } else {
                 debug!("Helper has CAP_SYS_PTRACE: {}", stdout.trim());
             }
@@ -336,7 +336,7 @@ fn check_helper_capabilities(path: &Path) -> Result<()> {
             // getcap not available or failed - just warn
             warn!("Could not verify capabilities on helper binary.");
             warn!(
-                "Make sure CAP_SYS_PTRACE is set: sudo setcap cap_sys_ptrace+ep {:?}",
+                "Make sure CAP_SYS_PTRACE is set: run `play_launch setcap` (grants cap_sys_ptrace+ep to {:?})",
                 path
             );
             Ok(())

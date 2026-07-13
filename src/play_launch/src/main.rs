@@ -62,14 +62,11 @@ fn main() -> eyre::Result<()> {
         cli::options::Command::Plot(args) => {
             commands::handle_plot(args)?;
         }
-        cli::options::Command::SetcapIoHelper => {
-            commands::handle_setcap_io_helper()?;
+        cli::options::Command::Setcap => {
+            commands::handle_setcap()?;
         }
-        cli::options::Command::VerifyIoHelper => {
-            commands::handle_verify_io_helper()?;
-        }
-        cli::options::Command::SetcapSched => {
-            commands::handle_setcap_sched()?;
+        cli::options::Command::Verify => {
+            commands::handle_verify()?;
         }
         cli::options::Command::Context(args) => {
             commands::handle_context(args)?;
