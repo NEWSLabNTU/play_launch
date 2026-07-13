@@ -82,45 +82,38 @@ run *ARGS:
     source install/setup.bash
     ros2 run play_launch play_launch {{ARGS}}
 
-# Apply CAP_SYS_NICE to the main play_launch binary and CAP_SYS_PTRACE to the I/O helper (requires sudo)
+# Apply CAP_SYS_PTRACE to the I/O helper (requires sudo).
+# NOTE: the main play_launch binary is deliberately NOT capped — a file capability
+# puts it in secure-execution mode (AT_SECURE), which makes the loader ignore
+# LD_LIBRARY_PATH, and it needs LD_LIBRARY_PATH to find its ~22 ROS libraries.
+# RT scheduling (--sched) requires running play_launch as root: `sudo -E play_launch ...`
 setcap:
     #!/bin/bash
-    if [ ! -f install/play_launch/lib/play_launch/play_launch ]; then
-        echo "Error: play_launch not found. Run 'just build' first."
-        exit 1
-    fi
     if [ ! -f install/play_launch/lib/play_launch/play_launch_io_helper ]; then
         echo "Error: play_launch_io_helper not found. Run 'just build' first."
         exit 1
     fi
-    sudo setcap cap_sys_nice+ep install/play_launch/lib/play_launch/play_launch
     sudo setcap cap_sys_ptrace+ep install/play_launch/lib/play_launch/play_launch_io_helper
-    getcap install/play_launch/lib/play_launch/play_launch
     getcap install/play_launch/lib/play_launch/play_launch_io_helper
-    echo "✓ play_launch can apply RT scheduling and I/O monitoring (reapply after rebuild)"
+    echo "✓ I/O helper ready (reapply after rebuild)"
+    echo "  RT scheduling (--sched) needs root: sudo -E play_launch launch ..."
 
-# Verify capability status for both the main binary and the I/O helper
+# Verify capabilities: I/O helper has CAP_SYS_PTRACE, main binary has NONE
 verify:
     #!/bin/bash
     ok=0
 
-    if [ ! -f install/play_launch/lib/play_launch/play_launch ]; then
-        echo "✗ play_launch not found. Run 'just build' first."
-        ok=1
-    else
+    # The main binary must have NO capabilities: one would set AT_SECURE, the
+    # loader would ignore LD_LIBRARY_PATH, and it could not find its ROS libs.
+    if [ -f install/play_launch/lib/play_launch/play_launch ]; then
         cap=$(getcap install/play_launch/lib/play_launch/play_launch 2>/dev/null)
-        if [ -z "$cap" ]; then
-            echo "✗ play_launch has no capabilities set"
-            echo "  Run 'just setcap' to enable RT scheduling"
+        if [ -n "$cap" ]; then
+            echo "✗ play_launch has file capabilities set: $cap"
+            echo "  This BREAKS ROS library loading (AT_SECURE drops LD_LIBRARY_PATH)."
+            echo "  Remove: sudo setcap -r install/play_launch/lib/play_launch/play_launch"
             ok=1
-        elif echo "$cap" | grep -qE "cap_sys_nice[=+]ep"; then
-            # getcap prints "=ep" while setcap takes "+ep" — accept both.
-            echo "✓ play_launch can apply RT scheduling: $cap"
         else
-            echo "⚠ play_launch has unexpected capabilities: $cap"
-            echo "  Expected: cap_sys_nice=ep"
-            echo "  Run 'just setcap' to fix"
-            ok=1
+            echo "✓ play_launch has no file capabilities (correct)"
         fi
     fi
 

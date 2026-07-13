@@ -19,11 +19,15 @@ Install from PyPI:
 pip install play_launch
 ```
 
-Optional: Grant capabilities for RT scheduling (`--sched`) and I/O monitoring (requires sudo):
+Optional: grant the I/O helper the capability it needs for per-process I/O monitoring (requires sudo):
 
 ```bash
 play_launch setcap
 ```
+
+> RT scheduling (`--sched`) requires running play_launch as **root** (`sudo -E play_launch ...`).
+> The main binary must not be given a file capability — that would put it in secure-execution
+> mode and stop it finding its ROS libraries.
 
 ## Quick Start
 
@@ -267,7 +271,8 @@ just build-rust     # Rust only (assumes C++ install/ exists)
 just build-wheel    # Bundle + wheel only (no colcon rebuild)
 ```
 
-Optional: grant capabilities for RT scheduling and I/O monitoring (requires sudo):
+Optional: grant the I/O helper its monitoring capability (requires sudo). RT scheduling
+(`--sched`) needs root — `sudo -E play_launch ...`:
 
 ```bash
 just setcap

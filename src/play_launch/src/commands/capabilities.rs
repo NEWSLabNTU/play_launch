@@ -33,135 +33,96 @@ fn find_io_helper_path() -> eyre::Result<PathBuf> {
     }
 }
 
-/// The running play_launch binary — the process that calls
-/// `sched_setscheduler`. `current_exe()` reads `/proc/self/exe` (the real ELF
-/// even when launched via the pip shim); canonicalize so setcap targets the
-/// file, not a symlink.
-fn main_binary_path() -> eyre::Result<PathBuf> {
-    std::env::current_exe()
-        .wrap_err("Failed to resolve the play_launch binary path")?
-        .canonicalize()
-        .wrap_err("Failed to canonicalize the play_launch binary path")
-}
+// ---------------------------------------------------------------------------
+// WHY THE MAIN `play_launch` BINARY MUST NEVER BE GIVEN FILE CAPABILITIES
+//
+// Setting a file capability on an ELF makes the kernel run it in
+// secure-execution mode (`AT_SECURE=1`). The dynamic linker then IGNORES
+// `LD_LIBRARY_PATH` (and `LD_PRELOAD`). The main binary links ~22 ROS shared
+// libraries that are found ONLY via `LD_LIBRARY_PATH` (set by ROS's
+// `setup.bash`) and it carries no `DT_RUNPATH`, so a capability on it makes it
+// fail at startup:
+//
+//     error while loading shared libraries: libcomposition_interfaces...so
+//
+// This is exactly why the privileged work is delegated to `play_launch_io_helper`,
+// which links ZERO ROS libraries and is therefore safe to capability-grant.
+//
+// Do NOT add `setcap` on the main binary here. For RT scheduling either run
+// play_launch as root (`sudo -E play_launch ...`) or use the privileged-helper
+// path (phase 38.10).
+// ---------------------------------------------------------------------------
 
 /// Handle the `setcap` subcommand.
 ///
-/// Grants both capabilities `play_launch` needs:
-/// - `CAP_SYS_NICE` on the main binary (for `--sched` RT scheduling).
-/// - `CAP_SYS_PTRACE` on the I/O helper (for `/proc/[pid]/io` monitoring).
-///
-/// If the I/O helper path can't be resolved, it's skipped with a warning
-/// rather than failing the whole command — the scheduling capability must
-/// still be granted.
+/// Grants `CAP_SYS_PTRACE` to the I/O helper (for `/proc/[pid]/io` monitoring).
+/// The helper is ROS-free, so a file capability on it is safe — see the note
+/// above for why the main binary is deliberately left uncapped.
 pub fn handle_setcap() -> eyre::Result<()> {
     println!("This requires sudo privileges.\n");
 
-    let mut results = Vec::new();
+    let io_helper = find_io_helper_path()?;
 
-    // CAP_SYS_NICE on the main binary.
-    let bin = main_binary_path()?;
-    println!("Setting CAP_SYS_NICE on {}", bin.display());
+    println!("Setting CAP_SYS_PTRACE on {}", io_helper.display());
     let status = process::Command::new("sudo")
-        .args(["setcap", "cap_sys_nice+ep"])
-        .arg(&bin)
+        .args(["setcap", "cap_sys_ptrace+ep"])
+        .arg(&io_helper)
         .status()
         .wrap_err("Failed to run setcap")?;
     if !status.success() {
-        eyre::bail!("Failed to set cap_sys_nice on {}", bin.display());
+        eyre::bail!("Failed to set cap_sys_ptrace on {}", io_helper.display());
     }
+
     let output = process::Command::new("getcap")
-        .arg(&bin)
+        .arg(&io_helper)
         .output()
         .wrap_err("Failed to run getcap")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.contains("cap_sys_nice") {
-        results.push(format!(
-            "✓ play_launch can apply RT scheduling: {}",
-            stdout.trim()
-        ));
+
+    if stdout.contains("cap_sys_ptrace") {
+        println!("\n✓ I/O helper ready: {}", stdout.trim());
     } else {
         eyre::bail!(
-            "cap_sys_nice may not have been set correctly on {}. Output: {}",
-            bin.display(),
+            "cap_sys_ptrace may not have been set correctly on {}. Output: {}",
+            io_helper.display(),
             stdout
         );
     }
 
-    // CAP_SYS_PTRACE on the I/O helper (skip, don't fail, if unresolvable).
-    match find_io_helper_path() {
-        Ok(io_helper) => {
-            println!("Setting CAP_SYS_PTRACE on {}", io_helper.display());
-            let status = process::Command::new("sudo")
-                .args(["setcap", "cap_sys_ptrace+ep"])
-                .arg(&io_helper)
-                .status()
-                .wrap_err("Failed to run setcap")?;
-            if !status.success() {
-                eyre::bail!("Failed to set cap_sys_ptrace on {}", io_helper.display());
-            }
-            let output = process::Command::new("getcap")
-                .arg(&io_helper)
-                .output()
-                .wrap_err("Failed to run getcap")?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if stdout.contains("cap_sys_ptrace") {
-                results.push(format!("✓ I/O helper ready: {}", stdout.trim()));
-            } else {
-                eyre::bail!(
-                    "cap_sys_ptrace may not have been set correctly on {}. Output: {}",
-                    io_helper.display(),
-                    stdout
-                );
-            }
-        }
-        Err(err) => {
-            println!("\n⚠ Could not resolve I/O helper path, skipping CAP_SYS_PTRACE: {err}");
-        }
-    }
-
-    println!();
-    for line in &results {
-        println!("{line}");
-    }
     println!("\nNote: Rerun this command after upgrading/rebuilding play_launch.");
+    println!(
+        "RT scheduling (`--sched`) currently requires running play_launch as root, \
+         e.g. `sudo -E play_launch launch ...` — the main binary cannot be given \
+         CAP_SYS_NICE (it would break ROS library loading)."
+    );
 
     Ok(())
 }
 
 /// Handle the `verify` subcommand.
 ///
-/// Checks both capabilities and exits non-zero if either is missing (usable
-/// as a CI/preflight check).
+/// Checks the I/O helper's `CAP_SYS_PTRACE` and exits non-zero if it's missing
+/// (usable as a CI/preflight check). It also warns if the MAIN binary has picked
+/// up a file capability, which would break ROS library loading (see the note at
+/// the top of this file).
 pub fn handle_verify() -> eyre::Result<()> {
     let mut all_ok = true;
 
-    // CAP_SYS_NICE on the main binary.
-    match main_binary_path() {
-        Ok(bin) => {
-            let output = process::Command::new("getcap")
-                .arg(&bin)
-                .output()
-                .wrap_err("Failed to run getcap")?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if stdout.contains("cap_sys_nice=ep") || stdout.contains("cap_sys_nice+ep") {
-                println!("✓ RT scheduling (cap_sys_nice): {}", stdout.trim());
-            } else if !stdout.trim().is_empty() {
-                println!(
-                    "⚠ play_launch binary has unexpected capabilities: {}",
-                    stdout.trim()
-                );
-                println!("  Expected: cap_sys_nice=ep");
-                println!("  Run: play_launch setcap");
-                all_ok = false;
-            } else {
-                println!("✗ RT scheduling (cap_sys_nice) not set on play_launch binary");
-                println!("  Run: play_launch setcap");
-                all_ok = false;
-            }
-        }
-        Err(err) => {
-            println!("✗ Could not resolve play_launch binary path: {err}");
-            println!("  Run: play_launch setcap");
+    // The main binary must have NO capabilities — one would put it in
+    // secure-execution mode and break LD_LIBRARY_PATH-based ROS lib loading.
+    if let Ok(bin) = std::env::current_exe().and_then(|p| p.canonicalize())
+        && let Ok(output) = process::Command::new("getcap").arg(&bin).output()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stdout.contains("cap_") {
+            println!(
+                "✗ play_launch binary has file capabilities set: {}",
+                stdout.trim()
+            );
+            println!(
+                "  This BREAKS ROS library loading (AT_SECURE drops LD_LIBRARY_PATH)."
+            );
+            println!("  Remove them:  sudo setcap -r {}", bin.display());
             all_ok = false;
         }
     }

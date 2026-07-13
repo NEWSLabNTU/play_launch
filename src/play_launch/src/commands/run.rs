@@ -202,7 +202,7 @@ async fn run_direct(
         if common.sched_apply != crate::execution::sched_apply::SchedApplyMode::Off
             && !crate::execution::sched_apply::has_sched_privilege()
         {
-            let msg = "scheduling: CAP_SYS_NICE or root required to apply; run `play_launch setcap` (grants cap_sys_nice+ep) or run as root";
+            let msg = "scheduling: CAP_SYS_NICE or root required to apply; run play_launch as root (e.g. `sudo -E play_launch ...`). Do NOT `setcap cap_sys_nice` the play_launch binary — a file capability breaks ROS library loading (AT_SECURE drops LD_LIBRARY_PATH)";
             if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
                 eyre::bail!("{msg}");
             }

@@ -113,15 +113,27 @@ reconstructs an FQN.
 ### 38.6 Preflight + mode error handling (planned)
 
 Once at replay/run start (only if `--sched` set, mode ≠ `Off`):
-`has_sched_privilege()`. Missing + `warn` → single `warn!` with a hint to run
-`play_launch setcap`; apply still attempted. Missing + `strict` → abort
-before spawning. Per-process: `warn` → log + continue; `strict` → abort the run.
+`has_sched_privilege()`. Missing + `warn` → single `warn!` hinting to run as
+root; apply still attempted. Missing + `strict` → abort before spawning.
+Per-process: `warn` → log + continue; `strict` → abort the run.
 
-**Granting the capability:** `play_launch setcap` runs `sudo setcap
-cap_sys_nice+ep` on the main `play_launch` binary (the process that calls
-`sched_setscheduler`) and `sudo setcap cap_sys_ptrace+ep` on the I/O helper
-binary in one command. Also available as `just setcap`. Reapply after any
-rebuild/upgrade (setcap is on the ELF file).
+**Obtaining the privilege — and why `setcap` on the main binary is NOT an
+option.** Granting a file capability to an ELF makes the kernel run it in
+secure-execution mode (`AT_SECURE=1`), which makes the dynamic linker ignore
+`LD_LIBRARY_PATH`. The main `play_launch` binary links ~22 ROS shared libraries
+found only via `LD_LIBRARY_PATH` (from ROS's `setup.bash`) and carries no
+`DT_RUNPATH`, so `setcap cap_sys_nice+ep` on it makes it fail at startup with
+`error while loading shared libraries: libcomposition_interfaces...so`. This is
+precisely why the existing `play_launch_io_helper` (which links **zero** ROS
+libraries) is the thing that carries `CAP_SYS_PTRACE`.
+
+Today: RT scheduling therefore requires **root** — `sudo -E play_launch launch
+...`. `play_launch setcap` / `just setcap` grant `CAP_SYS_PTRACE` to the I/O
+helper only, and `verify` actively flags a capability on the main binary as a
+fault. Non-root RT scheduling is tracked as **38.10** (delegate
+`sched_setscheduler`/`sched_setaffinity` to the ROS-free privileged helper over
+its existing IPC channel, granting it `CAP_SYS_NICE` alongside
+`CAP_SYS_PTRACE`).
 
 ### 38.7 Absorb latent `ProcessConfig::apply` (planned)
 

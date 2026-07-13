@@ -83,13 +83,15 @@ pub enum Command {
         play_launch plot --metrics cpu memory")]
     Plot(PlotArgs),
 
-    /// Grant the capabilities play_launch needs: CAP_SYS_NICE on the main
-    /// binary (for `--sched` RT scheduling) and CAP_SYS_PTRACE on the I/O
-    /// helper (for per-process I/O monitoring). Requires sudo.
+    /// Grant CAP_SYS_PTRACE to the I/O helper (for per-process I/O
+    /// monitoring). Requires sudo. NOTE: the main binary is deliberately NOT
+    /// capped — a file capability would put it in secure-execution mode and
+    /// break ROS library loading. RT scheduling (`--sched`) needs root.
     #[command(name = "setcap")]
     Setcap,
 
-    /// Check whether the required capabilities are set (see `setcap`)
+    /// Check capabilities: the I/O helper has CAP_SYS_PTRACE, and the main
+    /// binary has none (a capability on it breaks ROS library loading)
     #[command(name = "verify")]
     Verify,
 
