@@ -1,6 +1,6 @@
 # Phase 38: Linux Real-Time Scheduling Apply-Layer
 
-**Status:** ✅ v1 (38.1–38.8) + 38.9 composable scheduling complete
+**Status:** ✅ 38.1–38.9 complete (RT applies, verified on-kernel). 📋 38.10 planned — non-root RT via a privileged helper + per-TID fix.
 **Design of record:** [docs/superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md)
 **Builds on:** shared scheduling crate `ros-launch-manifest-sched` + `play_launch check --sched` (validate-now), already on `main`. Crate design: [docs/superpowers/specs/2026-07-01-shared-scheduling-crate-design.md](../superpowers/specs/2026-07-01-shared-scheduling-crate-design.md).
 
@@ -128,12 +128,12 @@ precisely why the existing `play_launch_io_helper` (which links **zero** ROS
 libraries) is the thing that carries `CAP_SYS_PTRACE`.
 
 Today: RT scheduling therefore requires **root** — `sudo -E play_launch launch
-...`. `play_launch setcap` / `just setcap` grant `CAP_SYS_PTRACE` to the I/O
-helper only, and `verify` actively flags a capability on the main binary as a
-fault. Non-root RT scheduling is tracked as **38.10** (delegate
-`sched_setscheduler`/`sched_setaffinity` to the ROS-free privileged helper over
-its existing IPC channel, granting it `CAP_SYS_NICE` alongside
-`CAP_SYS_PTRACE`).
+...` (note `sudo` strips `LD_*` even with `-E`, so `LD_LIBRARY_PATH` must be
+re-injected via `env`; see the `verify-sched-rt` recipe). `play_launch setcap` /
+`just setcap` grant `CAP_SYS_PTRACE` to the I/O helper only, and `verify`
+actively flags a capability on the main binary as a fault. Running the whole ROS
+stack as root just to set a scheduling policy is a bad trade — **38.10** removes
+the need.
 
 ### 38.7 Absorb latent `ProcessConfig::apply` (planned)
 
@@ -159,6 +159,19 @@ container actor's LOADED handler applies it via the entry (matched by
 `unique_id`), guarded on `sched_mode != Off && event.pid > 0`. Event-driven,
 no polling. Verified end-to-end on a ROS host (`tests/tests/sched_apply.rs::composable_scheduling_engages_on_isolated_container`).
 
+> ⚠ **Known defect — composables only get their MAIN thread scheduled.**
+> Linux scheduling attributes are **per-thread**: `sched_setscheduler(pid, …)`
+> affects only the thread whose TID == pid. A composable is scheduled on the
+> `LOADED` event, i.e. *after* `component_node` has initialized, by which point
+> it already has ~11 threads (the ~10 DDS/rmw threads spawn 0.1–0.5s after
+> exec). The 10 worker threads therefore stay `SCHED_OTHER` — and they are the
+> ones doing the work. Regular nodes/containers are unaffected: they are
+> scheduled at ~+1ms when only the main thread exists, and later threads
+> **inherit** the policy (glibc default `PTHREAD_INHERIT_SCHED`).
+> **Fixed by 38.10**, which applies per-TID across `/proc/<pid>/task/*`.
+> Note also that `chrt -p <pid>` reads only the main thread, so PID-level
+> verification does not catch this.
+
 **v1 strict boundary:** unlike regular nodes/containers (whose strict apply
 failure aborts the run), a *per-composable* strict apply failure mid-run logs
 at `error!` and leaves that composable running unscheduled — it does not tear
@@ -168,6 +181,70 @@ deterministic and permission causes before any composable loads, leaving only
 an unusual per-process EPERM (e.g. composable-specific rlimit). A hard
 coordinated shutdown from the async ComponentEvent handler is deferred (would
 be a 38.10).
+
+### 38.10 Privileged RT helper — non-root RT scheduling (planned)
+
+Design of record:
+[docs/superpowers/specs/2026-07-14-rt-helper-design.md](../superpowers/specs/2026-07-14-rt-helper-design.md).
+
+Removes the root requirement, and fixes the per-thread defect noted in 38.9.
+
+**Principle:** keep capabilities off the main functional binary (a file cap sets
+`AT_SECURE`, the loader drops `LD_LIBRARY_PATH`, and the ~22 ROS libs vanish).
+Put each privileged operation in a small ROS-free helper holding exactly one
+capability — the pattern `play_launch_io_helper` already established.
+
+```
+play_launch  (uncapped, ROS, unprivileged)
+    │                                  │
+    │ ApplySched{pid, tier}            │ ReadProcIo{pids}
+    ▼                                  ▼
+play_launch_rt_helper              play_launch_io_helper
+  CAP_SYS_NICE only                  CAP_SYS_PTRACE only
+```
+
+A **separate** RT helper (not `CAP_SYS_NICE` bolted onto the io_helper) so caps
+never pool: monitoring-only runs carry no RT privilege, RT-only runs carry no
+ptrace privilege.
+
+**Why the capability is needed at all:** `RLIMIT_RTPRIO` is 0 for a normal user,
+so any RT request from an unprivileged process is `EPERM`. `CAP_SYS_NICE`
+bypasses that limit. File caps do not change UID — the helper runs as the
+invoking user, so same-owner already holds and the cap does exactly one job.
+
+**Per-TID apply (the correctness fix).** Scheduling attributes are per-thread.
+The helper enumerates `/proc/<pid>/task/*` and applies to every TID. Threads
+created afterwards inherit the policy (glibc default `PTHREAD_INHERIT_SCHED`,
+verified empirically), so the sweep plus inheritance covers the process. This
+repairs composables, which are scheduled after `component_node` init when ~11
+threads already exist.
+
+**Work items:**
+- **38.10.1** Lib split: move the syscall core into `pub mod sched` (serde, no
+  clap) so a `src/bin/*` helper can use it; make `apply_tier` per-TID.
+  `execution/sched_apply.rs` keeps `SchedApplyMode` + re-exports.
+- **38.10.2** `ipc::sched_protocol` (own `Request`/`Response`, reusing the
+  length-prefixed bincode framing) + `[[bin]] play_launch_rt_helper`; assert
+  ROS-free via `ldd`; wire into colcon + wheel bundle.
+- **38.10.3** `RtHelperClient` + owner task + `SchedHelper(mpsc::Sender)` handle
+  (`Clone + Debug`, so it fits `ActorConfig`); lifetime: `PR_SET_PDEATHSIG`,
+  `kill_on_drop`, graceful `Shutdown`→ack→`wait()`-with-timeout→kill, and a
+  per-request timeout so a wedged helper degrades per `--sched-apply` rather
+  than hanging. Spawned only when `--sched` is used (independent of monitoring).
+  Reroute the 3 apply sites (helper-first, direct `apply_tier` when root).
+- **38.10.4** Capabilities: `setcap` grants `cap_sys_nice+ep` to rt_helper and
+  `cap_sys_ptrace+ep` to io_helper (main binary still stripped); `verify` does
+  per-binary/per-cap `contains` checks; preflight = root **or** rt_helper has
+  `cap_sys_nice` (and reports a cgroup `rt_runtime=0` gate distinctly from a
+  bare permission error).
+- **38.10.5** Acceptance: `just setcap`, then run **unprivileged** with
+  `--sched` and assert **every TID** of every node shows `SCHED_FIFO`/prio/affinity,
+  and that **no process runs as root**. (`chrt -p <pid>` reads only the main
+  thread and is not sufficient.)
+
+**IPC cost:** control-plane only — once per process at spawn/respawn/LOAD
+(~200 round-trips for Autoware, at startup). Zero steady-state cost; the kernel
+does the scheduling thereafter.
 
 ## Order and dependencies
 
