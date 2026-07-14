@@ -19,15 +19,18 @@ Install from PyPI:
 pip install play_launch
 ```
 
-Optional: grant the I/O helper the capability it needs for per-process I/O monitoring (requires sudo):
+Optional: grant the helper binaries the capabilities they need for per-process I/O
+monitoring and non-root RT scheduling (requires sudo):
 
 ```bash
 play_launch setcap
 ```
 
-> RT scheduling (`--sched`) requires running play_launch as **root** (`sudo -E play_launch ...`).
-> The main binary must not be given a file capability — that would put it in secure-execution
-> mode and stop it finding its ROS libraries.
+> This enables per-process I/O monitoring **and** non-root RT scheduling (`--sched`):
+> `play_launch setcap` grants `CAP_SYS_PTRACE` to the I/O helper and `CAP_SYS_NICE` to
+> the RT helper — both are small ROS-free binaries. The main `play_launch` binary is
+> never given a file capability — that would put it in secure-execution mode and stop
+> it finding its ROS libraries.
 
 ## Quick Start
 
@@ -271,8 +274,9 @@ just build-rust     # Rust only (assumes C++ install/ exists)
 just build-wheel    # Bundle + wheel only (no colcon rebuild)
 ```
 
-Optional: grant the I/O helper its monitoring capability (requires sudo). RT scheduling
-(`--sched`) needs root — `sudo -E play_launch ...`:
+Optional: grant the I/O helper its monitoring capability and the RT helper its
+scheduling capability (requires sudo). After this, RT scheduling (`--sched`) works
+**without root**:
 
 ```bash
 just setcap

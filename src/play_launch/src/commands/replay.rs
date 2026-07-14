@@ -507,10 +507,10 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 
     // Phase 38: resolve the scheduling spec (if any) once, before spawning any
     // member. Phase 38.10: prefer delegating to the RT helper (works
-    // unprivileged); only fall back to the root/has_sched_privilege() check
-    // (and its Warn/Strict preflight bail) when the helper itself is
-    // unavailable. Not being root is no longer grounds to hard-fail — that's
-    // the entire point of this wave.
+    // unprivileged given `play_launch setcap`); only fall back to the
+    // root-or-capped-helper privilege check (and its Warn/Strict preflight
+    // bail) when the helper itself failed to spawn. Not being root is no
+    // longer grounds to hard-fail — that's the entire point of this wave.
     let (sched_plan, sched_helper, sched_helper_join) = if let Some(path) = &common.sched {
         let plan =
             crate::execution::sched_plan::SchedPlan::build(&launch_dump, path, common.sched_apply)?;
@@ -521,8 +521,10 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
                     Ok((helper, join)) => (Some(helper), Some(join)),
                     Err(e) => {
                         tracing::debug!("RT helper unavailable: {:#}", e);
-                        if !crate::execution::sched_apply::has_sched_privilege() {
-                            let msg = "scheduling: CAP_SYS_NICE or root required to apply (RT helper unavailable); run play_launch as root (e.g. `sudo -E play_launch ...`) or ensure play_launch_rt_helper is installed. Do NOT `setcap cap_sys_nice` the play_launch binary — a file capability breaks ROS library loading (AT_SECURE drops LD_LIBRARY_PATH)";
+                        let privileged = crate::execution::sched_apply::has_sched_privilege()
+                            || crate::commands::capabilities::rt_helper_has_cap_sys_nice();
+                        if !privileged {
+                            let msg = "scheduling: no privilege to apply; run `play_launch setcap` (grants cap_sys_nice to play_launch_rt_helper) or run as root";
                             if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
                                 eyre::bail!("{msg}");
                             }

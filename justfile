@@ -82,19 +82,26 @@ run *ARGS:
     source install/setup.bash
     ros2 run play_launch play_launch {{ARGS}}
 
-# Apply CAP_SYS_PTRACE to the I/O helper (requires sudo).
+# Apply CAP_SYS_PTRACE to the I/O helper and CAP_SYS_NICE to the RT helper
+# (requires sudo). One capability per helper — never pooled onto one binary.
 # NOTE: the main play_launch binary is deliberately NOT capped — a file capability
 # puts it in secure-execution mode (AT_SECURE), which makes the loader ignore
 # LD_LIBRARY_PATH, and it needs LD_LIBRARY_PATH to find its ~22 ROS libraries.
-# RT scheduling (--sched) requires running play_launch as root: `sudo -E play_launch ...`
+# After this, RT scheduling (--sched) works WITHOUT root — play_launch delegates
+# the apply syscalls to play_launch_rt_helper over IPC.
 setcap:
     #!/bin/bash
     set -e
     main=install/play_launch/lib/play_launch/play_launch
-    helper=install/play_launch/lib/play_launch/play_launch_io_helper
+    io_helper=install/play_launch/lib/play_launch/play_launch_io_helper
+    rt_helper=install/play_launch/lib/play_launch/play_launch_rt_helper
 
-    if [ ! -f "$helper" ]; then
+    if [ ! -f "$io_helper" ]; then
         echo "Error: play_launch_io_helper not found. Run 'just build' first."
+        exit 1
+    fi
+    if [ ! -f "$rt_helper" ]; then
+        echo "Error: play_launch_rt_helper not found. Run 'just build' first."
         exit 1
     fi
 
@@ -106,12 +113,20 @@ setcap:
         echo "  removed."
     fi
 
-    sudo setcap cap_sys_ptrace+ep "$helper"
-    getcap "$helper"
+    sudo setcap cap_sys_ptrace+ep "$io_helper"
+    getcap "$io_helper"
     echo "✓ I/O helper ready (reapply after rebuild)"
-    echo "  RT scheduling (--sched) needs root: sudo -E play_launch launch ..."
 
-# Verify capabilities: I/O helper has CAP_SYS_PTRACE, main binary has NONE
+    sudo setcap cap_sys_nice+ep "$rt_helper"
+    getcap "$rt_helper"
+    echo "✓ RT helper ready (reapply after rebuild)"
+
+    echo
+    echo "RT scheduling (--sched) now works WITHOUT root — no sudo/setuid needed"
+    echo "to run play_launch itself."
+
+# Verify capabilities: main binary has NONE, io_helper has CAP_SYS_PTRACE,
+# rt_helper has CAP_SYS_NICE.
 verify:
     #!/bin/bash
     ok=0
@@ -150,10 +165,37 @@ verify:
         fi
     fi
 
+    if [ ! -f install/play_launch/lib/play_launch/play_launch_rt_helper ]; then
+        echo "✗ RT helper not found. Run 'just build' first."
+        ok=1
+    else
+        cap=$(getcap install/play_launch/lib/play_launch/play_launch_rt_helper 2>/dev/null)
+        if [ -z "$cap" ]; then
+            echo "✗ RT helper has no capabilities set"
+            echo "  Run 'just setcap' to enable non-root RT scheduling"
+            ok=1
+        elif echo "$cap" | grep -qE "cap_sys_nice[=+]ep"; then
+            # getcap prints "=ep" while setcap takes "+ep" — accept both.
+            echo "✓ RT helper ready: $cap"
+        else
+            echo "⚠ RT helper has unexpected capabilities: $cap"
+            echo "  Expected: cap_sys_nice=ep"
+            echo "  Run 'just setcap' to fix"
+            ok=1
+        fi
+    fi
+
     exit $ok
 
-# Prove RT scheduling actually applies: launch as root with --sched, then chrt/taskset each node.
-# Requires sudo. Note: sudo strips LD_* even with -E, so LD_LIBRARY_PATH is re-injected via `env`.
+# Prove RT scheduling actually applies UNPRIVILEGED (no sudo — this is now the
+# supported path: `just setcap` grants CAP_SYS_NICE to play_launch_rt_helper,
+# which the unprivileged play_launch process delegates the apply syscalls to).
+#
+# Checks EVERY TID of every scheduled node (not just the main thread): Linux
+# scheduling attributes are per-thread, and `chrt -p <pid>` alone only reads
+# the main thread, which would silently miss composables (scheduled after
+# ~11 DDS/rmw threads already exist). Fails non-zero if any thread of a
+# scheduled node is not SCHED_FIFO.
 verify-sched-rt:
     #!/usr/bin/env bash
     set -e
@@ -174,33 +216,77 @@ verify-sched-rt:
     echo "=== sched spec ==="; cat "$toml"
 
     logdir=$(mktemp -d /tmp/pl_rt_log_XXXXXX)
-    echo; echo "=== launching as root with --sched (running ~8s) ==="
-    sudo -E env LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
-      install/play_launch/lib/play_launch/play_launch launch \
+    echo; echo "=== launching UNPRIVILEGED (no sudo) with --sched (running ~8s) ==="
+    echo "    (requires: 'just setcap' has granted cap_sys_nice to play_launch_rt_helper)"
+    install/play_launch/lib/play_launch/play_launch launch \
         tests/fixtures/simple_test/launch/pure_nodes.launch.xml \
         --sched "$toml" --sched-apply warn \
         --log-dir "$logdir" --disable-web-ui --disable-diagnostics >/dev/null 2>&1 &
     pl=$!
     sleep 8
 
-    echo; echo "=== did the kernel actually get the policy? ==="
+    echo; echo "=== per-TID check: did EVERY thread of EVERY node get SCHED_FIFO? ==="
     found=0
+    fail=0
     for f in "$logdir"/latest/node/*/pid; do
         [ -f "$f" ] || continue
         name=$(basename "$(dirname "$f")")
         pid=$(cat "$f")
-        pol=$(chrt -p "$pid" 2>/dev/null | sed -n 's/.*policy: //p')
-        pri=$(chrt -p "$pid" 2>/dev/null | sed -n 's/.*priority: //p')
-        aff=$(taskset -cp "$pid" 2>/dev/null | sed -n 's/.*list: //p')
-        printf '  %-22s pid=%-7s policy=%-12s prio=%-3s cpu=%s\n' "$name" "$pid" "${pol:-?}" "${pri:-?}" "${aff:-?}"
+        if [ ! -d "/proc/$pid/task" ]; then
+            printf '  %-22s pid=%-7s (process exited before check)\n' "$name" "$pid"
+            continue
+        fi
         found=1
-    done
-    [ "$found" = 1 ] || echo "  (no pid files under $logdir/latest/node/ — did nodes start?)"
 
-    sudo kill -TERM -"$(ps -o pgid= -p $pl | tr -d ' ')" 2>/dev/null || true
+        threads=0
+        fifo=0
+        prio="?"
+        for tdir in /proc/"$pid"/task/*; do
+            [ -d "$tdir" ] || continue
+            threads=$((threads + 1))
+            stat=$(cat "$tdir/stat" 2>/dev/null) || continue
+            # comm (field 2) is parenthesized and may itself contain ')' or
+            # whitespace — strip through the LAST ') ' before splitting the
+            # remaining whitespace-separated fields.
+            rest="${stat##*) }"
+            read -ra fields <<< "$rest"
+            # fields[] is 0-indexed starting at stat field 3 (state), so
+            # field 40 (rt_priority) is fields[37] and field 41 (policy) is
+            # fields[38].
+            rt_priority="${fields[37]:-?}"
+            policy="${fields[38]:-?}"
+            # SCHED_FIFO == 1 (linux/sched.h)
+            if [ "$policy" = "1" ]; then
+                fifo=$((fifo + 1))
+                prio="$rt_priority"
+            fi
+        done
+
+        aff=$(taskset -cp "$pid" 2>/dev/null | sed -n 's/.*list: //p')
+        printf '  %-22s pid=%-7s threads=%-3s fifo=%s/%s prio=%-3s cpu=%s\n' \
+            "$name" "$pid" "$threads" "$fifo" "$threads" "$prio" "${aff:-?}"
+
+        if [ "$fifo" != "$threads" ]; then
+            fail=1
+        fi
+    done
+
+    if [ "$found" != 1 ]; then
+        echo "  (no live pid files under $logdir/latest/node/ — did nodes start?)"
+        fail=1
+    fi
+
+    kill -TERM -"$(ps -o pgid= -p $pl | tr -d ' ')" 2>/dev/null || true
     wait $pl 2>/dev/null || true
     rm -f "$toml"
-    echo; echo "Expected: policy=SCHED_FIFO  prio=20  cpu=0"
+
+    echo
+    if [ "$fail" = 1 ]; then
+        echo "✗ FAIL: not every thread of every scheduled node is SCHED_FIFO"
+        echo "  (did you run 'just setcap' to grant cap_sys_nice to play_launch_rt_helper?)"
+        exit 1
+    fi
+    echo "✓ PASS: every thread of every scheduled node is SCHED_FIFO (prio=20, cpu=0)"
 
 # Clean build artifacts
 clean:

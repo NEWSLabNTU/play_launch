@@ -1,6 +1,6 @@
 # Phase 38: Linux Real-Time Scheduling Apply-Layer
 
-**Status:** ✅ 38.1–38.9 complete (RT applies, verified on-kernel). 📋 38.10 planned — non-root RT via a privileged helper + per-TID fix.
+**Status:** ✅ 38.1–38.10 complete (RT applies, verified on-kernel; non-root RT via a privileged helper + per-TID fix).
 **Design of record:** [docs/superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md)
 **Builds on:** shared scheduling crate `ros-launch-manifest-sched` + `play_launch check --sched` (validate-now), already on `main`. Crate design: [docs/superpowers/specs/2026-07-01-shared-scheduling-crate-design.md](../superpowers/specs/2026-07-01-shared-scheduling-crate-design.md).
 
@@ -127,13 +127,13 @@ found only via `LD_LIBRARY_PATH` (from ROS's `setup.bash`) and carries no
 precisely why the existing `play_launch_io_helper` (which links **zero** ROS
 libraries) is the thing that carries `CAP_SYS_PTRACE`.
 
-Today: RT scheduling therefore requires **root** — `sudo -E play_launch launch
-...` (note `sudo` strips `LD_*` even with `-E`, so `LD_LIBRARY_PATH` must be
-re-injected via `env`; see the `verify-sched-rt` recipe). `play_launch setcap` /
-`just setcap` grant `CAP_SYS_PTRACE` to the I/O helper only, and `verify`
-actively flags a capability on the main binary as a fault. Running the whole ROS
-stack as root just to set a scheduling policy is a bad trade — **38.10** removes
-the need.
+**Fixed by 38.10:** `play_launch setcap` / `just setcap` now grant `CAP_SYS_PTRACE`
+to the I/O helper **and** `CAP_SYS_NICE` to the ROS-free `play_launch_rt_helper`
+(main binary still stripped/uncapped), and `verify` checks all three. RT
+scheduling (`--sched`) therefore works **unprivileged** — no `sudo -E play_launch
+...` required. Running the whole ROS stack as root just to set a scheduling
+policy was a bad trade; delegating the syscalls to a small capped helper avoids
+it entirely.
 
 ### 38.7 Absorb latent `ProcessConfig::apply` (planned)
 
@@ -182,7 +182,7 @@ an unusual per-process EPERM (e.g. composable-specific rlimit). A hard
 coordinated shutdown from the async ComponentEvent handler is deferred (would
 be a 38.10).
 
-### 38.10 Privileged RT helper — non-root RT scheduling (planned)
+### 38.10 Privileged RT helper — non-root RT scheduling — done
 
 Design of record:
 [docs/superpowers/specs/2026-07-14-rt-helper-design.md](../superpowers/specs/2026-07-14-rt-helper-design.md).
@@ -220,27 +220,32 @@ repairs composables, which are scheduled after `component_node` init when ~11
 threads already exist.
 
 **Work items:**
-- **38.10.1** Lib split: move the syscall core into `pub mod sched` (serde, no
-  clap) so a `src/bin/*` helper can use it; make `apply_tier` per-TID.
+- **38.10.1** — done. Lib split: syscall core lives in `pub mod sched` (serde,
+  no clap) so `src/bin/*` helpers can use it; `apply_tier` is per-TID.
   `execution/sched_apply.rs` keeps `SchedApplyMode` + re-exports.
-- **38.10.2** `ipc::sched_protocol` (own `Request`/`Response`, reusing the
-  length-prefixed bincode framing) + `[[bin]] play_launch_rt_helper`; assert
-  ROS-free via `ldd`; wire into colcon + wheel bundle.
-- **38.10.3** `RtHelperClient` + owner task + `SchedHelper(mpsc::Sender)` handle
-  (`Clone + Debug`, so it fits `ActorConfig`); lifetime: `PR_SET_PDEATHSIG`,
+- **38.10.2** — done. `ipc::sched_protocol` (own `Request`/`Response`, reusing
+  the length-prefixed bincode framing) + `[[bin]] play_launch_rt_helper`;
+  ROS-free (`ldd` = 0 ROS libs); wired into colcon + wheel bundle.
+- **38.10.3** — done. `RtHelperClient` + owner task + `SchedHelper(mpsc::Sender)`
+  handle (`Clone + Debug`, so it fits `ActorConfig`); lifetime: `PR_SET_PDEATHSIG`,
   `kill_on_drop`, graceful `Shutdown`→ack→`wait()`-with-timeout→kill, and a
   per-request timeout so a wedged helper degrades per `--sched-apply` rather
   than hanging. Spawned only when `--sched` is used (independent of monitoring).
-  Reroute the 3 apply sites (helper-first, direct `apply_tier` when root).
-- **38.10.4** Capabilities: `setcap` grants `cap_sys_nice+ep` to rt_helper and
-  `cap_sys_ptrace+ep` to io_helper (main binary still stripped); `verify` does
-  per-binary/per-cap `contains` checks; preflight = root **or** rt_helper has
-  `cap_sys_nice` (and reports a cgroup `rt_runtime=0` gate distinctly from a
-  bare permission error).
-- **38.10.5** Acceptance: `just setcap`, then run **unprivileged** with
-  `--sched` and assert **every TID** of every node shows `SCHED_FIFO`/prio/affinity,
-  and that **no process runs as root**. (`chrt -p <pid>` reads only the main
-  thread and is not sufficient.)
+  All 3 apply sites reroute through it (helper-first, direct `apply_tier` only
+  when running as root and the helper is unavailable).
+- **38.10.4** — done. `setcap` grants `cap_sys_nice+ep` to rt_helper and
+  `cap_sys_ptrace+ep` to io_helper (main binary still stripped, self-heals a
+  stray cap); `verify` does per-binary/per-cap `contains` checks (accepting
+  both `getcap`'s `=ep` and `setcap`'s `+ep` forms) across all three binaries.
+  The pre-spawn preflight (only reached when the RT helper itself fails to
+  spawn) treats root **or** an already-capped rt_helper as privileged, and its
+  warning/abort message always contains `cap_sys_nice` and points at
+  `play_launch setcap`.
+- **38.10.5** — done. `just verify-sched-rt` now runs fully **unprivileged**
+  (no sudo) and checks **every TID** of every node under
+  `/proc/<pid>/task/*` (not just `chrt -p <pid>`, which only reads the main
+  thread and would miss composables), failing non-zero if any thread of a
+  scheduled node isn't `SCHED_FIFO`.
 
 **IPC cost:** control-plane only — once per process at spawn/respawn/LOAD
 (~200 round-trips for Autoware, at startup). Zero steady-state cost; the kernel
@@ -268,9 +273,7 @@ only actor-lifecycle touch points.
 ## Out of scope for Phase 38
 
 - `SCHED_DEADLINE` / `sched_setattr` (period/budget/deadline apply).
-- Composable-node scheduling in v1 (38.9 fast-follow).
 - Any crate schema/resolver change (consumes existing `ResolvedTierTable`).
-- A privileged helper binary — play_launch applies from its own process.
 
 ## Tests
 

@@ -374,7 +374,7 @@ pub async fn apply_sched(
 /// 4. PATH search (fallback — prefer the branches above; a bare `which`
 ///    resolution can land on an unrelated shim if one is ever installed
 ///    under this binary name, as happens today for `play_launch_io_helper`)
-fn find_helper_binary() -> Result<PathBuf> {
+pub(crate) fn find_helper_binary() -> Result<PathBuf> {
     // 1. Check environment variable (development override)
     if let Ok(path) = std::env::var("PLAY_LAUNCH_RT_HELPER") {
         let p = PathBuf::from(&path);
