@@ -19,6 +19,11 @@ path = "src/main.rs"
 name = "play_launch_io_helper"
 path = "src/bin/play_launch_io_helper/main.rs"
 
+# RT scheduling helper daemon (requires CAP_SYS_NICE capability)
+[[bin]]
+name = "play_launch_rt_helper"
+path = "src/bin/play_launch_rt_helper/main.rs"
+
 [dependencies]
 chrono = "0.4"
 clap = { version = "4.5.16", features = ["derive"] }

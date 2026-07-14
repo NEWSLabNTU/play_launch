@@ -8,9 +8,11 @@
 
 pub mod error;
 pub mod protocol;
+pub mod sched_protocol;
 
 pub use error::{HelperError, ProcIoError};
 pub use protocol::{ProcIoResult, ProcIoStats, Request, Response};
+pub use sched_protocol::{SchedRequest, SchedResponse};
 
 /// Current protocol version for compatibility checking
 pub const PROTOCOL_VERSION: u32 = 1;

@@ -86,7 +86,16 @@ pub enum SchedApplyError {
     #[error("{call} failed for pid {pid}: errno {errno}")]
     Syscall {
         pid: u32,
-        call: &'static str,
+        // NOTE: `String`, not `&'static str` — a raw `&'static str` field
+        // breaks serde's derived `Deserialize` when this type is nested
+        // inside another derived container (e.g. `ipc::sched_protocol`'s
+        // `SchedResponse::Applied(Result<(), SchedApplyError>)`): the
+        // blanket `Deserialize` impl for `&'a str` requires `'de: 'a`, and
+        // with `'a = 'static` that forces `'de: 'static` on the *caller's*
+        // generic impl too, which serde_derive only threads through for
+        // fields with an explicit lifetime parameter it can see — not an
+        // opaque nested type. Owning the string sidesteps the whole issue.
+        call: String,
         errno: i32,
     },
 }
@@ -120,7 +129,11 @@ fn map_errno(pid: u32, call: &'static str, priority: i32) -> SchedApplyError {
     match errno {
         libc::EPERM => SchedApplyError::PermissionDenied { pid },
         libc::EINVAL => SchedApplyError::InvalidPriority { pid, priority },
-        _ => SchedApplyError::Syscall { pid, call, errno },
+        _ => SchedApplyError::Syscall {
+            pid,
+            call: call.to_string(),
+            errno,
+        },
     }
 }
 
@@ -135,7 +148,7 @@ fn map_affinity_errno(pid: u32) -> SchedApplyError {
         libc::EPERM => SchedApplyError::PermissionDenied { pid },
         _ => SchedApplyError::Syscall {
             pid,
-            call: "sched_setaffinity",
+            call: "sched_setaffinity".to_string(),
             errno,
         },
     }
@@ -228,7 +241,7 @@ pub fn apply_tier(pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
     if tids.is_empty() {
         return Err(SchedApplyError::Syscall {
             pid,
-            call: "thread_ids",
+            call: "thread_ids".to_string(),
             errno: libc::ESRCH,
         });
     }

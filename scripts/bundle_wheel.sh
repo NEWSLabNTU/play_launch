@@ -10,6 +10,7 @@ set -euo pipefail
 ARTIFACTS=(
   "play_launch/lib/play_launch/play_launch:bin/"
   "play_launch/lib/play_launch/play_launch_io_helper:bin/"
+  "play_launch/lib/play_launch/play_launch_rt_helper:bin/"
   "play_launch_msgs/lib/libplay_launch_msgs*.so:lib/"
   "play_launch_container/lib/play_launch_container/component_container:lib/play_launch_container/"
   "play_launch_container/lib/play_launch_container/component_node:lib/play_launch_container/"
