@@ -186,7 +186,13 @@ impl RegularNodeActor {
         if self.config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
             && let Some(tier) = &self.config.sched
         {
-            match crate::execution::sched_apply::apply_tier(pid, tier) {
+            match crate::execution::rt_helper_client::apply_sched(
+                self.config.sched_helper.as_ref(),
+                pid,
+                tier,
+            )
+            .await
+            {
                 Ok(()) => debug!(
                     "[{}] applied tier '{}' (pid {})",
                     self.name, tier.tier_name, pid

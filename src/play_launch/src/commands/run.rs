@@ -195,22 +195,38 @@ async fn run_direct(
     let pure_node_contexts = prepare_node_contexts(launch_dump, &node_log_dir)?;
 
     // Phase 38: resolve the scheduling spec (if any) once, before spawning any
-    // member. Preflight checks CAP_SYS_NICE/root so Strict mode can bail early
-    // rather than mid-spawn.
-    let sched_plan = if let Some(path) = &common.sched {
-        let plan = crate::execution::sched_plan::SchedPlan::build(launch_dump, path, common.sched_apply)?;
-        if common.sched_apply != crate::execution::sched_apply::SchedApplyMode::Off
-            && !crate::execution::sched_apply::has_sched_privilege()
-        {
-            let msg = "scheduling: CAP_SYS_NICE or root required to apply; run play_launch as root (e.g. `sudo -E play_launch ...`). Do NOT `setcap cap_sys_nice` the play_launch binary — a file capability breaks ROS library loading (AT_SECURE drops LD_LIBRARY_PATH)";
-            if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
-                eyre::bail!("{msg}");
-            }
-            tracing::warn!("{msg}; scheduling will not be applied");
-        }
-        Some(std::sync::Arc::new(plan))
+    // member. Phase 38.10: prefer delegating to the RT helper (works
+    // unprivileged); only fall back to the root/has_sched_privilege() check
+    // (and its Warn/Strict preflight bail) when the helper itself is
+    // unavailable. Not being root is no longer grounds to hard-fail — that's
+    // the entire point of this wave.
+    let (sched_plan, sched_helper, sched_helper_join) = if let Some(path) = &common.sched {
+        let plan =
+            crate::execution::sched_plan::SchedPlan::build(launch_dump, path, common.sched_apply)?;
+
+        let (sched_helper, sched_helper_join) =
+            if common.sched_apply != crate::execution::sched_apply::SchedApplyMode::Off {
+                match crate::execution::rt_helper_client::SchedHelper::spawn().await {
+                    Ok((helper, join)) => (Some(helper), Some(join)),
+                    Err(e) => {
+                        tracing::debug!("RT helper unavailable: {:#}", e);
+                        if !crate::execution::sched_apply::has_sched_privilege() {
+                            let msg = "scheduling: CAP_SYS_NICE or root required to apply (RT helper unavailable); run play_launch as root (e.g. `sudo -E play_launch ...`) or ensure play_launch_rt_helper is installed. Do NOT `setcap cap_sys_nice` the play_launch binary — a file capability breaks ROS library loading (AT_SECURE drops LD_LIBRARY_PATH)";
+                            if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
+                                eyre::bail!("{msg}");
+                            }
+                            tracing::warn!("{msg}; scheduling will not be applied");
+                        }
+                        (None, None)
+                    }
+                }
+            } else {
+                (None, None)
+            };
+
+        (Some(std::sync::Arc::new(plan)), sched_helper, sched_helper_join)
     } else {
-        None
+        (None, None, None)
     };
 
     // Create MemberCoordinatorBuilder
@@ -246,6 +262,7 @@ async fn run_direct(
                 p.for_fqn(&fqn).cloned()
             }),
             sched_mode: common.sched_apply,
+            sched_helper: sched_helper.clone(),
         };
 
         // Add to builder
@@ -494,6 +511,19 @@ async fn run_direct(
     let result = handle_shutdown_simple(Some(pgid), member_handle, &cleanup_guard).await;
     #[cfg(not(unix))]
     let result = handle_shutdown_simple(None, member_handle, &cleanup_guard).await;
+
+    // Phase 38.10: all actors have completed (and with them, every
+    // ActorConfig holding a SchedHelper clone). Drop our own clone so the
+    // owner task sees the mpsc channel close and shuts the RT helper down
+    // gracefully; bound the wait so a wedged owner task can't hang shutdown.
+    if let Some(join) = sched_helper_join {
+        drop(sched_helper);
+        match tokio::time::timeout(std::time::Duration::from_secs(5), join).await {
+            Ok(Ok(())) => debug!("RT helper owner task shut down cleanly"),
+            Ok(Err(e)) => warn!("RT helper owner task panicked: {:#}", e),
+            Err(_) => warn!("RT helper owner task did not shut down within timeout"),
+        }
+    }
 
     result
 }

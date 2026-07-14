@@ -25,6 +25,11 @@ pub struct ActorConfig {
     pub sched: Option<crate::execution::sched_apply::AppliedTier>,
     /// Phase 38: how to apply (Off short-circuits the actor hook).
     pub sched_mode: crate::execution::sched_apply::SchedApplyMode,
+    /// Phase 38.10: handle to the RT helper for delegated (non-root)
+    /// scheduling application. `None` means apply directly in-process via
+    /// `apply_tier` (only works as root) — see
+    /// `execution::rt_helper_client::apply_sched`.
+    pub sched_helper: Option<crate::execution::rt_helper_client::SchedHelper>,
 }
 
 /// State machine for a regular node or container

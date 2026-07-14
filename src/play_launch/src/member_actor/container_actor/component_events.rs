@@ -72,7 +72,13 @@ impl ContainerActor {
                 && event.pid > 0
                 && let Some(tier) = entry.metadata.sched.as_ref()
             {
-                match crate::execution::sched_apply::apply_tier(event.pid as u32, tier) {
+                match crate::execution::rt_helper_client::apply_sched(
+                    self.config.sched_helper.as_ref(),
+                    event.pid as u32,
+                    tier,
+                )
+                .await
+                {
                     Ok(()) => debug!(
                         "{}: applied tier '{}' to composable '{}' (pid {})",
                         self.name, tier.tier_name, composable_name, event.pid

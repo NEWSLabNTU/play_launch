@@ -493,7 +493,12 @@ impl ContainerActor {
         // Runs on every entry to Running, so respawns re-apply automatically.
         if self.config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
             && let Some(tier) = &self.config.sched
-            && let Err(e) = crate::execution::sched_apply::apply_tier(pid, tier)
+            && let Err(e) = crate::execution::rt_helper_client::apply_sched(
+                self.config.sched_helper.as_ref(),
+                pid,
+                tier,
+            )
+            .await
         {
             if self.config.sched_mode == crate::execution::sched_apply::SchedApplyMode::Strict {
                 return Err(eyre::eyre!(
