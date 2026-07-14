@@ -4,3 +4,4 @@
 //! binary and the play_launch_io_helper daemon.
 
 pub mod ipc;
+pub mod sched;
