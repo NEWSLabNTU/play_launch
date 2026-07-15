@@ -36,9 +36,34 @@ pub fn canonicalize_path(path: &Path) -> String {
                     .map(|cwd| cwd.join(path))
                     .unwrap_or_else(|_| path.to_path_buf())
             };
-            absolute.to_string_lossy().into_owned()
+            // Lexically collapse `.`/`..` so the fallback matches Python's
+            // os.path.realpath, which normalizes dot-segments even for paths
+            // it cannot stat. Without this, a nonexistent include containing
+            // `..` would break cross-parser path parity.
+            lexical_normalize(&absolute).to_string_lossy().into_owned()
         }
     }
+}
+
+/// Lexical `.`/`..` collapse (no filesystem access). Mirrors the dot-segment
+/// handling of `os.path.normpath`/`realpath` for nonexistent paths.
+fn lexical_normalize(path: &Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                // Pop a normal component if present; at the root, `..` is a
+                // no-op (same as normpath on absolute paths).
+                if !out.pop() {
+                    out.push(Component::RootDir);
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// A scope in the launch tree.
@@ -307,6 +332,21 @@ pub struct LoadNodeRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The fallback for nonexistent paths must collapse `.`/`..` exactly like
+    /// Python's os.path.realpath does for paths it cannot stat — otherwise the
+    /// two parsers emit different `origin.path` strings for the same include.
+    #[test]
+    fn test_canonicalize_fallback_normalizes_dot_segments() {
+        let p = Path::new("/nonexistent_dir_for_test/a/b/../c/./x.launch.xml");
+        assert_eq!(
+            canonicalize_path(p),
+            "/nonexistent_dir_for_test/a/c/x.launch.xml"
+        );
+        // `..` at the root is a no-op, as in normpath.
+        let q = Path::new("/nonexistent_dir_for_test/../../y.launch.xml");
+        assert_eq!(canonicalize_path(q), "/y.launch.xml");
+    }
 
     #[test]
     fn test_empty_record() {
