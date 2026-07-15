@@ -274,3 +274,20 @@ count-processes-python: (count-processes "python")
 # Kill orphan ROS nodes
 kill-orphans:
     @./scripts/kill_orphan_nodes.sh
+
+# Static contract check against the Autoware launch tree (requires Autoware env)
+check-contracts contracts_dir=(env_var('HOME') / 'repos/autoware-contract'): check-autoware
+    #!/usr/bin/env bash
+    set -e
+    SCRIPT_DIR="{{script_dir}}"
+    cd "$SCRIPT_DIR"
+
+    MAP_PATH="{{map_path}}"
+
+    # Source ROS and Autoware setup
+    source ../../../install/setup.bash
+    source activate_autoware.sh
+
+    play_launch check --contracts {{contracts_dir}} \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="$MAP_PATH"
