@@ -26,6 +26,10 @@ def visit_include_launch_description(
         launch_file_path = None
     filename = os.path.basename(launch_file_path) if launch_file_path else "unknown"
     pkg = extract_package_from_path(launch_file_path) if launch_file_path else None
+    # Canonicalize with realpath (resolves symlinks, matching Rust's
+    # fs::canonicalize) so both parsers emit byte-identical absolute paths
+    # even under colcon --symlink-install trees.
+    resolved_path = os.path.realpath(launch_file_path) if launch_file_path else None
 
     # Get namespace from context
     ns = context.launch_configurations.get("ros_namespace", "/")
@@ -44,7 +48,7 @@ def visit_include_launch_description(
         except Exception as e:
             logger.debug("Could not resolve include arg '%s': %s", arg_name, e)
 
-    dump.push_scope(pkg, filename, ns, include_args)
+    dump.push_scope(pkg, filename, ns, include_args, path=resolved_path)
 
     # If the location does not exist, then it's likely set to '<script>' or something.
     context.extend_locals(

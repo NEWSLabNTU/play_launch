@@ -7,6 +7,12 @@ class ScopeOrigin:
 
     pkg: str | None
     file: str
+    # Resolved absolute path of the launch file (Phase 40.1; needed for
+    # provider-sidecar contract lookup). Matches the Rust parser's
+    # `ScopeOrigin.path` field; both sides emit `null` (not omitted) when
+    # unknown, mirroring how `pkg: None` is already serialized here via
+    # `dataclasses.asdict`.
+    path: str | None = None
 
 
 @dataclass
@@ -26,6 +32,10 @@ class ScopeEntry:
     def file(self) -> str | None:
         """File name (if file scope)."""
         return self.origin.file if self.origin else None
+
+    def path(self) -> str | None:
+        """Canonicalized absolute path of the launch file (if file scope)."""
+        return self.origin.path if self.origin else None
 
 
 def extract_package_from_path(path: str) -> str | None:
@@ -107,12 +117,17 @@ class LaunchDump:
     _scope_stack: list[int] = field(default_factory=list, repr=False)
 
     def push_scope(
-        self, pkg: str | None, filename: str, ns: str, args: dict[str, str] | None = None
+        self,
+        pkg: str | None,
+        filename: str,
+        ns: str,
+        args: dict[str, str] | None = None,
+        path: str | None = None,
     ) -> int:
         """Push a new scope entry. Returns the scope ID."""
         scope_id = len(self.scopes)
         parent = self._scope_stack[-1] if self._scope_stack else None
-        origin = ScopeOrigin(pkg=pkg, file=filename) if filename else None
+        origin = ScopeOrigin(pkg=pkg, file=filename, path=path) if filename else None
         self.scopes.append(
             ScopeEntry(
                 id=scope_id,

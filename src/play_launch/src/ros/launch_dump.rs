@@ -17,6 +17,11 @@ pub struct ScopeOrigin {
     pub pkg: Option<String>,
     /// Launch file name (basename)
     pub file: String,
+    /// Resolved absolute path of the launch file (new in Phase 40; needed for
+    /// provider-sidecar contract lookup). `None` in records produced by older
+    /// parsers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// A scope in the launch tree (from parser Phase 30).
@@ -47,6 +52,15 @@ impl ScopeEntry {
     /// File name (if file scope).
     pub fn file(&self) -> Option<&str> {
         self.origin.as_ref().map(|o| o.file.as_str())
+    }
+
+    /// Canonicalized absolute path of the launch file (if file scope with a
+    /// known path). Not yet consumed by the executor (reserved for the
+    /// Phase 40 provider-sidecar contract lookup); kept alongside `pkg()`/
+    /// `file()` for API symmetry.
+    #[allow(dead_code)]
+    pub fn path(&self) -> Option<&str> {
+        self.origin.as_ref().and_then(|o| o.path.as_deref())
     }
 }
 
@@ -175,4 +189,69 @@ pub fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
     debug!("JSON deserialization complete!");
 
     Ok(launch_dump)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Old records (pre-Phase-40) have no `path` key in `ScopeOrigin`.
+    /// `#[serde(default)]` must keep these deserializable, with `path()`
+    /// returning `None`.
+    #[test]
+    fn test_scope_origin_path_defaults_to_none_for_old_records() {
+        let json = r#"{
+            "node": [],
+            "load_node": [],
+            "container": [],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [
+                {
+                    "id": 0,
+                    "origin": { "pkg": "demo_nodes_cpp", "file": "talker.launch.xml" },
+                    "ns": "/",
+                    "args": {},
+                    "parent": null
+                }
+            ]
+        }"#;
+
+        let dump: LaunchDump = serde_json::from_str(json).unwrap();
+        assert_eq!(dump.scopes.len(), 1);
+        assert_eq!(dump.scopes[0].file(), Some("talker.launch.xml"));
+        assert_eq!(dump.scopes[0].path(), None);
+    }
+
+    /// New records carry an absolute `path`; it round-trips through
+    /// deserialization intact.
+    #[test]
+    fn test_scope_origin_path_present_in_new_records() {
+        let json = r#"{
+            "node": [],
+            "load_node": [],
+            "container": [],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [
+                {
+                    "id": 0,
+                    "origin": {
+                        "pkg": "demo_nodes_cpp",
+                        "file": "talker.launch.xml",
+                        "path": "/opt/ros/humble/share/demo_nodes_cpp/launch/talker.launch.xml"
+                    },
+                    "ns": "/",
+                    "args": {},
+                    "parent": null
+                }
+            ]
+        }"#;
+
+        let dump: LaunchDump = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            dump.scopes[0].path(),
+            Some("/opt/ros/humble/share/demo_nodes_cpp/launch/talker.launch.xml")
+        );
+    }
 }

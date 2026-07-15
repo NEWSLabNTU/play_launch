@@ -38,6 +38,20 @@ def scope_file(s: dict) -> str | None:
     return None
 
 
+def scope_path(s: dict) -> str | None:
+    """Get the canonicalized absolute launch-file path from a scope dict.
+
+    New in Phase 40.1 (`ScopeOrigin.path`). Both parsers canonicalize with
+    `fs::canonicalize` / `os.path.realpath` respectively, so they should
+    agree byte-for-byte on a given machine. `None` for group scopes or
+    records produced by pre-Phase-40 parsers.
+    """
+    origin = s.get("origin")
+    if origin:
+        return origin.get("path")
+    return None
+
+
 def scope_identity(scopes: list[dict], s: dict) -> tuple:
     """Return (pkg, file, parent_pkg, parent_file) for a scope."""
     parent = scopes[s["parent"]] if s["parent"] is not None else None
@@ -305,6 +319,31 @@ def compare_scopes(rust_path: str, python_path: str) -> int:
 
     if not only_rust and not only_python:
         print("Scope identities (pkg, file, parent): all match")
+    print()
+
+    # --- Path comparison (Phase 40.1: ScopeOrigin.path) ---
+    # Compared positionally (by scope id) rather than folded into
+    # scope_identity(): both parsers assign scope ids in the same
+    # depth-first include order for a given launch file, so index-aligned
+    # comparison is meaningful and — unlike identity — lets us report a
+    # path-only mismatch distinctly from a structural (pkg/file/parent)
+    # mismatch.
+    if len(rust_scopes) == len(python_scopes):
+        path_mismatches = []
+        for i, (rs, ps) in enumerate(zip(rust_scopes, python_scopes)):
+            rp, pp = scope_path(rs), scope_path(ps)
+            if rp != pp:
+                path_mismatches.append((i, rp, pp))
+
+        if path_mismatches:
+            print(f"Scope path mismatches ({len(path_mismatches)}):")
+            for i, rp, pp in path_mismatches:
+                print(f"  scope {i}: Rust={rp!r} Python={pp!r}")
+            errors += len(path_mismatches)
+        else:
+            print("Scope paths (origin.path): all match")
+    else:
+        print("Scope paths: skipped (scope counts differ, see above)")
     print()
 
     # --- Entity counts ---
