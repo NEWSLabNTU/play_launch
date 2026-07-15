@@ -471,7 +471,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             if common.block_unauthorized_endpoints {
                 warn!(
                     "--block-unauthorized-endpoints requested but no contract declares any \
-                     topic (no overlay/provider/legacy contract resolved) — blocking \
+                     topic (no overlay or provider contract resolved) — blocking \
                      enforcement DISABLED; an empty allowlist would block every endpoint"
                 );
             }

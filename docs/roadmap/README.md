@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 34 phases total; 26 complete, 2 in progress, 6 planned.
+Started October 2025. 34 phases total; 27 complete, 2 in progress, 5 planned.
 
 Completed phase docs are in `archive/`.
 
@@ -40,7 +40,7 @@ Completed phase docs are in `archive/`.
 | 36 | Runtime Enforcement | ✅ 36.1–36.7 | 2026-05-11 |
 | 38 | Linux RT Scheduling Apply-Layer | ✅ 38.1–38.10 | 2026-07-15 |
 | 39 | RT Example Workspace | 📋 Planned | — |
-| 40 | Contract Shipping (sidecar + overlay) | 📋 Planned | — |
+| 40 | Contract Shipping (sidecar + overlay) | ✅ 40.1–40.7 | 2026-07-15 |
 
 ---
 
@@ -110,7 +110,7 @@ A small real colcon workspace (`tests/fixtures/rt_workspace/`, new `rt_demo` pac
 See [phase-39-rt_workspace_example.md](./phase-39-rt_workspace_example.md).
 Design: [docs/superpowers/specs/2026-07-15-rt-workspace-fixture-design.md](../superpowers/specs/2026-07-15-rt-workspace-fixture-design.md).
 
-### Phase 40: Contract Shipping — Provider Sidecars + User Overlay (planned)
+### Phase 40: Contract Shipping — Provider Sidecars + User Overlay (complete)
 
 The manifest stays a separate file; its shipping changes. Provider channel: `<name>.contract.yaml` next to `<name>.launch.{xml,py,yaml}`, installed with the package. User overlay (general user-side source): `<overlay>/<pkg>/launch/<name>.contract.yaml` (`--contracts <dir>`) — primary use today is supplying contracts for packages that ship none (Autoware; its manifest set migrates to this layout in-phase). Precedence overlay > provider > legacy `--manifest-dir` (retired in-phase once the Autoware set — `NEWSLabNTU/autoware-contract`, 75 manifests — migrates to the overlay layout); document-level replacement in v1. Requires `ScopeOrigin.path` (additive record-format change). Embedding contracts inside launch files was investigated and rejected — see the [research note](../research/manifest-annex-in-launch-files.md).
 

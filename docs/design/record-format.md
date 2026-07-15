@@ -98,7 +98,7 @@ Per-node scope annotation (on `NodeRecord`, `ComposableNodeContainerRecord`,
 
 ### ExpectedGraph
 
-Built by the parser from manifest files when `--manifest-dir` is provided.
+Built by the parser from manifest files when contract sources resolve (overlay `--contracts` or provider sidecars).
 
 ```json
 {
