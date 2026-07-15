@@ -116,6 +116,21 @@ pub fn thread_ids(pid: u32) -> Vec<u32> {
     tids
 }
 
+/// starttime (clock ticks since boot) of a PID, from `/proc/<pid>/stat` field
+/// 22. `None` if the process is gone or the file is unparsable. Field 2
+/// (`comm`) can contain spaces/parens — parse from after the LAST `')'`.
+pub fn proc_start_time(pid: u32) -> Option<u64> {
+    let content = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let close_paren = content.rfind(')')?;
+    // Fields after ')' start at field 3 (state). starttime is field 22
+    // overall, i.e. the 20th field counting from field 3.
+    let mut fields = content[close_paren + 1..].split_whitespace();
+    // Skip fields 3..21 (indices 0..18, 19 fields) to land on field 22
+    // (starttime, index 19).
+    let starttime = fields.nth(19)?;
+    starttime.parse::<u64>().ok()
+}
+
 /// Map the current `errno` (via `std::io::Error::last_os_error()`) to a
 /// [`SchedApplyError`] for a given syscall name. `priority` is the value
 /// that was attempted (used only to annotate `InvalidPriority` on `EINVAL`).
@@ -514,5 +529,22 @@ mod tests {
             let result = apply_tier(pid, &fifo_tier(10));
             assert_eq!(result, Err(SchedApplyError::PermissionDenied { pid }));
         });
+    }
+
+    #[test]
+    fn proc_start_time_own_pid_is_some_and_positive() {
+        let pid = std::process::id();
+        let start_time = proc_start_time(pid);
+        assert!(
+            matches!(start_time, Some(t) if t > 0),
+            "expected Some(>0) starttime for own pid {pid}, got {start_time:?}"
+        );
+    }
+
+    #[test]
+    fn proc_start_time_bogus_pid_is_none() {
+        // PID 0 is never a real process (reserved), and /proc/0/stat doesn't
+        // exist, so this reliably exercises the "gone/unreadable" path.
+        assert_eq!(proc_start_time(0), None);
     }
 }

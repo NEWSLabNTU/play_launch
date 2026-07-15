@@ -11,6 +11,21 @@ use crate::member_actor::{
 };
 use tracing::{debug, error, warn};
 
+/// Verify that `event.pid` still refers to the process that was actually
+/// spawned, guarding against PID-reuse TOCTOU between the LOADED publish and
+/// the sched apply: composables have no held `Child` handle (unlike regular
+/// nodes/containers), so if the process died and the kernel recycled its PID
+/// to an unrelated process, we must not set SCHED_FIFO on it.
+///
+/// `event.start_time == 0` means the container couldn't determine an
+/// identity token (older container binary, or a CRASHED/LOAD_FAILED event) —
+/// in that case there is nothing to verify against, so we keep today's
+/// pid>0-only behavior for wire compatibility.
+fn pid_identity_ok(event: &play_launch_msgs::msg::ComponentEvent) -> bool {
+    event.start_time == 0
+        || play_launch::sched::proc_start_time(event.pid as u32) == Some(event.start_time)
+}
+
 impl ContainerActor {
     /// Handle a ComponentEvent message from the container (Phase 19.5a).
     ///
@@ -72,35 +87,48 @@ impl ContainerActor {
                 && event.pid > 0
                 && let Some(tier) = entry.metadata.sched.as_ref()
             {
-                match crate::execution::rt_helper_client::apply_sched(
-                    self.config.sched_helper.as_ref(),
-                    event.pid as u32,
-                    tier,
-                )
-                .await
-                {
-                    Ok(()) => debug!(
-                        "{}: applied tier '{}' to composable '{}' (pid {})",
-                        self.name, tier.tier_name, composable_name, event.pid
-                    ),
-                    Err(e) => {
-                        // v1: a per-composable failure does not hard-abort the
-                        // container mid-run (config errors already fail at
-                        // SchedPlan::build; missing CAP is caught by the
-                        // pre-spawn preflight). Strict logs loudly; Warn logs
-                        // a warning.
-                        if self.config.sched_mode
-                            == crate::execution::sched_apply::SchedApplyMode::Strict
-                        {
-                            error!(
-                                "{}: STRICT sched apply failed for composable '{}' (pid {}): {}",
-                                self.name, composable_name, event.pid, e
-                            );
-                        } else {
-                            warn!(
-                                "{}: sched apply failed for composable '{}' (pid {}): {}",
-                                self.name, composable_name, event.pid, e
-                            );
+                if !pid_identity_ok(event) {
+                    // The pid no longer matches the start_time captured at
+                    // spawn: the composable died and (post PID-wraparound)
+                    // the kernel may have handed this pid to an unrelated
+                    // process. Skip the apply — there is nothing to
+                    // schedule, and this is not a strict failure.
+                    warn!(
+                        "{}: composable '{}' pid {} no longer matches its start_time \
+                         -- skipping sched apply (pid reused or process gone)",
+                        self.name, composable_name, event.pid
+                    );
+                } else {
+                    match crate::execution::rt_helper_client::apply_sched(
+                        self.config.sched_helper.as_ref(),
+                        event.pid as u32,
+                        tier,
+                    )
+                    .await
+                    {
+                        Ok(()) => debug!(
+                            "{}: applied tier '{}' to composable '{}' (pid {})",
+                            self.name, tier.tier_name, composable_name, event.pid
+                        ),
+                        Err(e) => {
+                            // v1: a per-composable failure does not hard-abort the
+                            // container mid-run (config errors already fail at
+                            // SchedPlan::build; missing CAP is caught by the
+                            // pre-spawn preflight). Strict logs loudly; Warn logs
+                            // a warning.
+                            if self.config.sched_mode
+                                == crate::execution::sched_apply::SchedApplyMode::Strict
+                            {
+                                error!(
+                                    "{}: STRICT sched apply failed for composable '{}' (pid {}): {}",
+                                    self.name, composable_name, event.pid, e
+                                );
+                            } else {
+                                warn!(
+                                    "{}: sched apply failed for composable '{}' (pid {}): {}",
+                                    self.name, composable_name, event.pid, e
+                                );
+                            }
                         }
                     }
                 }

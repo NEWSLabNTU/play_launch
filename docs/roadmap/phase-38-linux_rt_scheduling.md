@@ -250,14 +250,28 @@ threads already exist.
   thread and would miss composables), failing non-zero if any thread of a
   scheduled node isn't `SCHED_FIFO`.
 
-**Known follow-up — composable PID reuse (TOCTOU).** Regular nodes and
-containers are safe by construction: the Rust side holds the un-reaped
-`Child`, so the kernel cannot recycle that PID before the apply. Composables
-are scheduled from `event.pid` on a `ComponentEvent`, with no pidfd/Child held
-on the Rust side — the C++ container reaps independently. This race predates
-38.10, but the helper IPC hop widens the window slightly. Candidate fixes:
-compare `/proc/<pid>/stat` start-time against the event, or have the container
-pass a pidfd. Tracked, not a blocker.
+**Resolved — composable PID reuse (TOCTOU), via start-time identity check
+(follow-up T1).** Regular nodes and containers are safe by construction: the
+Rust side holds the un-reaped `Child`, so the kernel cannot recycle that PID
+before the apply. Composables are scheduled from `event.pid` on a
+`ComponentEvent`, with no pidfd/Child held on the Rust side — the C++
+container reaps independently — so if the composable died between the LOADED
+publish and the apply, a recycled PID could get scheduled instead.
+
+Fix: `ComponentEvent` carries a new `uint64 start_time` field — the process's
+`/proc/<pid>/stat` field 22 (clock ticks since boot), captured by the
+container right after fork, at the same time as `pid`. This value uniquely
+identifies a PID *incarnation*: a recycled PID gets a different `start_time`.
+Before applying sched to a composable, Rust re-reads `/proc/<pid>/stat` for
+the live process and compares; a mismatch (or the process being gone) skips
+the apply with a warning instead of scheduling the wrong process.
+
+**Wire-compat rule:** `start_time == 0` means "no identity check possible"
+(older container binary that doesn't populate the field, or a CRASHED/
+LOAD_FAILED event where the child is already reaped) — Rust treats 0 as
+"unknown" and falls back to today's behavior (apply guarded on `pid > 0`
+only). The check only skips the apply when `start_time > 0` **and** it no
+longer matches the live `/proc` value.
 
 **IPC cost:** control-plane only — once per process at spawn/respawn/LOAD
 (~200 round-trips for Autoware, at startup). Zero steady-state cost; the kernel
