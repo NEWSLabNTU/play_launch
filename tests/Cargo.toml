@@ -52,6 +52,10 @@ path = "tests/manifest_check.rs"
 name = "sched_apply"
 path = "tests/sched_apply.rs"
 
+[[test]]
+name = "rt_workspace"
+path = "tests/rt_workspace.rs"
+
 [dependencies]
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }

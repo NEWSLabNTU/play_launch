@@ -182,6 +182,61 @@ pub fn autoware_env() -> HashMap<String, String> {
     env
 }
 
+/// Return environment variables with ROS + install + the `rt_workspace`
+/// fixture's own install sourced.
+///
+/// Mirrors `autoware_env()`: the fixture builds `rt_demo` into its own
+/// `install/` tree (`just build` inside `tests/fixtures/rt_workspace/`), so
+/// `AMENT_PREFIX_PATH` needs that fixture-local `install/setup.bash` on top
+/// of the repo's own, or package-mode resolution (`rt_demo bringup.launch.xml`)
+/// won't find the package. Callers must gate on the fixture being built first
+/// (see `require_rt_workspace()` in `tests/tests/rt_workspace.rs`) — this
+/// function asserts (rather than skips) if the fixture install is missing.
+pub fn rt_workspace_env() -> HashMap<String, String> {
+    let install_setup = repo_root().join("install/setup.bash");
+    assert!(
+        install_setup.is_file(),
+        "install/setup.bash not found — run `just build` first"
+    );
+
+    let fixture_setup = test_workspace_path("rt_workspace").join("install/setup.bash");
+    assert!(
+        fixture_setup.is_file(),
+        "rt_workspace fixture install/setup.bash not found: {}. \
+         Run `just build` inside tests/fixtures/rt_workspace/ first.",
+        fixture_setup.display()
+    );
+
+    let ros_setup = if Path::new("/opt/ros/humble/setup.bash").is_file() {
+        "/opt/ros/humble/setup.bash"
+    } else {
+        "/opt/ros/jazzy/setup.bash"
+    };
+
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg(format!(
+            "source {} >/dev/null 2>&1 && source {} >/dev/null 2>&1 && source {} >/dev/null 2>&1 && env -0",
+            ros_setup,
+            install_setup.display(),
+            fixture_setup.display(),
+        ))
+        .output()
+        .expect("failed to run bash");
+
+    assert!(output.status.success(), "failed to source rt_workspace env");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .filter_map(|entry| {
+            let (k, v) = entry.split_once('=')?;
+            Some((k.to_string(), v.to_string()))
+        })
+        .collect()
+}
+
 /// Expected entity counts from `activate_autoware.sh` env vars.
 ///
 /// Returns `(nodes, containers, load_nodes)` as `Option<usize>` — `None` if
