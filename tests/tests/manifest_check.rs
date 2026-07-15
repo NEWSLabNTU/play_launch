@@ -72,19 +72,65 @@ fn check_no_args_shows_help() {
 }
 
 #[test]
-fn check_missing_manifest_dir_shows_error() {
+fn check_without_manifest_dir_is_valid_provider_channel_default() {
+    // Phase 40.2: --manifest-dir is no longer required. The provider
+    // sidecar channel is on by default, so `check` with no manifest
+    // flags at all is valid — it just finds nothing (no <stem>.contract.yaml
+    // sits next to this fixture launch file) and reports "No manifests found".
     let launch = simple_launch_dir().join("pure_nodes.launch.xml");
     if !launch.exists() {
         return;
     }
-    // Missing --manifest-dir should error
     let output = Command::new(play_launch_bin())
         .args(["check", launch.to_str().unwrap()])
         .output()
         .expect("failed to run play_launch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !output.status.success(),
-        "expected nonzero exit without --manifest-dir"
+        output.status.success(),
+        "expected success without --manifest-dir (provider channel is on by default): {stderr}"
+    );
+    assert!(
+        stderr.contains("No manifests found"),
+        "expected 'No manifests found' message, got: {stderr}"
+    );
+}
+
+#[test]
+fn check_provider_channel_sidecar_next_to_launch_file() {
+    // Copy a fixture manifest next to a launch file in a temp dir as
+    // `<stem>.contract.yaml`, then run `check` WITHOUT --manifest-dir —
+    // the provider channel should discover and load it.
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    let manifest_src = manifest_fixture_dir().join("manifest_simple/manifest.yaml");
+    let sidecar = tmp.path().join("pure_nodes.contract.yaml");
+    std::fs::copy(&manifest_src, &sidecar).expect("failed to copy manifest fixture as sidecar");
+
+    let output = Command::new(play_launch_bin())
+        .args(["check", launch_copy.to_str().unwrap()])
+        .output()
+        .expect("failed to run play_launch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Parsed:"),
+        "expected parse output: {stderr}"
+    );
+    assert!(
+        stderr.contains("manifest(s) checked"),
+        "expected the provider sidecar to be loaded and checked, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("No manifests found"),
+        "provider sidecar should have been discovered, got: {stderr}"
     );
 }
 

@@ -177,10 +177,24 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         launch_dump.load_node.len()
     );
 
-    // Load manifests if --manifest-dir is specified
-    let _manifest_index = if let Some(ref manifest_dir) = common.manifest_dir {
-        debug!("Loading manifests from: {}", manifest_dir.display());
-        let index = crate::ros::manifest_loader::load_manifests(&launch_dump, manifest_dir)?;
+    // Resolve contract sources (overlay > provider sidecar > legacy
+    // --manifest-dir) and load manifests. The provider channel is on by
+    // default, so this runs even when no manifest flags are given —
+    // scopes simply have nothing to load when no contract file exists in
+    // any channel.
+    if common.manifest_dir.is_some() {
+        tracing::warn!(
+            "--manifest-dir is deprecated; ship <name>.contract.yaml next to the launch file \
+             or use --contracts <dir>"
+        );
+    }
+    let contract_sources = common.contract_sources();
+    let _manifest_index = {
+        debug!(
+            "Resolving contracts: overlay={:?}, provider={}, legacy={:?}",
+            contract_sources.overlay, contract_sources.provider, contract_sources.legacy
+        );
+        let index = crate::ros::manifest_loader::load_manifests(&launch_dump, &contract_sources)?;
         if index.total_errors > 0 {
             warn!(
                 "Manifest static checks found {} error(s) — contracts may not hold",
@@ -188,8 +202,6 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             );
         }
         Some(index)
-    } else {
-        None
     };
 
     // Prepare directories

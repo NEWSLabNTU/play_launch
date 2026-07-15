@@ -39,11 +39,25 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
         crate::ros::sched_loader::check_sched(&dump, sched_path)?;
     }
 
-    // Load and check manifests
-    let index = manifest_loader::load_manifests(&dump, &args.manifest_dir)?;
+    if args.manifest_dir.is_some() {
+        tracing::warn!(
+            "--manifest-dir is deprecated; ship <name>.contract.yaml next to the launch file \
+             or use --contracts <dir>"
+        );
+    }
+
+    // Load and check manifests: overlay > provider sidecar > legacy
+    // --manifest-dir. The provider channel is on by default, so `check`
+    // works with no manifest flags at all whenever the launch file ships
+    // sidecar contracts.
+    let sources = args.contract_sources();
+    let index = manifest_loader::load_manifests(&dump, &sources)?;
 
     if index.manifests.is_empty() {
-        eprintln!("No manifests found in {}", args.manifest_dir.display());
+        eprintln!(
+            "No manifests found (overlay={:?}, provider={}, legacy={:?})",
+            sources.overlay, sources.provider, sources.legacy
+        );
         return Ok(());
     }
 
