@@ -1,8 +1,9 @@
 //! Smoke tests for Phase 36 runtime enforcement.
 //!
-//! Spawns a real ROS 2 launch under `play_launch` with `--manifest-dir`
-//! and `--enforce-rules=warn`, then verifies that the RuleEngine wrote
-//! `runtime_violations.jsonl` and that the expected rule fired.
+//! Spawns a real ROS 2 launch under `play_launch` with a `--contracts`
+//! overlay tree and `--enforce-rules=warn`, then verifies that the
+//! RuleEngine wrote `runtime_violations.jsonl` and that the expected rule
+//! fired.
 
 use play_launch_tests::fixtures;
 use play_launch_tests::process::ManagedProcess;
@@ -74,15 +75,16 @@ fn wait_for_file(path: &Path, timeout: Duration) -> bool {
     false
 }
 
-/// Write a manifest dir at `<work>/manifests/_/pure_nodes.yaml` matching
+/// Write an overlay contract tree at
+/// `<work>/contracts/_/launch/pure_nodes.contract.yaml` matching
 /// `tests/fixtures/simple_test/launch/pure_nodes.launch.xml` (raw path
 /// launches resolve to pkg = `_`). `topics_block` is appended verbatim
 /// if non-empty — lets each test shape the manifest to provoke a
 /// different rule violation.
-fn make_manifest_dir(work_dir: &Path, topics_block: &str) -> PathBuf {
-    let manifest_dir = work_dir.join("manifests");
-    let pkg_dir = manifest_dir.join("_");
-    std::fs::create_dir_all(&pkg_dir).expect("create pkg manifest dir");
+fn make_overlay_contracts(work_dir: &Path, topics_block: &str) -> PathBuf {
+    let overlay_root = work_dir.join("contracts");
+    let launch_dir = overlay_root.join("_/launch");
+    std::fs::create_dir_all(&launch_dir).expect("create overlay launch dir");
 
     let nodes_block = r#"
 nodes:
@@ -94,14 +96,15 @@ nodes:
       chatter: {}
 "#;
     let content = format!("version: 1\n{nodes_block}{topics_block}");
-    std::fs::write(pkg_dir.join("pure_nodes.yaml"), content).expect("write manifest");
-    manifest_dir
+    std::fs::write(launch_dir.join("pure_nodes.contract.yaml"), content).expect("write contract");
+    overlay_root
 }
 
 /// Spawn `play_launch launch demo_nodes_cpp talker_listener.launch.xml`
-/// with manifests + enforce-rules, run for `duration`, then SIGTERM.
+/// with an overlay contract tree + enforce-rules, run for `duration`,
+/// then SIGTERM.
 fn run_with_manifest(
-    manifest_dir: &Path,
+    overlay_root: &Path,
     enforce: &str,
     extra_args: &[&str],
     duration: Duration,
@@ -131,8 +134,8 @@ fn run_with_manifest(
         "stock",
         "--config",
         config_path.to_str().unwrap(),
-        "--manifest-dir",
-        manifest_dir.to_str().unwrap(),
+        "--contracts",
+        overlay_root.to_str().unwrap(),
         "--enforce-rules",
         enforce,
     ]);
@@ -187,7 +190,7 @@ fn consistency_runtime_fires_when_type_mismatch_real_launch() {
     }
 
     let work_dir = tempfile::TempDir::new().expect("tempdir");
-    let manifest_dir = make_manifest_dir(
+    let overlay_root = make_overlay_contracts(
         work_dir.path(),
         r#"topics:
   /pure_test/chatter:
@@ -197,7 +200,7 @@ fn consistency_runtime_fires_when_type_mismatch_real_launch() {
 "#,
     );
 
-    let res = run_with_manifest(&manifest_dir, "warn", &[], Duration::from_secs(3));
+    let res = run_with_manifest(&overlay_root, "warn", &[], Duration::from_secs(3));
     let viol_path = res
         .path()
         .join("play_log/latest/runtime_violations.jsonl");
@@ -228,8 +231,8 @@ fn graph_deviation_runtime_fires_for_undeclared_topic() {
 
     let work_dir = tempfile::TempDir::new().expect("tempdir");
     // Empty topics block → /chatter not in topic_hash_to_fqn map.
-    let manifest_dir = make_manifest_dir(work_dir.path(), "");
-    let res = run_with_manifest(&manifest_dir, "warn", &[], Duration::from_secs(3));
+    let overlay_root = make_overlay_contracts(work_dir.path(), "");
+    let res = run_with_manifest(&overlay_root, "warn", &[], Duration::from_secs(3));
     let viol_path = res
         .path()
         .join("play_log/latest/runtime_violations.jsonl");
@@ -266,8 +269,8 @@ fn enforce_off_skips_rule_engine() {
     }
 
     let work_dir = tempfile::TempDir::new().expect("tempdir");
-    let manifest_dir = make_manifest_dir(work_dir.path(), "");
-    let res = run_with_manifest(&manifest_dir, "off", &[], Duration::from_secs(2));
+    let overlay_root = make_overlay_contracts(work_dir.path(), "");
+    let res = run_with_manifest(&overlay_root, "off", &[], Duration::from_secs(2));
     let viol_path = res
         .path()
         .join("play_log/latest/runtime_violations.jsonl");
@@ -296,14 +299,14 @@ fn qos_match_runtime_fires_on_dds_incompatibility() {
     // Allow both bare and absolute forms of the topic — the python
     // scripts use the relative name `qos_test`, which rcl expands to
     // `/qos_test` once node namespaces are applied.
-    let manifest_dir = work_dir.path().join("manifests");
-    let pkg_dir = manifest_dir.join("_");
-    std::fs::create_dir_all(&pkg_dir).expect("create pkg manifest dir");
+    let overlay_root = work_dir.path().join("contracts");
+    let launch_dir = overlay_root.join("_/launch");
+    std::fs::create_dir_all(&launch_dir).expect("create overlay launch dir");
     std::fs::write(
-        pkg_dir.join("qos_mismatch.yaml"),
+        launch_dir.join("qos_mismatch.contract.yaml"),
         "version: 1\nnodes:\n  qos_mismatch_pub:\n    pub:\n      qos_test: {}\n  qos_mismatch_sub:\n    sub:\n      qos_test: {}\ntopics:\n  /qos_test:\n    type: std_msgs/msg/String\n    pub: [qos_mismatch_pub/qos_test]\n    sub: [qos_mismatch_sub/qos_test]\n",
     )
-    .expect("write manifest");
+    .expect("write contract");
 
     let config_path = work_dir.path().join("interception_on.yaml");
     std::fs::write(
@@ -323,8 +326,8 @@ fn qos_match_runtime_fires_on_dds_incompatibility() {
         "stock",
         "--config",
         config_path.to_str().unwrap(),
-        "--manifest-dir",
-        manifest_dir.to_str().unwrap(),
+        "--contracts",
+        overlay_root.to_str().unwrap(),
         "--enforce-rules",
         "warn",
     ]);
@@ -379,7 +382,7 @@ fn block_unauthorized_endpoints_writes_allowlist_file() {
     }
 
     let work_dir = tempfile::TempDir::new().expect("tempdir");
-    let manifest_dir = make_manifest_dir(
+    let overlay_root = make_overlay_contracts(
         work_dir.path(),
         r#"topics:
   /pure_test/chatter:
@@ -390,7 +393,7 @@ fn block_unauthorized_endpoints_writes_allowlist_file() {
     );
     // Use warn + block so a violation file or block log appears.
     let res = run_with_manifest(
-        &manifest_dir,
+        &overlay_root,
         "warn",
         &["--block-unauthorized-endpoints"],
         Duration::from_secs(2),
@@ -431,7 +434,7 @@ fn block_unauthorized_endpoints_disabled_when_no_contracts_resolve() {
         "--disable-diagnostics",
         "--container-mode",
         "stock",
-        // no --manifest-dir, no --contracts; fixture ships no sidecar either
+        // no --contracts; fixture ships no provider sidecar either
         "--block-unauthorized-endpoints",
     ]);
     let launch = fixtures::test_workspace_path("simple_test")

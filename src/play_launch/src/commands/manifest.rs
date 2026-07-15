@@ -39,24 +39,16 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
         crate::ros::sched_loader::check_sched(&dump, sched_path)?;
     }
 
-    if args.manifest_dir.is_some() {
-        tracing::warn!(
-            "--manifest-dir is deprecated; ship <name>.contract.yaml next to the launch file \
-             or use --contracts <dir>"
-        );
-    }
-
-    // Load and check manifests: overlay > provider sidecar > legacy
-    // --manifest-dir. The provider channel is on by default, so `check`
-    // works with no manifest flags at all whenever the launch file ships
-    // sidecar contracts.
+    // Load and check manifests: overlay > provider sidecar. The provider
+    // channel is on by default, so `check` works with no manifest flags at
+    // all whenever the launch file ships sidecar contracts.
     let sources = args.contract_sources();
     let index = manifest_loader::load_manifests(&dump, &sources)?;
 
     if index.manifests.is_empty() {
         eprintln!(
-            "No manifests found (overlay={:?}, provider={}, legacy={:?})",
-            sources.overlay, sources.provider, sources.legacy
+            "No manifests found (overlay={:?}, provider={})",
+            sources.overlay, sources.provider
         );
         return Ok(());
     }
@@ -143,9 +135,9 @@ fn render_scope_diagnostics(
                 let mut check_result = run_checks_with_spans(&parsed.manifest, parsed.spans);
                 // Suppress per-manifest `dangling-entity` and
                 // `service-wiring` warnings — the cross-scope merge in
-                // `manifest_loader` is authoritative when running with
-                // `--manifest-dir`. Per-manifest emission creates O(n)
-                // duplicates for legitimate cross-scope endpoints.
+                // `manifest_loader` is authoritative. Per-manifest emission
+                // creates O(n) duplicates for legitimate cross-scope
+                // endpoints.
                 check_result
                     .diagnostics
                     .retain(|d| d.rule_id != "dangling-entity" && d.rule_id != "service-wiring");
@@ -235,20 +227,17 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
 
     let mut overlay_count = 0usize;
     let mut provider_count = 0usize;
-    let mut legacy_count = 0usize;
     for resolved in index.manifests.values() {
         match resolved.channel {
             manifest_loader::ContractChannel::Overlay => overlay_count += 1,
             manifest_loader::ContractChannel::Provider => provider_count += 1,
-            manifest_loader::ContractChannel::Legacy => legacy_count += 1,
         }
     }
     eprintln!(
-        "{} contract(s): {} overlay, {} provider, {} legacy",
+        "{} contract(s): {} overlay, {} provider",
         index.manifests.len(),
         overlay_count,
         provider_count,
-        legacy_count,
     );
 }
 

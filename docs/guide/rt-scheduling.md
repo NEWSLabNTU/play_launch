@@ -141,7 +141,7 @@ Selector semantics:
 
 ```bash
 play_launch launch <pkg> <file> --sched system.toml [--sched-apply off|warn|strict]
-play_launch check <pkg> <file> --manifest-dir m/ --sched system.toml   # validate only
+play_launch check <pkg> <file> --contracts contracts/ --sched system.toml   # validate only
 ```
 
 | `--sched-apply` | behavior |

@@ -33,23 +33,36 @@ fn run_check(args: &[&str]) -> std::process::Output {
         .expect("failed to run play_launch")
 }
 
-// ── Launch file + manifest-dir mode ──
+// ── Launch file + overlay contracts mode ──
 
 #[test]
-fn check_launch_with_simple_manifest_dir() {
-    // Use a direct launch file path with manifest_simple fixtures
+fn check_launch_with_overlay_contracts() {
+    // Build a temp overlay tree from the manifest_simple fixture and run
+    // `check --contracts <root>` against a direct launch file path (pkg
+    // is "_" for raw-path launches — see `resolve_overlay_path`).
     let launch = simple_launch_dir().join("pure_nodes.launch.xml");
     if !launch.exists() {
         eprintln!("Skipping: simple_test fixture not available");
         return;
     }
+
+    let overlay_root = tempfile::TempDir::new().expect("failed to create overlay root");
+    let overlay_launch_dir = overlay_root.path().join("_/launch");
+    std::fs::create_dir_all(&overlay_launch_dir).expect("failed to create overlay launch dir");
+    let manifest_src = manifest_fixture_dir().join("manifest_simple/manifest.yaml");
+    std::fs::copy(
+        &manifest_src,
+        overlay_launch_dir.join("pure_nodes.contract.yaml"),
+    )
+    .expect("failed to copy manifest fixture into overlay tree");
+
     let output = run_check(&[
-        "--manifest-dir",
-        manifest_fixture_dir().to_str().unwrap(),
+        "--contracts",
+        overlay_root.path().to_str().unwrap(),
         launch.to_str().unwrap(),
     ]);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // Should parse successfully (may or may not find manifests)
+    // Should parse successfully and discover the overlay contract.
     assert!(
         stderr.contains("Parsed:") || stderr.contains("No manifests"),
         "expected parse output: {stderr}"
@@ -72,8 +85,8 @@ fn check_no_args_shows_help() {
 }
 
 #[test]
-fn check_without_manifest_dir_is_valid_provider_channel_default() {
-    // Phase 40.2: --manifest-dir is no longer required. The provider
+fn check_with_no_flags_is_valid_provider_channel_default() {
+    // Phase 40.6: no manifest flags are required at all. The provider
     // sidecar channel is on by default, so `check` with no manifest
     // flags at all is valid — it just finds nothing (no <stem>.contract.yaml
     // sits next to this fixture launch file) and reports "No manifests found".
@@ -88,7 +101,7 @@ fn check_without_manifest_dir_is_valid_provider_channel_default() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "expected success without --manifest-dir (provider channel is on by default): {stderr}"
+        "expected success with no manifest flags (provider channel is on by default): {stderr}"
     );
     assert!(
         stderr.contains("No manifests found"),
@@ -99,7 +112,7 @@ fn check_without_manifest_dir_is_valid_provider_channel_default() {
 #[test]
 fn check_provider_channel_sidecar_next_to_launch_file() {
     // Copy a fixture manifest next to a launch file in a temp dir as
-    // `<stem>.contract.yaml`, then run `check` WITHOUT --manifest-dir —
+    // `<stem>.contract.yaml`, then run `check` with no manifest flags —
     // the provider channel should discover and load it.
     let launch = simple_launch_dir().join("pure_nodes.launch.xml");
     if !launch.exists() {
@@ -136,11 +149,7 @@ fn check_provider_channel_sidecar_next_to_launch_file() {
 
 #[test]
 fn check_nonexistent_launch_file_exits_nonzero() {
-    let output = run_check(&[
-        "--manifest-dir",
-        manifest_fixture_dir().to_str().unwrap(),
-        "/nonexistent/launch.xml",
-    ]);
+    let output = run_check(&["/nonexistent/launch.xml"]);
     assert!(
         !output.status.success(),
         "expected nonzero exit for missing launch file"
@@ -153,9 +162,20 @@ fn check_format_json() {
     if !launch.exists() {
         return;
     }
+
+    let overlay_root = tempfile::TempDir::new().expect("failed to create overlay root");
+    let overlay_launch_dir = overlay_root.path().join("_/launch");
+    std::fs::create_dir_all(&overlay_launch_dir).expect("failed to create overlay launch dir");
+    let manifest_src = manifest_fixture_dir().join("manifest_simple/manifest.yaml");
+    std::fs::copy(
+        &manifest_src,
+        overlay_launch_dir.join("pure_nodes.contract.yaml"),
+    )
+    .expect("failed to copy manifest fixture into overlay tree");
+
     let output = run_check(&[
-        "--manifest-dir",
-        manifest_fixture_dir().to_str().unwrap(),
+        "--contracts",
+        overlay_root.path().to_str().unwrap(),
         "--format",
         "json",
         launch.to_str().unwrap(),
@@ -174,8 +194,8 @@ fn check_format_json() {
 fn check_overlay_channel_contract_dir() {
     // Build a temp overlay tree `<root>/_/launch/<stem>.contract.yaml`
     // (pkg is "_" because the launch file is referenced by a raw path,
-    // not a ROS package) and run `check --contracts <root>` with no
-    // --manifest-dir. The overlay channel should discover and load it.
+    // not a ROS package) and run `check --contracts <root>`. The overlay
+    // channel should discover and load it.
     let launch = simple_launch_dir().join("pure_nodes.launch.xml");
     if !launch.exists() {
         eprintln!("Skipping: simple_test fixture not available");

@@ -177,22 +177,15 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         launch_dump.load_node.len()
     );
 
-    // Resolve contract sources (overlay > provider sidecar > legacy
-    // --manifest-dir) and load manifests. The provider channel is on by
-    // default, so this runs even when no manifest flags are given —
-    // scopes simply have nothing to load when no contract file exists in
-    // any channel.
-    if common.manifest_dir.is_some() {
-        tracing::warn!(
-            "--manifest-dir is deprecated; ship <name>.contract.yaml next to the launch file \
-             or use --contracts <dir>"
-        );
-    }
+    // Resolve contract sources (overlay > provider sidecar) and load
+    // manifests. The provider channel is on by default, so this runs even
+    // when no manifest flags are given — scopes simply have nothing to
+    // load when no contract file exists in any channel.
     let contract_sources = common.contract_sources();
     let _manifest_index = {
         debug!(
-            "Resolving contracts: overlay={:?}, provider={}, legacy={:?}",
-            contract_sources.overlay, contract_sources.provider, contract_sources.legacy
+            "Resolving contracts: overlay={:?}, provider={}",
+            contract_sources.overlay, contract_sources.provider
         );
         let index = crate::ros::manifest_loader::load_manifests(&launch_dump, &contract_sources)?;
         if index.total_errors > 0 {
@@ -934,7 +927,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 
     // Spawn interception consumer task if we have consumers (Phase 29)
     if !interception_consumers.is_empty() {
-        // Phase 36.3: construct RuleEngine if --manifest-dir was given
+        // Phase 36.3: construct RuleEngine if a contract source resolved
         // and --enforce-rules is not Off. The engine observes every
         // event the listener dispatches.
         let rule_engine = match (

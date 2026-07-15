@@ -1,8 +1,9 @@
 //! Manifest loading and resolution using the scope table from record.json.
 //!
-//! For each file scope in the launch tree, looks up a manifest YAML file at
-//! `<manifest_dir>/<pkg>/<file>.yaml`, parses it, runs static checks, and
-//! builds a resolved index with fully-qualified topic/node names.
+//! For each file scope in the launch tree, resolves a contract YAML file via
+//! the overlay/provider channels (see `ContractSources`), parses it, runs
+//! static checks, and builds a resolved index with fully-qualified
+//! topic/node names.
 
 use super::launch_dump::{LaunchDump, ScopeEntry};
 use ros_launch_manifest_check::{Diagnostic, Severity, run_checks_with_spans};
@@ -16,9 +17,9 @@ use std::{
 };
 use tracing::{debug, info, warn};
 
-/// Which of the three resolution channels supplied a scope's contract.
+/// Which of the two resolution channels supplied a scope's contract.
 ///
-/// Resolution order (first hit wins): overlay > provider > legacy. See
+/// Resolution order (first hit wins): overlay > provider. See
 /// `docs/superpowers/specs/2026-07-15-contract-shipping-design.md` §Resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContractChannel {
@@ -27,8 +28,6 @@ pub enum ContractChannel {
     /// `<launch-file-dir>/<stem>.contract.yaml`, shipped next to the launch
     /// file (on by default; disable with `--no-provider-contracts`).
     Provider,
-    /// `<manifest-dir>/<pkg>/<stem>.yaml` (`--manifest-dir`, deprecated/transitional).
-    Legacy,
 }
 
 impl fmt::Display for ContractChannel {
@@ -36,16 +35,15 @@ impl fmt::Display for ContractChannel {
         f.write_str(match self {
             ContractChannel::Overlay => "overlay",
             ContractChannel::Provider => "provider",
-            ContractChannel::Legacy => "legacy(--manifest-dir)",
         })
     }
 }
 
-/// Configuration for the three-step contract resolution.
+/// Configuration for the two-step contract resolution.
 ///
 /// For every file scope, `load_manifests` tries each configured channel in
-/// order (overlay, then provider, then legacy) and uses the first file that
-/// exists on disk.
+/// order (overlay, then provider) and uses the first file that exists on
+/// disk.
 #[derive(Debug, Clone, Default)]
 pub struct ContractSources {
     /// Overlay root (`--contracts <dir>`). `None` disables the overlay channel.
@@ -53,23 +51,6 @@ pub struct ContractSources {
     /// Whether the provider-sidecar channel is enabled (on by default;
     /// `--no-provider-contracts` sets this to `false`).
     pub provider: bool,
-    /// Legacy manifest directory (`--manifest-dir <dir>`, transitional).
-    /// `None` disables the legacy channel.
-    pub legacy: Option<PathBuf>,
-}
-
-impl ContractSources {
-    /// Convenience constructor used by tests (and any caller that only
-    /// wants the legacy `<dir>/<pkg>/<stem>.yaml` layout): overlay and
-    /// provider channels are disabled.
-    #[cfg(test)]
-    pub fn legacy_only(dir: impl Into<PathBuf>) -> Self {
-        Self {
-            overlay: None,
-            provider: false,
-            legacy: Some(dir.into()),
-        }
-    }
 }
 
 /// A loaded and resolved manifest bound to a specific scope.
@@ -208,7 +189,7 @@ pub struct ManifestIndex {
 /// Load manifests for all file scopes in the launch tree.
 ///
 /// For each scope with a known `(pkg, file)` origin, resolves the contract
-/// file via the three-step channel order (overlay > provider > legacy, see
+/// file via the two-step channel order (overlay > provider, see
 /// `ContractSources`) and loads the first one found. Scopes without a
 /// matching contract file in any enabled channel are silently skipped.
 pub fn load_manifests(
@@ -220,7 +201,6 @@ pub fn load_manifests(
     let mut skipped = 0usize;
     let mut overlay_loaded = 0usize;
     let mut provider_loaded = 0usize;
-    let mut legacy_loaded = 0usize;
 
     // Snapshot scope tree (parent links) for cross-scope checks.
     // Includes all scopes (file and group), not just those with manifests.
@@ -361,7 +341,6 @@ pub fn load_manifests(
         match channel {
             ContractChannel::Overlay => overlay_loaded += 1,
             ContractChannel::Provider => provider_loaded += 1,
-            ContractChannel::Legacy => legacy_loaded += 1,
         }
         loaded += 1;
     }
@@ -386,14 +365,14 @@ pub fn load_manifests(
 
     if loaded > 0 {
         info!(
-            "Loaded {loaded} manifest(s) [{overlay_loaded} overlay, {provider_loaded} provider, \
-             {legacy_loaded} legacy] ({skipped} scopes without manifests, {} errors, {} warnings)",
+            "Loaded {loaded} manifest(s) [{overlay_loaded} overlay, {provider_loaded} provider] \
+             ({skipped} scopes without manifests, {} errors, {} warnings)",
             index.total_errors, index.total_warnings
         );
     } else {
         debug!(
-            "No manifests found (overlay={:?}, provider={}, legacy={:?})",
-            sources.overlay, sources.provider, sources.legacy
+            "No manifests found (overlay={:?}, provider={})",
+            sources.overlay, sources.provider
         );
     }
 
@@ -965,22 +944,10 @@ fn contract_stem(file: &str) -> &str {
         .unwrap_or(file)
 }
 
-/// Resolve the legacy manifest file path for a given scope.
-///
-/// Layout: `<manifest_dir>/<pkg>/<stem>.yaml`
-/// If pkg is None, looks in `<manifest_dir>/_/<stem>.yaml`.
-fn resolve_manifest_path(scope: &ScopeEntry, manifest_dir: &Path) -> Option<PathBuf> {
-    let file = scope.file()?;
-    let stem = contract_stem(file);
-    let pkg_dir = scope.pkg().unwrap_or("_");
-    Some(manifest_dir.join(pkg_dir).join(format!("{stem}.yaml")))
-}
-
 /// Resolve the user-overlay contract path for a given scope.
 ///
 /// Layout: `<overlay_root>/<pkg>/launch/<stem>.contract.yaml`
-/// If pkg is None, looks in `<overlay_root>/_/launch/<stem>.contract.yaml`
-/// (same `_` convention as the legacy channel).
+/// If pkg is None, looks in `<overlay_root>/_/launch/<stem>.contract.yaml`.
 fn resolve_overlay_path(scope: &ScopeEntry, overlay_root: &Path) -> Option<PathBuf> {
     let file = scope.file()?;
     let stem = contract_stem(file);
@@ -1009,10 +976,9 @@ fn resolve_provider_path(scope: &ScopeEntry) -> Option<PathBuf> {
     Some(dir.join(format!("{stem}.contract.yaml")))
 }
 
-/// Resolve the contract file for a scope using the three-step channel
-/// order: overlay > provider > legacy. First channel whose candidate file
-/// exists on disk wins; returns the resolved path plus which channel
-/// supplied it.
+/// Resolve the contract file for a scope using the two-step channel
+/// order: overlay > provider. First channel whose candidate file exists
+/// on disk wins; returns the resolved path plus which channel supplied it.
 fn resolve_contract_path(
     scope: &ScopeEntry,
     sources: &ContractSources,
@@ -1040,14 +1006,6 @@ fn resolve_contract_path(
                 );
             }
         }
-    }
-
-    // 3. Legacy — <manifest-dir>/<pkg>/<stem>.yaml (transitional)
-    if let Some(manifest_dir) = &sources.legacy
-        && let Some(path) = resolve_manifest_path(scope, manifest_dir)
-        && path.exists()
-    {
-        return Some((path, ContractChannel::Legacy));
     }
 
     None
@@ -1402,71 +1360,47 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_resolve_manifest_path() {
-        use super::super::launch_dump::{ScopeEntry, ScopeOrigin};
-
-        let scope = ScopeEntry {
-            id: 1,
-            origin: Some(ScopeOrigin {
-                pkg: Some("tier4_perception_launch".to_string()),
-                file: "perception.launch.xml".to_string(),
-                path: None,
-            }),
-            ns: "/perception".to_string(),
-            args: HashMap::new(),
-            parent: Some(0),
-        };
-
-        let path = resolve_manifest_path(&scope, Path::new("/manifests")).unwrap();
-        assert_eq!(
-            path,
-            PathBuf::from("/manifests/tier4_perception_launch/perception.yaml")
-        );
-    }
-
-    #[test]
-    fn test_resolve_manifest_path_no_pkg() {
-        use super::super::launch_dump::{ScopeEntry, ScopeOrigin};
-
-        let scope = ScopeEntry {
-            id: 2,
-            origin: Some(ScopeOrigin {
-                pkg: None,
-                file: "local.launch.py".to_string(),
-                path: None,
-            }),
-            ns: "".to_string(),
-            args: HashMap::new(),
-            parent: Some(0),
-        };
-
-        let path = resolve_manifest_path(&scope, Path::new("/manifests")).unwrap();
-        assert_eq!(path, PathBuf::from("/manifests/_/local.yaml"));
-    }
-
-    #[test]
-    fn test_resolve_manifest_path_group_scope() {
-        use super::super::launch_dump::ScopeEntry;
-
-        let scope = ScopeEntry {
-            id: 3,
-            origin: None,
-            ns: "/group".to_string(),
-            args: HashMap::new(),
-            parent: Some(0),
-        };
-
-        // Group scopes have no file, so no manifest path
-        assert!(resolve_manifest_path(&scope, Path::new("/manifests")).is_none());
-    }
-
     // ── Integration tests using fixture YAML files ──
 
     use super::super::launch_dump::{LaunchDump, ScopeOrigin};
 
     fn fixture_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ros-launch-manifest/tests/fixtures")
+    }
+
+    /// Materialize an overlay tree in a tempdir from the checker fixture
+    /// YAMLs (`<fixture_dir>/<pkg>/manifest.yaml`) and load manifests
+    /// through it via `ContractSources { overlay: Some(_), provider: false }`.
+    ///
+    /// For every file scope in `dump`, copies the fixture's
+    /// `<pkg>/manifest.yaml` (skipped when no such fixture exists, e.g.
+    /// scopes deliberately pointing at nonexistent packages) to
+    /// `<tmp>/<pkg>/launch/<stem>.contract.yaml`, matching the overlay
+    /// channel's resolution layout. `pkg: None` uses the `_` convention
+    /// shared with the provider/overlay channels. The tempdir is dropped
+    /// before returning — safe, since `load_manifests` reads every
+    /// resolved file synchronously and stores no open handles.
+    fn overlay_index(dump: &LaunchDump) -> ManifestIndex {
+        let tmp = tempfile::TempDir::new().unwrap();
+        for scope in &dump.scopes {
+            let Some(origin) = &scope.origin else {
+                continue;
+            };
+            let pkg_dir = origin.pkg.as_deref().unwrap_or("_");
+            let stem = contract_stem(&origin.file);
+            let src = fixture_dir().join(pkg_dir).join("manifest.yaml");
+            if !src.exists() {
+                continue;
+            }
+            let dest_dir = tmp.path().join(pkg_dir).join("launch");
+            std::fs::create_dir_all(&dest_dir).unwrap();
+            std::fs::copy(&src, dest_dir.join(format!("{stem}.contract.yaml"))).unwrap();
+        }
+        let sources = ContractSources {
+            overlay: Some(tmp.path().to_path_buf()),
+            provider: false,
+        };
+        load_manifests(dump, &sources).unwrap()
     }
 
     fn make_dump(scopes: Vec<ScopeEntry>) -> LaunchDump {
@@ -1506,7 +1440,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert_eq!(index.manifests.len(), 1);
         assert!(index.manifests.contains_key(&0));
@@ -1532,7 +1466,7 @@ mod tests {
             scope(0, "manifest_simple", "manifest.launch.xml", "/a", None),
             scope(1, "manifest_simple", "manifest.launch.xml", "/b", Some(0)),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert_eq!(index.manifests.len(), 2);
         // Same manifest loaded under different namespaces — topics don't collide
@@ -1553,7 +1487,7 @@ mod tests {
             "/planning/scenario_planning/lane_driving/motion_planning",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let deep_ns = "/planning/scenario_planning/lane_driving/motion_planning";
         let expected_topic = format!("{deep_ns}/cropped_points");
@@ -1590,7 +1524,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert!(
             index.total_errors >= 5,
@@ -1612,7 +1546,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert!(index.manifests.is_empty());
         assert_eq!(index.total_errors, 0);
@@ -1649,7 +1583,7 @@ mod tests {
                 Some(0),
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         // Only 2 manifests loaded (simple + ndt), group skipped, missing skipped
         assert_eq!(index.manifests.len(), 2);
@@ -1702,7 +1636,7 @@ mod tests {
                 None,
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         // All 5 invocations load successfully
         assert_eq!(index.manifests.len(), 5);
@@ -1758,7 +1692,7 @@ mod tests {
                 Some(3),
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         // 3 file scopes loaded, 2 group scopes skipped
         assert_eq!(index.manifests.len(), 3);
@@ -1839,7 +1773,7 @@ mod tests {
                 Some(9),
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         // Only scope 0 (simple) and scope 10 (periodic) have manifests
         assert_eq!(index.manifests.len(), 2);
@@ -1892,7 +1826,7 @@ mod tests {
             scope: Some(0),
         });
 
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         // Both manifests loaded, even though scope 1 has no entities
         assert_eq!(index.manifests.len(), 2);
@@ -1909,7 +1843,7 @@ mod tests {
             s.args.insert(format!("arg_{i}"), format!("value_{i}"));
         }
         let dump = make_dump(vec![s]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert_eq!(index.manifests.len(), 1);
         assert!(index.topics.contains_key("/chatter"));
@@ -1925,7 +1859,7 @@ mod tests {
             "/",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert!(
             index.topics.contains_key("/chatter"),
@@ -1961,7 +1895,7 @@ mod tests {
             for (j, ns) in namespaces.iter().enumerate() {
                 let id = i * namespaces.len() + j;
                 let dump = make_dump(vec![scope(id, fixture, "manifest.launch.xml", ns, None)]);
-                let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+                let index = overlay_index(&dump);
                 assert!(
                     index.manifests.len() <= 1,
                     "fixture {fixture} at ns {ns}: unexpected manifest count"
@@ -1984,7 +1918,7 @@ mod tests {
             "/perception",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert_eq!(index.total_errors, 0, "pipeline should be clean");
 
@@ -2028,7 +1962,7 @@ mod tests {
             "/loc",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert_eq!(index.total_errors, 0);
 
@@ -2065,7 +1999,7 @@ mod tests {
             "/ctrl",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert_eq!(index.total_errors, 0);
 
@@ -2092,7 +2026,7 @@ mod tests {
             .insert("output_topic".into(), "/resolved/output".into());
         s.args.insert("node_enabled".into(), "true".into());
         let dump = make_dump(vec![s]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert_eq!(index.manifests.len(), 1);
         let input_topic = &index.topics["/input_data"];
@@ -2111,7 +2045,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         // Manifest skipped because required args are missing
         assert!(index.manifests.is_empty());
@@ -2127,7 +2061,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
         assert_eq!(index.manifests.len(), 1);
         assert!(index.topics.contains_key("/chatter"));
     }
@@ -2142,7 +2076,7 @@ mod tests {
         s.args.insert("use_feature_b".into(), "false".into());
         s.args.insert("sensor_model".into(), "velodyne".into());
         let dump = make_dump(vec![s]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert_eq!(index.manifests.len(), 1);
         let m = &index.manifests[&0].manifest;
@@ -2170,7 +2104,7 @@ mod tests {
         s.args.insert("use_feature_b".into(), "true".into());
         s.args.insert("sensor_model".into(), "velodyne".into());
         let dump = make_dump(vec![s]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let m = &index.manifests[&0].manifest;
 
@@ -2191,7 +2125,7 @@ mod tests {
         s.args.insert("use_feature_b".into(), "false".into());
         s.args.insert("sensor_model".into(), "hesai".into());
         let dump = make_dump(vec![s]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let m = &index.manifests[&0].manifest;
 
@@ -2220,7 +2154,7 @@ mod tests {
                 Some(0),
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         // Both manifests loaded
         assert_eq!(index.manifests.len(), 2);
@@ -2272,7 +2206,7 @@ mod tests {
                 Some(0),
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         // Both manifests still loaded (errors are not fatal)
         assert_eq!(index.manifests.len(), 2);
@@ -2310,7 +2244,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let topic = &index.topics["/shared_data"];
         assert!(topic.publishers.is_empty());
@@ -2349,7 +2283,7 @@ mod tests {
                 Some(0),
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let topic = &index.topics["/shared_data"];
         assert!(!topic.publishers.is_empty());
@@ -2379,7 +2313,7 @@ mod tests {
                 Some(0),
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let overflow_errors: Vec<_> = index
             .merge_diagnostics
@@ -2411,7 +2345,7 @@ mod tests {
                 Some(0),
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let overflow_errors: Vec<_> = index
             .merge_diagnostics
@@ -2440,7 +2374,7 @@ mod tests {
                 None,
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let overflow_errors: Vec<_> = index
             .merge_diagnostics
@@ -2463,7 +2397,7 @@ mod tests {
             "/perception",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let scope_path = index
             .scope_paths
@@ -2492,7 +2426,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         assert_eq!(index.manifests.len(), 1);
         assert!(index.topics.contains_key("/shared_data"));
@@ -2538,7 +2472,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         // The fixture must declare /external/in as an external pub
         // topic AND a subscriber that wires it locally; this confirms
@@ -2573,7 +2507,7 @@ mod tests {
             "/perception",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
         let graph = build_global_graph(&index);
 
         // 4 nodes from the pipeline fixture
@@ -2613,7 +2547,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         // The declared 70ms == critical path, so no scope-budget warning.
         let budget_warnings: Vec<_> = index
@@ -2641,7 +2575,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
         let graph = build_global_graph(&index);
 
         let subtree = subtree_scope_ids(&index, 0);
@@ -2700,7 +2634,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
         let graph = build_global_graph(&index);
 
         // Inspect the lidar→fusion edge to confirm the override is applied.
@@ -2799,7 +2733,7 @@ mod tests {
                 Some(0),
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let qos_errors: Vec<_> = index
             .merge_diagnostics
@@ -2832,7 +2766,7 @@ mod tests {
                 Some(0),
             ),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let rate_errors: Vec<_> = index
             .merge_diagnostics
@@ -2865,7 +2799,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let rate_errors: Vec<_> = index
             .merge_diagnostics
@@ -2894,7 +2828,7 @@ mod tests {
             "",
             None,
         )]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let rate_errors: Vec<_> = index
             .merge_diagnostics
@@ -2925,7 +2859,7 @@ mod tests {
             scope(1, "manifest_simple", "manifest.launch.xml", "/a", Some(0)),
             scope(2, "manifest_simple", "manifest.launch.xml", "/a/b", Some(1)),
         ]);
-        let index = load_manifests(&dump, &ContractSources::legacy_only(fixture_dir())).unwrap();
+        let index = overlay_index(&dump);
 
         let subtree_of_0 = subtree_scope_ids(&index, 0);
         assert!(subtree_of_0.contains(&0));
@@ -2943,7 +2877,7 @@ mod tests {
         assert!(subtree_of_2.contains(&2));
     }
 
-    // ── Phase 40.2: three-step contract resolution (overlay/provider/legacy) ──
+    // ── Phase 40.2/40.6: two-step contract resolution (overlay/provider) ──
 
     fn write_marker_manifest(path: &std::path::Path, marker: &str) {
         if let Some(parent) = path.parent() {
@@ -3009,7 +2943,7 @@ mod tests {
     }
 
     #[test]
-    fn test_precedence_overlay_beats_provider_beats_legacy() {
+    fn test_precedence_overlay_beats_provider() {
         let tmp = tempfile::TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -3024,17 +2958,13 @@ mod tests {
             "overlay_marker",
         );
 
-        let legacy_dir = root.join("legacy");
-        write_marker_manifest(&legacy_dir.join("mypkg/bringup.yaml"), "legacy_marker");
-
         let scope = scope_with_path(0, Some("mypkg"), "bringup.launch.xml", Some(&launch_file));
         let dump = make_dump(vec![scope]);
 
-        // All three channels present — overlay wins.
+        // Both channels present — overlay wins.
         let sources = ContractSources {
             overlay: Some(overlay_root.clone()),
             provider: true,
-            legacy: Some(legacy_dir.clone()),
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert_eq!(index.manifests[&0].channel, ContractChannel::Overlay);
@@ -3044,7 +2974,6 @@ mod tests {
         let sources = ContractSources {
             overlay: None,
             provider: true,
-            legacy: Some(legacy_dir.clone()),
         };
         let dump = make_dump(vec![scope_with_path(
             0,
@@ -3055,22 +2984,6 @@ mod tests {
         let index = load_manifests(&dump, &sources).unwrap();
         assert_eq!(index.manifests[&0].channel, ContractChannel::Provider);
         assert!(index.topics.contains_key("/provider_marker"));
-
-        // Overlay + provider disabled — legacy wins.
-        let sources = ContractSources {
-            overlay: None,
-            provider: false,
-            legacy: Some(legacy_dir),
-        };
-        let dump = make_dump(vec![scope_with_path(
-            0,
-            Some("mypkg"),
-            "bringup.launch.xml",
-            Some(&launch_file),
-        )]);
-        let index = load_manifests(&dump, &sources).unwrap();
-        assert_eq!(index.manifests[&0].channel, ContractChannel::Legacy);
-        assert!(index.topics.contains_key("/legacy_marker"));
     }
 
     #[test]
@@ -3083,7 +2996,6 @@ mod tests {
         let sources = ContractSources {
             overlay: None,
             provider: true,
-            legacy: None,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert!(index.manifests.is_empty());
@@ -3106,7 +3018,6 @@ mod tests {
         let sources = ContractSources {
             overlay: None,
             provider: false,
-            legacy: None,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert!(index.manifests.is_empty());
@@ -3121,13 +3032,12 @@ mod tests {
             "overlay_marker",
         );
 
-        // pkg: None — same "_" convention as the legacy channel.
+        // pkg: None — uses the "_" convention shared by overlay/provider.
         let scope = scope_with_path(0, None, "bringup.launch.xml", None);
         let dump = make_dump(vec![scope]);
         let sources = ContractSources {
             overlay: Some(overlay_root),
             provider: false,
-            legacy: None,
         };
         let index = load_manifests(&dump, &sources).unwrap();
         assert_eq!(index.manifests.len(), 1);
