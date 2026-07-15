@@ -167,3 +167,130 @@ fn check_format_json() {
         "stderr: {stderr}"
     );
 }
+
+// ── Overlay channel (Phase 40.3) ──
+
+#[test]
+fn check_overlay_channel_contract_dir() {
+    // Build a temp overlay tree `<root>/_/launch/<stem>.contract.yaml`
+    // (pkg is "_" because the launch file is referenced by a raw path,
+    // not a ROS package) and run `check --contracts <root>` with no
+    // --manifest-dir. The overlay channel should discover and load it.
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let launch_tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    let overlay_root = tempfile::TempDir::new().expect("failed to create overlay root");
+    let overlay_launch_dir = overlay_root.path().join("_/launch");
+    std::fs::create_dir_all(&overlay_launch_dir).expect("failed to create overlay launch dir");
+    let manifest_src = manifest_fixture_dir().join("manifest_simple/manifest.yaml");
+    std::fs::copy(
+        &manifest_src,
+        overlay_launch_dir.join("pure_nodes.contract.yaml"),
+    )
+    .expect("failed to copy manifest fixture into overlay tree");
+
+    let output = Command::new(play_launch_bin())
+        .args(["check", "--contracts"])
+        .arg(overlay_root.path())
+        .arg(&launch_copy)
+        .output()
+        .expect("failed to run play_launch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("manifest(s) checked"),
+        "expected the overlay contract to be loaded and checked, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("1 overlay"),
+        "expected the overlay channel to supply the contract, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("0 provider"),
+        "no provider sidecar exists next to the launch file, got: {stderr}"
+    );
+}
+
+#[test]
+fn check_overlay_beats_provider_precedence() {
+    // Same temp dir holds the launch file AND a provider sidecar
+    // `<stem>.contract.yaml`. A separate overlay tree supplies a
+    // *different* contract for the same stem via `--contracts`. Per the
+    // resolution order (overlay > provider > legacy), the overlay
+    // contract must win — verified two ways: (1) the per-channel summary
+    // counts attribute the contract to `overlay`, not `provider`; (2) the
+    // overlay contract's distinguishing content (a topic declared with
+    // only a subscriber, so it should be recognized as its own thing)
+    // shows up as a cross-scope diagnostic that the provider contract
+    // does not produce.
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let launch_tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    // Provider sidecar: the clean fixture manifest (0 diagnostics).
+    let manifest_src = manifest_fixture_dir().join("manifest_simple/manifest.yaml");
+    std::fs::copy(
+        &manifest_src,
+        launch_tmp.path().join("pure_nodes.contract.yaml"),
+    )
+    .expect("failed to copy manifest fixture as provider sidecar");
+
+    // Overlay contract: distinguishable content — declares a
+    // subscriber-only topic with a marker name, which triggers a
+    // "0 publishers" cross-scope diagnostic naming that marker.
+    let overlay_root = tempfile::TempDir::new().expect("failed to create overlay root");
+    let overlay_launch_dir = overlay_root.path().join("_/launch");
+    std::fs::create_dir_all(&overlay_launch_dir).expect("failed to create overlay launch dir");
+    let overlay_contract = r#"
+version: 1
+
+nodes:
+  listener:
+    sub:
+      overlay_marker_topic: {}
+
+topics:
+  overlay_marker_topic:
+    type: std_msgs/msg/String
+    sub: [listener/overlay_marker_topic]
+"#;
+    std::fs::write(
+        overlay_launch_dir.join("pure_nodes.contract.yaml"),
+        overlay_contract,
+    )
+    .expect("failed to write overlay contract");
+
+    let output = Command::new(play_launch_bin())
+        .args(["check", "--contracts"])
+        .arg(overlay_root.path())
+        .arg(&launch_copy)
+        .output()
+        .expect("failed to run play_launch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("1 overlay"),
+        "expected overlay channel to win over the provider sidecar, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("0 provider"),
+        "provider sidecar exists but overlay should take precedence, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("overlay_marker_topic"),
+        "expected the overlay contract's distinguishing content (marker topic) to be in \
+         effect, got: {stderr}"
+    );
+}

@@ -111,9 +111,18 @@ fn render_scope_diagnostics(
             resolved.file.clone()
         };
         let label = if resolved.ns.is_empty() || resolved.ns == "/" {
-            format!("{filename} (scope {scope_id})")
+            format!(
+                "{filename} (scope {scope_id}) [{}: {}]",
+                resolved.channel,
+                resolved.contract_path.display()
+            )
         } else {
-            format!("{filename} (scope {scope_id}, ns={})", resolved.ns)
+            format!(
+                "{filename} (scope {scope_id}, ns={}) [{}: {}]",
+                resolved.ns,
+                resolved.channel,
+                resolved.contract_path.display()
+            )
         };
 
         let filtered = filter_diagnostics(&resolved.diagnostics, rule_filter);
@@ -122,7 +131,11 @@ fn render_scope_diagnostics(
         }
 
         if format == "json" {
-            print_diagnostics_json(&filtered, &label)?;
+            print_diagnostics_json(
+                &filtered,
+                &label,
+                Some((&resolved.channel.to_string(), &resolved.contract_path)),
+            )?;
         } else {
             // Re-run checks with spans to get a proper CheckResult for the emitter,
             // then filter rules.
@@ -165,7 +178,7 @@ fn render_cross_scope_diagnostics(
     }
 
     if format == "json" {
-        print_diagnostics_json(&filtered, "<cross-scope>")?;
+        print_diagnostics_json(&filtered, "<cross-scope>", None)?;
     } else {
         eprintln!("\n── Cross-scope diagnostics ──");
         for diag in &filtered {
@@ -219,6 +232,24 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
         total_warnings,
         filter_note,
     );
+
+    let mut overlay_count = 0usize;
+    let mut provider_count = 0usize;
+    let mut legacy_count = 0usize;
+    for resolved in index.manifests.values() {
+        match resolved.channel {
+            manifest_loader::ContractChannel::Overlay => overlay_count += 1,
+            manifest_loader::ContractChannel::Provider => provider_count += 1,
+            manifest_loader::ContractChannel::Legacy => legacy_count += 1,
+        }
+    }
+    eprintln!(
+        "{} contract(s): {} overlay, {} provider, {} legacy",
+        index.manifests.len(),
+        overlay_count,
+        provider_count,
+        legacy_count,
+    );
 }
 
 fn count_severities<'a>(
@@ -254,11 +285,15 @@ fn has_filtered_errors(
     count_severities(combined, rule_filter).0 > 0
 }
 
-fn print_diagnostics_json(diagnostics: &[&Diagnostic], label: &str) -> Result<()> {
+fn print_diagnostics_json(
+    diagnostics: &[&Diagnostic],
+    label: &str,
+    channel_and_path: Option<(&str, &std::path::Path)>,
+) -> Result<()> {
     let diags: Vec<serde_json::Value> = diagnostics
         .iter()
         .map(|d| {
-            serde_json::json!({
+            let mut obj = serde_json::json!({
                 "file": label,
                 "rule": d.rule_id,
                 "severity": d.severity.to_string(),
@@ -267,7 +302,17 @@ fn print_diagnostics_json(diagnostics: &[&Diagnostic], label: &str) -> Result<()
                 "span": d.span.as_ref().map(|s| {
                     serde_json::json!({"start": s.start, "end": s.end})
                 }),
-            })
+            });
+            if let Some((channel, contract_path)) = channel_and_path
+                && let Some(map) = obj.as_object_mut()
+            {
+                map.insert("channel".to_string(), serde_json::json!(channel));
+                map.insert(
+                    "contract_path".to_string(),
+                    serde_json::json!(contract_path.display().to_string()),
+                );
+            }
+            obj
         })
         .collect();
     println!("{}", serde_json::to_string_pretty(&diags)?);

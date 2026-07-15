@@ -86,6 +86,9 @@ pub struct ResolvedManifest {
     pub ns: String,
     /// Which resolution channel supplied this scope's contract file.
     pub channel: ContractChannel,
+    /// The actual contract file resolved for this scope (whichever channel
+    /// supplied it).
+    pub contract_path: PathBuf,
     /// The raw parsed manifest.
     pub manifest: Manifest,
     /// Original YAML source text (for codespan-reporting).
@@ -348,6 +351,7 @@ pub fn load_manifests(
                 file: scope.file().unwrap_or("").to_string(),
                 ns: scope.ns.clone(),
                 channel,
+                contract_path: path.clone(),
                 manifest,
                 source,
                 diagnostics: check_result.diagnostics,
