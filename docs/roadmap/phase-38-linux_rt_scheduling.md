@@ -273,6 +273,12 @@ LOAD_FAILED event where the child is already reaped) — Rust treats 0 as
 only). The check only skips the apply when `start_time > 0` **and** it no
 longer matches the live `/proc` value.
 
+**Residual (accepted):** if the child dies in the sub-microsecond window
+between its ready-pipe "OK" and the container's `proc_start_time` read, the
+event carries `start_time = 0` and that one apply falls back to the pid-only
+guard. This shrinks the original IPC-hop-sized window to microseconds rather
+than eliminating it outright.
+
 **IPC cost:** control-plane only — once per process at spawn/respawn/LOAD
 (~200 round-trips for Autoware, at startup). Zero steady-state cost; the kernel
 does the scheduling thereafter.
