@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 32 phases total; 25 complete, 2 in progress, 5 planned.
+Started October 2025. 33 phases total; 26 complete, 2 in progress, 5 planned.
 
 Completed phase docs are in `archive/`.
 
@@ -38,7 +38,8 @@ Completed phase docs are in `archive/`.
 | 30b | Group Scopes | ✅ | 2026-03-20 |
 | 31 | Launch Manifest | 📋 Planned | — |
 | 36 | Runtime Enforcement | ✅ 36.1–36.7 | 2026-05-11 |
-| 38 | Linux RT Scheduling Apply-Layer | ✅ 38.1–38.9 · 📋 38.10 | 2026-07-06 |
+| 38 | Linux RT Scheduling Apply-Layer | ✅ 38.1–38.10 | 2026-07-15 |
+| 39 | RT Example Workspace | 📋 Planned | — |
 
 ---
 
@@ -102,6 +103,13 @@ Turns the shared scheduling spec (`ros-launch-manifest-sched` + `check --sched`,
 
 See [phase-38-linux_rt_scheduling.md](./phase-38-linux_rt_scheduling.md).
 Design: [apply-layer](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md) · [RT helper (38.10)](../superpowers/specs/2026-07-14-rt-helper-design.md).
+
+### Phase 39: RT Example Workspace (planned)
+
+A small real colcon workspace (`tests/fixtures/rt_workspace/`, new `rt_demo` package: sensor node, FIFO-pinned control node, one composable) that is both the runnable example behind `docs/guide/rt-scheduling.md` and an integration fixture — committed `system.toml` + manifest validated in CI, sched-apply smoke on our own nodes. Survey (2026-07-15): no such fixture exists today (existing ones are launch-file-only or external).
+
+See [phase-39-rt_workspace_example.md](./phase-39-rt_workspace_example.md).
+Design: [docs/superpowers/specs/2026-07-15-rt-workspace-fixture-design.md](../superpowers/specs/2026-07-15-rt-workspace-fixture-design.md).
 
 ---
 
