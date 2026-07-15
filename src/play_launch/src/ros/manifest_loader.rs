@@ -62,6 +62,7 @@ impl ContractSources {
     /// Convenience constructor used by tests (and any caller that only
     /// wants the legacy `<dir>/<pkg>/<stem>.yaml` layout): overlay and
     /// provider channels are disabled.
+    #[cfg(test)]
     pub fn legacy_only(dir: impl Into<PathBuf>) -> Self {
         Self {
             overlay: None,

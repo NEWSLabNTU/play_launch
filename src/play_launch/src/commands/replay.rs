@@ -444,8 +444,16 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // `--block-unauthorized-endpoints` is set. Children's
     // `rcl_publisher_init` and `rcl_subscription_init` hooks refuse
     // topics not in this file.
+    // Safety gate: since 40.2 the manifest index is ALWAYS built (provider
+    // channel is on by default), so `is_some()` no longer means "a contract
+    // source was configured". An EMPTY index must not produce an empty
+    // allowlist — that would block every rcl endpoint in every child. Blocking
+    // enforcement only engages when at least one authorized topic exists.
+    let has_authorized_topics = _manifest_index
+        .as_ref()
+        .is_some_and(|idx| !idx.topics.is_empty() || !idx.externals.is_empty());
     let allowlist_file: Option<std::path::PathBuf> =
-        if common.block_unauthorized_endpoints && _manifest_index.is_some() {
+        if common.block_unauthorized_endpoints && has_authorized_topics {
             let idx = _manifest_index.as_ref().unwrap();
             let path = log_dir.join("expected_graph.txt");
             let mut contents = String::with_capacity(idx.topics.len() * 32);
@@ -467,6 +475,13 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
             );
             Some(path)
         } else {
+            if common.block_unauthorized_endpoints {
+                warn!(
+                    "--block-unauthorized-endpoints requested but no contract declares any \
+                     topic (no overlay/provider/legacy contract resolved) — blocking \
+                     enforcement DISABLED; an empty allowlist would block every endpoint"
+                );
+            }
             None
         };
 

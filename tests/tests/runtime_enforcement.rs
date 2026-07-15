@@ -407,3 +407,74 @@ fn block_unauthorized_endpoints_writes_allowlist_file() {
         "allowlist missing /pure_test/chatter: {contents}"
     );
 }
+
+/// Regression (40.2): with NO contract source resolving anything, blocking
+/// enforcement must DISABLE itself (with a warning) rather than write an
+/// empty allowlist that would refuse every rcl endpoint in every child.
+/// Before the fix, the always-built manifest index made the old
+/// `is_some()` gate pass and an empty expected_graph.txt blocked all IPC.
+#[test]
+fn block_unauthorized_endpoints_disabled_when_no_contracts_resolve() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+
+    let work_dir = tempfile::TempDir::new().expect("tempdir");
+    let mut cmd = play_launch_cmd_with_cargo(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--disable-web-ui",
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        "--container-mode",
+        "stock",
+        // no --manifest-dir, no --contracts; fixture ships no sidecar either
+        "--block-unauthorized-endpoints",
+    ]);
+    let launch = fixtures::test_workspace_path("simple_test")
+        .join("launch/pure_nodes.launch.xml");
+    cmd.arg(launch.to_str().unwrap());
+    cmd.env("RUST_LOG", "play_launch=warn");
+    let stdout_path = work_dir.path().join("stdout.log");
+    let stderr_path = work_dir.path().join("stderr.log");
+    cmd.stdout(Stdio::from(
+        std::fs::File::create(&stdout_path).expect("stdout file"),
+    ));
+    cmd.stderr(Stdio::from(
+        std::fs::File::create(&stderr_path).expect("stderr file"),
+    ));
+
+    let proc = ManagedProcess::spawn(&mut cmd).expect("spawn play_launch");
+    let play_log = work_dir.path().join("play_log/latest");
+    // Both nodes must come up — proof their rcl endpoints were NOT blocked.
+    fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
+    std::thread::sleep(Duration::from_secs(2));
+    let started = std::fs::read_dir(play_log.join("node"))
+        .map(|d| d.flatten().filter(|e| e.path().join("pid").exists()).count())
+        .unwrap_or(0);
+    drop(proc);
+    std::thread::sleep(Duration::from_millis(500));
+
+    assert!(
+        started >= 2,
+        "expected 2 running nodes (endpoints unblocked), found {started}"
+    );
+    let allow_path = play_log.join("expected_graph.txt");
+    assert!(
+        !allow_path.exists(),
+        "empty allowlist must NOT be written when no contracts resolve"
+    );
+    let combined = format!(
+        "{}{}",
+        std::fs::read_to_string(&stdout_path).unwrap_or_default(),
+        std::fs::read_to_string(&stderr_path).unwrap_or_default()
+    )
+    .to_lowercase();
+    assert!(
+        combined.contains("blocking") && combined.contains("disabled"),
+        "expected the blocking-disabled warning in output, got: {combined}"
+    );
+}

@@ -360,19 +360,21 @@ pub struct CommonOptions {
     pub no_provider_contracts: bool,
 
     /// Runtime enforcement mode for manifest contracts (Phase 36.3).
-    /// Requires `--manifest-dir`. Off: no runtime checks. Warn: log
-    /// violations. Strict: exit non-zero on first violation. RecordOnly:
-    /// collect events without evaluating rules.
+    /// Contracts come from any channel (overlay/provider/legacy); with no
+    /// contracts resolved the engine has nothing to enforce. Off: no runtime
+    /// checks. Warn: log violations. Strict: exit non-zero on first
+    /// violation. RecordOnly: collect events without evaluating rules.
     #[arg(long, value_enum, default_value = "warn")]
     pub enforce_rules: EnforceMode,
 
     /// Phase 36.7: block unauthorized publisher/subscription creation
-    /// at the rcl layer. Requires `--manifest-dir`. The set of allowed
-    /// topic FQNs is written from the merged ManifestIndex and passed
-    /// to every child via env var. Hooked rcl init calls for topics
-    /// not in the set return `RCL_RET_TOPIC_INVALID` (1004) — the
-    /// publisher/subscription is never created. Off by default
-    /// because nodes that don't handle init failure may crash.
+    /// at the rcl layer. The set of allowed topic FQNs is written from the
+    /// merged ManifestIndex (any contract channel) and passed to every child
+    /// via env var. Hooked rcl init calls for topics not in the set return
+    /// `RCL_RET_TOPIC_INVALID` (1004) — the publisher/subscription is never
+    /// created. If NO contract declares any topic, blocking is disabled with
+    /// a warning (an empty allowlist would block every endpoint). Off by
+    /// default because nodes that don't handle init failure may crash.
     #[arg(long, default_value_t = false)]
     pub block_unauthorized_endpoints: bool,
 
