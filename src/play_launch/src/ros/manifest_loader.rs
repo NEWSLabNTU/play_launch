@@ -1260,6 +1260,7 @@ mod tests {
             origin: Some(ScopeOrigin {
                 pkg: Some("tier4_perception_launch".to_string()),
                 file: "perception.launch.xml".to_string(),
+                path: None,
             }),
             ns: "/perception".to_string(),
             args: HashMap::new(),
@@ -1282,6 +1283,7 @@ mod tests {
             origin: Some(ScopeOrigin {
                 pkg: None,
                 file: "local.launch.py".to_string(),
+                path: None,
             }),
             ns: "".to_string(),
             args: HashMap::new(),
@@ -1334,6 +1336,7 @@ mod tests {
             origin: Some(ScopeOrigin {
                 pkg: Some(pkg.to_string()),
                 file: file.to_string(),
+                path: None,
             }),
             ns: ns.to_string(),
             args: HashMap::new(),
