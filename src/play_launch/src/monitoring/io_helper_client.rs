@@ -253,7 +253,7 @@ impl Drop for IoHelperClient {
 /// 2. Same directory as current executable (pip install or colcon)
 /// 3. ROS2 install paths (/opt/ros/$ROS_DISTRO/lib/play_launch/)
 /// 4. PATH search (fallback)
-fn find_helper_binary() -> Result<PathBuf> {
+pub(crate) fn find_helper_binary() -> Result<PathBuf> {
     // 1. Check environment variable (development override)
     if let Ok(path) = std::env::var("PLAY_LAUNCH_IO_HELPER") {
         let p = PathBuf::from(&path);

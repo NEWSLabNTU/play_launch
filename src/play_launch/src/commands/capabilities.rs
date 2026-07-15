@@ -18,6 +18,18 @@ use std::{path::PathBuf, process};
 /// location. The `play_launch_io_helper` on PATH is a Python shim, so this
 /// indirection is required — do NOT replace it with `which`.
 fn find_io_helper_path() -> eyre::Result<PathBuf> {
+    // Resolve the SAME binary the runtime client actually spawns (env override
+    // → exe dir → ROS lib path → /usr/lib → PATH), so setcap/verify cannot
+    // target a different copy than the one that runs. Previously this used the
+    // Python shim's `--binary-path`, which resolves whatever install is first
+    // on PATH (e.g. a pip copy) while the client spawns the sibling of the
+    // running executable — capping one and running the other.
+    if let Ok(path) = crate::monitoring::io_helper_client::find_helper_binary() {
+        return Ok(path);
+    }
+
+    // Last resort: the Python shim's --binary-path (covers unusual layouts
+    // where only the PATH shim knows the bundled binary's location).
     let output = process::Command::new("play_launch_io_helper")
         .arg("--binary-path")
         .output()
