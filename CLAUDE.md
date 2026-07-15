@@ -51,7 +51,7 @@ The parser includes an optional IR layer (`--features ir` on the parser crate) t
 
 ### Scheduling Spec
 
-- **Scheduling spec** (`src/ros-launch-manifest/sched/`): portable tier/deadline/binding schema shared with nano-ros. Generic layer carries no priority numbers; per-platform placement in `[tiers.X.<target>]` (posix = Linux RT). `play_launch check --sched <file.toml>` validates for `posix` (validate-now; apply-later is phase 2). See `src/ros-launch-manifest/docs/scheduling.md`.
+- **Scheduling spec** (`src/ros-launch-manifest/sched/`): portable tier/deadline/binding schema shared with nano-ros. Generic layer carries no priority numbers; per-platform placement in `[tiers.X.<target>]` (posix = Linux RT). `play_launch check --sched <file.toml>` validates; `--sched` at launch/replay APPLIES (Phase 38: per-TID SCHED_FIFO/RR + affinity via the CAP_SYS_NICE `play_launch_rt_helper`, non-root; `--sched-apply off|warn|strict`). User guide: `docs/guide/rt-scheduling.md`; schema: `src/ros-launch-manifest/docs/scheduling.md`.
 
 ## Installation & Usage
 

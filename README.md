@@ -31,6 +31,9 @@ play_launch setcap
 > the RT helper — both are small ROS-free binaries. The main `play_launch` binary is
 > never given a file capability — that would put it in secure-execution mode and stop
 > it finding its ROS libraries.
+>
+> See the [Real-Time Scheduling Guide](docs/guide/rt-scheduling.md) for the scheduling
+> spec format and how it maps onto processes, threads, and the kernel.
 
 ## Quick Start
 
