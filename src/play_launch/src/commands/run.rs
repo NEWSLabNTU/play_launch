@@ -222,7 +222,26 @@ async fn run_direct(
                 match crate::execution::rt_helper_client::SchedHelper::spawn().await {
                     Ok((helper, join)) => (Some(helper), Some(join)),
                     Err(e) => {
-                        tracing::debug!("RT helper unavailable: {:#}", e);
+                        // Without the helper, only root can apply (direct
+                        // fallback). If privilege depended on the capped
+                        // helper, a spawn failure means scheduling CANNOT be
+                        // applied — Strict must abort at this boundary, not
+                        // degrade into per-node EPERMs mid-run.
+                        if crate::execution::sched_apply::has_sched_privilege() {
+                            tracing::debug!(
+                                "RT helper unavailable ({e:#}); applying directly as root"
+                            );
+                        } else {
+                            let msg = format!(
+                                "scheduling: RT helper failed to start ({e:#}); cannot apply without root"
+                            );
+                            if common.sched_apply
+                                == crate::execution::sched_apply::SchedApplyMode::Strict
+                            {
+                                eyre::bail!("{msg}");
+                            }
+                            tracing::warn!("{msg}; scheduling will not be applied");
+                        }
                         (None, None)
                     }
                 }

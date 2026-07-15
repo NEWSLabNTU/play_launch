@@ -237,15 +237,27 @@ threads already exist.
   `cap_sys_ptrace+ep` to io_helper (main binary still stripped, self-heals a
   stray cap); `verify` does per-binary/per-cap `contains` checks (accepting
   both `getcap`'s `=ep` and `setcap`'s `+ep` forms) across all three binaries.
-  The pre-spawn preflight (only reached when the RT helper itself fails to
-  spawn) treats root **or** an already-capped rt_helper as privileged, and its
-  warning/abort message always contains `cap_sys_nice` and points at
-  `play_launch setcap`.
+  The pre-spawn preflight runs **unconditionally, before the helper is
+  spawned** (privilege is whether the apply can succeed — root **or** a
+  capped rt_helper — independent of whether the helper process starts; an
+  uncapped helper spawns fine but every apply would EPERM). Its warning/abort
+  message always contains `cap_sys_nice` and points at `play_launch setcap`.
+  If the helper then fails to spawn and the process is not root, Strict
+  aborts at that boundary too (Warn logs and proceeds unscheduled).
 - **38.10.5** — done. `just verify-sched-rt` now runs fully **unprivileged**
   (no sudo) and checks **every TID** of every node under
   `/proc/<pid>/task/*` (not just `chrt -p <pid>`, which only reads the main
   thread and would miss composables), failing non-zero if any thread of a
   scheduled node isn't `SCHED_FIFO`.
+
+**Known follow-up — composable PID reuse (TOCTOU).** Regular nodes and
+containers are safe by construction: the Rust side holds the un-reaped
+`Child`, so the kernel cannot recycle that PID before the apply. Composables
+are scheduled from `event.pid` on a `ComponentEvent`, with no pidfd/Child held
+on the Rust side — the C++ container reaps independently. This race predates
+38.10, but the helper IPC hop widens the window slightly. Candidate fixes:
+compare `/proc/<pid>/stat` start-time against the event, or have the container
+pass a pidfd. Tracked, not a blocker.
 
 **IPC cost:** control-plane only — once per process at spawn/respawn/LOAD
 (~200 round-trips for Autoware, at startup). Zero steady-state cost; the kernel
