@@ -1,0 +1,100 @@
+# rt_workspace — RT scheduling example + fixture (Phase 39)
+#
+# Runnable example behind docs/guide/rt-scheduling.md, and an integration
+# fixture exercising the RT apply-layer against real (non-system) nodes.
+
+set shell := ["bash", "-c"]
+
+ros_distro := env_var_or_default('ROS_DISTRO', 'humble')
+
+# Colcon-built play_launch binary (repo install/) — NOT the pip-installed one,
+# which may be stale relative to the repo checkout. Same binary
+# tests/src/fixtures.rs::play_launch_bin() resolves to.
+play_launch := "../../../install/play_launch/lib/play_launch/play_launch"
+
+# Show help
+default:
+    @just --list
+
+# Build the rt_demo package into this fixture's own install/ tree
+build:
+    #!/usr/bin/env bash
+    set -e
+    echo "Building rt_demo..."
+    . /opt/ros/{{ros_distro}}/setup.bash
+    colcon build --base-paths src --symlink-install
+
+# Dump bringup.launch.xml with the Rust parser
+dump-rust:
+    #!/usr/bin/env bash
+    set -e
+    echo "Dumping bringup.launch.xml with Rust parser..."
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../../install/setup.bash
+    . install/setup.bash
+    {{play_launch}} dump --output record_rust.json launch \
+        --parser rust \
+        rt_demo bringup.launch.xml
+    echo "Rust parser dump complete: record_rust.json"
+
+# Dump bringup.launch.xml with the Python parser
+dump-python:
+    #!/usr/bin/env bash
+    set -e
+    echo "Dumping bringup.launch.xml with Python parser..."
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../../install/setup.bash
+    . install/setup.bash
+    {{play_launch}} dump --output record_python.json launch \
+        --parser python \
+        rt_demo bringup.launch.xml
+    echo "Python parser dump complete: record_python.json"
+
+# Dump with both parsers
+dump-both: dump-rust dump-python
+
+# Compare Rust and Python parser outputs (record.json parity)
+compare-dumps:
+    #!/usr/bin/env bash
+    set -e
+    if [ ! -f "record_rust.json" ]; then
+        echo "ERROR: record_rust.json not found. Run 'just dump-rust' first."
+        exit 1
+    fi
+    if [ ! -f "record_python.json" ]; then
+        echo "ERROR: record_python.json not found. Run 'just dump-python' first."
+        exit 1
+    fi
+    echo "Comparing Rust and Python parser outputs..."
+    python3 ../../../scripts/compare_records.py record_rust.json record_python.json
+    echo "Comparison complete."
+
+# Validate the committed contract (provider sidecar), overlay, and system.toml
+check:
+    #!/usr/bin/env bash
+    set -e
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../../install/setup.bash
+    . install/setup.bash
+    echo "== provider sidecar + sched =="
+    {{play_launch}} check --sched system.toml rt_demo bringup.launch.xml
+    echo "== provider sidecar overridden by user overlay + sched =="
+    {{play_launch}} check --contracts contracts --sched system.toml rt_demo bringup.launch.xml
+
+# Launch with RT scheduling applied (warn mode: no root/setcap required)
+run:
+    #!/usr/bin/env bash
+    set -e
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../../install/setup.bash
+    . install/setup.bash
+    {{play_launch}} launch rt_demo bringup.launch.xml \
+        --sched system.toml --sched-apply warn
+
+# Clean generated files (build artifacts + logs), keep source
+clean:
+    #!/usr/bin/env bash
+    set -e
+    echo "Cleaning up..."
+    rm -rf play_log record*.json build install log
+    echo "Cleanup complete"

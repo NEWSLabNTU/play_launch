@@ -1,0 +1,25 @@
+# RT scheduling spec for the rt_workspace example/fixture.
+# See docs/guide/rt-scheduling.md and src/ros-launch-manifest/docs/scheduling.md.
+
+[tiers.control]
+class = "real_time"
+
+[tiers.control.posix]
+priority    = 20
+sched_class = "SCHED_FIFO"
+core        = 0
+
+[tiers.perception]
+class = "real_time"
+
+[tiers.perception.posix]
+priority    = 10
+sched_class = "SCHED_FIFO"
+
+[[assign]]
+tier  = "control"
+nodes = ["control_node"]
+
+[[assign]]
+tier  = "perception"
+scope = "/perception"

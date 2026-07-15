@@ -1,0 +1,59 @@
+# User overlay for bringup.launch.xml (Phase 40 layout: <dir>/<pkg>/launch/
+# <stem>.contract.yaml). Passed via `play_launch check --contracts contracts`
+# or `play_launch launch ... --contracts contracts`.
+#
+# Overlay always wins over the provider sidecar (launch/bringup.contract.yaml)
+# for the same scope. This copy is otherwise identical except control_node's
+# max_age_ms is tightened from 50ms to 20ms — demonstrating a downstream
+# integrator patching a contract without touching (or rebuilding) rt_demo.
+version: 1
+
+nodes:
+  sensor_node:
+    pub:
+      points_raw:
+        min_rate_hz: 100
+
+  filter_component:
+    sub:
+      points_raw:
+        min_rate_hz: 100
+    pub:
+      points_filtered:
+        min_rate_hz: 100
+    paths:
+      main:
+        input: points_raw
+        output: [points_filtered]
+        max_latency_ms: 5
+
+  control_node:
+    sub:
+      points_raw:
+        min_rate_hz: 100
+        max_age_ms: 20   # tightened from the provider sidecar's 50ms
+    pub:
+      cmd:
+        min_rate_hz: 100
+    paths:
+      main:
+        input: points_raw
+        output: [cmd]
+        max_latency_ms: 10
+
+topics:
+  /perception/points_raw:
+    type: std_msgs/msg/String
+    pub: [sensor_node/points_raw]
+    sub: [filter_component/points_raw, control_node/points_raw]
+    rate_hz: 100
+
+  /perception/points_filtered:
+    type: std_msgs/msg/String
+    pub: [filter_component/points_filtered]
+    rate_hz: 100
+
+  /control/cmd:
+    type: std_msgs/msg/String
+    pub: [control_node/cmd]
+    rate_hz: 100

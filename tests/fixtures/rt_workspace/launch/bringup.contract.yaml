@@ -1,0 +1,55 @@
+# Provider sidecar for bringup.launch.xml (Phase 40 layout: sits right next
+# to the launch file it describes, ships in rt_demo's installed share dir).
+# See src/ros-launch-manifest/docs/launch-manifest.md for the format.
+version: 1
+
+nodes:
+  sensor_node:
+    pub:
+      points_raw:
+        min_rate_hz: 100
+
+  filter_component:
+    sub:
+      points_raw:
+        min_rate_hz: 100
+    pub:
+      points_filtered:
+        min_rate_hz: 100
+    paths:
+      main:
+        input: points_raw
+        output: [points_filtered]
+        max_latency_ms: 5
+
+  control_node:
+    sub:
+      points_raw:
+        min_rate_hz: 100
+        max_age_ms: 50
+    pub:
+      cmd:
+        min_rate_hz: 100
+    paths:
+      main:
+        input: points_raw
+        output: [cmd]
+        max_latency_ms: 10
+
+topics:
+  # absolute — nodes above sit in different namespaces (/perception, /control)
+  /perception/points_raw:
+    type: std_msgs/msg/String
+    pub: [sensor_node/points_raw]
+    sub: [filter_component/points_raw, control_node/points_raw]
+    rate_hz: 100
+
+  /perception/points_filtered:
+    type: std_msgs/msg/String
+    pub: [filter_component/points_filtered]
+    rate_hz: 100
+
+  /control/cmd:
+    type: std_msgs/msg/String
+    pub: [control_node/cmd]
+    rate_hz: 100
