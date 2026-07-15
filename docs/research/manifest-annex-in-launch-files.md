@@ -78,7 +78,12 @@ untouched.
 
 ## Verdict
 
-Feasible and cheap: comment-fenced YAML, extracted by raw-text scan in
-`manifest_loader` as an alternative to the sidecar. Stock `ros2 launch`
-compatibility is preserved by construction (verified above). Not scheduled —
-candidate for a future manifest phase.
+Feasible and cheap (comment-fenced YAML, raw-text extraction; stock
+`ros2 launch` compatibility preserved by construction, verified above) —
+**but not pursued**. Decision (2026-07-15): the manifest stays a separate
+file; shipping moves to *contract sidecars* instead — a provider channel
+(`<name>.contract.yaml` next to the launch file, shipped by the package) plus
+a user overlay (`<overlay>/<pkg>/launch/<name>.contract.yaml`). See
+`docs/superpowers/specs/2026-07-15-contract-shipping-design.md` (Phase 40).
+This note remains the reference for why in-file embedding was rejected and
+what would be required if it is ever revisited.

@@ -19,7 +19,8 @@ is external/gated, and no fixture commits a `system.toml`.
   `sensor_node` (100 Hz timer pub), `control_node` (sub→pub; the FIFO-20
   node), `filter_component` (`rclcpp_components` composable).
 - **39.2** Fixture wiring — `bringup.launch.xml` (2 standalone + 1 container +
-  composable), `manifests/rt_demo/bringup.yaml`, `system.toml` (control /
+  composable), `bringup.contract.yaml` provider sidecar + a `contracts/`
+  user-overlay example (Phase 40 shipping), `system.toml` (control /
   perception tiers + `[[assign]]`), per-fixture `justfile`
   (build/dump/compare/run), README.
 - **39.3** Integration test `tests/tests/rt_workspace.rs` — build gate, dump
@@ -32,8 +33,9 @@ is external/gated, and no fixture commits a `system.toml`.
 
 ## Order and dependencies
 
-39.1 → 39.2 → 39.3 → 39.4. No coupling to other phases; Phase 38 machinery is
-consumed as-is.
+39.1 → 39.2 → 39.3 → 39.4. Phase 38 machinery is consumed as-is. 39.2 depends
+on Phase 40.1–40.2 (contract sidecar/overlay resolution) — land those first so
+the fixture ships only the new layout.
 
 ## Out of scope
 

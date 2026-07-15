@@ -53,15 +53,17 @@ tests/fixtures/rt_workspace/
 │       ├── control_node.cpp      # standalone: sub → pub (the "RT" node)
 │       └── filter_component.cpp  # composable (rclcpp_components), sub → pub
 ├── launch/
-│   └── bringup.launch.xml        # 2 standalone nodes + 1 container w/ the composable
-├── manifests/
-│   └── rt_demo/bringup.yaml      # topic types, rates, max_age_ms — the contract side
+│   ├── bringup.launch.xml        # 2 standalone nodes + 1 container w/ the composable
+│   └── bringup.contract.yaml     # provider sidecar (Phase 40 shipping): types, rates, max_age_ms
+├── contracts/                    # user-overlay example (Phase 40): overrides the sidecar
+│   └── rt_demo/launch/bringup.contract.yaml
 └── system.toml                   # tiers: control (FIFO 20, core 0), perception (FIFO 10)
                                   # [[assign]]: control_node → control; /perception scope → perception
 ```
 
-Everything mirrors the guide's three-file story: launch (what runs), manifest
-(what must hold), `system.toml` (how it is scheduled) — with the same names
+Everything mirrors the guide's three-file story: launch (what runs), contract
+(what must hold — shipped per Phase 40: provider sidecar + user overlay),
+`system.toml` (how it is scheduled) — with the same names
 used in `docs/guide/rt-scheduling.md` slide/examples so the docs become
 literal.
 
@@ -93,7 +95,7 @@ literal.
   1. build gate: skip with a clear message if the fixture isn't built (mirror
      `require_autoware()`).
   2. dump parity: rust vs python parse of `bringup.launch.xml`.
-  3. `check`: manifest + `--sched` validation passes on the committed files.
+  3. `check`: contract + `--sched` validation passes on the committed files; one case asserts the overlay overrides the provider sidecar.
   4. sched smoke: launch with `--sched system.toml --sched-apply warn`,
      assert the apply path engages for the standalone node AND the composable
      (reusing the tolerant privileged/unprivileged assertions from

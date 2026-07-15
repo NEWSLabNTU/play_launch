@@ -1,0 +1,50 @@
+# Phase 40: Contract Shipping — Provider Sidecars + User Overlay
+
+**Status:** 📋 Planned
+**Design of record:** [docs/superpowers/specs/2026-07-15-contract-shipping-design.md](../superpowers/specs/2026-07-15-contract-shipping-design.md)
+**Builds on:** the manifest loader (`ros/manifest_loader.rs`) and Phase 30 scope table.
+
+## Overview
+
+The manifest stays a separate YAML file; its **shipping** changes. Two
+channels replace the single `--manifest-dir <dir>/<pkg>/<file>.yaml` lookup:
+
+1. **Provider sidecar** — `<name>.contract.yaml` next to
+   `<name>.launch.{xml,py,yaml}`, shipped and installed *by the package*.
+2. **User overlay** — `<overlay-root>/<package>/launch/<name>.contract.yaml`
+   (`--contracts <dir>`), overriding without touching installed trees.
+
+Precedence: overlay > provider > legacy `--manifest-dir` (deprecated).
+Document-level replacement in v1; field-level merge deliberately deferred.
+(Embedding contracts inside launch files was investigated —
+[research note](../research/manifest-annex-in-launch-files.md) — feasible via
+comment-fenced payloads, but rejected in favor of sidecars.)
+
+## Work items
+
+- **40.1** Record format: add `ScopeOrigin.path` (absolute launch-file path)
+  in both parsers + `launch_dump.rs`; additive/serde-default, old records stay
+  loadable. Cross-parser scope comparison updated.
+- **40.2** Loader: three-step resolution (overlay → provider → legacy) in
+  `manifest_loader`, recording the supplying channel per scope;
+  `--contracts <dir>` + `--no-provider-contracts` flags; deprecation warning
+  on `--manifest-dir`.
+- **40.3** `check` surfaces channel + path per scope, so the effective
+  contract source is always visible.
+- **40.4** Tests: unit (stem rule, precedence, missing-path fallback);
+  fixture migration to provider sidecars; overlay-override integration case
+  (rt_workspace, Phase 39, ships the new layout from day one).
+- **40.5** Docs: `launch-manifest.md` lookup section, RT guide file tree,
+  CLAUDE.md, README deprecation note.
+
+## Order and dependencies
+
+40.1 → 40.2 → (40.3, 40.4) → 40.5. Phase 39's fixture should land either
+after 40.2 or ship both layouts (legacy + sidecar) temporarily — preferred:
+land 40.1–40.2 first, then Phase 39 uses only the new channels.
+
+## Out of scope
+
+Field-level overlay merging; embedded contracts; ament-index-based discovery;
+any change to the manifest schema or the scheduling spec (`system.toml` stays
+a single system-level file — one scheduling authority per deployment).

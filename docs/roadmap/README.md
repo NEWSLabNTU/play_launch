@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 33 phases total; 26 complete, 2 in progress, 5 planned.
+Started October 2025. 34 phases total; 26 complete, 2 in progress, 6 planned.
 
 Completed phase docs are in `archive/`.
 
@@ -40,6 +40,7 @@ Completed phase docs are in `archive/`.
 | 36 | Runtime Enforcement | ✅ 36.1–36.7 | 2026-05-11 |
 | 38 | Linux RT Scheduling Apply-Layer | ✅ 38.1–38.10 | 2026-07-15 |
 | 39 | RT Example Workspace | 📋 Planned | — |
+| 40 | Contract Shipping (sidecar + overlay) | 📋 Planned | — |
 
 ---
 
@@ -108,6 +109,13 @@ A small real colcon workspace (`tests/fixtures/rt_workspace/`, new `rt_demo` pac
 
 See [phase-39-rt_workspace_example.md](./phase-39-rt_workspace_example.md).
 Design: [docs/superpowers/specs/2026-07-15-rt-workspace-fixture-design.md](../superpowers/specs/2026-07-15-rt-workspace-fixture-design.md).
+
+### Phase 40: Contract Shipping — Provider Sidecars + User Overlay (planned)
+
+The manifest stays a separate file; its shipping changes. Provider channel: `<name>.contract.yaml` next to `<name>.launch.{xml,py,yaml}`, installed with the package. User overlay: `<overlay>/<pkg>/launch/<name>.contract.yaml` (`--contracts <dir>`). Precedence overlay > provider > legacy `--manifest-dir` (deprecated); document-level replacement in v1. Requires `ScopeOrigin.path` (additive record-format change). Embedding contracts inside launch files was investigated and rejected — see the [research note](../research/manifest-annex-in-launch-files.md).
+
+See [phase-40-contract_shipping.md](./phase-40-contract_shipping.md).
+Design: [docs/superpowers/specs/2026-07-15-contract-shipping-design.md](../superpowers/specs/2026-07-15-contract-shipping-design.md).
 
 ---
 
