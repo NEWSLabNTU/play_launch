@@ -70,7 +70,7 @@ For every file scope in `record.json` (pkg, launch-file name):
 ```
 1. overlay:  <overlay-root>/<pkg>/launch/<stem>.contract.yaml   (if --contracts given)
 2. provider: <launch-file-dir>/<stem>.contract.yaml
-3. legacy:   <manifest-dir>/<pkg>/<file>.yaml                   (if --manifest-dir given; deprecated)
+3. legacy:   <manifest-dir>/<pkg>/<file>.yaml                   (transitional; retired in-phase after the Autoware migration)
 ```
 
 First hit wins; the loader records which channel supplied each scope (shown in
@@ -107,7 +107,8 @@ unaffected.
   contract exists next to a launch file. An escape hatch
   `--no-provider-contracts` covers the "installed package ships a broken
   contract" case.
-- `--manifest-dir <dir>` — kept working, warns deprecated, removed later.
+- `--manifest-dir <dir>` — kept working (warns deprecated) only until the
+  Autoware migration (below) lands; **removed in this phase**, not "later".
 - `check` gains a `--explain-contracts` style summary (channel + path per
   scope) — exact flag shape decided at implementation.
 
@@ -124,16 +125,21 @@ deployment has one scheduling authority, not per-package fragments.
 2. Fixtures/tests move to provider sidecars (`tests/fixtures/*/launch/*.contract.yaml`);
    the rt_workspace fixture (Phase 39) ships this layout from day one and adds
    an overlay case to its integration test.
-3. **Autoware manifests migrate in this phase**: the Autoware manifest set
-   (today a `--manifest-dir` tree in `<dir>/<pkg>/<file>.yaml` layout) moves to
-   the overlay layout `<overlay>/<pkg>/launch/<name>.contract.yaml` and is
-   exercised through `--contracts` by the Autoware fixture's justfile/tests.
-   This is the overlay's flagship case — Autoware packages ship no contracts,
-   so the user overlay is their only source.
-4. Docs: `src/ros-launch-manifest/docs/launch-manifest.md` lookup section,
+3. **Autoware manifests migrate in this phase.** The set lives at
+   `~/repos/autoware-contract` (github `NEWSLabNTU/autoware-contract`): 75
+   manifests in the legacy `<pkg>/<stem>.yaml` layout (e.g.
+   `tier4_localization_launch/localization.yaml`). Migration = a mechanical
+   relayout in that repo to `<pkg>/launch/<stem>.contract.yaml`, then the
+   Autoware fixture's justfile/gated tests switch from `--manifest-dir` to
+   `--contracts ~/repos/autoware-contract`. This is the overlay's flagship
+   case — Autoware packages ship no contracts, so the user overlay is their
+   only source.
+4. **Legacy channel retired once the Autoware migration lands**: the
+   `--manifest-dir` flag, the step-3 resolution branch, and any legacy-layout
+   fixtures are removed *in this phase* — the Autoware set was the last known
+   user of the old layout.
+5. Docs: `src/ros-launch-manifest/docs/launch-manifest.md` lookup section,
    `docs/guide/rt-scheduling.md` file-tree, CLAUDE.md.
-5. Deprecation of `--manifest-dir` announced in README; removal in a later
-   release.
 
 ## Non-goals (v1)
 

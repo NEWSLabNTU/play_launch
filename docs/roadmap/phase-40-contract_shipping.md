@@ -16,7 +16,7 @@ channels replace the single `--manifest-dir <dir>/<pkg>/<file>.yaml` lookup:
    supplying contracts for packages that ship none (Autoware); overriding a
    shipped sidecar is the same mechanism.
 
-Precedence: overlay > provider > legacy `--manifest-dir` (deprecated).
+Precedence: overlay > provider > legacy `--manifest-dir` (transitional; retired in-phase).
 Document-level replacement in v1; field-level merge deliberately deferred.
 (Embedding contracts inside launch files was investigated —
 [research note](../research/manifest-annex-in-launch-files.md) — feasible via
@@ -36,17 +36,21 @@ comment-fenced payloads, but rejected in favor of sidecars.)
 - **40.4** Tests: unit (stem rule, precedence, missing-path fallback);
   fixture migration to provider sidecars; overlay-override integration case
   (rt_workspace, Phase 39, ships the new layout from day one).
-- **40.5** **Autoware manifest migration** — move the Autoware manifest set
-  from the legacy `--manifest-dir` `<pkg>/<file>.yaml` layout to the overlay
-  layout `<overlay>/<pkg>/launch/<name>.contract.yaml`; wire the Autoware
-  fixture (justfile + gated tests) to `--contracts`. The overlay's flagship
-  use: Autoware ships no contracts, so the user overlay is their only source.
-- **40.6** Docs: `launch-manifest.md` lookup section, RT guide file tree,
-  CLAUDE.md, README deprecation note.
+- **40.5** **Autoware manifest migration** — relayout `~/repos/autoware-contract`
+  (github `NEWSLabNTU/autoware-contract`; 75 manifests, legacy
+  `<pkg>/<stem>.yaml`) to `<pkg>/launch/<stem>.contract.yaml`; wire the
+  Autoware fixture (justfile + gated tests) to
+  `--contracts ~/repos/autoware-contract`. The overlay's flagship use:
+  Autoware ships no contracts, so the user overlay is their only source.
+- **40.6** **Retire the legacy channel** — after 40.5, remove
+  `--manifest-dir`, the legacy resolution branch, and legacy-layout fixture
+  remnants (the Autoware set was the last known user).
+- **40.7** Docs: `launch-manifest.md` lookup section, RT guide file tree,
+  CLAUDE.md, README.
 
 ## Order and dependencies
 
-40.1 → 40.2 → (40.3, 40.4, 40.5) → 40.6. Phase 39's fixture should land either
+40.1 → 40.2 → (40.3, 40.4, 40.5) → 40.6 → 40.7. Phase 39's fixture should land either
 after 40.2 or ship both layouts (legacy + sidecar) temporarily — preferred:
 land 40.1–40.2 first, then Phase 39 uses only the new channels.
 
