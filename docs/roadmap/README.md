@@ -95,11 +95,9 @@ Refactor monolithic `play_launch` (~19k LOC) into 6 focused crates with sharp in
 
 See [phase-37-crate_split.md](./phase-37-crate_split.md).
 
-### Phase 38: Linux RT Scheduling Apply-Layer (38.1–38.9 complete; 38.10 planned)
+### Phase 38: Linux RT Scheduling Apply-Layer (complete)
 
-Turns the shared scheduling spec (`ros-launch-manifest-sched` + `check --sched`, already on `main`) from validate-now into apply. During replay, sets `SCHED_FIFO`/`SCHED_RR` + priority + CPU affinity per spawned node/container process from the resolved `posix` tier. New `--sched <file.toml>` + `--sched-apply {off,warn,strict}` (default warn). Composables scheduled too (38.9, via `ComponentEvent.pid`). Verified on-kernel. `SCHED_DEADLINE` deferred.
-
-**38.10 (planned):** RT currently needs root. A file capability cannot go on the main binary — it sets `AT_SECURE`, the loader drops `LD_LIBRARY_PATH`, and the ~22 ROS libs vanish (which is why `play_launch_io_helper` exists). 38.10 adds a ROS-free `play_launch_rt_helper` holding `CAP_SYS_NICE` only, so play_launch stays unprivileged; it also fixes a per-thread defect (scheduling is per-TID, so composables currently get only their main thread).
+Turns the shared scheduling spec (`ros-launch-manifest-sched` + `check --sched`) from validate-now into apply: `--sched <file.toml>` + `--sched-apply {off,warn,strict}` sets `SCHED_FIFO`/`SCHED_RR` + priority + CPU affinity from the resolved `posix` tier — **per thread** (`/proc/<pid>/task/*` sweep; later threads inherit). Composables scheduled via `ComponentEvent.pid` + start-time identity (38.9). **Non-root** via the ROS-free `play_launch_rt_helper` holding `CAP_SYS_NICE` only (38.10) — the main binary must never carry a file capability (`AT_SECURE` would drop `LD_LIBRARY_PATH` and its ROS libs). Verified on-kernel, unprivileged: `fifo=11/11` on every node. `SCHED_DEADLINE` deferred. User guide: [docs/guide/rt-scheduling.md](../guide/rt-scheduling.md).
 
 See [phase-38-linux_rt_scheduling.md](./phase-38-linux_rt_scheduling.md).
 Design: [apply-layer](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md) · [RT helper (38.10)](../superpowers/specs/2026-07-14-rt-helper-design.md).
