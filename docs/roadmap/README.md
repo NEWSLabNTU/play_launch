@@ -112,7 +112,7 @@ Design: [docs/superpowers/specs/2026-07-15-rt-workspace-fixture-design.md](../su
 
 ### Phase 40: Contract Shipping — Provider Sidecars + User Overlay (planned)
 
-The manifest stays a separate file; its shipping changes. Provider channel: `<name>.contract.yaml` next to `<name>.launch.{xml,py,yaml}`, installed with the package. User overlay: `<overlay>/<pkg>/launch/<name>.contract.yaml` (`--contracts <dir>`). Precedence overlay > provider > legacy `--manifest-dir` (deprecated); document-level replacement in v1. Requires `ScopeOrigin.path` (additive record-format change). Embedding contracts inside launch files was investigated and rejected — see the [research note](../research/manifest-annex-in-launch-files.md).
+The manifest stays a separate file; its shipping changes. Provider channel: `<name>.contract.yaml` next to `<name>.launch.{xml,py,yaml}`, installed with the package. User overlay (general user-side source): `<overlay>/<pkg>/launch/<name>.contract.yaml` (`--contracts <dir>`) — primary use today is supplying contracts for packages that ship none (Autoware; its manifest set migrates to this layout in-phase). Precedence overlay > provider > legacy `--manifest-dir` (deprecated); document-level replacement in v1. Requires `ScopeOrigin.path` (additive record-format change). Embedding contracts inside launch files was investigated and rejected — see the [research note](../research/manifest-annex-in-launch-files.md).
 
 See [phase-40-contract_shipping.md](./phase-40-contract_shipping.md).
 Design: [docs/superpowers/specs/2026-07-15-contract-shipping-design.md](../superpowers/specs/2026-07-15-contract-shipping-design.md).

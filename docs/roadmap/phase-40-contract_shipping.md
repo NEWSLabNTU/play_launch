@@ -12,7 +12,9 @@ channels replace the single `--manifest-dir <dir>/<pkg>/<file>.yaml` lookup:
 1. **Provider sidecar** — `<name>.contract.yaml` next to
    `<name>.launch.{xml,py,yaml}`, shipped and installed *by the package*.
 2. **User overlay** — `<overlay-root>/<package>/launch/<name>.contract.yaml`
-   (`--contracts <dir>`), overriding without touching installed trees.
+   (`--contracts <dir>`) — the general user-side source. Primary use today:
+   supplying contracts for packages that ship none (Autoware); overriding a
+   shipped sidecar is the same mechanism.
 
 Precedence: overlay > provider > legacy `--manifest-dir` (deprecated).
 Document-level replacement in v1; field-level merge deliberately deferred.
@@ -34,12 +36,17 @@ comment-fenced payloads, but rejected in favor of sidecars.)
 - **40.4** Tests: unit (stem rule, precedence, missing-path fallback);
   fixture migration to provider sidecars; overlay-override integration case
   (rt_workspace, Phase 39, ships the new layout from day one).
-- **40.5** Docs: `launch-manifest.md` lookup section, RT guide file tree,
+- **40.5** **Autoware manifest migration** — move the Autoware manifest set
+  from the legacy `--manifest-dir` `<pkg>/<file>.yaml` layout to the overlay
+  layout `<overlay>/<pkg>/launch/<name>.contract.yaml`; wire the Autoware
+  fixture (justfile + gated tests) to `--contracts`. The overlay's flagship
+  use: Autoware ships no contracts, so the user overlay is their only source.
+- **40.6** Docs: `launch-manifest.md` lookup section, RT guide file tree,
   CLAUDE.md, README deprecation note.
 
 ## Order and dependencies
 
-40.1 → 40.2 → (40.3, 40.4) → 40.5. Phase 39's fixture should land either
+40.1 → 40.2 → (40.3, 40.4, 40.5) → 40.6. Phase 39's fixture should land either
 after 40.2 or ship both layouts (legacy + sidecar) temporarily — preferred:
 land 40.1–40.2 first, then Phase 39 uses only the new channels.
 

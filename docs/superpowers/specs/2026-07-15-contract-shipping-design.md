@@ -25,16 +25,21 @@ single `--manifest-dir <dir>/<pkg>/<file>.yaml` lookup:
    through colcon install / release, so a package's contracts version together
    with its launch files.
 
-2. **User overlay** — the integrator supplies or overrides contracts without
-   touching installed packages, in an overlay tree keyed by package + launch
-   path:
+2. **User overlay** — a *general* user-side contract source, in an overlay
+   tree keyed by package + launch path:
 
    ```
    <overlay-root>/<package>/launch/<name>.contract.yaml
    ```
 
-   e.g. `contracts/my_robot/launch/bringup.contract.yaml`. The overlay root is
-   given on the CLI (`--contracts <dir>`, working name).
+   e.g. `contracts/autoware_launch/launch/planning_simulator.contract.yaml`.
+   The overlay root is given on the CLI (`--contracts <dir>`, working name).
+
+   The overlay is not defined by one purpose — it is simply the user's layer
+   in the resolution order. Its **primary use today is supplying contracts
+   for packages that ship none** (virtually every third-party package,
+   Autoware included, has no `.contract.yaml`). Overriding a provider's
+   shipped contract is the same mechanism and needs nothing extra.
 
 **Precedence: overlay > provider**, at whole-document granularity (v1): if an
 overlay file exists for a scope, it *replaces* the provider sidecar for that
@@ -50,10 +55,13 @@ checker already handles between *scopes*, and would now have to handle
   authored the launch file, reviewed and released together. Today's
   `--manifest-dir` forces the *user* to maintain a parallel tree for other
   people's packages.
-- The overlay channel keeps the user in control: deployments differ (rates,
-  freshness budgets), packages can't anticipate them, and installed trees are
-  read-only. The mirror layout (`<pkg>/launch/<name>.contract.yaml`) makes the
-  correspondence to the provider file obvious.
+- The overlay channel keeps the user in control, and covers the world as it
+  is: today essentially no upstream package ships contracts, so the overlay is
+  how contracts exist at all for third-party trees (Autoware being the
+  driving example). It equally covers deployment-specific overrides (rates,
+  freshness budgets) and read-only installed trees. The mirror layout
+  (`<pkg>/launch/<name>.contract.yaml`) makes the correspondence to the
+  launch file obvious.
 
 ## Resolution (per file scope)
 
@@ -116,9 +124,15 @@ deployment has one scheduling authority, not per-package fragments.
 2. Fixtures/tests move to provider sidecars (`tests/fixtures/*/launch/*.contract.yaml`);
    the rt_workspace fixture (Phase 39) ships this layout from day one and adds
    an overlay case to its integration test.
-3. Docs: `src/ros-launch-manifest/docs/launch-manifest.md` lookup section,
+3. **Autoware manifests migrate in this phase**: the Autoware manifest set
+   (today a `--manifest-dir` tree in `<dir>/<pkg>/<file>.yaml` layout) moves to
+   the overlay layout `<overlay>/<pkg>/launch/<name>.contract.yaml` and is
+   exercised through `--contracts` by the Autoware fixture's justfile/tests.
+   This is the overlay's flagship case — Autoware packages ship no contracts,
+   so the user overlay is their only source.
+4. Docs: `src/ros-launch-manifest/docs/launch-manifest.md` lookup section,
    `docs/guide/rt-scheduling.md` file-tree, CLAUDE.md.
-4. Deprecation of `--manifest-dir` announced in README; removal in a later
+5. Deprecation of `--manifest-dir` announced in README; removal in a later
    release.
 
 ## Non-goals (v1)
