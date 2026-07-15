@@ -105,8 +105,7 @@ pub enum Command {
     /// Check manifest contracts against a launch file
     #[command(after_help = "Examples:\n  \
         play_launch check autoware_launch planning_simulator.launch.xml\n  \
-        play_launch check --contracts ~/contracts /path/to/launch.py arg:=value\n  \
-        play_launch check --manifest-dir manifests/ autoware_launch planning_simulator.launch.xml  # deprecated")]
+        play_launch check --contracts ~/contracts /path/to/launch.py arg:=value")]
     Check(CheckArgs),
 }
 
@@ -150,15 +149,9 @@ pub struct CheckArgs {
     #[arg(trailing_var_arg = true)]
     pub launch_arguments: Vec<String>,
 
-    /// Directory containing per-launch-file manifests (<pkg>/<stem>.yaml).
-    /// Deprecated/transitional (legacy channel) — prefer shipping
-    /// <stem>.contract.yaml next to the launch file, or --contracts.
-    #[arg(long, value_name = "PATH")]
-    pub manifest_dir: Option<PathBuf>,
-
     /// Overlay root for user-supplied contracts, mirroring the launch tree:
     /// <dir>/<pkg>/launch/<stem>.contract.yaml. Checked before provider
-    /// sidecars and the legacy --manifest-dir.
+    /// sidecars.
     #[arg(long, value_name = "PATH")]
     pub contracts: Option<PathBuf>,
 
@@ -183,12 +176,11 @@ pub struct CheckArgs {
 }
 
 impl CheckArgs {
-    /// Build the three-step `ContractSources` from this command's flags.
+    /// Build the two-step `ContractSources` from this command's flags.
     pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
         crate::ros::manifest_loader::ContractSources {
             overlay: self.contracts.clone(),
             provider: !self.no_provider_contracts,
-            legacy: self.manifest_dir.clone(),
         }
     }
 }
@@ -341,16 +333,9 @@ pub struct CommonOptions {
     #[arg(long, value_name = "IP:PORT", default_value = "127.0.0.1:8080")]
     pub web_addr: String,
 
-    /// Directory containing per-launch-file topic manifests for contract checking
-    /// (legacy channel, transitional). Manifests are looked up as
-    /// <manifest-dir>/<pkg>/<stem>.yaml for each scope. Prefer shipping
-    /// <stem>.contract.yaml next to the launch file, or --contracts.
-    #[arg(long, value_name = "PATH")]
-    pub manifest_dir: Option<PathBuf>,
-
     /// Overlay root for user-supplied contracts, mirroring the launch tree:
     /// <dir>/<pkg>/launch/<stem>.contract.yaml. Checked before provider
-    /// sidecars and the legacy --manifest-dir.
+    /// sidecars.
     #[arg(long, value_name = "PATH")]
     pub contracts: Option<PathBuf>,
 
@@ -360,7 +345,7 @@ pub struct CommonOptions {
     pub no_provider_contracts: bool,
 
     /// Runtime enforcement mode for manifest contracts (Phase 36.3).
-    /// Contracts come from any channel (overlay/provider/legacy); with no
+    /// Contracts come from any channel (overlay/provider); with no
     /// contracts resolved the engine has nothing to enforce. Off: no runtime
     /// checks. Warn: log violations. Strict: exit non-zero on first
     /// violation. RecordOnly: collect events without evaluating rules.
@@ -423,7 +408,6 @@ impl Default for CommonOptions {
             disable_respawn: false,
             container_mode: ContainerMode::Isolated,
             web_addr: "127.0.0.1:8080".to_string(),
-            manifest_dir: None,
             contracts: None,
             no_provider_contracts: false,
             enforce_rules: EnforceMode::Warn,
@@ -489,12 +473,11 @@ impl CommonOptions {
         Ok((ip, port))
     }
 
-    /// Build the three-step `ContractSources` from this command's flags.
+    /// Build the two-step `ContractSources` from this command's flags.
     pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
         crate::ros::manifest_loader::ContractSources {
             overlay: self.contracts.clone(),
             provider: !self.no_provider_contracts,
-            legacy: self.manifest_dir.clone(),
         }
     }
 }
