@@ -193,7 +193,7 @@ Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests 
 
 **DDS isolation**: `play_launch_cmd()` in `tests/src/fixtures.rs` assigns a unique `ROS_DOMAIN_ID` per invocation (PID + counter) so concurrent nextest processes don't cross-talk over DDS.
 
-Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading}/` — each has `just dump-rust`, `just dump-python`, `just compare-dumps`.
+Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading,rt_workspace}/` — each has `just dump-rust`, `just dump-python`, `just compare-dumps`. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; build with its own `just build`, tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`, skip when unbuilt).
 
 ## Key Recent Changes
 

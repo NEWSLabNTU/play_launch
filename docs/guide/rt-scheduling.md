@@ -20,13 +20,31 @@ launch file   ──┘     (via record.json)           + priority + CPU affinit
 
 ## Quick start
 
+A runnable copy of this example lives at `tests/fixtures/rt_workspace/` — a
+real colcon workspace (`rt_demo`: a 100 Hz sensor publisher, a FIFO-pinned
+control node, and one composable filter) with the launch file, contract, and
+`system.toml` committed:
+
 ```bash
 just build && just setcap        # one-time: grant the helper its capability
-play_launch launch my_pkg my.launch.xml --sched system.toml
-just verify-sched-rt             # prove every thread got the policy
+cd tests/fixtures/rt_workspace
+just build                       # colcon build of the rt_demo package
+just check                       # validate contract + system.toml statically
+just run                         # launch with --sched system.toml
 ```
 
-`system.toml`:
+While it runs, prove every thread of the control node got the policy
+(class `FF`, rtprio 20, cpu 0):
+
+```bash
+ps -eLo tid,cls,rtprio,psr,comm | grep control_node
+```
+
+(`just verify-sched-rt` at the repo root demonstrates the same check
+end-to-end against a generated spec.)
+
+Its `system.toml` (control tier pinned to FIFO 20 on core 0, perception
+tier at FIFO 10):
 
 ```toml
 [tiers.control]
@@ -37,9 +55,20 @@ priority    = 20
 sched_class = "SCHED_FIFO"
 core        = 0
 
+[tiers.perception]
+class = "real_time"
+
+[tiers.perception.posix]
+priority    = 10
+sched_class = "SCHED_FIFO"
+
 [[assign]]
 tier  = "control"
-scope = "/"          # everything in the launch
+nodes = ["control_node"]
+
+[[assign]]
+tier  = "perception"
+scope = "/perception"
 ```
 
 No `sudo` anywhere. Nothing runs as root.
