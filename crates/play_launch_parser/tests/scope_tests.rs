@@ -11,6 +11,7 @@ fn test_scope_table_root() {
     let id = table.push(
         Some("my_pkg".to_string()),
         "launch.xml".to_string(),
+        "/opt/ros/humble/share/my_pkg/launch/launch.xml".to_string(),
         "/".to_string(),
         HashMap::new(),
         None,
@@ -22,6 +23,10 @@ fn test_scope_table_root() {
     assert_eq!(entry.id, 0);
     assert_eq!(entry.pkg(), Some("my_pkg"));
     assert_eq!(entry.file().unwrap_or("?"), "launch.xml");
+    assert_eq!(
+        entry.path(),
+        Some("/opt/ros/humble/share/my_pkg/launch/launch.xml")
+    );
     assert_eq!(entry.ns, "/");
     assert!(entry.parent.is_none());
 }
@@ -33,6 +38,7 @@ fn test_scope_table_parent_chain() {
     let root = table.push(
         Some("autoware_launch".to_string()),
         "planning_simulator.launch.xml".to_string(),
+        "/opt/autoware/share/autoware_launch/launch/planning_simulator.launch.xml".to_string(),
         "/".to_string(),
         HashMap::new(),
         None,
@@ -41,6 +47,7 @@ fn test_scope_table_parent_chain() {
     let child1 = table.push(
         Some("tier4_sensing_launch".to_string()),
         "sensing.launch.xml".to_string(),
+        "/opt/autoware/share/tier4_sensing_launch/launch/sensing.launch.xml".to_string(),
         "/sensing".to_string(),
         HashMap::from([("vehicle_model".to_string(), "sample_vehicle".to_string())]),
         Some(root),
@@ -49,6 +56,7 @@ fn test_scope_table_parent_chain() {
     let child2 = table.push(
         Some("camera_driver".to_string()),
         "camera.launch.xml".to_string(),
+        "/opt/autoware/share/camera_driver/launch/camera.launch.xml".to_string(),
         "/sensing/camera/front".to_string(),
         HashMap::from([("camera_id".to_string(), "0".to_string())]),
         Some(child1),
@@ -77,6 +85,7 @@ fn test_scope_table_same_file_different_ns() {
     let root = table.push(
         Some("root_pkg".to_string()),
         "main.launch.xml".to_string(),
+        "/opt/ros/humble/share/root_pkg/launch/main.launch.xml".to_string(),
         "/".to_string(),
         HashMap::new(),
         None,
@@ -86,6 +95,7 @@ fn test_scope_table_same_file_different_ns() {
     let front = table.push(
         Some("camera_driver".to_string()),
         "camera.launch.xml".to_string(),
+        "/opt/ros/humble/share/camera_driver/launch/camera.launch.xml".to_string(),
         "/sensing/camera/front".to_string(),
         HashMap::from([("camera_id".to_string(), "0".to_string())]),
         Some(root),
@@ -94,6 +104,7 @@ fn test_scope_table_same_file_different_ns() {
     let rear = table.push(
         Some("camera_driver".to_string()),
         "camera.launch.xml".to_string(),
+        "/opt/ros/humble/share/camera_driver/launch/camera.launch.xml".to_string(),
         "/sensing/camera/rear".to_string(),
         HashMap::from([("camera_id".to_string(), "1".to_string())]),
         Some(root),
@@ -154,6 +165,10 @@ fn test_scope_serialization_roundtrip() {
         origin: Some(ScopeOrigin {
             pkg: Some("demo_nodes_cpp".to_string()),
             file: "talker_listener.launch.xml".to_string(),
+            path: Some(
+                "/opt/ros/humble/share/demo_nodes_cpp/launch/talker_listener.launch.xml"
+                    .to_string(),
+            ),
         }),
         ns: "/".to_string(),
         args: HashMap::new(),
@@ -248,6 +263,22 @@ fn test_scope_tracking_simple_launch() {
             .unwrap_or("?")
             .ends_with(".launch.xml"),
         "root scope file should be a launch file"
+    );
+
+    // The root scope's origin.path should be Some, absolute, and end with
+    // the launch file name (Phase 40.1: ScopeOrigin.path).
+    let root_path = record.scopes[0]
+        .path()
+        .expect("root scope origin.path should be Some");
+    assert!(
+        Path::new(root_path).is_absolute(),
+        "root scope path should be absolute, got: {}",
+        root_path
+    );
+    assert!(
+        root_path.ends_with("test_basic_node.launch.xml"),
+        "root scope path should end with the launch file name, got: {}",
+        root_path
     );
 
     // All nodes should have a scope

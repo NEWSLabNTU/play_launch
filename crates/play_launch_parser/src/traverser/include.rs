@@ -3,7 +3,7 @@ use crate::{
     actions::IncludeAction,
     error::{ParseError, Result},
     file_cache::read_file_cached,
-    record::extract_package_from_path,
+    record::{canonicalize_path, extract_package_from_path},
     substitution::resolve_substitutions,
     xml,
 };
@@ -121,10 +121,12 @@ impl LaunchTraverser {
                         .unwrap_or("unknown")
                         .to_string();
                     let py_pkg = extract_package_from_path(&resolved_path);
+                    let py_path = canonicalize_path(&resolved_path);
                     let py_ns = self.context.current_namespace();
                     let child_scope_id = self.scope_table.push(
                         py_pkg,
                         py_file_name,
+                        py_path,
                         py_ns,
                         python_args.clone(),
                         Some(self.current_scope_id),
@@ -198,10 +200,12 @@ impl LaunchTraverser {
                         .unwrap_or("unknown")
                         .to_string();
                     let yaml_pkg = extract_package_from_path(&resolved_path);
+                    let yaml_path = canonicalize_path(&resolved_path);
                     let yaml_ns = self.context.current_namespace();
                     let child_scope_id = self.scope_table.push(
                         yaml_pkg,
                         yaml_file_name,
+                        yaml_path,
                         yaml_ns,
                         self.context.configurations(),
                         Some(self.current_scope_id),
@@ -258,11 +262,13 @@ impl LaunchTraverser {
             .unwrap_or("unknown")
             .to_string();
         let include_pkg = extract_package_from_path(&resolved_path);
+        let include_path = canonicalize_path(&resolved_path);
         let include_ns = include_context.current_namespace();
         let include_args = include_context.configurations();
         let child_scope_id = self.scope_table.push(
             include_pkg,
             include_file_name,
+            include_path,
             include_ns,
             include_args,
             Some(self.current_scope_id),

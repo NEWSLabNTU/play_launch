@@ -5,6 +5,7 @@ __version__: str
 class ScopeOrigin(TypedDict, total=False):
     pkg: Optional[str]
     file: str
+    path: Optional[str]
 
 class ScopeEntry(TypedDict, total=False):
     id: int

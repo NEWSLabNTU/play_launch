@@ -112,10 +112,16 @@ impl LaunchTraverser {
                 .unwrap_or("unknown")
                 .to_string();
             let pkg = record::extract_package_from_path(path);
+            let canonical_path = record::canonicalize_path(path);
             let ns = self.context.current_namespace();
-            let root_id =
-                self.scope_table
-                    .push(pkg, file_name, ns, self.context.configurations(), None);
+            let root_id = self.scope_table.push(
+                pkg,
+                file_name,
+                canonical_path,
+                ns,
+                self.context.configurations(),
+                None,
+            );
             self.current_scope_id = root_id;
         }
 

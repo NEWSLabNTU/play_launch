@@ -9,5 +9,5 @@ pub use generator::{
 };
 pub use types::{
     ComposableNodeContainerRecord, LoadNodeRecord, NodeRecord, RecordJson, ScopeEntry, ScopeOrigin,
-    ScopeTable, extract_package_from_path,
+    ScopeTable, canonicalize_path, extract_package_from_path,
 };

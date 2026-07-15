@@ -1,7 +1,7 @@
 use super::{super::LaunchTraverser, include::validate_include_path};
 use crate::{
     error::{ParseError, Result},
-    record::extract_package_from_path,
+    record::{canonicalize_path, extract_package_from_path},
     substitution::{parse_substitutions, resolve_substitutions},
 };
 use std::{collections::HashMap, path::Path};
@@ -158,10 +158,12 @@ impl LaunchTraverser {
                                 .unwrap_or("unknown")
                                 .to_string();
                             let py_pkg = extract_package_from_path(&resolved_include_path);
+                            let py_path = canonicalize_path(&resolved_include_path);
                             let py_ns = self.context.current_namespace();
                             let child_scope_id = self.scope_table.push(
                                 py_pkg,
                                 py_file_name,
+                                py_path,
                                 py_ns,
                                 include_args.clone(),
                                 Some(self.current_scope_id),
@@ -245,10 +247,12 @@ impl LaunchTraverser {
                                 .unwrap_or("unknown")
                                 .to_string();
                             let yaml_pkg = extract_package_from_path(&resolved_include_path);
+                            let yaml_path = canonicalize_path(&resolved_include_path);
                             let yaml_ns = self.context.current_namespace();
                             let child_scope_id = self.scope_table.push(
                                 yaml_pkg,
                                 yaml_file_name,
+                                yaml_path,
                                 yaml_ns,
                                 include_args.clone(),
                                 Some(self.current_scope_id),

@@ -1,5 +1,10 @@
 use super::super::LaunchTraverser;
-use crate::{error::Result, file_cache::read_file_cached, record::extract_package_from_path, xml};
+use crate::{
+    error::Result,
+    file_cache::read_file_cached,
+    record::{canonicalize_path, extract_package_from_path},
+    xml,
+};
 use std::{collections::HashMap, path::Path};
 
 impl LaunchTraverser {
@@ -84,10 +89,12 @@ impl LaunchTraverser {
             .unwrap_or("unknown")
             .to_string();
         let include_pkg = extract_package_from_path(resolved_path);
+        let include_path = canonicalize_path(resolved_path);
         let include_ns = include_context.current_namespace();
         let child_scope_id = self.scope_table.push(
             include_pkg,
             include_file_name,
+            include_path,
             include_ns,
             include_args.clone(),
             Some(self.current_scope_id),

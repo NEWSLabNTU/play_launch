@@ -12,6 +12,33 @@ pub struct ScopeOrigin {
     pub pkg: Option<String>,
     /// Launch file name (basename, e.g. "sensing.launch.xml")
     pub file: String,
+    /// Resolved absolute path of the launch file (new in Phase 40; needed for
+    /// provider-sidecar contract lookup). None in records produced by older
+    /// parsers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+/// Resolve `path` to a canonicalized absolute path string.
+///
+/// Uses `fs::canonicalize` when possible (resolves symlinks, `.`/`..`); falls
+/// back to an absolutized (but not canonicalized) path if canonicalization
+/// fails (e.g. the file doesn't exist on disk, as in some test fixtures).
+/// Never panics.
+pub fn canonicalize_path(path: &Path) -> String {
+    match std::fs::canonicalize(path) {
+        Ok(canonical) => canonical.to_string_lossy().into_owned(),
+        Err(_) => {
+            let absolute = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(path))
+                    .unwrap_or_else(|_| path.to_path_buf())
+            };
+            absolute.to_string_lossy().into_owned()
+        }
+    }
 }
 
 /// A scope in the launch tree.
@@ -48,6 +75,13 @@ impl ScopeEntry {
     pub fn file(&self) -> Option<&str> {
         self.origin.as_ref().map(|o| o.file.as_str())
     }
+
+    /// Canonicalized absolute path of the launch file (if file scope with a
+    /// known path — always populated by current parsers, may be `None` when
+    /// reading older records).
+    pub fn path(&self) -> Option<&str> {
+        self.origin.as_ref().and_then(|o| o.path.as_deref())
+    }
 }
 
 /// Table of all scopes encountered during parsing.
@@ -66,10 +100,15 @@ impl ScopeTable {
     }
 
     /// Push a file scope, returning its ID.
+    ///
+    /// `path` should be the canonicalized absolute path of the launch file
+    /// (see [`canonicalize_path`]).
+    #[allow(clippy::too_many_arguments)]
     pub fn push(
         &mut self,
         pkg: Option<String>,
         file: String,
+        path: String,
         ns: String,
         args: HashMap<String, String>,
         parent: Option<usize>,
@@ -77,7 +116,11 @@ impl ScopeTable {
         let id = self.entries.len();
         self.entries.push(ScopeEntry {
             id,
-            origin: Some(ScopeOrigin { pkg, file }),
+            origin: Some(ScopeOrigin {
+                pkg,
+                file,
+                path: Some(path),
+            }),
             ns,
             args,
             parent,
