@@ -251,6 +251,16 @@ pub struct CheckArgs {
     /// no-op note is printed otherwise (not an error).
     #[arg(long)]
     pub explain: bool,
+
+    /// Export the DECLARED causal graph (nodes, topics, pub/sub edges,
+    /// node/scope paths, cycle catalogue) to `<path>` instead of — in
+    /// addition to — the normal validation output. Format is picked by
+    /// extension: `.json` (default, for tooling) or `.dot` (Graphviz, for
+    /// human inspection via `dot -Tsvg`). Extension-less paths are written
+    /// as JSON. This is an export, not a validation step — existing rules
+    /// and exit codes are unaffected (Phase 42.1).
+    #[arg(long, value_name = "PATH")]
+    pub export_graph: Option<PathBuf>,
 }
 
 impl CheckArgs {
