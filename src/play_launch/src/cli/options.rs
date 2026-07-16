@@ -271,11 +271,16 @@ impl CheckArgs {
 /// Arguments for `play_launch resolve`
 #[derive(Args)]
 pub struct ResolveArgs {
-    /// Package name or path to launch file
-    pub package_or_path: String,
+    /// Package name or path to launch file (omit when --record is given)
+    pub package_or_path: Option<String>,
 
     /// Launch file name (if package_or_path is a package name)
     pub launch_file: Option<String>,
+
+    /// Reuse an existing record.json instead of re-parsing the launch file
+    /// (Phase 43.1). The record file is hashed into meta.inputs.
+    #[arg(long, value_name = "PATH", conflicts_with = "package_or_path")]
+    pub record: Option<PathBuf>,
 
     /// Launch arguments in KEY:=VALUE format
     #[arg(trailing_var_arg = true)]
@@ -386,6 +391,12 @@ pub struct ReplayArgs {
     /// Input record file to replay
     #[arg(long, default_value = "record.json")]
     pub input_file: PathBuf,
+
+    /// SystemModel emitted by `play_launch resolve` (Phase 43). The record
+    /// must be one of the model's hashed inputs — a mismatched pair refuses
+    /// to run (the checked artifact must be the thing that runs).
+    #[arg(long, value_name = "PATH")]
+    pub model: Option<PathBuf>,
 
     #[command(flatten)]
     pub common: CommonOptions,
