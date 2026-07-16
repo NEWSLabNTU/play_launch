@@ -13,18 +13,17 @@
 //! `sched_apply`.
 #![allow(dead_code)]
 
-use std::collections::HashMap;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
-use eyre::{Result, WrapErr};
-use ros_launch_manifest_sched::{DEFAULT_TIER, parse_system_sched, resolve};
+use eyre::Result;
+use ros_launch_manifest_sched::DEFAULT_TIER;
 
-use crate::execution::sched_apply::{AppliedTier, SchedApplyMode, SchedPolicy};
-use crate::ros::launch_dump::LaunchDump;
-use crate::ros::sched_loader::sched_nodes_from_dump;
-
-/// The `posix` target key — Linux RT placement sub-table.
-const TARGET: &str = "posix";
+use crate::{
+    execution::sched_apply::{AppliedTier, SchedApplyMode, SchedPolicy},
+    ros::{
+        launch_dump::LaunchDump, manifest_loader::ManifestIndex, sched_loader::derive_sched_plan,
+    },
+};
 
 /// Per-FQN scheduling plan, resolved once at startup and consulted by actors
 /// as processes come up.
@@ -37,18 +36,27 @@ pub struct SchedPlan {
 }
 
 impl SchedPlan {
-    /// Read + parse the scheduling TOML at `sched_path`, resolve it for
-    /// `posix` against `dump`'s nodes, and invert tier membership into a
-    /// per-FQN lookup.
-    pub fn build(dump: &LaunchDump, sched_path: &Path, mode: SchedApplyMode) -> Result<SchedPlan> {
-        let text = std::fs::read_to_string(sched_path)
-            .wrap_err_with(|| format!("failed to read {}", sched_path.display()))?;
-        let sched =
-            parse_system_sched(&text).map_err(|e| eyre::eyre!("scheduling spec error: {e}"))?;
-
-        let nodes = sched_nodes_from_dump(dump);
-        let table = resolve(&sched.tiers, &sched.assign, &nodes, TARGET)
-            .map_err(|e| eyre::eyre!("scheduling resolve error: {e}"))?;
+    /// Parse the scheduling platform file at `sched_path` (v2 `.yaml` or
+    /// legacy `.toml`, dispatched by extension), run the full
+    /// derive→override→validate pipeline
+    /// (`ros::sched_loader::derive_sched_plan`) for `target`, and invert the
+    /// resulting tier membership into a per-FQN lookup.
+    ///
+    /// `index` is the resolved contract index (if any manifests were
+    /// loaded) — passed straight through to the derive stage, which uses it
+    /// to extract per-node timing facts (rate/deadline/criticality) for
+    /// contract-aware mappers. `None`/legacy-TOML callers get bare
+    /// `MapperNode`s, reproducing today's `manual`-only behavior exactly.
+    pub fn build(
+        dump: &LaunchDump,
+        index: Option<&ManifestIndex>,
+        sched_path: &Path,
+        target: &str,
+        mode: SchedApplyMode,
+    ) -> Result<SchedPlan> {
+        let derived = derive_sched_plan(dump, index, sched_path, target, mode)?;
+        let table = derived.plan;
+        let mut warnings = derived.warnings;
 
         // Number of online CPUs, computed once. Used to bound-check `core`
         // below. Falls back to 1 if unavailable, which conservatively
@@ -59,7 +67,6 @@ impl SchedPlan {
             .unwrap_or(1);
 
         let mut by_fqn = HashMap::new();
-        let mut warnings = Vec::new();
 
         for tier in &table.tiers {
             // The default tier's members have no meaningful scheduling assignment.
@@ -103,10 +110,7 @@ impl SchedPlan {
             if let Some(c) = tier.core
                 && c as usize >= ncpu
             {
-                eyre::bail!(
-                    "tier '{}': core {c} >= available CPUs ({ncpu})",
-                    tier.name
-                );
+                eyre::bail!("tier '{}': core {c} >= available CPUs ({ncpu})", tier.name);
             }
 
             let applied = AppliedTier {
@@ -211,7 +215,8 @@ tier = "control"
 nodes = ["/control/ndt_localizer", "/control/my_node"]
 "#;
         with_temp_toml(toml, |path| {
-            let plan = SchedPlan::build(&dump, path, SchedApplyMode::Warn).expect("build plan");
+            let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Warn)
+                .expect("build plan");
 
             let applied = plan
                 .for_fqn("/control/ndt_localizer")
@@ -242,7 +247,8 @@ nodes = ["/control/ndt_localizer", "/control/my_node"]
         // No [[assign]] rules at all: everything lands in the synthesized default tier.
         let toml = "";
         with_temp_toml(toml, |path| {
-            let plan = SchedPlan::build(&dump, path, SchedApplyMode::Off).expect("build plan");
+            let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Off)
+                .expect("build plan");
             assert!(plan.for_fqn("/control/ndt_localizer").is_none());
             assert!(plan.for_fqn("/control/my_node").is_none());
         });
@@ -267,7 +273,7 @@ nodes = ["/control/ndt_localizer"]
             // Strict/Warn/Off all validate the same: a malformed spec is a
             // spec bug, not a runtime condition, so `build` errors uniformly
             // regardless of mode. Using `Warn` here is representative.
-            let err = SchedPlan::build(&dump, path, SchedApplyMode::Warn)
+            let err = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Warn)
                 .expect_err("priority 0 should be rejected at build time");
             let msg = err.to_string();
             assert!(
@@ -296,7 +302,7 @@ tier = "control"
 nodes = ["/control/ndt_localizer"]
 "#;
         with_temp_toml(toml, |path| {
-            let _ = SchedPlan::build(&dump, path, SchedApplyMode::Warn)
+            let _ = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Warn)
                 .expect_err("i64 priority 2^32+20 must be rejected, not truncated to 20");
         });
     }
@@ -317,7 +323,7 @@ tier = "control"
 nodes = ["/control/ndt_localizer"]
 "#;
         with_temp_toml(toml, |path| {
-            let err = SchedPlan::build(&dump, path, SchedApplyMode::Strict)
+            let err = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Strict)
                 .expect_err("priority 100 should be rejected at build time");
             let msg = err.to_string();
             assert!(
@@ -347,7 +353,7 @@ nodes = ["/control/ndt_localizer"]
             // Off mode also errors — validation is unconditional on mode,
             // since a bad core is a spec bug regardless of whether apply is
             // even attempted.
-            let err = SchedPlan::build(&dump, path, SchedApplyMode::Off)
+            let err = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Off)
                 .expect_err("core 999 should be rejected at build time even in Off mode");
             let msg = err.to_string();
             assert!(
@@ -374,7 +380,7 @@ tier = "control"
 nodes = ["/control/ndt_localizer"]
 "#;
         with_temp_toml(toml, |path| {
-            let plan = SchedPlan::build(&dump, path, SchedApplyMode::Strict)
+            let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Strict)
                 .expect("valid tier (prio 20, core 0) should build fine");
             let applied = plan
                 .for_fqn("/control/ndt_localizer")
@@ -400,7 +406,8 @@ tier = "periodic"
 nodes = ["/control/ndt_localizer"]
 "#;
         with_temp_toml(toml, |path| {
-            let plan = SchedPlan::build(&dump, path, SchedApplyMode::Warn).expect("build plan");
+            let plan = SchedPlan::build(&dump, None, path, "posix", SchedApplyMode::Warn)
+                .expect("build plan");
             assert!(
                 plan.warnings
                     .iter()
