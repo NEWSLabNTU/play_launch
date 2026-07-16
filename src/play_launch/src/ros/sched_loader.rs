@@ -3,7 +3,11 @@
 //! Linux is "validate now, apply later": we resolve for the `posix` target and
 //! report, but do not (yet) apply `sched_setscheduler`/affinity to processes.
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use eyre::Result;
 use ros_launch_manifest_sched::{
@@ -11,11 +15,13 @@ use ros_launch_manifest_sched::{
     band_violations, deadline_priority_contradictions, parse_platform_file,
     rate_priority_contradictions,
 };
+use tracing::{debug, info};
 
 use crate::{
     execution::sched_apply::SchedApplyMode,
     ros::{
-        launch_dump::LaunchDump, manifest_loader::ManifestIndex,
+        launch_dump::LaunchDump,
+        manifest_loader::{ManifestIndex, contract_stem},
         sched_derive::mapper_input_from_dump,
     },
 };
@@ -559,6 +565,155 @@ pub fn check_sched(
     Ok(())
 }
 
+/// Which channel supplied a resolved platform file (Phase 41.3 design §3.1;
+/// mirrors [`crate::ros::manifest_loader::ContractChannel`], plus the
+/// explicit-CLI-path channel that contracts don't have — `--contracts` has
+/// no equivalent "always wins" per-scope override, but `--sched <path>`
+/// does).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformFileChannel {
+    /// `--sched <path>` given directly — bypasses discovery entirely.
+    Explicit,
+    /// `<overlay-root>/<pkg>/launch/<stem>.system.<target>.yaml`.
+    Overlay,
+    /// `<launch-file-dir>/<stem>.system.<target>.yaml`, shipped next to the
+    /// launch file.
+    Provider,
+}
+
+impl fmt::Display for PlatformFileChannel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            PlatformFileChannel::Explicit => "explicit",
+            PlatformFileChannel::Overlay => "overlay",
+            PlatformFileChannel::Provider => "provider",
+        })
+    }
+}
+
+/// A platform file resolved through the shipping channels, plus which
+/// channel supplied it (kept for `check`'s provenance line and, per the
+/// W3→W4 handoff, `--explain`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedPlatformFile {
+    pub path: PathBuf,
+    pub channel: PlatformFileChannel,
+}
+
+/// Resolve the overlay path for a platform file targeting `target`, rooted
+/// at the ROOT launch scope (platform files are per-launch, not
+/// per-include-scope — unlike contracts, which resolve per file scope).
+///
+/// Layout: `<overlay_root>/<pkg>/launch/<stem>.system.<target>.yaml`. Falls
+/// back to the `_` package-dir convention when the root scope has no pkg
+/// (mirrors `manifest_loader::resolve_overlay_path`).
+fn resolve_platform_overlay_path(
+    root_scope: &crate::ros::launch_dump::ScopeEntry,
+    overlay_root: &Path,
+    target: &str,
+) -> Option<PathBuf> {
+    let file = root_scope.file()?;
+    let stem = contract_stem(file);
+    let pkg_dir = root_scope.pkg().unwrap_or("_");
+    Some(
+        overlay_root
+            .join(pkg_dir)
+            .join("launch")
+            .join(format!("{stem}.system.{target}.yaml")),
+    )
+}
+
+/// Resolve the provider-sidecar path for a platform file targeting `target`,
+/// rooted at the ROOT launch scope. Layout:
+/// `<launch-file-dir>/<stem>.system.<target>.yaml`, where the directory
+/// comes from the root scope origin's canonicalized launch-file path.
+/// Returns `None` when the root scope has no recorded path (older
+/// `record.json`, or an origin the parser couldn't resolve to an absolute
+/// path) — provider lookup is simply unavailable.
+fn resolve_platform_provider_path(
+    root_scope: &crate::ros::launch_dump::ScopeEntry,
+    target: &str,
+) -> Option<PathBuf> {
+    let origin = root_scope.origin.as_ref()?;
+    let launch_path = origin.path.as_deref()?;
+    let dir = Path::new(launch_path).parent()?;
+    let stem = contract_stem(&origin.file);
+    Some(dir.join(format!("{stem}.system.{target}.yaml")))
+}
+
+/// Find the ROOT launch scope (the top-level file scope with no parent) —
+/// platform-file resolution is per-launch, not per-include-scope, so it
+/// always looks here regardless of which scope any given node lives in.
+fn root_scope(dump: &LaunchDump) -> Option<&crate::ros::launch_dump::ScopeEntry> {
+    dump.scopes
+        .iter()
+        .find(|s| s.parent.is_none() && s.is_file_scope())
+        .or_else(|| dump.scopes.first())
+}
+
+/// Resolve a scheduling platform file through the shipping channels (Phase
+/// 41.3 design §3.1): explicit `--sched <path>` > user overlay
+/// (`<overlay_root>/<pkg>/launch/<stem>.system.<target>.yaml`) > provider
+/// sidecar shipped next to the launch file
+/// (`<launch-file-dir>/<stem>.system.<target>.yaml`). Only `.yaml` v2 files
+/// ship via these channels — legacy `.toml` bridge files are explicit-path
+/// only (never discovered).
+///
+/// `overlay_root` should already be the result of
+/// [`crate::ros::manifest_loader::discover_overlay_root`] — this function
+/// does not itself consult `$PLAY_LAUNCH_CONTRACTS`/XDG/`/etc` so contract
+/// and platform-file resolution always agree on which root is in play for a
+/// given invocation.
+///
+/// Returns `None` when nothing resolves in any channel — the caller's
+/// existing "no `--sched`" behavior (scheduling disabled) applies unchanged.
+pub fn resolve_platform_file(
+    dump: &LaunchDump,
+    explicit: Option<&Path>,
+    overlay_root: Option<&Path>,
+    target: &str,
+) -> Option<ResolvedPlatformFile> {
+    if let Some(p) = explicit {
+        debug!("platform file: explicit --sched {}", p.display());
+        return Some(ResolvedPlatformFile {
+            path: p.to_path_buf(),
+            channel: PlatformFileChannel::Explicit,
+        });
+    }
+
+    let Some(scope) = root_scope(dump) else {
+        debug!("platform file: no root scope in launch dump — cannot resolve");
+        return None;
+    };
+
+    if let Some(root) = overlay_root
+        && let Some(path) = resolve_platform_overlay_path(scope, root, target)
+        && path.exists()
+    {
+        info!("Scheduling platform file [overlay]: {}", path.display());
+        return Some(ResolvedPlatformFile {
+            path,
+            channel: PlatformFileChannel::Overlay,
+        });
+    }
+
+    if let Some(path) = resolve_platform_provider_path(scope, target)
+        && path.exists()
+    {
+        info!("Scheduling platform file [provider]: {}", path.display());
+        return Some(ResolvedPlatformFile {
+            path,
+            channel: PlatformFileChannel::Provider,
+        });
+    }
+
+    debug!(
+        "platform file: no channel resolved a file for target `{target}` \
+         (overlay_root={overlay_root:?}) — scheduling disabled"
+    );
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1014,5 +1169,151 @@ nodes = ["fast_node"]
                 .expect("default tier");
             assert_eq!(default_tier.members, vec!["/slow_node".to_string()]);
         });
+    }
+
+    // ── Phase 41.3: platform-file shipping channels ──
+
+    /// Builds a dump whose only scope is the ROOT launch scope (no parent,
+    /// `origin: Some(...)`) — platform-file resolution only ever looks here.
+    fn dump_with_root_scope(pkg: Option<&str>, file: &str, path: Option<&Path>) -> LaunchDump {
+        let mut origin = serde_json::json!({"file": file});
+        if let Some(p) = pkg {
+            origin["pkg"] = serde_json::json!(p);
+        }
+        if let Some(p) = path {
+            origin["path"] = serde_json::json!(p.to_string_lossy());
+        }
+        let json = serde_json::json!({
+            "node": [],
+            "load_node": [],
+            "container": [],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [
+                {"id": 0, "ns": "/", "parent": null, "origin": origin}
+            ]
+        });
+        serde_json::from_value(json).expect("valid LaunchDump")
+    }
+
+    #[test]
+    fn resolve_platform_file_explicit_bypasses_discovery() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", None);
+
+        // Even with an overlay dir present, an explicit path always wins and
+        // is returned even though it doesn't exist on disk.
+        let overlay_root = tmp.path().join("overlay");
+        std::fs::create_dir_all(&overlay_root).unwrap();
+        let explicit = tmp.path().join("explicit.system.posix.yaml");
+
+        let resolved = resolve_platform_file(&dump, Some(&explicit), Some(&overlay_root), "posix")
+            .expect("explicit path always resolves");
+        assert_eq!(resolved.channel, PlatformFileChannel::Explicit);
+        assert_eq!(resolved.path, explicit);
+    }
+
+    #[test]
+    fn resolve_platform_file_overlay_beats_provider() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let launch_dir = root.join("install/mypkg/share/mypkg/launch");
+        std::fs::create_dir_all(&launch_dir).unwrap();
+        let launch_file = launch_dir.join("bringup.launch.xml");
+        std::fs::write(&launch_file, "<launch/>").unwrap();
+        std::fs::write(
+            launch_dir.join("bringup.system.posix.yaml"),
+            "target: posix\nmapper: manual\nprovider_marker: true\n",
+        )
+        .unwrap();
+
+        let overlay_root = root.join("overlay");
+        std::fs::create_dir_all(overlay_root.join("mypkg/launch")).unwrap();
+        std::fs::write(
+            overlay_root.join("mypkg/launch/bringup.system.posix.yaml"),
+            "target: posix\nmapper: manual\noverlay_marker: true\n",
+        )
+        .unwrap();
+
+        let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", Some(&launch_file));
+
+        let resolved = resolve_platform_file(&dump, None, Some(&overlay_root), "posix")
+            .expect("overlay file present");
+        assert_eq!(resolved.channel, PlatformFileChannel::Overlay);
+        assert_eq!(
+            resolved.path,
+            overlay_root.join("mypkg/launch/bringup.system.posix.yaml")
+        );
+    }
+
+    #[test]
+    fn resolve_platform_file_provider_sidecar_only_works() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let launch_dir = root.join("install/mypkg/share/mypkg/launch");
+        std::fs::create_dir_all(&launch_dir).unwrap();
+        let launch_file = launch_dir.join("bringup.launch.xml");
+        std::fs::write(&launch_file, "<launch/>").unwrap();
+        std::fs::write(
+            launch_dir.join("bringup.system.posix.yaml"),
+            "target: posix\nmapper: manual\n",
+        )
+        .unwrap();
+
+        let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", Some(&launch_file));
+
+        // No overlay root at all — provider sidecar is the only channel.
+        let resolved =
+            resolve_platform_file(&dump, None, None, "posix").expect("provider sidecar present");
+        assert_eq!(resolved.channel, PlatformFileChannel::Provider);
+        assert_eq!(resolved.path, launch_dir.join("bringup.system.posix.yaml"));
+    }
+
+    #[test]
+    fn resolve_platform_file_wrong_target_is_ignored() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let launch_dir = root.join("install/mypkg/share/mypkg/launch");
+        std::fs::create_dir_all(&launch_dir).unwrap();
+        let launch_file = launch_dir.join("bringup.launch.xml");
+        std::fs::write(&launch_file, "<launch/>").unwrap();
+        // Only a posix file is shipped — a zephyr request must not match it.
+        std::fs::write(
+            launch_dir.join("bringup.system.posix.yaml"),
+            "target: posix\nmapper: manual\n",
+        )
+        .unwrap();
+
+        let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", Some(&launch_file));
+
+        assert!(resolve_platform_file(&dump, None, None, "zephyr").is_none());
+    }
+
+    #[test]
+    fn resolve_platform_file_none_when_nothing_resolves() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let launch_dir = tmp.path().join("install/mypkg/share/mypkg/launch");
+        std::fs::create_dir_all(&launch_dir).unwrap();
+        let launch_file = launch_dir.join("bringup.launch.xml");
+        std::fs::write(&launch_file, "<launch/>").unwrap();
+        // No .system.<target>.yaml file anywhere (overlay or provider).
+
+        let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", Some(&launch_file));
+        let overlay_root = tmp.path().join("overlay");
+
+        assert!(resolve_platform_file(&dump, None, Some(&overlay_root), "posix").is_none());
+        assert!(resolve_platform_file(&dump, None, None, "posix").is_none());
+    }
+
+    #[test]
+    fn resolve_platform_file_none_when_root_scope_has_no_origin_path() {
+        // Root scope with an origin but no recorded `path` (old record.json,
+        // or unresolved origin) — provider lookup can't determine a
+        // directory; overlay still works if configured, but here it isn't.
+        let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", None);
+        assert!(resolve_platform_file(&dump, None, None, "posix").is_none());
     }
 }
