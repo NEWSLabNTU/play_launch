@@ -136,6 +136,76 @@ impl SchedPlan {
     pub fn for_fqn(&self, fqn: &str) -> Option<&AppliedTier> {
         self.by_fqn.get(fqn)
     }
+
+    /// Phase 43.3 — build the per-FQN plan from a checked SystemModel's
+    /// execution layer instead of re-deriving from the platform file:
+    /// `bindings` (FQN → tier name) + `tiers[name].<target>` placement.
+    /// Mapper derivation, overrides, and band validation already happened
+    /// at resolve time; this only re-checks platform applicability and the
+    /// deterministic spec invariants (RT priority range, core bounds) —
+    /// those depend on THIS host, not on the resolver's.
+    pub fn from_model(
+        model: &ros_launch_manifest_model::SystemModel,
+        target: &str,
+        mode: SchedApplyMode,
+    ) -> Result<SchedPlan> {
+        let mut warnings = Vec::new();
+        let ncpu = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let mut by_fqn = HashMap::new();
+
+        for (fqn, tier_name) in &model.execution.bindings {
+            let Some(tier) = model.execution.tiers.get(tier_name) else {
+                eyre::bail!(
+                    "SystemModel: binding '{fqn}' references undeclared tier '{tier_name}'"
+                );
+            };
+            let Some(spec) = tier.platform(target) else {
+                eyre::bail!(
+                    "SystemModel: tier '{tier_name}' has no `{target}` placement sub-table — \
+                     the model was resolved for a different target; re-run \
+                     `play_launch resolve --target {target}`"
+                );
+            };
+            if tier.class.as_deref() == Some("time_triggered") {
+                let msg = format!(
+                    "tier `{tier_name}`: SCHED_DEADLINE not applied in v1 (time_triggered)"
+                );
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+            }
+            let policy = SchedPolicy::from_sched_class(spec.sched_class.as_deref());
+            if matches!(policy, SchedPolicy::Fifo | SchedPolicy::Rr)
+                && !(1..=99).contains(&spec.priority)
+            {
+                eyre::bail!(
+                    "tier '{tier_name}': RT priority {} out of range 1..=99",
+                    spec.priority
+                );
+            }
+            if let Some(c) = spec.core
+                && c as usize >= ncpu
+            {
+                eyre::bail!("tier '{tier_name}': core {c} >= available CPUs ({ncpu})");
+            }
+            by_fqn.insert(
+                fqn.clone(),
+                AppliedTier {
+                    policy,
+                    priority: spec.priority as i32,
+                    core: spec.core,
+                    tier_name: tier_name.clone(),
+                },
+            );
+        }
+
+        Ok(SchedPlan {
+            by_fqn,
+            mode,
+            warnings,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -416,5 +486,54 @@ nodes = ["/control/ndt_localizer"]
                 plan.warnings
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+
+    fn model_with_binding(target_table: bool) -> ros_launch_manifest_model::SystemModel {
+        let mut m = ros_launch_manifest_model::SystemModel::default();
+        let mut tier = ros_launch_manifest_sched::TierDef {
+            class: Some("real_time".to_string()),
+            ..Default::default()
+        };
+        if target_table {
+            tier.posix = Some(ros_launch_manifest_sched::TierPlatformSpec {
+                priority: 40,
+                stack_bytes: None,
+                core: Some(0),
+                sched_class: Some("SCHED_FIFO".to_string()),
+                preempt_threshold: None,
+                deadline_us: None,
+            });
+        }
+        m.execution.tiers.insert("ctrl".to_string(), tier);
+        m.execution
+            .bindings
+            .insert("/a/control_node".to_string(), "ctrl".to_string());
+        m
+    }
+
+    #[test]
+    fn from_model_binds_applied_tier() {
+        let plan = SchedPlan::from_model(&model_with_binding(true), "posix", SchedApplyMode::Warn)
+            .expect("plan");
+        let t = plan.for_fqn("/a/control_node").expect("bound");
+        assert_eq!(t.priority, 40);
+        assert_eq!(t.core, Some(0));
+        assert_eq!(t.tier_name, "ctrl");
+        assert!(matches!(t.policy, SchedPolicy::Fifo));
+    }
+
+    #[test]
+    fn from_model_missing_target_table_fails_loud() {
+        let err = SchedPlan::from_model(&model_with_binding(false), "posix", SchedApplyMode::Warn)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("no `posix` placement"),
+            "got: {err}"
+        );
     }
 }
