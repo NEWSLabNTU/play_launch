@@ -40,6 +40,14 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
     let sources = args.contract_sources();
     let index = manifest_loader::load_manifests(&dump, &sources)?;
 
+    // Export the declared causal graph (Phase 42.1). This is an export, not
+    // a validation step — it runs regardless of rule filters/errors below
+    // and doesn't affect the exit code.
+    if let Some(export_path) = &args.export_graph {
+        crate::ros::causal_graph::export_to_file(&index, export_path)?;
+        eprintln!("Exported causal graph to {}", export_path.display());
+    }
+
     // Optional: validate the shared scheduling spec (Linux = validate-now).
     // Loaded after manifests so contract-aware mappers (rate_monotonic,
     // deadline_monotonic) can extract timing facts from `index`.

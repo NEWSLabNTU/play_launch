@@ -804,3 +804,117 @@ fn replay_model_binding_gate_refuses_stale_record() {
         "actionable mismatch message expected, got: {stderr}"
     );
 }
+
+// ---- `check --export-graph` (Phase 42.1) ----
+
+/// `play_launch check --export-graph <path>.json rt_demo bringup.launch.xml`
+/// (provider-sidecar contract, no `--sched`) must exit 0 and write a JSON
+/// export with the 3 nodes / 3 topics / 2 node-level paths declared in
+/// `bringup.contract.yaml` (no scope-level path, no cycles — a straight
+/// sensor -> filter/control pipeline).
+#[test]
+fn check_export_graph_json_matches_contract() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let export_path = tmp.path().join("graph.json");
+
+    let output = fixtures::play_launch_cmd(&env)
+        .args([
+            "check",
+            "rt_demo",
+            "bringup.launch.xml",
+            "--export-graph",
+            export_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run play_launch check --export-graph");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        output.status.success(),
+        "check --export-graph exited nonzero:\n{combined}"
+    );
+    assert!(
+        combined.contains("Exported causal graph to"),
+        "expected export confirmation line in check output:\n{combined}"
+    );
+
+    let data = fs::read_to_string(&export_path).expect("failed to read export JSON");
+    let graph: serde_json::Value =
+        serde_json::from_str(&data).expect("export JSON should parse");
+
+    assert_eq!(graph["version"], 1);
+    assert_eq!(
+        array_len(&graph, "nodes"),
+        3,
+        "expected 3 nodes (sensor_node, filter_component, control_node): {graph}"
+    );
+    assert_eq!(
+        array_len(&graph, "topics"),
+        3,
+        "expected 3 topics (points_raw, points_filtered, cmd): {graph}"
+    );
+    assert_eq!(
+        array_len(&graph, "node_paths"),
+        2,
+        "expected 2 node-level paths (filter_component.main, control_node.main): {graph}"
+    );
+    assert_eq!(
+        array_len(&graph, "scope_paths"),
+        0,
+        "bringup.contract.yaml declares no scope-level paths: {graph}"
+    );
+    assert_eq!(
+        array_len(&graph, "cycles"),
+        0,
+        "sensor -> filter/control is a straight pipeline, no cycles: {graph}"
+    );
+
+    let control_node = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["fqn"] == "/control_node")
+        .expect("control_node present in export");
+    assert_eq!(control_node["criticality"], "high");
+}
+
+/// Extension dispatch: `.dot` writes a Graphviz digraph, not JSON.
+#[test]
+fn check_export_graph_dot_extension_dispatch() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let export_path = tmp.path().join("graph.dot");
+
+    let output = fixtures::play_launch_cmd(&env)
+        .args([
+            "check",
+            "rt_demo",
+            "bringup.launch.xml",
+            "--export-graph",
+            export_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run play_launch check --export-graph (.dot)");
+
+    assert!(
+        output.status.success(),
+        "check --export-graph (.dot) exited nonzero:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let dot = fs::read_to_string(&export_path).expect("failed to read export DOT");
+    assert!(dot.starts_with("digraph causal {"));
+    assert!(dot.contains("/control_node"));
+}
