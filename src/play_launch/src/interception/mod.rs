@@ -75,6 +75,14 @@ pub enum EventKind {
     /// guaranteed delivery. See `docs/roadmap/phase-29-rcl_interception.md`
     /// ("Drop counters") for the full design + caveats.
     RingOverflowReport = 15,
+    /// Frontier-side publish notification, emitted by `FrontierPlugin`
+    /// only when its per-topic stamp frontier advances. Distinct from
+    /// `Publish` (`StatsPlugin`'s unconditional per-message event) so
+    /// this consumer doesn't count both plugins' events toward
+    /// `stats.pub_count` — see
+    /// `play_launch_interception::event::EventKind::FrontierPublish`
+    /// for the full rationale (fixes the stamped-topic 2x rate bug).
+    FrontierPublish = 16,
 }
 
 /// Interception event (40 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -483,7 +491,12 @@ fn process_event(
     stats: &mut HashMap<u64, TopicStats>,
 ) {
     match event.kind {
-        EventKind::Publish => {
+        EventKind::FrontierPublish => {
+            // Emitted only by FrontierPlugin, only when its frontier
+            // advances. Feeds frontier state exclusively — never
+            // `stats.pub_count` — so it can't double-count alongside
+            // StatsPlugin's unconditional `Publish` event below (the
+            // stamped-topic 2x rate bug fixed in Phase 42.x).
             if config.frontier {
                 let frontier = frontiers.entry(event.topic_hash).or_default();
                 // Max-update (same logic as in the .so)
@@ -495,6 +508,11 @@ fn process_event(
                 }
                 frontier.event_count += 1;
             }
+        }
+        EventKind::Publish => {
+            // Emitted unconditionally by StatsPlugin, once per message
+            // (stamped or not). Feeds pub_count/rate stats exclusively —
+            // frontier state comes only from `FrontierPublish` above.
             if config.stats {
                 let ts = stats.entry(event.topic_hash).or_default();
                 ts.pub_count += 1;
@@ -695,5 +713,149 @@ fn insert_meta(value: &mut serde_json::Value, total_dropped: u64) {
             "_events_dropped_total_best_effort".to_string(),
             serde_json::Value::from(total_dropped),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::config::InterceptionSettings;
+
+    /// Build a synthetic event the same way FrontierPlugin's shared-memory
+    /// transport does for an advancing stamp: `FrontierPublish`, not `Publish`.
+    fn frontier_publish_event(topic_hash: u64, sec: i32, nanosec: u32, mono: u64) -> InterceptionEvent {
+        InterceptionEvent {
+            kind: EventKind::FrontierPublish,
+            _pad: [0; 3],
+            topic_hash,
+            stamp_sec: sec,
+            stamp_nanosec: nanosec,
+            handle: 0x100,
+            monotonic_ns: mono,
+        }
+    }
+
+    /// Build a synthetic event the same way StatsPlugin does for every
+    /// message (stamped or not): plain `Publish`.
+    fn stats_publish_event(topic_hash: u64, sec: i32, nanosec: u32, mono: u64) -> InterceptionEvent {
+        InterceptionEvent {
+            kind: EventKind::Publish,
+            _pad: [0; 3],
+            topic_hash,
+            stamp_sec: sec,
+            stamp_nanosec: nanosec,
+            handle: 0x100,
+            monotonic_ns: mono,
+        }
+    }
+
+    fn stats_take_event(topic_hash: u64, sec: i32, nanosec: u32, mono: u64) -> InterceptionEvent {
+        InterceptionEvent {
+            kind: EventKind::Take,
+            _pad: [0; 3],
+            topic_hash,
+            stamp_sec: sec,
+            stamp_nanosec: nanosec,
+            handle: 0x200,
+            monotonic_ns: mono,
+        }
+    }
+
+    /// Regression test for the stamped-topic 2x rate bug: a single
+    /// stamped message previously produced *two* ring events counted as
+    /// two publishes — one plain `Publish` from `StatsPlugin` (emitted
+    /// unconditionally per message) and one from `FrontierPlugin` (which,
+    /// before this fix, also emitted `Publish` whenever its frontier
+    /// advanced — which is true for essentially every real message).
+    /// `process_event` counted every `Publish` it saw, doubling
+    /// `stats.pub_count`. With `FrontierPlugin` now emitting the distinct
+    /// `FrontierPublish` kind, one stamped message → one `FrontierPublish`
+    /// (frontier-only) + one `Publish` (stats-only) → `pub_count == 1`.
+    #[test]
+    fn stamped_message_through_both_plugins_counts_once() {
+        let config = InterceptionSettings::default();
+        let mut frontiers: HashMap<u64, FrontierState> = HashMap::new();
+        let mut stats: HashMap<u64, TopicStats> = HashMap::new();
+
+        let topic_hash = 0xABCD_EF01;
+
+        // Simulate one real publish call dispatched to both plugins, as
+        // `plugin_dispatch::dispatch_publish` does: FrontierPlugin's
+        // event first (order shouldn't matter), then StatsPlugin's.
+        let frontier_ev = frontier_publish_event(topic_hash, 10, 500, 1_000);
+        let stats_ev = stats_publish_event(topic_hash, 10, 500, 1_000);
+
+        process_event(&frontier_ev, &config, &mut frontiers, &mut stats);
+        process_event(&stats_ev, &config, &mut frontiers, &mut stats);
+
+        let ts = stats.get(&topic_hash).expect("stats entry present");
+        assert_eq!(ts.pub_count, 1, "one message must count as exactly one publish");
+
+        let frontier = frontiers.get(&topic_hash).expect("frontier entry present");
+        assert_eq!(frontier.event_count, 1, "frontier advance must be counted exactly once");
+        assert_eq!(frontier.stamp_sec, 10);
+        assert_eq!(frontier.stamp_nanosec, 500);
+    }
+
+    /// Same double-count regression, but for takes: `FrontierPlugin`'s
+    /// shared-memory transport no longer emits anything for `on_take`
+    /// (see `plugins/frontier.rs`), so only `StatsPlugin`'s `Take` event
+    /// reaches the consumer for a given message.
+    #[test]
+    fn stamped_take_through_both_plugins_counts_once() {
+        let config = InterceptionSettings::default();
+        let mut frontiers: HashMap<u64, FrontierState> = HashMap::new();
+        let mut stats: HashMap<u64, TopicStats> = HashMap::new();
+
+        let topic_hash = 0x1234_5678;
+
+        // FrontierPlugin emits nothing for take (shm mode) — only
+        // StatsPlugin's Take event is observed by the consumer.
+        let stats_ev = stats_take_event(topic_hash, 5, 100, 2_000);
+        process_event(&stats_ev, &config, &mut frontiers, &mut stats);
+
+        let ts = stats.get(&topic_hash).expect("stats entry present");
+        assert_eq!(ts.take_count, 1, "one message must count as exactly one take");
+    }
+
+    /// Multiple stamped messages in sequence should each count once,
+    /// exercising the full advance-then-plateau frontier pattern.
+    #[test]
+    fn multiple_stamped_publishes_count_linearly() {
+        let config = InterceptionSettings::default();
+        let mut frontiers: HashMap<u64, FrontierState> = HashMap::new();
+        let mut stats: HashMap<u64, TopicStats> = HashMap::new();
+        let topic_hash = 0x9999;
+
+        for i in 0..5u32 {
+            let frontier_ev = frontier_publish_event(topic_hash, 0, i, 1_000 + i as u64);
+            let stats_ev = stats_publish_event(topic_hash, 0, i, 1_000 + i as u64);
+            process_event(&frontier_ev, &config, &mut frontiers, &mut stats);
+            process_event(&stats_ev, &config, &mut frontiers, &mut stats);
+        }
+
+        assert_eq!(stats.get(&topic_hash).unwrap().pub_count, 5);
+        assert_eq!(frontiers.get(&topic_hash).unwrap().event_count, 5);
+    }
+
+    /// `config.frontier = false` must fully disable frontier aggregation
+    /// (including for `FrontierPublish`), while stats still accumulate.
+    #[test]
+    fn frontier_disabled_skips_frontier_publish() {
+        let config = InterceptionSettings {
+            frontier: false,
+            ..InterceptionSettings::default()
+        };
+        let mut frontiers: HashMap<u64, FrontierState> = HashMap::new();
+        let mut stats: HashMap<u64, TopicStats> = HashMap::new();
+        let topic_hash = 0x4242;
+
+        let frontier_ev = frontier_publish_event(topic_hash, 1, 0, 1);
+        let stats_ev = stats_publish_event(topic_hash, 1, 0, 1);
+        process_event(&frontier_ev, &config, &mut frontiers, &mut stats);
+        process_event(&stats_ev, &config, &mut frontiers, &mut stats);
+
+        assert!(frontiers.is_empty(), "frontier tracking disabled by config");
+        assert_eq!(stats.get(&topic_hash).unwrap().pub_count, 1);
     }
 }

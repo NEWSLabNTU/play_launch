@@ -112,11 +112,17 @@ impl FrontierPlugin {
             .or_insert_with(|| Box::leak(Box::new(AtomicU64::new(0))))
     }
 
+    /// Emit a frontier-advance notification. Uses `EventKind::FrontierPublish`
+    /// (not `EventKind::Publish`) on the shared-memory transport so the
+    /// consumer doesn't double-count this alongside `StatsPlugin`'s
+    /// unconditional per-message `Publish` event — see `EventKind::FrontierPublish`
+    /// for the full rationale. The socket fallback (standalone debugging,
+    /// no StatsPlugin/consumer involved) keeps the original wire format.
     fn send_publish(&self, topic_hash: u64, stamp: &Stamp, handle: usize) {
         match &self.transport {
             Transport::SharedMemory(prod) => {
                 let event = InterceptionEvent {
-                    kind: EventKind::Publish,
+                    kind: EventKind::FrontierPublish,
                     _pad: [0; 3],
                     topic_hash,
                     stamp_sec: stamp.sec,
@@ -144,35 +150,28 @@ impl FrontierPlugin {
         }
     }
 
-    fn send_take(&self, topic_hash: u64, stamp: &Stamp, handle: usize) {
-        match &self.transport {
-            Transport::SharedMemory(prod) => {
-                let event = InterceptionEvent {
-                    kind: EventKind::Take,
-                    _pad: [0; 3],
-                    topic_hash,
-                    stamp_sec: stamp.sec,
-                    stamp_nanosec: stamp.nanosec,
-                    handle: handle as u64,
-                    monotonic_ns: monotonic_ns(),
-                };
-                crate::drop_counter::push_or_count(&mut prod.lock(), &event);
-            }
-            Transport::Socket(sock) => {
-                let event = FrontierEvent {
-                    topic_hash,
-                    stamp_sec: stamp.sec,
-                    stamp_nanosec: stamp.nanosec,
-                    event_type: EVENT_TAKE,
-                };
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(
-                        &event as *const FrontierEvent as *const u8,
-                        size_of::<FrontierEvent>(),
-                    )
-                };
-                let _ = sock.send(bytes);
-            }
+    /// Socket-only notification for take events (standalone debugging).
+    /// The shared-memory path intentionally emits nothing: frontier
+    /// tracking is publish-side only (see `on_take` below) — `StatsPlugin`
+    /// already emits one `Take` event per message for count/rate
+    /// aggregation, and a second event from this plugin would double
+    /// `stats.take_count` for no benefit (the consumer's frontier state
+    /// isn't updated from `Take` events at all).
+    fn send_take_socket(&self, topic_hash: u64, stamp: &Stamp) {
+        if let Transport::Socket(sock) = &self.transport {
+            let event = FrontierEvent {
+                topic_hash,
+                stamp_sec: stamp.sec,
+                stamp_nanosec: stamp.nanosec,
+                event_type: EVENT_TAKE,
+            };
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    &event as *const FrontierEvent as *const u8,
+                    size_of::<FrontierEvent>(),
+                )
+            };
+            let _ = sock.send(bytes);
         }
     }
 }
@@ -239,9 +238,11 @@ impl InterceptionPlugin for FrontierPlugin {
         }
     }
 
-    fn on_take(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>) {
+    fn on_take(&self, _handle: usize, topic_hash: u64, stamp: Option<Stamp>) {
         let Some(stamp) = stamp else { return };
-        self.send_take(topic_hash, &stamp, handle);
+        // Frontier tracking is publish-side only (see module docs);
+        // shared-memory mode emits nothing here — see `send_take_socket`.
+        self.send_take_socket(topic_hash, &stamp);
     }
 }
 
@@ -288,7 +289,7 @@ mod tests {
         // First publish — frontier advances, event should be written.
         plugin.on_publish(0x100, hash, Some(Stamp { sec: 1, nanosec: 0 }));
         let ev = consumer.pop().expect("should receive publish event");
-        assert_eq!(ev.kind, EventKind::Publish);
+        assert_eq!(ev.kind, EventKind::FrontierPublish);
         assert_eq!(ev.topic_hash, hash);
         assert_eq!(ev.stamp_sec, 1);
         assert_eq!(ev.stamp_nanosec, 0);
@@ -335,7 +336,13 @@ mod tests {
     }
 
     #[test]
-    fn shm_take_always_sends_event() {
+    fn shm_take_never_sends_event() {
+        // Phase 42.x fix: FrontierPlugin's shared-memory transport no
+        // longer emits anything on take — frontier tracking is
+        // publish-side only, and StatsPlugin already emits one `Take`
+        // event per message. A second event here would double
+        // `stats.take_count` for no benefit (see `EventKind::FrontierPublish`
+        // docs for the parallel publish-side rationale).
         let (shm_fd, event_fd) = spsc_shm::create::<InterceptionEvent>(64).unwrap();
         let producer = unsafe { spsc_shm::Producer::from_raw_fd(shm_fd) }.unwrap();
         let mut consumer = unsafe { spsc_shm::Consumer::<InterceptionEvent>::from_raw_fd(shm_fd) }.unwrap();
@@ -344,15 +351,10 @@ mod tests {
         let hash = 0xBEEF;
 
         plugin.on_take(0x200, hash, Some(Stamp { sec: 5, nanosec: 100 }));
-        let ev = consumer.pop().expect("take should always send");
-        assert_eq!(ev.kind, EventKind::Take);
-        assert_eq!(ev.topic_hash, hash);
-        assert_eq!(ev.stamp_sec, 5);
-        assert_eq!(ev.stamp_nanosec, 100);
-
-        // Second take with same stamp — still sends.
-        plugin.on_take(0x200, hash, Some(Stamp { sec: 5, nanosec: 100 }));
-        assert!(consumer.pop().is_some(), "take should send even with same stamp");
+        assert!(
+            consumer.pop().is_none(),
+            "shared-memory take should not emit any event"
+        );
 
         unsafe {
             libc::close(shm_fd);

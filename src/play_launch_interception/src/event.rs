@@ -81,6 +81,18 @@ pub enum EventKind {
     /// itself be dropped if the ring stays full, so consumers must
     /// treat the reported count as a lower bound, not ground truth.
     RingOverflowReport = 15,
+    /// Frontier-side publish notification, emitted by `FrontierPlugin`
+    /// only when its per-topic stamp frontier advances (see
+    /// `plugins/frontier.rs::send_publish`). Distinct from `Publish`
+    /// (`StatsPlugin`'s unconditional per-message event) so the consumer
+    /// doesn't count both plugins' events toward `stats.pub_count` —
+    /// each real message previously produced *two* `Publish` events
+    /// (one from each plugin) whenever it carried a stamp, doubling
+    /// measured rates for every stamped message type. `FrontierPublish`
+    /// only feeds frontier-state aggregation (max-stamp + advance
+    /// count); `Publish` only feeds `stats.pub_count`. Same field
+    /// layout as `Publish` (stamp_sec/stamp_nanosec/handle).
+    FrontierPublish = 16,
 }
 
 /// A single interception event (40 bytes, `#[repr(C)]`).

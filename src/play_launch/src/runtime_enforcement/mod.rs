@@ -483,6 +483,16 @@ impl RuleEngine {
                 // frontier/stats consumer (`interception::mod.rs`),
                 // not by the RuleEngine.
             }
+            EventKind::FrontierPublish => {
+                // Phase 42.x: FrontierPlugin's advance-only publish
+                // notification. Not used here — rate-hierarchy and
+                // max-latency tracking above are already driven by the
+                // unconditional `Publish` event (one per message, from
+                // StatsPlugin). Before this event kind existed, both
+                // plugins emitted plain `Publish` for every stamped
+                // message, so this match arm's absence would have meant
+                // the RuleEngine silently double-counted here too.
+            }
         }
     }
 
