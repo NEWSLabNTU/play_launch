@@ -1,6 +1,6 @@
 # Phase 41: RT Config v2 — Derived Scheduling
 
-**Status:** 📋 Planned
+**Status:** 🔄 41.1–41.5 done, 41.6 gated on nano-ros migration
 **Design of record:** [docs/superpowers/specs/2026-07-16-rt-config-v2-design.md](../superpowers/specs/2026-07-16-rt-config-v2-design.md)
 **Builds on:** Phase 38 (apply layer, unchanged), Phase 40 (contract channels, reused for platform files).
 
@@ -18,23 +18,27 @@ until nano-ros migrates, then the old path is retired.
 
 ## Work items
 
-- **41.1** Sched crate: new YAML platform-file schema (`target`, `mapper`,
+- **41.1** ✅ Sched crate: new YAML platform-file schema (`target`, `mapper`,
   `resources`, `overrides`), `SchedMapper` trait + registry, built-ins
   (`manual`, `rate_monotonic`, `deadline_monotonic`), `MapperInput`
   extraction types, legacy-TOML bridge (`.toml` → `manual` mapper; extension
   selects parser).
-- **41.2** play_launch integration: contract timing facts → `MapperInput`;
+- **41.2** ✅ play_launch integration: contract timing facts → `MapperInput`;
   pipeline derive → override → validate; conflict semantics (band clamp
   warn/strict, rate-vs-priority contradiction check rule); `--target` flag.
-- **41.3** Shipping channels for platform files: provider sidecar + user
+- **41.3** ✅ Shipping channels for platform files: provider sidecar + user
   overlay resolution per target; overlay-root discovery order
   (`--contracts` > `$PLAY_LAUNCH_CONTRACTS` > XDG > `/etc/play_launch/contracts`).
-- **41.4** Tooling: `check --sched --explain` provenance view;
+- **41.4** ✅ Tooling: `check --sched --explain` provenance view;
   `play_launch contract eject` subcommand.
-- **41.5** Migration: rt_workspace fixture gains `bringup.system.posix.yaml`
-  sidecar + Zephyr stub + overlay example (keeps `system.toml` as living
-  bridge test); docs guide rewrite; autoware-contract repo untouched
-  (contracts unchanged).
+- **41.5** ✅ Migration: rt_workspace fixture gains `bringup.system.posix.yaml`
+  provider sidecar (mapper=rate_monotonic + one override) + a Zephyr stub
+  proving per-target coexistence (parses; derive is posix-only today) + a
+  user-overlay platform file tweaking the provider's band/pin (keeps
+  `system.toml` as the living bridge test); `docs/guide/rt-scheduling.md`
+  rewritten around the v2 model (quick start, mapper/platform-file/channels/
+  `--explain`/`eject` sections, legacy bridge marked deprecated-but-supported);
+  autoware-contract repo untouched (contracts unchanged).
 - **41.6** Retirement (LAST, gated on nano-ros migration): drop legacy
   `system.toml` schema, remove bridge, final doc sweep.
 
