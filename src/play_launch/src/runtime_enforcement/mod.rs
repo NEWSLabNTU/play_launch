@@ -187,10 +187,8 @@ impl TopicNameAssembly {
             return None;
         }
         let mut out = Vec::with_capacity(self.total as usize * 24);
-        for p in &self.parts {
-            if let Some(bytes) = p {
-                out.extend_from_slice(bytes);
-            }
+        for bytes in self.parts.iter().flatten() {
+            out.extend_from_slice(bytes);
         }
         String::from_utf8(out).ok()
     }
@@ -268,7 +266,10 @@ impl RuleEngine {
             return true;
         }
         matches!(
-            self.lifecycle_state.get(node_fqn).copied().unwrap_or_default(),
+            self.lifecycle_state
+                .get(node_fqn)
+                .copied()
+                .unwrap_or_default(),
             LifecycleState::Active
         )
     }
@@ -308,7 +309,9 @@ impl RuleEngine {
                         // the downstream stamp is still recent.
                         entry.last_pub_for_stamp.clear();
                     }
-                    entry.last_pub_for_stamp.insert(stamp_key, event.monotonic_ns);
+                    entry
+                        .last_pub_for_stamp
+                        .insert(stamp_key, event.monotonic_ns);
                 }
                 // Rate-hierarchy check fires periodically — every 1024
                 // publishes is enough to dampen evaluation overhead.
@@ -338,23 +341,22 @@ impl RuleEngine {
                 // moment, so we may overstate age by the listener's
                 // poll lag (default 10ms). Acceptable for warn-only
                 // monitoring on budgets typically ≥100ms.
-                if event.stamp_sec != 0 || event.stamp_nanosec != 0 {
-                    if let Ok(now) = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                    {
-                        let stamp_ns = (event.stamp_sec as i128) * 1_000_000_000
-                            + (event.stamp_nanosec as i128);
-                        let now_ns = now.as_nanos() as i128;
-                        let age_ns = now_ns - stamp_ns;
-                        if age_ns > 0 {
-                            drop_borrow(&mut self.state);
-                            self.check_max_age(
-                                event.topic_hash,
-                                event.handle,
-                                (age_ns / 1_000_000) as f64,
-                                event.monotonic_ns,
-                            );
-                        }
+                if (event.stamp_sec != 0 || event.stamp_nanosec != 0)
+                    && let Ok(now) =
+                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                {
+                    let stamp_ns =
+                        (event.stamp_sec as i128) * 1_000_000_000 + (event.stamp_nanosec as i128);
+                    let now_ns = now.as_nanos() as i128;
+                    let age_ns = now_ns - stamp_ns;
+                    if age_ns > 0 {
+                        drop_borrow(&mut self.state);
+                        self.check_max_age(
+                            event.topic_hash,
+                            event.handle,
+                            (age_ns / 1_000_000) as f64,
+                            event.monotonic_ns,
+                        );
                     }
                 }
 
@@ -422,7 +424,9 @@ impl RuleEngine {
                 }
                 entry.add(idx, &buf[..n]);
                 if let Some(type_id) = entry.assembled() {
-                    self.discovered_types.entry(event.topic_hash).or_insert(type_id);
+                    self.discovered_types
+                        .entry(event.topic_hash)
+                        .or_insert(type_id);
                     self.type_name_chunks.remove(&event.topic_hash);
                 }
             }
@@ -456,7 +460,9 @@ impl RuleEngine {
                 let runtime_type_hash =
                     ((event.stamp_sec as u32 as u64) << 32) | (event.stamp_nanosec as u64);
                 if runtime_type_hash != 0 {
-                    entry.endpoint_type_hash.insert(event.handle, runtime_type_hash);
+                    entry
+                        .endpoint_type_hash
+                        .insert(event.handle, runtime_type_hash);
                     drop_borrow(&mut self.state);
                     self.check_consistency(event.topic_hash, runtime_type_hash, event.monotonic_ns);
                 }
@@ -560,8 +566,7 @@ impl RuleEngine {
         let Some(st) = self.state.get(&topic_hash) else {
             return;
         };
-        if st.first_pub_monotonic_ns == 0 || st.last_pub_monotonic_ns <= st.first_pub_monotonic_ns
-        {
+        if st.first_pub_monotonic_ns == 0 || st.last_pub_monotonic_ns <= st.first_pub_monotonic_ns {
             return;
         }
         let window_ns = st.last_pub_monotonic_ns - st.first_pub_monotonic_ns;
@@ -619,13 +624,7 @@ impl RuleEngine {
     /// `EndpointProps.max_age_ms` on the consuming subscriber endpoint.
     /// Lifecycle-gated: skips if the consumer node isn't currently
     /// enforceable.
-    fn check_max_age(
-        &mut self,
-        topic_hash: u64,
-        sub_handle: u64,
-        age_ms: f64,
-        ts: u64,
-    ) {
+    fn check_max_age(&mut self, topic_hash: u64, sub_handle: u64, age_ms: f64, ts: u64) {
         let _ = sub_handle; // handle map not yet wired to manifest sub refs
         let Some(fqn) = self.topic_hash_to_fqn.get(&topic_hash).cloned() else {
             return;
@@ -1304,10 +1303,8 @@ mod tests {
 
         // Empty manifest index — every topic is "unknown".
         let index = ManifestIndex::default();
-        let tmp = std::env::temp_dir().join(format!(
-            "play_launch_graph_dev_test_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("play_launch_graph_dev_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Warn, &tmp);
 
@@ -1323,7 +1320,10 @@ mod tests {
         re.observe(&event);
         re.flush();
 
-        assert!(re.violation_count >= 1, "expected graph-deviation violation");
+        assert!(
+            re.violation_count >= 1,
+            "expected graph-deviation violation"
+        );
         let contents = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
         assert!(contents.contains("graph-deviation-runtime"), "{contents}");
 
@@ -1339,10 +1339,14 @@ mod tests {
         // Build a manifest where `talker` is lifecycle=true and publishes
         // to /chatter at declared min_rate_hz=30.
         let mut nodes = std::collections::BTreeMap::new();
-        let mut talker = NodeDecl::default();
-        talker.lifecycle = Some(true);
-        let mut pub_props = ros_launch_manifest_types::EndpointProps::default();
-        pub_props.min_rate_hz = Some(30.0);
+        let mut talker = NodeDecl {
+            lifecycle: Some(true),
+            ..Default::default()
+        };
+        let pub_props = ros_launch_manifest_types::EndpointProps {
+            min_rate_hz: Some(30.0),
+            ..Default::default()
+        };
         talker.publishers.insert("chatter".to_string(), pub_props);
         nodes.insert("talker".to_string(), talker);
 
@@ -1380,10 +1384,8 @@ mod tests {
             },
         );
 
-        let tmp = std::env::temp_dir().join(format!(
-            "play_launch_lifecycle_test_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("play_launch_lifecycle_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Warn, &tmp);
 
@@ -1488,8 +1490,10 @@ mod tests {
         // Build manifest: subscriber declares max_age_ms=10.
         let mut nodes = std::collections::BTreeMap::new();
         let mut sub_node = NodeDecl::default();
-        let mut sub_props = ros_launch_manifest_types::EndpointProps::default();
-        sub_props.max_age_ms = Some(10.0);
+        let sub_props = ros_launch_manifest_types::EndpointProps {
+            max_age_ms: Some(10.0),
+            ..Default::default()
+        };
         sub_node.subscribers.insert("in".to_string(), sub_props);
         nodes.insert("listener".to_string(), sub_node);
 
@@ -1527,10 +1531,8 @@ mod tests {
             },
         );
 
-        let tmp = std::env::temp_dir().join(format!(
-            "play_launch_max_age_test_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("play_launch_max_age_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Warn, &tmp);
 
@@ -1564,10 +1566,8 @@ mod tests {
         use crate::interception::{EventKind, InterceptionEvent};
 
         let index = ManifestIndex::default();
-        let tmp = std::env::temp_dir().join(format!(
-            "play_launch_strict_test_{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("play_launch_strict_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Strict, &tmp);
         let handle = re.strict_violated_handle();

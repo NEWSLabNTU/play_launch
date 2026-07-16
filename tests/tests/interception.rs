@@ -55,8 +55,7 @@ fn wait_for_file(path: &Path, timeout: Duration) -> bool {
 /// graceful shutdown. Returns the play_log directory.
 fn run_with_config(config_yaml: &str, run_duration: Duration) -> tempfile::TempDir {
     let env = fixtures::install_env();
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/pure_nodes.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
 
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
 
@@ -134,7 +133,7 @@ interception:
 
     // Should be an object with at least one topic
     assert!(
-        stats.as_object().map_or(false, |m| !m.is_empty()),
+        stats.as_object().is_some_and(|m| !m.is_empty()),
         "stats_summary.json should have at least one topic entry, got: {}",
         stats_content
     );

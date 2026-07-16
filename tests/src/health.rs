@@ -45,15 +45,10 @@ impl HealthReport {
     /// - `output_path`: path to the captured stdout file (play_launch writes
     ///   tracing output to stdout)
     /// - `expected_procs`: expected number of processes (nodes + containers)
-    pub fn analyze(
-        play_log: &Path,
-        output_path: &Path,
-        expected_procs: usize,
-    ) -> Self {
+    pub fn analyze(play_log: &Path, output_path: &Path, expected_procs: usize) -> Self {
         let processes_actual = fixtures::count_cmdline_files(play_log);
 
-        let raw_content = std::fs::read_to_string(output_path)
-            .unwrap_or_default();
+        let raw_content = std::fs::read_to_string(output_path).unwrap_or_default();
         let content = strip_ansi_escapes(&raw_content);
 
         let mut node_exits = Vec::new();
@@ -66,41 +61,42 @@ impl HealthReport {
         for line in content.lines() {
             // Match: ERROR ... [node_name] Exited without code
             // Match: ERROR ... [node_name] Exited with code N
-            if line.contains("ERROR") && line.contains("Exited") {
-                if let Some(exit) = parse_node_exit(line) {
-                    if seen_exits.insert(exit.name.clone()) {
-                        node_exits.push(exit);
-                    }
-                }
+            if line.contains("ERROR")
+                && line.contains("Exited")
+                && let Some(exit) = parse_node_exit(line)
+                && seen_exits.insert(exit.name.clone())
+            {
+                node_exits.push(exit);
             }
 
             // Match: WARN ... container_name: LoadNode FAILED for component_name: error='...'
-            if line.contains("LoadNode FAILED") {
-                if let Some(failure) = parse_load_node_failure(line) {
-                    let key = format!("{}/{}", failure.container, failure.component);
-                    if seen_failures.insert(key) {
-                        load_node_failures.push(failure);
-                    }
+            if line.contains("LoadNode FAILED")
+                && let Some(failure) = parse_load_node_failure(line)
+            {
+                let key = format!("{}/{}", failure.container, failure.component);
+                if seen_failures.insert(key) {
+                    load_node_failures.push(failure);
                 }
             }
 
             // Match: WARN ... container_name: ComponentEvent LOAD_FAILED for 'component': error
-            if line.contains("ComponentEvent LOAD_FAILED") {
-                if let Some(failure) = parse_component_event_load_failed(line) {
-                    let key = format!("{}/{}", failure.container, failure.component);
-                    if seen_failures.insert(key) {
-                        load_node_failures.push(failure);
-                    }
+            if line.contains("ComponentEvent LOAD_FAILED")
+                && let Some(failure) = parse_component_event_load_failed(line)
+            {
+                let key = format!("{}/{}", failure.container, failure.component);
+                if seen_failures.insert(key) {
+                    load_node_failures.push(failure);
                 }
             }
 
             // Match: ERROR ... container_name: Composable node 'component' crashed: detail
-            if line.contains("crashed:") && line.contains("Composable node") {
-                if let Some(crash) = parse_composable_crash(line) {
-                    let key = format!("{}/{}", crash.container, crash.component);
-                    if seen_crashes.insert(key) {
-                        composable_crashes.push(crash);
-                    }
+            if line.contains("crashed:")
+                && line.contains("Composable node")
+                && let Some(crash) = parse_composable_crash(line)
+            {
+                let key = format!("{}/{}", crash.container, crash.component);
+                if seen_crashes.insert(key) {
+                    composable_crashes.push(crash);
                 }
             }
         }
@@ -257,7 +253,9 @@ fn parse_composable_crash(line: &str) -> Option<ComposableNodeCrash> {
     // Detail: everything after "crashed: "
     let crashed_marker = "crashed: ";
     let crashed_pos = after_marker.find(crashed_marker)?;
-    let detail = after_marker[crashed_pos + crashed_marker.len()..].trim().to_string();
+    let detail = after_marker[crashed_pos + crashed_marker.len()..]
+        .trim()
+        .to_string();
 
     Some(ComposableNodeCrash {
         container,
@@ -337,11 +335,7 @@ impl fmt::Display for HealthReport {
                 let err_path = self.play_log.join(format!("node/{}/err", exit.name));
                 let stderr_tail = tail_lines(&err_path, 10);
                 if stderr_tail != "(file not found)" && !stderr_tail.is_empty() {
-                    writeln!(
-                        f,
-                        "    Stderr ({}, last 10 lines):",
-                        err_path.display()
-                    )?;
+                    writeln!(f, "    Stderr ({}, last 10 lines):", err_path.display())?;
                     for line in stderr_tail.lines() {
                         writeln!(f, "      {}", line)?;
                     }
@@ -358,11 +352,7 @@ impl fmt::Display for HealthReport {
             )?;
             for failure in &self.load_node_failures {
                 writeln!(f)?;
-                writeln!(
-                    f,
-                    "  {} / {}:",
-                    failure.container, failure.component
-                )?;
+                writeln!(f, "  {} / {}:", failure.container, failure.component)?;
                 if !failure.error.is_empty() {
                     writeln!(f, "    {}", failure.error)?;
                 }

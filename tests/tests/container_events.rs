@@ -82,9 +82,7 @@ fn test_dump_isolated_has_args() {
 
     // Verify the container's cmd contains --isolated
     let container = &record["container"][0];
-    let cmd = container["cmd"]
-        .as_array()
-        .expect("cmd should be an array");
+    let cmd = container["cmd"].as_array().expect("cmd should be an array");
     let has_isolated = cmd.iter().any(|v| v.as_str() == Some("--isolated"));
     assert!(
         has_isolated,
@@ -167,7 +165,11 @@ fn wait_for_pattern(
 /// Find the PID of a container process by matching its __node:= argument,
 /// restricted to the given session ID to avoid cross-contamination between
 /// concurrent tests (each test's ManagedProcess calls setsid()).
-fn find_container_pid(node_name: &str, session_id: u32, timeout: std::time::Duration) -> Option<u32> {
+fn find_container_pid(
+    node_name: &str,
+    session_id: u32,
+    timeout: std::time::Duration,
+) -> Option<u32> {
     let pattern = format!("__node:={node_name}");
     let sid = session_id.to_string();
     let start = std::time::Instant::now();
@@ -203,23 +205,17 @@ fn find_child_pids(parent_pid: u32) -> Vec<u32> {
         .output();
 
     match output {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .filter_map(|line| line.trim().parse::<u32>().ok())
-                .collect()
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| line.trim().parse::<u32>().ok())
+            .collect(),
         _ => Vec::new(),
     }
 }
 
 /// Wait until the given parent has at least `min_count` child processes,
 /// or until `timeout` elapses.
-fn wait_for_children(
-    parent_pid: u32,
-    min_count: usize,
-    timeout: std::time::Duration,
-) -> Vec<u32> {
+fn wait_for_children(parent_pid: u32, min_count: usize, timeout: std::time::Duration) -> Vec<u32> {
     let start = std::time::Instant::now();
     let poll = std::time::Duration::from_secs(1);
 
@@ -245,10 +241,8 @@ fn test_crash_detection() {
     let work_dir = work_tmp.path();
     let output_path = work_dir.join("stdout.log");
     let stderr_path = work_dir.join("stderr.log");
-    let output_file =
-        std::fs::File::create(&output_path).expect("failed to create output file");
-    let stderr_file =
-        std::fs::File::create(&stderr_path).expect("failed to create stderr file");
+    let output_file = std::fs::File::create(&output_path).expect("failed to create output file");
+    let stderr_file = std::fs::File::create(&stderr_path).expect("failed to create stderr file");
 
     let mut cmd = fixtures::play_launch_cmd(&env);
     cmd.current_dir(work_dir);
@@ -282,14 +276,17 @@ fn test_crash_detection() {
 
     // Find container PID via session-scoped pgrep (avoids cross-contamination
     // between concurrent tests that use the same container name)
-    let container_pid = find_container_pid("event_container", session_id, std::time::Duration::from_secs(10))
-        .expect("Failed to find container process 'event_container' via pgrep");
+    let container_pid = find_container_pid(
+        "event_container",
+        session_id,
+        std::time::Duration::from_secs(10),
+    )
+    .expect("Failed to find container process 'event_container' via pgrep");
 
     eprintln!("Container PID: {container_pid}");
 
     // Find fork+exec child processes
-    let children =
-        wait_for_children(container_pid, 1, std::time::Duration::from_secs(10));
+    let children = wait_for_children(container_pid, 1, std::time::Duration::from_secs(10));
     assert!(
         !children.is_empty(),
         "No child processes found for container {container_pid} — \
@@ -355,10 +352,10 @@ fn wait_for_container_log(
                 for entry in entries.flatten() {
                     for filename in ["err", "out"] {
                         let log_file = entry.path().join(filename);
-                        if let Ok(content) = std::fs::read_to_string(&log_file) {
-                            if content.contains(pattern) {
-                                return Some(content);
-                            }
+                        if let Ok(content) = std::fs::read_to_string(&log_file)
+                            && content.contains(pattern)
+                        {
+                            return Some(content);
                         }
                     }
                 }
@@ -382,10 +379,8 @@ fn test_isolated_data_delivery() {
     let work_dir = work_tmp.path();
     let output_path = work_dir.join("stdout.log");
     let stderr_path = work_dir.join("stderr.log");
-    let output_file =
-        std::fs::File::create(&output_path).expect("failed to create output file");
-    let stderr_file =
-        std::fs::File::create(&stderr_path).expect("failed to create stderr file");
+    let output_file = std::fs::File::create(&output_path).expect("failed to create output file");
+    let stderr_file = std::fs::File::create(&stderr_path).expect("failed to create stderr file");
 
     let mut cmd = fixtures::play_launch_cmd(&env);
     cmd.current_dir(work_dir);
@@ -409,10 +404,7 @@ fn test_isolated_data_delivery() {
         2,
         Duration::from_secs(30),
     );
-    assert!(
-        loaded >= 2,
-        "Expected 2 LOADED events, found {loaded}"
-    );
+    assert!(loaded >= 2, "Expected 2 LOADED events, found {loaded}");
 
     // Wait for data delivery: Talker publishes every 1s, Listener logs "I heard:"
     let play_log = work_dir.join("play_log/latest");
@@ -428,11 +420,7 @@ fn test_isolated_data_delivery() {
                     for filename in ["err", "out"] {
                         let log_file = entry.path().join(filename);
                         if let Ok(content) = std::fs::read_to_string(&log_file) {
-                            eprintln!(
-                                "--- {} ({} bytes) ---",
-                                log_file.display(),
-                                content.len()
-                            );
+                            eprintln!("--- {} ({} bytes) ---", log_file.display(), content.len());
                             let snippet_start = content.len().saturating_sub(2000);
                             eprintln!("{}", &content[snippet_start..]);
                         }
@@ -476,10 +464,8 @@ fn test_isolated_external_subscriber() {
     let work_dir = work_tmp.path();
     let output_path = work_dir.join("stdout.log");
     let stderr_path = work_dir.join("stderr.log");
-    let output_file =
-        std::fs::File::create(&output_path).expect("failed to create output file");
-    let stderr_file =
-        std::fs::File::create(&stderr_path).expect("failed to create stderr file");
+    let output_file = std::fs::File::create(&output_path).expect("failed to create output file");
+    let stderr_file = std::fs::File::create(&stderr_path).expect("failed to create stderr file");
 
     let mut cmd = fixtures::play_launch_cmd(&env);
     cmd.current_dir(work_dir);
@@ -504,10 +490,7 @@ fn test_isolated_external_subscriber() {
         2,
         Duration::from_secs(30),
     );
-    assert!(
-        loaded >= 2,
-        "Expected 2 LOADED events, found {loaded}"
-    );
+    assert!(loaded >= 2, "Expected 2 LOADED events, found {loaded}");
 
     // Give DDS a moment to complete discovery
     std::thread::sleep(Duration::from_secs(2));
@@ -524,9 +507,7 @@ fn test_isolated_external_subscriber() {
         echo_cmd.env("FASTRTPS_DEFAULT_PROFILES_FILE", &fastdds_profile);
     }
     echo_cmd.arg("-c");
-    echo_cmd.arg(
-        "timeout 15 ros2 topic echo /chatter std_msgs/msg/String --once 2>/dev/null",
-    );
+    echo_cmd.arg("timeout 15 ros2 topic echo /chatter std_msgs/msg/String --once 2>/dev/null");
 
     let echo_output = echo_cmd.output().expect("failed to run ros2 topic echo");
     let echo_stdout = String::from_utf8_lossy(&echo_output.stdout);
@@ -535,7 +516,10 @@ fn test_isolated_external_subscriber() {
     if !echo_stdout.contains("Hello World") {
         eprintln!("--- ros2 topic echo stdout ---\n{echo_stdout}");
         eprintln!("--- ros2 topic echo stderr ---\n{echo_stderr}");
-        eprintln!("--- ros2 topic echo exit code: {:?} ---", echo_output.status);
+        eprintln!(
+            "--- ros2 topic echo exit code: {:?} ---",
+            echo_output.status
+        );
 
         // Also try `ros2 topic list` to check visibility
         let mut list_cmd = std::process::Command::new("bash");
@@ -576,10 +560,8 @@ fn test_observable_data_delivery() {
     let work_dir = work_tmp.path();
     let output_path = work_dir.join("stdout.log");
     let stderr_path = work_dir.join("stderr.log");
-    let output_file =
-        std::fs::File::create(&output_path).expect("failed to create output file");
-    let stderr_file =
-        std::fs::File::create(&stderr_path).expect("failed to create stderr file");
+    let output_file = std::fs::File::create(&output_path).expect("failed to create output file");
+    let stderr_file = std::fs::File::create(&stderr_path).expect("failed to create stderr file");
 
     let mut cmd = fixtures::play_launch_cmd(&env);
     cmd.current_dir(work_dir);
@@ -605,10 +587,7 @@ fn test_observable_data_delivery() {
         2,
         Duration::from_secs(30),
     );
-    assert!(
-        loaded >= 2,
-        "Expected 2 LOADED events, found {loaded}"
-    );
+    assert!(loaded >= 2, "Expected 2 LOADED events, found {loaded}");
 
     // Wait for data delivery — in observable mode logs go to the container's stderr
     let play_log = work_dir.join("play_log/latest");

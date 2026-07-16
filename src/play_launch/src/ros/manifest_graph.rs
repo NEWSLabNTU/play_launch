@@ -415,10 +415,10 @@ pub fn critical_path(subgraph: &ScopeSubgraph) -> Option<CriticalPath> {
     // Find the sink with the maximum latency.
     let mut best_sink: Option<(String, f64)> = None;
     for sink in &subgraph.sinks {
-        if let Some(&lat) = latency.get(sink) {
-            if best_sink.as_ref().map(|(_, b)| lat > *b).unwrap_or(true) {
-                best_sink = Some((sink.clone(), lat));
-            }
+        if let Some(&lat) = latency.get(sink)
+            && best_sink.as_ref().map(|(_, b)| lat > *b).unwrap_or(true)
+        {
+            best_sink = Some((sink.clone(), lat));
         }
     }
     let (sink, total_ms) = best_sink?;

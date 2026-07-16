@@ -32,14 +32,12 @@ pub fn repo_root() -> PathBuf {
 /// 1. `install/play_launch/lib/play_launch/play_launch` (colcon build output)
 /// 2. `$PATH` via `which`
 pub fn play_launch_bin() -> PathBuf {
-    let colcon_bin = repo_root()
-        .join("install/play_launch/lib/play_launch/play_launch");
+    let colcon_bin = repo_root().join("install/play_launch/lib/play_launch/play_launch");
     if colcon_bin.is_file() {
         return colcon_bin;
     }
-    which::which("play_launch").expect(
-        "play_launch binary not found. Run `just build` first, or ensure it is on PATH.",
-    )
+    which::which("play_launch")
+        .expect("play_launch binary not found. Run `just build` first, or ensure it is on PATH.")
 }
 
 /// Source a bash setup file and return the resulting environment variables.
@@ -59,7 +57,11 @@ fn source_env(script: &Path) -> HashMap<String, String> {
         .output()
         .expect("failed to run bash");
 
-    assert!(output.status.success(), "failed to source {}", script.display());
+    assert!(
+        output.status.success(),
+        "failed to source {}",
+        script.display()
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     stdout
@@ -306,17 +308,15 @@ pub fn dump_launch(
     let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let output_path = tmp.path().join("record.json");
 
-    let mut proc = crate::process::ManagedProcess::spawn(
-        play_launch_cmd(env).args([
-            "dump",
-            "--output",
-            output_path.to_str().unwrap(),
-            "launch",
-            "--parser",
-            parser,
-            launch_file,
-        ]),
-    )
+    let mut proc = crate::process::ManagedProcess::spawn(play_launch_cmd(env).args([
+        "dump",
+        "--output",
+        output_path.to_str().unwrap(),
+        "launch",
+        "--parser",
+        parser,
+        launch_file,
+    ]))
     .expect("failed to spawn play_launch dump");
 
     let status = proc.wait_with_timeout(std::time::Duration::from_secs(60));
@@ -345,12 +345,11 @@ pub fn count_cmdline_files(play_log_dir: &Path) -> usize {
     if let Ok(entries) = std::fs::read_dir(&node_dir) {
         for entry in entries.flatten() {
             let cmdline = entry.path().join("cmdline");
-            if cmdline.is_file() {
-                if let Ok(meta) = cmdline.metadata() {
-                    if meta.len() > 0 {
-                        count += 1;
-                    }
-                }
+            if cmdline.is_file()
+                && let Ok(meta) = cmdline.metadata()
+                && meta.len() > 0
+            {
+                count += 1;
             }
         }
     }
