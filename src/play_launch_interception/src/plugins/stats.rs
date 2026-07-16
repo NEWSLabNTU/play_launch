@@ -45,7 +45,7 @@ impl InterceptionPlugin for StatsPlugin {
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
         };
-        let _ = self.producer.lock().push(&event);
+        crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 
     fn on_subscription_init(
@@ -66,7 +66,7 @@ impl InterceptionPlugin for StatsPlugin {
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
         };
-        let _ = self.producer.lock().push(&event);
+        crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 
     fn on_publish(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>) {
@@ -82,7 +82,7 @@ impl InterceptionPlugin for StatsPlugin {
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
         };
-        let _ = self.producer.lock().push(&event);
+        crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 
     fn on_take(&self, handle: usize, topic_hash: u64, stamp: Option<Stamp>) {
@@ -98,7 +98,7 @@ impl InterceptionPlugin for StatsPlugin {
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
         };
-        let _ = self.producer.lock().push(&event);
+        crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 }
 

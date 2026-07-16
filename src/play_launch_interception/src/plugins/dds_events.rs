@@ -39,7 +39,7 @@ impl DdsEventsPlugin {
     }
 
     fn push(&self, event: InterceptionEvent) {
-        let _ = self.producer.lock().push(&event);
+        crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 }
 

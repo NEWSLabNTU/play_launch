@@ -72,6 +72,15 @@ pub enum EventKind {
     /// overload as `TopicNameDeclared`. Lets the consumer build a
     /// `topic_hash → type_string` map for audit + contract backfill.
     TypeNameDeclared = 14,
+    /// Phase 42.0: periodic, best-effort report of this process's
+    /// cumulative SPSC ring-overflow drop count. Field overload:
+    /// `monotonic_ns` = cumulative dropped-event count since process
+    /// start (NOT a timestamp), `topic_hash` = 0 (sentinel). Emitted
+    /// opportunistically by `drop_counter::maybe_report` — see that
+    /// module for the emission policy. Like any other event this can
+    /// itself be dropped if the ring stays full, so consumers must
+    /// treat the reported count as a lower bound, not ground truth.
+    RingOverflowReport = 15,
 }
 
 /// A single interception event (40 bytes, `#[repr(C)]`).
@@ -98,74 +107,6 @@ pub struct InterceptionEvent {
 }
 
 const _: () = assert!(size_of::<InterceptionEvent>() == 40);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rcl_interception_sys::qos::{durability, history, liveliness, reliability};
-
-    #[test]
-    fn qos_declared_event_field_overload_roundtrip() {
-        let e = InterceptionEvent::qos_declared(
-            EventKind::QosDeclaredPub,
-            0xDEADBEEF,
-            0x1234_5678_9ABC_DEF0,
-            reliability::RELIABLE,
-            durability::TRANSIENT_LOCAL,
-            history::KEEP_LAST,
-            liveliness::AUTOMATIC,
-            5,
-        );
-        assert_eq!(e.kind, EventKind::QosDeclaredPub);
-        assert_eq!(e._pad[0], reliability::RELIABLE as u8);
-        assert_eq!(e._pad[1], durability::TRANSIENT_LOCAL as u8);
-        assert_eq!(e._pad[2], history::KEEP_LAST as u8);
-        assert_eq!(e.handle, 0xDEADBEEF);
-        assert_eq!(e.topic_hash, 0x1234_5678_9ABC_DEF0);
-        assert_eq!(e.stamp_sec, liveliness::AUTOMATIC);
-        assert_eq!(e.stamp_nanosec, 5);
-    }
-
-    #[test]
-    fn topic_name_chunk_roundtrip_full() {
-        let payload = b"/abcd/efgh/ijkl/mnop/qrst"; // 25 bytes — last is dropped
-        let e = InterceptionEvent::topic_name_chunk(0x1234, 0, 2, &payload[..24]);
-        let (idx, total, n, buf) = e.decode_topic_name_chunk();
-        assert_eq!(idx, 0);
-        assert_eq!(total, 2);
-        assert_eq!(n, 24);
-        assert_eq!(&buf[..24], &payload[..24]);
-    }
-
-    #[test]
-    fn topic_name_chunk_roundtrip_short() {
-        let e = InterceptionEvent::topic_name_chunk(0xdeadbeef, 1, 2, b"tail");
-        let (idx, total, n, buf) = e.decode_topic_name_chunk();
-        assert_eq!(idx, 1);
-        assert_eq!(total, 2);
-        assert_eq!(n, 4);
-        assert_eq!(&buf[..4], b"tail");
-        // Padding bytes should be zero.
-        assert_eq!(&buf[4..], &[0u8; 20][..]);
-        assert_eq!(e.kind, EventKind::TopicNameDeclared);
-    }
-
-    #[test]
-    fn qos_declared_sub_kind() {
-        let e = InterceptionEvent::qos_declared(
-            EventKind::QosDeclaredSub,
-            0,
-            0,
-            reliability::BEST_EFFORT,
-            durability::VOLATILE,
-            history::KEEP_LAST,
-            liveliness::AUTOMATIC,
-            10,
-        );
-        assert_eq!(e.kind, EventKind::QosDeclaredSub);
-        assert_eq!(e._pad[0], reliability::BEST_EFFORT as u8);
-    }
-}
 
 impl InterceptionEvent {
     /// Build a `QosDeclaredPub` or `QosDeclaredSub` event from a parsed
@@ -383,6 +324,24 @@ impl InterceptionEvent {
     }
 }
 
+impl InterceptionEvent {
+    /// Build a `RingOverflowReport` event carrying this process's
+    /// cumulative dropped-event count. See `EventKind::RingOverflowReport`
+    /// for the field overload.
+    #[inline]
+    pub fn ring_overflow_report(dropped_count: u64) -> Self {
+        Self {
+            kind: EventKind::RingOverflowReport,
+            _pad: [0; 3],
+            topic_hash: 0,
+            stamp_sec: 0,
+            stamp_nanosec: 0,
+            handle: 0,
+            monotonic_ns: dropped_count,
+        }
+    }
+}
+
 /// Get the current monotonic clock time in nanoseconds.
 #[inline]
 pub(crate) fn monotonic_ns() -> u64 {
@@ -392,4 +351,72 @@ pub(crate) fn monotonic_ns() -> u64 {
     };
     unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
     ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rcl_interception_sys::qos::{durability, history, liveliness, reliability};
+
+    #[test]
+    fn qos_declared_event_field_overload_roundtrip() {
+        let e = InterceptionEvent::qos_declared(
+            EventKind::QosDeclaredPub,
+            0xDEADBEEF,
+            0x1234_5678_9ABC_DEF0,
+            reliability::RELIABLE,
+            durability::TRANSIENT_LOCAL,
+            history::KEEP_LAST,
+            liveliness::AUTOMATIC,
+            5,
+        );
+        assert_eq!(e.kind, EventKind::QosDeclaredPub);
+        assert_eq!(e._pad[0], reliability::RELIABLE as u8);
+        assert_eq!(e._pad[1], durability::TRANSIENT_LOCAL as u8);
+        assert_eq!(e._pad[2], history::KEEP_LAST as u8);
+        assert_eq!(e.handle, 0xDEADBEEF);
+        assert_eq!(e.topic_hash, 0x1234_5678_9ABC_DEF0);
+        assert_eq!(e.stamp_sec, liveliness::AUTOMATIC);
+        assert_eq!(e.stamp_nanosec, 5);
+    }
+
+    #[test]
+    fn topic_name_chunk_roundtrip_full() {
+        let payload = b"/abcd/efgh/ijkl/mnop/qrst"; // 25 bytes — last is dropped
+        let e = InterceptionEvent::topic_name_chunk(0x1234, 0, 2, &payload[..24]);
+        let (idx, total, n, buf) = e.decode_topic_name_chunk();
+        assert_eq!(idx, 0);
+        assert_eq!(total, 2);
+        assert_eq!(n, 24);
+        assert_eq!(&buf[..24], &payload[..24]);
+    }
+
+    #[test]
+    fn topic_name_chunk_roundtrip_short() {
+        let e = InterceptionEvent::topic_name_chunk(0xdeadbeef, 1, 2, b"tail");
+        let (idx, total, n, buf) = e.decode_topic_name_chunk();
+        assert_eq!(idx, 1);
+        assert_eq!(total, 2);
+        assert_eq!(n, 4);
+        assert_eq!(&buf[..4], b"tail");
+        // Padding bytes should be zero.
+        assert_eq!(&buf[4..], &[0u8; 20][..]);
+        assert_eq!(e.kind, EventKind::TopicNameDeclared);
+    }
+
+    #[test]
+    fn qos_declared_sub_kind() {
+        let e = InterceptionEvent::qos_declared(
+            EventKind::QosDeclaredSub,
+            0,
+            0,
+            reliability::BEST_EFFORT,
+            durability::VOLATILE,
+            history::KEEP_LAST,
+            liveliness::AUTOMATIC,
+            10,
+        );
+        assert_eq!(e.kind, EventKind::QosDeclaredSub);
+        assert_eq!(e._pad[0], reliability::BEST_EFFORT as u8);
+    }
 }

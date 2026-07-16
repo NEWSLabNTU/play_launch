@@ -37,7 +37,7 @@ impl TopicNamesPlugin {
             let end = (start + TOPIC_NAME_CHUNK_BYTES).min(payload.len());
             let event =
                 InterceptionEvent::name_chunk(kind, topic_hash, idx as u8, total as u8, &payload[start..end]);
-            let _ = producer.push(&event);
+            crate::drop_counter::push_or_count(&mut producer, &event);
         }
     }
 

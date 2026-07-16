@@ -29,6 +29,7 @@
 //! to find the already-loaded library in its local scope.
 
 mod allowlist;
+mod drop_counter;
 mod event;
 mod introspection;
 mod plugin;
@@ -560,6 +561,9 @@ fn try_open_producer() -> Option<Arc<Mutex<Producer<InterceptionEvent>>>> {
     let fd_str = std::env::var("PLAY_LAUNCH_INTERCEPTION_SHM_FD").ok()?;
     let fd: RawFd = fd_str.parse().ok()?;
     let producer = unsafe { Producer::<InterceptionEvent>::from_raw_fd(fd) }.ok()?;
+    // Phase 42.0: register the process-exit drop-count report as soon
+    // as we know a ring is actually in use.
+    drop_counter::install_atexit_report();
     Some(Arc::new(Mutex::new(producer)))
 }
 

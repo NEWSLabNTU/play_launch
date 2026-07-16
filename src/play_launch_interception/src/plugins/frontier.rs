@@ -124,7 +124,7 @@ impl FrontierPlugin {
                     handle: handle as u64,
                     monotonic_ns: monotonic_ns(),
                 };
-                let _ = prod.lock().push(&event);
+                crate::drop_counter::push_or_count(&mut prod.lock(), &event);
             }
             Transport::Socket(sock) => {
                 let event = FrontierEvent {
@@ -156,7 +156,7 @@ impl FrontierPlugin {
                     handle: handle as u64,
                     monotonic_ns: monotonic_ns(),
                 };
-                let _ = prod.lock().push(&event);
+                crate::drop_counter::push_or_count(&mut prod.lock(), &event);
             }
             Transport::Socket(sock) => {
                 let event = FrontierEvent {

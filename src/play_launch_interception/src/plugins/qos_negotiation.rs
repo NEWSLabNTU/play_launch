@@ -44,7 +44,7 @@ impl QosNegotiationPlugin {
             qos.liveliness,
             qos.depth as u32,
         );
-        let _ = self.producer.lock().push(&event);
+        crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
 }
 
