@@ -12,15 +12,9 @@
 //! included in `just test-all`. All tests skip cleanly (not fail) if the
 //! fixture hasn't been built (`cd tests/fixtures/rt_workspace && just build`).
 
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-use std::process::Stdio;
-use std::time::Duration;
+use std::{collections::HashMap, fs, path::PathBuf, process::Stdio, time::Duration};
 
-use play_launch_tests::fixtures;
-use play_launch_tests::fixtures::array_len;
-use play_launch_tests::process::ManagedProcess;
+use play_launch_tests::{fixtures, fixtures::array_len, process::ManagedProcess};
 
 fn fixture_dir() -> PathBuf {
     fixtures::test_workspace_path("rt_workspace")
@@ -679,4 +673,84 @@ fn per_tid_sched_fifo_launch_privileged_only() {
     );
 
     // _proc dropped here — ManagedProcess::drop kills the process group.
+}
+
+// ---- `resolve` (SystemModel emission, RFC-0050) ----
+
+/// `play_launch resolve rt_demo bringup.launch.xml --sched system.toml`
+/// must emit a SystemModel whose three layers join on launch-side node
+/// FQNs: the contract endpoint keys and the sched bindings must reference
+/// nodes that exist in `structure.nodes`.
+#[test]
+fn resolve_emits_joined_system_model() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+    let sched = fixture_dir().join("system.toml");
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let out = tmp.path().join("system_model.yaml");
+
+    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
+        "resolve",
+        "rt_demo",
+        "bringup.launch.xml",
+        "--sched",
+        sched.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]))
+    .expect("failed to spawn play_launch resolve");
+    let status = proc.wait_with_timeout(Duration::from_secs(60));
+    assert!(status.success(), "play_launch resolve failed");
+
+    let yaml = std::fs::read_to_string(&out).expect("read system_model.yaml");
+    let model: serde_json::Value = serde_yaml_value(&yaml);
+
+    // meta: schema version + provenance hashes present
+    assert_eq!(model["meta"]["version"], 1);
+    assert!(
+        model["meta"]["inputs"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or(0)
+            >= 3,
+        "launch + contract + platform file must be hashed"
+    );
+
+    // structure: the four rt_demo nodes
+    let nodes = model["structure"]["nodes"]
+        .as_object()
+        .expect("structure.nodes");
+    assert!(nodes.contains_key("/control/control_node"));
+    assert!(nodes.contains_key("/perception/filter_component"));
+    assert_eq!(nodes["/control/control_node"]["criticality"], "high");
+
+    // contracts join on structure FQNs (manifest scope-ns refs reconciled)
+    let subs = model["contracts"]["sub_endpoints"]
+        .as_object()
+        .expect("contracts.sub_endpoints");
+    assert!(
+        subs.contains_key("/control/control_node/points_raw"),
+        "sub contract key must use the launch-side node FQN, got: {:?}",
+        subs.keys().collect::<Vec<_>>()
+    );
+
+    // execution: every binding target exists in structure.nodes
+    let bindings = model["execution"]["bindings"]
+        .as_object()
+        .expect("execution.bindings");
+    assert!(!bindings.is_empty());
+    for node in bindings.keys() {
+        assert!(
+            nodes.contains_key(node),
+            "sched binding references unknown node {node}"
+        );
+    }
+}
+
+/// Minimal YAML → JSON value bridge for assertions (tests avoid a direct
+/// serde_yaml dependency elsewhere; keep it local).
+fn serde_yaml_value(yaml: &str) -> serde_json::Value {
+    serde_yaml_ng::from_str(yaml).expect("parse system_model.yaml")
 }

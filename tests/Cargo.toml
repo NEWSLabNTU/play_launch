@@ -64,5 +64,6 @@ path = "tests/contract_eject.rs"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml_ng = "0.10"
 tempfile = "3"
 which = "6"

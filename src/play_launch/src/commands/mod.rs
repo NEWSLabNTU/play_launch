@@ -9,6 +9,7 @@ pub mod launch;
 pub mod manifest;
 pub mod plot;
 pub mod replay;
+pub mod resolve;
 pub mod run;
 pub(crate) mod signal_handler;
 
@@ -21,6 +22,7 @@ pub use launch::handle_launch;
 pub use manifest::handle_check_manifest;
 pub use plot::handle_plot;
 pub use replay::handle_replay;
+pub use resolve::handle_resolve;
 pub use run::handle_run;
 
 use std::collections::HashMap;

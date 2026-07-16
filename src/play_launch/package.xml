@@ -11,6 +11,7 @@
 
   <!-- Rust runtime dependencies (linked .so) -->
   <depend>rcl_interfaces</depend>
+  <depend>lifecycle_msgs</depend>
   <depend>composition_interfaces</depend>
   <depend>diagnostic_msgs</depend>
   <depend>rosgraph_msgs</depend>

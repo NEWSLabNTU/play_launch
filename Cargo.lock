@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "builtin_interfaces"
-version = "1.2.2"
+version = "1.2.1"
 dependencies = [
  "rosidl_runtime_rs",
 ]
@@ -547,7 +547,7 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
 name = "composition_interfaces"
-version = "1.2.2"
+version = "1.2.1"
 dependencies = [
  "rcl_interfaces",
  "rosidl_runtime_rs",
@@ -723,11 +723,17 @@ dependencies = [
 
 [[package]]
 name = "diagnostic_msgs"
-version = "4.9.0"
+version = "4.2.4"
 dependencies = [
  "rosidl_runtime_rs",
  "std_msgs",
 ]
+
+[[package]]
+name = "diff"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
 
 [[package]]
 name = "digest"
@@ -1795,12 +1801,14 @@ dependencies = [
  "rcl_interfaces",
  "rclrs",
  "ros-launch-manifest-check",
+ "ros-launch-manifest-model",
  "ros-launch-manifest-sched",
  "ros-launch-manifest-types",
  "rust-embed",
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha2",
  "shell-quote",
  "spsc_shm",
  "sysinfo",
@@ -1884,6 +1892,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "pretty_assertions"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ae130e2f271fbc2ac3a40fb1d07180839cdbbe443c7a27e1e3c13c5cac0116d"
+dependencies = [
+ "diff",
+ "yansi",
 ]
 
 [[package]]
@@ -2035,7 +2053,7 @@ dependencies = [
 
 [[package]]
 name = "rcl_interfaces"
-version = "1.2.2"
+version = "1.2.1"
 dependencies = [
  "builtin_interfaces",
  "rosidl_runtime_rs",
@@ -2115,6 +2133,17 @@ dependencies = [
  "ros-launch-manifest-types",
  "thiserror 2.0.18",
  "z3",
+]
+
+[[package]]
+name = "ros-launch-manifest-model"
+version = "0.1.0"
+dependencies = [
+ "pretty_assertions",
+ "ros-launch-manifest-sched",
+ "serde",
+ "serde_yaml_ng",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2431,7 +2460,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "std_msgs"
-version = "4.9.0"
+version = "4.2.4"
 dependencies = [
  "builtin_interfaces",
  "rosidl_runtime_rs",
@@ -3502,6 +3531,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
+
+[[package]]
 name = "z3"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3548,7 +3583,7 @@ checksum = "4de98dfa5d5b7fef4ee834d0073d560c9ca7b6c46a71d058c48db7960f8cfaf7"
 
 [[patch.unused]]
 name = "action_msgs"
-version = "1.2.2"
+version = "1.2.1"
 
 [[patch.unused]]
 name = "example_interfaces"
@@ -3556,11 +3591,11 @@ version = "0.9.3"
 
 [[patch.unused]]
 name = "geometry_msgs"
-version = "4.9.0"
+version = "4.2.4"
 
 [[patch.unused]]
 name = "rosgraph_msgs"
-version = "1.2.2"
+version = "1.2.1"
 
 [[patch.unused]]
 name = "test_msgs"

@@ -5,6 +5,7 @@ pub mod graph_builder;
 pub mod launch_dump;
 pub mod manifest_graph;
 pub mod manifest_loader;
+pub mod model_builder;
 pub mod parameter_conversion;
 pub mod parameter_proxy;
 pub mod parameter_types;
