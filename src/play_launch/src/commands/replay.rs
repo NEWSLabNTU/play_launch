@@ -568,23 +568,50 @@ async fn play(
     // explicit `--sched <path>` > overlay > provider sidecar. Reuses the
     // overlay root already discovered for contracts above, so both channels
     // agree on which root is in play for this invocation.
-    let resolved_sched = crate::ros::sched_loader::resolve_platform_file(
-        &launch_dump,
-        common.sched.as_deref(),
-        contract_sources.overlay.as_deref(),
-        contract_sources.provider,
-        &common.target,
-    );
-    let (sched_plan, sched_helper, sched_helper_join) = if let Some(resolved) = &resolved_sched {
-        let path = &resolved.path;
-        let plan = crate::execution::sched_plan::SchedPlan::build(
+    // Phase 43.3 — when a SystemModel with an execution layer was given,
+    // the plan comes from it directly (derive/override/band-validate ran at
+    // resolve time); the platform-file channels are only consulted on the
+    // legacy path.
+    let model_plan: Option<crate::execution::sched_plan::SchedPlan> = match &system_model {
+        Some(m) if !m.execution.is_empty() => {
+            info!("Scheduling source: SystemModel execution layer");
+            Some(crate::execution::sched_plan::SchedPlan::from_model(
+                m,
+                &common.target,
+                common.sched_apply,
+            )?)
+        }
+        Some(_) => {
+            info!("SystemModel carries no execution layer — scheduling disabled");
+            None
+        }
+        None => None,
+    };
+    let resolved_sched = if system_model.is_some() {
+        None
+    } else {
+        crate::ros::sched_loader::resolve_platform_file(
+            &launch_dump,
+            common.sched.as_deref(),
+            contract_sources.overlay.as_deref(),
+            contract_sources.provider,
+            &common.target,
+        )
+    };
+    let legacy_plan = if let Some(resolved) = &resolved_sched {
+        Some(crate::execution::sched_plan::SchedPlan::build(
             &launch_dump,
             _manifest_index.as_ref(),
-            path,
+            &resolved.path,
             &common.target,
             common.sched_apply,
-        )?;
-
+        )?)
+    } else {
+        None
+    };
+    let (sched_plan, sched_helper, sched_helper_join) = if let Some(plan) =
+        model_plan.or(legacy_plan)
+    {
         let (sched_helper, sched_helper_join) = if common.sched_apply
             != crate::execution::sched_apply::SchedApplyMode::Off
         {
