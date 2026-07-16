@@ -124,13 +124,21 @@ fn test_ir_group_scoping() {
     assert_eq!(program.body.len(), 1);
     match &program.body[0].kind {
         ActionKind::Group { namespace, body } => {
-            assert_eq!(
-                namespace.as_ref().and_then(|n| n.as_literal()),
-                Some("robot1")
-            );
-            assert_eq!(body.len(), 2);
-            assert!(matches!(&body[0].kind, ActionKind::SpawnNode { .. }));
+            // Real ROS 2 `<group>` has no `ns`/namespace attribute of its own
+            // (see `GroupAction::from_entity`) — namespacing is done via a
+            // nested `<push-ros-namespace>` action, which is represented as
+            // its own `PushNamespace` entry in `body`, same as it would be
+            // anywhere else in the tree (see `test_ir_push_namespace`).
+            assert!(namespace.is_none());
+            assert_eq!(body.len(), 3);
+            match &body[0].kind {
+                ActionKind::PushNamespace { namespace } => {
+                    assert_eq!(namespace.as_literal(), Some("robot1"));
+                }
+                other => panic!("Expected PushNamespace, got {:?}", other),
+            }
             assert!(matches!(&body[1].kind, ActionKind::SpawnNode { .. }));
+            assert!(matches!(&body[2].kind, ActionKind::SpawnNode { .. }));
         }
         other => panic!("Expected Group, got {:?}", other),
     }
