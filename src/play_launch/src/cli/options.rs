@@ -186,9 +186,14 @@ pub struct CheckArgs {
 
 impl CheckArgs {
     /// Build the two-step `ContractSources` from this command's flags.
+    ///
+    /// The overlay root is discovered (Phase 41.3 §3.2) when `--contracts`
+    /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
+    /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
+    /// `/etc/play_launch/contracts` — first existing wins.
     pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
         crate::ros::manifest_loader::ContractSources {
-            overlay: self.contracts.clone(),
+            overlay: crate::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
             provider: !self.no_provider_contracts,
         }
     }
@@ -492,9 +497,14 @@ impl CommonOptions {
     }
 
     /// Build the two-step `ContractSources` from this command's flags.
+    ///
+    /// The overlay root is discovered (Phase 41.3 §3.2) when `--contracts`
+    /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
+    /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
+    /// `/etc/play_launch/contracts` — first existing wins.
     pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
         crate::ros::manifest_loader::ContractSources {
-            overlay: self.contracts.clone(),
+            overlay: crate::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
             provider: !self.no_provider_contracts,
         }
     }

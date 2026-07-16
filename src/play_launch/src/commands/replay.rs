@@ -531,7 +531,18 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // unprivileged given `play_launch setcap`); only fall back to the
     // root-or-capped-helper privilege check. Not being root is no longer
     // grounds to hard-fail — that's the entire point of this wave.
-    let (sched_plan, sched_helper, sched_helper_join) = if let Some(path) = &common.sched {
+    // Resolve the platform file through the shipping channels (Phase 41.3):
+    // explicit `--sched <path>` > overlay > provider sidecar. Reuses the
+    // overlay root already discovered for contracts above, so both channels
+    // agree on which root is in play for this invocation.
+    let resolved_sched = crate::ros::sched_loader::resolve_platform_file(
+        &launch_dump,
+        common.sched.as_deref(),
+        contract_sources.overlay.as_deref(),
+        &common.target,
+    );
+    let (sched_plan, sched_helper, sched_helper_join) = if let Some(resolved) = &resolved_sched {
+        let path = &resolved.path;
         let plan = crate::execution::sched_plan::SchedPlan::build(
             &launch_dump,
             _manifest_index.as_ref(),

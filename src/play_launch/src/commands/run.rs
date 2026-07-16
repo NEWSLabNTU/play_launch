@@ -199,7 +199,21 @@ async fn run_direct(
     // unprivileged given `play_launch setcap`); only fall back to the
     // root-or-capped-helper privilege check. Not being root is no longer
     // grounds to hard-fail — that's the entire point of this wave.
-    let (sched_plan, sched_helper, sched_helper_join) = if let Some(path) = &common.sched {
+    // Resolve the platform file through the shipping channels (Phase 41.3):
+    // explicit `--sched <path>` > overlay > provider sidecar. `run` has no
+    // contract-loading infrastructure of its own, but the overlay root
+    // discovery (`--contracts`/`$PLAY_LAUNCH_CONTRACTS`/XDG/`/etc`) is
+    // shared with contract resolution regardless.
+    let overlay_root =
+        crate::ros::manifest_loader::discover_overlay_root(common.contracts.as_deref());
+    let resolved_sched = crate::ros::sched_loader::resolve_platform_file(
+        launch_dump,
+        common.sched.as_deref(),
+        overlay_root.as_deref(),
+        &common.target,
+    );
+    let (sched_plan, sched_helper, sched_helper_join) = if let Some(resolved) = &resolved_sched {
+        let path = &resolved.path;
         // `play_launch run` has no contract-loading infrastructure (single
         // node, no launch tree) — the derive pipeline runs with no
         // `ManifestIndex`, so every node gets a bare `MapperNode` (matches

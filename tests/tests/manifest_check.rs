@@ -314,3 +314,198 @@ topics:
          effect, got: {stderr}"
     );
 }
+
+// ── Platform-file shipping channels (Phase 41.3) ──
+//
+// Same channel order/discovery as contracts, but for the scheduling
+// platform file: `--sched <path>` (explicit, tested elsewhere via
+// `rt_workspace.rs`) > overlay `<root>/<pkg>/launch/<stem>.system.<target>.yaml`
+// > provider sidecar `<launch-file-dir>/<stem>.system.<target>.yaml`.
+
+/// Minimal valid v2 platform file: `rate_monotonic` (the `manual` mapper is
+/// reachable only via the legacy `.toml` bridge, not raw v2 `.yaml` — see
+/// `sched_loader::derive_sched_plan`'s "requires a legacy tiers+assign spec"
+/// error) with the `rt_priority_band` its posix resources require.
+fn minimal_platform_file(target: &str) -> String {
+    format!(
+        "target: {target}\nmapper: rate_monotonic\nresources:\n  rt_priority_band: {{ min: 10, max: 40 }}\n"
+    )
+}
+
+#[test]
+fn check_sched_overlay_platform_file_beats_provider_sidecar() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let launch_tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    // Provider sidecar next to the launch file.
+    std::fs::write(
+        launch_tmp.path().join("pure_nodes.system.posix.yaml"),
+        minimal_platform_file("posix"),
+    )
+    .expect("failed to write provider sidecar platform file");
+
+    // Overlay platform file for the same target — must win.
+    let overlay_root = tempfile::TempDir::new().expect("failed to create overlay root");
+    let overlay_launch_dir = overlay_root.path().join("_/launch");
+    std::fs::create_dir_all(&overlay_launch_dir).expect("failed to create overlay launch dir");
+    std::fs::write(
+        overlay_launch_dir.join("pure_nodes.system.posix.yaml"),
+        minimal_platform_file("posix"),
+    )
+    .expect("failed to write overlay platform file");
+
+    let output = Command::new(play_launch_bin())
+        .args(["check", "--contracts"])
+        .arg(overlay_root.path())
+        .arg(&launch_copy)
+        .output()
+        .expect("failed to run play_launch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "expected success (no --sched needed; resolved via channels): {stderr}"
+    );
+    assert!(
+        stderr.contains("Scheduling platform file [overlay]:"),
+        "expected the overlay platform file to win over the provider sidecar, got: {stderr}"
+    );
+    assert!(
+        stderr.contains(
+            overlay_launch_dir
+                .join("pure_nodes.system.posix.yaml")
+                .to_str()
+                .unwrap()
+        ),
+        "expected the resolved path to be the overlay file, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Scheduling (posix, mapper=rate_monotonic)"),
+        "expected the resolved platform file to actually be parsed/derived, got: {stderr}"
+    );
+}
+
+#[test]
+fn check_sched_provider_sidecar_only_platform_file() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let launch_tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    std::fs::write(
+        launch_tmp.path().join("pure_nodes.system.posix.yaml"),
+        minimal_platform_file("posix"),
+    )
+    .expect("failed to write provider sidecar platform file");
+
+    // No --contracts at all: provider channel is the only one available.
+    let output = Command::new(play_launch_bin())
+        .args(["check"])
+        .arg(&launch_copy)
+        .output()
+        .expect("failed to run play_launch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "expected success via the provider-sidecar-only channel: {stderr}"
+    );
+    assert!(
+        stderr.contains("Scheduling platform file [provider]:"),
+        "expected the provider sidecar to be resolved, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Scheduling (posix, mapper=rate_monotonic)"),
+        "expected the resolved platform file to actually be parsed/derived, got: {stderr}"
+    );
+}
+
+#[test]
+fn check_sched_wrong_target_platform_file_is_ignored() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let launch_tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    // Only a `posix` platform file is shipped.
+    std::fs::write(
+        launch_tmp.path().join("pure_nodes.system.posix.yaml"),
+        minimal_platform_file("posix"),
+    )
+    .expect("failed to write provider sidecar platform file");
+
+    // Requesting `zephyr` must not match the posix-named file — scheduling
+    // stays disabled, and this is NOT an error (distinct from an explicit
+    // `--sched` pointing at a file whose `target:` mismatches, which does
+    // error — see `sched_loader::derive_target_mismatch_errors`).
+    let output = Command::new(play_launch_bin())
+        .args(["check", "--target", "zephyr"])
+        .arg(&launch_copy)
+        .output()
+        .expect("failed to run play_launch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "wrong-target platform file must not error, just leave scheduling disabled: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Scheduling platform file"),
+        "expected no platform file resolved for the mismatched target, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Scheduling ("),
+        "expected no scheduling table since nothing resolved, got: {stderr}"
+    );
+}
+
+#[test]
+fn check_sched_no_platform_file_leaves_scheduling_disabled() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let launch_tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+    // No platform file anywhere (no overlay, no provider sidecar).
+
+    let output = Command::new(play_launch_bin())
+        .args(["check"])
+        .arg(&launch_copy)
+        .output()
+        .expect("failed to run play_launch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "no platform file anywhere must not be an error: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Scheduling platform file"),
+        "expected no platform file resolution line, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Scheduling ("),
+        "expected no scheduling table since nothing resolved, got: {stderr}"
+    );
+}

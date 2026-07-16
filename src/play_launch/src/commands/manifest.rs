@@ -43,8 +43,24 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
     // Optional: validate the shared scheduling spec (Linux = validate-now).
     // Loaded after manifests so contract-aware mappers (rate_monotonic,
     // deadline_monotonic) can extract timing facts from `index`.
-    if let Some(sched_path) = &args.sched {
-        crate::ros::sched_loader::check_sched(&dump, Some(&index), sched_path, &args.target)?;
+    //
+    // Resolve the platform file through the same channels as contracts
+    // (Phase 41.3): explicit `--sched <path>` > overlay > provider sidecar.
+    // `sources.overlay` is already the discovered root (see
+    // `CheckArgs::contract_sources`), so both channels agree on which root
+    // is in play.
+    if let Some(resolved) = crate::ros::sched_loader::resolve_platform_file(
+        &dump,
+        args.sched.as_deref(),
+        sources.overlay.as_deref(),
+        &args.target,
+    ) {
+        eprintln!(
+            "Scheduling platform file [{}]: {}",
+            resolved.channel,
+            resolved.path.display()
+        );
+        crate::ros::sched_loader::check_sched(&dump, Some(&index), &resolved.path, &args.target)?;
     }
 
     if index.manifests.is_empty() {

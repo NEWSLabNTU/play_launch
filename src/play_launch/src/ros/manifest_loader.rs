@@ -53,6 +53,64 @@ pub struct ContractSources {
     pub provider: bool,
 }
 
+/// Discover the overlay root shared by contracts and platform files (Phase
+/// 41.3 design §3.2).
+///
+/// First existing of, in order (no cross-root merging):
+/// 1. `explicit` (the `--contracts <dir>` flag) — when given, the rest are
+///    not consulted, and it's returned unconditionally (even if the
+///    directory doesn't exist yet — matches the pre-41.3 behavior where a
+///    typo'd `--contracts` path simply resolves no files rather than
+///    silently falling back to a standard location).
+/// 2. `$PLAY_LAUNCH_CONTRACTS`
+/// 3. `$XDG_CONFIG_HOME/play_launch/contracts` (default
+///    `~/.config/play_launch/contracts`, when `XDG_CONFIG_HOME` is unset)
+/// 4. `/etc/play_launch/contracts`
+///
+/// Candidates 2-4 must exist (`is_dir()`) to be selected; candidate 1 always
+/// wins when present regardless of existence. Returns `None` when nothing
+/// resolves — both contract and platform-file overlay channels are then
+/// disabled.
+pub fn discover_overlay_root(explicit: Option<&Path>) -> Option<PathBuf> {
+    if let Some(p) = explicit {
+        debug!("overlay root: explicit --contracts {}", p.display());
+        return Some(p.to_path_buf());
+    }
+
+    if let Ok(v) = std::env::var("PLAY_LAUNCH_CONTRACTS") {
+        let p = PathBuf::from(v);
+        if p.is_dir() {
+            debug!("overlay root: $PLAY_LAUNCH_CONTRACTS {}", p.display());
+            return Some(p);
+        }
+    }
+
+    let xdg_base = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".config"))
+        });
+    if let Some(base) = xdg_base {
+        let p = base.join("play_launch").join("contracts");
+        if p.is_dir() {
+            debug!("overlay root: XDG_CONFIG_HOME {}", p.display());
+            return Some(p);
+        }
+    }
+
+    let etc = PathBuf::from("/etc/play_launch/contracts");
+    if etc.is_dir() {
+        debug!("overlay root: /etc {}", etc.display());
+        return Some(etc);
+    }
+
+    debug!("overlay root: none of the standard locations exist (no overlay)");
+    None
+}
+
 /// A loaded and resolved manifest bound to a specific scope.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Fields used by 31.5 runtime monitors and 31.6 audit
@@ -681,14 +739,15 @@ fn collect_externals(index: &mut ManifestIndex) {
     use ros_launch_manifest_types::ExternalSide;
     let mut externals: BTreeMap<String, ExternalSide> = BTreeMap::new();
 
-    let merge = |externals: &mut BTreeMap<String, ExternalSide>, fqn: String, side: ExternalSide| {
-        let merged = match externals.get(&fqn).copied() {
-            None => side,
-            Some(existing) if existing == side => existing,
-            Some(_) => ExternalSide::Both,
+    let merge =
+        |externals: &mut BTreeMap<String, ExternalSide>, fqn: String, side: ExternalSide| {
+            let merged = match externals.get(&fqn).copied() {
+                None => side,
+                Some(existing) if existing == side => existing,
+                Some(_) => ExternalSide::Both,
+            };
+            externals.insert(fqn, merged);
         };
-        externals.insert(fqn, merged);
-    };
 
     for resolved in index.manifests.values() {
         let ns = &resolved.ns;
@@ -772,9 +831,10 @@ fn check_cross_scope_qos_match(
 
         for (pub_ref, pub_qos) in &pubs {
             for (sub_ref, sub_qos) in &subs {
-                if let (Some(pub_rel), Some(sub_rel)) =
-                    (pub_qos.reliability.as_deref(), sub_qos.reliability.as_deref())
-                    && !reliability_compatible(pub_rel, sub_rel)
+                if let (Some(pub_rel), Some(sub_rel)) = (
+                    pub_qos.reliability.as_deref(),
+                    sub_qos.reliability.as_deref(),
+                ) && !reliability_compatible(pub_rel, sub_rel)
                 {
                     index.merge_diagnostics.push(Diagnostic {
                         rule_id: "qos-match".to_string(),
@@ -936,7 +996,7 @@ fn path_endpoints_match(a: &ResolvedScopePath, b: &ResolvedScopePath) -> bool {
 /// Strip a launch file's extension to get its contract stem, shared by all
 /// three resolution channels. `bringup.launch.xml` → `bringup`, likewise for
 /// `.launch.py` and `.launch.yaml` (and the bare `.launch`).
-fn contract_stem(file: &str) -> &str {
+pub(crate) fn contract_stem(file: &str) -> &str {
     file.strip_suffix(".launch.xml")
         .or_else(|| file.strip_suffix(".launch.py"))
         .or_else(|| file.strip_suffix(".launch.yaml"))
@@ -2742,11 +2802,9 @@ mod tests {
             .collect();
 
         assert!(
-            qos_errors
-                .iter()
-                .any(|d| d.message.contains("reliability")
-                    && d.message.contains("best_effort")
-                    && d.message.contains("reliable")),
+            qos_errors.iter().any(|d| d.message.contains("reliability")
+                && d.message.contains("best_effort")
+                && d.message.contains("reliable")),
             "expected cross-scope reliability mismatch error, got: {qos_errors:?}"
         );
     }
@@ -3043,5 +3101,129 @@ mod tests {
         assert_eq!(index.manifests.len(), 1);
         assert_eq!(index.manifests[&0].channel, ContractChannel::Overlay);
         assert!(index.topics.contains_key("/overlay_marker"));
+    }
+
+    // ── Phase 41.3: overlay-root discovery ──
+
+    /// Serializes tests that mutate `PLAY_LAUNCH_CONTRACTS`/`XDG_CONFIG_HOME`
+    /// — `std::env` is process-global, and `cargo test` runs tests on
+    /// multiple threads within the same process by default.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// RAII guard that snapshots and restores an env var, so a panicking
+    /// assertion inside a test still leaves the environment clean for
+    /// whichever test runs next while holding `ENV_GUARD`.
+    struct EnvVarRestore {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvVarRestore {
+        fn unset(key: &'static str) -> Self {
+            let original = std::env::var(key).ok();
+            // SAFETY: serialized by `ENV_GUARD`, held for the guard's lifetime.
+            unsafe { std::env::remove_var(key) };
+            Self { key, original }
+        }
+
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let original = std::env::var(key).ok();
+            // SAFETY: serialized by `ENV_GUARD`, held for the guard's lifetime.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarRestore {
+        fn drop(&mut self) {
+            // SAFETY: serialized by `ENV_GUARD`.
+            match &self.original {
+                Some(v) => unsafe { std::env::set_var(self.key, v) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
+    #[test]
+    fn test_discover_overlay_root_explicit_always_wins() {
+        let _lock = ENV_GUARD.lock().unwrap();
+        // Explicit path returned unconditionally, even if it doesn't exist
+        // and even with other channels present.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let env_dir = tmp.path().join("env_root");
+        std::fs::create_dir_all(&env_dir).unwrap();
+        let _env = EnvVarRestore::set("PLAY_LAUNCH_CONTRACTS", &env_dir);
+
+        let explicit = tmp.path().join("does_not_exist");
+        assert_eq!(
+            discover_overlay_root(Some(&explicit)),
+            Some(explicit.clone())
+        );
+    }
+
+    #[test]
+    fn test_discover_overlay_root_env_var_wins_over_xdg() {
+        let _lock = ENV_GUARD.lock().unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let env_dir = tmp.path().join("env_root");
+        std::fs::create_dir_all(&env_dir).unwrap();
+        let xdg_dir = tmp.path().join("xdg_root/play_launch/contracts");
+        std::fs::create_dir_all(&xdg_dir).unwrap();
+
+        let _env = EnvVarRestore::set("PLAY_LAUNCH_CONTRACTS", &env_dir);
+        let _xdg = EnvVarRestore::set("XDG_CONFIG_HOME", &tmp.path().join("xdg_root"));
+
+        assert_eq!(discover_overlay_root(None), Some(env_dir));
+    }
+
+    #[test]
+    fn test_discover_overlay_root_falls_back_to_xdg_when_env_var_missing() {
+        let _lock = ENV_GUARD.lock().unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let xdg_base = tmp.path().join("xdg_root");
+        let xdg_dir = xdg_base.join("play_launch/contracts");
+        std::fs::create_dir_all(&xdg_dir).unwrap();
+
+        let _env = EnvVarRestore::unset("PLAY_LAUNCH_CONTRACTS");
+        let _xdg = EnvVarRestore::set("XDG_CONFIG_HOME", &xdg_base);
+
+        assert_eq!(discover_overlay_root(None), Some(xdg_dir));
+    }
+
+    #[test]
+    fn test_discover_overlay_root_env_var_ignored_when_dir_missing() {
+        let _lock = ENV_GUARD.lock().unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let xdg_base = tmp.path().join("xdg_root");
+        let xdg_dir = xdg_base.join("play_launch/contracts");
+        std::fs::create_dir_all(&xdg_dir).unwrap();
+
+        // PLAY_LAUNCH_CONTRACTS points at a directory that doesn't exist —
+        // must be skipped in favor of XDG, not just silently returned.
+        let _env = EnvVarRestore::set("PLAY_LAUNCH_CONTRACTS", &tmp.path().join("nope"));
+        let _xdg = EnvVarRestore::set("XDG_CONFIG_HOME", &xdg_base);
+
+        assert_eq!(discover_overlay_root(None), Some(xdg_dir));
+    }
+
+    #[test]
+    fn test_discover_overlay_root_none_when_nothing_exists() {
+        let _lock = ENV_GUARD.lock().unwrap();
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        let _env = EnvVarRestore::set("PLAY_LAUNCH_CONTRACTS", &tmp.path().join("nope1"));
+        let _xdg = EnvVarRestore::set("XDG_CONFIG_HOME", &tmp.path().join("nope2"));
+
+        // This assumes /etc/play_launch/contracts doesn't exist on the test
+        // host — true for any stock CI/dev box; skip if it somehow does.
+        if std::path::Path::new("/etc/play_launch/contracts").is_dir() {
+            eprintln!(
+                "SKIP: /etc/play_launch/contracts exists on this host, \
+                 can't test the all-missing case"
+            );
+            return;
+        }
+
+        assert_eq!(discover_overlay_root(None), None);
     }
 }
