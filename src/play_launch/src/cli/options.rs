@@ -108,6 +108,15 @@ pub enum Command {
         play_launch check --contracts ~/contracts /path/to/launch.py arg:=value")]
     Check(CheckArgs),
 
+    /// Resolve launch + contracts + scheduling into a SystemModel YAML
+    /// (RFC-0050 / docs/design/system-model.md): one fully-resolved,
+    /// checked artifact per concrete arg-set. Refuses to emit when the
+    /// contract checker reports errors; warnings are embedded in the model.
+    #[command(after_help = "Examples:\n  \
+        play_launch resolve demo_pkg pipeline.launch.xml --out system_model.yaml\n  \
+        play_launch resolve /path/to/launch.xml mode:=velodyne --sched system.posix.yaml")]
+    Resolve(ResolveArgs),
+
     /// Manage contract/platform-file overlays (Phase 41.4, design §3.3)
     #[command(after_help = "Examples:\n  \
         play_launch contract eject rt_demo bringup.launch.xml\n  \
@@ -251,6 +260,50 @@ impl CheckArgs {
     /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
     /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
     /// `/etc/play_launch/contracts` — first existing wins.
+    pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
+        crate::ros::manifest_loader::ContractSources {
+            overlay: crate::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
+            provider: !self.no_provider_contracts,
+        }
+    }
+}
+
+/// Arguments for `play_launch resolve`
+#[derive(Args)]
+pub struct ResolveArgs {
+    /// Package name or path to launch file
+    pub package_or_path: String,
+
+    /// Launch file name (if package_or_path is a package name)
+    pub launch_file: Option<String>,
+
+    /// Launch arguments in KEY:=VALUE format
+    #[arg(trailing_var_arg = true)]
+    pub launch_arguments: Vec<String>,
+
+    /// Overlay root for user-supplied contracts (see `check --contracts`).
+    #[arg(long, value_name = "PATH")]
+    pub contracts: Option<PathBuf>,
+
+    /// Disable the provider-sidecar channel (see `check`).
+    #[arg(long)]
+    pub no_provider_contracts: bool,
+
+    /// Path to a scheduling platform file (v2 `.yaml` or legacy `.toml`).
+    #[arg(long)]
+    pub sched: Option<std::path::PathBuf>,
+
+    /// Scheduling target the platform file must declare.
+    #[arg(long, default_value = "posix")]
+    pub target: String,
+
+    /// Output path for the SystemModel YAML. `-` writes to stdout.
+    #[arg(long, short = 'o', default_value = "system_model.yaml")]
+    pub out: String,
+}
+
+impl ResolveArgs {
+    /// Same two-step contract source resolution as `check`.
     pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
         crate::ros::manifest_loader::ContractSources {
             overlay: crate::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
