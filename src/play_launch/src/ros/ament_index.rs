@@ -160,8 +160,46 @@ pub fn check_system_deps() -> eyre::Result<()> {
 mod tests {
     use super::*;
 
+    /// Serializes tests in this module — every test here transitively reads
+    /// `AMENT_PREFIX_PATH` (via `get_package_prefix`/`find_executable`/
+    /// `check_system_deps`), and `test_ament_prefix_path_required` temporarily
+    /// clears it. `std::env` is process-global and `cargo test` runs tests on
+    /// multiple threads within the same process by default, so without this
+    /// lock the clearing test can race with the others and flake them with a
+    /// spurious "AMENT_PREFIX_PATH not set" error.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// RAII guard that snapshots and restores an env var, so a panicking
+    /// assertion inside a test still leaves the environment clean for
+    /// whichever test runs next while holding `ENV_GUARD`.
+    struct EnvVarRestore {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvVarRestore {
+        fn unset(key: &'static str) -> Self {
+            let original = env::var(key).ok();
+            // SAFETY: serialized by `ENV_GUARD`, held for the guard's lifetime.
+            unsafe { env::remove_var(key) };
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarRestore {
+        fn drop(&mut self) {
+            // SAFETY: serialized by `ENV_GUARD`.
+            match &self.original {
+                Some(v) => unsafe { env::set_var(self.key, v) },
+                None => unsafe { env::remove_var(self.key) },
+            }
+        }
+    }
+
     #[test]
     fn test_get_package_prefix_existing() {
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
         // Test with std_msgs which should always be available in a ROS environment
         let result = get_package_prefix("std_msgs");
         assert!(result.is_ok(), "std_msgs package should be found");
@@ -175,6 +213,8 @@ mod tests {
 
     #[test]
     fn test_get_package_prefix_nonexistent() {
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
         let result = get_package_prefix("nonexistent_package_12345");
         assert!(result.is_err(), "Nonexistent package should return error");
         assert!(
@@ -185,6 +225,8 @@ mod tests {
 
     #[test]
     fn test_find_executable_component_container() {
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
         // Test finding component_container which should exist in rclcpp_components
         let result = find_executable("rclcpp_components", "component_container");
         assert!(
@@ -205,6 +247,8 @@ mod tests {
 
     #[test]
     fn test_find_executable_component_container_mt() {
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
         // Test finding component_container_mt variant
         let result = find_executable("rclcpp_components", "component_container_mt");
         assert!(
@@ -218,12 +262,16 @@ mod tests {
 
     #[test]
     fn test_find_executable_nonexistent_package() {
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
         let result = find_executable("nonexistent_package_12345", "fake_executable");
         assert!(result.is_err(), "Nonexistent package should return error");
     }
 
     #[test]
     fn test_find_executable_nonexistent_executable() {
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
         let result = find_executable("std_msgs", "nonexistent_executable_12345");
         assert!(
             result.is_err(),
@@ -237,41 +285,27 @@ mod tests {
 
     #[test]
     fn test_ament_prefix_path_required() {
-        // Save current AMENT_PREFIX_PATH
-        let original = env::var("AMENT_PREFIX_PATH").ok();
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = EnvVarRestore::unset("AMENT_PREFIX_PATH");
 
-        // Use a closure to ensure restoration even on panic
-        let test_result = std::panic::catch_unwind(|| {
-            // Temporarily unset it
-            unsafe { env::remove_var("AMENT_PREFIX_PATH") };
-
-            let result = get_package_prefix("std_msgs");
-            assert!(
-                result.is_err(),
-                "Should error when AMENT_PREFIX_PATH not set"
-            );
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("AMENT_PREFIX_PATH"),
-                "Error should mention AMENT_PREFIX_PATH"
-            );
-        });
-
-        // Always restore original value, even if test panicked
-        if let Some(path) = original {
-            unsafe { env::set_var("AMENT_PREFIX_PATH", path) };
-        }
-
-        // Re-panic if test failed
-        if let Err(e) = test_result {
-            std::panic::resume_unwind(e);
-        }
+        let result = get_package_prefix("std_msgs");
+        assert!(
+            result.is_err(),
+            "Should error when AMENT_PREFIX_PATH not set"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("AMENT_PREFIX_PATH"),
+            "Error should mention AMENT_PREFIX_PATH"
+        );
     }
 
     #[test]
     fn test_check_system_deps_passes() {
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
         // All required packages should be present in a properly configured ROS environment
         let result = check_system_deps();
         assert!(
