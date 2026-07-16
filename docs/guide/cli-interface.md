@@ -122,19 +122,44 @@ These options apply to `launch`, `run`, and `replay` subcommands:
 
 ## Workflow Explanation
 
-### Automatic Dump-and-Replay (`launch` and `run`)
+### Automatic Dump-Resolve-Replay (`launch` and `run`)
 
-When you use `play_launch launch` or `play_launch run`:
+When you use `play_launch launch` (Phase 43 — the SystemModel path is the
+default):
 
-1. **Dump Phase**: `play_launch` invokes `dump_launch` (found via PATH)
-   - Records launch execution to `record.json` (or custom output via `--output`)
+1. **Dump Phase**: records launch execution to `record.json`
    - Captures nodes, composable nodes, containers, parameters, and remappings
 
-2. **Replay Phase**: `play_launch` executes the recorded launch
-   - Spawns nodes and containers
-   - Loads composable nodes using direct RCL service calls
-   - Monitors resources if enabled
-   - Saves all outputs to log directory
+2. **Resolve Phase**: builds `system_model.yaml` from the record + contract
+   manifests + scheduling platform file (the same pipeline as
+   `play_launch resolve`)
+   - Contract **errors refuse the launch** — the model is checked by
+     construction; warnings embed in the model
+   - The model is cryptographically bound to `record.json` (sha256 in
+     `meta.record`)
+
+3. **Replay Phase**: executes the recorded launch **from the bound pair**
+   - Spawns nodes and containers; loads composable nodes via RCL services
+   - The rule engine, blocking allowlist, and lifecycle wiring read the
+     model's contracts; the scheduling plan reads the model's execution
+     layer (no re-derivation at spawn time)
+   - Monitors resources if enabled; saves all outputs to the log directory
+
+`play_launch run` (single node) skips the resolve phase — it has no
+contracts to check.
+
+### The three-verb split
+
+| Verb | Role |
+|---|---|
+| `check` | diagnostic front-end — full source excerpts, `--explain`, rule filters |
+| `resolve` | the build step — emits the checked `system_model.yaml` + `*.record.json` pair |
+| `replay --model` | the runtime — refuses a stale pair, consumes the model for contracts + scheduling |
+
+`replay` without `--model` remains the legacy path (re-loads manifests and
+re-derives the sched plan from the platform file) — for old records and
+hand runs. A mismatched (model, record) pair fails loud with both hashes;
+re-run `play_launch resolve` to rebind.
 
 ### Manual Workflow
 
@@ -146,9 +171,14 @@ play_launch dump launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning \
     --output autoware_planning.json
 
-# Step 2: Replay with custom options
+# Step 2 (optional): resolve the record into a checked SystemModel
+play_launch resolve --record autoware_planning.json \
+    --sched system.posix.yaml -o autoware.system_model.yaml
+
+# Step 3: Replay with custom options (add --model for the checked path)
 play_launch replay \
     --input-file autoware_planning.json \
+    --model autoware.system_model.yaml \
     --log-dir logs/run1 \
     --enable-monitoring \
     --wait-for-service-ready \
