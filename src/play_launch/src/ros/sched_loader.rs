@@ -539,25 +539,32 @@ pub fn derive_sched_plan(
     }
 
     // Rate/deadline-vs-priority contradictions (design §6): always
-    // reported, never fatal. Cite the contract file that declared the
-    // contradicted fact (`node_a`'s scope) and the platform file that
-    // produced the final priority — the sched crate's `Contradiction` type
-    // carries no location (it's a pure host-agnostic pairwise scan), so this
-    // wave attaches file references on the play_launch side instead of
-    // touching the sched crate (per the brief's "do NOT change the sched
-    // crate unless trivial+additive").
+    // reported, never fatal. Cite the contract file(s) that declared the
+    // contradicted facts — BOTH nodes' scopes (deduped when they resolve to
+    // the same contract; in a multi-include launch tree they can legitimately
+    // differ) — and the platform file that produced the final priority. The
+    // sched crate's `Contradiction` type carries no location (it's a pure
+    // host-agnostic pairwise scan), so these file references are attached on
+    // the play_launch side instead of touching the sched crate (per the
+    // brief's "do NOT change the sched crate unless trivial+additive").
     let scope_by_fqn = fqn_to_scope_id(dump);
+    let contract_ref_for = |fqn: &str| -> Option<String> {
+        let scope_id = scope_by_fqn.get(fqn).copied().flatten()?;
+        let rm = index?.manifests.get(&scope_id)?;
+        Some(format!("{} [{}]", rm.contract_path.display(), rm.channel))
+    };
     for c in rate_priority_contradictions(&input, &plan)
         .into_iter()
         .chain(deadline_priority_contradictions(&input, &plan))
     {
-        let contract_ref = scope_by_fqn
-            .get(c.node_a.as_str())
-            .copied()
-            .flatten()
-            .and_then(|scope_id| index.and_then(|idx| idx.manifests.get(&scope_id)))
-            .map(|rm| format!("{} [{}]", rm.contract_path.display(), rm.channel))
-            .unwrap_or_else(|| "<contract unknown>".to_string());
+        let ref_a = contract_ref_for(&c.node_a);
+        let ref_b = contract_ref_for(&c.node_b);
+        let contract_ref = match (ref_a, ref_b) {
+            (Some(a), Some(b)) if a == b => a,
+            (Some(a), Some(b)) => format!("{a}, {b}"),
+            (Some(one), None) | (None, Some(one)) => one,
+            (None, None) => "<contract unknown>".to_string(),
+        };
         let msg = format!(
             "scheduling: `{}` vs `{}` priority order contradicts their `{}` order \
              (contract: {contract_ref}; platform file: {})",
@@ -592,12 +599,15 @@ fn fqn_to_scope_id(dump: &LaunchDump) -> HashMap<String, Option<usize>> {
 
 /// Human-readable description of the timing fact that produced `priority`
 /// under `mapper`, for a node's `Provenance::Derived` line (design §7, e.g.
-/// `"100 Hz → prio 38"`). Falls back to a generic description for mappers
-/// (`manual`, or future built-ins) that don't derive from a single
-/// rate/deadline fact.
+/// `"100 Hz → prio 38"`). The `manual` mapper (and any future mapper that
+/// doesn't derive from a single rate/deadline fact) is described by the
+/// tier that placed the node instead — `Display` already prefixes the
+/// mapper name (`derived(<mapper>: <fact>)`), so repeating it here would be
+/// redundant (W4 review, Cosmetic #2).
 fn describe_derived_fact(
     mapper: &str,
     node: Option<&ros_launch_manifest_sched::MapperNode>,
+    tier_name: &str,
     priority: i64,
 ) -> String {
     let fmt_num = |v: f64| {
@@ -616,7 +626,7 @@ fn describe_derived_fact(
         ("deadline_monotonic", _, Some(deadline_us)) => {
             format!("{deadline_us} us deadline → prio {priority}")
         }
-        _ => format!("assigned by `{mapper}` → prio {priority}"),
+        _ => format!("tier '{tier_name}' → prio {priority}"),
     }
 }
 
@@ -643,7 +653,7 @@ fn build_provenance(
                 let node = input.nodes.iter().find(|n| &n.name == member);
                 Provenance::Derived {
                     mapper: mapper.to_string(),
-                    fact: describe_derived_fact(mapper, node, tier.priority),
+                    fact: describe_derived_fact(mapper, node, &tier.name, tier.priority),
                 }
             };
             out.insert(member.clone(), provenance);
@@ -1435,6 +1445,52 @@ nodes = ["fast_node"]
     // ── Phase 41.4: provenance + `--explain` ──
 
     #[test]
+    fn render_explain_manual_mapper_cites_tier_not_mapper_twice() {
+        // W4 review Cosmetic #2: the manual mapper's provenance must not
+        // read `derived(manual: assigned by `manual` ...)` — it cites the
+        // tier that placed the node instead.
+        let dump = dump_two_plain_nodes();
+        let toml = r#"
+[tiers.rt]
+class = "real_time"
+
+[tiers.rt.posix]
+priority = 20
+sched_class = "SCHED_FIFO"
+
+[[assign]]
+tier = "rt"
+nodes = ["fast_node"]
+"#;
+        with_temp_file("toml", toml, |path| {
+            let derived = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
+                .expect("legacy toml derives via bridge + manual mapper");
+
+            match derived.provenance.get("/fast_node").expect("fast_node") {
+                Provenance::Derived { mapper, fact } => {
+                    assert_eq!(mapper, "manual");
+                    assert_eq!(fact, "tier 'rt' → prio 20");
+                }
+                other => panic!("expected Derived, got {other:?}"),
+            }
+
+            let resolved = ResolvedPlatformFile {
+                path: path.to_path_buf(),
+                channel: PlatformFileChannel::Explicit,
+            };
+            let text = render_explain(&derived, &resolved, None);
+            assert!(
+                text.contains("derived(manual: tier 'rt' → prio 20)"),
+                "{text}"
+            );
+            assert!(
+                !text.contains("assigned by"),
+                "redundant mapper-name wording must be gone: {text}"
+            );
+        });
+    }
+
+    #[test]
     fn provenance_marks_override_derived_and_default() {
         let dump = dump_two_plain_nodes();
         let index = index_with_rates();
@@ -1536,6 +1592,145 @@ overrides:
             "derived(rate_monotonic: 100 Hz → prio 38)"
         );
         assert_eq!(Provenance::Default.to_string(), "default (no timing facts)");
+    }
+
+    /// Two nodes in DIFFERENT scopes, each scope with its own contract file
+    /// (distinct paths) — for the dual-scope contradiction-citation test
+    /// (W4 review Important #1).
+    fn dump_two_nodes_two_scopes() -> LaunchDump {
+        let json = serde_json::json!({
+            "node": [
+                {
+                    "executable": "fast_node",
+                    "name": "fast_node",
+                    "exec_name": "fast_node",
+                    "params_files": [],
+                    "cmd": [],
+                    "scope": 0
+                },
+                {
+                    "executable": "slow_node",
+                    "name": "slow_node",
+                    "exec_name": "slow_node",
+                    "params_files": [],
+                    "cmd": [],
+                    "scope": 1
+                }
+            ],
+            "load_node": [],
+            "container": [],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [
+                {"id": 0, "ns": "/", "parent": null},
+                {"id": 1, "ns": "/", "parent": 0}
+            ]
+        });
+        serde_json::from_value(json).expect("valid LaunchDump")
+    }
+
+    fn index_with_rates_two_scopes() -> ManifestIndex {
+        use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedTopic};
+        let mut index = ManifestIndex::default();
+        for (topic, node, rate, scope_id) in [
+            ("/fast_topic", "/fast_node", 100.0, 0usize),
+            ("/slow_topic", "/slow_node", 10.0, 1usize),
+        ] {
+            index.topics.insert(
+                topic.to_string(),
+                ResolvedTopic {
+                    fqn: topic.to_string(),
+                    msg_type: "std_msgs/msg/String".to_string(),
+                    qos: None,
+                    publishers: vec![format!("{node}/out")],
+                    subscribers: vec![],
+                    rate_hz: Some(rate),
+                    max_transport_ms: None,
+                    drop: None,
+                    scope_ids: vec![scope_id],
+                },
+            );
+            index.manifests.insert(
+                scope_id,
+                ResolvedManifest {
+                    scope_id,
+                    pkg: Some(format!("pkg{scope_id}")),
+                    file: format!("scope{scope_id}.launch.xml"),
+                    ns: "/".to_string(),
+                    channel: ContractChannel::Provider,
+                    contract_path: PathBuf::from(format!(
+                        "/opt/share/pkg{scope_id}/launch/scope{scope_id}.contract.yaml"
+                    )),
+                    manifest: Default::default(),
+                    source: String::new(),
+                    diagnostics: vec![],
+                },
+            );
+        }
+        index
+    }
+
+    #[test]
+    fn contradiction_warning_cites_both_scopes_contracts() {
+        let dump = dump_two_nodes_two_scopes();
+        let index = index_with_rates_two_scopes();
+        // Invert the rate order: slow (scope 1) pinned above fast (scope 0).
+        let yaml = "\
+target: posix
+mapper: rate_monotonic
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+overrides:
+  slow_node: { priority: 40 }
+  fast_node: { priority: 12 }
+";
+        with_temp_file("yaml", yaml, |path| {
+            let derived =
+                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
+                    .expect("contradictions are warnings, never fatal");
+            let msg = derived
+                .warnings
+                .iter()
+                .find(|w| w.contains("contradicts"))
+                .expect("expected a contradiction warning");
+            // BOTH scopes' contract files must be cited (W4 review
+            // Important #1) — a multi-include tree can put the two nodes
+            // of a contradicting pair in different contracts.
+            assert!(msg.contains("scope0.contract.yaml"), "{msg}");
+            assert!(msg.contains("scope1.contract.yaml"), "{msg}");
+        });
+    }
+
+    #[test]
+    fn contradiction_warning_dedupes_identical_contract_citation() {
+        // Same-scope pair (both nodes in scope 0, one shared contract):
+        // the contract path must appear exactly once, not twice.
+        let dump = dump_two_plain_nodes();
+        let index = index_with_rates();
+        let yaml = "\
+target: posix
+mapper: rate_monotonic
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+overrides:
+  slow_node: { priority: 40 }
+  fast_node: { priority: 12 }
+";
+        with_temp_file("yaml", yaml, |path| {
+            let derived =
+                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
+                    .expect("derive");
+            let msg = derived
+                .warnings
+                .iter()
+                .find(|w| w.contains("contradicts"))
+                .expect("expected a contradiction warning");
+            assert_eq!(
+                msg.matches("two_nodes.contract.yaml").count(),
+                1,
+                "identical contract citation must be deduped: {msg}"
+            );
+        });
     }
 
     #[test]
