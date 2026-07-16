@@ -4,7 +4,7 @@
 //! report, but do not (yet) apply `sched_setscheduler`/affinity to processes.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt,
     path::{Path, PathBuf},
 };
@@ -263,6 +263,36 @@ pub struct DerivedSchedPlan {
     pub target: String,
     pub mapper: String,
     pub warnings: Vec<String>,
+    /// Per-node fqn -> why it ended up with its final priority/class (Phase
+    /// 41.4, `--explain`). Every member of every tier in `plan` has an entry.
+    pub provenance: BTreeMap<String, Provenance>,
+}
+
+/// Why a node ended up with its final scheduling placement (design §7
+/// `--explain`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Provenance {
+    /// An explicit `overrides.<selector>` entry in the platform file beat
+    /// whatever the mapper derived (or promoted the node out of the
+    /// non-RT default tier). `selector` is the exact key used in the
+    /// platform file's `overrides:` map.
+    Override { selector: String },
+    /// The mapper derived this placement from a timing fact. `fact` is a
+    /// human-readable description of the fact and resulting priority, e.g.
+    /// `"100 Hz → prio 38"`.
+    Derived { mapper: String, fact: String },
+    /// No timing fact and no override — landed in the non-RT default tier.
+    Default,
+}
+
+impl fmt::Display for Provenance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Provenance::Override { selector } => write!(f, "override({selector})"),
+            Provenance::Derived { mapper, fact } => write!(f, "derived({mapper}: {fact})"),
+            Provenance::Default => write!(f, "default (no timing facts)"),
+        }
+    }
 }
 
 /// `true` if `selector` names `fqn` exactly or matches its bare (last path
@@ -317,6 +347,7 @@ fn apply_overrides(
         ros_launch_manifest_sched::PlatformOverrideEntry,
     >,
     warnings: &mut Vec<String>,
+    overridden: &mut BTreeMap<String, String>,
 ) {
     use ros_launch_manifest_sched::PlatformOverrideEntry;
 
@@ -345,6 +376,9 @@ fn apply_overrides(
             if tier.class.is_none() {
                 tier.class = Some("real_time".to_string());
             }
+            if let Some(member) = tier.members.first() {
+                overridden.insert(member.clone(), selector.clone());
+            }
             continue;
         }
 
@@ -370,6 +404,7 @@ fn apply_overrides(
                 .sched_class
                 .clone()
                 .or_else(|| posix.priority.map(|_| "SCHED_FIFO".to_string()));
+            overridden.insert(node_fqn.clone(), selector.clone());
             tiers_push_override(
                 table,
                 node_fqn.clone(),
@@ -462,7 +497,8 @@ pub fn derive_sched_plan(
 
     let mut plan = flatten_to_one_tier_per_node(&derived);
     let mut warnings = Vec::new();
-    apply_overrides(&mut plan, &file.overrides, &mut warnings);
+    let mut overridden: BTreeMap<String, String> = BTreeMap::new();
+    apply_overrides(&mut plan, &file.overrides, &mut warnings, &mut overridden);
 
     // Band violations — only meaningful with an explicit posix band.
     if let PlatformResources::Posix(res) = &file.resources
@@ -503,26 +539,117 @@ pub fn derive_sched_plan(
     }
 
     // Rate/deadline-vs-priority contradictions (design §6): always
-    // reported, never fatal.
+    // reported, never fatal. Cite the contract file that declared the
+    // contradicted fact (`node_a`'s scope) and the platform file that
+    // produced the final priority — the sched crate's `Contradiction` type
+    // carries no location (it's a pure host-agnostic pairwise scan), so this
+    // wave attaches file references on the play_launch side instead of
+    // touching the sched crate (per the brief's "do NOT change the sched
+    // crate unless trivial+additive").
+    let scope_by_fqn = fqn_to_scope_id(dump);
     for c in rate_priority_contradictions(&input, &plan)
         .into_iter()
         .chain(deadline_priority_contradictions(&input, &plan))
     {
+        let contract_ref = scope_by_fqn
+            .get(c.node_a.as_str())
+            .copied()
+            .flatten()
+            .and_then(|scope_id| index.and_then(|idx| idx.manifests.get(&scope_id)))
+            .map(|rm| format!("{} [{}]", rm.contract_path.display(), rm.channel))
+            .unwrap_or_else(|| "<contract unknown>".to_string());
         let msg = format!(
-            "scheduling: `{}` vs `{}` priority order contradicts their `{}` order (check the \
-             contract and platform-file overrides)",
-            c.node_a, c.node_b, c.kind,
+            "scheduling: `{}` vs `{}` priority order contradicts their `{}` order \
+             (contract: {contract_ref}; platform file: {})",
+            c.node_a,
+            c.node_b,
+            c.kind,
+            platform_path.display(),
         );
         tracing::warn!("{msg}");
         warnings.push(msg);
     }
+
+    let provenance = build_provenance(&plan, &input, &file.mapper, &overridden);
 
     Ok(DerivedSchedPlan {
         plan,
         target: file.target,
         mapper: file.mapper,
         warnings,
+        provenance,
     })
+}
+
+/// FQN -> scope id, for locating which manifest (if any) declared a node's
+/// contract facts — used to cite a contract file in contradiction warnings.
+fn fqn_to_scope_id(dump: &LaunchDump) -> HashMap<String, Option<usize>> {
+    scheduled_records_from_dump(dump)
+        .into_iter()
+        .map(|r| (r.fqn, r.scope_id))
+        .collect()
+}
+
+/// Human-readable description of the timing fact that produced `priority`
+/// under `mapper`, for a node's `Provenance::Derived` line (design §7, e.g.
+/// `"100 Hz → prio 38"`). Falls back to a generic description for mappers
+/// (`manual`, or future built-ins) that don't derive from a single
+/// rate/deadline fact.
+fn describe_derived_fact(
+    mapper: &str,
+    node: Option<&ros_launch_manifest_sched::MapperNode>,
+    priority: i64,
+) -> String {
+    let fmt_num = |v: f64| {
+        if v.fract() == 0.0 {
+            format!("{v:.0}")
+        } else {
+            format!("{v}")
+        }
+    };
+    match (
+        mapper,
+        node.and_then(|n| n.rate_hz),
+        node.and_then(|n| n.deadline_us),
+    ) {
+        ("rate_monotonic", Some(rate), _) => format!("{} Hz → prio {priority}", fmt_num(rate)),
+        ("deadline_monotonic", _, Some(deadline_us)) => {
+            format!("{deadline_us} us deadline → prio {priority}")
+        }
+        _ => format!("assigned by `{mapper}` → prio {priority}"),
+    }
+}
+
+/// Build the per-node provenance map (design §7) from the final plan: an
+/// override always wins the label; failing that, membership in the
+/// synthesized default tier means no timing facts; anything else is a
+/// mapper-derived placement.
+fn build_provenance(
+    plan: &ResolvedTierTable,
+    input: &ros_launch_manifest_sched::MapperInput,
+    mapper: &str,
+    overridden: &BTreeMap<String, String>,
+) -> BTreeMap<String, Provenance> {
+    let mut out = BTreeMap::new();
+    for tier in &plan.tiers {
+        for member in &tier.members {
+            let provenance = if let Some(selector) = overridden.get(member) {
+                Provenance::Override {
+                    selector: selector.clone(),
+                }
+            } else if tier.name == ros_launch_manifest_sched::DEFAULT_TIER {
+                Provenance::Default
+            } else {
+                let node = input.nodes.iter().find(|n| &n.name == member);
+                Provenance::Derived {
+                    mapper: mapper.to_string(),
+                    fact: describe_derived_fact(mapper, node, tier.priority),
+                }
+            };
+            out.insert(member.clone(), provenance);
+        }
+    }
+    out
 }
 
 /// Load a scheduling platform file (v2 `.yaml` or legacy `.toml`), derive +
@@ -537,7 +664,7 @@ pub fn check_sched(
     index: Option<&ManifestIndex>,
     sched_path: &Path,
     target: &str,
-) -> Result<()> {
+) -> Result<DerivedSchedPlan> {
     let derived = derive_sched_plan(dump, index, sched_path, target, SchedApplyMode::Warn)?;
 
     eprintln!(
@@ -562,7 +689,114 @@ pub fn check_sched(
     for w in &derived.warnings {
         eprintln!("  warning: {w}");
     }
-    Ok(())
+    Ok(derived)
+}
+
+/// `play_launch check --sched ... --explain` (design §7): print the merged
+/// logical view — one row per schedulable node with its final
+/// class/priority/core and *why* (provenance), followed by footer lines
+/// naming the platform file and every per-scope contract that fed the
+/// mappers.
+///
+/// Plain aligned text (brief: "no external table crates") — column widths
+/// are computed from the actual data so the table stays readable for both
+/// short demo fixtures and long FQNs.
+pub fn print_explain(
+    derived: &DerivedSchedPlan,
+    platform: &ResolvedPlatformFile,
+    index: Option<&ManifestIndex>,
+) {
+    eprint!("{}", render_explain(derived, platform, index));
+}
+
+/// Pure string-builder for `--explain`'s output (design §7) — split out from
+/// [`print_explain`] so tests can assert on the rendered text directly
+/// instead of only smoke-testing that printing doesn't panic.
+fn render_explain(
+    derived: &DerivedSchedPlan,
+    platform: &ResolvedPlatformFile,
+    index: Option<&ManifestIndex>,
+) -> String {
+    use std::fmt::Write as _;
+
+    // One row per node, highest priority first (ties by FQN ascending) —
+    // the default (non-RT) tier's members interleave at priority 0.
+    struct Row<'a> {
+        fqn: &'a str,
+        class: String,
+        priority: i64,
+        core: String,
+        provenance: Provenance,
+    }
+
+    let mut rows: Vec<Row> = derived
+        .plan
+        .tiers
+        .iter()
+        .flat_map(|t| {
+            t.members.iter().map(move |m| Row {
+                fqn: m,
+                class: t
+                    .sched_class
+                    .clone()
+                    .unwrap_or_else(|| "SCHED_OTHER".to_string()),
+                priority: t.priority,
+                core: t.core.map(|c| c.to_string()).unwrap_or_else(|| "-".into()),
+                provenance: derived
+                    .provenance
+                    .get(m)
+                    .cloned()
+                    .unwrap_or(Provenance::Default),
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.fqn.cmp(b.fqn)));
+
+    let fqn_w = rows.iter().map(|r| r.fqn.len()).max().unwrap_or(3).max(3);
+    let class_w = rows.iter().map(|r| r.class.len()).max().unwrap_or(5).max(5);
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{:fqn_w$}  {:class_w$}  {:>4}  {:>4}  PROVENANCE",
+        "FQN", "CLASS", "PRIO", "CORE"
+    );
+    for r in &rows {
+        let _ = writeln!(
+            out,
+            "{:fqn_w$}  {:class_w$}  {:>4}  {:>4}  {}",
+            r.fqn, r.class, r.priority, r.core, r.provenance
+        );
+    }
+
+    for w in &derived.warnings {
+        let _ = writeln!(out, "  warning: {w}");
+    }
+
+    let _ = writeln!(
+        out,
+        "system file: {}({})",
+        platform.channel,
+        platform.path.display()
+    );
+    if let Some(index) = index {
+        let mut scopes: Vec<_> = index.manifests.iter().collect();
+        scopes.sort_by_key(|(scope_id, _)| **scope_id);
+        for (scope_id, resolved) in scopes {
+            let filename = if let Some(ref pkg) = resolved.pkg {
+                format!("{}/{}", pkg, resolved.file)
+            } else {
+                resolved.file.clone()
+            };
+            let _ = writeln!(
+                out,
+                "contract[scope {scope_id}, {filename}]: {}({})",
+                resolved.channel,
+                resolved.contract_path.display()
+            );
+        }
+    }
+    out
 }
 
 /// Which channel supplied a resolved platform file (Phase 41.3 design §3.1;
@@ -607,7 +841,7 @@ pub struct ResolvedPlatformFile {
 /// Layout: `<overlay_root>/<pkg>/launch/<stem>.system.<target>.yaml`. Falls
 /// back to the `_` package-dir convention when the root scope has no pkg
 /// (mirrors `manifest_loader::resolve_overlay_path`).
-fn resolve_platform_overlay_path(
+pub(crate) fn resolve_platform_overlay_path(
     root_scope: &crate::ros::launch_dump::ScopeEntry,
     overlay_root: &Path,
     target: &str,
@@ -630,7 +864,7 @@ fn resolve_platform_overlay_path(
 /// Returns `None` when the root scope has no recorded path (older
 /// `record.json`, or an origin the parser couldn't resolve to an absolute
 /// path) — provider lookup is simply unavailable.
-fn resolve_platform_provider_path(
+pub(crate) fn resolve_platform_provider_path(
     root_scope: &crate::ros::launch_dump::ScopeEntry,
     target: &str,
 ) -> Option<PathBuf> {
@@ -644,7 +878,7 @@ fn resolve_platform_provider_path(
 /// Find the ROOT launch scope (the top-level file scope with no parent) —
 /// platform-file resolution is per-launch, not per-include-scope, so it
 /// always looks here regardless of which scope any given node lives in.
-fn root_scope(dump: &LaunchDump) -> Option<&crate::ros::launch_dump::ScopeEntry> {
+pub(crate) fn root_scope(dump: &LaunchDump) -> Option<&crate::ros::launch_dump::ScopeEntry> {
     dump.scopes
         .iter()
         .find(|s| s.parent.is_none() && s.is_file_scope())
@@ -889,7 +1123,7 @@ mod tests {
     /// A contract index giving `/fast_node` 100 Hz and `/slow_node` 10 Hz
     /// (topic-level rate facts on topics each publishes).
     fn index_with_rates() -> ManifestIndex {
-        use crate::ros::manifest_loader::ResolvedTopic;
+        use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedTopic};
         let mut index = ManifestIndex::default();
         for (topic, node, rate) in [
             ("/fast_topic", "/fast_node", 100.0),
@@ -910,6 +1144,26 @@ mod tests {
                 },
             );
         }
+        // A resolved manifest at scope 0 — exercised by the `--explain`
+        // footer tests (contract-file citation) and by
+        // `contradiction_warning_cites_contract_and_platform_file` (the
+        // contract-file half of a contradiction warning).
+        index.manifests.insert(
+            0,
+            ResolvedManifest {
+                scope_id: 0,
+                pkg: Some("rate_fixture".to_string()),
+                file: "two_nodes.launch.xml".to_string(),
+                ns: "/".to_string(),
+                channel: ContractChannel::Provider,
+                contract_path: PathBuf::from(
+                    "/opt/share/rate_fixture/launch/two_nodes.contract.yaml",
+                ),
+                manifest: Default::default(),
+                source: String::new(),
+                diagnostics: vec![],
+            },
+        );
         index
     }
 
@@ -1175,6 +1429,208 @@ nodes = ["fast_node"]
                 .find(|t| t.name == ros_launch_manifest_sched::DEFAULT_TIER)
                 .expect("default tier");
             assert_eq!(default_tier.members, vec!["/slow_node".to_string()]);
+        });
+    }
+
+    // ── Phase 41.4: provenance + `--explain` ──
+
+    #[test]
+    fn provenance_marks_override_derived_and_default() {
+        let dump = dump_two_plain_nodes();
+        let index = index_with_rates();
+        // fast_node/slow_node both have rate facts (derived); pin slow_node
+        // via an override; a third fact-less node lands in the default tier.
+        let yaml = "\
+target: posix
+mapper: rate_monotonic
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+overrides:
+  slow_node: { priority: 39, core: 0 }
+";
+        with_temp_file("yaml", yaml, |path| {
+            let derived =
+                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
+                    .expect("derive");
+
+            match derived.provenance.get("/fast_node").expect("fast_node") {
+                Provenance::Derived { mapper, fact } => {
+                    assert_eq!(mapper, "rate_monotonic");
+                    assert!(fact.contains("100"), "{fact}");
+                    assert!(fact.contains("prio 40"), "{fact}");
+                }
+                other => panic!("expected Derived, got {other:?}"),
+            }
+
+            match derived.provenance.get("/slow_node").expect("slow_node") {
+                Provenance::Override { selector } => assert_eq!(selector, "slow_node"),
+                other => panic!("expected Override, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn provenance_default_for_factless_node() {
+        let dump = dump_two_plain_nodes();
+        // No contract index: both nodes are fact-less.
+        let yaml = "\
+target: posix
+mapper: rate_monotonic
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+";
+        with_temp_file("yaml", yaml, |path| {
+            let derived = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
+                .expect("derive");
+            assert_eq!(
+                derived.provenance.get("/fast_node"),
+                Some(&Provenance::Default)
+            );
+            assert_eq!(
+                derived.provenance.get("/slow_node"),
+                Some(&Provenance::Default)
+            );
+        });
+    }
+
+    #[test]
+    fn provenance_promoted_factless_node_is_override_not_default() {
+        let dump = dump_two_plain_nodes();
+        let yaml = "\
+target: posix
+mapper: rate_monotonic
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+overrides:
+  fast_node: { priority: 20 }
+";
+        with_temp_file("yaml", yaml, |path| {
+            let derived = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
+                .expect("derive");
+            match derived.provenance.get("/fast_node").expect("fast_node") {
+                Provenance::Override { selector } => assert_eq!(selector, "fast_node"),
+                other => panic!("expected Override, got {other:?}"),
+            }
+            assert_eq!(
+                derived.provenance.get("/slow_node"),
+                Some(&Provenance::Default)
+            );
+        });
+    }
+
+    #[test]
+    fn provenance_display_matches_design_format() {
+        assert_eq!(
+            Provenance::Override {
+                selector: "sensor_node".to_string()
+            }
+            .to_string(),
+            "override(sensor_node)"
+        );
+        assert_eq!(
+            Provenance::Derived {
+                mapper: "rate_monotonic".to_string(),
+                fact: "100 Hz → prio 38".to_string(),
+            }
+            .to_string(),
+            "derived(rate_monotonic: 100 Hz → prio 38)"
+        );
+        assert_eq!(Provenance::Default.to_string(), "default (no timing facts)");
+    }
+
+    #[test]
+    fn contradiction_warning_cites_contract_and_platform_file() {
+        let dump = dump_two_plain_nodes();
+        let index = index_with_rates();
+        // Pin the SLOW node above the fast one — contradicts the rate order
+        // (reuses `derive_rate_contradiction_from_override_is_warned`'s
+        // scenario, but this test asserts the file-citation wording added
+        // in Phase 41.4).
+        let yaml = "\
+target: posix
+mapper: rate_monotonic
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+overrides:
+  slow_node: { priority: 40 }
+  fast_node: { priority: 12 }
+";
+        with_temp_file("yaml", yaml, |path| {
+            let derived =
+                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
+                    .expect("contradictions are warnings, never fatal");
+            let msg = derived
+                .warnings
+                .iter()
+                .find(|w| w.contains("contradicts"))
+                .expect("expected a contradiction warning");
+            assert!(msg.contains("platform file:"), "{msg}");
+            assert!(msg.contains(&path.display().to_string()), "{msg}");
+        });
+    }
+
+    #[test]
+    fn render_explain_shows_override_derived_default_and_footer() {
+        let dump = dump_two_plain_nodes();
+        let index = index_with_rates();
+        let yaml = "\
+target: posix
+mapper: rate_monotonic
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+overrides:
+  slow_node: { priority: 39, core: 0 }
+";
+        with_temp_file("yaml", yaml, |path| {
+            let derived =
+                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
+                    .expect("derive");
+            let resolved = ResolvedPlatformFile {
+                path: path.to_path_buf(),
+                channel: PlatformFileChannel::Explicit,
+            };
+            let text = render_explain(&derived, &resolved, Some(&index));
+
+            // Header + per-node rows.
+            assert!(text.contains("PROVENANCE"), "{text}");
+            assert!(
+                text.contains("/fast_node") && text.contains("derived(rate_monotonic: 100 Hz"),
+                "{text}"
+            );
+            assert!(
+                text.contains("/slow_node") && text.contains("override(slow_node)"),
+                "{text}"
+            );
+
+            // Footer: platform file + per-scope contract, channel-tagged.
+            assert!(
+                text.contains(&format!("system file: explicit({})", path.display())),
+                "{text}"
+            );
+            assert!(text.contains("contract[scope 0,"), "{text}");
+            assert!(text.contains("provider("), "{text}");
+        });
+    }
+
+    #[test]
+    fn render_explain_default_node_has_no_provenance_entry_falls_back() {
+        let dump = dump_two_plain_nodes();
+        let yaml = "\
+target: posix
+mapper: rate_monotonic
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+";
+        with_temp_file("yaml", yaml, |path| {
+            let derived = derive_sched_plan(&dump, None, path, "posix", SchedApplyMode::Warn)
+                .expect("derive");
+            let resolved = ResolvedPlatformFile {
+                path: path.to_path_buf(),
+                channel: PlatformFileChannel::Provider,
+            };
+            let text = render_explain(&derived, &resolved, None);
+            assert!(text.contains("default (no timing facts)"), "{text}");
+            assert!(text.contains("system file: provider("), "{text}");
         });
     }
 
