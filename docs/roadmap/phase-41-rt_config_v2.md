@@ -42,6 +42,28 @@ until nano-ros migrates, then the old path is retired.
 - **41.6** Retirement (LAST, gated on nano-ros migration): drop legacy
   `system.toml` schema, remove bridge, final doc sweep.
 
+## Follow-ups (from the Autoware v2 exercise, 2026-07-16)
+
+Findings report: `.superpowers/sdd/autoware-v2-report.md`. Mechanics validated at
+scale (119 entities / 63 manifests, 0.29 s derivation; channels/provenance/band
+clamp all correct). Gaps are mapper sophistication + UX:
+
+- **41.7 Criticality-aware mapper** (highest value): Autoware declares 11/13 RT
+  nodes at exactly 10 Hz, so `rate_monotonic` orders them by its alphabetical
+  tie-break; an untagged perception node outranked a `criticality: high` control
+  node; 43/78 node pairs produced contradiction-warning noise from the tied
+  rates. New built-in consuming the (already-plumbed, currently inert)
+  `criticality` field; equal facts should collapse to equal priority, not
+  alphabetical spread. Design discussion → separate spec.
+- **41.8 `--explain` polish**: dedupe repeated warning lines; show the full
+  default bucket (or a count + `--explain-all`); warn when the requested
+  `--target` resolves no platform file even without `--explain`.
+- **41.9 Document the two-pass authoring workflow**: overrides are written
+  against the derived plan (`--explain` first, then pin) — guide section.
+- **autoware-contract**: branch `rt/v2-platform` (platform file + 6 criticality
+  facts, committed, unpushed) — push after 41.7 makes the derived numbers
+  meaningful.
+
 ## Order and dependencies
 
 41.1 → 41.2 → (41.3, 41.4 parallel) → 41.5 → 41.6. 41.6 blocks on the
