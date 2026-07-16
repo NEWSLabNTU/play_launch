@@ -580,7 +580,7 @@ play_launch replay record.json --config my_config.yaml
 # -> interception/frontier_summary.json + stats_summary.json in play_log/
 
 # Autoware validation
-just run-autoware --config autoware_config.yaml
+just run-autoware --config tests/fixtures/autoware/autoware_config.yaml
 # -> works with 46 nodes + 15 containers
 ```
 

@@ -1,0 +1,39 @@
+# Example play_launch runtime config for the Autoware planning_simulator
+# fixture (`tests/fixtures/autoware/`). Pass via `--config`:
+#
+#   play_launch launch --config tests/fixtures/autoware/autoware_config.yaml \
+#       autoware_launch planning_simulator.launch.xml map_path:=...
+#
+# or (installed CLI): `play_launch launch --config <this file> ...`
+#
+# This mirrors the tuning used for the Phase 42.0 profiling-infra readiness
+# run (`.superpowers/sdd/p42-infra-readiness.md`, 2026-07-16): composable
+# node loading given extra time to settle under Autoware's ~130-node graph,
+# and RCL interception enabled (frontier + stats) for data-flow visibility.
+#
+# Full field reference: `src/play_launch/src/cli/config.rs`
+# (`RuntimeConfig` and friends). Every field below has a default if omitted
+# — this file only sets what differs from default.
+
+composable_node_loading:
+  # Autoware's containers load 5-15+ composable nodes each; give each
+  # attempt more headroom than the (30s) default before retrying.
+  delay_load_node_millis: 2000
+  load_node_timeout_millis: 60000
+
+container_readiness:
+  # Container services can take a while to become discoverable under a
+  # cold DDS graph this large; the (120s) default can be too tight.
+  service_ready_timeout_secs: 300
+
+interception:
+  enabled: true
+  frontier: true
+  stats: true
+  ring_capacity: 65536
+
+monitoring:
+  enabled: true
+
+diagnostics:
+  enabled: true

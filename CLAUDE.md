@@ -108,7 +108,7 @@ Key flags: `--config <PATH>`, `--disable-monitoring`, `--disable-diagnostics`, `
 
 When mode is not `stock`, `prepare_container_contexts()` in `src/execution/context.rs` overrides the container's `package` and `executable`. If the original was `component_container_mt`, `--use_multi_threaded_executor` is prepended to args. Original `args` from the launch file (e.g. `--isolated`) are preserved.
 
-See `tests/fixtures/autoware/autoware_config.yaml` for full config YAML reference.
+See `tests/fixtures/autoware/autoware_config.yaml` for an example config (not exhaustive — full field reference: `src/play_launch/src/cli/config.rs`).
 
 **Interception** (`interception` config section, default: disabled):
 - `enabled: true` — inject `LD_PRELOAD` interception .so into all child processes
