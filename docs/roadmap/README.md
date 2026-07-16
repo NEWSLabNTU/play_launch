@@ -41,6 +41,7 @@ Completed phase docs are in `archive/`.
 | 38 | Linux RT Scheduling Apply-Layer | ✅ 38.1–38.10 | 2026-07-15 |
 | 39 | RT Example Workspace | ✅ 39.1–39.4 | 2026-07-15 |
 | 40 | Contract Shipping (sidecar + overlay) | ✅ 40.1–40.7 | 2026-07-15 |
+| 41 | RT Config v2 (derived scheduling) | 📋 Planned | — |
 
 ---
 
@@ -116,6 +117,13 @@ The manifest stays a separate file; its shipping changes. Provider channel: `<na
 
 See [phase-40-contract_shipping.md](./phase-40-contract_shipping.md).
 Design: [docs/superpowers/specs/2026-07-15-contract-shipping-design.md](../superpowers/specs/2026-07-15-contract-shipping-design.md).
+
+### Phase 41: RT Config v2 — Derived Scheduling (planned)
+
+Answers design feedback on the three-part RT config (scatter, format heterogeneity, hand-written `system.toml` conflicting with derivable context, hard-wired contract→sched mapping). Scheduling context becomes derived from launch+contract via a pluggable `SchedMapper` (trait + built-ins: `manual`, `rate_monotonic`, `deadline_monotonic`); the platform file shrinks to platform facts + explicit overrides, unifies on YAML, becomes per-target (`<stem>.system.<target>.yaml`), and ships through the Phase 40 provider/overlay channels with overlay-root discovery (`$PLAY_LAUNCH_CONTRACTS` / XDG / `/etc`). `check --explain` shows the merged plan with provenance; `contract eject` seeds overlays from installed providers. Legacy `system.toml` parses via a bridge until nano-ros migrates, then retires.
+
+See [phase-41-rt_config_v2.md](./phase-41-rt_config_v2.md).
+Design: [docs/superpowers/specs/2026-07-16-rt-config-v2-design.md](../superpowers/specs/2026-07-16-rt-config-v2-design.md).
 
 ---
 
