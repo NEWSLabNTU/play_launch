@@ -151,7 +151,7 @@ pub(super) fn resolve_launch_file(
 
 /// Handle the 'launch' subcommand
 pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
-    info!("Step 1/2: Recording launch execution...");
+    info!("Step 1/3: Recording launch execution...");
 
     play_launch_parser::block_command_substitution(args.block_commands);
 
@@ -180,12 +180,29 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
         }
     }
 
-    info!("Step 2/2: Replaying launch execution...");
+    // Phase 43.5 — the model path is launch's default: resolve the record
+    // just written into a checked SystemModel (contract Errors refuse the
+    // launch — validity by construction), then replay from the bound pair.
+    info!("Step 2/3: Resolving SystemModel from the record...");
+    let resolve_args = crate::cli::options::ResolveArgs {
+        package_or_path: None,
+        launch_file: None,
+        record: Some(PathBuf::from("record.json")),
+        launch_arguments: args.launch_arguments.clone(),
+        contracts: args.common.contracts.clone(),
+        no_provider_contracts: args.common.no_provider_contracts,
+        sched: args.common.sched.clone(),
+        target: args.common.target.clone(),
+        out: "system_model.yaml".to_string(),
+    };
+    super::resolve::handle_resolve(&resolve_args)?;
+
+    info!("Step 3/3: Replaying launch execution...");
 
     // Create replay args and call handle_replay
     let replay_args = crate::cli::options::ReplayArgs {
         input_file: PathBuf::from("record.json"),
-        model: None,
+        model: Some(PathBuf::from("system_model.yaml")),
         common: args.common.clone(),
     };
 

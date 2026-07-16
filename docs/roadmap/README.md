@@ -43,7 +43,7 @@ Completed phase docs are in `archive/`.
 | 40 | Contract Shipping (sidecar + overlay) | ✅ 40.1–40.7 | 2026-07-15 |
 | 41 | RT Config v2 (derived scheduling) | 🔄 41.1–41.5 done, 41.6 gated | — |
 | 42 | Autoware System Model Study | 📋 Planned | — |
-| 43 | Runtime Consumes the SystemModel | 📋 Planned | — |
+| 43 | Runtime Consumes the SystemModel | 🔄 43.1–43.3, 43.5 done; 43.4 re-scoped | — |
 
 ---
 

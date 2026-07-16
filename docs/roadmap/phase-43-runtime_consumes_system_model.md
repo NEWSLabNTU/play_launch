@@ -1,6 +1,6 @@
 # Phase 43: Runtime Consumes the SystemModel
 
-**Status:** 📋 Planned
+**Status:** 🔄 43.1–43.3, 43.5 landed (2026-07-17); 43.4 re-scoped (see below)
 **Design:** [docs/design/system-model.md](../design/system-model.md) (producer side) + nano-ros RFC-0050 (consumer side)
 **Builds on:** `play_launch resolve` (work item 2, landed), the `model` crate in ros-launch-manifest, Phase 36 runtime enforcement, Phase 41 sched v2.
 **Relation to Phase 42:** orthogonal — 42 studies the *content* of the model (chains, mappers); 43 changes *which artifact the runtime reads*. No shared files beyond `replay.rs` plumbing; land in either order.
@@ -88,13 +88,15 @@ already does the job and record/replay tooling depends on it).
   `/proc/<pid>/sched` assertions), and a model lacking the requested
   target's sub-table fails loud at startup, not at first spawn.
 
-### 43.4 — Web UI + scope data from the model
+### 43.4 — Web UI + scope data from the model — RE-SCOPED (dropped)
 
-- `WebState` scope table (`launch_dump.scopes` + `node_scope_map`) reads
-  `model.structure.scopes`/`nodes` when `--model` is present. Live state
-  (actor events, `/parameter_events`) unchanged.
-- **Done when:** UI scope tree renders identically in both modes on
-  rt_workspace.
+Decision (43 implementation, 2026-07-17): the web UI's scope feed is keyed
+by member names + dump scope ids — spawn-info territory, and the record is
+ALWAYS present in the two-artifact runtime. Converting the model's
+string-keyed scope table back into synthetic ids would be a lossy shim
+with no user-visible benefit (the model's scopes were derived from the
+same dump). The model's scope table serves EXTERNAL consumers (nano-ros,
+tooling); the in-process UI keeps reading the record.
 
 ### 43.5 — Make the model path the default for `launch`
 
@@ -106,6 +108,10 @@ already does the job and record/replay tooling depends on it).
 - **Done when:** `just build && play_launch launch rt_demo
   bringup.launch.xml --sched …` exercises resolve→replay-from-model
   end-to-end and the guide documents the three-verb split.
+- Landed: launch = record → resolve (`--record record.json`, refuses on
+  contract Errors) → replay `--model system_model.yaml`; verified on
+  rt_workspace (contract source + sched source logs both say SystemModel;
+  4 members spawn).
 
 ## Non-goals
 
