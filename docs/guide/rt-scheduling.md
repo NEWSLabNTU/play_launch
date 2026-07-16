@@ -436,7 +436,7 @@ here changes existing behavior.
 | worked yesterday, EPERM today | rebuild replaced the binaries — caps are per-inode | `just setcap` again |
 | `error while loading shared libraries: lib...rosidl...` | someone ran `setcap` on the **main** binary (`AT_SECURE` drops `LD_LIBRARY_PATH`) | `just setcap` (it strips it) |
 | `mapper 'X' requires resources.rt_priority_band` | platform file's `resources` doesn't declare a band, or `target` isn't `posix` | add `rt_priority_band` to `resources`; non-`posix` targets aren't derivable by play_launch's built-in mappers today (nano-ros's job) |
-| `platform file ... targets 'zephyr', but --target requested 'posix'` | wrong file resolved for the target, or wrong `--target` passed | check `--target`, or that the right per-target file is on disk |
+| ``platform file ... targets `zephyr`, but --target requested `posix` `` | wrong file resolved for the target, or wrong `--target` passed | check `--target`, or that the right per-target file is on disk |
 | warning: `priority N outside band [min, max], clamping to ...` | derived or overridden priority exceeds the platform file's band | widen `rt_priority_band`, or fix the override |
 | warning citing both a contract and a platform file | a pinned priority order contradicts the contract's declared rate/deadline order | re-check the override, or accept the warning if intentional |
 | `--explain` prints a no-op note | no platform file resolved (no `--sched`, nothing on the overlay/provider channels) | pass `--sched <path>`, or ship one via the overlay/provider channels |
