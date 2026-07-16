@@ -5,6 +5,12 @@ use std::ffi::{c_char, CStr};
 
 use rcl_interception_sys::*;
 
+/// Fully-qualified type name of `builtin_interfaces/msg/Time`, used to guard
+/// the bare top-level `stamp` fallback (see `find_bare_stamp_offset`) against
+/// false positives — a field merely *named* `stamp` that isn't actually a
+/// `Time` must not be mistaken for a timestamp.
+const TIME_TYPE_IDENTITY: &str = "builtin_interfaces/msg/Time";
+
 /// Walk a `MessageMembers` array looking for a field named "header" with
 /// `type_id_ == ROS_TYPE_MESSAGE`. Returns its byte offset within the message
 /// struct, or `None` if no such field exists.
@@ -26,6 +32,52 @@ unsafe fn find_header_offset(members: *const MessageMembers) -> Option<usize> {
         }
         let name = unsafe { CStr::from_ptr(member.name_) };
         if name.to_bytes() == b"header" && member.type_id_ == ROS_TYPE_MESSAGE {
+            return Some(member.offset_ as usize);
+        }
+    }
+    None
+}
+
+/// Walk a `MessageMembers` array looking for a *top-level* field named
+/// "stamp" whose type is exactly `builtin_interfaces/msg/Time`. This covers
+/// messages that carry a bare `stamp` field as their first member instead of
+/// a nested `header.stamp` (e.g. `autoware_control_msgs/Control` and other
+/// vehicle command/report types) — `find_header_offset` alone misses these,
+/// so the frontier plugin never observes a stamp for them.
+///
+/// Returns the byte offset of the `Time` struct within the message (i.e. the
+/// offset to read `sec`/`nanosec` from, same convention as the header path:
+/// `Time` is `{sec: i32, nanosec: u32}` at offset 0 of itself).
+///
+/// The type check (not just the name) guards against false positives: a
+/// field merely named `stamp` that isn't a `builtin_interfaces/msg/Time`
+/// (e.g. a `string stamp` or an unrelated message type) is skipped.
+///
+/// # Safety
+///
+/// Same preconditions as `find_header_offset`.
+unsafe fn find_bare_stamp_offset(members: *const MessageMembers) -> Option<usize> {
+    let members = unsafe { &*members };
+    if members.members_.is_null() || members.member_count_ == 0 {
+        return None;
+    }
+    let slice =
+        unsafe { std::slice::from_raw_parts(members.members_, members.member_count_ as usize) };
+    for member in slice {
+        if member.name_.is_null() {
+            continue;
+        }
+        let name = unsafe { CStr::from_ptr(member.name_) };
+        if name.to_bytes() != b"stamp" || member.type_id_ != ROS_TYPE_MESSAGE {
+            continue;
+        }
+        if member.members_.is_null() {
+            continue;
+        }
+        let Some(identity) = (unsafe { find_type_identity(member.members_) }) else {
+            continue;
+        };
+        if identity == TIME_TYPE_IDENTITY {
             return Some(member.offset_ as usize);
         }
     }
@@ -88,16 +140,23 @@ unsafe fn try_type_identity(
     Some(format!("{ns}/{name}"))
 }
 
-/// Resolve the byte offset of `header.stamp` within messages published or
-/// received through `type_support`.
+/// Resolve the byte offset of the message's timestamp (either nested
+/// `header.stamp` or a bare top-level `stamp` field) within messages
+/// published or received through `type_support`.
 ///
 /// 1. Calls `type_support->func(type_support, "rosidl_typesupport_introspection_c")`
 ///    to obtain the introspection handle.
 /// 2. Casts `handle->data` to `MessageMembers*`.
-/// 3. Finds the "header" member with `type_id_ == ROS_TYPE_MESSAGE`.
-/// 4. Returns `header.offset_` — the stamp lives at offset 0 within Header.
+/// 3. Finds the "header" member with `type_id_ == ROS_TYPE_MESSAGE` and
+///    returns `header.offset_` — the stamp lives at offset 0 within Header.
+/// 4. If no "header" field exists, falls back to a top-level field named
+///    "stamp" whose type is exactly `builtin_interfaces/msg/Time` (e.g.
+///    `autoware_control_msgs/Control` and other vehicle command/report
+///    types carry a bare `stamp` as their first field instead of a
+///    `std_msgs/Header`). Returns that field's offset.
 ///
-/// Returns `None` for messages without a `header` field (e.g. `std_msgs/String`).
+/// Returns `None` for messages without a `header` field or a `Time`-typed
+/// `stamp` field (e.g. `std_msgs/String`).
 ///
 /// # Safety
 ///
@@ -140,7 +199,8 @@ unsafe fn try_introspection(
         return None;
     }
 
-    unsafe { find_header_offset(data as *const MessageMembers) }
+    let members = data as *const MessageMembers;
+    unsafe { find_header_offset(members) }.or_else(|| unsafe { find_bare_stamp_offset(members) })
 }
 
 #[cfg(test)]
@@ -207,6 +267,157 @@ mod tests {
             assert_eq!(
                 find_header_offset(&msg_members as *const MessageMembers),
                 None
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Bare top-level `stamp` fallback (autoware_control_msgs/Control etc.)
+    // -----------------------------------------------------------------------
+
+    /// A `func` that always hands back the same `rosidl_message_type_support_t`
+    /// it was given, regardless of the requested identifier — enough to
+    /// stand in for the real introspection dispatch in tests, since we only
+    /// ever need `(*handle).data` to resolve.
+    unsafe extern "C" fn return_self(
+        ts: *const rosidl_message_type_support_t,
+        _identifier: *const c_char,
+    ) -> *const rosidl_message_type_support_t {
+        ts
+    }
+
+    /// Build a `rosidl_message_type_support_t` whose introspection resolves
+    /// to a message named `namespace_/name_` with no fields — enough for
+    /// `find_type_identity` to read off a `"pkg/msg/Name"` string.
+    fn make_type_support(
+        members: &MessageMembers,
+        ts_storage: &mut rosidl_message_type_support_t,
+    ) -> *const rosidl_message_type_support_t {
+        ts_storage.typesupport_identifier = std::ptr::null();
+        ts_storage.data = members as *const MessageMembers as *const std::ffi::c_void;
+        ts_storage.func = Some(return_self);
+        ts_storage as *const rosidl_message_type_support_t
+    }
+
+    #[test]
+    fn finds_bare_stamp_offset_when_typed_time() {
+        let ns = c"builtin_interfaces__msg";
+        let name = c"Time";
+        let stamp_name = c"stamp";
+        let frame_id_name = c"frame_id";
+
+        unsafe {
+            // The `Time` message's own MessageMembers (namespace/name only —
+            // find_type_identity doesn't look at member fields).
+            let mut time_members: MessageMembers = std::mem::zeroed();
+            time_members.message_namespace_ = ns.as_ptr();
+            time_members.message_name_ = name.as_ptr();
+
+            let mut time_ts: rosidl_message_type_support_t = std::mem::zeroed();
+            let time_ts_ptr = make_type_support(&time_members, &mut time_ts);
+
+            // Top-level message with a bare `stamp: builtin_interfaces/Time`
+            // field followed by an unrelated `frame_id` field.
+            let mut fields: [MessageMember; 2] = std::mem::zeroed();
+            fields[0].name_ = stamp_name.as_ptr();
+            fields[0].type_id_ = ROS_TYPE_MESSAGE;
+            fields[0].offset_ = 0;
+            fields[0].members_ = time_ts_ptr;
+
+            fields[1].name_ = frame_id_name.as_ptr();
+            fields[1].type_id_ = 16; // ROS_TYPE_STRING
+            fields[1].offset_ = 8;
+
+            let mut msg_members: MessageMembers = std::mem::zeroed();
+            msg_members.member_count_ = 2;
+            msg_members.members_ = fields.as_ptr();
+
+            assert_eq!(
+                find_bare_stamp_offset(&msg_members as *const MessageMembers),
+                Some(0)
+            );
+        }
+    }
+
+    #[test]
+    fn ignores_stamp_field_with_wrong_type() {
+        let stamp_name = c"stamp";
+
+        unsafe {
+            // A field named "stamp" that is a plain string, not a Time —
+            // must not be mistaken for a timestamp.
+            let mut fields: [MessageMember; 1] = std::mem::zeroed();
+            fields[0].name_ = stamp_name.as_ptr();
+            fields[0].type_id_ = 16; // ROS_TYPE_STRING
+            fields[0].offset_ = 0;
+
+            let mut msg_members: MessageMembers = std::mem::zeroed();
+            msg_members.member_count_ = 1;
+            msg_members.members_ = fields.as_ptr();
+
+            assert_eq!(
+                find_bare_stamp_offset(&msg_members as *const MessageMembers),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn ignores_stamp_message_field_of_non_time_type() {
+        let ns = c"my_pkg__msg";
+        let name = c"NotTime";
+        let stamp_name = c"stamp";
+
+        unsafe {
+            let mut other_members: MessageMembers = std::mem::zeroed();
+            other_members.message_namespace_ = ns.as_ptr();
+            other_members.message_name_ = name.as_ptr();
+
+            let mut other_ts: rosidl_message_type_support_t = std::mem::zeroed();
+            let other_ts_ptr = make_type_support(&other_members, &mut other_ts);
+
+            // A field named "stamp" whose message type is NOT
+            // builtin_interfaces/Time — must be rejected.
+            let mut fields: [MessageMember; 1] = std::mem::zeroed();
+            fields[0].name_ = stamp_name.as_ptr();
+            fields[0].type_id_ = ROS_TYPE_MESSAGE;
+            fields[0].offset_ = 0;
+            fields[0].members_ = other_ts_ptr;
+
+            let mut msg_members: MessageMembers = std::mem::zeroed();
+            msg_members.member_count_ = 1;
+            msg_members.members_ = fields.as_ptr();
+
+            assert_eq!(
+                find_bare_stamp_offset(&msg_members as *const MessageMembers),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn header_offset_takes_priority_over_bare_stamp() {
+        // A message that (hypothetically) has both a "header" field and a
+        // top-level "stamp" field should resolve via the header path first
+        // — `try_introspection`'s `.or_else` only falls back when the
+        // header lookup returns `None`. This test exercises
+        // `find_header_offset` directly to document that priority; the
+        // actual short-circuit is in `try_introspection`.
+        let header_name = c"header";
+
+        unsafe {
+            let mut fields: [MessageMember; 1] = std::mem::zeroed();
+            fields[0].name_ = header_name.as_ptr();
+            fields[0].type_id_ = ROS_TYPE_MESSAGE;
+            fields[0].offset_ = 4;
+
+            let mut msg_members: MessageMembers = std::mem::zeroed();
+            msg_members.member_count_ = 1;
+            msg_members.members_ = fields.as_ptr();
+
+            assert_eq!(
+                find_header_offset(&msg_members as *const MessageMembers),
+                Some(4)
             );
         }
     }
