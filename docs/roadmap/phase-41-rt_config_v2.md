@@ -54,7 +54,9 @@ clamp all correct). Gaps are mapper sophistication + UX:
   node; 43/78 node pairs produced contradiction-warning noise from the tied
   rates. New built-in consuming the (already-plumbed, currently inert)
   `criticality` field; equal facts should collapse to equal priority, not
-  alphabetical spread. Design discussion → separate spec.
+  alphabetical spread. GATED on Phase 42 (Autoware system model study) —
+  chain criticality may subsume node buckets; see
+  [phase-42-autoware_system_model.md](./phase-42-autoware_system_model.md).
 - **41.8 `--explain` polish**: dedupe repeated warning lines; show the full
   default bucket (or a count + `--explain-all`); warn when the requested
   `--target` resolves no platform file even without `--explain`.
