@@ -37,9 +37,12 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     // the record we are about to run MUST be one of the model's hashed
     // inputs. The checked artifact and the running artifact stay the same
     // thing; a stale pair refuses instead of silently diverging.
-    if let Some(model_path) = &args.model {
-        verify_model_record_binding(model_path, input_file)?;
-    }
+    let system_model = match &args.model {
+        Some(model_path) => Some(std::sync::Arc::new(verify_model_record_binding(
+            model_path, input_file,
+        )?)),
+        None => None,
+    };
 
     // Verify all required ROS 2 system packages are installed
     crate::ros::ament_index::check_system_deps()?;
@@ -116,11 +119,15 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     // Note: ROS service discovery and anchor process now started in play() async function (Phase 2, 4)
 
     let runtime = build_tokio_runtime()?;
-    runtime.block_on(play(input_file, &args.common))
+    runtime.block_on(play(input_file, &args.common, system_model))
 }
 
 /// Play the launch according to the launch record.
-async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::Result<()> {
+async fn play(
+    input_file: &Path,
+    common: &cli::options::CommonOptions,
+    system_model: Option<std::sync::Arc<ros_launch_manifest_model::SystemModel>>,
+) -> eyre::Result<()> {
     debug!("=== Starting play() function ===");
 
     // Install cleanup guard to ensure children are killed even if we're interrupted
@@ -204,6 +211,26 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         }
         Some(index)
     };
+
+    // Phase 43.2 — the rule engine, blocking allowlist, and lifecycle
+    // wiring read a source-agnostic ContractView: from the checked
+    // SystemModel when `--model` was given, else from the manifest tree
+    // loaded above. (The sched plan still reads the manifest index until
+    // 43.3 lands.)
+    let contract_view: Option<std::sync::Arc<crate::runtime_enforcement::ContractView>> =
+        match &system_model {
+            Some(m) => {
+                info!("Contract source: SystemModel (checked at resolve time)");
+                Some(std::sync::Arc::new(
+                    crate::runtime_enforcement::ContractView::from_model(m),
+                ))
+            }
+            None => _manifest_index.as_ref().map(|i| {
+                std::sync::Arc::new(
+                    crate::runtime_enforcement::ContractView::from_manifest_index(i),
+                )
+            }),
+        };
 
     // Prepare directories
     debug!("Creating log directories...");
@@ -450,21 +477,19 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // source was configured". An EMPTY index must not produce an empty
     // allowlist — that would block every rcl endpoint in every child. Blocking
     // enforcement only engages when at least one authorized topic exists.
-    let has_authorized_topics = _manifest_index
-        .as_ref()
-        .is_some_and(|idx| !idx.topics.is_empty() || !idx.externals.is_empty());
+    let has_authorized_topics = contract_view.as_ref().is_some_and(|v| !v.is_empty());
     let allowlist_file: Option<std::path::PathBuf> = if common.block_unauthorized_endpoints
         && has_authorized_topics
     {
-        let idx = _manifest_index.as_ref().unwrap();
+        let view = contract_view.as_ref().unwrap();
         let path = log_dir.join("expected_graph.txt");
-        let mut contents = String::with_capacity(idx.topics.len() * 32);
+        let mut contents = String::with_capacity(view.topics.len() * 32);
         contents.push_str("# Phase 36.7 allowlist — every topic FQN authorized in this launch\n");
-        for fqn in idx.topics.keys() {
+        for fqn in view.topics.keys() {
             contents.push_str(fqn);
             contents.push('\n');
         }
-        for fqn in idx.externals.keys() {
+        for fqn in &view.externals {
             contents.push_str(fqn);
             contents.push('\n');
         }
@@ -472,8 +497,8 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         info!(
             "Blocking enforcement: allowlist written to {} ({} topics + {} externals)",
             path.display(),
-            idx.topics.len(),
-            idx.externals.len()
+            view.topics.len(),
+            view.externals.len()
         );
         Some(path)
     } else {
@@ -959,14 +984,10 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         // Phase 36.3: construct RuleEngine if a contract source resolved
         // and --enforce-rules is not Off. The engine observes every
         // event the listener dispatches.
-        let rule_engine = match (_manifest_index.as_ref(), common.enforce_rules) {
-            (Some(idx), mode) if !matches!(mode, crate::cli::options::EnforceMode::Off) => {
-                Some(crate::runtime_enforcement::RuleEngine::new(
-                    std::sync::Arc::new(idx.clone()),
-                    mode,
-                    &log_dir,
-                ))
-            }
+        let rule_engine = match (contract_view.as_ref(), common.enforce_rules) {
+            (Some(view), mode) if !matches!(mode, crate::cli::options::EnforceMode::Off) => Some(
+                crate::runtime_enforcement::RuleEngine::new(view.clone(), mode, &log_dir),
+            ),
             _ => None,
         };
 
@@ -1132,7 +1153,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 fn verify_model_record_binding(
     model_path: &std::path::Path,
     record_path: &std::path::Path,
-) -> eyre::Result<()> {
+) -> eyre::Result<ros_launch_manifest_model::SystemModel> {
     use sha2::Digest as _;
 
     let yaml = std::fs::read_to_string(model_path)
@@ -1158,7 +1179,7 @@ fn verify_model_record_binding(
             record_path.display(),
             &digest[..12],
         );
-        return Ok(());
+        return Ok(model);
     }
     eyre::bail!(
         "record {} (sha256 {digest}) does not match the record bound to \

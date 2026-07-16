@@ -17,21 +17,26 @@
 //! tracked in `phase-36-runtime_enforcement.md` and land in later
 //! sub-phases.
 
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufWriter, Write};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{BufWriter, Write},
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use serde::Serialize;
 use tracing::{debug, warn};
 
-use crate::cli::options::EnforceMode;
-use crate::interception::{
-    EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk,
+use crate::{
+    cli::options::EnforceMode,
+    interception::{EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk},
 };
-use crate::ros::manifest_loader::ManifestIndex;
+pub mod view;
+pub use view::ContractView;
 
 /// One runtime violation entry written to the jsonl log.
 #[derive(Debug, Clone, Serialize)]
@@ -114,7 +119,7 @@ pub enum LifecycleState {
 
 /// The runtime rule engine. One per `play_launch` invocation.
 pub struct RuleEngine {
-    index: Arc<ManifestIndex>,
+    view: Arc<ContractView>,
     mode: EnforceMode,
     /// Map topic_hash → resolved FQN, built from the manifest index at
     /// startup so we don't have to hash on every event.
@@ -170,37 +175,32 @@ pub struct RuleEngine {
 // same `TopicNameDeclared`/`TypeNameDeclared` wire chunk format.
 
 impl RuleEngine {
-    pub fn new(index: Arc<ManifestIndex>, mode: EnforceMode, log_dir: &std::path::Path) -> Self {
+    pub fn new(view: Arc<ContractView>, mode: EnforceMode, log_dir: &std::path::Path) -> Self {
         // Precompute topic_hash → FQN map for fast event lookup.
         // Include both declared topics and external_topics so the
         // graph-deviation-runtime check (36.5) doesn't flag externally
         // wired channels.
-        let mut topic_hash_to_fqn: HashMap<u64, String> = index
+        let mut topic_hash_to_fqn: HashMap<u64, String> = view
             .topics
             .keys()
             .map(|fqn| (fnv1a(fqn.as_bytes()), fqn.clone()))
             .collect();
-        for fqn in index.externals.keys() {
+        for fqn in &view.externals {
             topic_hash_to_fqn
                 .entry(fnv1a(fqn.as_bytes()))
                 .or_insert_with(|| fqn.clone());
         }
 
-        // Collect lifecycle nodes from the manifest tree. Used by
-        // rate/age/latency rules to gate checks on observed lifecycle
-        // state (Phase 36.6).
-        let mut lifecycle_nodes: HashMap<String, bool> = HashMap::new();
-        for resolved in index.manifests.values() {
-            for (node_name, node) in &resolved.manifest.nodes {
-                if node.lifecycle.unwrap_or(false) {
-                    let fqn = qualify(&resolved.ns, node_name);
-                    lifecycle_nodes.insert(fqn, true);
-                }
-            }
-        }
+        // Lifecycle nodes (Phase 36.6): rate/age/latency rules gate on
+        // observed lifecycle state.
+        let lifecycle_nodes: HashMap<String, bool> = view
+            .lifecycle_nodes
+            .iter()
+            .map(|f| (f.clone(), true))
+            .collect();
 
         Self {
-            index,
+            view,
             mode,
             topic_hash_to_fqn,
             state: HashMap::new(),
@@ -541,7 +541,7 @@ impl RuleEngine {
         let Some(fqn) = self.topic_hash_to_fqn.get(&topic_hash).cloned() else {
             return;
         };
-        let Some(topic) = self.index.topics.get(&fqn) else {
+        let Some(topic) = self.view.topics.get(&fqn) else {
             return;
         };
         let Some(st) = self.state.get(&topic_hash) else {
@@ -557,11 +557,11 @@ impl RuleEngine {
         }
         let measured_hz = st.pub_count as f64 * 1e9 / window_ns as f64;
 
-        // Collect violations first to avoid `&self.index` vs `&mut self`
+        // Collect violations first to avoid a `&self.view` vs `&mut self`
         // borrow conflict during `self.emit()`.
         let mut to_emit: Vec<String> = Vec::new();
         for pub_ref in &topic.publishers {
-            let (node_fqn, ep_name) = match split_endpoint_ref(pub_ref) {
+            let (node_fqn, _ep_name) = match split_endpoint_ref(pub_ref) {
                 Some(v) => v,
                 None => continue,
             };
@@ -571,23 +571,14 @@ impl RuleEngine {
             if !self.is_node_enforceable(&node_fqn) {
                 continue;
             }
-            for resolved in self.index.manifests.values() {
-                for (node_name, node) in &resolved.manifest.nodes {
-                    let resolved_fqn = qualify(&resolved.ns, node_name);
-                    if resolved_fqn != node_fqn {
-                        continue;
-                    }
-                    if let Some(props) = node.publishers.get(&ep_name)
-                        && let Some(min) = props.min_rate_hz
-                        && measured_hz < min
-                    {
-                        to_emit.push(format!(
-                            "topic '{fqn}' publisher '{pub_ref}' measured rate {:.2} Hz \
-                             < declared min_rate_hz ({min})",
-                            measured_hz
-                        ));
-                    }
-                }
+            if let Some(&min) = self.view.pub_min_rate.get(pub_ref)
+                && measured_hz < min
+            {
+                to_emit.push(format!(
+                    "topic '{fqn}' publisher '{pub_ref}' measured rate {:.2} Hz \
+                     < declared min_rate_hz ({min})",
+                    measured_hz
+                ));
             }
         }
         for message in to_emit {
@@ -610,7 +601,7 @@ impl RuleEngine {
         let Some(fqn) = self.topic_hash_to_fqn.get(&topic_hash).cloned() else {
             return;
         };
-        let Some(topic) = self.index.topics.get(&fqn) else {
+        let Some(topic) = self.view.topics.get(&fqn) else {
             return;
         };
         // For each subscriber endpoint, look up its declared `max_age_ms`
@@ -618,29 +609,21 @@ impl RuleEngine {
         // identity, fire one violation per (topic, declared sub) pair.
         let mut to_emit: Vec<String> = Vec::new();
         for sub_ref in &topic.subscribers {
-            let (node_fqn, ep_name) = match split_endpoint_ref(sub_ref) {
+            let (node_fqn, _ep_name) = match split_endpoint_ref(sub_ref) {
                 Some(v) => v,
                 None => continue,
             };
             if !self.is_node_enforceable(&node_fqn) {
                 continue;
             }
-            for resolved in self.index.manifests.values() {
-                for (node_name, node) in &resolved.manifest.nodes {
-                    if qualify(&resolved.ns, node_name) != node_fqn {
-                        continue;
-                    }
-                    if let Some(props) = node.subscribers.get(&ep_name)
-                        && let Some(max) = props.max_age_ms
-                        && age_ms > max
-                    {
-                        to_emit.push(format!(
-                            "topic '{fqn}' subscriber '{sub_ref}' observed age {:.1} ms \
-                             > declared max_age_ms ({max})",
-                            age_ms
-                        ));
-                    }
-                }
+            if let Some(&max) = self.view.sub_max_age.get(sub_ref)
+                && age_ms > max
+            {
+                to_emit.push(format!(
+                    "topic '{fqn}' subscriber '{sub_ref}' observed age {:.1} ms \
+                     > declared max_age_ms ({max})",
+                    age_ms
+                ));
             }
         }
         for message in to_emit {
@@ -661,16 +644,12 @@ impl RuleEngine {
         let Some(fqn) = self.topic_hash_to_fqn.get(&topic_hash).cloned() else {
             return;
         };
-        let Some(topic) = self.index.topics.get(&fqn) else {
+        let Some(topic) = self.view.topics.get(&fqn) else {
             return;
         };
-        let Some(drop) = &topic.drop else {
+        let Some(max_rate) = topic.max_drop_rate else {
             return;
         };
-        let Some(max_count) = &drop.max_count else {
-            return;
-        };
-        let max_rate = max_count.drop_rate();
 
         let Some(st) = self.state.get(&topic_hash) else {
             return;
@@ -727,13 +706,13 @@ impl RuleEngine {
 
         // Collect candidate scope paths whose output matches this topic
         // before recursing into &mut self for emit.
-        let scope_paths = self.index.scope_paths.clone();
+        let scope_paths = self.view.scope_paths.clone();
         let mut to_emit: Vec<(String, String)> = Vec::new();
         for sp in &scope_paths {
             if !sp.output_topics.iter().any(|t| t == &output_fqn) {
                 continue;
             }
-            let Some(max) = sp.path.max_latency_ms else {
+            let Some(max) = sp.max_latency_ms else {
                 continue;
             };
             for input_fqn in &sp.input_topics {
@@ -753,7 +732,7 @@ impl RuleEngine {
                         format!(
                             "scope path '{}' (input '{}' → output '{}'): observed latency \
                              {:.2} ms > declared max ({})",
-                            sp.path_name, input_fqn, output_fqn, latency_ms, max
+                            sp.name, input_fqn, output_fqn, latency_ms, max
                         ),
                         output_fqn.clone(),
                     ));
@@ -777,14 +756,11 @@ impl RuleEngine {
         let Some(fqn) = self.topic_hash_to_fqn.get(&topic_hash).cloned() else {
             return;
         };
-        let declared_type = if let Some(topic) = self.index.topics.get(&fqn) {
+        let declared_type = if let Some(topic) = self.view.topics.get(&fqn) {
             Some(topic.msg_type.clone())
-        } else if let Some(ext) = self.index.externals.get(&fqn) {
-            // ExternalSide doesn't carry the type — fetch via topic
-            // lookup or skip. Skip to avoid false positives.
-            let _ = ext;
-            None
         } else {
+            // External topics don't carry a declared type — skip to
+            // avoid false positives.
             None
         };
         let Some(declared) = declared_type else {
@@ -1115,7 +1091,7 @@ fn split_endpoint_ref(ep_ref: &str) -> Option<(String, String)> {
     Some((node.to_string(), ep.to_string()))
 }
 
-fn qualify(ns: &str, name: &str) -> String {
+pub(crate) fn qualify(ns: &str, name: &str) -> String {
     if name.starts_with('/') {
         return name.to_string();
     }
@@ -1172,6 +1148,7 @@ fn durability_name(v: i32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ros::manifest_loader::ManifestIndex;
 
     #[test]
     fn reliability_matrix() {
@@ -1191,8 +1168,10 @@ mod tests {
 
     #[test]
     fn qos_match_runtime_fires_on_incompatible_pair() {
-        use crate::interception::{EventKind, InterceptionEvent};
-        use crate::ros::manifest_loader::ResolvedTopic;
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            ros::manifest_loader::ResolvedTopic,
+        };
 
         // Build a minimal ManifestIndex containing one topic.
         let mut index = ManifestIndex::default();
@@ -1218,7 +1197,11 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp).unwrap();
 
-        let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Warn, &tmp);
+        let mut re = RuleEngine::new(
+            Arc::new(ContractView::from_manifest_index(&index)),
+            EnforceMode::Warn,
+            &tmp,
+        );
         let topic_hash = fnv1a(fqn.as_bytes());
 
         // Publisher with reliability=best_effort
@@ -1272,7 +1255,11 @@ mod tests {
         let tmp =
             std::env::temp_dir().join(format!("play_launch_graph_dev_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Warn, &tmp);
+        let mut re = RuleEngine::new(
+            Arc::new(ContractView::from_manifest_index(&index)),
+            EnforceMode::Warn,
+            &tmp,
+        );
 
         let event = InterceptionEvent {
             kind: EventKind::PublisherInit,
@@ -1298,8 +1285,10 @@ mod tests {
 
     #[test]
     fn lifecycle_gating_default_unknown_blocks_check() {
-        use crate::interception::{EventKind, InterceptionEvent};
-        use crate::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            ros::manifest_loader::{ResolvedManifest, ResolvedTopic},
+        };
         use ros_launch_manifest_types::{Manifest, NodeDecl};
 
         // Build a manifest where `talker` is lifecycle=true and publishes
@@ -1353,7 +1342,11 @@ mod tests {
         let tmp =
             std::env::temp_dir().join(format!("play_launch_lifecycle_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Warn, &tmp);
+        let mut re = RuleEngine::new(
+            Arc::new(ContractView::from_manifest_index(&index)),
+            EnforceMode::Warn,
+            &tmp,
+        );
 
         // Confirm lifecycle_nodes was populated from the manifest.
         assert!(re.lifecycle_nodes.contains_key("/talker"));
@@ -1397,8 +1390,10 @@ mod tests {
 
     #[test]
     fn consistency_runtime_fires_on_type_mismatch() {
-        use crate::interception::{EventKind, InterceptionEvent};
-        use crate::ros::manifest_loader::ResolvedTopic;
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            ros::manifest_loader::ResolvedTopic,
+        };
 
         let mut index = ManifestIndex::default();
         let fqn = "/chatter".to_string();
@@ -1422,7 +1417,11 @@ mod tests {
             std::process::id()
         ));
         std::fs::create_dir_all(&tmp).unwrap();
-        let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Warn, &tmp);
+        let mut re = RuleEngine::new(
+            Arc::new(ContractView::from_manifest_index(&index)),
+            EnforceMode::Warn,
+            &tmp,
+        );
 
         // Send a PublisherInit with the wrong runtime type hash —
         // declared is std_msgs/msg/String. Use a deliberately wrong
@@ -1449,8 +1448,10 @@ mod tests {
 
     #[test]
     fn max_age_runtime_fires_when_stamp_too_old() {
-        use crate::interception::{EventKind, InterceptionEvent};
-        use crate::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            ros::manifest_loader::{ResolvedManifest, ResolvedTopic},
+        };
         use ros_launch_manifest_types::{Manifest, NodeDecl};
 
         // Build manifest: subscriber declares max_age_ms=10.
@@ -1500,7 +1501,11 @@ mod tests {
         let tmp =
             std::env::temp_dir().join(format!("play_launch_max_age_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Warn, &tmp);
+        let mut re = RuleEngine::new(
+            Arc::new(ContractView::from_manifest_index(&index)),
+            EnforceMode::Warn,
+            &tmp,
+        );
 
         // Take event carrying a stamp 1 second in the past — older
         // than max_age_ms=10ms.
@@ -1535,7 +1540,11 @@ mod tests {
         let tmp =
             std::env::temp_dir().join(format!("play_launch_strict_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
-        let mut re = RuleEngine::new(Arc::new(index), EnforceMode::Strict, &tmp);
+        let mut re = RuleEngine::new(
+            Arc::new(ContractView::from_manifest_index(&index)),
+            EnforceMode::Strict,
+            &tmp,
+        );
         let handle = re.strict_violated_handle();
         assert!(!handle.load(Ordering::Acquire));
 
