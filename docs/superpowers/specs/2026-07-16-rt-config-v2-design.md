@@ -115,6 +115,17 @@ Target selection: `--target <t>` (play_launch default: `posix`; nano-ros
 codegen passes its board target). Overlay overrides provider only for the
 same target — a user Zephyr file never shadows a provider POSIX file.
 
+**Auto-apply at launch (decision 2026-07-16):** when `--sched` is absent,
+launch/replay resolve the platform file through the channels and APPLY it.
+The provider sidecar is the vendor's shipped default and is trusted — RT
+works out of the box on installed systems. The overlay exists to fill gaps
+(vendor ships no config, or none for your target/board) and to tweak vendor
+numbers that don't fit; per (stem, target) the overlay wins. Escape hatches:
+`--sched-apply off` disables all applying; explicit `--sched <path>`
+bypasses discovery entirely. `check` validates all channels and never
+applies. The `--no-provider-contracts` flag disables the provider channel
+for BOTH contracts and platform files.
+
 ### 3.2 Overlay-root discovery
 
 The overlay root is the **first existing** of, in order (no cross-root
