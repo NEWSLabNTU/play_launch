@@ -1,6 +1,6 @@
 # Phase 42: Autoware System Model Study → Chain-Aware Scheduling Design
 
-**Status:** 📋 Planned (design draft under discussion)
+**Status:** 🔄 In progress — waves 42.1–42.4 (study) complete; 42.5–42.6 (proposal/design) pending
 **Design draft:** [docs/design/autoware-system-model-study.md](../design/autoware-system-model-study.md)
 **Builds on:** Phase 41 (RT config v2; exercise findings), Phase 29 (interception), manifest `paths:`/`state:` semantics.
 **Gates:** 41.7 (criticality mapper) — deliberately held until this study lands.
@@ -27,16 +27,21 @@ designs the chain-aware mapper on evidence.
   (d) 42.2 runbook: engaged autonomous scenario (goal pose + engage) so the
   sim clock advances and frontier stamps are non-zero — idle baseline showed
   68/161 declared topics active.
-- **42.1** Graph export tooling: extend the causal-dag machinery to export the
-  declared causal graph (nodes, causal edges, `state:` cuts, paths, budgets)
-  as JSON/DOT from `check`.
-- **42.2** Measured model: interception-enabled planning_simulator run;
-  per-topic rates + frontier data joined against the declared graph.
-- **42.3** Source census (sampled): trigger semantics classification for
-  representative node patterns (timer/event/hybrid, sync policies).
-- **42.4** System-model report: `docs/research/autoware-system-model.md`
-  answering Q1–Q5 (cycles, junctions, chain composability, triggers,
-  rate monoculture).
+- **42.1** ✅ Graph export tooling: `play_launch check --export-graph` (JSON/DOT),
+  reuses Phase 35's `manifest_graph`. Autoware: 74 nodes/169 topics/13 cycles
+  (12 state-cut, 1 not — cross-scope, invisible to per-manifest `causal-dag`).
+  Schema: `docs/design/causal-graph-export.md`.
+- **42.2** ✅ Measured model: engaged planning_simulator run (1.37 m/s, 1.54M
+  events, 610 measured topics, 119/169 declared active, 0 ring drops). Found
+  + corrected a stamped-topic double-count bug (source fix still needed);
+  join tool `scripts/p42_join.py` committed.
+- **42.3** ✅ Source census (9 nodes): 4 timer / 2 event / 2 hybrid / 1
+  runtime-configurable trigger disciplines; Q1 cycle diagnosed as a
+  contract-authoring bug (one missing `state: true`), not a vocabulary gap.
+- **42.4** ✅ System-model report: `docs/research/autoware-system-model.md`
+  answers Q1–Q5 (cycles, junctions, chain composability, triggers,
+  rate monoculture) and lists consequences for 42.5 (vocabulary), the
+  checker, the mapper, and infra follow-ups.
 - **42.5** Contract vocabulary proposal: manifest extensions justified by
   42.4 findings (trigger, cross-scope chains, chain semantics tag) —
   platform-agnostic, optional, additive.
