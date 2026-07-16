@@ -186,6 +186,9 @@ below the plan changes.
   warn + clamp under `--sched-apply warn`, error under `strict`.
 - Node with no timing facts and no override → non-RT default (`SCHED_OTHER`),
   reported.
+- Node with no timing facts but WITH an override → promoted to RT with the
+  override's values (a pin is an explicit user statement; `SCHED_FIFO` unless
+  the override says otherwise). Reported as `override` provenance.
 - **Contract-vs-plan sanity** (the hand-written-conflict feedback made
   checkable): new check rule — a final priority order that contradicts the
   contract's rate/deadline order yields a warning citing both sources
