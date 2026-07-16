@@ -43,6 +43,7 @@ Completed phase docs are in `archive/`.
 | 40 | Contract Shipping (sidecar + overlay) | ✅ 40.1–40.7 | 2026-07-15 |
 | 41 | RT Config v2 (derived scheduling) | 🔄 41.1–41.5 done, 41.6 gated | — |
 | 42 | Autoware System Model Study | 📋 Planned | — |
+| 43 | Runtime Consumes the SystemModel | 📋 Planned | — |
 
 ---
 
@@ -125,6 +126,15 @@ Answers design feedback on the three-part RT config (scatter, format heterogenei
 
 See [phase-41-rt_config_v2.md](./phase-41-rt_config_v2.md).
 Design: [docs/superpowers/specs/2026-07-16-rt-config-v2-design.md](../superpowers/specs/2026-07-16-rt-config-v2-design.md).
+
+---
+
+### Phase 43: Runtime Consumes the SystemModel (planned)
+
+`replay --model system_model.yaml`: the checked artifact from `play_launch resolve` becomes the runtime's single source for identity, contracts (RuleEngine), and scheduling (AppliedTier) — record.json stays the spawn-info companion, bound by sha256 in `meta.inputs` (mismatch refuses). Five stages: model↔record binding, RuleEngine view-struct with `from_model`, sched from `execution.tiers`/`bindings`, web-UI scopes from the model, model-path default for `launch`. Orthogonal to Phase 42 (content vs plumbing).
+
+See [phase-43-runtime_consumes_system_model.md](./phase-43-runtime_consumes_system_model.md).
+Design: [docs/design/system-model.md](../design/system-model.md) + nano-ros RFC-0050.
 
 ---
 
