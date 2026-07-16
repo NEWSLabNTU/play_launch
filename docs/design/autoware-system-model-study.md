@@ -3,6 +3,13 @@
 **Status:** Draft (discussion)
 **Date:** 2026-07-16
 **Phase:** [phase-42](../roadmap/phase-42-autoware_system_model.md)
+**Not to be confused with** [system-model.md](./system-model.md) — the
+*SystemModel resolved artifact* (structure/contracts/execution schema shared
+with nano-ros). This document studies the *behavioral* model of a real
+system. Touchpoints: contract vocabulary extensions proposed here (Q3
+cross-scope chains) extend SystemModel layer 2; the chain-aware mapper's
+output populates SystemModel layer 3 (`execution:`).
+
 **Prereads:** [data-quality-semantics.md](../research/data-quality-semantics.md)
 (cause-effect chains, TIMEX, Lingua Franca, Timely Dataflow),
 `src/ros-launch-manifest/docs/launch-manifest.md` (paths, `state:` semantics),
