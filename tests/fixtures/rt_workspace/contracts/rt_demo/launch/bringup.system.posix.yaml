@@ -1,0 +1,22 @@
+# User overlay for bringup.launch.xml (Phase 41 v2 layout: <dir>/<pkg>/launch/
+# <stem>.system.<target>.yaml). Passed via `play_launch check --contracts
+# contracts` or `play_launch launch ... --contracts contracts` (or discovered
+# automatically via $PLAY_LAUNCH_CONTRACTS / XDG / /etc, design doc §3.2).
+#
+# Overlay always wins over the provider sidecar
+# (launch/bringup.system.posix.yaml) for the same (stem, target) — design
+# doc §3.1. This copy tweaks two things vs the provider: control_node's
+# pinned priority (20 -> 22, still core 0 — an integrator deciding the
+# provider's default is a little low) and the priority band ceiling
+# (40 -> 45, giving the rate-monotonic mapper more headroom). Everything
+# else is unchanged.
+target: posix
+mapper: rate_monotonic
+
+resources:
+  rt_priority_band: { min: 10, max: 45 }
+  isolated_cpus: [0]
+
+overrides:
+  # Tightened from the provider sidecar's { priority: 20, core: 0 }.
+  control_node: { priority: 22, core: 0 }

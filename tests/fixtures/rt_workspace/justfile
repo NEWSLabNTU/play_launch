@@ -69,19 +69,45 @@ compare-dumps:
     python3 ../../../scripts/compare_records.py record_rust.json record_python.json
     echo "Comparison complete."
 
-# Validate the committed contract (provider sidecar), overlay, and system.toml
+# Validate contracts + scheduling: v2 channel resolution/--explain/overlay,
+# and the legacy system.toml bridge (kept as the living bridge test).
 check:
     #!/usr/bin/env bash
     set -e
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../../install/setup.bash
     . install/setup.bash
-    echo "== provider sidecar + sched =="
+
+    echo "== v2: channel resolution (no --sched) picks the provider platform file =="
+    {{play_launch}} check rt_demo bringup.launch.xml
+
+    echo "== v2: --explain shows derived + override + default provenance =="
+    {{play_launch}} check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
+
+    echo "== v2: user overlay tweaks the provider's band/pin (overlay always wins) =="
+    {{play_launch}} check --contracts contracts rt_demo bringup.launch.xml
+
+    echo "== legacy bridge: system.toml (manual mapper) + sched =="
     {{play_launch}} check --sched system.toml rt_demo bringup.launch.xml
-    echo "== provider sidecar overridden by user overlay + sched =="
+    echo "== legacy bridge: system.toml overridden by user overlay CONTRACT (not platform file — system.toml is passed explicitly) =="
     {{play_launch}} check --contracts contracts --sched system.toml rt_demo bringup.launch.xml
 
-# Launch with RT scheduling applied (warn mode: no root/setcap required)
+# Schema-coexistence demo: a Zephyr platform file resolves and parses via the
+# same --target channel mechanism, but play_launch's built-in mappers only
+# derive plans for `posix` today (RTOS derivation is nano-ros's job) — this
+# is EXPECTED to fail at the derive step, not the parse step. See
+# docs/guide/rt-scheduling.md's "per-target coexistence" note.
+check-zephyr-stub:
+    #!/usr/bin/env bash
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../../install/setup.bash
+    . install/setup.bash
+    {{play_launch}} check --target zephyr rt_demo bringup.launch.xml && \
+        { echo "UNEXPECTED: check --target zephyr succeeded"; exit 1; } || \
+        echo "expected failure: deadline_monotonic requires posix facts (file parsed fine; derive is posix-only today)"
+
+# Launch with RT scheduling applied (warn mode: no root/setcap required) —
+# explicit legacy system.toml (kept as the living bridge test).
 run:
     #!/usr/bin/env bash
     set -e
@@ -90,6 +116,17 @@ run:
     . install/setup.bash
     {{play_launch}} launch rt_demo bringup.launch.xml \
         --sched system.toml --sched-apply warn
+
+# Launch with RT scheduling applied via v2 channel resolution — no --sched
+# flag at all: play_launch discovers launch/bringup.system.posix.yaml (the
+# provider sidecar) and applies the rate_monotonic-derived + overridden plan.
+run-derived:
+    #!/usr/bin/env bash
+    set -e
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../../install/setup.bash
+    . install/setup.bash
+    {{play_launch}} launch rt_demo bringup.launch.xml --sched-apply warn
 
 # Clean generated files (build artifacts + logs), keep source
 clean:

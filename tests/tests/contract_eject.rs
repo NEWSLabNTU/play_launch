@@ -137,11 +137,18 @@ fn eject_provider_contract_then_check_uses_overlay_channel() {
         "expected ejected contract at {}",
         dest.display()
     );
-    // rt_demo ships no provider platform file in this fixture — only the
-    // contract half of the pair should have been ejected.
+    // rt_demo ships a provider platform file too (Phase 41.5:
+    // launch/bringup.system.posix.yaml) — both halves of the pair should
+    // have been ejected together.
     assert!(
-        !stderr.contains("Ejected platform file:"),
-        "no provider platform file exists to eject: {stderr}"
+        stderr.contains("Ejected platform file:"),
+        "expected the provider platform file to also be ejected: {stderr}"
+    );
+    let platform_dest = into.path().join("rt_demo/launch/bringup.system.posix.yaml");
+    assert!(
+        platform_dest.is_file(),
+        "expected ejected platform file at {}",
+        platform_dest.display()
     );
 
     // Re-check with --contracts pointing at the overlay: the ejected

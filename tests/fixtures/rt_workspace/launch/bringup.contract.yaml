@@ -23,6 +23,10 @@ nodes:
         max_latency_ms: 5
 
   control_node:
+    # Phase 41.5: mapper hint, no numbers (design doc §2.1) — informational
+    # today (the built-in rate/deadline mappers rank by rate/deadline only),
+    # future mappers can weight by this.
+    criticality: high
     sub:
       points_raw:
         min_rate_hz: 100

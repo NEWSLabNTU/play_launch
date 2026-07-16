@@ -28,6 +28,7 @@ nodes:
         max_latency_ms: 5
 
   control_node:
+    criticality: high   # unchanged from the provider sidecar
     sub:
       points_raw:
         min_rate_hz: 100

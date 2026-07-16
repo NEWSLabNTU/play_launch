@@ -1,0 +1,21 @@
+# Provider sidecar for bringup.launch.xml (Phase 41 v2 schema). Sits right
+# next to the launch file it describes, ships in rt_demo's installed share
+# dir — same provider-sidecar channel as bringup.contract.yaml (Phase 40).
+#
+# `mapper: rate_monotonic` derives priorities from the contract's declared
+# rates (see bringup.contract.yaml: sensor_node, filter_component, and
+# control_node all publish/subscribe at 100 Hz) instead of hand-assigning
+# them. The one override below pins control_node to the exact priority/core
+# system.toml assigns by hand — showing the same outcome reached two ways.
+target: posix
+mapper: rate_monotonic
+
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+  isolated_cpus: [0]
+
+overrides:
+  # Mirrors system.toml's [[assign]] tier="control" outcome (FIFO 20, core 0)
+  # as an explicit pin — overrides always beat the derived value (design
+  # doc §3.1, §6).
+  control_node: { priority: 20, core: 0 }

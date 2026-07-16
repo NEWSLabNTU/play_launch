@@ -254,6 +254,207 @@ fn check_overlay_overrides_provider_sidecar() {
     );
 }
 
+// ---- v2: platform-file channel resolution + --explain + per-target coexistence ----
+
+/// `play_launch check rt_demo bringup.launch.xml` with **no `--sched` at
+/// all** must resolve `launch/bringup.system.posix.yaml` through the
+/// provider-sidecar channel (Phase 41.3) and print its provenance line, and
+/// derive with the v2 `rate_monotonic` mapper (not `manual` — proving the
+/// v2 file, not `system.toml`, was picked).
+#[test]
+fn check_channel_resolution_picks_provider_platform_file_with_no_sched_flag() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+
+    let output = fixtures::play_launch_cmd(&env)
+        .args(["check", "rt_demo", "bringup.launch.xml"])
+        .output()
+        .expect("failed to run play_launch check");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        output.status.success(),
+        "check (no --sched, channel resolution) exited nonzero:\n{combined}"
+    );
+    assert!(
+        combined.contains("Scheduling platform file [provider]:")
+            && combined.contains("bringup.system.posix.yaml"),
+        "expected the provider platform-file provenance line in check output:\n{combined}"
+    );
+    assert!(
+        combined.contains("mapper=rate_monotonic"),
+        "expected the v2 rate_monotonic mapper (not the legacy manual bridge) \
+         to have been selected:\n{combined}"
+    );
+}
+
+/// A user overlay platform file (`--contracts contracts`, still no
+/// `--sched`) must win over the provider sidecar for the same `(stem,
+/// target)` — `contracts/rt_demo/launch/bringup.system.posix.yaml` widens
+/// the band and re-pins `control_node` to priority 22 (vs the provider's
+/// 20).
+#[test]
+fn check_channel_resolution_overlay_platform_file_beats_provider() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+    let contracts = fixture_dir().join("contracts");
+    assert!(
+        contracts.is_dir(),
+        "contracts overlay dir not found: {}",
+        contracts.display()
+    );
+
+    let output = fixtures::play_launch_cmd(&env)
+        .args(["check", "--contracts"])
+        .arg(&contracts)
+        .args(["rt_demo", "bringup.launch.xml"])
+        .output()
+        .expect("failed to run play_launch check");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        output.status.success(),
+        "check (overlay platform file, no --sched) exited nonzero:\n{combined}"
+    );
+    assert!(
+        combined.contains("Scheduling platform file [overlay]:")
+            && combined.contains("bringup.system.posix.yaml"),
+        "expected the overlay platform-file provenance line in check output:\n{combined}"
+    );
+    assert!(
+        combined.contains("prio=22") && combined.contains("control_node"),
+        "expected the overlay's control_node pin (priority 22, not the \
+         provider's 20) in the tier table:\n{combined}"
+    );
+}
+
+/// `--explain` against the fixture's explicit provider platform file must
+/// show all three provenance kinds design doc §7 documents: `derived(...)`
+/// for the rate-monotonic nodes, `override(control_node)` for the pinned
+/// node, and `default (no timing facts)` for the fact-less container — plus
+/// the `system file:`/`contract[...]:` footer lines.
+#[test]
+fn check_explain_shows_derived_override_and_default_provenance() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+    let sched = fixture_dir().join("launch/bringup.system.posix.yaml");
+    assert!(
+        sched.is_file(),
+        "provider platform file not found: {}",
+        sched.display()
+    );
+
+    let output = fixtures::play_launch_cmd(&env)
+        .args([
+            "check",
+            "--sched",
+            sched.to_str().unwrap(),
+            "--explain",
+            "rt_demo",
+            "bringup.launch.xml",
+        ])
+        .output()
+        .expect("failed to run play_launch check --explain");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        output.status.success(),
+        "check --explain exited nonzero:\n{combined}"
+    );
+    assert!(
+        combined.contains("derived(rate_monotonic:"),
+        "expected a derived(rate_monotonic: ...) provenance entry:\n{combined}"
+    );
+    assert!(
+        combined.contains("override(control_node)"),
+        "expected an override(control_node) provenance entry:\n{combined}"
+    );
+    assert!(
+        combined.contains("default (no timing facts)"),
+        "expected a default (no timing facts) provenance entry for the \
+         fact-less container:\n{combined}"
+    );
+    assert!(
+        combined.contains("system file:") && combined.contains("contract["),
+        "expected the system file / contract provenance footer lines:\n{combined}"
+    );
+}
+
+/// Per design doc §2.2/§3.1, a non-`posix` platform file resolves through
+/// the identical provider-sidecar channel under `--target zephyr` and
+/// **parses** (valid v2 schema) — proven here by asserting the failure is a
+/// mapper-derive error (`requires \`resources.rt_priority_band\``), not a
+/// YAML/schema parse error. None of play_launch's built-in mappers derive a
+/// plan for non-`posix` facts today (RTOS derivation is nano-ros's job), so
+/// `check --target zephyr` is expected to error at that later stage — this
+/// test locks in that the failure mode is exactly this, not a schema
+/// regression, and that no apply/syscall is ever attempted (`check` never
+/// applies, for any target).
+#[test]
+fn check_target_zephyr_platform_file_parses_but_derive_is_posix_only() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+
+    let output = fixtures::play_launch_cmd(&env)
+        .args([
+            "check",
+            "--target",
+            "zephyr",
+            "rt_demo",
+            "bringup.launch.xml",
+        ])
+        .output()
+        .expect("failed to run play_launch check --target zephyr");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !output.status.success(),
+        "expected check --target zephyr to fail at the derive step (no \
+         posix facts for the deadline_monotonic mapper):\n{combined}"
+    );
+    assert!(
+        combined.contains("Scheduling platform file [provider]:")
+            && combined.contains("bringup.system.zephyr.yaml"),
+        "expected the zephyr file to resolve via the provider channel \
+         (proving it was found and parsed) before the derive error:\n{combined}"
+    );
+    assert!(
+        combined.contains("requires `resources.rt_priority_band`"),
+        "expected the mapper-derive error (not a parse/schema error), \
+         proving the zephyr file parsed successfully:\n{combined}"
+    );
+    assert!(
+        !combined.to_lowercase().contains("invalid platform file")
+            && !combined.to_lowercase().contains("parse error")
+            && !combined.to_lowercase().contains("deserializ"),
+        "expected no parse/schema-level error text:\n{combined}"
+    );
+}
+
 // ---- sched-apply smoke ----
 
 /// Spawn `play_launch launch rt_demo bringup.launch.xml --sched system.toml

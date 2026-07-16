@@ -1,0 +1,24 @@
+# Zephyr stub platform file for bringup.launch.xml (Phase 41 v2 schema).
+# play_launch never applies this file (it only ever resolves/applies
+# `--target posix`) — it exists to prove per-target coexistence: a board
+# integrator's nano-ros build resolves THIS file through the identical
+# provider-sidecar/user-overlay channels play_launch uses for `posix`,
+# picking it by `--target zephyr`, while play_launch and nano-ros share one
+# launch tree and one set of channels without fighting over a file.
+#
+# `resources`/`overrides` for non-posix targets are untyped passthrough
+# (raw YAML) validated by the consumer (nano-ros), not by play_launch's
+# sched crate — see design doc §2.2. `play_launch check --target zephyr`
+# only validates that this file parses and declares `target: zephyr`; it
+# does not (and cannot) derive or apply a plan for it.
+target: zephyr
+mapper: deadline_monotonic
+
+resources:
+  # Zephyr priority numbers are consumer-defined (cooperative priorities can
+  # be negative); play_launch does not interpret these.
+  priority_range: { min: -8, max: 8 }
+  tick_hz: 1000
+
+overrides:
+  control_node: { priority: 2 }
