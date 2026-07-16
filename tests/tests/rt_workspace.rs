@@ -754,3 +754,53 @@ fn resolve_emits_joined_system_model() {
 fn serde_yaml_value(yaml: &str) -> serde_json::Value {
     serde_yaml_ng::from_str(yaml).expect("parse system_model.yaml")
 }
+
+/// Phase 43.1: `replay --model` refuses a record that is not the model's
+/// bound companion (stale pair), before any process spawns.
+#[test]
+fn replay_model_binding_gate_refuses_stale_record() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let out = tmp.path().join("system_model.yaml");
+
+    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
+        "resolve",
+        "rt_demo",
+        "bringup.launch.xml",
+        "-o",
+        out.to_str().unwrap(),
+    ]))
+    .expect("spawn resolve");
+    assert!(proc.wait_with_timeout(Duration::from_secs(60)).success());
+
+    let model: serde_json::Value =
+        serde_yaml_value(&std::fs::read_to_string(&out).expect("read model"));
+    assert!(
+        model["meta"]["record"]["sha256"].is_string(),
+        "resolve must bind the record companion"
+    );
+
+    // A record that is NOT the bound companion (the launch file itself —
+    // which IS among meta.inputs, proving the gate checks meta.record, not
+    // just any input hash).
+    let wrong_record = fixture_dir().join("launch/bringup.launch.xml");
+    let output = fixtures::play_launch_cmd(&env)
+        .args([
+            "replay",
+            "--model",
+            out.to_str().unwrap(),
+            "--input-file",
+            wrong_record.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run replay");
+    assert!(!output.status.success(), "stale pair must refuse");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not match the record bound"),
+        "actionable mismatch message expected, got: {stderr}"
+    );
+}

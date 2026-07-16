@@ -33,6 +33,14 @@ const EXECUTOR_SPIN_TIMEOUT: std::time::Duration = std::time::Duration::from_mil
 pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     let input_file = &args.input_file;
 
+    // Phase 43.1 — model↔record binding gate: when a SystemModel is given,
+    // the record we are about to run MUST be one of the model's hashed
+    // inputs. The checked artifact and the running artifact stay the same
+    // thing; a stale pair refuses instead of silently diverging.
+    if let Some(model_path) = &args.model {
+        verify_model_record_binding(model_path, input_file)?;
+    }
+
     // Verify all required ROS 2 system packages are installed
     crate::ros::ament_index::check_system_deps()?;
 
@@ -1116,4 +1124,50 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
 
     debug!("play() function completed, returning");
     Ok(())
+}
+
+/// Phase 43.1 — refuse a (model, record) pair that doesn't match: the
+/// record's sha256 must appear among the model's `meta.inputs` hashes
+/// (`resolve` hashes the record companion / --record file it consumed).
+fn verify_model_record_binding(
+    model_path: &std::path::Path,
+    record_path: &std::path::Path,
+) -> eyre::Result<()> {
+    use sha2::Digest as _;
+
+    let yaml = std::fs::read_to_string(model_path)
+        .wrap_err_with(|| format!("reading SystemModel {}", model_path.display()))?;
+    let model = ros_launch_manifest_model::SystemModel::from_yaml_str(&yaml)
+        .map_err(|e| eyre::eyre!("loading SystemModel {}: {e}", model_path.display()))?;
+    let bytes = std::fs::read(record_path)
+        .wrap_err_with(|| format!("reading record {}", record_path.display()))?;
+    let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+
+    let Some(bound) = &model.meta.record else {
+        eyre::bail!(
+            "SystemModel {} carries no bound record (resolved to stdout?) — \
+             re-run `play_launch resolve -o <file>` so a record companion is \
+             emitted and bound.",
+            model_path.display(),
+        );
+    };
+    if bound.sha256 == digest {
+        info!(
+            "SystemModel {} binds record {} (sha256 {})",
+            model_path.display(),
+            record_path.display(),
+            &digest[..12],
+        );
+        return Ok(());
+    }
+    eyre::bail!(
+        "record {} (sha256 {digest}) does not match the record bound to \
+         SystemModel {} ({} sha256 {}) — the pair is stale. Re-run \
+         `play_launch resolve`, or pass the record companion emitted next \
+         to the model.",
+        record_path.display(),
+        model_path.display(),
+        bound.path,
+        bound.sha256,
+    );
 }

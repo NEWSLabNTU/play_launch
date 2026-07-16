@@ -20,20 +20,51 @@ use crate::{
 };
 
 pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
-    let launch_path =
-        super::launch::resolve_launch_file(&args.package_or_path, args.launch_file.as_deref())?;
-    eprintln!("Resolving launch file: {}", launch_path.display());
-
     let cli_args = super::parse_launch_arguments(&args.launch_arguments);
     let arg_binding: BTreeMap<String, String> = cli_args
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    let record = play_launch_parser::parse_launch_file(&launch_path, cli_args)
-        .map_err(|e| eyre::eyre!("Parser error: {e}"))?;
-    let json = serde_json::to_string(&record)?;
-    let dump: crate::ros::launch_dump::LaunchDump = serde_json::from_str(&json)?;
+    // Phase 43.1 — two record modes. Either way `record_path` names the
+    // spawn-info companion on disk, whose sha256 lands in meta.inputs so
+    // `replay --model` can refuse a mismatched (model, record) pair.
+    let (dump, launch_path, record_path): (
+        crate::ros::launch_dump::LaunchDump,
+        Option<std::path::PathBuf>,
+        Option<std::path::PathBuf>,
+    ) = match &args.record {
+        Some(rec) => {
+            eprintln!("Resolving from record: {}", rec.display());
+            let dump = crate::ros::launch_dump::load_launch_dump(rec)
+                .wrap_err_with(|| format!("loading record {}", rec.display()))?;
+            (dump, None, Some(rec.clone()))
+        }
+        None => {
+            let pkg_or_path = args.package_or_path.as_deref().ok_or_else(|| {
+                eyre::eyre!("either a launch file (package/path) or --record is required")
+            })?;
+            let launch_path =
+                super::launch::resolve_launch_file(pkg_or_path, args.launch_file.as_deref())?;
+            eprintln!("Resolving launch file: {}", launch_path.display());
+            let record = play_launch_parser::parse_launch_file(&launch_path, cli_args.clone())
+                .map_err(|e| eyre::eyre!("Parser error: {e}"))?;
+            let json = serde_json::to_string_pretty(&record)?;
+            let dump: crate::ros::launch_dump::LaunchDump = serde_json::from_str(&json)?;
+            // Emit the spawn-info companion next to the model so the pair
+            // ships together (skipped for stdout mode — nothing to bind).
+            let record_path = if args.out == "-" {
+                None
+            } else {
+                let p = std::path::PathBuf::from(&args.out).with_extension("record.json");
+                std::fs::write(&p, &json)
+                    .wrap_err_with(|| format!("writing record companion {}", p.display()))?;
+                eprintln!("Record companion: {}", p.display());
+                Some(p)
+            };
+            (dump, Some(launch_path), record_path)
+        }
+    };
 
     let sources = args.contract_sources();
     let index = manifest_loader::load_manifests(&dump, &sources)?;
@@ -69,7 +100,12 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
     // file, every resolved contract file, and (below) the platform file.
     let canon = |p: PathBuf| std::fs::canonicalize(&p).unwrap_or(p);
     let mut input_paths: BTreeSet<PathBuf> = BTreeSet::new();
-    input_paths.insert(canon(launch_path.clone()));
+    if let Some(lp) = &launch_path {
+        input_paths.insert(canon(lp.clone()));
+    }
+    if let Some(rp) = &record_path {
+        input_paths.insert(canon(rp.clone()));
+    }
     for s in &dump.scopes {
         if let Some(p) = s.path() {
             input_paths.insert(canon(PathBuf::from(p)));
@@ -121,13 +157,26 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
             declared_tiers: tiers.clone(),
         });
 
-    let model = model_builder::build_system_model(
+    let mut model = model_builder::build_system_model(
         &dump,
         &index,
         sched_inputs.as_ref(),
         arg_binding,
         &input_paths,
     );
+    // Phase 43.1 — bind the spawn-info companion explicitly (the gate
+    // `replay --model` checks; a bare inputs match is too loose, since the
+    // launch file itself is also hashed).
+    if let Some(rp) = &record_path {
+        use sha2::Digest as _;
+        let bytes = std::fs::read(rp)
+            .wrap_err_with(|| format!("hashing record companion {}", rp.display()))?;
+        let canon_rp = std::fs::canonicalize(rp).unwrap_or_else(|_| rp.clone());
+        model.meta.record = Some(ros_launch_manifest_model::InputHash {
+            path: canon_rp.display().to_string(),
+            sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
+        });
+    }
 
     let yaml = model
         .to_yaml_string()
