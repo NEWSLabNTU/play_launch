@@ -53,6 +53,7 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
         &dump,
         args.sched.as_deref(),
         sources.overlay.as_deref(),
+        sources.provider,
         &args.target,
     ) {
         eprintln!(

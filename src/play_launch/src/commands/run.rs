@@ -201,15 +201,16 @@ async fn run_direct(
     // grounds to hard-fail — that's the entire point of this wave.
     // Resolve the platform file through the shipping channels (Phase 41.3):
     // explicit `--sched <path>` > overlay > provider sidecar. `run` has no
-    // contract-loading infrastructure of its own, but the overlay root
-    // discovery (`--contracts`/`$PLAY_LAUNCH_CONTRACTS`/XDG/`/etc`) is
-    // shared with contract resolution regardless.
-    let overlay_root =
-        crate::ros::manifest_loader::discover_overlay_root(common.contracts.as_deref());
+    // contract-loading infrastructure of its own, but the overlay-root
+    // discovery and the `--no-provider-contracts` gate
+    // (`CommonOptions::contract_sources`) are shared with contract
+    // resolution regardless.
+    let sched_sources = common.contract_sources();
     let resolved_sched = crate::ros::sched_loader::resolve_platform_file(
         launch_dump,
         common.sched.as_deref(),
-        overlay_root.as_deref(),
+        sched_sources.overlay.as_deref(),
+        sched_sources.provider,
         &common.target,
     );
     let (sched_plan, sched_helper, sched_helper_join) = if let Some(resolved) = &resolved_sched {

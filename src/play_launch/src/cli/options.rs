@@ -155,8 +155,10 @@ pub struct CheckArgs {
     #[arg(long, value_name = "PATH")]
     pub contracts: Option<PathBuf>,
 
-    /// Disable the provider-sidecar channel (contracts shipped next to the
-    /// launch file as <stem>.contract.yaml). On by default.
+    /// Disable the provider-sidecar channel for BOTH contracts
+    /// (<stem>.contract.yaml) and scheduling platform files
+    /// (<stem>.system.<target>.yaml) shipped next to the launch file.
+    /// On by default.
     #[arg(long)]
     pub no_provider_contracts: bool,
 
@@ -353,8 +355,10 @@ pub struct CommonOptions {
     #[arg(long, value_name = "PATH")]
     pub contracts: Option<PathBuf>,
 
-    /// Disable the provider-sidecar channel (contracts shipped next to the
-    /// launch file as <stem>.contract.yaml). On by default.
+    /// Disable the provider-sidecar channel for BOTH contracts
+    /// (<stem>.contract.yaml) and scheduling platform files
+    /// (<stem>.system.<target>.yaml) shipped next to the launch file.
+    /// On by default.
     #[arg(long)]
     pub no_provider_contracts: bool,
 

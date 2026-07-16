@@ -85,9 +85,12 @@ pub fn discover_overlay_root(explicit: Option<&Path>) -> Option<PathBuf> {
         }
     }
 
+    // Per the XDG Base Directory spec, an empty $XDG_CONFIG_HOME must be
+    // treated as unset (fall back to ~/.config).
     let xdg_base = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
         .ok()
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
         .or_else(|| {
             std::env::var("HOME")
                 .ok()
@@ -3146,7 +3149,7 @@ mod tests {
 
     #[test]
     fn test_discover_overlay_root_explicit_always_wins() {
-        let _lock = ENV_GUARD.lock().unwrap();
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         // Explicit path returned unconditionally, even if it doesn't exist
         // and even with other channels present.
         let tmp = tempfile::TempDir::new().unwrap();
@@ -3163,7 +3166,7 @@ mod tests {
 
     #[test]
     fn test_discover_overlay_root_env_var_wins_over_xdg() {
-        let _lock = ENV_GUARD.lock().unwrap();
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::TempDir::new().unwrap();
         let env_dir = tmp.path().join("env_root");
         std::fs::create_dir_all(&env_dir).unwrap();
@@ -3178,7 +3181,7 @@ mod tests {
 
     #[test]
     fn test_discover_overlay_root_falls_back_to_xdg_when_env_var_missing() {
-        let _lock = ENV_GUARD.lock().unwrap();
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::TempDir::new().unwrap();
         let xdg_base = tmp.path().join("xdg_root");
         let xdg_dir = xdg_base.join("play_launch/contracts");
@@ -3192,7 +3195,7 @@ mod tests {
 
     #[test]
     fn test_discover_overlay_root_env_var_ignored_when_dir_missing() {
-        let _lock = ENV_GUARD.lock().unwrap();
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::TempDir::new().unwrap();
         let xdg_base = tmp.path().join("xdg_root");
         let xdg_dir = xdg_base.join("play_launch/contracts");
@@ -3207,8 +3210,25 @@ mod tests {
     }
 
     #[test]
+    fn test_discover_overlay_root_empty_xdg_config_home_treated_as_unset() {
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let default_xdg_dir = home.join(".config/play_launch/contracts");
+        std::fs::create_dir_all(&default_xdg_dir).unwrap();
+
+        let _env = EnvVarRestore::unset("PLAY_LAUNCH_CONTRACTS");
+        // XDG spec: empty value must be treated as unset → fall back to
+        // $HOME/.config, not to a relative "play_launch/contracts" path.
+        let _xdg = EnvVarRestore::set("XDG_CONFIG_HOME", std::path::Path::new(""));
+        let _home = EnvVarRestore::set("HOME", &home);
+
+        assert_eq!(discover_overlay_root(None), Some(default_xdg_dir));
+    }
+
+    #[test]
     fn test_discover_overlay_root_none_when_nothing_exists() {
-        let _lock = ENV_GUARD.lock().unwrap();
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::TempDir::new().unwrap();
 
         let _env = EnvVarRestore::set("PLAY_LAUNCH_CONTRACTS", &tmp.path().join("nope1"));

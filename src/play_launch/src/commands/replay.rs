@@ -539,6 +539,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         &launch_dump,
         common.sched.as_deref(),
         contract_sources.overlay.as_deref(),
+        contract_sources.provider,
         &common.target,
     );
     let (sched_plan, sched_helper, sched_helper_join) = if let Some(resolved) = &resolved_sched {
