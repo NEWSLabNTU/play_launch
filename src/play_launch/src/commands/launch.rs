@@ -185,6 +185,7 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
     // Create replay args and call handle_replay
     let replay_args = crate::cli::options::ReplayArgs {
         input_file: PathBuf::from("record.json"),
+        model: None,
         common: args.common.clone(),
     };
 
