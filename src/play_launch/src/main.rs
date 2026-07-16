@@ -74,6 +74,11 @@ fn main() -> eyre::Result<()> {
         cli::options::Command::Check(args) => {
             commands::handle_check_manifest(args)?;
         }
+        cli::options::Command::Contract(args) => match &args.subcommand {
+            cli::options::ContractSubcommand::Eject(eject_args) => {
+                commands::handle_contract_eject(eject_args)?;
+            }
+        },
     }
 
     Ok(())

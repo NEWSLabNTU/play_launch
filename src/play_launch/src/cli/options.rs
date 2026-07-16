@@ -107,6 +107,54 @@ pub enum Command {
         play_launch check autoware_launch planning_simulator.launch.xml\n  \
         play_launch check --contracts ~/contracts /path/to/launch.py arg:=value")]
     Check(CheckArgs),
+
+    /// Manage contract/platform-file overlays (Phase 41.4, design §3.3)
+    #[command(after_help = "Examples:\n  \
+        play_launch contract eject rt_demo bringup.launch.xml\n  \
+        play_launch contract eject rt_demo bringup.launch.xml --into ~/.config/play_launch/contracts")]
+    Contract(ContractArgs),
+}
+
+/// Arguments for `play_launch contract`
+#[derive(Args)]
+pub struct ContractArgs {
+    #[command(subcommand)]
+    pub subcommand: ContractSubcommand,
+}
+
+#[derive(Subcommand)]
+pub enum ContractSubcommand {
+    /// Copy the resolved provider contract (and target's platform file, if
+    /// any) into the overlay tree, ready to edit — editing never touches
+    /// `/opt` (design §3.3).
+    Eject(ContractEjectArgs),
+}
+
+/// Arguments for `play_launch contract eject`
+#[derive(Args)]
+pub struct ContractEjectArgs {
+    /// Package name or path to launch file
+    pub package_or_path: String,
+
+    /// Launch file name (if package_or_path is a package name)
+    pub launch_file: Option<String>,
+
+    /// Which scheduling target's platform file to eject (`<stem>.system.<target>.yaml`).
+    #[arg(long, default_value = "posix")]
+    pub target: String,
+
+    /// Overlay root to eject into. Defaults to the discovered overlay root
+    /// (same discovery as `check --contracts`: `$PLAY_LAUNCH_CONTRACTS`,
+    /// then `$XDG_CONFIG_HOME/play_launch/contracts`, then
+    /// `/etc/play_launch/contracts`) — errors if none of those exist yet
+    /// and `--into` wasn't given.
+    #[arg(long, value_name = "PATH")]
+    pub into: Option<PathBuf>,
+
+    /// Overwrite existing overlay files. Without this flag, `eject` refuses
+    /// to touch a destination that already exists.
+    #[arg(long)]
+    pub force: bool,
 }
 
 /// Arguments for the context extraction command
@@ -184,6 +232,16 @@ pub struct CheckArgs {
     /// Example: --rule satisfiability --rule consistency
     #[arg(long, value_name = "RULE_ID")]
     pub rule: Vec<String>,
+
+    /// Print the merged scheduling plan with provenance per node (design
+    /// §7): which platform-file override, mapper-derived fact, or default
+    /// placement produced each node's final class/priority/core, plus the
+    /// platform-file and per-scope contract paths that fed the pipeline.
+    /// Only meaningful together with a resolved scheduling platform file
+    /// (`--sched`, or one resolved via the overlay/provider channels) — a
+    /// no-op note is printed otherwise (not an error).
+    #[arg(long)]
+    pub explain: bool,
 }
 
 impl CheckArgs {

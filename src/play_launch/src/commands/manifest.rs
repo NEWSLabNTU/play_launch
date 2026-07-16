@@ -49,19 +49,33 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
     // `sources.overlay` is already the discovered root (see
     // `CheckArgs::contract_sources`), so both channels agree on which root
     // is in play.
-    if let Some(resolved) = crate::ros::sched_loader::resolve_platform_file(
+    let resolved_platform = crate::ros::sched_loader::resolve_platform_file(
         &dump,
         args.sched.as_deref(),
         sources.overlay.as_deref(),
         sources.provider,
         &args.target,
-    ) {
+    );
+    if let Some(resolved) = &resolved_platform {
         eprintln!(
             "Scheduling platform file [{}]: {}",
             resolved.channel,
             resolved.path.display()
         );
-        crate::ros::sched_loader::check_sched(&dump, Some(&index), &resolved.path, &args.target)?;
+        let derived = crate::ros::sched_loader::check_sched(
+            &dump,
+            Some(&index),
+            &resolved.path,
+            &args.target,
+        )?;
+        if args.explain {
+            crate::ros::sched_loader::print_explain(&derived, resolved, Some(&index));
+        }
+    } else if args.explain {
+        eprintln!(
+            "note: --explain has no effect without a resolved scheduling platform file \
+             (pass --sched <path>, or ship one via the overlay/provider channels)"
+        );
     }
 
     if index.manifests.is_empty() {

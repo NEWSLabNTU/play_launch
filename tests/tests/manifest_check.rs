@@ -509,3 +509,105 @@ fn check_sched_no_platform_file_leaves_scheduling_disabled() {
         "expected no scheduling table since nothing resolved, got: {stderr}"
     );
 }
+
+// ── W2 carry-forward #3 (Phase 41.4): legacy `.toml` platform file + a live
+// contract index whose rate facts contradict the manually-assigned priority
+// order → warning only, `check` still succeeds. ──
+
+#[test]
+fn check_legacy_toml_with_contradicting_contract_facts_warns_but_succeeds() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let launch_tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    // Contract: talker publishes at 100 Hz, listener at 10 Hz.
+    let overlay_root = tempfile::TempDir::new().expect("failed to create overlay root");
+    let overlay_launch_dir = overlay_root.path().join("_/launch");
+    std::fs::create_dir_all(&overlay_launch_dir).expect("failed to create overlay launch dir");
+    std::fs::write(
+        overlay_launch_dir.join("pure_nodes.contract.yaml"),
+        "\
+version: 1
+nodes:
+  talker:
+    pub:
+      chatter:
+        min_rate_hz: 100
+  listener:
+    pub:
+      status:
+        min_rate_hz: 10
+topics:
+  chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
+    rate_hz: 100
+  status:
+    type: std_msgs/msg/String
+    pub: [listener/status]
+    rate_hz: 10
+",
+    )
+    .expect("failed to write overlay contract");
+
+    // Legacy manual-mapper platform file (explicit-path only): pins talker
+    // (the FASTER node) to a LOWER priority than listener — contradicts the
+    // contract's rate order.
+    let system_toml = launch_tmp.path().join("system.toml");
+    std::fs::write(
+        &system_toml,
+        "\
+[tiers.low]
+class = \"real_time\"
+[tiers.low.posix]
+priority = 10
+sched_class = \"SCHED_FIFO\"
+
+[tiers.high]
+class = \"real_time\"
+[tiers.high.posix]
+priority = 40
+sched_class = \"SCHED_FIFO\"
+
+[[assign]]
+tier = \"low\"
+nodes = [\"talker\"]
+
+[[assign]]
+tier = \"high\"
+nodes = [\"listener\"]
+",
+    )
+    .expect("failed to write legacy system.toml");
+
+    let output = Command::new(play_launch_bin())
+        .args(["check", "--contracts"])
+        .arg(overlay_root.path())
+        .arg("--sched")
+        .arg(&system_toml)
+        .arg(&launch_copy)
+        .output()
+        .expect("failed to run play_launch");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "contradicting facts must be a warning, not a failure: {stderr}"
+    );
+    assert!(
+        stderr.contains("contradicts") && stderr.contains("rate_hz"),
+        "expected a rate contradiction warning citing both nodes, got: {stderr}"
+    );
+    // The warning cites both the contract file (fact side) and the
+    // platform file (priority side) — Phase 41.4's file-citation addition.
+    assert!(
+        stderr.contains("contract:") && stderr.contains("platform file:"),
+        "expected the warning to cite both source files, got: {stderr}"
+    );
+}

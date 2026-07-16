@@ -1,8 +1,9 @@
 //! Command handlers
 
-pub(crate) mod common;
 pub mod capabilities;
+pub(crate) mod common;
 pub mod context;
+pub mod contract;
 pub mod dump;
 pub mod launch;
 pub mod manifest;
@@ -14,6 +15,7 @@ pub(crate) mod signal_handler;
 // Re-export command handlers
 pub use capabilities::{handle_setcap, handle_verify};
 pub use context::handle_context;
+pub use contract::handle_contract_eject;
 pub use dump::handle_dump;
 pub use launch::handle_launch;
 pub use manifest::handle_check_manifest;

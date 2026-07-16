@@ -1011,7 +1011,10 @@ pub(crate) fn contract_stem(file: &str) -> &str {
 ///
 /// Layout: `<overlay_root>/<pkg>/launch/<stem>.contract.yaml`
 /// If pkg is None, looks in `<overlay_root>/_/launch/<stem>.contract.yaml`.
-fn resolve_overlay_path(scope: &ScopeEntry, overlay_root: &Path) -> Option<PathBuf> {
+///
+/// `pub(crate)`: also reused by `commands::contract::handle_contract_eject`
+/// (Phase 41.4) to compute the destination path for an ejected contract.
+pub(crate) fn resolve_overlay_path(scope: &ScopeEntry, overlay_root: &Path) -> Option<PathBuf> {
     let file = scope.file()?;
     let stem = contract_stem(file);
     let pkg_dir = scope.pkg().unwrap_or("_");
@@ -1031,7 +1034,10 @@ fn resolve_overlay_path(scope: &ScopeEntry, overlay_root: &Path) -> Option<PathB
 /// `record.json` produced before W1, or an origin the parser couldn't
 /// resolve to an absolute path) — provider lookup is simply unavailable
 /// for that scope.
-fn resolve_provider_path(scope: &ScopeEntry) -> Option<PathBuf> {
+///
+/// `pub(crate)`: also reused by `commands::contract::handle_contract_eject`
+/// (Phase 41.4) to find the provider contract to eject.
+pub(crate) fn resolve_provider_path(scope: &ScopeEntry) -> Option<PathBuf> {
     let origin = scope.origin.as_ref()?;
     let launch_path = origin.path.as_deref()?;
     let dir = Path::new(launch_path).parent()?;
