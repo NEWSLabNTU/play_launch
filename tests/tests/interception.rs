@@ -138,8 +138,14 @@ interception:
         stats_content
     );
 
-    // Each entry should have pub_count > 0 (talker publishes ~1Hz for 5 seconds)
+    // Each entry should have pub_count > 0 (talker publishes ~1Hz for 5 seconds).
+    // Skip metadata keys (Phase 42.0: `_events_dropped_total_best_effort` is a
+    // top-level additive field, not a per-topic entry — see
+    // docs/roadmap/phase-29-rcl_interception.md).
     for (hash, entry) in stats.as_object().unwrap() {
+        if hash.starts_with('_') {
+            continue;
+        }
         let pub_count = entry.get("pub_count").and_then(|v| v.as_u64()).unwrap_or(0);
         eprintln!("  topic_hash={hash}: pub_count={pub_count}");
         assert!(

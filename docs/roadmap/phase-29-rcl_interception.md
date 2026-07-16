@@ -453,6 +453,91 @@ When not using a config file, defaults apply: interception enabled with all plug
 - [x] Log final state at `info!` level (topic counts + total events)
 - [ ] Expose live stats via web UI SSE endpoint (deferred — future enhancement)
 
+##### Phase 42.0 additions: topic-name persistence + drop counters
+
+`.superpowers/sdd/p42-infra-readiness.md` (2026-07-16 profiling-infra
+readiness check) identified two gaps before these summaries could be
+trusted as Phase 42.2's "measured model" ground truth. Both are fixed as
+of Phase 42.0, additively (no breaking schema change):
+
+1. **Hash→name persistence (capability 4, "NOT READY as shipped")**.
+   Previously the only way to resolve a `topic_hash` key back to a real
+   topic name was joining against `discovered_topic_types.tsv` — an
+   *incidental* side effect of the separate `RuleEngine` (Phase 36/40
+   contract-audit machinery) that only exists when a `RuleEngine` is
+   instantiated. Plain interception-only runs (no contracts) had no way
+   to resolve hashes at all.
+
+   Fix: `run_interception_task` (`src/play_launch/src/interception/mod.rs`)
+   now also feeds every event into a `NameCatalog` that reassembles
+   `TopicNameDeclared`/`TypeNameDeclared` chunk events into
+   `topic_hash -> name` / `topic_hash -> msg_type` maps, independently
+   of whether a `RuleEngine` is present. Both maps are folded into
+   `frontier_summary.json` and `stats_summary.json` **inline, per
+   topic**, as two additive optional fields:
+
+   ```json
+   {
+     "12345678901234": {
+       "stamp_sec": 10, "stamp_nanosec": 500000000, "event_count": 42,
+       "name": "/control/output/control_cmd",
+       "msg_type": "autoware_control_msgs/msg/Control"
+     }
+   }
+   ```
+
+   `name` / `msg_type` are omitted (not `null`) when the hash was never
+   announced in this run — old consumers that only read
+   `stamp_sec`/`stamp_nanosec`/`event_count` (or `pub_count`/`take_count`/
+   `duration_ms`/`avg_pub_rate_hz` for stats) see no schema change for
+   those entries. `TopicNameAssembly` + `decode_topic_name_chunk` (the
+   chunk-reassembly helpers) now live in `interception::mod` as
+   `pub(crate)` and are reused by `runtime_enforcement::RuleEngine`
+   rather than duplicated.
+
+2. **Drop counters (capability 5, "NOT READY — no instrumentation")**.
+   Every producer call site in `play_launch_interception/src/plugins/*.rs`
+   used to do `let _ = producer.push(&event)`, silently discarding
+   `Err(Full)` (ring overflow). Fix, in
+   `play_launch_interception/src/drop_counter.rs`:
+   - `drop_counter::push_or_count()` replaces every bare
+     `producer.push()` call site and increments a process-wide atomic
+     counter on `Err(Full)`. One counter (not per-plugin) because all
+     ring-buffer plugins in a process share a single `Producer`
+     (`try_open_producer()` in `lib.rs`) — a dropped slot doesn't
+     belong to any one plugin.
+   - **Always-available**: an `atexit` hook (registered the first time
+     a producer is opened) prints the final drop count to stderr if
+     nonzero — accurate for *that* process, no wire dependency.
+   - **Best-effort in-band**: every 256 push attempts, if the drop
+     count changed since the last report, the `.so` opportunistically
+     pushes a new `EventKind::RingOverflowReport` event (field overload:
+     `monotonic_ns` = cumulative dropped count, `topic_hash` = 0
+     sentinel) through the same ring. This event can itself be dropped
+     under sustained overflow, so it's a lower bound, never an
+     overestimate.
+   - The consumer (`run_interception_task`) tracks the latest reported
+     count per child process and sums them into a new top-level key,
+     `_events_dropped_total_best_effort`, added to both summary JSONs
+     (a string key, so it can never collide with a numeric topic-hash
+     key). 0 means "no drops observed" — which is true whenever no
+     overflow occurred, but is also what a process would report if it
+     overflowed so badly its reports never got through; the stderr log
+     is the fallback of record for that edge case.
+
+   This was chosen over threading a fuller protocol-version /
+   guaranteed-delivery mechanism through `spsc_shm` itself, since
+   `spsc_shm` is a generic zero-dep SPSC primitive (used exactly this
+   way by design — see `spsc_shm/src/lib.rs`'s `Full` error type) and
+   over-engineering guaranteed delivery for a monitoring counter isn't
+   worth the complexity. `EventKind::RingOverflowReport = 15` is a pure
+   wire-protocol addition on the existing `InterceptionEvent` enum (no
+   `spsc_shm` change, no version marker exists or was needed — the
+   `.so` and `play_launch` consumer are always built together from the
+   same commit via `just build-interception` + `just build-rust`/`just
+   build`, so there is no cross-version compatibility concern for this
+   in-repo wire format).
+
 #### 29.16: Build integration
 
 - [x] Justfile recipe: `build-interception` — builds `spsc_shm` + `play_launch_interception`

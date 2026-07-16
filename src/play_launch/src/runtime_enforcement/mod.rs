@@ -28,7 +28,9 @@ use serde::Serialize;
 use tracing::{debug, warn};
 
 use crate::cli::options::EnforceMode;
-use crate::interception::{EventKind, InterceptionEvent};
+use crate::interception::{
+    EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk,
+};
 use crate::ros::manifest_loader::ManifestIndex;
 
 /// One runtime violation entry written to the jsonl log.
@@ -162,37 +164,10 @@ pub struct RuleEngine {
     discovered_types: HashMap<u64, String>,
 }
 
-/// In-flight reassembly state for a `TopicNameDeclared` stream.
-struct TopicNameAssembly {
-    total: u8,
-    parts: Vec<Option<Vec<u8>>>,
-}
-
-impl TopicNameAssembly {
-    fn new(total: u8) -> Self {
-        Self {
-            total,
-            parts: vec![None; total as usize],
-        }
-    }
-
-    fn add(&mut self, idx: u8, bytes: &[u8]) {
-        if (idx as usize) < self.parts.len() && self.parts[idx as usize].is_none() {
-            self.parts[idx as usize] = Some(bytes.to_vec());
-        }
-    }
-
-    fn assembled(&self) -> Option<String> {
-        if self.parts.iter().any(|p| p.is_none()) {
-            return None;
-        }
-        let mut out = Vec::with_capacity(self.total as usize * 24);
-        for bytes in self.parts.iter().flatten() {
-            out.extend_from_slice(bytes);
-        }
-        String::from_utf8(out).ok()
-    }
-}
+// `TopicNameAssembly` (multi-chunk string reassembly) and
+// `decode_topic_name_chunk` live in `crate::interception` — shared with
+// the frontier/stats `NameCatalog` (Phase 42.0), since both decode the
+// same `TopicNameDeclared`/`TypeNameDeclared` wire chunk format.
 
 impl RuleEngine {
     pub fn new(index: Arc<ManifestIndex>, mode: EnforceMode, log_dir: &std::path::Path) -> Self {
@@ -501,6 +476,12 @@ impl RuleEngine {
                         event.monotonic_ns,
                     );
                 }
+            }
+            EventKind::RingOverflowReport => {
+                // Phase 42.0: ring-overflow drop-count telemetry, not a
+                // manifest-relevant event. Aggregated by the
+                // frontier/stats consumer (`interception::mod.rs`),
+                // not by the RuleEngine.
             }
         }
     }
@@ -1122,21 +1103,6 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 #[inline]
 fn pack_stamp(sec: i32, nsec: u32) -> u64 {
     (sec as u32 as u64) * 1_000_000_000 + (nsec as u64)
-}
-
-/// Mirror of `play_launch_interception::event::InterceptionEvent::decode_topic_name_chunk`
-/// — the .so and play_launch are separate crates so the binary-level
-/// layout is shared but the helper isn't reachable. Both sides use
-/// host-native byte order so a direct copy of the numeric fields is
-/// safe.
-#[inline]
-fn decode_topic_name_chunk(event: &InterceptionEvent) -> (u8, u8, usize, [u8; 24]) {
-    let mut buf = [0u8; 24];
-    buf[0..4].copy_from_slice(&event.stamp_sec.to_ne_bytes());
-    buf[4..8].copy_from_slice(&event.stamp_nanosec.to_ne_bytes());
-    buf[8..16].copy_from_slice(&event.handle.to_ne_bytes());
-    buf[16..24].copy_from_slice(&event.monotonic_ns.to_ne_bytes());
-    (event._pad[0], event._pad[1], event._pad[2] as usize, buf)
 }
 
 fn split_endpoint_ref(ep_ref: &str) -> Option<(String, String)> {

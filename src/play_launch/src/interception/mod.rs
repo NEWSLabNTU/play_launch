@@ -64,6 +64,17 @@ pub enum EventKind {
     /// (`"pkg/msg/Name"`), keyed by `topic_hash`. Same chunk encoding
     /// as `TopicNameDeclared`.
     TypeNameDeclared = 14,
+    /// Phase 42.0: periodic, best-effort report of this process's
+    /// cumulative SPSC ring-overflow drop count (i.e. how many times a
+    /// producer's `push()` returned `Err(Full)` since process start).
+    /// Field overload: `monotonic_ns` = cumulative dropped-event count
+    /// (NOT a timestamp), `topic_hash` = 0 (sentinel, not a real
+    /// topic). Emitted opportunistically by the `.so` whenever a push
+    /// succeeds and the drop count has changed since the last report —
+    /// so it can itself be dropped under sustained overflow and is not
+    /// guaranteed delivery. See `docs/roadmap/phase-29-rcl_interception.md`
+    /// ("Drop counters") for the full design + caveats.
+    RingOverflowReport = 15,
 }
 
 /// Interception event (40 bytes, matches play_launch_interception::event::InterceptionEvent).
@@ -218,6 +229,119 @@ struct TopicStats {
 }
 
 // ---------------------------------------------------------------------------
+// Topic name / type reassembly (Phase 42.0)
+// ---------------------------------------------------------------------------
+
+/// In-flight reassembly state for a multi-chunk string announcement
+/// (`TopicNameDeclared` / `TypeNameDeclared`). The `.so` splits long
+/// strings into 24-byte chunks (see `EventKind::TopicNameDeclared`);
+/// this buffers them per `topic_hash` until all chunks arrive.
+///
+/// Shared between this module (frontier/stats name catalog) and
+/// `runtime_enforcement::RuleEngine` (graph-deviation messages +
+/// `discovered_topic_types.tsv`) since both decode the same wire
+/// chunk format independently.
+#[derive(Debug)]
+pub(crate) struct TopicNameAssembly {
+    pub(crate) total: u8,
+    parts: Vec<Option<Vec<u8>>>,
+}
+
+impl TopicNameAssembly {
+    pub(crate) fn new(total: u8) -> Self {
+        Self {
+            total,
+            parts: vec![None; total as usize],
+        }
+    }
+
+    pub(crate) fn add(&mut self, idx: u8, bytes: &[u8]) {
+        if (idx as usize) < self.parts.len() && self.parts[idx as usize].is_none() {
+            self.parts[idx as usize] = Some(bytes.to_vec());
+        }
+    }
+
+    pub(crate) fn assembled(&self) -> Option<String> {
+        if self.parts.iter().any(|p| p.is_none()) {
+            return None;
+        }
+        let mut out = Vec::with_capacity(self.total as usize * 24);
+        for bytes in self.parts.iter().flatten() {
+            out.extend_from_slice(bytes);
+        }
+        String::from_utf8(out).ok()
+    }
+}
+
+/// Mirror of `play_launch_interception::event::InterceptionEvent::decode_topic_name_chunk`
+/// — the .so and play_launch are separate crates so the binary-level
+/// layout is shared but the helper isn't reachable. Both sides use
+/// host-native byte order so a direct copy of the numeric fields is
+/// safe.
+#[inline]
+pub(crate) fn decode_topic_name_chunk(event: &InterceptionEvent) -> (u8, u8, usize, [u8; 24]) {
+    let mut buf = [0u8; 24];
+    buf[0..4].copy_from_slice(&event.stamp_sec.to_ne_bytes());
+    buf[4..8].copy_from_slice(&event.stamp_nanosec.to_ne_bytes());
+    buf[8..16].copy_from_slice(&event.handle.to_ne_bytes());
+    buf[16..24].copy_from_slice(&event.monotonic_ns.to_ne_bytes());
+    (event._pad[0], event._pad[1], event._pad[2] as usize, buf)
+}
+
+/// Accumulates `topic_hash -> name` (and `topic_hash -> msg type`) maps
+/// from `TopicNameDeclared` / `TypeNameDeclared` chunk events, for
+/// inclusion in `frontier_summary.json` / `stats_summary.json`.
+///
+/// Kept separate from `RuleEngine::discovered_names` /
+/// `discovered_types` (`runtime_enforcement/mod.rs`) — that map only
+/// exists when a `RuleEngine` is instantiated (contracts/manifest
+/// audit, Phase 36/40), whereas this one is always populated whenever
+/// interception is enabled, regardless of whether contracts are in
+/// use. This is precisely the gap identified in
+/// `.superpowers/sdd/p42-infra-readiness.md` capability 4: previously
+/// the only way to resolve a topic hash to a name was the RuleEngine's
+/// incidental `discovered_topic_types.tsv` side effect.
+#[derive(Debug, Default)]
+struct NameCatalog {
+    names: HashMap<u64, String>,
+    types: HashMap<u64, String>,
+    name_chunks: HashMap<u64, TopicNameAssembly>,
+    type_chunks: HashMap<u64, TopicNameAssembly>,
+}
+
+impl NameCatalog {
+    fn observe(&mut self, event: &InterceptionEvent) {
+        match event.kind {
+            EventKind::TopicNameDeclared => {
+                let (idx, total, n, buf) = decode_topic_name_chunk(event);
+                let entry = self
+                    .name_chunks
+                    .entry(event.topic_hash)
+                    .or_insert_with(|| TopicNameAssembly::new(total.max(1)));
+                entry.add(idx, &buf[..n]);
+                if let Some(name) = entry.assembled() {
+                    self.names.entry(event.topic_hash).or_insert(name);
+                    self.name_chunks.remove(&event.topic_hash);
+                }
+            }
+            EventKind::TypeNameDeclared => {
+                let (idx, total, n, buf) = decode_topic_name_chunk(event);
+                let entry = self
+                    .type_chunks
+                    .entry(event.topic_hash)
+                    .or_insert_with(|| TopicNameAssembly::new(total.max(1)));
+                entry.add(idx, &buf[..n]);
+                if let Some(ty) = entry.assembled() {
+                    self.types.entry(event.topic_hash).or_insert(ty);
+                    self.type_chunks.remove(&event.topic_hash);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Interception task
 // ---------------------------------------------------------------------------
 
@@ -249,6 +373,15 @@ pub async fn run_interception_task(
 
     let mut frontiers: HashMap<u64, FrontierState> = HashMap::new();
     let mut stats: HashMap<u64, TopicStats> = HashMap::new();
+    let mut names = NameCatalog::default();
+    // Phase 42.0: per-child (per-process) latest reported cumulative
+    // drop count, keyed by index into `consumers`. `RingOverflowReport`
+    // carries a cumulative-since-process-start count, so later reports
+    // simply overwrite earlier ones for the same child; the final
+    // events-dropped estimate is the sum across all children. This is
+    // a lower bound (best-effort reports can themselves be dropped),
+    // never an overestimate.
+    let mut drop_counts: HashMap<usize, u64> = HashMap::new();
     let mut total_events: u64 = 0;
 
     let poll_interval = tokio::time::Duration::from_millis(10);
@@ -267,7 +400,7 @@ pub async fn run_interception_task(
         tokio::select! {
             _ = tokio::time::sleep(poll_interval) => {
                 // Drain all consumers
-                for child in &mut consumers {
+                for (child_idx, child) in consumers.iter_mut().enumerate() {
                     while let Some(event) = child.consumer.pop() {
                         total_events += 1;
                         debug!(
@@ -275,6 +408,10 @@ pub async fn run_interception_task(
                             event.kind, event.topic_hash, event.stamp_sec, event.stamp_nanosec, event.handle, event.monotonic_ns
                         );
                         process_event(&event, &config, &mut frontiers, &mut stats);
+                        names.observe(&event);
+                        if event.kind == EventKind::RingOverflowReport {
+                            drop_counts.insert(child_idx, event.monotonic_ns);
+                        }
                         if let Some(re) = rule_engine.as_mut() {
                             re.observe(&event);
                         }
@@ -290,10 +427,14 @@ pub async fn run_interception_task(
     }
 
     // Final drain
-    for child in &mut consumers {
+    for (child_idx, child) in consumers.iter_mut().enumerate() {
         while let Some(event) = child.consumer.pop() {
             total_events += 1;
             process_event(&event, &config, &mut frontiers, &mut stats);
+            names.observe(&event);
+            if event.kind == EventKind::RingOverflowReport {
+                drop_counts.insert(child_idx, event.monotonic_ns);
+            }
             if let Some(re) = rule_engine.as_mut() {
                 re.observe(&event);
             }
@@ -314,7 +455,16 @@ pub async fn run_interception_task(
 
     // Write summaries
     if total_events > 0 {
-        write_summaries(&log_dir, &frontiers, &stats, total_events)?;
+        let total_dropped: u64 = drop_counts.values().sum();
+        write_summaries(
+            &log_dir,
+            &frontiers,
+            &stats,
+            total_events,
+            &names.names,
+            &names.types,
+            total_dropped,
+        )?;
     } else {
         debug!("Interception task: no events received");
     }
@@ -378,11 +528,21 @@ fn process_event(
         | EventKind::RequestedDeadlineMissed
         | EventKind::LivelinessLost
         | EventKind::LivelinessChanged
-        | EventKind::MessageLost
-        | EventKind::TopicNameDeclared
-        | EventKind::TypeNameDeclared => {
+        | EventKind::MessageLost => {
             // Phase 36: forwarded to the RuleEngine. Not aggregated
             // into frontier or stats summaries.
+        }
+        EventKind::TopicNameDeclared | EventKind::TypeNameDeclared => {
+            // Phase 42.0: handled by `NameCatalog::observe` (called
+            // alongside this function in `run_interception_task`) and
+            // also forwarded to the RuleEngine. Not aggregated into
+            // frontier or stats *state*, but folded into the summary
+            // JSON at write time via the name/type catalog.
+        }
+        EventKind::RingOverflowReport => {
+            // Phase 42.0: handled directly in `run_interception_task`'s
+            // drain loops (keyed by child index) so we can distinguish
+            // which child's ring is reporting. Not aggregated here.
         }
     }
 }
@@ -397,14 +557,53 @@ fn write_summaries(
     frontiers: &HashMap<u64, FrontierState>,
     stats: &HashMap<u64, TopicStats>,
     total_events: u64,
+    names: &HashMap<u64, String>,
+    types: &HashMap<u64, String>,
+    total_dropped: u64,
 ) -> eyre::Result<()> {
     let interception_dir = log_dir.join("interception");
     std::fs::create_dir_all(&interception_dir)?;
 
     // Frontier summary
     if !frontiers.is_empty() {
+        #[derive(Serialize)]
+        struct FrontierOutput {
+            stamp_sec: i32,
+            stamp_nanosec: u32,
+            event_count: u64,
+            // Phase 42.0: additive fields — populated from
+            // `TopicNameDeclared`/`TypeNameDeclared` events observed
+            // in this run. Omitted (not `null`) when the hash was
+            // never announced, so old consumers keyed only on
+            // `stamp_sec`/`stamp_nanosec`/`event_count` see no schema
+            // change.
+            #[serde(skip_serializing_if = "Option::is_none")]
+            name: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            msg_type: Option<String>,
+        }
+
+        let frontier_output: HashMap<u64, FrontierOutput> = frontiers
+            .iter()
+            .map(|(&hash, f)| {
+                (
+                    hash,
+                    FrontierOutput {
+                        stamp_sec: f.stamp_sec,
+                        stamp_nanosec: f.stamp_nanosec,
+                        event_count: f.event_count,
+                        name: names.get(&hash).cloned(),
+                        msg_type: types.get(&hash).cloned(),
+                    },
+                )
+            })
+            .collect();
+
+        let mut value = serde_json::to_value(&frontier_output)?;
+        insert_meta(&mut value, total_dropped);
+
         let path = interception_dir.join("frontier_summary.json");
-        let json = serde_json::to_string_pretty(frontiers)?;
+        let json = serde_json::to_string_pretty(&value)?;
         std::fs::write(&path, json)?;
         info!(
             "Interception: {} topic frontiers written to {}",
@@ -421,6 +620,11 @@ fn write_summaries(
             take_count: u64,
             duration_ms: f64,
             avg_pub_rate_hz: f64,
+            // Phase 42.0: additive, see `FrontierOutput` above.
+            #[serde(skip_serializing_if = "Option::is_none")]
+            name: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            msg_type: Option<String>,
         }
 
         let stats_output: HashMap<u64, StatsOutput> = stats
@@ -441,13 +645,18 @@ fn write_summaries(
                         take_count: ts.take_count,
                         duration_ms,
                         avg_pub_rate_hz,
+                        name: names.get(&hash).cloned(),
+                        msg_type: types.get(&hash).cloned(),
                     },
                 )
             })
             .collect();
 
+        let mut value = serde_json::to_value(&stats_output)?;
+        insert_meta(&mut value, total_dropped);
+
         let path = interception_dir.join("stats_summary.json");
-        let json = serde_json::to_string_pretty(&stats_output)?;
+        let json = serde_json::to_string_pretty(&value)?;
         std::fs::write(&path, json)?;
         info!(
             "Interception: {} topic stats written to {}",
@@ -456,7 +665,35 @@ fn write_summaries(
         );
     }
 
+    if total_dropped > 0 {
+        info!(
+            "Interception: {} event(s) known-dropped to ring overflow (best-effort estimate, \
+             lower bound — see `_events_dropped_total_best_effort` in the summaries)",
+            total_dropped
+        );
+    }
+
     info!("Interception: {} total events processed", total_events);
 
     Ok(())
+}
+
+/// Inserts a top-level `_events_dropped_total_best_effort` key into a
+/// `HashMap<u64, _>`-shaped JSON object. The key is a non-numeric
+/// string, so it can never collide with a topic-hash key (those always
+/// serialize as decimal-digit strings) — existing consumers that
+/// iterate "every key is a topic hash" need a one-line allowlist/skip
+/// for this one metadata key, but nothing about the *shape* changes.
+///
+/// Value is a lower-bound estimate: it only counts drops that a
+/// producer *also* managed to report back through the (possibly full)
+/// ring before the process exited. See "Drop counters" in
+/// `docs/roadmap/phase-29-rcl_interception.md` for the full design.
+fn insert_meta(value: &mut serde_json::Value, total_dropped: u64) {
+    if let serde_json::Value::Object(map) = value {
+        map.insert(
+            "_events_dropped_total_best_effort".to_string(),
+            serde_json::Value::from(total_dropped),
+        );
+    }
 }
