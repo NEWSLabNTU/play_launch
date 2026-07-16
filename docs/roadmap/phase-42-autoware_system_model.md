@@ -17,6 +17,16 @@ designs the chain-aware mapper on evidence.
 
 ## Work items
 
+- **42.0** Profiling infra readiness (from `.superpowers/sdd/p42-infra-readiness.md`,
+  2026-07-16 idle-baseline run: composable injection 100%, rates plausible):
+  (a) persist hash→topic-name map in `frontier_summary.json`/`stats_summary.json`
+  (consume `TopicNameDeclared` in the Phase 29 consumer; today the join rides on
+  the RuleEngine's incidental `discovered_topic_types.tsv`); (b) drop counters
+  for SPSC ring overflow (producers silently discard `Err(Full)`) reported in
+  the summaries; (c) fix CLAUDE.md's stale `autoware_config.yaml` reference;
+  (d) 42.2 runbook: engaged autonomous scenario (goal pose + engage) so the
+  sim clock advances and frontier stamps are non-zero — idle baseline showed
+  68/161 declared topics active.
 - **42.1** Graph export tooling: extend the causal-dag machinery to export the
   declared causal graph (nodes, causal edges, `state:` cuts, paths, budgets)
   as JSON/DOT from `check`.
