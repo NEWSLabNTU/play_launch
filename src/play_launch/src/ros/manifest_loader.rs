@@ -533,6 +533,12 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // critical-path and rate-hierarchy checks.
     let graph = build_global_graph(index);
 
+    // Cross-scope causal-DAG check (Phase 42 finding): a cycle spanning
+    // multiple contract files is invisible to the per-manifest `causal-dag`
+    // rule, which only sees one manifest's own `DataflowGraph` at a time.
+    // Advisory (warning), not error — see `causal_dag_global` module docs.
+    super::causal_dag_global::check_causal_dag_global(index, &graph);
+
     // Critical-path latency check via the global dataflow graph.
     check_scope_path_critical_path(index, &graph);
 

@@ -1,4 +1,5 @@
 pub mod ament_index;
+pub mod causal_dag_global;
 pub mod causal_graph;
 #[allow(dead_code)] // Infrastructure spawned at startup; query path not yet wired
 pub mod container_readiness;
