@@ -200,56 +200,68 @@ async fn run_direct(
     // root-or-capped-helper privilege check. Not being root is no longer
     // grounds to hard-fail — that's the entire point of this wave.
     let (sched_plan, sched_helper, sched_helper_join) = if let Some(path) = &common.sched {
-        let plan =
-            crate::execution::sched_plan::SchedPlan::build(launch_dump, path, common.sched_apply)?;
+        // `play_launch run` has no contract-loading infrastructure (single
+        // node, no launch tree) — the derive pipeline runs with no
+        // `ManifestIndex`, so every node gets a bare `MapperNode` (matches
+        // v1 behavior for the legacy `manual`/`.toml` path exactly).
+        let plan = crate::execution::sched_plan::SchedPlan::build(
+            launch_dump,
+            None,
+            path,
+            &common.target,
+            common.sched_apply,
+        )?;
 
-        let (sched_helper, sched_helper_join) =
-            if common.sched_apply != crate::execution::sched_apply::SchedApplyMode::Off {
-                // Privilege is about whether the apply can SUCCEED, which is
-                // independent of whether the helper process starts: a helper
-                // that spawns fine but lacks CAP_SYS_NICE is useless (every
-                // apply would EPERM). So check first, then spawn.
-                let privileged = crate::execution::sched_apply::has_sched_privilege()
-                    || crate::commands::capabilities::rt_helper_has_cap_sys_nice();
-                if !privileged {
-                    let msg = "scheduling: no privilege to apply; run `play_launch setcap` (grants cap_sys_nice to play_launch_rt_helper) or run as root";
-                    if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
-                        eyre::bail!("{msg}");
-                    }
-                    tracing::warn!("{msg}; scheduling will not be applied");
+        let (sched_helper, sched_helper_join) = if common.sched_apply
+            != crate::execution::sched_apply::SchedApplyMode::Off
+        {
+            // Privilege is about whether the apply can SUCCEED, which is
+            // independent of whether the helper process starts: a helper
+            // that spawns fine but lacks CAP_SYS_NICE is useless (every
+            // apply would EPERM). So check first, then spawn.
+            let privileged = crate::execution::sched_apply::has_sched_privilege()
+                || crate::commands::capabilities::rt_helper_has_cap_sys_nice();
+            if !privileged {
+                let msg = "scheduling: no privilege to apply; run `play_launch setcap` (grants cap_sys_nice to play_launch_rt_helper) or run as root";
+                if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
+                    eyre::bail!("{msg}");
                 }
+                tracing::warn!("{msg}; scheduling will not be applied");
+            }
 
-                match crate::execution::rt_helper_client::SchedHelper::spawn().await {
-                    Ok((helper, join)) => (Some(helper), Some(join)),
-                    Err(e) => {
-                        // Without the helper, only root can apply (direct
-                        // fallback). If privilege depended on the capped
-                        // helper, a spawn failure means scheduling CANNOT be
-                        // applied — Strict must abort at this boundary, not
-                        // degrade into per-node EPERMs mid-run.
-                        if crate::execution::sched_apply::has_sched_privilege() {
-                            tracing::debug!(
-                                "RT helper unavailable ({e:#}); applying directly as root"
-                            );
-                        } else {
-                            let msg = format!(
-                                "scheduling: RT helper failed to start ({e:#}); cannot apply without root"
-                            );
-                            if common.sched_apply
-                                == crate::execution::sched_apply::SchedApplyMode::Strict
-                            {
-                                eyre::bail!("{msg}");
-                            }
-                            tracing::warn!("{msg}; scheduling will not be applied");
+            match crate::execution::rt_helper_client::SchedHelper::spawn().await {
+                Ok((helper, join)) => (Some(helper), Some(join)),
+                Err(e) => {
+                    // Without the helper, only root can apply (direct
+                    // fallback). If privilege depended on the capped
+                    // helper, a spawn failure means scheduling CANNOT be
+                    // applied — Strict must abort at this boundary, not
+                    // degrade into per-node EPERMs mid-run.
+                    if crate::execution::sched_apply::has_sched_privilege() {
+                        tracing::debug!("RT helper unavailable ({e:#}); applying directly as root");
+                    } else {
+                        let msg = format!(
+                            "scheduling: RT helper failed to start ({e:#}); cannot apply without root"
+                        );
+                        if common.sched_apply
+                            == crate::execution::sched_apply::SchedApplyMode::Strict
+                        {
+                            eyre::bail!("{msg}");
                         }
-                        (None, None)
+                        tracing::warn!("{msg}; scheduling will not be applied");
                     }
+                    (None, None)
                 }
-            } else {
-                (None, None)
-            };
+            }
+        } else {
+            (None, None)
+        };
 
-        (Some(std::sync::Arc::new(plan)), sched_helper, sched_helper_join)
+        (
+            Some(std::sync::Arc::new(plan)),
+            sched_helper,
+            sched_helper_join,
+        )
     } else {
         (None, None, None)
     };

@@ -8,4 +8,5 @@ pub mod manifest_loader;
 pub mod parameter_conversion;
 pub mod parameter_proxy;
 pub mod parameter_types;
+pub mod sched_derive;
 pub mod sched_loader;

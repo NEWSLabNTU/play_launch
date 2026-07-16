@@ -34,16 +34,18 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
         dump.load_node.len(),
     );
 
-    // Optional: validate the shared scheduling spec (Linux = validate-now).
-    if let Some(sched_path) = &args.sched {
-        crate::ros::sched_loader::check_sched(&dump, sched_path)?;
-    }
-
     // Load and check manifests: overlay > provider sidecar. The provider
     // channel is on by default, so `check` works with no manifest flags at
     // all whenever the launch file ships sidecar contracts.
     let sources = args.contract_sources();
     let index = manifest_loader::load_manifests(&dump, &sources)?;
+
+    // Optional: validate the shared scheduling spec (Linux = validate-now).
+    // Loaded after manifests so contract-aware mappers (rate_monotonic,
+    // deadline_monotonic) can extract timing facts from `index`.
+    if let Some(sched_path) = &args.sched {
+        crate::ros::sched_loader::check_sched(&dump, Some(&index), sched_path, &args.target)?;
+    }
 
     if index.manifests.is_empty() {
         eprintln!(

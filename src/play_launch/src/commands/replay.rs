@@ -445,38 +445,39 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     let has_authorized_topics = _manifest_index
         .as_ref()
         .is_some_and(|idx| !idx.topics.is_empty() || !idx.externals.is_empty());
-    let allowlist_file: Option<std::path::PathBuf> =
-        if common.block_unauthorized_endpoints && has_authorized_topics {
-            let idx = _manifest_index.as_ref().unwrap();
-            let path = log_dir.join("expected_graph.txt");
-            let mut contents = String::with_capacity(idx.topics.len() * 32);
-            contents.push_str("# Phase 36.7 allowlist — every topic FQN authorized in this launch\n");
-            for fqn in idx.topics.keys() {
-                contents.push_str(fqn);
-                contents.push('\n');
-            }
-            for fqn in idx.externals.keys() {
-                contents.push_str(fqn);
-                contents.push('\n');
-            }
-            std::fs::write(&path, contents).wrap_err("write allowlist file")?;
-            info!(
-                "Blocking enforcement: allowlist written to {} ({} topics + {} externals)",
-                path.display(),
-                idx.topics.len(),
-                idx.externals.len()
-            );
-            Some(path)
-        } else {
-            if common.block_unauthorized_endpoints {
-                warn!(
-                    "--block-unauthorized-endpoints requested but no contract declares any \
+    let allowlist_file: Option<std::path::PathBuf> = if common.block_unauthorized_endpoints
+        && has_authorized_topics
+    {
+        let idx = _manifest_index.as_ref().unwrap();
+        let path = log_dir.join("expected_graph.txt");
+        let mut contents = String::with_capacity(idx.topics.len() * 32);
+        contents.push_str("# Phase 36.7 allowlist — every topic FQN authorized in this launch\n");
+        for fqn in idx.topics.keys() {
+            contents.push_str(fqn);
+            contents.push('\n');
+        }
+        for fqn in idx.externals.keys() {
+            contents.push_str(fqn);
+            contents.push('\n');
+        }
+        std::fs::write(&path, contents).wrap_err("write allowlist file")?;
+        info!(
+            "Blocking enforcement: allowlist written to {} ({} topics + {} externals)",
+            path.display(),
+            idx.topics.len(),
+            idx.externals.len()
+        );
+        Some(path)
+    } else {
+        if common.block_unauthorized_endpoints {
+            warn!(
+                "--block-unauthorized-endpoints requested but no contract declares any \
                      topic (no overlay or provider contract resolved) — blocking \
                      enforcement DISABLED; an empty allowlist would block every endpoint"
-                );
-            }
-            None
-        };
+            );
+        }
+        None
+    };
 
     // Setup interception if enabled (Phase 29)
     let mut interception_consumers: Vec<crate::interception::ChildConsumer> = Vec::new();
@@ -531,56 +532,64 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
     // root-or-capped-helper privilege check. Not being root is no longer
     // grounds to hard-fail — that's the entire point of this wave.
     let (sched_plan, sched_helper, sched_helper_join) = if let Some(path) = &common.sched {
-        let plan =
-            crate::execution::sched_plan::SchedPlan::build(&launch_dump, path, common.sched_apply)?;
+        let plan = crate::execution::sched_plan::SchedPlan::build(
+            &launch_dump,
+            _manifest_index.as_ref(),
+            path,
+            &common.target,
+            common.sched_apply,
+        )?;
 
-        let (sched_helper, sched_helper_join) =
-            if common.sched_apply != crate::execution::sched_apply::SchedApplyMode::Off {
-                // Privilege is about whether the apply can SUCCEED, which is
-                // independent of whether the helper process starts: a helper
-                // that spawns fine but lacks CAP_SYS_NICE is useless (every
-                // apply would EPERM). So check first, then spawn.
-                let privileged = crate::execution::sched_apply::has_sched_privilege()
-                    || crate::commands::capabilities::rt_helper_has_cap_sys_nice();
-                if !privileged {
-                    let msg = "scheduling: no privilege to apply; run `play_launch setcap` (grants cap_sys_nice to play_launch_rt_helper) or run as root";
-                    if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
-                        eyre::bail!("{msg}");
-                    }
-                    tracing::warn!("{msg}; scheduling will not be applied");
+        let (sched_helper, sched_helper_join) = if common.sched_apply
+            != crate::execution::sched_apply::SchedApplyMode::Off
+        {
+            // Privilege is about whether the apply can SUCCEED, which is
+            // independent of whether the helper process starts: a helper
+            // that spawns fine but lacks CAP_SYS_NICE is useless (every
+            // apply would EPERM). So check first, then spawn.
+            let privileged = crate::execution::sched_apply::has_sched_privilege()
+                || crate::commands::capabilities::rt_helper_has_cap_sys_nice();
+            if !privileged {
+                let msg = "scheduling: no privilege to apply; run `play_launch setcap` (grants cap_sys_nice to play_launch_rt_helper) or run as root";
+                if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
+                    eyre::bail!("{msg}");
                 }
+                tracing::warn!("{msg}; scheduling will not be applied");
+            }
 
-                match crate::execution::rt_helper_client::SchedHelper::spawn().await {
-                    Ok((helper, join)) => (Some(helper), Some(join)),
-                    Err(e) => {
-                        // Without the helper, only root can apply (direct
-                        // fallback). If privilege depended on the capped
-                        // helper, a spawn failure means scheduling CANNOT be
-                        // applied — Strict must abort at this boundary, not
-                        // degrade into per-node EPERMs mid-run.
-                        if crate::execution::sched_apply::has_sched_privilege() {
-                            tracing::debug!(
-                                "RT helper unavailable ({e:#}); applying directly as root"
-                            );
-                        } else {
-                            let msg = format!(
-                                "scheduling: RT helper failed to start ({e:#}); cannot apply without root"
-                            );
-                            if common.sched_apply
-                                == crate::execution::sched_apply::SchedApplyMode::Strict
-                            {
-                                eyre::bail!("{msg}");
-                            }
-                            tracing::warn!("{msg}; scheduling will not be applied");
+            match crate::execution::rt_helper_client::SchedHelper::spawn().await {
+                Ok((helper, join)) => (Some(helper), Some(join)),
+                Err(e) => {
+                    // Without the helper, only root can apply (direct
+                    // fallback). If privilege depended on the capped
+                    // helper, a spawn failure means scheduling CANNOT be
+                    // applied — Strict must abort at this boundary, not
+                    // degrade into per-node EPERMs mid-run.
+                    if crate::execution::sched_apply::has_sched_privilege() {
+                        tracing::debug!("RT helper unavailable ({e:#}); applying directly as root");
+                    } else {
+                        let msg = format!(
+                            "scheduling: RT helper failed to start ({e:#}); cannot apply without root"
+                        );
+                        if common.sched_apply
+                            == crate::execution::sched_apply::SchedApplyMode::Strict
+                        {
+                            eyre::bail!("{msg}");
                         }
-                        (None, None)
+                        tracing::warn!("{msg}; scheduling will not be applied");
                     }
+                    (None, None)
                 }
-            } else {
-                (None, None)
-            };
+            }
+        } else {
+            (None, None)
+        };
 
-        (Some(std::sync::Arc::new(plan)), sched_helper, sched_helper_join)
+        (
+            Some(std::sync::Arc::new(plan)),
+            sched_helper,
+            sched_helper_join,
+        )
     } else {
         (None, None, None)
     };
@@ -930,13 +939,8 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         // Phase 36.3: construct RuleEngine if a contract source resolved
         // and --enforce-rules is not Off. The engine observes every
         // event the listener dispatches.
-        let rule_engine = match (
-            _manifest_index.as_ref(),
-            common.enforce_rules,
-        ) {
-            (Some(idx), mode)
-                if !matches!(mode, crate::cli::options::EnforceMode::Off) =>
-            {
+        let rule_engine = match (_manifest_index.as_ref(), common.enforce_rules) {
+            (Some(idx), mode) if !matches!(mode, crate::cli::options::EnforceMode::Off) => {
                 Some(crate::runtime_enforcement::RuleEngine::new(
                     std::sync::Arc::new(idx.clone()),
                     mode,
@@ -1002,8 +1006,11 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
         // first hit. The flag is also flipped under Warn mode but only
         // Strict listens for it.
         let strict_handle = rule_engine.as_ref().and_then(|re| {
-            matches!(common.enforce_rules, crate::cli::options::EnforceMode::Strict)
-                .then(|| re.strict_violated_handle())
+            matches!(
+                common.enforce_rules,
+                crate::cli::options::EnforceMode::Strict
+            )
+            .then(|| re.strict_violated_handle())
         });
         if let Some(handle) = strict_handle {
             let shutdown_tx_strict = shutdown_tx.clone();
@@ -1012,9 +1019,7 @@ async fn play(input_file: &Path, common: &cli::options::CommonOptions) -> eyre::
                 loop {
                     tokio::time::sleep(poll_interval).await;
                     if handle.load(std::sync::atomic::Ordering::Acquire) {
-                        warn!(
-                            "[runtime] Strict enforcement violated — initiating shutdown"
-                        );
+                        warn!("[runtime] Strict enforcement violated — initiating shutdown");
                         let _ = shutdown_tx_strict.send(true);
                         break;
                     }

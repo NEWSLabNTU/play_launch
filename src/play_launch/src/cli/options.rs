@@ -160,10 +160,19 @@ pub struct CheckArgs {
     #[arg(long)]
     pub no_provider_contracts: bool,
 
-    /// Path to a system scheduling spec (TOML). When given, `check` also
-    /// resolves + validates tier assignments for the `posix` (Linux RT) target.
+    /// Path to a scheduling platform file — v2 `.yaml` schema (mapper +
+    /// resources + overrides) or legacy `.toml` (dispatched by extension).
+    /// When given, `check` also derives + validates a plan for `--target`.
     #[arg(long)]
     pub sched: Option<std::path::PathBuf>,
+
+    /// Which scheduling target the platform file must declare (`target:` in
+    /// the v2 schema; legacy `.toml` always implies `posix`). `posix` is
+    /// Linux RT (the only target `play_launch` itself applies); RTOS targets
+    /// (`zephyr`, `freertos`, ...) are for nano-ros's own consumption of the
+    /// same file format.
+    #[arg(long, default_value = "posix")]
+    pub target: String,
 
     /// Output format: terminal (default, with source excerpts) or json
     #[arg(long, default_value = "terminal")]
@@ -363,12 +372,20 @@ pub struct CommonOptions {
     #[arg(long, default_value_t = false)]
     pub block_unauthorized_endpoints: bool,
 
-    /// Phase 38: path to a system scheduling spec (TOML). When set, replay
-    /// resolves it for the `posix` target and (per `--sched-apply`) applies
-    /// SCHED_FIFO/RR + priority + CPU affinity to each spawned node/container
-    /// process. Same file `play_launch check --sched` validates.
+    /// Phase 38: path to a scheduling platform file — v2 `.yaml` schema
+    /// (mapper + resources + overrides) or legacy `.toml` (dispatched by
+    /// extension; Phase 41.2). When set, replay derives + validates a plan
+    /// for `--target` and (per `--sched-apply`) applies SCHED_FIFO/RR +
+    /// priority + CPU affinity to each spawned node/container process. Same
+    /// file `play_launch check --sched` validates.
     #[arg(long, value_name = "PATH")]
     pub sched: Option<PathBuf>,
+
+    /// Which scheduling target the platform file must declare (`target:` in
+    /// the v2 schema; legacy `.toml` always implies `posix`). Only `posix`
+    /// (Linux RT) is ever applied by `play_launch` itself.
+    #[arg(long, default_value = "posix")]
+    pub target: String,
 
     /// Phase 38: how to apply the scheduling spec. `off` = resolve + report
     /// only (no syscalls). `warn` = apply, log a warning and continue on
@@ -413,6 +430,7 @@ impl Default for CommonOptions {
             enforce_rules: EnforceMode::Warn,
             block_unauthorized_endpoints: false,
             sched: None,
+            target: "posix".to_string(),
             sched_apply: SchedApplyMode::Warn,
         }
     }
