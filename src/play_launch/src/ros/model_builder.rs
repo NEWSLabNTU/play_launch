@@ -394,6 +394,16 @@ pub fn build_system_model(
     // NOTE: manifest `actions:` are not merged into ManifestIndex yet;
     // structure.actions stays empty until the loader grows that pass.
 
+    for (fqn_e, side) in &index.externals {
+        use ros_launch_manifest_types::ExternalSide as S;
+        let mapped = match side {
+            S::Pub => model::ExternalSide::Pub,
+            S::Sub => model::ExternalSide::Sub,
+            _ => model::ExternalSide::Both,
+        };
+        contracts.externals.insert(fqn_e.clone(), mapped);
+    }
+
     // --- contracts: endpoints (from each scope's node declarations) -------
     for m in index.manifests.values() {
         for (name, decl) in &m.manifest.nodes {
