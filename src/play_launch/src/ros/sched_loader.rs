@@ -665,12 +665,18 @@ fn root_scope(dump: &LaunchDump) -> Option<&crate::ros::launch_dump::ScopeEntry>
 /// and platform-file resolution always agree on which root is in play for a
 /// given invocation.
 ///
+/// `provider` gates the provider-sidecar channel: `--no-provider-contracts`
+/// disables it for platform files exactly as it does for contracts (W3
+/// review Important #2) — pass `ContractSources::provider` so both file
+/// kinds honor the same flag.
+///
 /// Returns `None` when nothing resolves in any channel — the caller's
 /// existing "no `--sched`" behavior (scheduling disabled) applies unchanged.
 pub fn resolve_platform_file(
     dump: &LaunchDump,
     explicit: Option<&Path>,
     overlay_root: Option<&Path>,
+    provider: bool,
     target: &str,
 ) -> Option<ResolvedPlatformFile> {
     if let Some(p) = explicit {
@@ -697,7 +703,8 @@ pub fn resolve_platform_file(
         });
     }
 
-    if let Some(path) = resolve_platform_provider_path(scope, target)
+    if provider
+        && let Some(path) = resolve_platform_provider_path(scope, target)
         && path.exists()
     {
         info!("Scheduling platform file [provider]: {}", path.display());
@@ -709,7 +716,7 @@ pub fn resolve_platform_file(
 
     debug!(
         "platform file: no channel resolved a file for target `{target}` \
-         (overlay_root={overlay_root:?}) — scheduling disabled"
+         (overlay_root={overlay_root:?}, provider={provider}) — scheduling disabled"
     );
     None
 }
@@ -1207,8 +1214,9 @@ nodes = ["fast_node"]
         std::fs::create_dir_all(&overlay_root).unwrap();
         let explicit = tmp.path().join("explicit.system.posix.yaml");
 
-        let resolved = resolve_platform_file(&dump, Some(&explicit), Some(&overlay_root), "posix")
-            .expect("explicit path always resolves");
+        let resolved =
+            resolve_platform_file(&dump, Some(&explicit), Some(&overlay_root), true, "posix")
+                .expect("explicit path always resolves");
         assert_eq!(resolved.channel, PlatformFileChannel::Explicit);
         assert_eq!(resolved.path, explicit);
     }
@@ -1238,7 +1246,7 @@ nodes = ["fast_node"]
 
         let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", Some(&launch_file));
 
-        let resolved = resolve_platform_file(&dump, None, Some(&overlay_root), "posix")
+        let resolved = resolve_platform_file(&dump, None, Some(&overlay_root), true, "posix")
             .expect("overlay file present");
         assert_eq!(resolved.channel, PlatformFileChannel::Overlay);
         assert_eq!(
@@ -1265,10 +1273,46 @@ nodes = ["fast_node"]
         let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", Some(&launch_file));
 
         // No overlay root at all — provider sidecar is the only channel.
-        let resolved =
-            resolve_platform_file(&dump, None, None, "posix").expect("provider sidecar present");
+        let resolved = resolve_platform_file(&dump, None, None, true, "posix")
+            .expect("provider sidecar present");
         assert_eq!(resolved.channel, PlatformFileChannel::Provider);
         assert_eq!(resolved.path, launch_dir.join("bringup.system.posix.yaml"));
+    }
+
+    #[test]
+    fn resolve_platform_file_no_provider_contracts_disables_provider_channel() {
+        // W3 review Important #2: `--no-provider-contracts` (provider:
+        // false) must gate the platform-file provider channel exactly as it
+        // gates contracts — a sidecar that exists on disk is NOT resolved.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let launch_dir = root.join("install/mypkg/share/mypkg/launch");
+        std::fs::create_dir_all(&launch_dir).unwrap();
+        let launch_file = launch_dir.join("bringup.launch.xml");
+        std::fs::write(&launch_file, "<launch/>").unwrap();
+        std::fs::write(
+            launch_dir.join("bringup.system.posix.yaml"),
+            "target: posix\nmapper: manual\n",
+        )
+        .unwrap();
+
+        let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", Some(&launch_file));
+
+        // provider: false — the existing sidecar must be ignored.
+        assert!(resolve_platform_file(&dump, None, None, false, "posix").is_none());
+
+        // But the overlay channel is unaffected by the provider gate.
+        let overlay_root = root.join("overlay");
+        std::fs::create_dir_all(overlay_root.join("mypkg/launch")).unwrap();
+        std::fs::write(
+            overlay_root.join("mypkg/launch/bringup.system.posix.yaml"),
+            "target: posix\nmapper: manual\n",
+        )
+        .unwrap();
+        let resolved = resolve_platform_file(&dump, None, Some(&overlay_root), false, "posix")
+            .expect("overlay resolves regardless of the provider gate");
+        assert_eq!(resolved.channel, PlatformFileChannel::Overlay);
     }
 
     #[test]
@@ -1289,7 +1333,7 @@ nodes = ["fast_node"]
 
         let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", Some(&launch_file));
 
-        assert!(resolve_platform_file(&dump, None, None, "zephyr").is_none());
+        assert!(resolve_platform_file(&dump, None, None, true, "zephyr").is_none());
     }
 
     #[test]
@@ -1304,8 +1348,8 @@ nodes = ["fast_node"]
         let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", Some(&launch_file));
         let overlay_root = tmp.path().join("overlay");
 
-        assert!(resolve_platform_file(&dump, None, Some(&overlay_root), "posix").is_none());
-        assert!(resolve_platform_file(&dump, None, None, "posix").is_none());
+        assert!(resolve_platform_file(&dump, None, Some(&overlay_root), true, "posix").is_none());
+        assert!(resolve_platform_file(&dump, None, None, true, "posix").is_none());
     }
 
     #[test]
@@ -1314,6 +1358,6 @@ nodes = ["fast_node"]
         // or unresolved origin) — provider lookup can't determine a
         // directory; overlay still works if configured, but here it isn't.
         let dump = dump_with_root_scope(Some("mypkg"), "bringup.launch.xml", None);
-        assert!(resolve_platform_file(&dump, None, None, "posix").is_none());
+        assert!(resolve_platform_file(&dump, None, None, true, "posix").is_none());
     }
 }
