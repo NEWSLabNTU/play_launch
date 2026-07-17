@@ -13,15 +13,21 @@
 //! `sched_apply`.
 #![allow(dead_code)]
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{BTreeSet, HashMap},
+    path::Path,
+};
 
 use eyre::Result;
 use ros_launch_manifest_sched::DEFAULT_TIER;
 
 use crate::{
+    cli::options::ContainerMode,
     execution::sched_apply::{AppliedTier, SchedApplyMode, SchedPolicy},
     ros::{
-        launch_dump::LaunchDump, manifest_loader::ManifestIndex, sched_loader::derive_sched_plan,
+        launch_dump::LaunchDump,
+        manifest_loader::ManifestIndex,
+        sched_loader::{derive_sched_plan, fqn_for},
     },
 };
 
@@ -33,6 +39,14 @@ pub struct SchedPlan {
     pub mode: SchedApplyMode,
     /// User-facing warnings emitted at build (also logged). Kept for testability.
     pub warnings: Vec<String>,
+    /// Every node FQN that participates in a resolved `chains:` declaration
+    /// (Phase 44.4) — threaded through from
+    /// [`crate::ros::sched_loader::DerivedSchedPlan::chain_member_nodes`],
+    /// consumed by [`chain_container_colocation_warnings`]. Empty for
+    /// [`SchedPlan::from_model`] (the Phase 43.3 `SystemModel` execution
+    /// layer carries bindings, not chain structure — a known gap, not this
+    /// wave's scope; see that method's doc comment).
+    pub chain_member_nodes: BTreeSet<String>,
 }
 
 impl SchedPlan {
@@ -57,6 +71,7 @@ impl SchedPlan {
         let derived = derive_sched_plan(dump, index, sched_path, target, mode)?;
         let table = derived.plan;
         let mut warnings = derived.warnings;
+        let chain_member_nodes = derived.chain_member_nodes;
 
         // Number of online CPUs, computed once. Used to bound-check `core`
         // below. Falls back to 1 if unavailable, which conservatively
@@ -129,6 +144,7 @@ impl SchedPlan {
             by_fqn,
             mode,
             warnings,
+            chain_member_nodes,
         })
     }
 
@@ -204,8 +220,100 @@ impl SchedPlan {
             by_fqn,
             mode,
             warnings,
+            // Phase 43.3's `SystemModel` execution layer is bindings-only
+            // (fqn -> tier name); it doesn't carry chain structure (that's
+            // resolved once at `play_launch resolve` time and not re-emitted
+            // into the model). The container co-location warning is simply
+            // unavailable on the `--model` path until a future wave threads
+            // chain membership through the model too — documented gap, not
+            // a silent one (44.4 W4 report).
+            chain_member_nodes: BTreeSet::new(),
         })
     }
+}
+
+/// Chain members co-located in a non-isolated container share one OS
+/// process and cannot receive distinct scheduling priorities (chain-aware-
+/// mapper design step 8, Phase 44.4 §4) — a best-effort warning naming the
+/// container and its chain-member composable nodes.
+///
+/// **Placement decision**: computed here, at launch/replay time
+/// (`commands::replay`, after `container_contexts`/`SchedPlan` are both
+/// built), rather than at `check` time
+/// (`ros::sched_loader::derive_sched_plan`/`check_sched`). `--container-mode`
+/// is a *runtime replay flag* with no equivalent at `check` time (`check`
+/// only parses+validates a launch file and its contracts — it never decides
+/// how containers will actually be spawned), so the mode this warning keys
+/// off simply isn't knowable at `check` time. `derive_sched_plan` only
+/// exposes the data half of this warning (`chain_member_nodes`, mapper-
+/// independent) — the runtime half (container topology + mode) lives here.
+///
+/// Fires only under `ContainerMode::Observable`/`Stock` — under `Isolated`
+/// every composable node is fork+exec'd into its own process (Phase 19.10),
+/// so no two nodes ever share a process and co-location is structurally
+/// impossible. (The design doc's own wording, "stock (non-isolated)
+/// container", predates the `Observable`/`Isolated`/`Stock` three-way split
+/// this codebase later grew — `Observable` shares the design doc's failure
+/// mode exactly as much as `Stock` does: neither forks per node.)
+///
+/// Container membership resolution mirrors `builder.rs`'s composable-node
+/// target matching (documented in the top-level `CLAUDE.md`, "2026-03-11"
+/// changelog entry): exact FQN match first, then a suffix match
+/// (`container_fqn.ends_with("/{target_name}")`) for relative targets.
+pub fn chain_container_colocation_warnings(
+    dump: &LaunchDump,
+    container_mode: ContainerMode,
+    chain_member_nodes: &BTreeSet<String>,
+) -> Vec<String> {
+    if container_mode == ContainerMode::Isolated || chain_member_nodes.is_empty() {
+        return Vec::new();
+    }
+
+    let containers: Vec<String> = dump
+        .container
+        .iter()
+        .filter(|c| !c.name.is_empty())
+        .map(|c| fqn_for(dump, Some(c.namespace.as_str()), &c.name, c.scope))
+        .collect();
+
+    let mut by_container: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for lc in &dump.load_node {
+        if lc.node_name.is_empty() {
+            continue;
+        }
+        let member_fqn = fqn_for(dump, Some(lc.namespace.as_str()), &lc.node_name, lc.scope);
+        if !chain_member_nodes.contains(&member_fqn) {
+            continue;
+        }
+        let target = lc.target_container_name.trim();
+        let suffix = format!("/{}", target.trim_start_matches('/'));
+        let container_fqn = containers
+            .iter()
+            .find(|fqn| fqn.as_str() == target)
+            .or_else(|| containers.iter().find(|fqn| fqn.ends_with(&suffix)))
+            .cloned();
+        if let Some(container_fqn) = container_fqn {
+            by_container
+                .entry(container_fqn)
+                .or_default()
+                .push(member_fqn);
+        }
+    }
+
+    by_container
+        .into_iter()
+        .filter(|(_, members)| members.len() >= 2)
+        .map(|(container_fqn, mut members)| {
+            members.sort();
+            format!(
+                "scheduling: chain-member composable nodes {members:?} are co-located in \
+                 non-isolated container '{container_fqn}' (--container-mode {container_mode:?}) \
+                 — they share one process and cannot receive distinct scheduling priorities; \
+                 use --container-mode isolated to schedule them independently"
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

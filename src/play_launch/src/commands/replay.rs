@@ -609,9 +609,24 @@ async fn play(
     } else {
         None
     };
-    let (sched_plan, sched_helper, sched_helper_join) = if let Some(plan) =
+    let (sched_plan, sched_helper, sched_helper_join) = if let Some(mut plan) =
         model_plan.or(legacy_plan)
     {
+        // Phase 44.4 §4: chain-member composable nodes co-located in a
+        // non-isolated container can't receive distinct priorities —
+        // best-effort warning, computed here (not at `check` time) since
+        // `--container-mode` is a runtime replay flag. See
+        // `chain_container_colocation_warnings`'s doc comment for the
+        // placement decision.
+        for msg in crate::execution::sched_plan::chain_container_colocation_warnings(
+            &launch_dump,
+            common.container_mode,
+            &plan.chain_member_nodes,
+        ) {
+            tracing::warn!("{msg}");
+            plan.warnings.push(msg);
+        }
+
         let (sched_helper, sched_helper_join) = if common.sched_apply
             != crate::execution::sched_apply::SchedApplyMode::Off
         {
