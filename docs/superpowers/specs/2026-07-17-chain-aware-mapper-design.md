@@ -44,6 +44,32 @@ alignment) — changes node code assumptions. Harmonic-period refinement of the
 conservative one-period-per-boundary bound: future work; the conservative bound
 is used for checking.
 
+### Boundary consumption rule (implementation note, 2026-07-17)
+
+A `Timer`-triggered path's own trigger fact carries no input endpoint (a
+timer callback has no input) — but that does not mean a Boundary consumes
+nothing from a preceding `via`. Rule: **a Boundary consumes an incoming
+`via` through its NODE's subscription on that topic** — the `state:` sub
+(or any ordinary sub) IS the sampling mechanism that makes this a
+clock-segmented model in the first place. Concretely, `chain-link`'s
+"via consumed by the following segment" check resolves a Timer segment's
+`input_topics` as every topic FQN the owning node subscribes to anywhere
+(all its `sub:` endpoints across the whole node, not just the endpoints
+named by this path's own trigger) — the honest reading of "a boundary
+samples whatever it subscribes."
+
+Without this rule, a Boundary's `input_topics` always resolved empty,
+which made `Segment → via → Boundary` structurally undeclarable —
+`chain-link` would always reject the `via` as "not consumed by the
+following segment" — even though this worked example's own `S1 B1 S2 B2
+S3` shape requires exactly that transition twice. Implemented in
+`chain_checks::resolve_segment` (`src/play_launch/src/ros/chain_checks.rs`);
+mirrored nowhere else since the sched-extraction decomposition
+(`sched_derive::build_resolved_chain`) only branches on trigger kind
+(`Timer` vs. not) to alternate `Segment`/`Boundary` elements — it never
+reads `input_topics` — so it already supported the S·B·S shape once
+`chain-link` stopped rejecting it.
+
 ## Companion checker rules (land regardless of mapper)
 
 - **`chain-sampling-feasibility`**: `sampling_cost(chain) ≥ budget` → the chain

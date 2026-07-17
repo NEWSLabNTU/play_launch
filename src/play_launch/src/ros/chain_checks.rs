@@ -298,19 +298,40 @@ pub(crate) fn resolve_segment(
         .find(|np| scope_ids.contains(&np.scope_id) && np.path_name == path_name)
     {
         let trigger = np.path.effective_trigger();
-        // Input endpoint names come from the *effective* trigger (explicit
-        // `trigger: {input: [...]}` or the legacy `input:` derivation),
-        // matching the same source of truth `EffectiveTrigger` establishes
-        // everywhere else (W1) — not the raw `path.input` field, which is
-        // empty whenever the author used the explicit form.
-        let input_eps: &[String] = match &trigger {
-            EffectiveTrigger::Input(eps) => eps,
-            _ => &[],
+        // Input topics: for an `Input`-triggered (event segment) path, the
+        // *effective* trigger's endpoint names (explicit `trigger: {input:
+        // [...]}` or the legacy `input:` derivation — matching the same
+        // source of truth `EffectiveTrigger` establishes everywhere else,
+        // W1) — not the raw `path.input` field, which is empty whenever
+        // the author used the explicit form.
+        //
+        // For a `Timer`-triggered (Boundary) path, the trigger's own
+        // endpoint list is necessarily empty (a timer callback has no
+        // input endpoint) — but that does NOT mean a Boundary consumes
+        // nothing. Boundary consumption rule (implementation note,
+        // 2026-07-17, chain-aware-mapper spec / W6 report §3): a Boundary
+        // consumes an incoming `via` through its NODE's subscription on
+        // that topic — the `state:` sub (or any sub) is the sampling
+        // mechanism that makes this a clock-segmented model in the first
+        // place. So a Timer path's `input_topics` is every topic FQN the
+        // owning node subscribes to anywhere (all its `sub:` endpoints
+        // across the whole node, not just this one path) — the honest
+        // reading of "a boundary samples whatever it subscribes."
+        let input_topics: Vec<String> = match &trigger {
+            EffectiveTrigger::Input(eps) => eps
+                .iter()
+                .filter_map(|ep| sub_map.get(&format!("{}/{ep}", np.node_fqn)).cloned())
+                .collect(),
+            EffectiveTrigger::Timer { rate_hz } if *rate_hz > 0.0 => {
+                let node_prefix = format!("{}/", np.node_fqn);
+                sub_map
+                    .iter()
+                    .filter(|(ep_ref, _)| ep_ref.starts_with(&node_prefix))
+                    .map(|(_, fqn)| fqn.clone())
+                    .collect()
+            }
+            _ => Vec::new(),
         };
-        let input_topics = input_eps
-            .iter()
-            .filter_map(|ep| sub_map.get(&format!("{}/{ep}", np.node_fqn)).cloned())
-            .collect();
         let output_topics = np
             .path
             .output
@@ -569,5 +590,237 @@ mod tests {
         assert!(super::resolve_segment(&index, &pub_map, &sub_map, "/a", "nonexistent").is_none());
         // Known scope + path resolves.
         assert!(super::resolve_segment(&index, &pub_map, &sub_map, "/a", "make").is_some());
+    }
+
+    // ── W6 Fix A: Boundary consumption rule (§3, mid-chain boundaries) ──
+    //
+    // A Timer-triggered path's own trigger carries no input endpoint, but
+    // that must not mean the Boundary "consumes nothing" for chain-link
+    // purposes — the rule (chain-aware-mapper spec, implementation note
+    // 2026-07-17) is that a Boundary consumes an incoming `via` through its
+    // NODE's subscription on that topic (any `sub:`, `state:` or not).
+    // These hand-built-index tests exercise `Segment -> via -> Boundary`
+    // directly (the shape §3 found undeclarable before the fix), without
+    // depending on the fixture-file overlay machinery the rest of this
+    // module's tests use.
+
+    use super::super::manifest_loader::{
+        ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedTopic,
+    };
+    use super::check_chains;
+    use ros_launch_manifest_types::{
+        ChainDecl, ChainSegment, EndpointProps, Manifest, NodeDecl, PathDecl, Trigger,
+    };
+    use std::collections::BTreeMap;
+
+    fn empty_resolved_manifest(scope_id: usize, manifest: Manifest) -> ResolvedManifest {
+        ResolvedManifest {
+            scope_id,
+            pkg: None,
+            file: "root.launch.xml".to_string(),
+            ns: "/".to_string(),
+            channel: ContractChannel::Provider,
+            contract_path: PathBuf::new(),
+            manifest,
+            source: String::new(),
+            diagnostics: vec![],
+        }
+    }
+
+    /// Builds a hand-rolled index with one `Segment -> via -> Boundary`
+    /// chain: `producer.emit` (Once, output `/topic`) -> via `/topic` ->
+    /// `consumer.sample` (Timer, boundary). `consumer_subscribes` controls
+    /// whether the consumer node's `sub:` declares `/topic` — the pivot
+    /// this test exercises.
+    fn boundary_via_index(consumer_subscribes: bool) -> ManifestIndex {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            "producer".to_string(),
+            NodeDecl {
+                publishers: {
+                    let mut m = BTreeMap::new();
+                    m.insert("out".to_string(), EndpointProps::default());
+                    m
+                },
+                paths: {
+                    let mut m = BTreeMap::new();
+                    m.insert(
+                        "emit".to_string(),
+                        PathDecl {
+                            trigger: Some(Trigger::Once),
+                            output: vec!["out".to_string()],
+                            ..Default::default()
+                        },
+                    );
+                    m
+                },
+                ..Default::default()
+            },
+        );
+        nodes.insert(
+            "consumer".to_string(),
+            NodeDecl {
+                subscribers: if consumer_subscribes {
+                    let mut m = BTreeMap::new();
+                    m.insert("state_in".to_string(), EndpointProps::default());
+                    m
+                } else {
+                    BTreeMap::new()
+                },
+                paths: {
+                    let mut m = BTreeMap::new();
+                    m.insert(
+                        "sample".to_string(),
+                        PathDecl {
+                            trigger: Some(Trigger::Timer { rate_hz: 10.0 }),
+                            ..Default::default()
+                        },
+                    );
+                    m
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut chains = BTreeMap::new();
+        chains.insert(
+            "sbs_chain".to_string(),
+            ChainDecl {
+                semantics: ros_launch_manifest_types::ChainSemantics::Reaction,
+                max_latency_ms: 200.0,
+                segments: vec![
+                    ChainSegment::Path {
+                        scope: "/".to_string(),
+                        path: "emit".to_string(),
+                    },
+                    ChainSegment::Via {
+                        via: "/topic".to_string(),
+                    },
+                    ChainSegment::Path {
+                        scope: "/".to_string(),
+                        path: "sample".to_string(),
+                    },
+                ],
+            },
+        );
+
+        let manifest = Manifest {
+            version: 1,
+            nodes,
+            chains,
+            ..Default::default()
+        };
+
+        let mut index = ManifestIndex::default();
+        index.node_paths.push(ResolvedNodePath {
+            node_fqn: "/producer".to_string(),
+            path_name: "emit".to_string(),
+            path: PathDecl {
+                trigger: Some(Trigger::Once),
+                output: vec!["out".to_string()],
+                ..Default::default()
+            },
+            scope_id: 0,
+        });
+        index.node_paths.push(ResolvedNodePath {
+            node_fqn: "/consumer".to_string(),
+            path_name: "sample".to_string(),
+            path: PathDecl {
+                trigger: Some(Trigger::Timer { rate_hz: 10.0 }),
+                ..Default::default()
+            },
+            scope_id: 0,
+        });
+
+        let mut subscribers = Vec::new();
+        if consumer_subscribes {
+            subscribers.push("/consumer/state_in".to_string());
+        }
+        index.topics.insert(
+            "/topic".to_string(),
+            ResolvedTopic {
+                fqn: "/topic".to_string(),
+                msg_type: "std_msgs/msg/String".to_string(),
+                qos: None,
+                publishers: vec!["/producer/out".to_string()],
+                subscribers,
+                rate_hz: None,
+                max_transport_ms: None,
+                drop: None,
+                scope_ids: vec![0],
+            },
+        );
+        index
+            .manifests
+            .insert(0, empty_resolved_manifest(0, manifest));
+        index
+    }
+
+    #[test]
+    fn boundary_consumes_via_through_node_subscription_chain_link_passes() {
+        let mut index = boundary_via_index(true);
+        check_chains(&mut index);
+        let errs: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.path == "chains.sbs_chain" && d.rule_id == "chain-link")
+            .collect();
+        assert!(
+            errs.is_empty(),
+            "Segment -> via -> Boundary should pass chain-link when the \
+             boundary node subscribes the via topic, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn boundary_not_subscribing_via_fails_chain_link() {
+        let mut index = boundary_via_index(false);
+        check_chains(&mut index);
+        let errs: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| {
+                d.path == "chains.sbs_chain"
+                    && d.rule_id == "chain-link"
+                    && d.severity == Severity::Error
+            })
+            .collect();
+        assert_eq!(
+            errs.len(),
+            1,
+            "expected exactly one chain-link error when the boundary node \
+             doesn't subscribe the via topic, got: {:?}",
+            index.merge_diagnostics
+        );
+        assert!(
+            errs[0]
+                .message
+                .contains("not consumed by the following segment")
+        );
+    }
+
+    #[test]
+    fn sched_derive_decomposes_sbs_chain_into_segment_boundary() {
+        // Mirrors the mapper spec's worked example / W3's hypothesis that
+        // S·B·S decomposition should work with an interior/leading
+        // boundary — verifies the play_launch extraction path
+        // (`sched_derive::resolve_chains`) agrees with `chain-link` that
+        // this chain is well-formed and decomposes to [Segment, Boundary].
+        let mut index = boundary_via_index(true);
+        check_chains(&mut index);
+        let chains = crate::ros::sched_derive::resolve_chains(&index);
+        let chain = chains
+            .iter()
+            .find(|c| c.name == "sbs_chain")
+            .expect("sbs_chain should resolve — no chain-link errors");
+        assert_eq!(chain.elements.len(), 2);
+        assert!(matches!(
+            chain.elements[0],
+            ros_launch_manifest_sched::ChainElement::Segment { .. }
+        ));
+        assert!(matches!(
+            chain.elements[1],
+            ros_launch_manifest_sched::ChainElement::Boundary { .. }
+        ));
     }
 }
