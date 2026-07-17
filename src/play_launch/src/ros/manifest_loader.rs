@@ -557,6 +557,10 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // (Issue #45). Per-endpoint QoS overrides are overlaid on the
     // topic-level default before comparison.
     check_cross_scope_qos_match(index, &graph);
+
+    // Vocabulary v2 chains: chain-link (existence + via linkage across
+    // scopes), chain-budget, chain-sampling-feasibility (Phase 44.2).
+    super::chain_checks::check_chains(index);
 }
 
 /// Build the global dataflow graph and verify each scope path's
