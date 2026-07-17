@@ -48,8 +48,17 @@ designs the chain-aware mapper on evidence.
   integrator-owned `chains:` with checked `via:` links; mode conditioning +
   consumes_hz deferred. Spec:
   [2026-07-17-contract-vocabulary-v2-design.md](../superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md).
-- **42.6** Chain-aware mapper design spec (design only; implementation is a
-  later phase). Decides the fate of the interim `criticality_rm` idea (41.7).
+- **42.6** ✅ Chain-aware mapper design (2026-07-17): clock-segmented chain
+  model — declared chains decompose at timer boundaries (declaration-driven,
+  per-path triggers); PiCAS drain-toward-sink within event segments, RM
+  boundaries, criticality-RM/DM fallback (subsumes 41.7 `criticality_rm` —
+  step 5 IS it; 41.7 closed). Companion checker rules:
+  `chain-sampling-feasibility` (Σ boundary periods vs budget — structural
+  infeasibility no scheduler can fix) + extended `chain-budget`. Known limits
+  recorded (per-node max projection on POSIX, shared-node rank anomaly,
+  conservative period bound). Spec:
+  [2026-07-17-chain-aware-mapper-design.md](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
+  Implementation = future phase.
 
 ## Order
 
