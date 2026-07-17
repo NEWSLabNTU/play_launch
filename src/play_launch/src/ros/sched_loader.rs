@@ -576,8 +576,35 @@ pub fn derive_sched_plan(
         })?;
 
     let mut plan = flatten_to_one_tier_per_node(&derived);
+    // Snapshot chain members' derived priorities so an override that lowers
+    // one can be called out: "overrides win, always" stands, but a pin that
+    // drops a chain member below its derived rank silently defeats the
+    // chain's drain-toward-sink ordering — the integrator should hear that.
+    let derived_chain_prio: BTreeMap<String, i64> = plan
+        .tiers
+        .iter()
+        .flat_map(|t| t.members.iter().map(move |m| (m.clone(), t.priority)))
+        .filter(|(m, _)| chain_member_nodes.contains(m))
+        .collect();
     let mut overridden: BTreeMap<String, String> = BTreeMap::new();
     apply_overrides(&mut plan, &file.overrides, &mut warnings, &mut overridden);
+    for tier in &plan.tiers {
+        for member in &tier.members {
+            if let Some(derived_prio) = derived_chain_prio.get(member)
+                && overridden.contains_key(member)
+                && tier.priority < *derived_prio
+            {
+                let msg = format!(
+                    "override pins chain member `{member}` to priority {} (derived {}) — \
+                     below its chain-derived rank; drain-toward-sink ordering within its \
+                     chain is no longer guaranteed",
+                    tier.priority, derived_prio
+                );
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+            }
+        }
+    }
 
     // Chain-aware mapper diagnostics (Phase 44.4 §3): `BandTooNarrow` is a
     // real resource-fit problem (the platform's `rt_priority_band` can't
