@@ -1,0 +1,48 @@
+# Root-scope contract for the contract_merge fixture (SystemModel merge
+# + full-dump test). Consumer side of /perception/objects lives HERE;
+# the producer side lives in perception.contract.yaml — the resolver
+# must merge both into one topic entry.
+version: 1
+
+nodes:
+  planner:
+    criticality: high
+    sub:
+      objects:
+        min_rate_hz: 5
+        max_age_ms: 200
+        required: true
+      map:
+        state: true
+    srv:
+      compute:
+        max_response_ms: 100
+
+topics:
+  /perception/objects:
+    type: std_msgs/msg/String
+    sub: [planner/objects]
+    qos:
+      reliability: reliable
+      depth: 5
+
+external_topics:
+  /sensing/points:
+    external: pub
+    type: std_msgs/msg/String
+
+services:
+  /planning/compute:
+    type: std_srvs/srv/Trigger
+    server: [planner/compute]
+
+paths:
+  e2e:
+    input: /sensing/points
+    output: [/perception/objects]
+    max_latency_ms: 80
+    correlation: timestamp
+    tolerance_ms: 10
+    drop:
+      max_count: 2 / 25
+      max_consecutive: 5

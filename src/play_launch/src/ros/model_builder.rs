@@ -456,7 +456,7 @@ pub fn build_system_model(
     }
     for p in &index.scope_paths {
         contracts.scope_paths.insert(
-            format!("{}/{}", scope_key(Some(p.scope_id)), p.path_name),
+            fqn(&scope_key(Some(p.scope_id)), &p.path_name),
             path_contract(&p.path, p.input_topics.clone(), p.output_topics.clone()),
         );
     }

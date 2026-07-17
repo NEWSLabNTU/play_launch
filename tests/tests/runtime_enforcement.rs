@@ -5,11 +5,12 @@
 //! RuleEngine wrote `runtime_violations.jsonl` and that the expected rule
 //! fired.
 
-use play_launch_tests::fixtures;
-use play_launch_tests::process::ManagedProcess;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use play_launch_tests::{fixtures, process::ManagedProcess};
+use std::{
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    time::Duration,
+};
 
 /// Prefer the cargo-built binary so Phase 36 CLI flags are present.
 /// The install/ binary may be older than the workspace if `just build`
@@ -23,22 +24,15 @@ fn play_launch_bin_with_cargo_fallback() -> PathBuf {
     if debug.is_file() {
         return debug;
     }
-    fixtures::repo_root()
-        .join("install/play_launch/lib/play_launch/play_launch")
+    fixtures::repo_root().join("install/play_launch/lib/play_launch/play_launch")
 }
 
-fn play_launch_cmd_with_cargo(
-    env: &std::collections::HashMap<String, String>,
-) -> Command {
+fn play_launch_cmd_with_cargo(env: &std::collections::HashMap<String, String>) -> Command {
     let mut cmd = Command::new(play_launch_bin_with_cargo_fallback());
     cmd.env_clear();
     cmd.envs(env);
-    cmd.env(
-        "ROS_DOMAIN_ID",
-        (std::process::id() % 200 + 30).to_string(),
-    );
-    let fastdds_profile =
-        fixtures::repo_root().join("tests/fixtures/fastdds_no_shm.xml");
+    cmd.env("ROS_DOMAIN_ID", (std::process::id() % 200 + 30).to_string());
+    let fastdds_profile = fixtures::repo_root().join("tests/fixtures/fastdds_no_shm.xml");
     if fastdds_profile.is_file() {
         cmd.env("FASTRTPS_DEFAULT_PROFILES_FILE", &fastdds_profile);
     }
@@ -144,8 +138,7 @@ fn run_with_manifest(
     }
     // Use the simple_test fixture launch — pure_nodes.launch.xml runs
     // two demo_nodes_cpp nodes under namespace /pure_test.
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/pure_nodes.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
     cmd.arg(launch.to_str().unwrap());
     cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", &so_path);
     cmd.env("RUST_LOG", "play_launch=warn");
@@ -201,9 +194,7 @@ fn consistency_runtime_fires_when_type_mismatch_real_launch() {
     );
 
     let res = run_with_manifest(&overlay_root, "warn", &[], Duration::from_secs(3));
-    let viol_path = res
-        .path()
-        .join("play_log/latest/runtime_violations.jsonl");
+    let viol_path = res.path().join("play_log/latest/runtime_violations.jsonl");
     assert!(
         wait_for_file(&viol_path, Duration::from_secs(3)),
         "runtime_violations.jsonl not written"
@@ -233,9 +224,7 @@ fn graph_deviation_runtime_fires_for_undeclared_topic() {
     // Empty topics block → /chatter not in topic_hash_to_fqn map.
     let overlay_root = make_overlay_contracts(work_dir.path(), "");
     let res = run_with_manifest(&overlay_root, "warn", &[], Duration::from_secs(3));
-    let viol_path = res
-        .path()
-        .join("play_log/latest/runtime_violations.jsonl");
+    let viol_path = res.path().join("play_log/latest/runtime_violations.jsonl");
     assert!(
         wait_for_file(&viol_path, Duration::from_secs(3)),
         "runtime_violations.jsonl not written"
@@ -251,8 +240,13 @@ fn graph_deviation_runtime_fires_for_undeclared_topic() {
     // graph-deviation messages now carry the real FQN string instead
     // of falling back to `(unknown hash ...)`.
     assert!(
-        violations.iter().any(|v| v["rule_id"].as_str() == Some("graph-deviation-runtime")
-            && v["fqn"].as_str().map(|s| s.starts_with("/")).unwrap_or(false)),
+        violations
+            .iter()
+            .any(|v| v["rule_id"].as_str() == Some("graph-deviation-runtime")
+                && v["fqn"]
+                    .as_str()
+                    .map(|s| s.starts_with("/"))
+                    .unwrap_or(false)),
         "expected at least one graph-deviation FQN to be a real topic path; got: {violations:?}"
     );
 }
@@ -271,9 +265,7 @@ fn enforce_off_skips_rule_engine() {
     let work_dir = tempfile::TempDir::new().expect("tempdir");
     let overlay_root = make_overlay_contracts(work_dir.path(), "");
     let res = run_with_manifest(&overlay_root, "off", &[], Duration::from_secs(2));
-    let viol_path = res
-        .path()
-        .join("play_log/latest/runtime_violations.jsonl");
+    let viol_path = res.path().join("play_log/latest/runtime_violations.jsonl");
     assert!(
         !viol_path.exists(),
         "runtime_violations.jsonl should NOT be written with --enforce-rules=off"
@@ -331,8 +323,8 @@ fn qos_match_runtime_fires_on_dds_incompatibility() {
         "--enforce-rules",
         "warn",
     ]);
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/qos_mismatch.launch.xml");
+    let launch =
+        fixtures::test_workspace_path("simple_test").join("launch/qos_mismatch.launch.xml");
     cmd.arg(launch.to_str().unwrap());
     cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", &so_path);
     cmd.env("RUST_LOG", "play_launch=warn");
@@ -437,8 +429,7 @@ fn block_unauthorized_endpoints_disabled_when_no_contracts_resolve() {
         // no --contracts; fixture ships no provider sidecar either
         "--block-unauthorized-endpoints",
     ]);
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/pure_nodes.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
     cmd.arg(launch.to_str().unwrap());
     cmd.env("RUST_LOG", "play_launch=warn");
     let stdout_path = work_dir.path().join("stdout.log");
@@ -456,7 +447,11 @@ fn block_unauthorized_endpoints_disabled_when_no_contracts_resolve() {
     fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
     std::thread::sleep(Duration::from_secs(2));
     let started = std::fs::read_dir(play_log.join("node"))
-        .map(|d| d.flatten().filter(|e| e.path().join("pid").exists()).count())
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.path().join("pid").exists())
+                .count()
+        })
         .unwrap_or(0);
     drop(proc);
     std::thread::sleep(Duration::from_millis(500));
@@ -479,5 +474,117 @@ fn block_unauthorized_endpoints_disabled_when_no_contracts_resolve() {
     assert!(
         combined.contains("blocking") && combined.contains("disabled"),
         "expected the blocking-disabled warning in output, got: {combined}"
+    );
+}
+
+/// The runtime respects a declared rate contract: `demo_nodes_cpp` talker
+/// publishes at ~1 Hz; a contract demanding `min_rate_hz: 1000` must make
+/// `rate-hierarchy-runtime` fire. (Phase 43: `launch` routes through the
+/// SystemModel, so this exercises the model-path rule engine.)
+#[test]
+fn rate_hierarchy_runtime_fires_when_publisher_too_slow() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+    let work_dir = tempfile::TempDir::new().expect("tempdir");
+    let overlay_root = work_dir.path().join("contracts");
+    let launch_dir = overlay_root.join("_/launch");
+    std::fs::create_dir_all(&launch_dir).expect("create overlay launch dir");
+    std::fs::write(
+        launch_dir.join("pure_nodes.contract.yaml"),
+        r#"version: 1
+nodes:
+  talker:
+    pub:
+      chatter:
+        min_rate_hz: 1000
+  listener:
+    sub:
+      chatter: {}
+topics:
+  /pure_test/chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
+    sub: [listener/chatter]
+"#,
+    )
+    .expect("write contract");
+
+    let run_dir = run_with_manifest(&overlay_root, "warn", &[], Duration::from_secs(8));
+    let violations_path = run_dir
+        .path()
+        .join("play_log/latest/runtime_violations.jsonl");
+    assert!(
+        wait_for_file(&violations_path, Duration::from_secs(10)),
+        "runtime_violations.jsonl not written"
+    );
+    let violations = read_violations(&violations_path);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v["rule_id"] == "rate-hierarchy-runtime"),
+        "expected rate-hierarchy-runtime (1 Hz talker vs min_rate_hz 1000), got: {violations:?}"
+    );
+}
+
+/// The converse: a contract the running system SATISFIES must produce no
+/// rate/age/consistency violations — the engine respects compliant
+/// contracts silently.
+#[test]
+fn compliant_contract_produces_no_rate_or_type_violations() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+    let work_dir = tempfile::TempDir::new().expect("tempdir");
+    let overlay_root = work_dir.path().join("contracts");
+    let launch_dir = overlay_root.join("_/launch");
+    std::fs::create_dir_all(&launch_dir).expect("create overlay launch dir");
+    std::fs::write(
+        launch_dir.join("pure_nodes.contract.yaml"),
+        r#"version: 1
+nodes:
+  talker:
+    pub:
+      chatter:
+        min_rate_hz: 0.1
+  listener:
+    sub:
+      chatter: {}
+topics:
+  /pure_test/chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
+    sub: [listener/chatter]
+"#,
+    )
+    .expect("write contract");
+
+    let run_dir = run_with_manifest(&overlay_root, "warn", &[], Duration::from_secs(8));
+    let violations_path = run_dir
+        .path()
+        .join("play_log/latest/runtime_violations.jsonl");
+    // File may legitimately not exist (no violations at all).
+    let offending: Vec<serde_json::Value> = if violations_path.is_file() {
+        read_violations(&violations_path)
+            .into_iter()
+            .filter(|v| {
+                matches!(
+                    v["rule_id"].as_str(),
+                    Some("rate-hierarchy-runtime")
+                        | Some("consistency-runtime")
+                        | Some("max-age-runtime")
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    assert!(
+        offending.is_empty(),
+        "compliant contract must not trip rate/type/age rules, got: {offending:?}"
     );
 }

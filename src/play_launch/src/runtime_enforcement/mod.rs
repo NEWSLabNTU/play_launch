@@ -86,6 +86,10 @@ struct TopicRuntimeState {
     /// observed. Used by `max-latency-runtime` to time the stamp from
     /// pipeline input to output.
     last_pub_for_stamp: HashMap<u64, u64>,
+    /// When the rate-hierarchy check last ran for this topic (monotonic
+    /// ns). Slow topics never reach the publish-count trigger, so a
+    /// time-based trigger runs the check at least every ~5 s.
+    last_rate_check_monotonic_ns: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -289,8 +293,16 @@ impl RuleEngine {
                         .insert(stamp_key, event.monotonic_ns);
                 }
                 // Rate-hierarchy check fires periodically — every 1024
-                // publishes is enough to dampen evaluation overhead.
-                if entry.pub_count.is_multiple_of(1024) {
+                // publishes on busy topics, and at least every ~5 s on slow
+                // ones (a 1 Hz topic would otherwise NEVER reach the count
+                // trigger and escape its rate contract entirely).
+                let time_due = entry.last_rate_check_monotonic_ns == 0
+                    || event
+                        .monotonic_ns
+                        .saturating_sub(entry.last_rate_check_monotonic_ns)
+                        >= 5_000_000_000;
+                if entry.pub_count.is_multiple_of(1024) || time_due {
+                    entry.last_rate_check_monotonic_ns = event.monotonic_ns;
                     drop_borrow(&mut self.state);
                     self.check_rate_hierarchy(event.topic_hash, event.monotonic_ns);
                 }

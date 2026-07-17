@@ -20,7 +20,18 @@ use crate::{
 };
 
 pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
-    let cli_args = super::parse_launch_arguments(&args.launch_arguments);
+    // Positional quirk: with a direct launch-file PATH, the second
+    // positional (`launch_file`) can swallow the first `KEY:=VALUE` arg.
+    // Reclassify it so the binding isn't silently lost.
+    let mut launch_arguments = args.launch_arguments.clone();
+    let mut launch_file = args.launch_file.as_deref();
+    if let Some(lf) = launch_file
+        && lf.contains(":=")
+    {
+        launch_arguments.insert(0, lf.to_string());
+        launch_file = None;
+    }
+    let cli_args = super::parse_launch_arguments(&launch_arguments);
     let arg_binding: BTreeMap<String, String> = cli_args
         .iter()
         .map(|(k, v)| (k.clone(), v.clone()))
@@ -44,8 +55,7 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
             let pkg_or_path = args.package_or_path.as_deref().ok_or_else(|| {
                 eyre::eyre!("either a launch file (package/path) or --record is required")
             })?;
-            let launch_path =
-                super::launch::resolve_launch_file(pkg_or_path, args.launch_file.as_deref())?;
+            let launch_path = super::launch::resolve_launch_file(pkg_or_path, launch_file)?;
             eprintln!("Resolving launch file: {}", launch_path.display());
             let record = play_launch_parser::parse_launch_file(&launch_path, cli_args.clone())
                 .map_err(|e| eyre::eyre!("Parser error: {e}"))?;

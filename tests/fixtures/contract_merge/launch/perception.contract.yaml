@@ -1,0 +1,25 @@
+# Child-scope contract: the producer side of objects (relative name,
+# resolved against the /perception scope namespace).
+version: 1
+
+nodes:
+  detector:
+    lifecycle: true
+    pub:
+      objects:
+        min_rate_hz: 10
+        jitter_ms: 5
+    paths:
+      main:
+        output: [objects]
+        max_latency_ms: 15
+
+topics:
+  objects:
+    type: std_msgs/msg/String
+    pub: [detector/objects]
+    rate_hz: 10
+    max_transport_ms: 5
+    drop:
+      max_count: 1 / 20
+      max_consecutive: 3

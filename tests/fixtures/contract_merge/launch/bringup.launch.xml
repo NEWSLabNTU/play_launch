@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="mode" default="fast"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="planner" namespace="/planning" output="screen"/>
+  <group>
+    <push-ros-namespace namespace="perception"/>
+    <include file="perception.launch.xml"/>
+  </group>
+</launch>
