@@ -120,6 +120,9 @@ fn pub_contract(p: &EndpointProps) -> Option<model::PubContract> {
         min_rate_hz: p.min_rate_hz,
         max_rate_hz: p.max_rate_hz,
         jitter_ms: p.jitter_ms,
+        // R1-M5 — manifest-side per-endpoint QoS lands here when the
+        // loader surfaces it (P-item); None until then.
+        qos: None,
     })
 }
 
@@ -140,6 +143,7 @@ fn sub_contract(p: &EndpointProps) -> Option<model::SubContract> {
         max_age_ms: p.max_age_ms,
         state,
         required,
+        qos: None,
     })
 }
 
@@ -308,6 +312,8 @@ pub fn build_system_model(
                 plugin: None,
                 container: None,
                 lifecycle: decl.and_then(|d| d.lifecycle).unwrap_or(false),
+                lifecycle_autostart: None,
+                params: Default::default(),
                 criticality: decl.and_then(|d| d.criticality.clone()),
             },
         );
@@ -324,6 +330,8 @@ pub fn build_system_model(
                 plugin: None,
                 container: None,
                 lifecycle: false,
+                lifecycle_autostart: None,
+                params: Default::default(),
                 criticality: None,
             },
         );
@@ -341,6 +349,8 @@ pub fn build_system_model(
                 plugin: Some(l.plugin.clone()),
                 container: Some(l.target_container_name.clone()),
                 lifecycle: decl.and_then(|d| d.lifecycle).unwrap_or(false),
+                lifecycle_autostart: None,
+                params: Default::default(),
                 criticality: decl.and_then(|d| d.criticality.clone()),
             },
         );
