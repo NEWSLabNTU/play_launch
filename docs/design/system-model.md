@@ -116,6 +116,22 @@ system config → execution. Consumers slice: play_launch runtime takes the
 4. Record format / web UI: point both at the model as their system view
    (follow-up; record format already overlaps heavily with layer 1).
 
+## nano-ros R1 asks (canonical-path decision, 2026-07-17)
+
+nano-ros adopted the SystemModel as its CANONICAL config path (its own
+launch/system.toml bake retires at parity — nano-ros RFC-0052 §Canonical
+path, phase-296 §Retirement). The parity gate needs, on this side:
+
+1. `Deploy { domain: Option<u8>, locator: Option<String> }` schema fields
+   (model crate) + resolver population — the embedded boot-config bake
+   reads them (RFC-0045 baked rung).
+2. `resolve` reads the integrator's `system.toml [deploy]` as its
+   system-config input (the agreed RFC-0050 deploy SSoT) and fills
+   `execution.deploy`.
+3. Per-target resolve ergonomics for multi-target systems (one model per
+   `--target`, or one model carrying every target's tier sub-tables —
+   the TierDef schema already holds all platforms; decide + document).
+
 ## Non-goals
 
 - Variables or conditions inside the model (early binding).
