@@ -278,6 +278,32 @@ pub struct ManifestIndex {
     pub node_identity: HashMap<(usize, String), String>,
 }
 
+/// Walk from `scope_id` up through `parent` links until a file scope
+/// (`origin: Some(...)`) is found (inclusive — if `scope_id` itself is
+/// already a file scope, it's returned unchanged). Returns `None` if the
+/// chain runs out (root reached with no file scope, or a dangling/unknown
+/// scope id) — the caller then indexes the record only under its own
+/// immediate scope id.
+///
+/// This is the walk Fix B (W6 report §4c) needs: a node stamped with a
+/// bare `<group>`'s scope id must reconcile under the *file* scope's id
+/// too, since contract resolution (`resolve_node_paths` -> `resolve_node_fqn`)
+/// only ever queries `node_identity` keyed by the manifest's own file scope
+/// id, never by an intervening group's id.
+fn nearest_file_scope_id(
+    scopes_by_id: &HashMap<usize, &ScopeEntry>,
+    scope_id: usize,
+) -> Option<usize> {
+    let mut current = scope_id;
+    loop {
+        let scope = scopes_by_id.get(&current)?;
+        if scope.is_file_scope() {
+            return Some(current);
+        }
+        current = scope.parent?;
+    }
+}
+
 /// Load manifests for all file scopes in the launch tree.
 ///
 /// For each scope with a known `(pkg, file)` origin, resolves the contract
@@ -300,22 +326,46 @@ pub fn load_manifests(
         index.scope_parents.insert(scope.id, scope.parent);
     }
 
+    // Map every scope id to its `ScopeEntry` (for `is_file_scope()`/`parent`
+    // walks below) — group-nesting reconciliation needs to know which
+    // ancestor scope ids are file scopes, not just their parent links.
+    let scopes_by_id: HashMap<usize, &ScopeEntry> =
+        launch_dump.scopes.iter().map(|s| (s.id, s)).collect();
+
     // Build the contract-identity -> launch-dump-FQN reconciliation map
     // (see `ManifestIndex::node_identity` doc) before any node/topic/
     // service/path resolution below, so every resolution in this function
     // (and every downstream consumer that reads `index.node_identity`)
     // agrees on the same node identity.
+    //
+    // A record's own `scope_id` is its *immediate* enclosing scope, which
+    // may be a bare (non-`<include>`) `<group>` — the parser stamps those
+    // with their own distinct scope id, one level deeper than the file
+    // scope contract resolution (`resolve_node_fqn`) actually looks up
+    // under. Index the record under BOTH its immediate scope id (for any
+    // consumer that happens to have that id in hand) AND its nearest
+    // ancestor FILE scope id (what `resolve_node_paths`/`resolve_node_fqn`
+    // actually query) — see W6 report §4c / Fix B.
     for record in scheduled_records_from_dump(launch_dump) {
-        if let Some(scope_id) = record.scope_id {
+        let Some(scope_id) = record.scope_id else {
+            continue;
+        };
+        let mut keys = vec![scope_id];
+        if let Some(file_scope_id) = nearest_file_scope_id(&scopes_by_id, scope_id)
+            && file_scope_id != scope_id
+        {
+            keys.push(file_scope_id);
+        }
+        for key_scope_id in keys {
             if let Some(prev) = index
                 .node_identity
-                .insert((scope_id, record.bare_name.clone()), record.fqn.clone())
+                .insert((key_scope_id, record.bare_name.clone()), record.fqn.clone())
                 && prev != record.fqn
             {
                 warn!(
                     "ambiguous node identity: two schedulable records named `{}` in scope {} \
                      ({prev} vs {}); contract facts for this name may be misattributed",
-                    record.bare_name, scope_id, record.fqn
+                    record.bare_name, key_scope_id, record.fqn
                 );
             }
         }
@@ -2199,6 +2249,98 @@ mod tests {
             .unwrap_or_else(|| panic!("no scheduled node named {real_fqn}: {:?}", input.nodes));
         assert_eq!(node.path_budget_ms, Some(5.0));
         assert_eq!(node.deadline_us, Some(5_000));
+    }
+
+    #[test]
+    fn test_node_behind_bare_group_reconciles_across_file_scope() {
+        // Phase 44 W6 Fix B (group-nesting FQN gap, §4c): reproduces the
+        // `vehicle_cmd_gate` shape — a node sits behind a bare (non-
+        // `<include>`) `<group>` *within its own file's scope subtree*.
+        // The parser stamps that group with its own distinct scope id (1),
+        // one level deeper than the file scope (0) that
+        // `resolve_node_paths`/`resolve_node_fqn` actually query
+        // `node_identity` under. Before the fix, `node_identity` was keyed
+        // only by the record's immediate scope id (1) — a guaranteed miss
+        // at scope 0, silently falling back to naive `scope.ns + bare_name`
+        // qualification instead of the real launch FQN.
+        use super::super::launch_dump::NodeRecord;
+
+        let mut dump = make_dump(vec![
+            scope(
+                0,
+                "manifest_pipeline",
+                "manifest.launch.xml",
+                "/perception",
+                None,
+            ),
+            // Bare group: no origin, own scope id, nested namespace — same
+            // shape as autoware's `<group ns="/control">` wrapping
+            // `vehicle_cmd_gate` inside `control.launch.xml`'s own file scope.
+            ScopeEntry {
+                id: 1,
+                origin: None,
+                ns: "/perception/inner".to_string(),
+                args: HashMap::new(),
+                parent: Some(0),
+            },
+        ]);
+        dump.node.push(NodeRecord {
+            executable: "cropbox".to_string(),
+            package: Some("manifest_pipeline".to_string()),
+            name: Some("cropbox".to_string()),
+            namespace: None,
+            exec_name: Some("cropbox".to_string()),
+            params: vec![],
+            params_files: vec![],
+            remaps: vec![],
+            ros_args: None,
+            args: None,
+            cmd: vec![],
+            env: None,
+            respawn: None,
+            respawn_delay: None,
+            global_params: None,
+            scope: Some(1),
+        });
+
+        let index = overlay_index(&dump);
+
+        let real_fqn = "/perception/inner/cropbox";
+        let naive_fqn = "/perception/cropbox";
+
+        // node_identity reconciles under BOTH the node's immediate (group)
+        // scope id and the manifest's own file scope id (0) — the latter
+        // is what `resolve_node_paths` actually queries.
+        assert_eq!(
+            index.node_identity.get(&(1, "cropbox".to_string())),
+            Some(&real_fqn.to_string())
+        );
+        assert_eq!(
+            index.node_identity.get(&(0, "cropbox".to_string())),
+            Some(&real_fqn.to_string()),
+            "node_identity must also reconcile under the file scope id (0), \
+             not just the node's immediate bare-group scope id (1)"
+        );
+
+        // `nodes.cropbox.paths.main`'s facts attach to the real FQN, never
+        // the naive scope-qualified phantom.
+        let main_path = index
+            .node_paths
+            .iter()
+            .find(|p| p.path_name == "main")
+            .expect("cropbox.main path resolved");
+        assert_eq!(main_path.node_fqn, real_fqn);
+        assert_ne!(main_path.node_fqn, naive_fqn);
+
+        // The scheduling extraction pipeline agrees: chain/derived facts
+        // route to the real process, not a phantom no process answers to.
+        let input = crate::ros::sched_derive::mapper_input_from_dump(&dump, Some(&index), None);
+        let node = input
+            .nodes
+            .iter()
+            .find(|n| n.name == real_fqn)
+            .unwrap_or_else(|| panic!("no scheduled node named {real_fqn}: {:?}", input.nodes));
+        assert_eq!(node.path_budget_ms, Some(5.0));
     }
 
     #[test]
