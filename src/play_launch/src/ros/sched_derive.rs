@@ -48,7 +48,11 @@ pub fn mapper_input_from_dump(
         .iter()
         .map(|r| build_mapper_node(r, index))
         .collect();
-    MapperInput { nodes, legacy }
+    MapperInput {
+        nodes,
+        legacy,
+        chains: Vec::new(), // populated by W4 chain resolution (44.4)
+    }
 }
 
 fn build_mapper_node(record: &ScheduledRecord, index: Option<&ManifestIndex>) -> MapperNode {
@@ -71,6 +75,7 @@ fn build_mapper_node(record: &ScheduledRecord, index: Option<&ManifestIndex>) ->
         deadline_us,
         criticality,
         path_budget_ms,
+        paths: Vec::new(), // populated by W4 per-path extraction (44.4)
     }
 }
 
