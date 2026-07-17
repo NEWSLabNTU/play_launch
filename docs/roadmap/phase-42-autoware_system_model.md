@@ -42,9 +42,12 @@ designs the chain-aware mapper on evidence.
   answers Q1–Q5 (cycles, junctions, chain composability, triggers,
   rate monoculture) and lists consequences for 42.5 (vocabulary), the
   checker, the mapper, and infra follow-ups.
-- **42.5** Contract vocabulary proposal: manifest extensions justified by
-  42.4 findings (trigger, cross-scope chains, chain semantics tag) —
-  platform-agnostic, optional, additive.
+- **42.5** ✅ Contract vocabulary v2 design (2026-07-17): explicit path trigger
+  taxonomy (timer/input/once/spontaneous — user decision: clocks explicit, never
+  implied by empty input), `sync:` fan-in policy, `buffer:` discriminator,
+  integrator-owned `chains:` with checked `via:` links; mode conditioning +
+  consumes_hz deferred. Spec:
+  [2026-07-17-contract-vocabulary-v2-design.md](../superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md).
 - **42.6** Chain-aware mapper design spec (design only; implementation is a
   later phase). Decides the fate of the interim `criticality_rm` idea (41.7).
 
