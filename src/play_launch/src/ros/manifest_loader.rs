@@ -6,6 +6,7 @@
 //! topic/node names.
 
 use super::launch_dump::{LaunchDump, ScopeEntry};
+use super::sched_loader::scheduled_records_from_dump;
 use ros_launch_manifest_check::{Diagnostic, Severity, run_checks_with_spans};
 use ros_launch_manifest_types::{
     Manifest, filter_manifest, parse_manifest_with_spans, resolve_args, substitute_manifest,
@@ -250,6 +251,31 @@ pub struct ManifestIndex {
     pub total_errors: usize,
     /// Total warnings across all manifests.
     pub total_warnings: usize,
+    /// Bare node identity -> launch-dump-verified FQN, keyed by
+    /// `(scope_id, bare_node_name)`.
+    ///
+    /// Contracts only ever declare a node by its bare name
+    /// (`nodes.<name>`) — they carry no `namespace=` attribute, since
+    /// that's a launch-file-only concept. Naively qualifying a contract
+    /// node as `scope.ns + bare_name` silently diverges from the node's
+    /// *real* fully-qualified name whenever the launch file gives the node
+    /// its own `namespace=` attribute that overrides the declaring scope's
+    /// namespace (see `sched_loader::fqn_for`'s precedence rule: own
+    /// namespace wins over scope). That divergence used to mean a chain's
+    /// derived priorities (and any other contract-identity-keyed fact)
+    /// would silently attach to a name no real process ever answers to.
+    ///
+    /// Built once per [`load_manifests`] call from the real launch dump's
+    /// [`super::sched_loader::ScheduledRecord`]s (the same identity the
+    /// apply layer keys on) and consulted by [`resolve_node_fqn`] /
+    /// [`resolve_endpoint_ref`] — the single reconciliation point every
+    /// consumer (`resolve_node_paths`/`resolve_topics`/`resolve_services`
+    /// here, `manifest_graph::build_global_graph`, `causal_graph::build_export`)
+    /// goes through, so they can never disagree about a node's identity.
+    /// Falls back to naive `scope.ns + bare_name` qualification when the
+    /// dump has no matching record (no launch dump available, or the
+    /// contract names a node the dump doesn't contain).
+    pub node_identity: HashMap<(usize, String), String>,
 }
 
 /// Load manifests for all file scopes in the launch tree.
@@ -272,6 +298,19 @@ pub fn load_manifests(
     // Includes all scopes (file and group), not just those with manifests.
     for scope in &launch_dump.scopes {
         index.scope_parents.insert(scope.id, scope.parent);
+    }
+
+    // Build the contract-identity -> launch-dump-FQN reconciliation map
+    // (see `ManifestIndex::node_identity` doc) before any node/topic/
+    // service/path resolution below, so every resolution in this function
+    // (and every downstream consumer that reads `index.node_identity`)
+    // agrees on the same node identity.
+    for record in scheduled_records_from_dump(launch_dump) {
+        if let Some(scope_id) = record.scope_id {
+            index
+                .node_identity
+                .insert((scope_id, record.bare_name.clone()), record.fqn.clone());
+        }
     }
 
     for scope in &launch_dump.scopes {
@@ -1103,22 +1142,21 @@ fn resolve_contract_path(
 /// fields agree, union the publisher/subscriber endpoint lists, and
 /// emit `consistency` diagnostics on mismatches.
 fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
-    let ns = &scope.ns;
+    let ns = scope.ns.clone();
 
     for (topic_name, topic_decl) in &manifest.topics {
-        let fqn = qualify_name(ns, topic_name);
+        let fqn = qualify_name(&ns, topic_name);
 
-        // Qualify publisher/subscriber endpoint references
-        let publishers: Vec<String> = topic_decl
-            .publishers
-            .iter()
-            .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
-            .collect();
-        let subscribers: Vec<String> = topic_decl
-            .subscribers
-            .iter()
-            .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
-            .collect();
+        // Qualify publisher/subscriber endpoint references, reconciling
+        // the node part against the launch dump (see `resolve_endpoint_ref`).
+        let mut publishers: Vec<String> = Vec::new();
+        for ep_ref in &topic_decl.publishers {
+            publishers.push(resolve_endpoint_ref(index, scope.id, &ns, ep_ref));
+        }
+        let mut subscribers: Vec<String> = Vec::new();
+        for ep_ref in &topic_decl.subscribers {
+            subscribers.push(resolve_endpoint_ref(index, scope.id, &ns, ep_ref));
+        }
 
         if let Some(existing) = index.topics.get_mut(&fqn) {
             // Merge with existing declaration — validate agreement
@@ -1308,21 +1346,19 @@ fn qos_matches(
 
 /// Resolve and merge service declarations from this scope into the index.
 fn resolve_services(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
-    let ns = &scope.ns;
+    let ns = scope.ns.clone();
 
     for (service_name, service_decl) in &manifest.services {
-        let fqn = qualify_name(ns, service_name);
+        let fqn = qualify_name(&ns, service_name);
 
-        let servers: Vec<String> = service_decl
-            .server
-            .iter()
-            .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
-            .collect();
-        let clients: Vec<String> = service_decl
-            .client
-            .iter()
-            .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
-            .collect();
+        let mut servers: Vec<String> = Vec::new();
+        for ep_ref in &service_decl.server {
+            servers.push(resolve_endpoint_ref(index, scope.id, &ns, ep_ref));
+        }
+        let mut clients: Vec<String> = Vec::new();
+        for ep_ref in &service_decl.client {
+            clients.push(resolve_endpoint_ref(index, scope.id, &ns, ep_ref));
+        }
 
         if let Some(existing) = index.services.get_mut(&fqn) {
             // Validate type agreement
@@ -1439,10 +1475,10 @@ fn resolve_actions(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifest
 
 /// Resolve node path declarations.
 fn resolve_node_paths(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
-    let ns = &scope.ns;
+    let ns = scope.ns.clone();
 
     for (node_name, node_decl) in &manifest.nodes {
-        let node_fqn = qualify_name(ns, node_name);
+        let node_fqn = resolve_node_fqn(index, scope.id, &ns, node_name);
 
         for (path_name, path_decl) in &node_decl.paths {
             index.node_paths.push(ResolvedNodePath {
@@ -1505,6 +1541,59 @@ fn qualify_endpoint_ref(ns: &str, ep_ref: &str) -> String {
         format!("/{ep_ref}")
     } else {
         format!("{ns}/{ep_ref}")
+    }
+}
+
+/// Resolve a bare node name declared in a scope's contract to its real,
+/// launch-dump-verified FQN — the single reconciliation point described on
+/// [`ManifestIndex::node_identity`]. Every consumer that needs "the FQN of
+/// contract node X declared in scope S" must go through this function (or
+/// [`resolve_endpoint_ref`]) rather than re-deriving `scope.ns + name`
+/// locally, or it risks silently disagreeing with the rest of the pipeline
+/// whenever a node's own `namespace=` attribute overrides its scope.
+///
+/// Absolute names (`name.starts_with('/')`) pass through unchanged, matching
+/// [`qualify_name`]'s behavior.
+pub(crate) fn resolve_node_fqn(
+    index: &ManifestIndex,
+    scope_id: usize,
+    ns: &str,
+    node_name: &str,
+) -> String {
+    if node_name.starts_with('/') {
+        return node_name.to_string();
+    }
+    if let Some(fqn) = index.node_identity.get(&(scope_id, node_name.to_string())) {
+        return fqn.clone();
+    }
+    qualify_name(ns, node_name)
+}
+
+/// Resolve an endpoint reference like `"node/endpoint"` the same way
+/// [`resolve_node_fqn`] resolves a bare node name — splits off the trailing
+/// endpoint segment, reconciles the node part against the launch dump, and
+/// rejoins. Absolute refs pass through unchanged.
+pub(crate) fn resolve_endpoint_ref(
+    index: &ManifestIndex,
+    scope_id: usize,
+    ns: &str,
+    ep_ref: &str,
+) -> String {
+    if ep_ref.starts_with('/') {
+        return ep_ref.to_string();
+    }
+    match ep_ref.rfind('/') {
+        Some(pos) => {
+            let node_part = &ep_ref[..pos];
+            let ep_part = &ep_ref[pos + 1..];
+            format!(
+                "{}/{ep_part}",
+                resolve_node_fqn(index, scope_id, ns, node_part)
+            )
+        }
+        // Malformed ref (no node/endpoint separator) — keep the old
+        // best-effort behavior rather than panicking or dropping it.
+        None => qualify_endpoint_ref(ns, ep_ref),
     }
 }
 
@@ -2010,6 +2099,98 @@ mod tests {
         assert_eq!(index.manifests.len(), 2);
         assert!(index.manifests.contains_key(&1));
         assert!(!index.topics.is_empty());
+    }
+
+    #[test]
+    fn test_node_own_namespace_override_reconciles_to_launch_fqn() {
+        // Phase 44.6 fix pin: a node's own `namespace=` launch-XML attribute
+        // (here "/sensors/cropbox_group") overrides its declaring scope's
+        // namespace ("/perception") — the contract (which only ever names
+        // the node bare, "cropbox") must not silently attribute its facts
+        // to the naive scope-qualified "/perception/cropbox"; it must
+        // reconcile against the real launch-dump FQN.
+        use super::super::launch_dump::NodeRecord;
+
+        let mut dump = make_dump(vec![scope(
+            0,
+            "manifest_pipeline",
+            "manifest.launch.xml",
+            "/perception",
+            None,
+        )]);
+        dump.node.push(NodeRecord {
+            executable: "cropbox".to_string(),
+            package: Some("manifest_pipeline".to_string()),
+            name: Some("cropbox".to_string()),
+            namespace: Some("/sensors/cropbox_group".to_string()),
+            exec_name: Some("cropbox".to_string()),
+            params: vec![],
+            params_files: vec![],
+            remaps: vec![],
+            ros_args: None,
+            args: None,
+            cmd: vec![],
+            env: None,
+            respawn: None,
+            respawn_delay: None,
+            global_params: None,
+            scope: Some(0),
+        });
+
+        let index = overlay_index(&dump);
+
+        let real_fqn = "/sensors/cropbox_group/cropbox";
+        let naive_fqn = "/perception/cropbox";
+
+        // The identity map resolves the contract's bare "cropbox" (declared
+        // in scope 0) to the real launch-dump FQN.
+        assert_eq!(
+            index.node_identity.get(&(0, "cropbox".to_string())),
+            Some(&real_fqn.to_string())
+        );
+
+        // `nodes.cropbox.paths.main`'s facts attach to the real FQN, not the
+        // naive scope-qualified one.
+        let main_path = index
+            .node_paths
+            .iter()
+            .find(|p| p.path_name == "main")
+            .expect("cropbox.main path resolved");
+        assert_eq!(main_path.node_fqn, real_fqn);
+        assert_eq!(main_path.path.max_latency_ms, Some(5.0));
+
+        // The pub/sub endpoint refs on the merged topics reconcile the same
+        // way — `cropbox/raw_points`/`cropbox/cropped_points` must key on
+        // the real FQN so rate/QoS/graph checks agree with the scheduling
+        // plan's node set.
+        assert!(
+            index.topics["/sensing/lidar/pointcloud"]
+                .subscribers
+                .contains(&format!("{real_fqn}/raw_points")),
+            "subscribers: {:?}",
+            index.topics["/sensing/lidar/pointcloud"].subscribers
+        );
+        assert!(
+            index.topics["/perception/cropped_points"]
+                .publishers
+                .contains(&format!("{real_fqn}/cropped_points"))
+        );
+
+        // Never the naive scope-qualified identity.
+        assert_ne!(main_path.node_fqn, naive_fqn);
+
+        // `sched_derive`'s extraction must key the fact on the same real
+        // FQN a `ScheduledRecord` (built from the launch dump) carries —
+        // this is what actually routes a derived/chain priority to the
+        // real process.
+        let input = crate::ros::sched_derive::mapper_input_from_dump(&dump, Some(&index), None);
+        let node = input
+            .nodes
+            .iter()
+            .find(|n| n.name == real_fqn)
+            .unwrap_or_else(|| panic!("no scheduled node named {real_fqn}: {:?}", input.nodes));
+        assert_eq!(node.path_budget_ms, Some(5.0));
+        assert_eq!(node.deadline_us, Some(5_000));
     }
 
     #[test]

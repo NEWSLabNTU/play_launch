@@ -89,9 +89,20 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
     let mut graph = GlobalDataflowGraph::default();
 
     // Step 1: collect all nodes from all manifests, computing FQNs.
+    //
+    // Uses `manifest_loader::resolve_node_fqn` (not a locally re-derived
+    // `scope.ns + bare_name`) so this graph's node keys agree with the
+    // launch-dump-verified identity every other consumer
+    // (`resolve_node_paths`/`resolve_topics`/`resolve_services`,
+    // `causal_graph::build_export`) uses — see `ManifestIndex::node_identity`.
     for resolved in index.manifests.values() {
         for (node_name, node_decl) in &resolved.manifest.nodes {
-            let fqn = qualify(&resolved.ns, node_name);
+            let fqn = super::manifest_loader::resolve_node_fqn(
+                index,
+                resolved.scope_id,
+                &resolved.ns,
+                node_name,
+            );
             graph.nodes.insert(
                 fqn.clone(),
                 GlobalNode {
@@ -187,20 +198,6 @@ fn split_endpoint_ref(ep_ref: &str) -> Option<(String, String)> {
         return None;
     }
     Some((node.to_string(), ep.to_string()))
-}
-
-/// Prefix a relative name with a namespace, matching `qualify_name` in
-/// `manifest_loader`.
-fn qualify(ns: &str, name: &str) -> String {
-    if name.starts_with('/') {
-        return name.to_string();
-    }
-    let ns = ns.trim_end_matches('/');
-    if ns.is_empty() {
-        format!("/{name}")
-    } else {
-        format!("{ns}/{name}")
-    }
 }
 
 // ── Phase 35.2: subgraph extraction ──
