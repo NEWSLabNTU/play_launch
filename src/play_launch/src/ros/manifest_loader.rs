@@ -1237,6 +1237,34 @@ fn merge_topic(
         existing.qos = decl.qos.clone();
     }
 
+    // Merge drop budget: fill when only one side declares; both declared
+    // must agree (same N/W count + max_consecutive) — mismatched loss
+    // budgets are a consistency error like rate_hz/qos.
+    match (existing.drop.as_ref(), decl.drop.as_ref()) {
+        (Some(a), Some(b)) => {
+            let same = a.max_consecutive == b.max_consecutive
+                && a.max_count.as_ref().map(|c| (c.n, c.w))
+                    == b.max_count.as_ref().map(|c| (c.n, c.w));
+            if !same {
+                diagnostics.push(Diagnostic {
+                    rule_id: "consistency".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "topic '{}' drop budget mismatch in scope {} ({}/{})",
+                        existing.fqn,
+                        scope.id,
+                        scope.pkg().unwrap_or("?"),
+                        scope.file().unwrap_or("?"),
+                    ),
+                    path: format!("topics.{topic_name}.drop"),
+                    span: None,
+                });
+            }
+        }
+        (None, Some(_)) => existing.drop = decl.drop.clone(),
+        _ => {}
+    }
+
     // Merge endpoint lists (deduplicated)
     for p in publishers {
         if !existing.publishers.contains(&p) {
