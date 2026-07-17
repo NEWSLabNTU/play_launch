@@ -174,7 +174,15 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
     let mut sub_props: HashMap<String, ros_launch_manifest_types::EndpointProps> = HashMap::new();
     for resolved in index.manifests.values() {
         for (node_name, node_decl) in &resolved.manifest.nodes {
-            let node_fqn = qualify_name(&resolved.ns, node_name);
+            // Same launch-dump-reconciled identity `build_global_graph`
+            // uses for its node keys (`ManifestIndex::node_identity`) —
+            // must agree or `node_meta.get(fqn)` below would silently miss.
+            let node_fqn = super::manifest_loader::resolve_node_fqn(
+                index,
+                resolved.scope_id,
+                &resolved.ns,
+                node_name,
+            );
             node_meta.insert(
                 node_fqn.clone(),
                 (resolved.pkg.clone(), node_decl.criticality.clone()),
@@ -317,20 +325,6 @@ fn split_endpoint_ref(ep_ref: &str) -> Option<(String, String)> {
         return None;
     }
     Some((node.to_string(), ep.to_string()))
-}
-
-/// Prefix a relative name with a namespace, matching `qualify_name` in
-/// `manifest_loader` (duplicated here to avoid making it `pub`).
-fn qualify_name(ns: &str, name: &str) -> String {
-    if name.starts_with('/') {
-        return name.to_string();
-    }
-    let ns = ns.trim_end_matches('/');
-    if ns.is_empty() {
-        format!("/{name}")
-    } else {
-        format!("{ns}/{name}")
-    }
 }
 
 /// Find cycles in the node-to-node causal graph, counting `state:` edges as

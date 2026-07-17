@@ -1044,11 +1044,16 @@ fn check_export_graph_json_matches_contract() {
         "sensor -> filter/control is a straight pipeline, no cycles: {graph}"
     );
 
+    // Phase 44.6: node FQNs in the export now reconcile against the real
+    // launch-dump identity (`control_node` has its own `namespace="/control"`
+    // attribute, which wins over the contract's root scope) instead of the
+    // old naive `scope_ns + bare_name` ("/control_node") — see
+    // `ManifestIndex::node_identity`.
     let control_node = graph["nodes"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|n| n["fqn"] == "/control_node")
+        .find(|n| n["fqn"] == "/control/control_node")
         .expect("control_node present in export");
     assert_eq!(control_node["criticality"], "high");
 }
