@@ -188,6 +188,39 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         });
     }
 
+    // R1-P1 — integrator system config fills the execution layer
+    // (deploy/transports/bridges/features). Fail-loud on unplaced nodes;
+    // lenient diagnostics embed like checker warnings.
+    if let Some(sys_path) = &args.system {
+        let text = std::fs::read_to_string(sys_path)
+            .wrap_err_with(|| format!("reading system config {}", sys_path.display()))?;
+        let cfg = ros_launch_manifest_model::system_config::parse_system_config(&text)
+            .map_err(|e| eyre::eyre!("parsing {}: {e}", sys_path.display()))?;
+        let node_fqns: Vec<&str> = model.structure.nodes.keys().map(|s| s.as_str()).collect();
+        let diags = cfg
+            .apply_to(&mut model.execution, &node_fqns)
+            .map_err(|e| eyre::eyre!(e))?;
+        model.meta.diagnostics.extend(diags);
+        // Hash the system config into provenance.
+        {
+            use sha2::Digest as _;
+            let bytes = std::fs::read(sys_path)?;
+            let canon = std::fs::canonicalize(sys_path).unwrap_or_else(|_| sys_path.clone());
+            model.meta.inputs.push(ros_launch_manifest_model::InputHash {
+                path: canon.display().to_string(),
+                sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
+            });
+            model.meta.inputs.sort_by(|a, b| a.path.cmp(&b.path));
+        }
+        eprintln!(
+            "System config: {} ({} deploy, {} transport(s), {} bridge(s))",
+            sys_path.display(),
+            model.execution.deploy.len(),
+            model.execution.transports.len(),
+            model.execution.bridges.len(),
+        );
+    }
+
     let yaml = model
         .to_yaml_string()
         .wrap_err("serializing SystemModel to YAML")?;
