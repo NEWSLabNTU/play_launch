@@ -1,7 +1,9 @@
-// control_node: standalone node, subscribes "points_raw" published by
-// sensor_node (cross-namespace, hence the absolute topic name below) and
-// publishes "cmd" (relative — resolves under this node's own namespace,
-// e.g. /control/cmd).
+// control_node: standalone node, subscribes "points_filtered" published by
+// filter_component (cross-namespace, hence the absolute topic name below —
+// Phase 44.5: the `points_to_cmd` chain's second hop, sensor_node ->
+// filter_component -> control_node, matches bringup.contract.yaml exactly)
+// and publishes "cmd" (relative — resolves under this node's own
+// namespace, e.g. /control/cmd).
 //
 // This is the node system.toml's [tiers.control] pins to SCHED_FIFO
 // priority 20 / CPU core 0 — see docs/guide/rt-scheduling.md.
@@ -20,9 +22,9 @@ public:
   {
     pub_ = this->create_publisher<std_msgs::msg::String>("cmd", 10);
 
-    // Absolute: sensor_node lives under a different namespace (/perception).
+    // Absolute: filter_component lives under a different namespace (/perception).
     sub_ = this->create_subscription<std_msgs::msg::String>(
-      "/perception/points_raw", 10,
+      "/perception/points_filtered", 10,
       [this](const std_msgs::msg::String::SharedPtr msg) {
         auto out = std_msgs::msg::String();
         out.data = "cmd_for:" + msg->data;

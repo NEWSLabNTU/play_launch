@@ -8,10 +8,12 @@
 # doc §3.1. This copy tweaks two things vs the provider: control_node's
 # pinned priority (20 -> 22, still core 0 — an integrator deciding the
 # provider's default is a little low) and the priority band ceiling
-# (40 -> 45, giving the rate-monotonic mapper more headroom). Everything
-# else is unchanged.
+# (40 -> 45, giving the chain-aware mapper more headroom). Everything
+# else is unchanged — including `mapper: chain_aware` (Phase 44.5; matches
+# the provider's channel so the overlay demonstrates a resources/overrides
+# tweak, not a mapper swap).
 target: posix
-mapper: rate_monotonic
+mapper: chain_aware
 
 resources:
   rt_priority_band: { min: 10, max: 45 }

@@ -70,7 +70,8 @@ compare-dumps:
     echo "Comparison complete."
 
 # Validate contracts + scheduling: v2 channel resolution/--explain/overlay,
-# and the legacy system.toml bridge (kept as the living bridge test).
+# the vocabulary-v2 `points_to_cmd` chain, and the legacy system.toml bridge
+# (kept as the living bridge test).
 check:
     #!/usr/bin/env bash
     set -e
@@ -86,6 +87,11 @@ check:
 
     echo "== v2: user overlay tweaks the provider's band/pin (overlay always wins) =="
     {{play_launch}} check --contracts contracts rt_demo bringup.launch.xml
+
+    echo "== v2: chain-aware --explain shows points_to_cmd chain provenance (Phase 44.5) =="
+    {{play_launch}} check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml 2>&1 \
+        | grep -F "derived(chain_aware: points_to_cmd" \
+        || { echo "ERROR: expected chain_aware provenance for points_to_cmd in --explain output"; exit 1; }
 
     echo "== legacy bridge: system.toml (manual mapper) + sched =="
     {{play_launch}} check --sched system.toml rt_demo bringup.launch.xml

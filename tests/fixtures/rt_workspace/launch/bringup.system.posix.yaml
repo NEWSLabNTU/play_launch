@@ -2,13 +2,18 @@
 # next to the launch file it describes, ships in rt_demo's installed share
 # dir — same provider-sidecar channel as bringup.contract.yaml (Phase 40).
 #
-# `mapper: rate_monotonic` derives priorities from the contract's declared
-# rates (see bringup.contract.yaml: sensor_node, filter_component, and
-# control_node all publish/subscribe at 100 Hz) instead of hand-assigning
-# them. The one override below pins control_node to the exact priority/core
-# system.toml assigns by hand — showing the same outcome reached two ways.
+# `mapper: chain_aware` (Phase 44.5: switched from `rate_monotonic` as the
+# showcase for the vocabulary-v2 `points_to_cmd` chain declared in
+# bringup.contract.yaml — see that file + docs/superpowers/specs/
+# 2026-07-17-chain-aware-mapper-design.md). Ranks control_node > filter_component
+# > sensor_node (drain-toward-sink within the chain's one event segment,
+# the timer boundary ranked last) before the override below clamps
+# control_node to its pinned priority/core. rate_monotonic's outcome for
+# this same fixture is preserved unchanged as the legacy `system.toml`
+# bridge test (`just check`'s case 4/5) — this file is the only channel
+# that changed mappers.
 target: posix
-mapper: rate_monotonic
+mapper: chain_aware
 
 resources:
   rt_priority_band: { min: 10, max: 40 }

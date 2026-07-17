@@ -3,9 +3,11 @@
 # or `play_launch launch ... --contracts contracts`.
 #
 # Overlay always wins over the provider sidecar (launch/bringup.contract.yaml)
-# for the same scope. This copy is otherwise identical except control_node's
-# max_age_ms is tightened from 50ms to 20ms — demonstrating a downstream
-# integrator patching a contract without touching (or rebuilding) rt_demo.
+# for the same scope. This copy is otherwise identical (Phase 44.5:
+# vocabulary v2 explicit triggers + the `points_to_cmd` chain, same as the
+# provider) except control_node's max_age_ms is tightened from 50ms to
+# 20ms — demonstrating a downstream integrator patching a contract without
+# touching (or rebuilding) rt_demo.
 version: 1
 
 nodes:
@@ -13,6 +15,10 @@ nodes:
     pub:
       points_raw:
         min_rate_hz: 100
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 100 } }
+        output: [points_raw]
 
   filter_component:
     sub:
@@ -22,36 +28,48 @@ nodes:
       points_filtered:
         min_rate_hz: 100
     paths:
-      main:
-        input: points_raw
+      filter:
+        trigger: { input: [points_raw] }
         output: [points_filtered]
         max_latency_ms: 5
 
   control_node:
     criticality: high   # unchanged from the provider sidecar
     sub:
-      points_raw:
+      points_filtered:
         min_rate_hz: 100
         max_age_ms: 20   # tightened from the provider sidecar's 50ms
     pub:
       cmd:
         min_rate_hz: 100
     paths:
-      main:
-        input: points_raw
+      control:
+        trigger: { input: [points_filtered] }
         output: [cmd]
         max_latency_ms: 10
+
+chains:
+  points_to_cmd:
+    semantics: reaction
+    max_latency_ms: 30
+    segments:
+      - { scope: /, path: tick }
+      - { via: /perception/points_raw }
+      - { scope: /, path: filter }
+      - { via: /perception/points_filtered }
+      - { scope: /, path: control }
 
 topics:
   /perception/points_raw:
     type: std_msgs/msg/String
     pub: [sensor_node/points_raw]
-    sub: [filter_component/points_raw, control_node/points_raw]
+    sub: [filter_component/points_raw]
     rate_hz: 100
 
   /perception/points_filtered:
     type: std_msgs/msg/String
     pub: [filter_component/points_filtered]
+    sub: [control_node/points_filtered]
     rate_hz: 100
 
   /control/cmd:

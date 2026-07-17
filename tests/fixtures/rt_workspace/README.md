@@ -7,6 +7,9 @@ A small, real, buildable ROS 2 workspace that is both:
    the Phase 41 v2 model: a `mapper` **derives** priorities from the
    contract's declared rates; a platform file supplies platform facts and
    explicit per-node overrides — you no longer hand-write every priority.
+   Phase 44.5 upgrades the contract to vocabulary v2 (explicit `trigger:` on
+   every path) and composes the three nodes into one named chain
+   (`points_to_cmd`), derived by the `chain_aware` mapper.
 2. **An integration fixture** exercising the RT apply-layer (Phase 38)
    against our own nodes, with a committed manifest under test.
 
@@ -16,13 +19,13 @@ A small, real, buildable ROS 2 workspace that is both:
 rt_workspace/
 ├── justfile                                  # build / dump / check / run
 ├── src/rt_demo/                              # ament_cmake package: rclcpp + std_msgs + rclcpp_components
-│   ├── sensor_node                           # 100 Hz publisher on points_raw
-│   ├── control_node                          # sub points_raw -> pub cmd (the overridden-priority node)
-│   └── filter_component                      # composable: sub points_raw -> pub points_filtered
+│   ├── sensor_node                           # 100 Hz publisher on points_raw (chain boundary)
+│   ├── control_node                          # sub points_filtered -> pub cmd (chain sink, overridden-priority node)
+│   └── filter_component                      # composable: sub points_raw -> pub points_filtered (chain segment)
 ├── launch/
 │   ├── bringup.launch.xml                    # sensor_node + control_node + 1 container w/ filter_component
-│   ├── bringup.contract.yaml                 # provider sidecar (types, rates, max_age_ms, criticality)
-│   ├── bringup.system.posix.yaml             # provider platform file (v2): mapper=rate_monotonic + 1 override
+│   ├── bringup.contract.yaml                 # provider sidecar: vocab v2 triggers + `points_to_cmd` chain (44.5)
+│   ├── bringup.system.posix.yaml             # provider platform file (v2): mapper=chain_aware + 1 override
 │   └── bringup.system.zephyr.yaml            # Zephyr stub: proves per-target coexistence (nano-ros's file, not ours)
 ├── contracts/rt_demo/launch/
 │   ├── bringup.contract.yaml                 # user overlay: tightens control_node's max_age_ms
@@ -31,11 +34,81 @@ rt_workspace/
 ```
 
 `/perception` namespace: `sensor_node` + `perception_container` (loading
-`filter_component`) — both 100 Hz, priorities **derived** by
-`bringup.system.posix.yaml`'s `mapper: rate_monotonic`. `/control` namespace:
-`control_node` — pinned by an explicit `overrides:` entry (mirrors the
-legacy `system.toml`'s hand-written FIFO 20 / core 0 outcome, reached a
-different way).
+`filter_component`). `/control` namespace: `control_node` — pinned by an
+explicit `overrides:` entry (mirrors the legacy `system.toml`'s hand-written
+FIFO 20 / core 0 outcome, reached a different way).
+
+## The `points_to_cmd` chain (Phase 44.5)
+
+`bringup.contract.yaml` declares one end-to-end chain across all three
+nodes — the smallest honest decomposition vocabulary v2 supports:
+
+```yaml
+chains:
+  points_to_cmd:
+    semantics: reaction
+    max_latency_ms: 30
+    segments:
+      - { scope: /, path: tick }               # sensor_node: trigger: {timer: {rate_hz: 100}}
+      - { via: /perception/points_raw }
+      - { scope: /, path: filter }              # filter_component: trigger: {input: [points_raw]}
+      - { via: /perception/points_filtered }
+      - { scope: /, path: control }              # control_node: trigger: {input: [points_filtered]}
+```
+
+`sensor_node`'s `tick` path is timer-triggered — the chain-aware mapper
+(`docs/superpowers/specs/2026-07-17-chain-aware-mapper-design.md`) classifies
+it a **clock boundary** (the chain's own source clock, not a crossing to
+reduce by scheduling). `filter_component`'s `filter` and `control_node`'s
+`control` are both input-triggered and adjacent, so they merge into one
+**event segment**, ranked drain-toward-sink (`control_node` > `filter_component`
+— downstream ranks above upstream). The boundary is placed below the whole
+segment (its obligation is local: meet its own 10ms period).
+
+Feasibility (computed honestly, by hand): `sampling_cost` = the `tick`
+boundary's period alone (1000/100 Hz = 10ms; no declared `max_latency_ms` on
+that path, so no extra exec cost — "no invented WCETs"). Declared
+event-segment latency = `filter`'s 5ms + `control`'s 10ms = 15ms. Total
+25ms fits comfortably inside the chain's 30ms budget (5ms honest slack) —
+passes `chain-budget` cleanly, and 10ms sampling_cost is well under the
+30ms budget, so `chain-sampling-feasibility` doesn't fire either.
+
+### Declare → check → explain workflow
+
+```bash
+# 1. Declare: the chain lives in bringup.contract.yaml's `chains:` section
+#    (see above) — no separate command, just YAML.
+
+# 2. Check: `chain-link` (every segment/via resolves), `chain-budget`, and
+#    `chain-sampling-feasibility` all run as part of the normal manifest
+#    check — no chain-specific flag needed.
+play_launch check --sched launch/bringup.system.posix.yaml rt_demo bringup.launch.xml
+
+# 3. Explain: --explain shows the per-node chain provenance the mapper
+#    derived (`derived(chain_aware: points_to_cmd segment drain 2/2) ->
+#    prio 39` for filter_component, `derived(chain_aware: points_to_cmd
+#    boundary RM period=10ms) -> prio 38` for sensor_node; control_node
+#    shows `override(control_node)` instead — the platform file's explicit
+#    pin always beats the chain-derived rank).
+play_launch check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
+```
+
+**Known gap** (tracked, not fixed by this fixture): `--explain`'s tier table
+also logs a `chain member ... does not match any schedulable node` warning
+for all three chain members. This is a pre-existing FQN-qualification
+mismatch (`.superpowers/sdd/p44-w4-report.md`'s carry-forward note): chain
+segment node identity is resolved from the *contract* side (scope
+namespace + bare node name, e.g. `/sensor_node`), while the actual
+schedulable node comes from the *launch dump* side (the node's own
+`namespace=` attribute, e.g. `/perception/sensor_node`) — this fixture's
+nodes use exactly the bare-`namespace=`-outside-any-`<group>` shape that
+triggers it. `check` still exits 0 (it's a warning); the derived
+priorities for `filter_component`/`sensor_node` are correct as *numbers*
+(and are asserted exactly in `tests/tests/rt_workspace.rs`), but applying
+them via a real `launch --sched-apply` run would not currently reach the
+real `/perception/*` processes — only `control_node`'s override does
+(a different, unaffected resolution path). See
+`.superpowers/sdd/p44-w5-report.md` for the full write-up.
 
 ## Build
 
@@ -87,10 +160,11 @@ Five cases, all expected to exit 0:
    is discovered as the provider sidecar; prints the
    `Scheduling platform file [provider]: ...` provenance line.
 2. **`--explain`** against the explicit provider file — the merged table
-   shows all three provenance kinds: `derived(rate_monotonic: ...)` for
-   `sensor_node`/`filter_component`, `override(control_node)` for
-   `control_node`, and `default (no timing facts)` for the fact-less
-   container.
+   shows all provenance kinds: `derived(chain_aware: points_to_cmd ...)` for
+   `sensor_node` (boundary) and `filter_component` (segment drain),
+   `override(control_node)` for `control_node`, and `default (no timing
+   facts)` for the fact-less container. Also prints the chain provenance
+   case documented below ("The `points_to_cmd` chain").
 3. **User overlay tweak** (`--contracts contracts`, still no `--sched`) — the
    overlay's `bringup.system.posix.yaml` (wider band, different
    `control_node` pin) wins over the provider sidecar for the same
