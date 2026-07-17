@@ -288,6 +288,31 @@ pub fn build_system_model(
 
     let mut contracts = model::Contracts::default();
 
+    // R1-M4 producer side — lower the record's string params into typed
+    // ParamValues (bool/int/float sniffed, else string). The embedded
+    // consumer reads params from the model (it has no record.json).
+    fn lower_params(params: &[(String, String)]) -> std::collections::BTreeMap<String, model::ParamValue> {
+        params
+            .iter()
+            .map(|(k, v)| {
+                let pv = match v.as_str() {
+                    "true" => model::ParamValue::Bool(true),
+                    "false" => model::ParamValue::Bool(false),
+                    s => {
+                        if let Ok(i) = s.parse::<i64>() {
+                            model::ParamValue::Int(i)
+                        } else if let Ok(f) = s.parse::<f64>() {
+                            model::ParamValue::Float(f)
+                        } else {
+                            model::ParamValue::Str(s.to_string())
+                        }
+                    }
+                };
+                (k.clone(), pv)
+            })
+            .collect()
+    }
+
     let mut insert_node =
         |structure: &mut model::Structure, node_fqn: String, inst: model::NodeInstance| {
             if structure.nodes.insert(node_fqn.clone(), inst).is_some() {
@@ -313,7 +338,7 @@ pub fn build_system_model(
                 container: None,
                 lifecycle: decl.and_then(|d| d.lifecycle).unwrap_or(false),
                 lifecycle_autostart: None,
-                params: Default::default(),
+                params: lower_params(&n.params),
                 criticality: decl.and_then(|d| d.criticality.clone()),
             },
         );
@@ -350,7 +375,7 @@ pub fn build_system_model(
                 container: Some(l.target_container_name.clone()),
                 lifecycle: decl.and_then(|d| d.lifecycle).unwrap_or(false),
                 lifecycle_autostart: None,
-                params: Default::default(),
+                params: lower_params(&l.params),
                 criticality: decl.and_then(|d| d.criticality.clone()),
             },
         );
