@@ -122,15 +122,35 @@ nano-ros adopted the SystemModel as its CANONICAL config path (its own
 launch/system.toml bake retires at parity — nano-ros RFC-0052 §Canonical
 path, phase-296 §Retirement). The parity gate needs, on this side:
 
-1. `Deploy { domain: Option<u8>, locator: Option<String> }` schema fields
-   (model crate) + resolver population — the embedded boot-config bake
-   reads them (RFC-0045 baked rung).
-2. `resolve` reads the integrator's `system.toml [deploy]` as its
-   system-config input (the agreed RFC-0050 deploy SSoT) and fills
-   `execution.deploy`.
-3. Per-target resolve ergonomics for multi-target systems (one model per
-   `--target`, or one model carrying every target's tier sub-tables —
-   the TierDef schema already holds all platforms; decide + document).
+Full inventory: nano-ros RFC-0052 §Parity gap analysis (status table).
+Dependency-ordered asks on this side:
+
+**Model schema (ros-launch-manifest `model` crate):**
+1. `Deploy { domain, locator, rmw }` + a `Deploy.extra` open map
+   (consumer-defined keys — nano-ros build tuning rides it so the end
+   state never parses system.toml directly).
+2. `execution.transports` — the largest gap: per-deploy network/session
+   identity (ip/mac/gateway/interfaces, wifi ssid/psk, serial/can
+   device+baud, per-transport rmw/locator/domain). Folds multi-domain
+   routing; the embedded boot bake cannot exist without it.
+3. `execution.bridges` (in-binary topic relays) + `execution.features`
+   (capability axes).
+4. `structure.nodes[].params` — RESOLVED parameter values. ROS params
+   are system semantics, not spawn info (the two-artifact split excluded
+   cmd/env/params-FILES); the embedded target has no record.json to read
+   params from.
+5. Endpoint contracts (`PubContract`/`SubContract`) gain optional `qos`
+   (per-endpoint QoS already exists manifest-side).
+6. Per-node `lifecycle_autostart` (`none|configure|active`).
+
+**resolve:**
+7. Read the integrator's `system.toml` as the system-config input
+   (deploy/tiers/transports/bridges/features → execution layer).
+8. Merge manifest `actions:` into the index — `structure.actions` is
+   always empty today (the loader never merges actions).
+9. Per-target resolve ergonomics (one-model-all-targets vs per-target
+   `--target` resolves; TierDef already carries all platforms — decide
+   + document).
 
 ## Non-goals
 
