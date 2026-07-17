@@ -307,9 +307,17 @@ pub fn load_manifests(
     // agrees on the same node identity.
     for record in scheduled_records_from_dump(launch_dump) {
         if let Some(scope_id) = record.scope_id {
-            index
+            if let Some(prev) = index
                 .node_identity
-                .insert((scope_id, record.bare_name.clone()), record.fqn.clone());
+                .insert((scope_id, record.bare_name.clone()), record.fqn.clone())
+                && prev != record.fqn
+            {
+                warn!(
+                    "ambiguous node identity: two schedulable records named `{}` in scope {} \
+                     ({prev} vs {}); contract facts for this name may be misattributed",
+                    record.bare_name, scope_id, record.fqn
+                );
+            }
         }
     }
 

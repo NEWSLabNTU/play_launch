@@ -431,6 +431,13 @@ fn check_explain_shows_derived_override_and_default_provenance() {
         combined.contains("system file:") && combined.contains("contract["),
         "expected the system file / contract provenance footer lines:\n{combined}"
     );
+    // The fixture's override pins control_node (the chain sink) to priority
+    // 20, BELOW filter_component's derived 39 — the loader must call out
+    // that the pin defeats drain-toward-sink ordering (44.5 review).
+    assert!(
+        combined.contains("below its chain-derived rank"),
+        "expected the override-inversion warning for control_node's pin:\n{combined}"
+    );
 }
 
 /// Deliverable 4(c): an overlay that tightens the fixture's chain budget

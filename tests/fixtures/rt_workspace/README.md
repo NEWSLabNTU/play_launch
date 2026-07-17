@@ -93,22 +93,15 @@ play_launch check --sched launch/bringup.system.posix.yaml rt_demo bringup.launc
 play_launch check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
 ```
 
-**Known gap** (tracked, not fixed by this fixture): `--explain`'s tier table
-also logs a `chain member ... does not match any schedulable node` warning
-for all three chain members. This is a pre-existing FQN-qualification
-mismatch (`.superpowers/sdd/p44-w4-report.md`'s carry-forward note): chain
-segment node identity is resolved from the *contract* side (scope
-namespace + bare node name, e.g. `/sensor_node`), while the actual
-schedulable node comes from the *launch dump* side (the node's own
-`namespace=` attribute, e.g. `/perception/sensor_node`) — this fixture's
-nodes use exactly the bare-`namespace=`-outside-any-`<group>` shape that
-triggers it. `check` still exits 0 (it's a warning); the derived
-priorities for `filter_component`/`sensor_node` are correct as *numbers*
-(and are asserted exactly in `tests/tests/rt_workspace.rs`), but applying
-them via a real `launch --sched-apply` run would not currently reach the
-real `/perception/*` processes — only `control_node`'s override does
-(a different, unaffected resolution path). See
-`.superpowers/sdd/p44-w5-report.md` for the full write-up.
+**Note on identity resolution**: chain members are attributed to their real
+launch-side FQNs (`/perception/sensor_node`, `/perception/filter_component`,
+`/control/control_node`) even though the contract declares bare names — the
+loader reconciles contract-side identity against the launch dump
+(`ManifestIndex::node_identity`), so `--explain` attribution and real
+`launch --sched-apply` routing agree. An override pin (like `control_node`'s
+priority 20) always beats the chain-derived rank, including when that places
+the chain sink below its upstream members — a deliberate "overrides win"
+semantic; `--explain` shows both values.
 
 ## Build
 
