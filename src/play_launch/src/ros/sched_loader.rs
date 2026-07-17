@@ -537,6 +537,35 @@ pub fn derive_sched_plan(
         })
         .collect();
 
+    // Defensive FQN-consistency check (44.4 review, Important-3): a chain
+    // segment resolves node identity from the CONTRACT side
+    // (`manifest_loader::qualify_name`: scope namespace + bare name), while
+    // the plan's node set comes from the LAUNCH-DUMP side
+    // (`scheduled_records_from_dump`: node's own `namespace=` attribute
+    // wins over scope namespace). These diverge for nodes using a bare
+    // `namespace=` attribute outside a `<group>`/`<include>` boundary —
+    // and a chain-resolved FQN missing from the plan's node set means the
+    // chain_aware mapper would emit a phantom tier no process ever matches
+    // (the real node silently falls to the default tier). Warn loudly
+    // instead of letting that be a silent no-op. Full FQN unification is a
+    // tracked follow-up (W4 report, "notes for W5").
+    let mut warnings = Vec::new();
+    {
+        let plan_node_set: BTreeSet<&str> = input.nodes.iter().map(|n| n.name.as_str()).collect();
+        for fqn in &chain_member_nodes {
+            if !plan_node_set.contains(fqn.as_str()) {
+                let msg = format!(
+                    "scheduling: chain member `{fqn}` (contract-side FQN) does not match any \
+                     schedulable node in the launch tree — its chain-derived priority would \
+                     apply to no process (likely a namespace mismatch between the contract \
+                     scope and the node's own `namespace=` attribute)"
+                );
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+            }
+        }
+    }
+
     // `map_with_diagnostics` (Phase 44.3, defaulted on the trait) works for
     // every mapper: built-ins fall back to `map` + empty diagnostics, only
     // `chain_aware` populates `details`/`warnings`.
@@ -547,7 +576,6 @@ pub fn derive_sched_plan(
         })?;
 
     let mut plan = flatten_to_one_tier_per_node(&derived);
-    let mut warnings = Vec::new();
     let mut overridden: BTreeMap<String, String> = BTreeMap::new();
     apply_overrides(&mut plan, &file.overrides, &mut warnings, &mut overridden);
 
@@ -688,12 +716,20 @@ fn describe_map_warning(w: &MapWarning) -> String {
         MapWarning::BandTooNarrow {
             distinct_classes,
             band_width,
-        } => format!(
-            "scheduling: rt_priority_band (width {band_width}) is narrower than the \
-             {distinct_classes} distinct priority classes remaining after every legal collapse \
-             — some classes were clamped into the same priority (introduces cross-chain/bucket \
-             ties, never inversions)"
-        ),
+            clamped,
+        } => {
+            let who = if clamped.is_empty() {
+                String::new()
+            } else {
+                format!(" (clamped: {})", clamped.join(", "))
+            };
+            format!(
+                "scheduling: rt_priority_band (width {band_width}) is narrower than the \
+                 {distinct_classes} distinct priority classes remaining after every legal \
+                 collapse — the lowest classes{who} were clamped into the band minimum \
+                 (introduces cross-chain/bucket ties, never inversions)"
+            )
+        }
     }
 }
 
