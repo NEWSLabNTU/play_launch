@@ -479,6 +479,61 @@ mod tests {
         assert_eq!(budget, 0);
     }
 
+    /// Via topic exists in the merged tree but is NOT output by the
+    /// preceding path segment (make_slow outputs /link/out2, via is
+    /// /link/out) — must emit exactly the "not output by preceding"
+    /// chain-link error, and neither the topic-existence nor the
+    /// consumed-by-following errors (consume does consume /link/out).
+    #[test]
+    fn via_exists_but_not_output_by_preceding_segment_errors() {
+        let index = overlay_index(&chain_dump());
+        let errs: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| {
+                d.path == "chains.via_not_output_chain"
+                    && d.rule_id == "chain-link"
+                    && d.severity == Severity::Error
+            })
+            .collect();
+        assert_eq!(errs.len(), 1, "got: {:?}", index.merge_diagnostics);
+        assert!(
+            errs[0]
+                .message
+                .contains("not output by the preceding segment"),
+            "wrong branch: {}",
+            errs[0].message
+        );
+        assert!(errs[0].message.contains("/a/producer.make_slow"));
+    }
+
+    /// Via topic exists and IS output by the preceding segment (make →
+    /// /link/out), but the following segment (consume2) consumes
+    /// /link/out2 — must emit exactly the "not consumed by the following"
+    /// chain-link error and no others.
+    #[test]
+    fn via_exists_but_not_consumed_by_following_segment_errors() {
+        let index = overlay_index(&chain_dump());
+        let errs: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| {
+                d.path == "chains.via_not_consumed_chain"
+                    && d.rule_id == "chain-link"
+                    && d.severity == Severity::Error
+            })
+            .collect();
+        assert_eq!(errs.len(), 1, "got: {:?}", index.merge_diagnostics);
+        assert!(
+            errs[0]
+                .message
+                .contains("not consumed by the following segment"),
+            "wrong branch: {}",
+            errs[0].message
+        );
+        assert!(errs[0].message.contains("/b/consumer.consume2"));
+    }
+
     #[test]
     fn resolve_segment_returns_none_for_unknown_scope_or_path() {
         let index = overlay_index(&chain_dump());
