@@ -253,8 +253,11 @@ fn check_overlay_overrides_provider_sidecar() {
 /// `play_launch check rt_demo bringup.launch.xml` with **no `--sched` at
 /// all** must resolve `launch/bringup.system.posix.yaml` through the
 /// provider-sidecar channel (Phase 41.3) and print its provenance line, and
-/// derive with the v2 `rate_monotonic` mapper (not `manual` — proving the
-/// v2 file, not `system.toml`, was picked).
+/// derive with the v2 `chain_aware` mapper (Phase 44.5: switched from
+/// `rate_monotonic` as the showcase for the fixture's `points_to_cmd` chain)
+/// — not `manual`, proving the v2 file, not `system.toml`, was picked. Also
+/// asserts 0 manifest errors (deliverable 4a: the chain fixture must check
+/// clean).
 #[test]
 fn check_channel_resolution_picks_provider_platform_file_with_no_sched_flag() {
     if !require_rt_workspace() {
@@ -282,9 +285,13 @@ fn check_channel_resolution_picks_provider_platform_file_with_no_sched_flag() {
         "expected the provider platform-file provenance line in check output:\n{combined}"
     );
     assert!(
-        combined.contains("mapper=rate_monotonic"),
-        "expected the v2 rate_monotonic mapper (not the legacy manual bridge) \
+        combined.contains("mapper=chain_aware"),
+        "expected the v2 chain_aware mapper (not the legacy manual bridge) \
          to have been selected:\n{combined}"
+    );
+    assert!(
+        combined.contains("0 errors,"),
+        "expected the chain fixture to check with 0 manifest errors:\n{combined}"
     );
 }
 
@@ -335,10 +342,31 @@ fn check_channel_resolution_overlay_platform_file_beats_provider() {
 }
 
 /// `--explain` against the fixture's explicit provider platform file must
-/// show all three provenance kinds design doc §7 documents: `derived(...)`
-/// for the rate-monotonic nodes, `override(control_node)` for the pinned
-/// node, and `default (no timing facts)` for the fact-less container — plus
-/// the `system file:`/`contract[...]:` footer lines.
+/// show all provenance kinds design doc §7 documents, now under the
+/// `chain_aware` mapper (Phase 44.5): `derived(chain_aware: points_to_cmd
+/// segment drain ...)` for `filter_component` (the chain's event-segment
+/// sink relative to `sensor_node`), `derived(chain_aware: points_to_cmd
+/// boundary RM period=10ms)` for `sensor_node` (the chain's timer
+/// boundary), `override(control_node)` for the pinned node (overrides
+/// still beat the chain-derived rank), and `default (no timing facts)` for
+/// the fact-less container — plus the `system file:`/`contract[...]:`
+/// footer lines.
+///
+/// Priorities are asserted **exactly**, computed by hand from the
+/// chain_aware mapper spec against this fixture's `points_to_cmd` chain
+/// (band 10-40, see `.superpowers/sdd/p44-w5-report.md` for the full
+/// derivation): the chain resolves to one `Boundary` (`sensor_node.tick`,
+/// 100 Hz) followed by one `Segment` (`filter_component.filter` ->
+/// `control_node.control`, in source-to-sink declaration order). The
+/// mapper walks chain elements sink-to-source and, within a `Segment`,
+/// drain-toward-sink (downstream ranks above upstream): `control_node`
+/// (segment sink) > `filter_component` (segment source) > `sensor_node`
+/// (boundary, ranked below every segment item). Dense-rank-to-band
+/// (`band.max - k`, k=0,1,2 for a 3-item, no-collapse-needed sequence)
+/// gives `control_node`=40, `filter_component`=39, `sensor_node`=38 — but
+/// `control_node` is separately pinned by the platform file's `overrides:`
+/// to 20 (overrides always win), so only `filter_component`=39 and
+/// `sensor_node`=38 surface as chain_aware-derived priorities here.
 #[test]
 fn check_explain_shows_derived_override_and_default_provenance() {
     if !require_rt_workspace() {
@@ -374,12 +402,25 @@ fn check_explain_shows_derived_override_and_default_provenance() {
         "check --explain exited nonzero:\n{combined}"
     );
     assert!(
-        combined.contains("derived(rate_monotonic:"),
-        "expected a derived(rate_monotonic: ...) provenance entry:\n{combined}"
+        combined.contains("points_to_cmd"),
+        "expected the fixture's chain name in --explain provenance:\n{combined}"
+    );
+    assert!(
+        combined.contains("derived(chain_aware: points_to_cmd segment drain")
+            && combined.contains("-> prio 39"),
+        "expected filter_component's segment-drain provenance at the \
+         by-hand-derived priority 39:\n{combined}"
+    );
+    assert!(
+        combined.contains("derived(chain_aware: points_to_cmd boundary RM period=10ms)")
+            && combined.contains("-> prio 38"),
+        "expected sensor_node's boundary-RM provenance at the by-hand-derived \
+         priority 38:\n{combined}"
     );
     assert!(
         combined.contains("override(control_node)"),
-        "expected an override(control_node) provenance entry:\n{combined}"
+        "expected an override(control_node) provenance entry (overrides beat \
+         the chain-derived rank 40):\n{combined}"
     );
     assert!(
         combined.contains("default (no timing facts)"),
@@ -389,6 +430,127 @@ fn check_explain_shows_derived_override_and_default_provenance() {
     assert!(
         combined.contains("system file:") && combined.contains("contract["),
         "expected the system file / contract provenance footer lines:\n{combined}"
+    );
+}
+
+/// Deliverable 4(c): an overlay that tightens the fixture's chain budget
+/// below the chain's own `sampling_cost` (the `sensor_node.tick` boundary's
+/// period alone, 10ms at 100 Hz) must trigger the `chain-sampling-
+/// feasibility` warning (structural infeasibility — no scheduling
+/// assignment can fix it) — `check` must still exit 0 (warnings never
+/// fail `check`).
+#[test]
+fn check_chain_budget_tightened_below_sampling_cost_warns_infeasible() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+
+    let overlay_root = tempfile::TempDir::new().expect("failed to create overlay root");
+    let overlay_launch_dir = overlay_root.path().join("rt_demo/launch");
+    fs::create_dir_all(&overlay_launch_dir).expect("failed to create overlay launch dir");
+    fs::write(
+        overlay_launch_dir.join("bringup.contract.yaml"),
+        "\
+version: 1
+
+nodes:
+  sensor_node:
+    pub:
+      points_raw:
+        min_rate_hz: 100
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 100 } }
+        output: [points_raw]
+
+  filter_component:
+    sub:
+      points_raw:
+        min_rate_hz: 100
+    pub:
+      points_filtered:
+        min_rate_hz: 100
+    paths:
+      filter:
+        trigger: { input: [points_raw] }
+        output: [points_filtered]
+        max_latency_ms: 5
+
+  control_node:
+    criticality: high
+    sub:
+      points_filtered:
+        min_rate_hz: 100
+        max_age_ms: 50
+    pub:
+      cmd:
+        min_rate_hz: 100
+    paths:
+      control:
+        trigger: { input: [points_filtered] }
+        output: [cmd]
+        max_latency_ms: 10
+
+chains:
+  points_to_cmd:
+    semantics: reaction
+    max_latency_ms: 5
+    segments:
+      - { scope: /, path: tick }
+      - { via: /perception/points_raw }
+      - { scope: /, path: filter }
+      - { via: /perception/points_filtered }
+      - { scope: /, path: control }
+
+topics:
+  /perception/points_raw:
+    type: std_msgs/msg/String
+    pub: [sensor_node/points_raw]
+    sub: [filter_component/points_raw]
+    rate_hz: 100
+
+  /perception/points_filtered:
+    type: std_msgs/msg/String
+    pub: [filter_component/points_filtered]
+    sub: [control_node/points_filtered]
+    rate_hz: 100
+
+  /control/cmd:
+    type: std_msgs/msg/String
+    pub: [control_node/cmd]
+    rate_hz: 100
+",
+    )
+    .expect("failed to write tightened-budget overlay contract");
+
+    let output = fixtures::play_launch_cmd(&env)
+        .args(["check", "--contracts"])
+        .arg(overlay_root.path())
+        .args(["rt_demo", "bringup.launch.xml"])
+        .output()
+        .expect("failed to run play_launch check");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        output.status.success(),
+        "tightened chain budget must warn, not fail, check:\n{combined}"
+    );
+    assert!(
+        combined.contains("chain-sampling-feasibility"),
+        "expected the chain-sampling-feasibility warning:\n{combined}"
+    );
+    assert!(
+        combined.contains("points_to_cmd"),
+        "expected the warning to name the infeasible chain:\n{combined}"
+    );
+    assert!(
+        combined.contains("sampling_cost"),
+        "expected the sampling_cost breakdown in the warning:\n{combined}"
     );
 }
 
@@ -731,7 +893,10 @@ fn resolve_emits_joined_system_model() {
         .as_object()
         .expect("contracts.sub_endpoints");
     assert!(
-        subs.contains_key("/control/control_node/points_raw"),
+        // Phase 44.5: control_node now subscribes points_filtered (the
+        // chain's second hop), not points_raw directly — see
+        // bringup.contract.yaml's `points_to_cmd` chain.
+        subs.contains_key("/control/control_node/points_filtered"),
         "sub contract key must use the launch-side node FQN, got: {:?}",
         subs.keys().collect::<Vec<_>>()
     );
@@ -809,9 +974,10 @@ fn replay_model_binding_gate_refuses_stale_record() {
 
 /// `play_launch check --export-graph <path>.json rt_demo bringup.launch.xml`
 /// (provider-sidecar contract, no `--sched`) must exit 0 and write a JSON
-/// export with the 3 nodes / 3 topics / 2 node-level paths declared in
-/// `bringup.contract.yaml` (no scope-level path, no cycles — a straight
-/// sensor -> filter/control pipeline).
+/// export with the 3 nodes / 3 topics / 3 node-level paths declared in
+/// `bringup.contract.yaml` (Phase 44.5: sensor_node's `tick` + filter_component's
+/// `filter` + control_node's `control` — no scope-level path, no cycles — a
+/// straight sensor -> filter -> control pipeline).
 #[test]
 fn check_export_graph_json_matches_contract() {
     if !require_rt_workspace() {
@@ -863,8 +1029,9 @@ fn check_export_graph_json_matches_contract() {
     );
     assert_eq!(
         array_len(&graph, "node_paths"),
-        2,
-        "expected 2 node-level paths (filter_component.main, control_node.main): {graph}"
+        3,
+        "expected 3 node-level paths (Phase 44.5: sensor_node.tick, \
+         filter_component.filter, control_node.control): {graph}"
     );
     assert_eq!(
         array_len(&graph, "scope_paths"),
