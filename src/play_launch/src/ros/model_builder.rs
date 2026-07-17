@@ -401,8 +401,24 @@ pub fn build_system_model(
             },
         );
     }
-    // NOTE: manifest `actions:` are not merged into ManifestIndex yet;
-    // structure.actions stays empty until the loader grows that pass.
+    for (fqn_a, a) in &index.actions {
+        structure.actions.insert(
+            fqn_a.clone(),
+            model::ServiceWiring {
+                srv_type: a.srv_type.clone(),
+                server: a
+                    .servers
+                    .iter()
+                    .map(|e| resolve_endpoint_ref(&structure.nodes, e))
+                    .collect(),
+                client: a
+                    .clients
+                    .iter()
+                    .map(|e| resolve_endpoint_ref(&structure.nodes, e))
+                    .collect(),
+            },
+        );
+    }
 
     for (fqn_e, side) in &index.externals {
         use ros_launch_manifest_types::ExternalSide as S;

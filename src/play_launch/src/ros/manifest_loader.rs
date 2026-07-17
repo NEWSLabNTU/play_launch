@@ -228,6 +228,11 @@ pub struct ManifestIndex {
     pub topics: BTreeMap<String, ResolvedTopic>,
     /// All resolved services (FQN → service info, merged across scopes).
     pub services: BTreeMap<String, ResolvedService>,
+    /// R1-P2 — all resolved actions (FQN → info, merged across scopes;
+    /// same shape as services: type must agree, endpoint lists union).
+    /// Previously the loader silently dropped `actions:` — the model's
+    /// `structure.actions` was always empty.
+    pub actions: BTreeMap<String, ResolvedService>,
     /// All resolved node paths.
     pub node_paths: Vec<ResolvedNodePath>,
     /// Resolved scope-level paths (input/output as resolved topic FQNs).
@@ -381,6 +386,7 @@ pub fn load_manifests(
         // Resolve names with namespace prefix and merge across scopes
         resolve_topics(&manifest, scope, &mut index);
         resolve_services(&manifest, scope, &mut index);
+        resolve_actions(&manifest, scope, &mut index);
         resolve_node_paths(&manifest, scope, &mut index);
         resolve_scope_paths(&manifest, scope, &mut index);
 
@@ -1353,6 +1359,71 @@ fn resolve_services(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifes
                 ResolvedService {
                     fqn,
                     srv_type: service_decl.srv_type.clone(),
+                    servers,
+                    clients,
+                    scope_ids: vec![scope.id],
+                },
+            );
+        }
+    }
+}
+
+/// R1-P2 — resolve + merge `actions:` (mirror of `resolve_services`;
+/// actions share the server/client wiring shape).
+fn resolve_actions(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
+    let ns = &scope.ns;
+
+    for (action_name, action_decl) in &manifest.actions {
+        let fqn = qualify_name(ns, action_name);
+
+        let servers: Vec<String> = action_decl
+            .server
+            .iter()
+            .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
+            .collect();
+        let clients: Vec<String> = action_decl
+            .client
+            .iter()
+            .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
+            .collect();
+
+        if let Some(existing) = index.actions.get_mut(&fqn) {
+            if existing.srv_type != action_decl.action_type {
+                index.merge_diagnostics.push(Diagnostic {
+                    rule_id: "consistency".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "action '{}' type mismatch: '{}' vs '{}' in scope {} ({}/{})",
+                        existing.fqn,
+                        existing.srv_type,
+                        action_decl.action_type,
+                        scope.id,
+                        scope.pkg().unwrap_or("?"),
+                        scope.file().unwrap_or("?"),
+                    ),
+                    path: format!("actions.{action_name}.type"),
+                    span: None,
+                });
+            }
+            for s in servers {
+                if !existing.servers.contains(&s) {
+                    existing.servers.push(s);
+                }
+            }
+            for c in clients {
+                if !existing.clients.contains(&c) {
+                    existing.clients.push(c);
+                }
+            }
+            if !existing.scope_ids.contains(&scope.id) {
+                existing.scope_ids.push(scope.id);
+            }
+        } else {
+            index.actions.insert(
+                fqn.clone(),
+                ResolvedService {
+                    fqn,
+                    srv_type: action_decl.action_type.clone(),
                     servers,
                     clients,
                     scope_ids: vec![scope.id],

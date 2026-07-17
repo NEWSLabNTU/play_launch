@@ -192,6 +192,7 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
         contracts: args.common.contracts.clone(),
         no_provider_contracts: args.common.no_provider_contracts,
         sched: args.common.sched.clone(),
+        system: None,
         target: args.common.target.clone(),
         out: "system_model.yaml".to_string(),
     };
