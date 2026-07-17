@@ -221,15 +221,51 @@ impl SchedPlan {
             mode,
             warnings,
             // Phase 43.3's `SystemModel` execution layer is bindings-only
-            // (fqn -> tier name); it doesn't carry chain structure (that's
-            // resolved once at `play_launch resolve` time and not re-emitted
-            // into the model). The container co-location warning is simply
-            // unavailable on the `--model` path until a future wave threads
-            // chain membership through the model too — documented gap, not
-            // a silent one (44.4 W4 report).
+            // (fqn -> tier name); it doesn't carry chain structure, and
+            // extending the YAML artifact schema is 44.7's coordination —
+            // so this stays empty here. The replay path compensates:
+            // `chain_colocation_warnings_for_plan` falls back to re-deriving
+            // membership from the manifest index (always re-loaded at
+            // replay time) when this set is empty, so the co-location
+            // warning DOES fire on the default `launch` → model path
+            // (44.4 review, Critical-1).
             chain_member_nodes: BTreeSet::new(),
         })
     }
+}
+
+/// [`chain_container_colocation_warnings`] with the chain-membership source
+/// resolved for the caller (Phase 44.4 review, Critical-1): use the plan's
+/// own `chain_member_nodes` when populated (the legacy platform-file path,
+/// `SchedPlan::build`), else re-derive membership from the manifest index
+/// (`sched_derive::chain_member_fqns`) — the model path
+/// (`SchedPlan::from_model`) carries no chain structure (the SystemModel
+/// YAML execution layer is bindings-only), but replay always re-loads the
+/// manifest index, so membership is derivable right here without extending
+/// the model schema.
+///
+/// **Residual gap** (documented, accepted): `play_launch replay --model
+/// <file>` against a bare artifact on a host where no contracts resolve at
+/// replay time (no overlay given, no provider sidecars present) has no
+/// membership source at all — `index` is empty/`None` and the warning
+/// cannot fire. The default `launch` flow never hits this (it resolves and
+/// replays on the same host with the same contract sources).
+pub fn chain_colocation_warnings_for_plan(
+    dump: &LaunchDump,
+    index: Option<&ManifestIndex>,
+    container_mode: ContainerMode,
+    plan: &SchedPlan,
+) -> Vec<String> {
+    let fallback;
+    let members: &BTreeSet<String> = if !plan.chain_member_nodes.is_empty() {
+        &plan.chain_member_nodes
+    } else if let Some(index) = index {
+        fallback = crate::ros::sched_derive::chain_member_fqns(index);
+        &fallback
+    } else {
+        return Vec::new();
+    };
+    chain_container_colocation_warnings(dump, container_mode, members)
 }
 
 /// Chain members co-located in a non-isolated container share one OS
@@ -643,5 +679,238 @@ mod model_tests {
             err.to_string().contains("no `posix` placement"),
             "got: {err}"
         );
+    }
+
+    // ── Phase 44.4 (review Important-4): container co-location warning ──
+
+    /// A container with two composable chain members plus one non-chain
+    /// composable — the co-location warning must name the container and
+    /// exactly the two chain members.
+    fn dump_with_colocated_chain_members() -> LaunchDump {
+        let json = serde_json::json!({
+            "node": [],
+            "load_node": [
+                {
+                    "package": "p",
+                    "plugin": "p::A",
+                    "target_container_name": "shared_container",
+                    "node_name": "chain_a",
+                    "namespace": "/perception",
+                    "scope": 0
+                },
+                {
+                    "package": "p",
+                    "plugin": "p::B",
+                    "target_container_name": "shared_container",
+                    "node_name": "chain_b",
+                    "namespace": "/perception",
+                    "scope": 0
+                },
+                {
+                    "package": "p",
+                    "plugin": "p::C",
+                    "target_container_name": "shared_container",
+                    "node_name": "bystander",
+                    "namespace": "/perception",
+                    "scope": 0
+                }
+            ],
+            "container": [{
+                "executable": "component_container",
+                "package": "rclcpp_components",
+                "name": "shared_container",
+                "namespace": "/perception",
+                "params_files": [],
+                "cmd": [],
+                "scope": 0
+            }],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [
+                {"id": 0, "ns": "/", "parent": null}
+            ]
+        });
+        serde_json::from_value(json).expect("valid LaunchDump")
+    }
+
+    fn chain_members() -> BTreeSet<String> {
+        BTreeSet::from([
+            "/perception/chain_a".to_string(),
+            "/perception/chain_b".to_string(),
+        ])
+    }
+
+    #[test]
+    fn colocation_warning_fires_for_stock_mode_names_container_and_members() {
+        let dump = dump_with_colocated_chain_members();
+        let warnings =
+            chain_container_colocation_warnings(&dump, ContainerMode::Stock, &chain_members());
+        assert_eq!(warnings.len(), 1, "got: {warnings:?}");
+        let w = &warnings[0];
+        assert!(w.contains("/perception/shared_container"), "{w}");
+        assert!(
+            w.contains("/perception/chain_a") && w.contains("/perception/chain_b"),
+            "{w}"
+        );
+        assert!(!w.contains("bystander"), "non-chain member must not be named: {w}");
+    }
+
+    #[test]
+    fn colocation_warning_silent_for_isolated_mode() {
+        let dump = dump_with_colocated_chain_members();
+        let warnings =
+            chain_container_colocation_warnings(&dump, ContainerMode::Isolated, &chain_members());
+        assert!(warnings.is_empty(), "got: {warnings:?}");
+    }
+
+    #[test]
+    fn colocation_warning_silent_for_single_chain_member_in_container() {
+        let dump = dump_with_colocated_chain_members();
+        let one = BTreeSet::from(["/perception/chain_a".to_string()]);
+        let warnings = chain_container_colocation_warnings(&dump, ContainerMode::Stock, &one);
+        assert!(warnings.is_empty(), "one member co-locates with nothing: {warnings:?}");
+    }
+
+    #[test]
+    fn colocation_warning_suffix_matches_relative_container_target() {
+        // Same shape but with a relative target name ("shared_container")
+        // while the container's FQN is "/perception/shared_container" —
+        // exercises the suffix-match fallback (mirrors builder.rs).
+        let dump = dump_with_colocated_chain_members();
+        // dump already uses the relative target — assert the exact-match
+        // branch did NOT silently save us: the target "shared_container"
+        // != FQN "/perception/shared_container", so a hit proves suffix
+        // matching worked.
+        let warnings =
+            chain_container_colocation_warnings(&dump, ContainerMode::Stock, &chain_members());
+        assert_eq!(warnings.len(), 1, "suffix match must resolve the container");
+    }
+
+    /// Critical-1 (44.4 review): the default `launch` path builds its plan
+    /// via `SchedPlan::from_model`, whose `chain_member_nodes` is empty —
+    /// `chain_colocation_warnings_for_plan` must fall back to deriving
+    /// membership from the manifest index so the warning still fires under
+    /// stock container mode.
+    #[test]
+    fn colocation_warning_fires_through_model_path_via_index_fallback() {
+        use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedNodePath};
+        use ros_launch_manifest_types::{
+            ChainDecl, ChainSegment, ChainSemantics, Manifest, PathDecl, Trigger,
+        };
+        use std::collections::BTreeMap;
+
+        let dump = dump_with_colocated_chain_members();
+
+        // Manifest index: chain_a (timer path) -> via -> chain_b (input
+        // path), both under scope 0 (ns "/" — but the nodes' contract FQNs
+        // must match the launch FQNs, so declare them with the namespace
+        // folded into node_paths' node_fqn directly).
+        let mut index = crate::ros::manifest_loader::ManifestIndex::default();
+        index.node_paths.push(ResolvedNodePath {
+            node_fqn: "/perception/chain_a".to_string(),
+            path_name: "tick".to_string(),
+            path: PathDecl {
+                trigger: Some(Trigger::Timer { rate_hz: 10.0 }),
+                output: vec!["out".to_string()],
+                ..Default::default()
+            },
+            scope_id: 0,
+        });
+        index.node_paths.push(ResolvedNodePath {
+            node_fqn: "/perception/chain_b".to_string(),
+            path_name: "react".to_string(),
+            path: PathDecl {
+                trigger: Some(Trigger::Input(vec!["in".to_string()])),
+                ..Default::default()
+            },
+            scope_id: 0,
+        });
+        index.topics.insert(
+            "/perception/link".to_string(),
+            crate::ros::manifest_loader::ResolvedTopic {
+                fqn: "/perception/link".to_string(),
+                msg_type: "std_msgs/msg/String".to_string(),
+                qos: None,
+                publishers: vec!["/perception/chain_a/out".to_string()],
+                subscribers: vec!["/perception/chain_b/in".to_string()],
+                rate_hz: None,
+                max_transport_ms: None,
+                drop: None,
+                scope_ids: vec![0],
+            },
+        );
+        let mut chains = BTreeMap::new();
+        chains.insert(
+            "pipeline".to_string(),
+            ChainDecl {
+                semantics: ChainSemantics::Reaction,
+                max_latency_ms: 500.0,
+                segments: vec![
+                    ChainSegment::Path {
+                        scope: "/".to_string(),
+                        path: "tick".to_string(),
+                    },
+                    ChainSegment::Via {
+                        via: "/perception/link".to_string(),
+                    },
+                    ChainSegment::Path {
+                        scope: "/".to_string(),
+                        path: "react".to_string(),
+                    },
+                ],
+            },
+        );
+        index.manifests.insert(
+            0,
+            ResolvedManifest {
+                scope_id: 0,
+                pkg: None,
+                file: "demo.launch.xml".to_string(),
+                ns: "/".to_string(),
+                channel: ContractChannel::Provider,
+                contract_path: std::path::PathBuf::new(),
+                manifest: Manifest {
+                    version: 1,
+                    chains,
+                    ..Default::default()
+                },
+                source: String::new(),
+                diagnostics: vec![],
+            },
+        );
+
+        // A model-path plan: empty chain_member_nodes (exactly what
+        // `SchedPlan::from_model` produces).
+        let plan = SchedPlan {
+            by_fqn: HashMap::new(),
+            mode: SchedApplyMode::Warn,
+            warnings: vec![],
+            chain_member_nodes: BTreeSet::new(),
+        };
+
+        let warnings = chain_colocation_warnings_for_plan(
+            &dump,
+            Some(&index),
+            ContainerMode::Stock,
+            &plan,
+        );
+        assert_eq!(
+            warnings.len(),
+            1,
+            "model-path plan (empty chain_member_nodes) must fall back to the \
+             manifest index: {warnings:?}"
+        );
+        assert!(warnings[0].contains("/perception/shared_container"), "{}", warnings[0]);
+        assert!(
+            warnings[0].contains("/perception/chain_a")
+                && warnings[0].contains("/perception/chain_b"),
+            "{}",
+            warnings[0]
+        );
+
+        // And the isolated mode stays silent through the same wrapper.
+        let none =
+            chain_colocation_warnings_for_plan(&dump, Some(&index), ContainerMode::Isolated, &plan);
+        assert!(none.is_empty(), "got: {none:?}");
     }
 }

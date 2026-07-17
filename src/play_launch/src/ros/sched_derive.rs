@@ -62,6 +62,29 @@ pub fn mapper_input_from_dump(
     }
 }
 
+/// Every node FQN that participates in at least one resolved `chains:`
+/// declaration (Phase 44.4 review, Critical-1): resolves chains against the
+/// index and collects the member node identities. Used by the replay path
+/// to compute chain membership when the scheduling plan came from a
+/// `SystemModel` (`SchedPlan::from_model`, whose execution layer is
+/// bindings-only and carries no chain structure) — the manifest index is
+/// re-loaded at replay time anyway, so membership is derivable there
+/// without extending the SystemModel YAML schema.
+pub fn chain_member_fqns(index: &ManifestIndex) -> std::collections::BTreeSet<String> {
+    resolve_chains(index)
+        .iter()
+        .flat_map(|c| c.elements.iter())
+        .flat_map(|e| -> Vec<String> {
+            match e {
+                ChainElement::Segment {
+                    nodes_in_topo_order,
+                } => nodes_in_topo_order.iter().map(|(n, _)| n.clone()).collect(),
+                ChainElement::Boundary { node, .. } => vec![node.clone()],
+            }
+        })
+        .collect()
+}
+
 fn build_mapper_node(record: &ScheduledRecord, index: Option<&ManifestIndex>) -> MapperNode {
     let Some(index) = index else {
         return MapperNode {

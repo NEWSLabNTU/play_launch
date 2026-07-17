@@ -611,3 +611,104 @@ nodes = [\"listener\"]
         "expected the warning to cite both source files, got: {stderr}"
     );
 }
+
+// ── chain_aware end-to-end: chain fixture + platform file + --explain (44.4) ──
+
+/// A provider-sidecar contract declaring a two-segment chain across a timer
+/// boundary, checked with a `chain_aware` platform file: `--explain` must
+/// show chain provenance for the segment members.
+#[test]
+fn check_chain_aware_explain_shows_chain_provenance() {
+    let launch = simple_launch_dir().join("pure_nodes.launch.xml");
+    if !launch.exists() {
+        eprintln!("Skipping: simple_test fixture not available");
+        return;
+    }
+
+    let tmp = tempfile::TempDir::new().expect("failed to create temp dir");
+    let launch_copy = tmp.path().join("pure_nodes.launch.xml");
+    std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
+
+    std::fs::write(
+        tmp.path().join("pure_nodes.contract.yaml"),
+        r#"version: 1
+nodes:
+  talker:
+    pub:
+      chatter: {}
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [chatter]
+        max_latency_ms: 5
+  listener:
+    sub:
+      chatter: {}
+    pub:
+      done: {}
+    paths:
+      handle:
+        trigger: { input: [chatter] }
+        output: [done]
+        max_latency_ms: 20
+chains:
+  test_chain:
+    semantics: reaction
+    max_latency_ms: 500
+    segments:
+      - { scope: /, path: tick }
+      - { via: /chatter }
+      - { scope: /, path: handle }
+topics:
+  chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
+    sub: [listener/chatter]
+    rate_hz: 10
+  done:
+    type: std_msgs/msg/String
+    pub: [listener/done]
+"#,
+    )
+    .expect("failed to write chain contract");
+
+    let platform = tmp.path().join("system.posix.yaml");
+    std::fs::write(
+        &platform,
+        r#"target: posix
+mapper: chain_aware
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+"#,
+    )
+    .expect("failed to write platform file");
+
+    let output = Command::new(play_launch_bin())
+        .args([
+            "check",
+            "--sched",
+            platform.to_str().unwrap(),
+            "--explain",
+            launch_copy.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run play_launch");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    assert!(
+        output.status.success(),
+        "check --sched chain_aware --explain failed:\n{combined}"
+    );
+    assert!(
+        combined.contains("chain_aware"),
+        "expected chain_aware provenance in explain output:\n{combined}"
+    );
+    assert!(
+        combined.contains("test_chain"),
+        "expected the chain name in explain provenance:\n{combined}"
+    );
+}

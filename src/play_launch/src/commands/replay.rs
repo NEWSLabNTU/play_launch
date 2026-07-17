@@ -615,13 +615,18 @@ async fn play(
         // Phase 44.4 §4: chain-member composable nodes co-located in a
         // non-isolated container can't receive distinct priorities —
         // best-effort warning, computed here (not at `check` time) since
-        // `--container-mode` is a runtime replay flag. See
-        // `chain_container_colocation_warnings`'s doc comment for the
-        // placement decision.
-        for msg in crate::execution::sched_plan::chain_container_colocation_warnings(
+        // `--container-mode` is a runtime replay flag. Works on BOTH
+        // scheduling sources: the legacy plan carries its own
+        // `chain_member_nodes`; the model plan (the default `launch` path)
+        // falls back to re-deriving membership from the manifest index
+        // loaded above (44.4 review, Critical-1). See
+        // `chain_colocation_warnings_for_plan`'s doc comment for the
+        // placement decision and the residual bare-`--model` gap.
+        for msg in crate::execution::sched_plan::chain_colocation_warnings_for_plan(
             &launch_dump,
+            _manifest_index.as_ref(),
             common.container_mode,
-            &plan.chain_member_nodes,
+            &plan,
         ) {
             tracing::warn!("{msg}");
             plan.warnings.push(msg);

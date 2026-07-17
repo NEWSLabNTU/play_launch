@@ -404,19 +404,19 @@ checksum = "3ff05f8caa9038894637571ae6b9e29466c1f4f829d26c9b28f869a29cbe3445"
 
 [[patch.unused]]
 name = "action_msgs"
-version = "1.2.1"
+version = "1.2.2"
 
 [[patch.unused]]
 name = "builtin_interfaces"
-version = "1.2.1"
+version = "1.2.2"
 
 [[patch.unused]]
 name = "composition_interfaces"
-version = "1.2.1"
+version = "1.2.2"
 
 [[patch.unused]]
 name = "diagnostic_msgs"
-version = "4.2.4"
+version = "4.9.0"
 
 [[patch.unused]]
 name = "example_interfaces"
@@ -424,7 +424,7 @@ version = "0.9.3"
 
 [[patch.unused]]
 name = "geometry_msgs"
-version = "4.2.4"
+version = "4.9.0"
 
 [[patch.unused]]
 name = "lifecycle_msgs"
@@ -436,15 +436,15 @@ version = "0.1.0"
 
 [[patch.unused]]
 name = "rcl_interfaces"
-version = "1.2.1"
+version = "1.2.2"
 
 [[patch.unused]]
 name = "rosgraph_msgs"
-version = "1.2.1"
+version = "1.2.2"
 
 [[patch.unused]]
 name = "std_msgs"
-version = "4.2.4"
+version = "4.9.0"
 
 [[patch.unused]]
 name = "test_msgs"
