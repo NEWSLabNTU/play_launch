@@ -104,6 +104,11 @@ system config → execution. Consumers slice: play_launch runtime takes the
 
 ## Work items (proposal)
 
+Vocabulary v2 coordination (Phase 44.7): see
+[system-model-vocab-v2-embedding.md](system-model-vocab-v2-embedding.md)
+for what layer 2 gains from embedding resolved chains/triggers and the
+exact `types`/`sched`-crate structs to share.
+
 1. `ros-launch-manifest`: add `model` crate — `SystemModel` types, serde,
    schema doc, golden-file round-trip tests. No behavior, pure schema.
 2. play_launch: extract the existing parse→bind→merge→check pipeline into a

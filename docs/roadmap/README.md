@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 34 phases total; 27 complete, 2 in progress, 5 planned.
+Started October 2025. 34 phases total; 27 complete, 3 in progress, 4 planned.
 
 Completed phase docs are in `archive/`.
 
@@ -44,7 +44,7 @@ Completed phase docs are in `archive/`.
 | 41 | RT Config v2 (derived scheduling) | 🔄 41.1–41.5 done, 41.6 gated | — |
 | 42 | Autoware System Model Study | ✅ 42.0–42.6 | 2026-07-17 |
 | 43 | Runtime Consumes the SystemModel | 🔄 43.1–43.3, 43.5 done; 43.4 re-scoped | — |
-| 44 | Vocabulary v2 + Chain-Aware Mapper | 📋 Planned | — |
+| 44 | Vocabulary v2 + Chain-Aware Mapper | 🔄 44.1–44.6, 44.8 done; 44.7 handoff | — |
 
 ---
 
@@ -137,9 +137,9 @@ Design: [docs/superpowers/specs/2026-07-16-rt-config-v2-design.md](../superpower
 See [phase-43-runtime_consumes_system_model.md](./phase-43-runtime_consumes_system_model.md).
 Design: [docs/design/system-model.md](../design/system-model.md) + nano-ros RFC-0050.
 
-### Phase 44: Vocabulary v2 + Chain-Aware Mapper (planned)
+### Phase 44: Vocabulary v2 + Chain-Aware Mapper (44.1–44.6, 44.8 done; 44.7 handoff)
 
-Linux implementation of the Phase 42 designs: additive contract vocabulary (explicit path triggers timer/input/once/spontaneous, `sync:`, `buffer:`, integrator-owned `chains:` with checked `via:` links) + the `chain_aware` mapper (clock-segmented chains — PiCAS drain-toward-sink within event segments, RM boundaries, criticality-RM/DM fallback) with nine checker rules (`chain-link`, `chain-sampling-feasibility`, `sync-feasibility`, `queue-drain-rate`, `once-durability`, lints...). Validated on rt_workspace (new chain example) and Autoware planning_simulator (trigger annotation from the W3 census + one sensing→actuation chain, closing the `/planning/trajectory` declaration gap). SystemModel layer-2 embedding coordinated with Phase 43.
+Linux implementation of the Phase 42 designs: additive contract vocabulary (explicit path triggers timer/input/once/spontaneous, `sync:`, `buffer:`, integrator-owned `chains:` with checked `via:` links) + the `chain_aware` mapper (clock-segmented chains — PiCAS drain-toward-sink within event segments, RM boundaries, criticality-RM/DM fallback) with 9 new checker rules (`explicit-trigger`, `inherited-rate`, `once-durability`, `sync-feasibility`, `queue-drain-rate`, `chain-shape`, `chain-link`, `chain-budget`, `chain-sampling-feasibility`). Validated on rt_workspace (`points_to_cmd` chain example, mapper switched to `chain_aware`) and at scale on Autoware planning_simulator (trigger annotation from the W3 census + 3 chains, closing the `/planning/trajectory` declaration gap by authoring the real bridge node `autoware_planning_validator`) — 2 real defects found and fixed: interior clock boundaries (`chain-link` rejected any boundary but the first — fixed via the boundary-consumption rule) and a group-nesting node-identity gap (a node behind a bare `<group>` resolved to a phantom FQN — fixed by indexing identity under the nearest ancestor file scope too). `docs/guide/rt-scheduling.md` gained a "Chains" authoring-workflow section (§1.7); `launch-manifest.md` gained the vocabulary-v2 field reference + all new rule severities. SystemModel layer-2 embedding: coordination note delivered ([system-model-vocab-v2-embedding.md](../design/system-model-vocab-v2-embedding.md)); the embedding itself is the Phase 43/SystemModel track's follow-up.
 
 See [phase-44-vocab_v2_chain_mapper.md](./phase-44-vocab_v2_chain_mapper.md).
 Designs: [vocabulary v2](../superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md) · [chain-aware mapper](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
