@@ -308,6 +308,13 @@ pub struct ResolveArgs {
     #[arg(long)]
     pub sched: Option<std::path::PathBuf>,
 
+    /// R1-P1 — the integrator `system.toml` (deploy placement, transports,
+    /// bridges, capability features, domain/locator/rmw ladder). Fills the
+    /// model's execution layer; consumers never parse system.toml
+    /// themselves (canonical-path decision).
+    #[arg(long, value_name = "system.toml")]
+    pub system: Option<std::path::PathBuf>,
+
     /// Scheduling target the platform file must declare.
     #[arg(long, default_value = "posix")]
     pub target: String,
