@@ -44,6 +44,7 @@ Completed phase docs are in `archive/`.
 | 41 | RT Config v2 (derived scheduling) | 🔄 41.1–41.5 done, 41.6 gated | — |
 | 42 | Autoware System Model Study | ✅ 42.0–42.6 | 2026-07-17 |
 | 43 | Runtime Consumes the SystemModel | 🔄 43.1–43.3, 43.5 done; 43.4 re-scoped | — |
+| 44 | Vocabulary v2 + Chain-Aware Mapper | 📋 Planned | — |
 
 ---
 
@@ -135,6 +136,13 @@ Design: [docs/superpowers/specs/2026-07-16-rt-config-v2-design.md](../superpower
 
 See [phase-43-runtime_consumes_system_model.md](./phase-43-runtime_consumes_system_model.md).
 Design: [docs/design/system-model.md](../design/system-model.md) + nano-ros RFC-0050.
+
+### Phase 44: Vocabulary v2 + Chain-Aware Mapper (planned)
+
+Linux implementation of the Phase 42 designs: additive contract vocabulary (explicit path triggers timer/input/once/spontaneous, `sync:`, `buffer:`, integrator-owned `chains:` with checked `via:` links) + the `chain_aware` mapper (clock-segmented chains — PiCAS drain-toward-sink within event segments, RM boundaries, criticality-RM/DM fallback) with nine checker rules (`chain-link`, `chain-sampling-feasibility`, `sync-feasibility`, `queue-drain-rate`, `once-durability`, lints...). Validated on rt_workspace (new chain example) and Autoware planning_simulator (trigger annotation from the W3 census + one sensing→actuation chain, closing the `/planning/trajectory` declaration gap). SystemModel layer-2 embedding coordinated with Phase 43.
+
+See [phase-44-vocab_v2_chain_mapper.md](./phase-44-vocab_v2_chain_mapper.md).
+Designs: [vocabulary v2](../superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md) · [chain-aware mapper](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
 ---
 
