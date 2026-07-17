@@ -44,23 +44,36 @@ use std::collections::HashMap;
 
 /// A resolved chain path segment: everything `chain-link`/`chain-budget`
 /// need about the path a `{scope, path}` segment points at.
-struct ResolvedSegment {
+pub(crate) struct ResolvedSegment {
     /// Human-readable label for diagnostics.
     label: String,
-    trigger: EffectiveTrigger,
-    max_latency_ms: Option<f64>,
+    pub(crate) trigger: EffectiveTrigger,
+    pub(crate) max_latency_ms: Option<f64>,
     /// Resolved input topic FQNs.
     input_topics: Vec<String>,
     /// Resolved output topic FQNs.
     output_topics: Vec<String>,
+    /// The owning node's FQN, when this segment resolved to a node-level
+    /// path (`index.node_paths`). `None` when it resolved to a scope-level
+    /// aggregate path instead (`index.scope_paths`) — those have no single
+    /// owning node, which the sched extraction (44.4) needs to know since
+    /// `ChainElement::Segment`/`Boundary` require a node identity.
+    pub(crate) node_fqn: Option<String>,
+    /// The scope id that declared the resolved path (node-level or
+    /// scope-level either way) — sched extraction (44.4) uses this to look
+    /// up the owning node's `criticality` contract fact.
+    pub(crate) scope_id: Option<usize>,
 }
 
-/// Run all three chain checks over every `chains:` block declared in any
-/// loaded manifest, pushing diagnostics into `index.merge_diagnostics`.
-pub fn check_chains(index: &mut ManifestIndex) {
-    // Endpoint-ref ("<node_fqn>/<endpoint>") -> topic FQN, built once from
-    // the merged topic index (mirrors the pattern in `manifest_loader`'s
-    // cross-scope QoS/rate checks).
+/// Endpoint-ref (`"<node_fqn>/<endpoint>"`) -> topic FQN maps, built once
+/// from the merged topic index (mirrors the pattern in `manifest_loader`'s
+/// cross-scope QoS/rate checks). Shared by `check_chains` (chain-link/
+/// budget diagnostics) and the sched extraction pipeline (44.4,
+/// `sched_derive::resolve_chains`) so both resolve chain segments
+/// identically.
+pub(crate) fn build_pub_sub_maps(
+    index: &ManifestIndex,
+) -> (HashMap<String, String>, HashMap<String, String>) {
     let mut pub_map: HashMap<String, String> = HashMap::new();
     let mut sub_map: HashMap<String, String> = HashMap::new();
     for (fqn, topic) in &index.topics {
@@ -71,6 +84,13 @@ pub fn check_chains(index: &mut ManifestIndex) {
             sub_map.insert(s.clone(), fqn.clone());
         }
     }
+    (pub_map, sub_map)
+}
+
+/// Run all three chain checks over every `chains:` block declared in any
+/// loaded manifest, pushing diagnostics into `index.merge_diagnostics`.
+pub fn check_chains(index: &mut ManifestIndex) {
+    let (pub_map, sub_map) = build_pub_sub_maps(index);
 
     // Snapshot chains from every manifest — (chain name, decl) — to avoid
     // borrowing `index` immutably while pushing diagnostics into it. The
@@ -255,7 +275,7 @@ fn check_one_chain(
 /// by name, first among that scope's node-level `paths:` (any node —
 /// chain segments name only the scope + path, not the owning node), then
 /// falling back to the scope's own top-level `paths:`.
-fn resolve_segment(
+pub(crate) fn resolve_segment(
     index: &ManifestIndex,
     pub_map: &HashMap<String, String>,
     sub_map: &HashMap<String, String>,
@@ -303,6 +323,8 @@ fn resolve_segment(
             max_latency_ms: np.path.max_latency_ms,
             input_topics,
             output_topics,
+            node_fqn: Some(np.node_fqn.clone()),
+            scope_id: Some(np.scope_id),
         });
     }
 
@@ -317,6 +339,8 @@ fn resolve_segment(
             max_latency_ms: sp.path.max_latency_ms,
             input_topics: sp.input_topics.clone(),
             output_topics: sp.output_topics.clone(),
+            node_fqn: None,
+            scope_id: Some(sp.scope_id),
         });
     }
 

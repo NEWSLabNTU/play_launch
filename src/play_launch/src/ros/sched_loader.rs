@@ -4,16 +4,16 @@
 //! report, but do not (yet) apply `sched_setscheduler`/affinity to processes.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt,
     path::{Path, PathBuf},
 };
 
 use eyre::Result;
 use ros_launch_manifest_sched::{
-    MapError, MapperRegistry, PlatformResources, ResolvedTier, ResolvedTierTable, SchedNode,
-    band_violations, deadline_priority_contradictions, parse_platform_file,
-    rate_priority_contradictions,
+    ChainAwareDetail, ChainElement, MapError, MapWarning, MapperRegistry, PlatformResources,
+    ResolvedTier, ResolvedTierTable, SchedNode, band_violations, deadline_priority_contradictions,
+    parse_platform_file, rate_priority_contradictions,
 };
 use tracing::{debug, info};
 
@@ -30,7 +30,12 @@ use crate::{
 /// (rather than asking the registry to enumerate itself, which its wave-1 API
 /// doesn't expose) purely so an "unknown mapper" error can list the known
 /// names.
-const KNOWN_MAPPERS: &[&str] = &["manual", "rate_monotonic", "deadline_monotonic"];
+const KNOWN_MAPPERS: &[&str] = &[
+    "manual",
+    "rate_monotonic",
+    "deadline_monotonic",
+    "chain_aware",
+];
 
 /// One record in the launch dump that is a schedulable unit (regular node,
 /// container, or composable/load_node — all of which are separate
@@ -266,6 +271,16 @@ pub struct DerivedSchedPlan {
     /// Per-node fqn -> why it ended up with its final priority/class (Phase
     /// 41.4, `--explain`). Every member of every tier in `plan` has an entry.
     pub provenance: BTreeMap<String, Provenance>,
+    /// Every node FQN that participates in at least one resolved `chains:`
+    /// declaration (Phase 44.4) — populated straight from
+    /// `MapperInput.chains`, independent of which mapper is selected
+    /// (`chain_aware` or otherwise; "harmless" per the brief). Consumed at
+    /// launch/replay time by the container co-location warning
+    /// (`execution::sched_plan::chain_container_colocation_warnings`) —
+    /// `derive_sched_plan`/`check` don't know the runtime `--container-mode`
+    /// flag, so the warning itself can't be computed here (see that
+    /// function's doc comment for the placement decision).
+    pub chain_member_nodes: BTreeSet<String>,
 }
 
 /// Why a node ended up with its final scheduling placement (design §7
@@ -281,6 +296,18 @@ pub enum Provenance {
     /// human-readable description of the fact and resulting priority, e.g.
     /// `"100 Hz → prio 38"`.
     Derived { mapper: String, fact: String },
+    /// The `chain_aware` mapper derived this placement (Phase 44.4): `line`
+    /// is the **already-fully-formatted** provenance string from the sched
+    /// crate's [`ChainAwareDetail::provenance`] (e.g. `"derived(chain_aware:
+    /// sensing_to_actuation segment drain 2/3) -> prio 44"`), optionally
+    /// suffixed with `" (max over N paths)"` when the node's final priority
+    /// was the max over more than one of its ranked paths (design step 6 —
+    /// node projection). Kept as a **separate** variant from `Derived`
+    /// rather than reusing it: `ChainAwareDetail::provenance` already
+    /// contains its own `derived(chain_aware: ...)` wrapper, so passing it
+    /// as `Derived::fact` would double-wrap under this type's `Display`
+    /// impl (`derived(chain_aware: derived(chain_aware: ...))`).
+    ChainAware { line: String },
     /// No timing fact and no override — landed in the non-RT default tier.
     Default,
 }
@@ -290,6 +317,7 @@ impl fmt::Display for Provenance {
         match self {
             Provenance::Override { selector } => write!(f, "override({selector})"),
             Provenance::Derived { mapper, fact } => write!(f, "derived({mapper}: {fact})"),
+            Provenance::ChainAware { line } => write!(f, "{line}"),
             Provenance::Default => write!(f, "default (no timing facts)"),
         }
     }
@@ -491,14 +519,60 @@ pub fn derive_sched_plan(
 
     let input = mapper_input_from_dump(dump, index, file.legacy.clone());
 
-    let derived = mapper.map(&input, &file.resources).map_err(|e: MapError| {
-        eyre::eyre!("mapper `{}` failed to derive a plan: {e}", file.mapper)
-    })?;
+    // Every node referenced by a resolved `chains:` declaration (44.4) —
+    // independent of the selected mapper (only `chain_aware` acts on
+    // `input.chains` for ranking, but chain *membership* is a pure data
+    // fact, useful to every mapper/consumer — "harmless" per the brief).
+    let chain_member_nodes: BTreeSet<String> = input
+        .chains
+        .iter()
+        .flat_map(|c| c.elements.iter())
+        .flat_map(|e| -> Vec<String> {
+            match e {
+                ChainElement::Segment {
+                    nodes_in_topo_order,
+                } => nodes_in_topo_order.iter().map(|(n, _)| n.clone()).collect(),
+                ChainElement::Boundary { node, .. } => vec![node.clone()],
+            }
+        })
+        .collect();
+
+    // `map_with_diagnostics` (Phase 44.3, defaulted on the trait) works for
+    // every mapper: built-ins fall back to `map` + empty diagnostics, only
+    // `chain_aware` populates `details`/`warnings`.
+    let (derived, diagnostics) = mapper
+        .map_with_diagnostics(&input, &file.resources)
+        .map_err(|e: MapError| {
+            eyre::eyre!("mapper `{}` failed to derive a plan: {e}", file.mapper)
+        })?;
 
     let mut plan = flatten_to_one_tier_per_node(&derived);
     let mut warnings = Vec::new();
     let mut overridden: BTreeMap<String, String> = BTreeMap::new();
     apply_overrides(&mut plan, &file.overrides, &mut warnings, &mut overridden);
+
+    // Chain-aware mapper diagnostics (Phase 44.4 §3): `BandTooNarrow` is a
+    // real resource-fit problem (the platform's `rt_priority_band` can't
+    // hold the ranked classes) — gated by `mode` like `band_violations`
+    // below (Strict errors, Warn/Off clamp-and-warn — the mapper itself
+    // already clamped, so there's nothing left to *do* here besides
+    // surface it). `ChainInfeasible` is never fatal (a chain that consumes
+    // its whole budget in sampling cost alone is a modeling fact, not a
+    // band-fit violation — its members simply fall through to non-chain
+    // ranking, same as the `chain-sampling-feasibility` checker warning at
+    // manifest-load time).
+    for w in &diagnostics.warnings {
+        let msg = describe_map_warning(w);
+        match w {
+            MapWarning::BandTooNarrow { .. } if mode == SchedApplyMode::Strict => {
+                eyre::bail!("{msg}");
+            }
+            _ => {
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+            }
+        }
+    }
 
     // Band violations — only meaningful with an explicit posix band.
     if let PlatformResources::Posix(res) = &file.resources
@@ -577,7 +651,13 @@ pub fn derive_sched_plan(
         warnings.push(msg);
     }
 
-    let provenance = build_provenance(&plan, &input, &file.mapper, &overridden);
+    let provenance = build_provenance(
+        &plan,
+        &input,
+        &file.mapper,
+        &overridden,
+        &diagnostics.details,
+    );
 
     Ok(DerivedSchedPlan {
         plan,
@@ -585,7 +665,36 @@ pub fn derive_sched_plan(
         mapper: file.mapper,
         warnings,
         provenance,
+        chain_member_nodes,
     })
+}
+
+/// Human-readable rendering of a [`MapWarning`] (Phase 44.3's chain-aware
+/// mapper diagnostics), matching the style of this pipeline's other
+/// `"scheduling: ..."` warnings.
+fn describe_map_warning(w: &MapWarning) -> String {
+    match w {
+        MapWarning::ChainInfeasible {
+            chain,
+            sampling_cost_ms,
+            budget_ms,
+        } => format!(
+            "scheduling: chain '{chain}' is infeasible (sampling_cost {sampling_cost_ms:.2}ms \
+             meets or exceeds its {budget_ms}ms budget from clock boundaries alone) — excluded \
+             from priority shaping; its members keep their local-fact (non-chain) priorities. \
+             See the `chain-sampling-feasibility` manifest diagnostic for the per-boundary \
+             breakdown."
+        ),
+        MapWarning::BandTooNarrow {
+            distinct_classes,
+            band_width,
+        } => format!(
+            "scheduling: rt_priority_band (width {band_width}) is narrower than the \
+             {distinct_classes} distinct priority classes remaining after every legal collapse \
+             — some classes were clamped into the same priority (introduces cross-chain/bucket \
+             ties, never inversions)"
+        ),
+    }
 }
 
 /// FQN -> scope id, for locating which manifest (if any) declared a node's
@@ -632,14 +741,31 @@ fn describe_derived_fact(
 
 /// Build the per-node provenance map (design §7) from the final plan: an
 /// override always wins the label; failing that, membership in the
-/// synthesized default tier means no timing facts; anything else is a
-/// mapper-derived placement.
+/// synthesized default tier means no timing facts; failing that, a node
+/// ranked by the `chain_aware` mapper (present in `details`, Phase 44.4 §5)
+/// gets its winning path's pre-formatted provenance line; anything else is
+/// the generic mapper-derived placement (`rate_monotonic`/`deadline_monotonic`/
+/// `manual`).
 fn build_provenance(
     plan: &ResolvedTierTable,
     input: &ros_launch_manifest_sched::MapperInput,
     mapper: &str,
     overridden: &BTreeMap<String, String>,
+    details: &[ChainAwareDetail],
 ) -> BTreeMap<String, Provenance> {
+    // Node -> every ChainAwareDetail ranked for one of its paths (Phase
+    // 44.4 §5/§6): a node can own >1 ranked path (e.g. two segments of the
+    // same chain, or paths in two different chains); the plan's final
+    // priority for the node is the mapper's own max-over-paths projection
+    // (design step 6) — pick the matching detail (max priority, ties broken
+    // by path name for determinism) as the "winning" provenance line, and
+    // note the path count when >1 (brief deliverable 5: "(max over N
+    // paths)").
+    let mut by_node: HashMap<&str, Vec<&ChainAwareDetail>> = HashMap::new();
+    for d in details {
+        by_node.entry(d.node.as_str()).or_default().push(d);
+    }
+
     let mut out = BTreeMap::new();
     for tier in &plan.tiers {
         for member in &tier.members {
@@ -649,6 +775,20 @@ fn build_provenance(
                 }
             } else if tier.name == ros_launch_manifest_sched::DEFAULT_TIER {
                 Provenance::Default
+            } else if let Some(ds) = by_node.get(member.as_str()) {
+                let winner = ds
+                    .iter()
+                    .max_by(|a, b| {
+                        a.priority
+                            .cmp(&b.priority)
+                            .then_with(|| a.path.cmp(&b.path))
+                    })
+                    .expect("by_node groups are always non-empty");
+                let mut line = winner.provenance.clone();
+                if ds.len() > 1 {
+                    line.push_str(&format!(" (max over {} paths)", ds.len()));
+                }
+                Provenance::ChainAware { line }
             } else {
                 let node = input.nodes.iter().find(|n| &n.name == member);
                 Provenance::Derived {
@@ -1177,6 +1317,120 @@ mod tests {
         index
     }
 
+    /// A contract index declaring one chain (`sensing_chain`): `/fast_node`
+    /// has a Timer path (`tick`, 50 Hz — a Boundary) that outputs
+    /// `/link_topic`; `/slow_node` has an Input path (`react`, consuming
+    /// `/link_topic`, 8ms deadline — a Segment) — a 2-element chain
+    /// exercising both `ChainElement` kinds (Phase 44.4).
+    fn index_with_chain() -> ManifestIndex {
+        use crate::ros::manifest_loader::{
+            ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedTopic,
+        };
+        use ros_launch_manifest_types::{
+            ChainDecl, ChainSegment, ChainSemantics, Manifest, NodeDecl, PathDecl, Trigger,
+        };
+
+        let mut index = ManifestIndex::default();
+        index.node_paths.push(ResolvedNodePath {
+            node_fqn: "/fast_node".to_string(),
+            path_name: "tick".to_string(),
+            path: PathDecl {
+                trigger: Some(Trigger::Timer { rate_hz: 50.0 }),
+                output: vec!["tick_out".to_string()],
+                // Deliberately the LOOSER deadline of the two paths: the
+                // chain_aware mapper ranks the downstream Segment (`react`)
+                // above the Boundary (`tick`) regardless of raw per-path
+                // deadlines (chain context, not local DM order) — picking
+                // `tick`'s own deadline looser than `react`'s here keeps
+                // the generic (mapper-agnostic) `deadline-vs-priority`
+                // contradiction check agreeing with the chain-aware
+                // placement, so this fixture doesn't also (correctly, but
+                // distractingly for this test's purpose) trip that
+                // unrelated warning.
+                max_latency_ms: Some(20.0),
+                ..Default::default()
+            },
+            scope_id: 0,
+        });
+        index.node_paths.push(ResolvedNodePath {
+            node_fqn: "/slow_node".to_string(),
+            path_name: "react".to_string(),
+            path: PathDecl {
+                trigger: Some(Trigger::Input(vec!["react_in".to_string()])),
+                max_latency_ms: Some(1.0),
+                ..Default::default()
+            },
+            scope_id: 0,
+        });
+        index.topics.insert(
+            "/link_topic".to_string(),
+            ResolvedTopic {
+                fqn: "/link_topic".to_string(),
+                msg_type: "std_msgs/msg/String".to_string(),
+                qos: None,
+                publishers: vec!["/fast_node/tick_out".to_string()],
+                subscribers: vec!["/slow_node/react_in".to_string()],
+                rate_hz: None,
+                max_transport_ms: None,
+                drop: None,
+                scope_ids: vec![0],
+            },
+        );
+
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            "fast_node".to_string(),
+            NodeDecl {
+                criticality: Some("high".to_string()),
+                ..Default::default()
+            },
+        );
+        let mut chains = BTreeMap::new();
+        chains.insert(
+            "sensing_chain".to_string(),
+            ChainDecl {
+                semantics: ChainSemantics::Reaction,
+                max_latency_ms: 100.0,
+                segments: vec![
+                    ChainSegment::Path {
+                        scope: "/".to_string(),
+                        path: "tick".to_string(),
+                    },
+                    ChainSegment::Via {
+                        via: "/link_topic".to_string(),
+                    },
+                    ChainSegment::Path {
+                        scope: "/".to_string(),
+                        path: "react".to_string(),
+                    },
+                ],
+            },
+        );
+        let manifest = Manifest {
+            version: 1,
+            nodes,
+            chains,
+            ..Default::default()
+        };
+        index.manifests.insert(
+            0,
+            ResolvedManifest {
+                scope_id: 0,
+                pkg: Some("chain_fixture".to_string()),
+                file: "two_nodes.launch.xml".to_string(),
+                ns: "/".to_string(),
+                channel: ContractChannel::Provider,
+                contract_path: PathBuf::from(
+                    "/opt/share/chain_fixture/launch/two_nodes.contract.yaml",
+                ),
+                manifest,
+                source: String::new(),
+                diagnostics: vec![],
+            },
+        );
+        index
+    }
+
     /// RAII temp-file guard (same pattern as `execution::sched_plan` tests).
     struct TempFileGuard(std::path::PathBuf);
     impl Drop for TempFileGuard {
@@ -1204,6 +1458,13 @@ target: posix
 mapper: rate_monotonic
 resources:
   rt_priority_band: { min: 10, max: 40 }
+";
+
+    const V2_CHAIN_AWARE_BAND: &str = "\
+target: posix
+mapper: chain_aware
+resources:
+  rt_priority_band: { min: 5, max: 45 }
 ";
 
     #[test]
@@ -1439,6 +1700,178 @@ nodes = ["fast_node"]
                 .find(|t| t.name == ros_launch_manifest_sched::DEFAULT_TIER)
                 .expect("default tier");
             assert_eq!(default_tier.members, vec!["/slow_node".to_string()]);
+        });
+    }
+
+    // ── Phase 44.4: chain_aware pipeline wiring ──
+
+    #[test]
+    fn derive_chain_aware_ranks_boundary_and_segment_with_chain_aware_provenance() {
+        let dump = dump_two_plain_nodes();
+        let index = index_with_chain();
+        with_temp_file("yaml", V2_CHAIN_AWARE_BAND, |path| {
+            let derived =
+                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
+                    .expect("derive");
+            assert_eq!(derived.mapper, "chain_aware");
+            assert!(derived.warnings.is_empty(), "{:?}", derived.warnings);
+            assert_eq!(
+                derived.chain_member_nodes,
+                std::collections::BTreeSet::from([
+                    "/fast_node".to_string(),
+                    "/slow_node".to_string()
+                ])
+            );
+
+            // Sink-first: the Segment (react, chain-adjacent to nothing
+            // downstream — it IS the sink) outranks the Boundary (tick).
+            let fast = derived
+                .plan
+                .tiers
+                .iter()
+                .find(|t| t.members == vec!["/fast_node".to_string()])
+                .expect("fast_node tier");
+            let slow = derived
+                .plan
+                .tiers
+                .iter()
+                .find(|t| t.members == vec!["/slow_node".to_string()])
+                .expect("slow_node tier");
+            assert!(
+                slow.priority > fast.priority,
+                "segment (sink) must outrank boundary: slow={} fast={}",
+                slow.priority,
+                fast.priority
+            );
+
+            match derived.provenance.get("/fast_node").expect("fast_node") {
+                Provenance::ChainAware { line } => {
+                    assert!(line.contains("derived(chain_aware:"), "{line}");
+                    assert!(line.contains("boundary"), "{line}");
+                    assert!(
+                        line.contains(&format!("-> prio {}", fast.priority)),
+                        "{line}"
+                    );
+                }
+                other => panic!("expected ChainAware provenance, got {other:?}"),
+            }
+            match derived.provenance.get("/slow_node").expect("slow_node") {
+                Provenance::ChainAware { line } => {
+                    assert!(line.contains("derived(chain_aware:"), "{line}");
+                    assert!(line.contains("segment"), "{line}");
+                }
+                other => panic!("expected ChainAware provenance, got {other:?}"),
+            }
+        });
+    }
+
+    /// Two INDEPENDENT single-boundary chains (`chain_a` over `/fast_node`,
+    /// `chain_b` over `/slow_node`) — no `via` linking them at all. Distinct
+    /// chains never collapse into each other under band compression (design
+    /// step 7: "never across the chain/non-chain divide or a criticality
+    /// bucket [or a different chain]"), so a width-1 band is guaranteed to
+    /// overflow with exactly 2 irreducible classes — unlike
+    /// `index_with_chain`'s single 2-element chain, where both elements
+    /// share one `coarse_group` and DO legally collapse together under
+    /// scarcity.
+    fn index_with_two_independent_chains() -> ManifestIndex {
+        use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedNodePath};
+        use ros_launch_manifest_types::{
+            ChainDecl, ChainSegment, ChainSemantics, Manifest, PathDecl, Trigger,
+        };
+
+        let mut index = ManifestIndex::default();
+        index.node_paths.push(ResolvedNodePath {
+            node_fqn: "/fast_node".to_string(),
+            path_name: "tick".to_string(),
+            path: PathDecl {
+                trigger: Some(Trigger::Timer { rate_hz: 50.0 }),
+                ..Default::default()
+            },
+            scope_id: 0,
+        });
+        index.node_paths.push(ResolvedNodePath {
+            node_fqn: "/slow_node".to_string(),
+            path_name: "tick2".to_string(),
+            path: PathDecl {
+                trigger: Some(Trigger::Timer { rate_hz: 10.0 }),
+                ..Default::default()
+            },
+            scope_id: 0,
+        });
+
+        let mut chains = BTreeMap::new();
+        for (name, path) in [("chain_a", "tick"), ("chain_b", "tick2")] {
+            chains.insert(
+                name.to_string(),
+                ChainDecl {
+                    semantics: ChainSemantics::Reaction,
+                    max_latency_ms: 1000.0,
+                    // A single-element chain is valid (first == last == a
+                    // Path segment); no `via` needed since there's nothing
+                    // to connect.
+                    segments: vec![ChainSegment::Path {
+                        scope: "/".to_string(),
+                        path: path.to_string(),
+                    }],
+                },
+            );
+        }
+        let manifest = Manifest {
+            version: 1,
+            chains,
+            ..Default::default()
+        };
+        index.manifests.insert(
+            0,
+            ResolvedManifest {
+                scope_id: 0,
+                pkg: Some("two_chain_fixture".to_string()),
+                file: "two_nodes.launch.xml".to_string(),
+                ns: "/".to_string(),
+                channel: ContractChannel::Provider,
+                contract_path: PathBuf::from(
+                    "/opt/share/two_chain_fixture/launch/two_nodes.contract.yaml",
+                ),
+                manifest,
+                source: String::new(),
+                diagnostics: vec![],
+            },
+        );
+        index
+    }
+
+    #[test]
+    fn derive_chain_aware_band_too_narrow_warns_in_warn_mode_errors_in_strict() {
+        let dump = dump_two_plain_nodes();
+        let index = index_with_two_independent_chains();
+        // A single-priority band: two DIFFERENT chains' items never
+        // collapse into each other (design step 7), so 2 irreducible
+        // classes can't fit into width 1 — guaranteed `BandTooNarrow`.
+        let narrow_yaml = "\
+target: posix
+mapper: chain_aware
+resources:
+  rt_priority_band: { min: 45, max: 45 }
+";
+        with_temp_file("yaml", narrow_yaml, |path| {
+            let derived =
+                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
+                    .expect("warn mode clamps, does not error");
+            assert!(
+                derived
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("rt_priority_band") && w.contains("narrower")),
+                "{:?}",
+                derived.warnings
+            );
+        });
+        with_temp_file("yaml", narrow_yaml, |path| {
+            let err = derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Strict)
+                .expect_err("strict mode must refuse a too-narrow band");
+            let msg = err.to_string();
+            assert!(msg.contains("narrower"), "{msg}");
         });
     }
 
@@ -1804,6 +2237,33 @@ overrides:
             );
             assert!(text.contains("contract[scope 0,"), "{text}");
             assert!(text.contains("provider("), "{text}");
+        });
+    }
+
+    #[test]
+    fn render_explain_shows_chain_aware_provenance_and_max_over_paths_note() {
+        let dump = dump_two_plain_nodes();
+        let index = index_with_chain();
+        with_temp_file("yaml", V2_CHAIN_AWARE_BAND, |path| {
+            let derived =
+                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
+                    .expect("derive");
+            let resolved = ResolvedPlatformFile {
+                path: path.to_path_buf(),
+                channel: PlatformFileChannel::Explicit,
+            };
+            let text = render_explain(&derived, &resolved, Some(&index));
+            eprintln!("--- chain_aware --explain output ---\n{text}");
+
+            // Both nodes show a `derived(chain_aware: ...)` line, matching
+            // the design's `--explain` provenance format (§8):
+            // `derived(chain_aware: <chain> ... ) -> prio <N>`. Neither has
+            // >1 ranked path here, so no "(max over N paths)" note.
+            assert!(text.contains("derived(chain_aware:"), "{text}");
+            assert!(text.contains("sensing_chain"), "{text}");
+            assert!(!text.contains("max over"), "{text}");
+            assert!(text.contains("system file: explicit("), "{text}");
+            assert!(text.contains("contract[scope 0,"), "{text}");
         });
     }
 
