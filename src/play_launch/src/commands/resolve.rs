@@ -208,6 +208,13 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         let diags = cfg
             .apply_to(&mut model.execution, &node_fqns)
             .map_err(|e| eyre::eyre!(e))?;
+        // `[lifecycle] autostart` lives in the structure layer (per-node), so
+        // it is applied here rather than in the execution-only `apply_to`.
+        if let Some(autostart) = cfg.lifecycle_autostart() {
+            for inst in model.structure.nodes.values_mut() {
+                inst.lifecycle_autostart = Some(autostart);
+            }
+        }
         model.meta.diagnostics.extend(diags);
         // Hash the system config into provenance.
         {
