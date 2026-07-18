@@ -71,6 +71,16 @@ impl SchedPlan {
         let derived = derive_sched_plan(dump, index, sched_path, target, mode)?;
         let table = derived.plan;
         let mut warnings = derived.warnings;
+        // Single authoritative surfacing point for the run/replay/apply path
+        // (45.1a) — `derive_sched_plan` only collects now (no internal
+        // `tracing::warn!`); this is the one place these warnings get
+        // logged for callers that reach `SchedPlan::build` (`run`,
+        // `replay`). `check`'s own call path surfaces via `check_sched`
+        // instead (structured, 45.1c) — never both, to avoid the 2x/3x
+        // duplicate-print bug this wave fixes.
+        for w in &warnings {
+            tracing::warn!("{w}");
+        }
         let chain_member_nodes = derived.chain_member_nodes;
 
         // Number of online CPUs, computed once. Used to bound-check `core`
@@ -752,7 +762,10 @@ mod model_tests {
             w.contains("/perception/chain_a") && w.contains("/perception/chain_b"),
             "{w}"
         );
-        assert!(!w.contains("bystander"), "non-chain member must not be named: {w}");
+        assert!(
+            !w.contains("bystander"),
+            "non-chain member must not be named: {w}"
+        );
     }
 
     #[test]
@@ -768,7 +781,10 @@ mod model_tests {
         let dump = dump_with_colocated_chain_members();
         let one = BTreeSet::from(["/perception/chain_a".to_string()]);
         let warnings = chain_container_colocation_warnings(&dump, ContainerMode::Stock, &one);
-        assert!(warnings.is_empty(), "one member co-locates with nothing: {warnings:?}");
+        assert!(
+            warnings.is_empty(),
+            "one member co-locates with nothing: {warnings:?}"
+        );
     }
 
     #[test]
@@ -888,19 +904,19 @@ mod model_tests {
             chain_member_nodes: BTreeSet::new(),
         };
 
-        let warnings = chain_colocation_warnings_for_plan(
-            &dump,
-            Some(&index),
-            ContainerMode::Stock,
-            &plan,
-        );
+        let warnings =
+            chain_colocation_warnings_for_plan(&dump, Some(&index), ContainerMode::Stock, &plan);
         assert_eq!(
             warnings.len(),
             1,
             "model-path plan (empty chain_member_nodes) must fall back to the \
              manifest index: {warnings:?}"
         );
-        assert!(warnings[0].contains("/perception/shared_container"), "{}", warnings[0]);
+        assert!(
+            warnings[0].contains("/perception/shared_container"),
+            "{}",
+            warnings[0]
+        );
         assert!(
             warnings[0].contains("/perception/chain_a")
                 && warnings[0].contains("/perception/chain_b"),
