@@ -152,6 +152,14 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
                 &args.target,
                 crate::execution::sched_apply::SchedApplyMode::Warn,
             )?;
+            // Single authoritative surfacing point for `resolve` (45.1a) —
+            // `derive_sched_plan` only collects now (no internal
+            // `tracing::warn!`), so the caller must log its own returned
+            // warnings exactly once. `check`/`run`/`replay` do the same at
+            // their own single call sites (`check_sched`, `SchedPlan::build`).
+            for w in &derived.warnings {
+                tracing::warn!("{w}");
+            }
             let declared_tiers = ros_launch_manifest_sched::parse_platform_file(&resolved.path)
                 .ok()
                 .and_then(|f| f.legacy)
@@ -206,10 +214,13 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
             use sha2::Digest as _;
             let bytes = std::fs::read(sys_path)?;
             let canon = std::fs::canonicalize(sys_path).unwrap_or_else(|_| sys_path.clone());
-            model.meta.inputs.push(ros_launch_manifest_model::InputHash {
-                path: canon.display().to_string(),
-                sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
-            });
+            model
+                .meta
+                .inputs
+                .push(ros_launch_manifest_model::InputHash {
+                    path: canon.display().to_string(),
+                    sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
+                });
             model.meta.inputs.sort_by(|a, b| a.path.cmp(&b.path));
         }
         eprintln!(

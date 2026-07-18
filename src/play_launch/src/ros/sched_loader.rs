@@ -446,7 +446,10 @@ fn apply_overrides(
         let msg = format!(
             "scheduling: override for unknown node `{selector}` (no matching node in the derived plan)"
         );
-        tracing::warn!("{msg}");
+        // Collect only — the caller (check_sched / SchedPlan::build) is the
+        // single authoritative surfacing point (45.1a: fixes the 2x/3x
+        // duplicate-print bug where this fired here AND at every print
+        // site that loops `derived.warnings`).
         warnings.push(msg);
     }
 }
@@ -560,7 +563,8 @@ pub fn derive_sched_plan(
                      apply to no process (likely a namespace mismatch between the contract \
                      scope and the node's own `namespace=` attribute)"
                 );
-                tracing::warn!("{msg}");
+                // Collect only — see the comment at `apply_overrides`'s
+                // unknown-selector warning (45.1a).
                 warnings.push(msg);
             }
         }
@@ -600,7 +604,7 @@ pub fn derive_sched_plan(
                      chain is no longer guaranteed",
                     tier.priority, derived_prio
                 );
-                tracing::warn!("{msg}");
+                // Collect only (45.1a) — see `apply_overrides`.
                 warnings.push(msg);
             }
         }
@@ -623,7 +627,7 @@ pub fn derive_sched_plan(
                 eyre::bail!("{msg}");
             }
             _ => {
-                tracing::warn!("{msg}");
+                // Collect only (45.1a) — see `apply_overrides`.
                 warnings.push(msg);
             }
         }
@@ -656,7 +660,7 @@ pub fn derive_sched_plan(
                             "scheduling: `{}` priority {} outside band [{}, {}], clamping to {}",
                             v.tier, v.priority, v.band.min, v.band.max, clamped
                         );
-                        tracing::warn!("{msg}");
+                        // Collect only (45.1a) — see `apply_overrides`.
                         warnings.push(msg);
                         if let Some(t) = plan.tiers.iter_mut().find(|t| t.name == v.tier) {
                             t.priority = clamped;
@@ -702,7 +706,7 @@ pub fn derive_sched_plan(
             c.kind,
             platform_path.display(),
         );
-        tracing::warn!("{msg}");
+        // Collect only (45.1a) — see `apply_overrides`.
         warnings.push(msg);
     }
 
@@ -982,9 +986,11 @@ fn render_explain(
         );
     }
 
-    for w in &derived.warnings {
-        let _ = writeln!(out, "  warning: {w}");
-    }
+    // 45.1a: warnings are NOT re-printed here — `check_sched` (the only
+    // caller of `render_explain`, via `print_explain`) already surfaced
+    // them once before this table renders. Re-looping `derived.warnings`
+    // here was site #3 of the original 2x/3x duplicate-print bug (study
+    // §4.2).
 
     let _ = writeln!(
         out,
