@@ -18,6 +18,29 @@ Autoware warning flood, and unifies the three FQN builders.
 
 All schema changes are additive (old models still parse); no flag day.
 
+## Status (2026-07-18)
+
+- **45.1 ✅ done + on main** (`a3b1403`): Autoware default sched output 111 → 3
+  lines; contradiction spam 105 → 0; genuine override-pin warnings preserved.
+- **45.7 play_launch side ✅ already done** by Phase 44.5 (`ManifestIndex::
+  node_identity` reconciles contract-side identity to the launch-dump FQN;
+  `qualify_name`'s remaining callers are topic/service qualification, which
+  have no per-node `namespace=` override and are correctly naive). The
+  **only** un-unified builder is `model_builder::fqn` — cross-track.
+- **45.8 delineation ✅ documented** in
+  [system-model-sched-ssot.md](../design/system-model-sched-ssot.md)
+  §"Platform file vs `system.toml`"; the "identical resolved output for the
+  manual case" claim is backed by the existing sched-crate test
+  `bridge_then_manual_mapper_matches_direct_resolve` (`bridge.rs`).
+- **45.2 / 45.3 HELD** pending the SystemModel/nano-ros track's confirmation
+  of the model-schema layout + RTOS per-path-rank consumption model
+  (requested: nano-ros RFC-0050/0052 cross-track notes, 2026-07-18). These
+  are joint decisions on the shared `model` crate — not landed unilaterally.
+- **45.4 / 45.5 / 45.6 GATED** on 45.2 (the model must carry the resolved
+  chains before `resolve` can embed / `from_model` can read them).
+- **45.9** overlaps the design/phase cross-reference sweep already landed
+  (`f4b209b`); the RT-guide `--explain`-on-model portion follows 45.6.
+
 ## Work items
 
 - **45.1** Warning diagnosis (independent, ship first — no schema change):
