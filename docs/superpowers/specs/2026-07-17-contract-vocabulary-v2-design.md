@@ -164,6 +164,14 @@ chains:
 - Manifest format version: additive ⇒ no version bump; document in
   `launch-manifest.md` with a vocabulary-v2 section.
 
+Per the SystemModel-as-scheduling-SSoT decision
+([system-model-sched-ssot.md](../../design/system-model-sched-ssot.md),
+work items in [phase-45](../../roadmap/phase-45-sched_ssot_unification.md)),
+this coordination is now committed: the authored facts here (`trigger:`,
+`sync:`, `buffer:`, `chains:`) embed into SystemModel layer 2 verbatim from
+the `types` crate structs, alongside the resolved chains/per-path ranks
+that layer 3 gains — one derivation at `resolve` time, no parallel copies.
+
 ## 7. Out of scope
 
 Per-mode contract variants (mode conditioning); `consumes_hz`; automatic trigger

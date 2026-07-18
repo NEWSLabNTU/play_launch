@@ -1,5 +1,14 @@
 # SystemModel: embedding Vocabulary v2 (Phase 44.7 coordination note)
 
+> **Promoted/superseded (2026-07-18):** this was a "coordination note, not a
+> design change." The SystemModel-as-scheduling-SSoT decision makes its
+> content the design: [system-model-sched-ssot.md](system-model-sched-ssot.md)
+> (design of record) and [phase-45](../roadmap/phase-45-sched_ssot_unification.md)
+> (work items) now own the embedding decision and its execution. This
+> document's body remains the detailed type/translation reference — the new
+> doc's "Type sharing" section points back here for the exact `types`/`sched`
+> struct tables below.
+
 Status: coordination note, not a design change. Written by the Phase 44
 (vocabulary v2 + chain-aware mapper) track for the Phase 43/layer-2 track,
 which owns the `model` crate. **No code in the `model` crate is touched by

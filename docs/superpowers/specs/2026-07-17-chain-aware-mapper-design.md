@@ -170,3 +170,28 @@ Phase 41 trait unchanged); `MapperInput` grows optional per-path trigger facts
 and resolved chains (additive). Companion checker rules land with the
 vocabulary-v2 implementation. Implementation phasing belongs to a future phase
 doc (not 42 — the study phase ends with this spec).
+
+## Reachability & artifact embedding (2026-07-18)
+
+Today the chain structure this design computes (S·B·S decomposition,
+per-path ranks, provenance strings) is reachable only via `check`/`--sched`
+— it lives in the in-memory `DerivedSchedPlan`/`MapDiagnostics` for the
+duration of one process and is never serialized. Per the SystemModel-as-
+scheduling-SSoT decision
+([system-model-sched-ssot.md](../../design/system-model-sched-ssot.md),
+work items in [phase-45](../../roadmap/phase-45-sched_ssot_unification.md)),
+this structure will be embedded in the SystemModel's execution layer
+(`mapper`, resolved `chains: Vec<ResolvedChain>`, per-path
+`Vec<ChainAwareDetail>`) so `replay --model`, `--explain`, and off-host
+consumers (nano-ros) read the same chain facts this mapper derives, instead
+of re-deriving or losing them at the artifact boundary.
+
+That same decision also folds in the fix for this design's
+contradiction-detector false positives: `validate.rs::scan_contradictions`
+today flags chain members ranked by drain-toward-sink position as
+"contradicting" their raw `rate_hz`/`deadline_us` order — expected
+behavior per §Algorithm step 4, not a defect, and 74% of the observed
+warning volume on real Autoware output
+(`.superpowers/sdd/warning-diagnosis-study.md`). Phase 45.1 makes the
+detector chain-aware (suppress when the higher-priority side is a chain
+member) as the resolution.

@@ -104,10 +104,16 @@ system config → execution. Consumers slice: play_launch runtime takes the
 
 ## Work items (proposal)
 
-Vocabulary v2 coordination (Phase 44.7): see
-[system-model-vocab-v2-embedding.md](system-model-vocab-v2-embedding.md)
-for what layer 2 gains from embedding resolved chains/triggers and the
-exact `types`/`sched`-crate structs to share.
+**Scheduling SSoT (2026-07-18 decision):** the execution layer will carry
+the *resolved* sched plan — mapper identity, resolved chains, per-path
+ranks — not just flat `tiers`/`bindings`, so every consumer (runtime apply,
+`--explain`, analysis, monitoring, off-host nano-ros) reads scheduling from
+the model instead of re-deriving it. Design of record:
+[system-model-sched-ssot.md](system-model-sched-ssot.md); work items:
+[phase-45](../roadmap/phase-45-sched_ssot_unification.md). That document
+supersedes the vocabulary-v2 coordination note below, which stays as the
+detailed type/translation reference (exact `types`/`sched`-crate structs to
+share): [system-model-vocab-v2-embedding.md](system-model-vocab-v2-embedding.md).
 
 1. `ros-launch-manifest`: add `model` crate — `SystemModel` types, serde,
    schema doc, golden-file round-trip tests. No behavior, pure schema.

@@ -45,6 +45,7 @@ Completed phase docs are in `archive/`.
 | 42 | Autoware System Model Study | ✅ 42.0–42.6 | 2026-07-17 |
 | 43 | Runtime Consumes the SystemModel | 🔄 43.1–43.3, 43.5 done; 43.4 re-scoped | — |
 | 44 | Vocabulary v2 + Chain-Aware Mapper | 🔄 44.1–44.6, 44.8 done; 44.7 handoff | — |
+| 45 | Scheduling SSoT Unification | 📋 Planned | — |
 
 ---
 
@@ -143,6 +144,13 @@ Linux implementation of the Phase 42 designs: additive contract vocabulary (expl
 
 See [phase-44-vocab_v2_chain_mapper.md](./phase-44-vocab_v2_chain_mapper.md).
 Designs: [vocabulary v2](../superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md) · [chain-aware mapper](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
+
+### Phase 45: Scheduling SSoT Unification (planned)
+
+Makes the SystemModel the single source of truth for scheduling: `resolve` runs the mapper once and embeds its complete output (resolved chains, per-path ranks, mapper identity) into the model, so runtime apply, `--explain`, analysis, monitoring, and nano-ros all read scheduling from the model instead of re-deriving it. Also unifies the diagnostic renderer (Autoware's 111-line warning flood → ≤3) and the three FQN builders.
+
+See [phase-45-sched_ssot_unification.md](./phase-45-sched_ssot_unification.md).
+Design: [docs/design/system-model-sched-ssot.md](../design/system-model-sched-ssot.md).
 
 ---
 

@@ -121,6 +121,12 @@ tooling); the in-process UI keeps reading the record.
 - nano-ros-side model consumption (tracked by nano-ros RFC-0050's own
   phase).
 
+The runtime-reads-model work started here continues into
+[Phase 45](./phase-45-sched_ssot_unification.md), which makes the model the
+scheduling SSoT specifically (resolved chains + per-path ranks embedded in
+`execution:`, `from_model` becomes a pure reader) — see
+[system-model-sched-ssot.md](../design/system-model-sched-ssot.md).
+
 ## Risks / notes
 
 - `RuleEngine` refactor (43.2) is the largest item — its rules read

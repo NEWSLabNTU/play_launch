@@ -88,7 +88,12 @@ working unchanged.
   awareness today — a bare `replay --model <file>` run can't re-derive,
   re-explain, or warn about chain structure because the model's
   `execution:` layer doesn't carry it, per `p44-w4-report.md`'s documented
-  gap). No `model`-crate code touched by Phase 44.
+  gap). No `model`-crate code touched by Phase 44. **Realized by
+  [Phase 45](./phase-45-sched_ssot_unification.md)**, item 45.2/45.4: the
+  SystemModel-as-scheduling-SSoT decision
+  ([system-model-sched-ssot.md](../design/system-model-sched-ssot.md))
+  commits this coordination note to a concrete schema + `resolve`-time
+  embedding.
 - **44.8** ✅ Docs: `launch-manifest.md` vocabulary-v2 section gained the
   boundary-consumption rule, the via-required-between-segments rule, and a
   `Static Validation` table row for every Phase 44 rule with its severity
