@@ -163,6 +163,29 @@ Dependency-ordered asks on this side:
    `--target` resolves; TierDef already carries all platforms — decide
    + document).
 
+## Parser fidelity (cross-runtime consistency)
+
+The model is only "canonical" if the resolver's launch parser agrees with
+every consumer's parser on the RESOLVED node graph — same FQNs, same
+params. A divergence there silently changes node identity or topic names
+between the Linux runtime and an embedded image built from the same model.
+
+- **`resolve` from a launch file** uses the Rust `play_launch_parser`
+  (`parse_launch_file`), not the Python ROS 2 dumper — the dumper (with
+  `expanded_node_namespace`) is only on the `--record` path. So
+  `play_launch_parser` must reproduce ROS 2 launch semantics faithfully.
+- **`<group ns="…">` fix (2026-07):** the parser had dropped the `ns`
+  attribute on `<group>` (treating only `<push-ros-namespace>` as
+  namespace-setting), so a node under `<group ns="alpha">` resolved as
+  `/talker` instead of `/alpha/talker`. This diverged from nano-ros's
+  `nros-launch-parser` (which honors `<group ns=>` per its RFC-0024
+  subset) and from ROS 2 launch_xml (which translates the attribute into a
+  leading push-ros-namespace). Fixed: `GroupAction` parses `ns`/
+  `namespace` and the entity traverser pushes it for the group body.
+  General rule: when a consumer parser and `play_launch_parser` disagree
+  on a launch construct, the resolved model is wrong for that construct —
+  fix the parser, add a regression test, and note it here.
+
 ## Non-goals
 
 - Variables or conditions inside the model (early binding).
