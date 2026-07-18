@@ -823,6 +823,84 @@ fn should_suppress_contradiction(
     chain_member_nodes.contains(&c.node_b) || override_pinned_below_chain_rank.contains(&c.node_a)
 }
 
+/// Category id for a sched warning message (45.1c) — a `rule_id`-equivalent
+/// matching the manifest-checker's convention (`check/src/rules/*.rs`,
+/// e.g. `qos-compat`, `state-consistency`) closely enough to `grep`/filter
+/// on, without introducing a full `Diagnostic` for warnings that (unlike the
+/// manifest checker's) have no source span to render — see
+/// `render_sched_warnings_summary`'s doc comment for why
+/// `codespan-reporting` isn't used here. Matched by literal prefix/substring
+/// against this file's own `format!` templates (`apply_overrides`,
+/// `derive_sched_plan`, `describe_map_warning`, `SchedPlan::build`'s
+/// `time_triggered` message) — brittle to template wording changes by
+/// construction, but every template is defined a few lines above its match
+/// arm here, in the same file.
+fn categorize_sched_warning(msg: &str) -> &'static str {
+    if msg.starts_with("scheduling: override for unknown node") {
+        "sched:override-unknown-node"
+    } else if msg.starts_with("scheduling: chain member") {
+        "sched:fqn-mismatch"
+    } else if msg.starts_with("override pins chain member") {
+        "sched:override-inversion"
+    } else if msg.contains("is infeasible (sampling_cost") {
+        "sched:chain-infeasible"
+    } else if msg.starts_with("scheduling: rt_priority_band") {
+        "sched:band-too-narrow"
+    } else if msg.contains("outside band [") {
+        "sched:band-violation-clamp"
+    } else if msg.contains("priority order contradicts") {
+        "sched:contradiction"
+    } else if msg.contains("SCHED_DEADLINE not applied") {
+        "sched:sched-deadline-skip"
+    } else {
+        "sched:other"
+    }
+}
+
+/// Render `warnings` the way the manifest-checker half of `check` already
+/// renders its own diagnostics (`check/src/emit/diagnostic.rs`,
+/// `codespan-reporting`-based): a per-rule id, deduped identical lines, and
+/// a trailing `{errors} error(s), {warnings} warning(s)`-style summary
+/// (45.1c). Deliberately does NOT force these through `codespan-reporting`
+/// or a full `Diagnostic` — sched warnings have no source span (the
+/// contradiction detector, `ros_launch_manifest_sched::validate`, is a pure
+/// host-agnostic pairwise scan with no YAML location; the manifest-checker's
+/// span rendering has nothing to attach to here) — a structured id +
+/// message + dedup + count is the actual goal (brief), not literal reuse of
+/// the span-rendering path. `suppressed` is the count of chain-aware/
+/// override-derivative contradictions `should_suppress_contradiction`
+/// filtered out (45.1b) — surfaced so the suppression itself stays visible
+/// instead of silently vanishing 26+ warnings with no trace.
+fn render_sched_warnings_summary(warnings: &[String], suppressed: usize) -> String {
+    use std::fmt::Write as _;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut deduped: Vec<&String> = Vec::new();
+    for w in warnings {
+        if seen.insert(w.as_str()) {
+            deduped.push(w);
+        }
+    }
+    let dupes = warnings.len() - deduped.len();
+
+    let mut out = String::new();
+    if deduped.is_empty() && suppressed == 0 {
+        return out;
+    }
+    let _ = write!(out, "{} scheduling warning(s)", deduped.len());
+    if suppressed > 0 {
+        let _ = write!(out, " ({suppressed} suppressed: chain-intended)");
+    }
+    if dupes > 0 {
+        let _ = write!(out, " ({dupes} duplicate line(s) deduped)");
+    }
+    let _ = writeln!(out);
+    for w in &deduped {
+        let _ = writeln!(out, "  warning[{}]: {w}", categorize_sched_warning(w));
+    }
+    out
+}
+
 /// FQN -> scope id, for locating which manifest (if any) declared a node's
 /// contract facts — used to cite a contract file in contradiction warnings.
 fn fqn_to_scope_id(dump: &LaunchDump) -> HashMap<String, Option<usize>> {
@@ -962,9 +1040,13 @@ pub fn check_sched(
             eprintln!("      {m}");
         }
     }
-    for w in &derived.warnings {
-        eprintln!("  warning: {w}");
-    }
+    // Single authoritative surfacing point for `check` (45.1a): structured,
+    // deduped, with a summary line (45.1c) — `render_explain` must NOT
+    // re-print these, even under `--explain`.
+    eprint!(
+        "{}",
+        render_sched_warnings_summary(&derived.warnings, derived.suppressed_contradictions)
+    );
     Ok(derived)
 }
 
