@@ -2,7 +2,7 @@
 
 use crate::{
     error::Result,
-    substitution::Substitution,
+    substitution::{Substitution, parse_substitutions},
     xml::{Entity, XmlEntity},
 };
 
@@ -17,11 +17,19 @@ pub struct GroupAction {
 
 impl GroupAction {
     pub fn from_entity(entity: &XmlEntity) -> Result<Self> {
-        // Note: <group> does NOT have a namespace/ns attribute in standard
-        // ROS 2. Namespace is set via <push-ros-namespace> inside the group.
-        // We don't parse ns here — if present, it's silently ignored
-        // (same as ROS 2 which rejects it with ValueError).
-        let namespace = None;
+        // `<group ns="…">` / `<group namespace="…">` — the launch-XML frontend
+        // sugar for a leading `<push-ros-namespace>` inside the group (the IR
+        // builder pushes `namespace` onto the stack for the group's body).
+        // ROS 2's launch_xml, nano-ros's `nros-launch-parser` (RFC-0024), and
+        // real Autoware/nav2 launch files all accept it, so honoring it keeps
+        // the resolved model's node FQNs consistent across both runtimes
+        // (previously this was dropped → `/alpha/talker` resolved as
+        // `/talker`). `ns` takes precedence; `namespace` is the long spelling.
+        let namespace = entity
+            .optional_attr_str("ns")?
+            .or(entity.optional_attr_str("namespace")?)
+            .map(|s| parse_substitutions(&s))
+            .transpose()?;
 
         // Parse scoped attribute (default: true)
         let scoped = entity
@@ -39,15 +47,30 @@ mod tests {
     use crate::xml::parse_xml_string;
 
     #[test]
-    fn test_parse_group_with_ns_attr_ignored() {
-        // <group ns="..."> is non-standard. The ns attribute is ignored.
+    fn test_parse_group_ns_attr_honored() {
+        // `<group ns="…">` is the launch-XML sugar for a leading
+        // push-ros-namespace; the ns attribute must be captured (the IR
+        // builder pushes it onto the namespace stack for the body).
         let xml = r#"<group ns="/my_namespace" />"#;
         parse_xml_string(xml).unwrap();
         let doc = roxmltree::Document::parse(xml).unwrap();
         let entity = crate::xml::XmlEntity::new(doc.root_element());
         let group = GroupAction::from_entity(&entity).unwrap();
 
-        assert!(group.namespace.is_none(), "ns attribute should be ignored");
+        assert!(
+            group.namespace.is_some(),
+            "ns attribute must be captured, not ignored"
+        );
+    }
+
+    #[test]
+    fn test_parse_group_namespace_long_attr_honored() {
+        let xml = r#"<group namespace="robot1" />"#;
+        parse_xml_string(xml).unwrap();
+        let doc = roxmltree::Document::parse(xml).unwrap();
+        let entity = crate::xml::XmlEntity::new(doc.root_element());
+        let group = GroupAction::from_entity(&entity).unwrap();
+        assert!(group.namespace.is_some(), "namespace attribute must be captured");
     }
 
     #[test]

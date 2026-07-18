@@ -108,6 +108,19 @@ impl LaunchTraverser {
                 // Push a group scope for scoped groups.
                 // This creates an anonymous scope entry so the launch tree
                 // reflects the group nesting structure.
+                // `<group ns="…">`: push the group's namespace onto the stack
+                // for its body — the launch-XML sugar for a leading
+                // <push-ros-namespace>. Must precede the group-scope entry so
+                // the scope records the pushed namespace, and precede child
+                // traversal so nodes inherit it via `current_namespace()`.
+                // `save_scope`/`restore_scope` (scoped groups) pops it; an
+                // unscoped group intentionally leaks it to siblings.
+                if let Some(ref ns_subs) = group.namespace
+                    && let Ok(namespace) = resolve_substitutions(ns_subs, &self.context)
+                {
+                    self.context.push_namespace(namespace);
+                }
+
                 let prev_scope_id = self.current_scope_id;
                 if group.scoped {
                     let group_ns = self.context.current_namespace();
