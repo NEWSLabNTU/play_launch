@@ -11,9 +11,9 @@ use std::{
 
 use eyre::Result;
 use ros_launch_manifest_sched::{
-    ChainAwareDetail, ChainElement, MapError, MapWarning, MapperRegistry, PlatformResources,
-    ResolvedTier, ResolvedTierTable, SchedNode, band_violations, deadline_priority_contradictions,
-    parse_platform_file, rate_priority_contradictions,
+    ChainAwareDetail, ChainElement, Contradiction, MapError, MapWarning, MapperRegistry,
+    PlatformResources, ResolvedTier, ResolvedTierTable, SchedNode, band_violations,
+    deadline_priority_contradictions, parse_platform_file, rate_priority_contradictions,
 };
 use tracing::{debug, info};
 
@@ -281,6 +281,12 @@ pub struct DerivedSchedPlan {
     /// flag, so the warning itself can't be computed here (see that
     /// function's doc comment for the placement decision).
     pub chain_member_nodes: BTreeSet<String>,
+    /// Number of raw rate/deadline-vs-priority contradictions
+    /// (`ros_launch_manifest_sched::validate::scan_contradictions`) that
+    /// [`should_suppress_contradiction`] filtered out as chain-drain-order-
+    /// intended or override-derivative noise (45.1b) — surfaced in the
+    /// structured summary line (45.1c) so suppression is visible, not silent.
+    pub suppressed_contradictions: usize,
 }
 
 /// Why a node ended up with its final scheduling placement (design §7
@@ -592,6 +598,11 @@ pub fn derive_sched_plan(
         .collect();
     let mut overridden: BTreeMap<String, String> = BTreeMap::new();
     apply_overrides(&mut plan, &file.overrides, &mut warnings, &mut overridden);
+    // Chain members an override pinned below their chain-derived rank
+    // (45.1b): every contradiction where this node is the fact-implied
+    // "should lead" side is a mechanical, already-explained downstream
+    // consequence of THIS warning — see `should_suppress_contradiction`.
+    let mut override_pinned_below_chain_rank: BTreeSet<String> = BTreeSet::new();
     for tier in &plan.tiers {
         for member in &tier.members {
             if let Some(derived_prio) = derived_chain_prio.get(member)
@@ -606,6 +617,7 @@ pub fn derive_sched_plan(
                 );
                 // Collect only (45.1a) — see `apply_overrides`.
                 warnings.push(msg);
+                override_pinned_below_chain_rank.insert(member.clone());
             }
         }
     }
@@ -686,10 +698,16 @@ pub fn derive_sched_plan(
         let rm = index?.manifests.get(&scope_id)?;
         Some(format!("{} [{}]", rm.contract_path.display(), rm.channel))
     };
+    let mut suppressed_contradictions = 0usize;
     for c in rate_priority_contradictions(&input, &plan)
         .into_iter()
         .chain(deadline_priority_contradictions(&input, &plan))
     {
+        if should_suppress_contradiction(&c, &chain_member_nodes, &override_pinned_below_chain_rank)
+        {
+            suppressed_contradictions += 1;
+            continue;
+        }
         let ref_a = contract_ref_for(&c.node_a);
         let ref_b = contract_ref_for(&c.node_b);
         let contract_ref = match (ref_a, ref_b) {
@@ -725,6 +743,7 @@ pub fn derive_sched_plan(
         warnings,
         provenance,
         chain_member_nodes,
+        suppressed_contradictions,
     })
 }
 
@@ -762,6 +781,46 @@ fn describe_map_warning(w: &MapWarning) -> String {
             )
         }
     }
+}
+
+/// The chain-aware contradiction-suppression predicate (45.1b, design study
+/// §5.3). `scan_contradictions` (`ros_launch_manifest_sched::validate`) is a
+/// generic, mapper- and chain-agnostic pairwise scan: for any two nodes with
+/// a known `rate_hz`/`deadline_us` fact, it flags `(node_a, node_b)` when
+/// `node_a`'s fact implies it should be prioritized at least as high as
+/// `node_b`'s, but the FINAL plan gives `node_a` a strictly lower priority
+/// than `node_b` — i.e. `node_b` is always the side that actually "won" the
+/// final priority order despite the raw fact saying it shouldn't have.
+///
+/// The `chain_aware` mapper deliberately ranks its own members by
+/// drain-toward-sink chain position, not by raw `rate_hz`/`deadline_us` — so
+/// whenever the winning side (`node_b`) is a chain member, the "contradiction"
+/// is the mapper doing exactly what it's documented to do, not a defect.
+/// Real Autoware data (the 111-line flood this predicate was built against)
+/// confirms this covers every false positive: in all 35 unique contradictions
+/// produced by that plan, `node_b` was always a chain member — including the
+/// 9 that are downstream echoes of the two `override pins chain member`
+/// warnings (an override can only ever pin a node that IS a chain member, by
+/// construction of that warning), so clause (1) alone happens to subsume
+/// clause (2) on that dataset. Clause (2) stays as an explicit, independent
+/// rule (not just relying on the coincidence above) for the case clause (1)
+/// alone can't catch: an override could in principle pin a chain member so
+/// far down that some entirely non-chain node ends up "winning" the pair —
+/// that contradiction's `node_b` would NOT be a chain member, but it is
+/// still a mechanical, already-explained consequence of the override (named
+/// in `override_pinned_below_chain_rank`, built alongside the "override
+/// pins" warning above), not new information — so it's folded here too
+/// rather than emitted as an independent top-level warning.
+///
+/// Genuine signal — a contradiction between two nodes where neither is
+/// chain-ranked and neither is an override-pinned chain member — is never
+/// suppressed by either clause and is reported as before.
+fn should_suppress_contradiction(
+    c: &Contradiction,
+    chain_member_nodes: &BTreeSet<String>,
+    override_pinned_below_chain_rank: &BTreeSet<String>,
+) -> bool {
+    chain_member_nodes.contains(&c.node_b) || override_pinned_below_chain_rank.contains(&c.node_a)
 }
 
 /// FQN -> scope id, for locating which manifest (if any) declared a node's
@@ -1731,6 +1790,86 @@ overrides:
                 derived.warnings
             );
         });
+    }
+
+    // --- 45.1b: `should_suppress_contradiction` predicate -----------------
+
+    fn contradiction(node_a: &str, node_b: &str, kind: &'static str) -> Contradiction {
+        Contradiction {
+            node_a: node_a.to_string(),
+            node_b: node_b.to_string(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn suppresses_when_winning_side_is_a_chain_member() {
+        // A non-chain node's raw deadline_us implies it should outrank the
+        // chain member, but the chain member (`node_b`, the side that
+        // actually won the final priority order) is ranked by chain
+        // drain-position, not the raw fact — this is the mapper doing what
+        // it's documented to do, not a defect (design study §5.2, bucket
+        // NONCHAIN-vs-CHAIN / CHAIN-INTERNAL).
+        let c = contradiction("/nonchain_tight_deadline", "/chain_member", "deadline_us");
+        let chain_members = BTreeSet::from(["/chain_member".to_string()]);
+        let overridden = BTreeSet::new();
+        assert!(should_suppress_contradiction(
+            &c,
+            &chain_members,
+            &overridden
+        ));
+    }
+
+    #[test]
+    fn keeps_contradiction_between_two_non_chain_nodes() {
+        // Neither side is chain-ranked and neither is an override-pinned
+        // chain member — this is genuine signal (design study §5.2: two
+        // plain nodes whose raw facts and final priorities actually
+        // disagree, with no chain_aware involvement to explain it away).
+        let c = contradiction("/nonchain_a", "/nonchain_b", "rate_hz");
+        let chain_members = BTreeSet::new();
+        let overridden = BTreeSet::new();
+        assert!(!should_suppress_contradiction(
+            &c,
+            &chain_members,
+            &overridden
+        ));
+    }
+
+    #[test]
+    fn keeps_contradiction_when_losing_side_is_chain_member_but_winner_is_not() {
+        // The fact-implied "should lead" side (`node_a`) happens to be a
+        // chain member, but the actual winner (`node_b`) is plain and
+        // NOT an override-pinned chain member — only `node_b`'s status
+        // controls suppression (see `should_suppress_contradiction`'s doc
+        // comment); this case is still genuine signal.
+        let c = contradiction("/chain_member", "/nonchain_b", "deadline_us");
+        let chain_members = BTreeSet::from(["/chain_member".to_string()]);
+        let overridden = BTreeSet::new();
+        assert!(!should_suppress_contradiction(
+            &c,
+            &chain_members,
+            &overridden
+        ));
+    }
+
+    #[test]
+    fn suppresses_override_derivative_contradiction_even_when_winner_is_not_a_chain_member() {
+        // `node_a` was pinned below its chain-derived rank by an explicit
+        // override (already named in a separate "override pins chain
+        // member" warning) — every contradiction this produces against
+        // some OTHER, non-chain node is a mechanical downstream echo of
+        // that one already-reported decision (design study §5.2, bucket
+        // OVERRIDE-DERIVATIVE), not new information, even though `node_b`
+        // itself is plain.
+        let c = contradiction("/pinned_chain_member", "/nonchain_winner", "deadline_us");
+        let chain_members = BTreeSet::from(["/pinned_chain_member".to_string()]);
+        let overridden = BTreeSet::from(["/pinned_chain_member".to_string()]);
+        assert!(should_suppress_contradiction(
+            &c,
+            &chain_members,
+            &overridden
+        ));
     }
 
     #[test]
