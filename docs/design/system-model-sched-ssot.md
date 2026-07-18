@@ -67,24 +67,43 @@ per-path `trigger:` (timer/input/once/spontaneous), `sync:`, `buffer:`, and
 the authored `chains:` (scope-relative). Embedded verbatim from the `types`
 crate — no parallel copies (see "Type sharing" below).
 
-**Layer 3 (`execution:`) — the RESOLVED sched plan:** today only
-`tiers: BTreeMap<String,TierDef>` + `bindings: FQN→tier`. It gains:
+**Layer 3 (`execution:`) — the RESOLVED sched plan.** Reconciled with the
+nano-ros track (maintainer decision 2026-07-19, ros-launch-manifest
+`docs/scheduling.md` §Cross-repo design agreement; nano-ros RFC-0050/0052):
+**the SSoT owns the *structure*, each back-end owns its *realization*.** Today
+`execution:` is `tiers` + `bindings` only. It gains two shared-structure
+groups plus one Linux-realization group:
 
-- `mapper: String` — which mapper produced this plan (provenance).
+*Shared structure (both back-ends read; this is the mapper INPUT):*
 - resolved chains: `Vec<ResolvedChain>` — FQN-qualified `via` topics, the
-  S·B·S decomposition (`ChainElement::{Segment,Boundary}`), each chain's
-  budget/semantics/criticality. This is `chain_member_nodes` made explicit
-  and durable.
-- per-path ranks: `Vec<ChainAwareDetail>` — one per (node, path), with the
-  provenance string. The POSIX apply layer projects to per-node max (a
-  documented lossy compression); embedding the per-path ranks lets an RTOS
-  executor (nano-ros) discriminate at callback granularity — the finer fact
-  play_launch computes and then throws away at its own POSIX boundary.
+  segment/boundary decomposition (`ChainElement::{Segment,Boundary}`), each
+  chain's budget/semantics. `chain_member_nodes` made explicit and durable.
+- per-(node, path) requirement facts: effective `trigger`
+  (timer/input/once/spontaneous), `deadline`, `budget`, `criticality` — the
+  facts nano-ros's own RTOS mapper needs to bind kernel features. Carried
+  once, resolved once, never re-derived per consumer.
 
-`bindings`/`tiers` stay the applied representation (per-node priority/policy/
-core); the additions are the *structure* behind them. `from_model`
-reconstructs membership, the colocation warning, and `--explain` from these
-fields instead of returning `chain_member_nodes: empty`.
+*Linux realization (play_launch writes + reads; nano-ros IGNORES):*
+- `mapper: String` — which mapper produced the applied plan (provenance).
+- per-path ranks: `Vec<ChainAwareDetail>` — one per (node, path), PiCAS
+  fixed-priority ranks + provenance string. These are play_launch's Linux
+  realization. Keeping them in the model is harmless (nano-ros ignores them;
+  `provenance` may surface for diagnostics), but they are NOT the shared
+  interface — nano-ros runs its own mapper over the shared *structure* and
+  binds kernel features (EDF / preemption-threshold / sporadic / affinity)
+  via its six-dim requirement.
+
+`bindings`/`tiers` stay the applied per-node representation
+(priority/policy/core). `from_model` reconstructs membership, the colocation
+warning, and `--explain` from these fields instead of returning
+`chain_member_nodes: empty`.
+
+**Runtime E2E monitoring stays stamp-based — no chain-id.** The model's chains
+are a *bake-time* input to the mappers. At run time, freshness is
+`age = now − header.stamp` at the sink (`sub_endpoints.max_age_ms`); the
+subscription topic disambiguates the budget, the message carries its own
+origin time. One behavioral dependency: stamp preservation (a relay forwards
+`header.stamp`; a re-stamping node is modeled as a periodic path `input: []`).
 
 ### Consumers become readers
 

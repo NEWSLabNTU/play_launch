@@ -32,10 +32,14 @@ All schema changes are additive (old models still parse); no flag day.
   §"Platform file vs `system.toml`"; the "identical resolved output for the
   manual case" claim is backed by the existing sched-crate test
   `bridge_then_manual_mapper_matches_direct_resolve` (`bridge.rs`).
-- **45.2 / 45.3 HELD** pending the SystemModel/nano-ros track's confirmation
-  of the model-schema layout + RTOS per-path-rank consumption model
-  (requested: nano-ros RFC-0050/0052 cross-track notes, 2026-07-18). These
-  are joint decisions on the shared `model` crate — not landed unilaterally.
+- **45.2 / 45.3 UNBLOCKED** (reconciled 2026-07-19). The nano-ros track
+  answered both asks (ros-launch-manifest `docs/scheduling.md` §Cross-repo
+  agreement; nano-ros RFC-0050/0052): chain data lands in `execution:` as
+  **shared structure** (resolved chains + per-(node,path) requirement facts:
+  trigger/deadline/budget/criticality) + play_launch's **Linux-realization**
+  ranks (which nano-ros ignores). SSoT owns structure, each back-end owns
+  realization. These are now play_launch's to implement (nano-ros phase-296
+  W5 depends on them).
 - **45.4 / 45.5 / 45.6 GATED** on 45.2 (the model must carry the resolved
   chains before `resolve` can embed / `from_model` can read them).
 - **45.9** overlaps the design/phase cross-reference sweep already landed
@@ -51,11 +55,13 @@ All schema changes are additive (old models still parse); no flag day.
   consequences sub-list; (c) give sched/runtime diagnostics the same
   structured presentation (rule id, dedup, summary line) the manifest-checker
   half already has via `codespan-reporting`. Target: Autoware 111 lines → ≤3.
-- **45.2** Model schema: `execution:` gains `mapper: String`, resolved
-  `chains: Vec<ResolvedChain>`, per-path `Vec<ChainAwareDetail>`; `contracts:`
-  gains the vocab-v2 authored facts (triggers/sync/buffer/chains) via the
-  shared `types` structs. Additive, optional, serde round-trip + golden tests.
-  **(model crate — cross-track.)**
+- **45.2** Model schema (reconciled 2026-07-19): `execution:` gains — SHARED
+  structure: resolved `chains: Vec<ResolvedChain>` (FQN via + segment/boundary)
+  + per-(node,path) requirement facts (trigger/deadline/budget/criticality);
+  LINUX realization: `mapper: String` + per-path `Vec<ChainAwareDetail>` ranks
+  (nano-ros ignores these). `contracts:` gains vocab-v2 authored facts via the
+  shared `types` structs. Additive/optional; serde round-trip + golden tests.
+  Model crate now play_launch's to land (schema agreed with the nano-ros track).
 - **45.3** Type sharing: retire `sched/src/chain.rs`'s hand-mirror of
   `EffectiveTrigger`/`ChainDecl` in favor of a `types` dependency (or forbid a
   third copy in `model` and document); move/host `resolve_chains` so
