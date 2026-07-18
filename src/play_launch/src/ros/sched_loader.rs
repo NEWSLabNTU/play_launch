@@ -698,13 +698,21 @@ pub fn derive_sched_plan(
         let rm = index?.manifests.get(&scope_id)?;
         Some(format!("{} [{}]", rm.contract_path.display(), rm.channel))
     };
+    // Every node whose final priority was set by an explicit override (45.1b
+    // review): clause 2 of `should_suppress_contradiction` must not fold away
+    // a contradiction whose winner is independently overridden.
+    let overridden_nodes: BTreeSet<String> = overridden.keys().cloned().collect();
     let mut suppressed_contradictions = 0usize;
     for c in rate_priority_contradictions(&input, &plan)
         .into_iter()
         .chain(deadline_priority_contradictions(&input, &plan))
     {
-        if should_suppress_contradiction(&c, &chain_member_nodes, &override_pinned_below_chain_rank)
-        {
+        if should_suppress_contradiction(
+            &c,
+            &chain_member_nodes,
+            &override_pinned_below_chain_rank,
+            &overridden_nodes,
+        ) {
             suppressed_contradictions += 1;
             continue;
         }
@@ -815,12 +823,38 @@ fn describe_map_warning(w: &MapWarning) -> String {
 /// Genuine signal — a contradiction between two nodes where neither is
 /// chain-ranked and neither is an override-pinned chain member — is never
 /// suppressed by either clause and is reported as before.
+///
+/// **Clause 2's double-override guard** (W1 review, Important): clause 2 only
+/// fires when the winner (`node_b`) is NOT itself explicitly overridden
+/// (`!overridden.contains(node_b)`). Clause 1 already handled the case where
+/// `node_b` is a chain member, so clause 2 only ever reaches this check when
+/// `node_b` is non-chain — and if that non-chain winner's priority is itself
+/// the product of a *separate* operator override, the contradiction is a
+/// two-override interaction, not a single mechanical consequence of `node_a`'s
+/// pin: absent `node_a`'s override, `node_a` would sit at its (higher)
+/// chain-derived rank, yet `node_b`'s independent override could still push it
+/// above that rank, so the contradiction would persist. Attributing it solely
+/// to `node_a`'s pin (and folding it away) would silently drop a genuinely
+/// two-cause contradiction — the exact signal-loss this wave fights. So when
+/// both sides are independently overridden, the contradiction survives.
 fn should_suppress_contradiction(
     c: &Contradiction,
     chain_member_nodes: &BTreeSet<String>,
     override_pinned_below_chain_rank: &BTreeSet<String>,
+    overridden: &BTreeSet<String>,
 ) -> bool {
-    chain_member_nodes.contains(&c.node_b) || override_pinned_below_chain_rank.contains(&c.node_a)
+    // Clause 1: the winner (node_b) is chain-ranked (drain-toward-sink), so
+    // the "contradiction" against its raw timing fact is the mapper's own
+    // documented design, not a defect.
+    if chain_member_nodes.contains(&c.node_b) {
+        return true;
+    }
+    // Clause 2: the loser (node_a) was pinned below its chain-derived rank by
+    // a single override already named in an "override pins chain member"
+    // warning — AND the winner (node_b) is not itself independently
+    // overridden (else the pair is a two-override interaction; see the
+    // double-override guard note above).
+    override_pinned_below_chain_rank.contains(&c.node_a) && !overridden.contains(&c.node_b)
 }
 
 /// Category id for a sched warning message (45.1c) — a `rule_id`-equivalent
@@ -831,10 +865,18 @@ fn should_suppress_contradiction(
 /// `render_sched_warnings_summary`'s doc comment for why
 /// `codespan-reporting` isn't used here. Matched by literal prefix/substring
 /// against this file's own `format!` templates (`apply_overrides`,
-/// `derive_sched_plan`, `describe_map_warning`, `SchedPlan::build`'s
-/// `time_triggered` message) — brittle to template wording changes by
-/// construction, but every template is defined a few lines above its match
-/// arm here, in the same file.
+/// `derive_sched_plan`, `describe_map_warning`) — brittle to template wording
+/// changes by construction, but every template is defined a few lines above
+/// its match arm here, in the same file.
+///
+/// Covers exactly the warnings [`derive_sched_plan`] can push into
+/// [`DerivedSchedPlan::warnings`] — the only warnings this renderer ever
+/// sees. The `time_triggered`/`SCHED_DEADLINE not applied` warning is
+/// deliberately NOT categorized here: it originates in
+/// `execution::sched_plan::SchedPlan::{build,from_model}` (the runtime apply
+/// path), lands in a different struct (`SchedPlan::warnings`), and is
+/// surfaced there via its own `tracing::warn!` — it never reaches
+/// `derive_sched_plan`/`check_sched`, so a branch for it here would be dead.
 fn categorize_sched_warning(msg: &str) -> &'static str {
     if msg.starts_with("scheduling: override for unknown node") {
         "sched:override-unknown-node"
@@ -850,8 +892,6 @@ fn categorize_sched_warning(msg: &str) -> &'static str {
         "sched:band-violation-clamp"
     } else if msg.contains("priority order contradicts") {
         "sched:contradiction"
-    } else if msg.contains("SCHED_DEADLINE not applied") {
-        "sched:sched-deadline-skip"
     } else {
         "sched:other"
     }
@@ -1894,10 +1934,12 @@ overrides:
         // NONCHAIN-vs-CHAIN / CHAIN-INTERNAL).
         let c = contradiction("/nonchain_tight_deadline", "/chain_member", "deadline_us");
         let chain_members = BTreeSet::from(["/chain_member".to_string()]);
+        let pinned = BTreeSet::new();
         let overridden = BTreeSet::new();
         assert!(should_suppress_contradiction(
             &c,
             &chain_members,
+            &pinned,
             &overridden
         ));
     }
@@ -1910,10 +1952,12 @@ overrides:
         // disagree, with no chain_aware involvement to explain it away).
         let c = contradiction("/nonchain_a", "/nonchain_b", "rate_hz");
         let chain_members = BTreeSet::new();
+        let pinned = BTreeSet::new();
         let overridden = BTreeSet::new();
         assert!(!should_suppress_contradiction(
             &c,
             &chain_members,
+            &pinned,
             &overridden
         ));
     }
@@ -1927,10 +1971,12 @@ overrides:
         // comment); this case is still genuine signal.
         let c = contradiction("/chain_member", "/nonchain_b", "deadline_us");
         let chain_members = BTreeSet::from(["/chain_member".to_string()]);
+        let pinned = BTreeSet::new();
         let overridden = BTreeSet::new();
         assert!(!should_suppress_contradiction(
             &c,
             &chain_members,
+            &pinned,
             &overridden
         ));
     }
@@ -1943,13 +1989,47 @@ overrides:
         // some OTHER, non-chain node is a mechanical downstream echo of
         // that one already-reported decision (design study §5.2, bucket
         // OVERRIDE-DERIVATIVE), not new information, even though `node_b`
-        // itself is plain.
+        // itself is plain. `node_b` is NOT itself overridden, so clause 2
+        // fires.
         let c = contradiction("/pinned_chain_member", "/nonchain_winner", "deadline_us");
         let chain_members = BTreeSet::from(["/pinned_chain_member".to_string()]);
+        let pinned = BTreeSet::from(["/pinned_chain_member".to_string()]);
         let overridden = BTreeSet::from(["/pinned_chain_member".to_string()]);
         assert!(should_suppress_contradiction(
             &c,
             &chain_members,
+            &pinned,
+            &overridden
+        ));
+    }
+
+    #[test]
+    fn keeps_contradiction_when_both_sides_independently_overridden() {
+        // Double-override guard (W1 review, Important): `node_a` was pinned
+        // below its chain rank by one override, but the winner (`node_b`,
+        // non-chain) got its winning priority from a SEPARATE, independent
+        // override. The contradiction is then a two-override interaction —
+        // absent node_a's pin it would sit at its higher chain-derived rank,
+        // yet node_b's own override could still push it above that rank, so
+        // the contradiction is not purely a mechanical consequence of
+        // node_a's pin. Attributing it solely to node_a's override and
+        // folding it away would silently drop genuine two-cause signal — so
+        // clause 2 must NOT fire.
+        let c = contradiction(
+            "/pinned_chain_member",
+            "/overridden_nonchain",
+            "deadline_us",
+        );
+        let chain_members = BTreeSet::from(["/pinned_chain_member".to_string()]);
+        let pinned = BTreeSet::from(["/pinned_chain_member".to_string()]);
+        let overridden = BTreeSet::from([
+            "/pinned_chain_member".to_string(),
+            "/overridden_nonchain".to_string(),
+        ]);
+        assert!(!should_suppress_contradiction(
+            &c,
+            &chain_members,
+            &pinned,
             &overridden
         ));
     }
