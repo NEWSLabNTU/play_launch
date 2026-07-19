@@ -230,52 +230,40 @@ impl SchedPlan {
             by_fqn,
             mode,
             warnings,
-            // Phase 43.3's `SystemModel` execution layer is bindings-only
-            // (fqn -> tier name); it doesn't carry chain structure, and
-            // extending the YAML artifact schema is 44.7's coordination —
-            // so this stays empty here. The replay path compensates:
-            // `chain_colocation_warnings_for_plan` falls back to re-deriving
-            // membership from the manifest index (always re-loaded at
-            // replay time) when this set is empty, so the co-location
-            // warning DOES fire on the default `launch` → model path
-            // (44.4 review, Critical-1).
-            chain_member_nodes: BTreeSet::new(),
+            // Phase 45.5: reconstructed from the model's OWN embedded
+            // structure (`execution.sched.chains`) — the exact same
+            // `ResolvedChain`/`ChainElement` walk `derive_sched_plan` runs
+            // over a freshly-built `MapperInput::chains`
+            // (`chain_member_nodes_from_chains`, shared by both). No mapper
+            // re-run, no ManifestIndex re-parse: a pure field read. Empty
+            // when the model carries no `execution.sched` at all (older
+            // artifacts, or a `resolve` with no platform file) — this is a
+            // legitimate "no chains declared" state, not a gap to fall back
+            // from (see [`chain_colocation_warnings_for_plan`], which no
+            // longer needs a ManifestIndex fallback because of this).
+            chain_member_nodes: model
+                .execution
+                .sched
+                .as_ref()
+                .map(|s| crate::ros::sched_loader::chain_member_nodes_from_chains(&s.chains))
+                .unwrap_or_default(),
         })
     }
 }
 
-/// [`chain_container_colocation_warnings`] with the chain-membership source
-/// resolved for the caller (Phase 44.4 review, Critical-1): use the plan's
-/// own `chain_member_nodes` when populated (the legacy platform-file path,
-/// `SchedPlan::build`), else re-derive membership from the manifest index
-/// (`sched_derive::chain_member_fqns`) — the model path
-/// (`SchedPlan::from_model`) carries no chain structure (the SystemModel
-/// YAML execution layer is bindings-only), but replay always re-loads the
-/// manifest index, so membership is derivable right here without extending
-/// the model schema.
-///
-/// **Residual gap** (documented, accepted): `play_launch replay --model
-/// <file>` against a bare artifact on a host where no contracts resolve at
-/// replay time (no overlay given, no provider sidecars present) has no
-/// membership source at all — `index` is empty/`None` and the warning
-/// cannot fire. The default `launch` flow never hits this (it resolves and
-/// replays on the same host with the same contract sources).
+/// Chain-member composable-node co-location warning, keyed off whichever
+/// scheduling source built `plan`: [`SchedPlan::build`] (legacy platform-
+/// file path) and [`SchedPlan::from_model`] (Phase 45.5) both populate
+/// `plan.chain_member_nodes` directly from their own already-resolved chain
+/// data now, so this no longer needs a `ManifestIndex` re-parse fallback for
+/// either scheduling source (Phase 45.5 retired the fallback the model path
+/// used to need — see `from_model`'s doc comment).
 pub fn chain_colocation_warnings_for_plan(
     dump: &LaunchDump,
-    index: Option<&ManifestIndex>,
     container_mode: ContainerMode,
     plan: &SchedPlan,
 ) -> Vec<String> {
-    let fallback;
-    let members: &BTreeSet<String> = if !plan.chain_member_nodes.is_empty() {
-        &plan.chain_member_nodes
-    } else if let Some(index) = index {
-        fallback = crate::ros::sched_derive::chain_member_fqns(index);
-        &fallback
-    } else {
-        return Vec::new();
-    };
-    chain_container_colocation_warnings(dump, container_mode, members)
+    chain_container_colocation_warnings(dump, container_mode, &plan.chain_member_nodes)
 }
 
 /// Chain members co-located in a non-isolated container share one OS
@@ -802,116 +790,60 @@ mod model_tests {
         assert_eq!(warnings.len(), 1, "suffix match must resolve the container");
     }
 
-    /// Critical-1 (44.4 review): the default `launch` path builds its plan
-    /// via `SchedPlan::from_model`, whose `chain_member_nodes` is empty —
-    /// `chain_colocation_warnings_for_plan` must fall back to deriving
-    /// membership from the manifest index so the warning still fires under
-    /// stock container mode.
+    /// Phase 45.5: the default `launch` path builds its plan via
+    /// `SchedPlan::from_model` — `chain_member_nodes` must now come straight
+    /// from the model's own `execution.sched.chains` (no ManifestIndex
+    /// involved at all), and the co-location warning must still fire under
+    /// stock container mode from that reconstructed set.
     #[test]
-    fn colocation_warning_fires_through_model_path_via_index_fallback() {
-        use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedNodePath};
-        use ros_launch_manifest_types::{
-            ChainDecl, ChainSegment, ChainSemantics, Manifest, PathDecl, Trigger,
+    fn colocation_warning_fires_through_model_path_from_embedded_chains() {
+        use ros_launch_manifest_sched::{
+            ChainElement, ChainSemantics as SchedChainSemantics, Criticality, ResolvedChain,
+            SegmentNode,
         };
-        use std::collections::BTreeMap;
 
         let dump = dump_with_colocated_chain_members();
 
-        // Manifest index: chain_a (timer path) -> via -> chain_b (input
-        // path), both under scope 0 (ns "/" — but the nodes' contract FQNs
-        // must match the launch FQNs, so declare them with the namespace
-        // folded into node_paths' node_fqn directly).
-        let mut index = crate::ros::manifest_loader::ManifestIndex::default();
-        index.node_paths.push(ResolvedNodePath {
-            node_fqn: "/perception/chain_a".to_string(),
-            path_name: "tick".to_string(),
-            path: PathDecl {
-                trigger: Some(Trigger::Timer { rate_hz: 10.0 }),
-                output: vec!["out".to_string()],
-                ..Default::default()
-            },
-            scope_id: 0,
-        });
-        index.node_paths.push(ResolvedNodePath {
-            node_fqn: "/perception/chain_b".to_string(),
-            path_name: "react".to_string(),
-            path: PathDecl {
-                trigger: Some(Trigger::Input(vec!["in".to_string()])),
-                ..Default::default()
-            },
-            scope_id: 0,
-        });
-        index.topics.insert(
-            "/perception/link".to_string(),
-            crate::ros::manifest_loader::ResolvedTopic {
-                fqn: "/perception/link".to_string(),
-                msg_type: "std_msgs/msg/String".to_string(),
-                qos: None,
-                publishers: vec!["/perception/chain_a/out".to_string()],
-                subscribers: vec!["/perception/chain_b/in".to_string()],
-                rate_hz: None,
-                max_transport_ms: None,
-                drop: None,
-                scope_ids: vec![0],
-            },
-        );
-        let mut chains = BTreeMap::new();
-        chains.insert(
-            "pipeline".to_string(),
-            ChainDecl {
-                semantics: ChainSemantics::Reaction,
+        // Model carries the resolved chain directly (as `resolve` would
+        // have embedded it) — no ManifestIndex anywhere in this test.
+        let mut model = ros_launch_manifest_model::SystemModel::default();
+        model.execution.sched = Some(ros_launch_manifest_model::ExecutionSched {
+            chains: vec![ResolvedChain {
+                name: "pipeline".to_string(),
+                criticality: Criticality::Medium,
                 max_latency_ms: 500.0,
-                segments: vec![
-                    ChainSegment::Path {
-                        scope: "/".to_string(),
-                        path: "tick".to_string(),
-                    },
-                    ChainSegment::Via {
-                        via: "/perception/link".to_string(),
-                    },
-                    ChainSegment::Path {
-                        scope: "/".to_string(),
-                        path: "react".to_string(),
-                    },
-                ],
-            },
-        );
-        index.manifests.insert(
-            0,
-            ResolvedManifest {
-                scope_id: 0,
-                pkg: None,
-                file: "demo.launch.xml".to_string(),
-                ns: "/".to_string(),
-                channel: ContractChannel::Provider,
-                contract_path: std::path::PathBuf::new(),
-                manifest: Manifest {
-                    version: 1,
-                    chains,
-                    ..Default::default()
-                },
-                source: String::new(),
-                diagnostics: vec![],
-            },
-        );
+                semantics: SchedChainSemantics::Reaction,
+                elements: vec![ChainElement::Segment {
+                    nodes_in_topo_order: vec![
+                        SegmentNode {
+                            node: "/perception/chain_a".to_string(),
+                            path: "tick".to_string(),
+                        },
+                        SegmentNode {
+                            node: "/perception/chain_b".to_string(),
+                            path: "react".to_string(),
+                        },
+                    ],
+                }],
+            }],
+            requirements: vec![],
+            mapper: Some("chain_aware".to_string()),
+            ranks: vec![],
+        });
 
-        // A model-path plan: empty chain_member_nodes (exactly what
-        // `SchedPlan::from_model` produces).
-        let plan = SchedPlan {
-            by_fqn: HashMap::new(),
-            mode: SchedApplyMode::Warn,
-            warnings: vec![],
-            chain_member_nodes: BTreeSet::new(),
-        };
-
-        let warnings =
-            chain_colocation_warnings_for_plan(&dump, Some(&index), ContainerMode::Stock, &plan);
+        let plan =
+            SchedPlan::from_model(&model, "posix", SchedApplyMode::Warn).expect("build plan");
         assert_eq!(
-            warnings.len(),
-            1,
-            "model-path plan (empty chain_member_nodes) must fall back to the \
-             manifest index: {warnings:?}"
+            plan.chain_member_nodes,
+            BTreeSet::from([
+                "/perception/chain_a".to_string(),
+                "/perception/chain_b".to_string(),
+            ]),
+            "from_model must reconstruct membership from execution.sched.chains"
         );
+
+        let warnings = chain_colocation_warnings_for_plan(&dump, ContainerMode::Stock, &plan);
+        assert_eq!(warnings.len(), 1, "got: {warnings:?}");
         assert!(
             warnings[0].contains("/perception/shared_container"),
             "{}",
@@ -925,8 +857,20 @@ mod model_tests {
         );
 
         // And the isolated mode stays silent through the same wrapper.
-        let none =
-            chain_colocation_warnings_for_plan(&dump, Some(&index), ContainerMode::Isolated, &plan);
+        let none = chain_colocation_warnings_for_plan(&dump, ContainerMode::Isolated, &plan);
         assert!(none.is_empty(), "got: {none:?}");
+    }
+
+    /// Backward-compat (45.5): a model with NO `execution.sched` at all
+    /// (older artifact, or `resolve` with no platform file) must still
+    /// produce an empty `chain_member_nodes` and never panic — the same
+    /// behavior `from_model` had before this wave, just via a different
+    /// (now-always-safe) code path.
+    #[test]
+    fn from_model_with_no_sched_layer_has_empty_chain_member_nodes() {
+        let model = model_with_binding(true);
+        assert!(model.execution.sched.is_none());
+        let plan = SchedPlan::from_model(&model, "posix", SchedApplyMode::Warn).expect("plan");
+        assert!(plan.chain_member_nodes.is_empty());
     }
 }
