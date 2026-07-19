@@ -1,6 +1,6 @@
 # Phase 45: Scheduling SSoT Unification
 
-**Status:** 📋 Planned
+**Status:** ✅ 45.1–45.8 shipped (2026-07-19); 45.9 = this doc sweep
 **Design of record:** [docs/design/system-model-sched-ssot.md](../design/system-model-sched-ssot.md)
 **Builds on:** Phase 41 (sched v2), Phase 42 (study), Phase 43 (SystemModel runtime), Phase 44 (vocab v2 + chain_aware).
 **Cross-track:** the `model`-crate work items (45.2, 45.3) are shared with the
@@ -40,8 +40,16 @@ All schema changes are additive (old models still parse); no flag day.
   ranks (which nano-ros ignores). SSoT owns structure, each back-end owns
   realization. These are now play_launch's to implement (nano-ros phase-296
   W5 depends on them).
-- **45.4 / 45.5 / 45.6 GATED** on 45.2 (the model must carry the resolved
-  chains before `resolve` can embed / `from_model` can read them).
+- **45.2/45.3 ✅** (main 5aba11c, submodule 5016b4d): `execution.sched` =
+  `{chains, requirements, mapper, ranks, overrides}` (shared structure +
+  Linux realization); sched resolved types serializable; backward-compat.
+- **45.4 ✅** (main 4a1032a): `resolve` embeds `execution.sched` via a single
+  derivation feeding both `bindings` and `execution.sched`; golden test
+  model == `check --explain`.
+- **45.5/45.6 ✅** (main 552596c, submodule c47c5bd): `from_model` reconstructs
+  chain membership + colocation from the model (no re-derive); `--explain`
+  renders from the model on `check`/`resolve`/`replay --model` (byte-identical),
+  exact override classification via `execution.sched.overrides`.
 - **45.9** overlaps the design/phase cross-reference sweep already landed
   (`f4b209b`); the RT-guide `--explain`-on-model portion follows 45.6.
 

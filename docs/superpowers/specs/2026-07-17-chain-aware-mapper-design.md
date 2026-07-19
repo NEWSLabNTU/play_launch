@@ -171,20 +171,25 @@ and resolved chains (additive). Companion checker rules land with the
 vocabulary-v2 implementation. Implementation phasing belongs to a future phase
 doc (not 42 — the study phase ends with this spec).
 
-## Reachability & artifact embedding (2026-07-18)
+## Reachability & artifact embedding (2026-07-18 decision; SHIPPED Phase 45)
 
-Today the chain structure this design computes (S·B·S decomposition,
-per-path ranks, provenance strings) is reachable only via `check`/`--sched`
-— it lives in the in-memory `DerivedSchedPlan`/`MapDiagnostics` for the
-duration of one process and is never serialized. Per the SystemModel-as-
-scheduling-SSoT decision
-([system-model-sched-ssot.md](../../design/system-model-sched-ssot.md),
-work items in [phase-45](../../roadmap/phase-45-sched_ssot_unification.md)),
-this structure will be embedded in the SystemModel's execution layer
-(`mapper`, resolved `chains: Vec<ResolvedChain>`, per-path
-`Vec<ChainAwareDetail>`) so `replay --model`, `--explain`, and off-host
-consumers (nano-ros) read the same chain facts this mapper derives, instead
-of re-deriving or losing them at the artifact boundary.
+Originally the chain structure this design computes (S·B·S decomposition,
+per-path ranks, provenance strings) was reachable only via `check`/`--sched`
+— it lived in the in-memory `DerivedSchedPlan`/`MapDiagnostics` for one
+process and was never serialized. Per the SystemModel-as-scheduling-SSoT
+decision ([system-model-sched-ssot.md](../../design/system-model-sched-ssot.md);
+[phase-45](../../roadmap/phase-45-sched_ssot_unification.md)), **now shipped**:
+`play_launch resolve` embeds the structure in the SystemModel's `execution:`
+layer — `execution.sched.{chains, requirements, mapper, ranks, overrides}`
+(the reconciled split: `chains`+`requirements` are SHARED structure both
+back-ends read; `mapper`+`ranks`+`overrides` are the Linux realization,
+which nano-ros ignores). `SchedPlan::from_model` reconstructs chain
+membership + the colocation warning from it (no re-derive), and `--explain`
+renders from it on `check`/`resolve`/`replay --model` (byte-identical across
+all three). Off-host consumers (nano-ros) read the shared structure and run
+their own RTOS mapper over it (nano-ros RFC-0052). Runtime E2E monitoring
+stays stamp-based (`age = now − header.stamp`) — the model chains are
+bake-time input only.
 
 That same decision also folds in the fix for this design's
 contradiction-detector false positives: `validate.rs::scan_contradictions`

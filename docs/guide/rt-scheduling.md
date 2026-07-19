@@ -205,6 +205,16 @@ from" in one command. Without a resolved platform file, `--explain` prints a
 no-op note and exits 0 (it's a decoration on an already-optional feature,
 not something that should fail `check`).
 
+`--explain` is not `check`-only. `play_launch resolve` embeds the resolved
+scheduling structure into the SystemModel (`execution.sched`), so
+`resolve --explain` and `replay --model <model.yaml> --explain` render the
+same table **from the model** — no re-derivation — byte-identical to
+`check --explain` on the same inputs. The scheduling structure travels with
+the artifact: an off-host consumer (nano-ros) reads the shared chains +
+per-path requirement facts from `execution.sched` and runs its own RTOS
+mapper over them (the PiCAS ranks are the Linux realization, ignored
+off-host). See `docs/design/system-model-sched-ssot.md`.
+
 ### 1.4 Shipping channels — auto-apply, no flags needed
 
 Both the contract and the platform file resolve through the same three

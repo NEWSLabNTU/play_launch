@@ -104,16 +104,22 @@ system config → execution. Consumers slice: play_launch runtime takes the
 
 ## Work items (proposal)
 
-**Scheduling SSoT (2026-07-18 decision):** the execution layer will carry
-the *resolved* sched plan — mapper identity, resolved chains, per-path
-ranks — not just flat `tiers`/`bindings`, so every consumer (runtime apply,
-`--explain`, analysis, monitoring, off-host nano-ros) reads scheduling from
-the model instead of re-deriving it. Design of record:
+**Scheduling SSoT (2026-07-18 decision; Phase 45 SHIPPED):** the execution
+layer carries the *resolved* sched plan in `execution.sched` — SHARED
+structure (`chains`, per-(node,path) `requirements`: trigger/deadline/budget/
+criticality) + Linux realization (`mapper`, `ranks`, `overrides`) — not just
+flat `tiers`/`bindings`, so every consumer reads scheduling from the model
+instead of re-deriving it: `resolve` writes it, `SchedPlan::from_model` reads
+chain membership + colocation from it, `--explain` renders from it on
+`check`/`resolve`/`replay --model` (byte-identical), and off-host nano-ros
+reads the shared structure and runs its own RTOS mapper (RFC-0052; the ranks
+are Linux-only, ignored off-host). Reconciled 2026-07-19: SSoT owns
+structure, each back-end owns realization. Design of record:
 [system-model-sched-ssot.md](system-model-sched-ssot.md); work items:
 [phase-45](../roadmap/phase-45-sched_ssot_unification.md). That document
 supersedes the vocabulary-v2 coordination note below, which stays as the
-detailed type/translation reference (exact `types`/`sched`-crate structs to
-share): [system-model-vocab-v2-embedding.md](system-model-vocab-v2-embedding.md).
+detailed type/translation reference:
+[system-model-vocab-v2-embedding.md](system-model-vocab-v2-embedding.md).
 
 1. `ros-launch-manifest`: add `model` crate — `SystemModel` types, serde,
    schema doc, golden-file round-trip tests. No behavior, pure schema.

@@ -45,7 +45,7 @@ Completed phase docs are in `archive/`.
 | 42 | Autoware System Model Study | ✅ 42.0–42.6 | 2026-07-17 |
 | 43 | Runtime Consumes the SystemModel | 🔄 43.1–43.3, 43.5 done; 43.4 re-scoped | — |
 | 44 | Vocabulary v2 + Chain-Aware Mapper | 🔄 44.1–44.6, 44.8 done; 44.7 handoff | — |
-| 45 | Scheduling SSoT Unification | 📋 Planned | — |
+| 45 | Scheduling SSoT Unification | ✅ 45.1–45.8 | 2026-07-19 |
 
 ---
 
