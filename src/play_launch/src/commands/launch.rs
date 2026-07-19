@@ -195,6 +195,7 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
         system: None,
         target: args.common.target.clone(),
         out: "system_model.yaml".to_string(),
+        explain: false,
     };
     super::resolve::handle_resolve(&resolve_args)?;
 
@@ -204,6 +205,7 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
     let replay_args = crate::cli::options::ReplayArgs {
         input_file: PathBuf::from("record.json"),
         model: Some(PathBuf::from("system_model.yaml")),
+        explain: false,
         common: args.common.clone(),
     };
 

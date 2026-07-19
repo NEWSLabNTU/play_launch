@@ -239,6 +239,31 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         );
     }
 
+    // Phase 45.6 — `--explain` on `resolve`: render from the SystemModel
+    // this invocation just built (`model.execution.sched`/`tiers`/
+    // `bindings`), not from `derived` — proves the embedded artifact itself
+    // carries enough to render without a fresh derive, the same guarantee
+    // `replay --model --explain` depends on. We still have the fresh
+    // `resolved_platform`/`index` in scope, so the footer is byte-identical
+    // to what `check --sched --explain` would print for the same inputs.
+    if args.explain {
+        if model.execution.sched.is_some() || !model.execution.bindings.is_empty() {
+            let footer = match &resolved_platform {
+                Some(p) => sched_loader::explain_footer(p, Some(&index)),
+                None => sched_loader::explain_footer_from_model(&model),
+            };
+            eprint!(
+                "{}",
+                sched_loader::render_explain_from_model(&model, &args.target, &footer)
+            );
+        } else {
+            eprintln!(
+                "note: --explain has no effect without a resolved scheduling platform file \
+                 (pass --sched <path>, or ship one via the overlay/provider channels)"
+            );
+        }
+    }
+
     let yaml = model
         .to_yaml_string()
         .wrap_err("serializing SystemModel to YAML")?;
