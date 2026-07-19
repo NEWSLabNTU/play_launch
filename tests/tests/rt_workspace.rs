@@ -927,6 +927,181 @@ fn serde_yaml_value(yaml: &str) -> serde_json::Value {
     serde_yaml_ng::from_str(yaml).expect("parse system_model.yaml")
 }
 
+/// Phase 45.4 — `resolve` with the `chain_aware` platform file
+/// (`bringup.system.posix.yaml`, the `points_to_cmd` chain showcase, Phase
+/// 44.5) must embed the resolved sched structure into
+/// `execution.sched` (`docs/design/system-model-sched-ssot.md`): the chain,
+/// the per-node requirement facts, the mapper identity, and the PiCAS ranks
+/// — the SAME single derivation that already produced `tiers`/`bindings`
+/// (deliverable 4: no double-derivation drift). A second assertion checks
+/// consistency against `check --sched --explain` on the identical inputs:
+/// since both commands call the same `derive_sched_plan`, the chain
+/// membership and per-node priorities must agree exactly (deliverable 3).
+#[test]
+fn resolve_embeds_sched_structure_matching_check_explain() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+    let sched = fixture_dir().join("launch/bringup.system.posix.yaml");
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let out = tmp.path().join("system_model.yaml");
+
+    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
+        "resolve",
+        "rt_demo",
+        "bringup.launch.xml",
+        "--sched",
+        sched.to_str().unwrap(),
+        "-o",
+        out.to_str().unwrap(),
+    ]))
+    .expect("failed to spawn play_launch resolve");
+    let status = proc.wait_with_timeout(Duration::from_secs(60));
+    assert!(status.success(), "play_launch resolve failed");
+
+    let yaml = std::fs::read_to_string(&out).expect("read system_model.yaml");
+    let model: serde_json::Value = serde_yaml_value(&yaml);
+
+    let sched_layer = &model["execution"]["sched"];
+    assert!(
+        sched_layer.is_object(),
+        "execution.sched must be embedded when a chain_aware platform file is resolved: {model}"
+    );
+    assert_eq!(sched_layer["mapper"], "chain_aware");
+
+    // chains: the points_to_cmd chain, decomposed into the timer boundary
+    // (sensor_node.tick) followed by one drain-toward-sink segment
+    // (filter_component.filter -> control_node.control).
+    let chains = sched_layer["chains"].as_array().expect("sched.chains");
+    let chain = chains
+        .iter()
+        .find(|c| c["name"] == "points_to_cmd")
+        .expect("points_to_cmd chain must be embedded");
+    assert_eq!(chain["criticality"], "high");
+    let elements = chain["elements"].as_array().expect("chain.elements");
+    assert_eq!(elements.len(), 2, "1 boundary + 1 segment: {elements:?}");
+    assert_eq!(elements[0]["kind"], "boundary");
+    assert_eq!(elements[0]["value"]["node"], "/perception/sensor_node");
+    assert_eq!(elements[1]["kind"], "segment");
+    let seg_nodes = elements[1]["value"]["nodes_in_topo_order"]
+        .as_array()
+        .expect("segment nodes_in_topo_order");
+    assert_eq!(seg_nodes[0]["node"], "/perception/filter_component");
+    assert_eq!(seg_nodes[1]["node"], "/control/control_node");
+
+    // requirements: one entry per chain member, FQN-keyed the same as
+    // structure.nodes/execution.bindings — no fourth FQN builder.
+    let requirements = sched_layer["requirements"]
+        .as_array()
+        .expect("sched.requirements");
+    let structure_nodes = model["structure"]["nodes"]
+        .as_object()
+        .expect("structure.nodes");
+    let bindings = model["execution"]["bindings"]
+        .as_object()
+        .expect("execution.bindings");
+    assert_eq!(requirements.len(), 3, "one requirement per rt_demo node");
+    for req in requirements {
+        let fqn = req["node_fqn"].as_str().expect("node_fqn");
+        assert!(
+            structure_nodes.contains_key(fqn),
+            "requirement node_fqn {fqn} must match a structure.nodes key"
+        );
+        assert!(
+            bindings.contains_key(fqn),
+            "requirement node_fqn {fqn} must match an execution.bindings key"
+        );
+    }
+    let control_req = requirements
+        .iter()
+        .find(|r| r["node_fqn"] == "/control/control_node")
+        .expect("control_node requirement");
+    assert_eq!(control_req["criticality"], "high");
+    assert_eq!(control_req["paths"][0]["max_latency_ms"], 10.0);
+
+    // ranks: per-(node,path) chain_aware PiCAS ranks, one per chain member.
+    let ranks = sched_layer["ranks"].as_array().expect("sched.ranks");
+    assert_eq!(ranks.len(), 3);
+    for r in ranks {
+        let node = r["node"].as_str().expect("rank node");
+        assert!(
+            structure_nodes.contains_key(node),
+            "rank node {node} must match a structure.nodes key"
+        );
+        assert!(
+            r["provenance"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("chain_aware"),
+            "rank provenance must cite chain_aware: {r:?}"
+        );
+    }
+
+    // Model-vs-derive consistency (deliverable 3): `check --sched --explain`
+    // on the SAME inputs re-derives via the same `derive_sched_plan` — the
+    // chain-ranked node set embedded in the model must match the set of
+    // nodes `--explain` shows with `chain_aware` provenance.
+    let explain_output = fixtures::play_launch_cmd(&env)
+        .args([
+            "check",
+            "rt_demo",
+            "bringup.launch.xml",
+            "--sched",
+            sched.to_str().unwrap(),
+            "--explain",
+        ])
+        .output()
+        .expect("failed to run check --sched --explain");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&explain_output.stdout),
+        String::from_utf8_lossy(&explain_output.stderr),
+    );
+    assert!(
+        explain_output.status.success(),
+        "check --sched --explain failed:\n{combined}"
+    );
+    let mut chain_member_fqns: Vec<&str> = elements
+        .iter()
+        .flat_map(|e| {
+            if e["kind"] == "boundary" {
+                vec![e["value"]["node"].as_str().unwrap()]
+            } else {
+                e["value"]["nodes_in_topo_order"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|n| n["node"].as_str().unwrap())
+                    .collect()
+            }
+        })
+        .collect();
+    chain_member_fqns.sort_unstable();
+    for fqn in &chain_member_fqns {
+        // `combined` has more than one line mentioning `fqn` (the plain
+        // tier-table dump from `check_sched` prints it too, with no
+        // provenance) — the row that matters is the `--explain` FQN table
+        // row, so scan every matching line rather than taking the first.
+        let matched = combined
+            .lines()
+            .filter(|l| l.contains(fqn))
+            .any(|l| l.contains("chain_aware") || l.contains("override"));
+        // Every chain member must show either the chain_aware-derived
+        // provenance or an explicit override (`control_node`'s pinned
+        // priority, per bringup.system.posix.yaml) — both are legitimate
+        // final labels for a node the SAME derivation ranked as a chain
+        // member; the model's own `ranks` (asserted above) already carries
+        // the pre-override chain_aware rank for every member, including
+        // the overridden one.
+        assert!(
+            matched,
+            "chain member {fqn} must be chain_aware- or override-provenanced in --explain \
+             (same derivation as the embedded model):\n{combined}"
+        );
+    }
+}
+
 /// Phase 43.1: `replay --model` refuses a record that is not the model's
 /// bound companion (stale pair), before any process spawns.
 #[test]

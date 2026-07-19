@@ -11,9 +11,10 @@ use std::{
 
 use eyre::Result;
 use ros_launch_manifest_sched::{
-    ChainAwareDetail, ChainElement, Contradiction, MapError, MapWarning, MapperRegistry,
-    PlatformResources, ResolvedTier, ResolvedTierTable, SchedNode, band_violations,
-    deadline_priority_contradictions, parse_platform_file, rate_priority_contradictions,
+    ChainAwareDetail, ChainElement, Contradiction, MapError, MapWarning, MapperNode,
+    MapperRegistry, PlatformResources, ResolvedChain, ResolvedTier, ResolvedTierTable, SchedNode,
+    band_violations, deadline_priority_contradictions, parse_platform_file,
+    rate_priority_contradictions,
 };
 use tracing::{debug, info};
 
@@ -287,6 +288,25 @@ pub struct DerivedSchedPlan {
     /// intended or override-derivative noise (45.1b) — surfaced in the
     /// structured summary line (45.1c) so suppression is visible, not silent.
     pub suppressed_contradictions: usize,
+    /// Phase 45.4 — the resolved chains this derivation fed to the mapper
+    /// (`MapperInput::chains`, built by `sched_derive::resolve_chains`),
+    /// carried straight through so `model_builder` can embed them verbatim
+    /// in `execution.sched.chains` — the model's SHARED STRUCTURE (design
+    /// `docs/design/system-model-sched-ssot.md`). Never re-derived by the
+    /// model builder: this is the single derivation call's output.
+    pub chains: Vec<ResolvedChain>,
+    /// Phase 45.4 — every schedulable node's extracted timing/criticality/
+    /// path facts (`MapperInput::nodes`), carried through so `model_builder`
+    /// can translate each into a `model::NodeSchedRequirement` for
+    /// `execution.sched.requirements` — the model's SHARED STRUCTURE
+    /// (per-(node,path) trigger/deadline/budget + per-node criticality).
+    pub nodes: Vec<MapperNode>,
+    /// Phase 45.4 — per-(node, path) `chain_aware` PiCAS ranks
+    /// (`MapDiagnostics::details`), carried through so `model_builder` can
+    /// embed them in `execution.sched.ranks` — the model's LINUX
+    /// REALIZATION. Empty for mappers other than `chain_aware` (which is
+    /// the only built-in that populates diagnostics `details`).
+    pub ranks: Vec<ChainAwareDetail>,
 }
 
 /// Why a node ended up with its final scheduling placement (design §7
@@ -755,6 +775,13 @@ pub fn derive_sched_plan(
         provenance,
         chain_member_nodes,
         suppressed_contradictions,
+        // Phase 45.4 — single-derive wiring: `input`/`diagnostics` were
+        // already fully consumed above (contradiction scans, provenance);
+        // move their chain/node/rank facts out here rather than re-deriving
+        // them a second time for the model's `execution.sched`.
+        chains: input.chains,
+        nodes: input.nodes,
+        ranks: diagnostics.details,
     })
 }
 

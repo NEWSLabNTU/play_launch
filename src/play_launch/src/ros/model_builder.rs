@@ -528,6 +528,40 @@ pub fn build_system_model(
             }
         }
         diagnostics.extend(s.derived.warnings.iter().cloned());
+
+        // Phase 45.4 — embed the resolved sched structure into
+        // `execution.sched` (docs/design/system-model-sched-ssot.md): the
+        // SAME single derivation that fed `tiers`/`bindings` above, never
+        // re-derived. `chains`/`nodes`/`ranks` are `s.derived`'s own fields
+        // (Phase 45.4, `sched_loader::derive_sched_plan`) — carried
+        // straight through from the one `MapperInput`/`MapDiagnostics` this
+        // function already built.
+        //
+        // FQN identity: `s.derived.nodes[].name` and `s.derived.chains`'
+        // member FQNs are the SAME identities already used for `bindings`
+        // above (`t.members`, sourced from `scheduled_records_from_dump`'s
+        // `MapperNode::name` / `resolve_chains`'s contract-side resolution)
+        // — no fourth FQN builder introduced here.
+        let requirements: Vec<model::NodeSchedRequirement> = s
+            .derived
+            .nodes
+            .iter()
+            .filter(|n| n.criticality.is_some() || !n.paths.is_empty())
+            .map(|n| model::NodeSchedRequirement {
+                node_fqn: n.name.clone(),
+                criticality: n.criticality,
+                paths: n.paths.clone(),
+            })
+            .collect();
+        let exec_sched = model::ExecutionSched {
+            chains: s.derived.chains.clone(),
+            requirements,
+            mapper: Some(s.derived.mapper.clone()),
+            ranks: s.derived.ranks.clone(),
+        };
+        if !exec_sched.is_empty() {
+            execution.sched = Some(exec_sched);
+        }
     }
     // deploy: integrator-owned placement lands here once the system config
     // grows a [deploy] section (RFC-0050 open question); empty = all-linux.
