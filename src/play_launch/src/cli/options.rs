@@ -322,6 +322,14 @@ pub struct ResolveArgs {
     /// Output path for the SystemModel YAML. `-` writes to stdout.
     #[arg(long, short = 'o', default_value = "system_model.yaml")]
     pub out: String,
+
+    /// Print the merged scheduling plan with provenance per node (Phase
+    /// 45.6), rendered from the SystemModel this invocation just built —
+    /// same table `check --sched --explain` shows for the same inputs, one
+    /// renderer. Only meaningful together with a resolved scheduling
+    /// platform file; a no-op note is printed otherwise (not an error).
+    #[arg(long)]
+    pub explain: bool,
 }
 
 impl ResolveArgs {
@@ -414,6 +422,14 @@ pub struct ReplayArgs {
     /// to run (the checked artifact must be the thing that runs).
     #[arg(long, value_name = "PATH")]
     pub model: Option<PathBuf>,
+
+    /// Print the merged scheduling plan with provenance per node (Phase
+    /// 45.6), rendered from the given `--model`'s `execution.sched` — same
+    /// table `check --sched --explain`/`resolve --explain` show for the
+    /// same inputs, one renderer, no re-derive. Requires `--model`; a note
+    /// is printed and the replay proceeds otherwise (not an error).
+    #[arg(long)]
+    pub explain: bool,
 
     #[command(flatten)]
     pub common: CommonOptions,

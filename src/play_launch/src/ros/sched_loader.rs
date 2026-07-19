@@ -1155,39 +1155,40 @@ pub fn print_explain(
     eprint!("{}", render_explain(derived, platform, index));
 }
 
-/// Pure string-builder for `--explain`'s output (design §7) — split out from
-/// [`print_explain`] so tests can assert on the rendered text directly
-/// instead of only smoke-testing that printing doesn't panic.
-fn render_explain(
-    derived: &DerivedSchedPlan,
-    platform: &ResolvedPlatformFile,
-    index: Option<&ManifestIndex>,
-) -> String {
-    use std::fmt::Write as _;
+/// One `--explain` table row (Phase 45.6, design "Consumers become
+/// readers" — "same renderer, one code path"): per-node final
+/// class/priority/core + provenance, independent of whether the caller
+/// derived it fresh ([`explain_rows_from_derived`], the `check` path) or
+/// read it back from an already-resolved [`ros_launch_manifest_model::
+/// SystemModel`] ([`explain_rows_from_model`], the `resolve`/`replay
+/// --model` path). [`render_explain_table`] is the one formatter both
+/// converge on.
+#[derive(Debug)]
+pub(crate) struct ExplainRow {
+    fqn: String,
+    class: String,
+    priority: i64,
+    core: Option<u32>,
+    provenance: Provenance,
+}
 
-    // One row per node, highest priority first (ties by FQN ascending) —
-    // the default (non-RT) tier's members interleave at priority 0.
-    struct Row<'a> {
-        fqn: &'a str,
-        class: String,
-        priority: i64,
-        core: String,
-        provenance: Provenance,
-    }
-
-    let mut rows: Vec<Row> = derived
+/// Build `--explain`'s rows from a freshly-derived [`DerivedSchedPlan`]
+/// (the `check` path — `derived.plan`/`derived.provenance` are this
+/// invocation's own mapper output, not read back from anywhere).
+fn explain_rows_from_derived(derived: &DerivedSchedPlan) -> Vec<ExplainRow> {
+    derived
         .plan
         .tiers
         .iter()
         .flat_map(|t| {
-            t.members.iter().map(move |m| Row {
-                fqn: m,
+            t.members.iter().map(move |m| ExplainRow {
+                fqn: m.clone(),
                 class: t
                     .sched_class
                     .clone()
                     .unwrap_or_else(|| "SCHED_OTHER".to_string()),
                 priority: t.priority,
-                core: t.core.map(|c| c.to_string()).unwrap_or_else(|| "-".into()),
+                core: t.core,
                 provenance: derived
                     .provenance
                     .get(m)
@@ -1195,8 +1196,144 @@ fn render_explain(
                     .unwrap_or(Provenance::Default),
             })
         })
-        .collect();
-    rows.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.fqn.cmp(b.fqn)));
+        .collect()
+}
+
+/// Phase 45.6 — build `--explain`'s rows directly from a `SystemModel`'s
+/// ALREADY-RESOLVED `execution` layer: `tiers`+`bindings` for every
+/// RT-scheduled node's final class/priority/core (the exact representation
+/// [`crate::execution::sched_plan::SchedPlan::from_model`] applies at
+/// runtime), `structure.nodes` for the full schedulable-node identity set
+/// (RT nodes AND non-RT ones — Phase 45.4's `execution.bindings` only ever
+/// carries non-default tiers, so a plain binding lookup alone would silently
+/// drop every non-RT node the `check` path still lists as `default`),
+/// and `execution.sched.ranks` for chain-aware provenance. No mapper
+/// re-run: every value here is a field read.
+///
+/// Provenance reconstruction is best-effort where the model doesn't carry
+/// enough to be exact (documented per-branch below); it is EXACT for the
+/// two cases the design doc calls out by name — chain-aware rows and the
+/// non-RT default — which is what Phase 45.6's parity test exercises:
+///
+/// - No binding at all → [`Provenance::Default`] (byte-for-byte identical
+///   to the `check` path's default-tier row).
+/// - A binding whose FQN carries a `ranks` entry (only the `chain_aware`
+///   mapper populates `ranks`): pick the winning (max-priority) rank the
+///   same way [`build_provenance`] does. If the model's FINAL applied
+///   priority equals that un-overridden rank's priority, the node's
+///   placement IS the mapper's raw output → [`Provenance::ChainAware`]
+///   with the exact same provenance line (`"(max over N paths)"` suffix
+///   under the same condition) `check --explain` would show — this is the
+///   byte-for-byte parity case.
+/// - A binding with a `ranks` entry whose priority does NOT match the
+///   final applied value: something (almost always an explicit
+///   `overrides.<selector>` entry; in principle also priority-band
+///   clamping) changed it after derivation. Rendered as
+///   [`Provenance::Override`] using the FQN's bare (last-segment) name as
+///   the selector — the model carries no verbatim override-selector
+///   string, so this is an approximation, but matches every override
+///   convention observed in the rt_workspace/Autoware fixtures (which key
+///   overrides by bare node name, not FQN).
+/// - A binding with no `ranks` entry at all (every non-`chain_aware`
+///   mapper): the model's `NodeSchedRequirement` carries per-PATH facts
+///   only (`requirements[].paths[]`), not the top-level `rate_hz`/
+///   `deadline_us` facts `rate_monotonic`/`deadline_monotonic` actually
+///   derived from (topic-level rate facts, a different source) — so this
+///   falls back to the same tier-name description [`describe_derived_fact`]
+///   itself uses for the `manual` mapper (`"tier '<name>' → prio <p>"`):
+///   honestly states the applied outcome without inventing a fact number
+///   the model doesn't carry. A known, documented gap — it does not affect
+///   chain_aware chain provenance, the case Phase 45.6 targets.
+pub(crate) fn explain_rows_from_model(
+    model: &ros_launch_manifest_model::SystemModel,
+    target: &str,
+) -> Vec<ExplainRow> {
+    let sched = model.execution.sched.as_ref();
+    let mapper_name = sched.and_then(|s| s.mapper.clone());
+
+    let mut ranks_by_node: HashMap<&str, Vec<&ChainAwareDetail>> = HashMap::new();
+    if let Some(s) = sched {
+        for d in &s.ranks {
+            ranks_by_node.entry(d.node.as_str()).or_default().push(d);
+        }
+    }
+
+    let mut rows = Vec::new();
+    for fqn in model.structure.nodes.keys() {
+        let Some(tier_name) = model.execution.bindings.get(fqn) else {
+            rows.push(ExplainRow {
+                fqn: fqn.clone(),
+                class: "SCHED_OTHER".to_string(),
+                priority: 0,
+                core: None,
+                provenance: Provenance::Default,
+            });
+            continue;
+        };
+        let Some(tier) = model.execution.tiers.get(tier_name) else {
+            continue;
+        };
+        let Some(spec) = tier.platform(target) else {
+            continue;
+        };
+
+        let provenance = if let Some(ds) = ranks_by_node.get(fqn.as_str()) {
+            let winner = ds
+                .iter()
+                .max_by(|a, b| {
+                    a.priority
+                        .cmp(&b.priority)
+                        .then_with(|| a.path.cmp(&b.path))
+                })
+                .expect("ranks_by_node groups are always non-empty");
+            if winner.priority == spec.priority {
+                let mut line = winner.provenance.clone();
+                if ds.len() > 1 {
+                    line.push_str(&format!(" (max over {} paths)", ds.len()));
+                }
+                Provenance::ChainAware { line }
+            } else {
+                Provenance::Override {
+                    selector: bare_node_name(fqn),
+                }
+            }
+        } else {
+            Provenance::Derived {
+                mapper: mapper_name.clone().unwrap_or_else(|| "manual".to_string()),
+                fact: format!("tier '{tier_name}' → prio {}", spec.priority),
+            }
+        };
+
+        rows.push(ExplainRow {
+            fqn: fqn.clone(),
+            class: spec
+                .sched_class
+                .clone()
+                .unwrap_or_else(|| "SCHED_OTHER".to_string()),
+            priority: spec.priority,
+            core: spec.core,
+            provenance,
+        });
+    }
+    rows
+}
+
+/// The bare (last path segment) name of an FQN, e.g. `/a/b/c` → `c` — the
+/// override-selector convention every rt_workspace/Autoware platform file
+/// observed so far uses (see [`explain_rows_from_model`]'s doc comment).
+fn bare_node_name(fqn: &str) -> String {
+    fqn.rsplit('/').next().unwrap_or(fqn).to_string()
+}
+
+/// Pure table formatter shared by every `--explain` source (Phase 45.6,
+/// design "same renderer, one code path"): sort (priority desc, FQN asc),
+/// compute column widths, render the table, append `footer` verbatim.
+/// [`render_explain`] (fresh derive) and [`render_explain_from_model`]
+/// (embedded model) build `rows` differently but converge here.
+fn render_explain_table(mut rows: Vec<ExplainRow>, footer: &str) -> String {
+    use std::fmt::Write as _;
+
+    rows.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.fqn.cmp(&b.fqn)));
 
     let fqn_w = rows.iter().map(|r| r.fqn.len()).max().unwrap_or(3).max(3);
     let class_w = rows.iter().map(|r| r.class.len()).max().unwrap_or(5).max(5);
@@ -1208,10 +1345,11 @@ fn render_explain(
         "FQN", "CLASS", "PRIO", "CORE"
     );
     for r in &rows {
+        let core = r.core.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
         let _ = writeln!(
             out,
             "{:fqn_w$}  {:class_w$}  {:>4}  {:>4}  {}",
-            r.fqn, r.class, r.priority, r.core, r.provenance
+            r.fqn, r.class, r.priority, core, r.provenance
         );
     }
 
@@ -1221,6 +1359,22 @@ fn render_explain(
     // here was site #3 of the original 2x/3x duplicate-print bug (study
     // §4.2).
 
+    out.push_str(footer);
+    out
+}
+
+/// The `check`/`resolve` footer: "system file: <channel>(<path>)" plus one
+/// "contract[scope N, file]: <channel>(<path>)" line per resolved manifest
+/// — shared by both callers that have a [`ResolvedPlatformFile`] +
+/// [`ManifestIndex`] in hand (`check` always; `resolve` too, since it
+/// resolves both before building its model).
+pub(crate) fn explain_footer(
+    platform: &ResolvedPlatformFile,
+    index: Option<&ManifestIndex>,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
     let _ = writeln!(
         out,
         "system file: {}({})",
@@ -1245,6 +1399,67 @@ fn render_explain(
         }
     }
     out
+}
+
+/// Footer for a bare-model `--explain` render with no resolved platform
+/// file / manifest index in hand (`replay --model` on a host where the
+/// scheduling-platform-file channels were never consulted, since the model
+/// already carries the applied plan) — names the mapper the model itself
+/// recorded (`execution.sched.mapper`) instead of a file path.
+pub(crate) fn explain_footer_from_model(model: &ros_launch_manifest_model::SystemModel) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    match model
+        .execution
+        .sched
+        .as_ref()
+        .and_then(|s| s.mapper.as_deref())
+    {
+        Some(mapper) => {
+            let _ = writeln!(out, "system file: (embedded in model; mapper={mapper})");
+        }
+        None => {
+            let _ = writeln!(
+                out,
+                "system file: (embedded in model; no scheduling platform file resolved)"
+            );
+        }
+    }
+    out
+}
+
+/// Pure string-builder for `--explain`'s output (design §7) — split out from
+/// [`print_explain`] so tests can assert on the rendered text directly
+/// instead of only smoke-testing that printing doesn't panic. `check`'s own
+/// call path: a fresh derive, never re-read from a model.
+fn render_explain(
+    derived: &DerivedSchedPlan,
+    platform: &ResolvedPlatformFile,
+    index: Option<&ManifestIndex>,
+) -> String {
+    let rows = explain_rows_from_derived(derived);
+    let footer = explain_footer(platform, index);
+    render_explain_table(rows, &footer)
+}
+
+/// Phase 45.6 — `--explain` sourced from an already-resolved `SystemModel`
+/// instead of a fresh derive: `resolve --explain` (render the model just
+/// built) and `replay --model --explain` (render the stored model) both
+/// call this. `footer` is caller-supplied so a caller with a fresh
+/// `ResolvedPlatformFile`/`ManifestIndex` in hand (`resolve`, which
+/// resolves both before building its model) can pass the byte-identical
+/// [`explain_footer`] text `check --explain` would show for the same
+/// inputs; a caller with only the bare model (`replay --model`, which never
+/// consults the platform-file channels once a model is given) passes
+/// [`explain_footer_from_model`]'s graceful fallback instead.
+pub fn render_explain_from_model(
+    model: &ros_launch_manifest_model::SystemModel,
+    target: &str,
+    footer: &str,
+) -> String {
+    let rows = explain_rows_from_model(model, target);
+    render_explain_table(rows, footer)
 }
 
 /// Which channel supplied a resolved platform file (Phase 41.3 design §3.1;
@@ -2750,6 +2965,111 @@ resources:
             assert!(text.contains("default (no timing facts)"), "{text}");
             assert!(text.contains("system file: provider("), "{text}");
         });
+    }
+
+    // ── Phase 45.6: model-sourced --explain ──
+
+    /// Phase 45.6 parity test (the brief's core deliverable): render
+    /// `--explain` from a fresh derive (the `check` path,
+    /// `explain_rows_from_derived`/`render_explain`) and from the SAME
+    /// derivation embedded into a `SystemModel` the way `resolve` actually
+    /// builds it (`model_builder::build_system_model`, the `resolve`/
+    /// `replay --model` path, `explain_rows_from_model`/
+    /// `render_explain_from_model`) — the two must show byte-identical
+    /// per-node rows (chain-aware provenance included) and, since `resolve`
+    /// still has the fresh `ResolvedPlatformFile`/`ManifestIndex` in scope,
+    /// a byte-identical footer too.
+    #[test]
+    fn model_sourced_explain_matches_fresh_derive_for_chain_aware_plan() {
+        let dump = dump_two_plain_nodes();
+        let index = index_with_chain();
+        with_temp_file("yaml", V2_CHAIN_AWARE_BAND, |path| {
+            let derived =
+                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
+                    .expect("derive");
+            assert_eq!(derived.mapper, "chain_aware");
+
+            // Build the model exactly the way `resolve` does (same
+            // `SchedInputs` shape `model_builder::build_system_model`
+            // expects) — no separate/hand-rolled construction.
+            let sched_inputs = crate::ros::model_builder::SchedInputs {
+                derived: &derived,
+                declared_tiers: None,
+            };
+            let model = crate::ros::model_builder::build_system_model(
+                &dump,
+                &index,
+                Some(&sched_inputs),
+                Default::default(),
+                &Default::default(),
+            );
+            assert!(
+                model.execution.sched.is_some(),
+                "chain_aware mapper must embed execution.sched"
+            );
+
+            let resolved = ResolvedPlatformFile {
+                path: path.to_path_buf(),
+                channel: PlatformFileChannel::Explicit,
+            };
+            let check_text = render_explain(&derived, &resolved, Some(&index));
+            let footer = explain_footer(&resolved, Some(&index));
+            let model_text = render_explain_from_model(&model, "posix", &footer);
+
+            eprintln!("--- check --sched --explain ---\n{check_text}");
+            eprintln!("--- resolve/replay --model --explain ---\n{model_text}");
+
+            // Chain-aware provenance: exact per-node row parity for both
+            // chain members (design requirement: "chain provenance from
+            // ranks... must be equivalent").
+            for fqn in ["/fast_node", "/slow_node"] {
+                let check_row = check_text
+                    .lines()
+                    .find(|l| l.trim_start().starts_with(fqn))
+                    .unwrap_or_else(|| {
+                        panic!("check --explain row for {fqn} missing:\n{check_text}")
+                    });
+                let model_row = model_text
+                    .lines()
+                    .find(|l| l.trim_start().starts_with(fqn))
+                    .unwrap_or_else(|| {
+                        panic!("model --explain row for {fqn} missing:\n{model_text}")
+                    });
+                assert_eq!(check_row, model_row, "row mismatch for {fqn}");
+                assert!(check_row.contains("derived(chain_aware:"), "{check_row}");
+            }
+
+            // Footer parity: `resolve` has the same `ResolvedPlatformFile`/
+            // `ManifestIndex` in scope as `check`, so the footer is
+            // byte-identical, not just "equivalent".
+            let check_footer: Vec<&str> = check_text
+                .lines()
+                .skip_while(|l| !l.starts_with("system file:"))
+                .collect();
+            let model_footer: Vec<&str> = model_text
+                .lines()
+                .skip_while(|l| !l.starts_with("system file:"))
+                .collect();
+            assert_eq!(check_footer, model_footer);
+        });
+    }
+
+    /// Backward-compat (45.5/45.6): a model with no `execution.sched` and no
+    /// bindings at all (no platform file resolved) — `--explain` must not
+    /// panic and must render something graceful (every node falls back to
+    /// `Provenance::Default`, matching the `check` path's own "no timing
+    /// facts" rows).
+    #[test]
+    fn model_sourced_explain_graceful_when_sched_less() {
+        let model = ros_launch_manifest_model::SystemModel::default();
+        let rows = explain_rows_from_model(&model, "posix");
+        assert!(
+            rows.is_empty(),
+            "an empty model (no structure.nodes) has nothing to show: {rows:?}"
+        );
+        let text = render_explain_from_model(&model, "posix", "system file: (none)\n");
+        assert!(text.contains("PROVENANCE"));
+        assert!(text.contains("system file: (none)"));
     }
 
     // ── Phase 41.3: platform-file shipping channels ──

@@ -44,6 +44,32 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
         None => None,
     };
 
+    // Phase 45.6 — `--explain` on `replay`: render the STORED model's
+    // `execution.sched`/`tiers`/`bindings` — no fresh derive, no
+    // ManifestIndex needed, so this works off-host too (the design doc's
+    // "consumers become readers" guarantee). `check --explain` and
+    // `resolve --explain` share the same renderer
+    // (`sched_loader::render_explain_from_model`) — this is the third and
+    // final caller.
+    if args.explain {
+        match &system_model {
+            Some(m) => {
+                let footer = crate::ros::sched_loader::explain_footer_from_model(m);
+                eprint!(
+                    "{}",
+                    crate::ros::sched_loader::render_explain_from_model(
+                        m,
+                        &args.common.target,
+                        &footer
+                    )
+                );
+            }
+            None => {
+                eprintln!("note: --explain has no effect without --model (nothing to render)");
+            }
+        }
+    }
+
     // Verify all required ROS 2 system packages are installed
     crate::ros::ament_index::check_system_deps()?;
 
