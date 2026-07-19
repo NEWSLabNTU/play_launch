@@ -78,7 +78,10 @@ pub fn chain_member_fqns(index: &ManifestIndex) -> std::collections::BTreeSet<St
             match e {
                 ChainElement::Segment {
                     nodes_in_topo_order,
-                } => nodes_in_topo_order.iter().map(|(n, _)| n.clone()).collect(),
+                } => nodes_in_topo_order
+                    .iter()
+                    .map(|sn| sn.node.clone())
+                    .collect(),
                 ChainElement::Boundary { node, .. } => vec![node.clone()],
             }
         })
@@ -134,6 +137,10 @@ fn extract_paths(record: &ScheduledRecord, index: &ManifestIndex) -> Vec<MapperP
                 name: p.path_name.clone(),
                 effective_trigger: convert_trigger(effective),
                 max_latency_ms: p.path.max_latency_ms,
+                // budget (WCET) — the current contract vocabulary declares
+                // no per-path execution-time fact, so this stays None until a
+                // future vocab addition (the shared schema carries the slot).
+                exec_ms: None,
                 inputs,
                 outputs: p.path.output.clone(),
             }
@@ -301,14 +308,15 @@ fn build_resolved_chain(
 /// consecutive non-boundary path segments into one `Segment` element, in
 /// declaration order.
 fn push_segment_node(elements: &mut Vec<ChainElement>, node: String, path: String) {
+    let entry = ros_launch_manifest_sched::SegmentNode { node, path };
     if let Some(ChainElement::Segment {
         nodes_in_topo_order,
     }) = elements.last_mut()
     {
-        nodes_in_topo_order.push((node, path));
+        nodes_in_topo_order.push(entry);
     } else {
         elements.push(ChainElement::Segment {
-            nodes_in_topo_order: vec![(node, path)],
+            nodes_in_topo_order: vec![entry],
         });
     }
 }
@@ -797,8 +805,14 @@ mod tests {
                 assert_eq!(
                     nodes_in_topo_order,
                     &vec![
-                        ("/a/producer".to_string(), "make".to_string()),
-                        ("/b/consumer".to_string(), "consume".to_string()),
+                        ros_launch_manifest_sched::SegmentNode {
+                            node: "/a/producer".to_string(),
+                            path: "make".to_string(),
+                        },
+                        ros_launch_manifest_sched::SegmentNode {
+                            node: "/b/consumer".to_string(),
+                            path: "consume".to_string(),
+                        },
                     ]
                 );
             }
@@ -953,7 +967,10 @@ mod tests {
             } => {
                 assert_eq!(
                     nodes_in_topo_order,
-                    &vec![("/listener".to_string(), "react".to_string())]
+                    &vec![ros_launch_manifest_sched::SegmentNode {
+                        node: "/listener".to_string(),
+                        path: "react".to_string(),
+                    }]
                 );
             }
             other => panic!("expected a Segment, got {other:?}"),
