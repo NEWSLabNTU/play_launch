@@ -540,7 +540,10 @@ pub fn derive_sched_plan(
             match e {
                 ChainElement::Segment {
                     nodes_in_topo_order,
-                } => nodes_in_topo_order.iter().map(|(n, _)| n.clone()).collect(),
+                } => nodes_in_topo_order
+                    .iter()
+                    .map(|sn| sn.node.clone())
+                    .collect(),
                 ChainElement::Boundary { node, .. } => vec![node.clone()],
             }
         })
