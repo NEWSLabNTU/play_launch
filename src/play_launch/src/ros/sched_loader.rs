@@ -498,6 +498,35 @@ fn tiers_push_override(
     });
 }
 
+/// Every node FQN that participates in at least one of `chains`' elements
+/// (Phase 44.4 membership fact). Shared by two call sites reading the exact
+/// same `ResolvedChain`/`ChainElement` shape:
+///
+/// - [`derive_sched_plan`], walking a freshly-built `MapperInput::chains`;
+/// - [`crate::execution::sched_plan::SchedPlan::from_model`] (Phase
+///   45.5), walking the model's already-resolved
+///   `execution.sched.chains` — the SAME type, embedded verbatim
+///   (`docs/design/system-model-sched-ssot.md` "Type sharing"), so no
+///   second implementation (and no mapper re-run) is needed to reconstruct
+///   membership on the model-reader path.
+pub fn chain_member_nodes_from_chains(chains: &[ResolvedChain]) -> BTreeSet<String> {
+    chains
+        .iter()
+        .flat_map(|c| c.elements.iter())
+        .flat_map(|e| -> Vec<String> {
+            match e {
+                ChainElement::Segment {
+                    nodes_in_topo_order,
+                } => nodes_in_topo_order
+                    .iter()
+                    .map(|sn| sn.node.clone())
+                    .collect(),
+                ChainElement::Boundary { node, .. } => vec![node.clone()],
+            }
+        })
+        .collect()
+}
+
 /// The v2 derive→override→validate pipeline (design §5, §6). Parses a
 /// platform file (`.yaml` v2 schema or legacy `.toml`, dispatched by
 /// extension — see `ros_launch_manifest_sched::parse_platform_file`),
@@ -552,22 +581,11 @@ pub fn derive_sched_plan(
     // independent of the selected mapper (only `chain_aware` acts on
     // `input.chains` for ranking, but chain *membership* is a pure data
     // fact, useful to every mapper/consumer — "harmless" per the brief).
-    let chain_member_nodes: BTreeSet<String> = input
-        .chains
-        .iter()
-        .flat_map(|c| c.elements.iter())
-        .flat_map(|e| -> Vec<String> {
-            match e {
-                ChainElement::Segment {
-                    nodes_in_topo_order,
-                } => nodes_in_topo_order
-                    .iter()
-                    .map(|sn| sn.node.clone())
-                    .collect(),
-                ChainElement::Boundary { node, .. } => vec![node.clone()],
-            }
-        })
-        .collect();
+    // Phase 45.5: this is the SAME walk `SchedPlan::from_model` now runs
+    // over `execution.sched.chains` (the identical `ResolvedChain`/
+    // `ChainElement` shape, embedded verbatim) — factored out so there is
+    // one implementation for both the fresh-derive and model-reader paths.
+    let chain_member_nodes = chain_member_nodes_from_chains(&input.chains);
 
     // Defensive FQN-consistency check (44.4 review, Important-3): a chain
     // segment resolves node identity from the CONTRACT side
@@ -2273,6 +2291,51 @@ resources:
             let msg = err.to_string();
             assert!(msg.contains("narrower"), "{msg}");
         });
+    }
+
+    // ── Phase 45.5: chain_member_nodes_from_chains (shared by derive + from_model) ──
+
+    #[test]
+    fn chain_member_nodes_from_chains_walks_segments_and_boundaries() {
+        use ros_launch_manifest_sched::{
+            ChainSemantics as SchedChainSemantics, Criticality, SegmentNode,
+        };
+
+        let chains = vec![ResolvedChain {
+            name: "c".to_string(),
+            criticality: Criticality::Medium,
+            max_latency_ms: 10.0,
+            semantics: SchedChainSemantics::Reaction,
+            elements: vec![
+                ChainElement::Boundary {
+                    node: "/a".to_string(),
+                    path: "tick".to_string(),
+                    period_ms: 10.0,
+                    exec_ms: None,
+                },
+                ChainElement::Segment {
+                    nodes_in_topo_order: vec![
+                        SegmentNode {
+                            node: "/b".to_string(),
+                            path: "x".to_string(),
+                        },
+                        SegmentNode {
+                            node: "/c".to_string(),
+                            path: "y".to_string(),
+                        },
+                    ],
+                },
+            ],
+        }];
+        assert_eq!(
+            chain_member_nodes_from_chains(&chains),
+            BTreeSet::from(["/a".to_string(), "/b".to_string(), "/c".to_string()])
+        );
+    }
+
+    #[test]
+    fn chain_member_nodes_from_chains_empty_for_no_chains() {
+        assert!(chain_member_nodes_from_chains(&[]).is_empty());
     }
 
     // ── Phase 41.4: provenance + `--explain` ──

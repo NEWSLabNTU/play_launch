@@ -616,15 +616,12 @@ async fn play(
         // non-isolated container can't receive distinct priorities —
         // best-effort warning, computed here (not at `check` time) since
         // `--container-mode` is a runtime replay flag. Works on BOTH
-        // scheduling sources: the legacy plan carries its own
-        // `chain_member_nodes`; the model plan (the default `launch` path)
-        // falls back to re-deriving membership from the manifest index
-        // loaded above (44.4 review, Critical-1). See
-        // `chain_colocation_warnings_for_plan`'s doc comment for the
-        // placement decision and the residual bare-`--model` gap.
+        // scheduling sources: the legacy plan and the model plan (Phase
+        // 45.5) both carry their own `chain_member_nodes` directly now — no
+        // ManifestIndex re-parse fallback needed on either path. See
+        // `chain_colocation_warnings_for_plan`'s doc comment.
         for msg in crate::execution::sched_plan::chain_colocation_warnings_for_plan(
             &launch_dump,
-            _manifest_index.as_ref(),
             common.container_mode,
             &plan,
         ) {
