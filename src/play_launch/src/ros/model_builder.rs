@@ -558,6 +558,10 @@ pub fn build_system_model(
             requirements,
             mapper: Some(s.derived.mapper.clone()),
             ranks: s.derived.ranks.clone(),
+            // Phase 45.6 (review) — the overridden-node set the fresh-derive
+            // renderer keyed off, embedded verbatim so a model-sourced
+            // `--explain` reproduces override(...) classification exactly.
+            overrides: s.derived.overrides.clone(),
         };
         if !exec_sched.is_empty() {
             execution.sched = Some(exec_sched);
