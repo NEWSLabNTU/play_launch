@@ -829,6 +829,7 @@ mod model_tests {
             requirements: vec![],
             mapper: Some("chain_aware".to_string()),
             ranks: vec![],
+            overrides: Default::default(),
         });
 
         let plan =
