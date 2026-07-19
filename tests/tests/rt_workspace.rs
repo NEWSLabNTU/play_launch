@@ -1102,6 +1102,45 @@ fn resolve_embeds_sched_structure_matching_check_explain() {
     }
 }
 
+/// Backward-compat (45.4): when NO platform file resolves, `resolve` must NOT
+/// emit `execution.sched` — it stays absent, so old consumers and round-trips
+/// are unaffected. The rt_workspace fixture ships a provider platform sidecar
+/// (so a plain `resolve` DOES auto-resolve it — that's the auto-discovery,
+/// tested elsewhere); `--no-provider-contracts` suppresses that sidecar,
+/// exercising the genuine no-platform-file path end-to-end (complements the
+/// model-crate unit test).
+#[test]
+fn resolve_without_platform_file_omits_execution_sched() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let out = tmp.path().join("system_model.yaml");
+
+    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
+        "resolve",
+        "--no-provider-contracts",
+        "rt_demo",
+        "bringup.launch.xml",
+        "-o",
+        out.to_str().unwrap(),
+    ]))
+    .expect("failed to spawn play_launch resolve");
+    assert!(
+        proc.wait_with_timeout(Duration::from_secs(60)).success(),
+        "play_launch resolve (--no-provider-contracts) failed"
+    );
+
+    let yaml = std::fs::read_to_string(&out).expect("read system_model.yaml");
+    // Match the `sched:` map key at execution-nesting depth, not the
+    // `sched_class:` inside a tier platform spec.
+    assert!(
+        !yaml.lines().any(|l| l.trim_end() == "sched:" || l.trim() == "sched:"),
+        "resolve with no platform file must not emit execution.sched:\n{yaml}"
+    );
+}
+
 /// Phase 43.1: `replay --model` refuses a record that is not the model's
 /// bound companion (stale pair), before any process spawns.
 #[test]
