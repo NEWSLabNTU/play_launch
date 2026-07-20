@@ -447,15 +447,19 @@ pub enum DumpSubcommand {
 /// Arguments for replay command
 #[derive(Args, Default)]
 pub struct ReplayArgs {
-    /// Input record file to replay
+    /// Input record.json to replay when `--model` is absent. DEPRECATED
+    /// (Phase 46.5): the SystemModel (`--model`) is the primary replay
+    /// source now; this legacy record-only path prints a one-time
+    /// deprecation warning and is kept as a compat path (no hard removal
+    /// this wave — rollback safety / one release's grace).
     #[arg(long, default_value = "record.json")]
     pub input_file: PathBuf,
 
-    /// SystemModel emitted by `play_launch resolve` (Phase 43). Spawns
-    /// directly from the model's `structure.nodes` — no accompanying
-    /// `--input-file` record is required (Phase 46.4: the model↔record
-    /// binding gate was removed once the model became a self-sufficient
-    /// spawn source).
+    /// SystemModel emitted by `play_launch resolve`/`dump` (Phase 43/46.5:
+    /// the primary replay source). Spawns directly from the model's
+    /// `structure.nodes` — no accompanying `--input-file` record is
+    /// required (Phase 46.4: the model↔record binding gate was removed
+    /// once the model became a self-sufficient spawn source).
     #[arg(long, value_name = "PATH")]
     pub model: Option<PathBuf>,
 

@@ -1551,3 +1551,77 @@ fn resolve_no_longer_writes_record_companion() {
         companion.display()
     );
 }
+
+/// `replay --input-file <record.json>` (no `--model`) is the DEPRECATED
+/// compat path (Phase 46.5): still spawns exactly as before (rollback
+/// safety, one release's grace), but must print a one-time deprecation
+/// warning pointing at the SystemModel.
+#[test]
+fn replay_input_file_record_json_is_deprecated_but_still_spawns() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+
+    // Produce a legacy record.json via the dev/parser-parity escape hatch.
+    let dump_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let record_path = dump_tmp.path().join("record.json");
+    let mut dump_proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
+        "dump",
+        "-o",
+        record_path.to_str().unwrap(),
+        "--format",
+        "record",
+        "launch",
+        "rt_demo",
+        "bringup.launch.xml",
+    ]))
+    .expect("spawn dump --format record");
+    assert!(
+        dump_proc
+            .wait_with_timeout(Duration::from_secs(60))
+            .success(),
+        "play_launch dump --format record failed"
+    );
+
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let stdout_path = work_tmp.path().join("stdout.log");
+    let stderr_path = work_tmp.path().join("stderr.log");
+    let stdout_file = fs::File::create(&stdout_path).expect("failed to create stdout file");
+    let stderr_file = fs::File::create(&stderr_path).expect("failed to create stderr file");
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_tmp.path());
+    cmd.args([
+        "replay",
+        "--input-file",
+        record_path.to_str().unwrap(),
+        "--disable-web-ui",
+        "--disable-monitoring",
+        "--disable-diagnostics",
+    ]);
+    cmd.stdout(Stdio::from(stdout_file));
+    cmd.stderr(Stdio::from(stderr_file));
+
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
+
+    let play_log = work_tmp.path().join("play_log/latest");
+    fixtures::wait_for_processes(&play_log, 3, Duration::from_secs(30));
+    let actual = fixtures::count_cmdline_files(&play_log);
+    assert_eq!(
+        actual, 3,
+        "the deprecated --input-file path must still spawn cleanly: actual={actual}, expected=3"
+    );
+
+    // Tracing output (including this warning) goes to stdout, not stderr —
+    // check both to be robust to that detail.
+    let stdout = fs::read_to_string(&stdout_path).unwrap_or_default();
+    let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
+    let combined = format!("{stdout}\n{stderr}").to_lowercase();
+    assert!(
+        combined.contains("deprecated"),
+        "replay --input-file (no --model) must print a deprecation warning:\n{combined}"
+    );
+
+    // _proc dropped here — ManagedProcess::drop kills the process group.
+}

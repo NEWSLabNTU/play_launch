@@ -40,12 +40,24 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     // `prepare_*_contexts_from_model` paths build every node/container/
     // composable-node context straight from `structure.nodes`), so
     // `replay --model` no longer requires — or even reads — a matching
-    // record companion. `meta.record` stays on the model as informational
-    // provenance only (`resolve` still writes it); it is dropped entirely,
-    // along with `record.json` itself, at 46.5.
+    // record companion.
     let system_model = match &args.model {
         Some(model_path) => Some(std::sync::Arc::new(load_system_model(model_path)?)),
-        None => None,
+        None => {
+            // Phase 46.5 — record.json replay is the deprecated compat path:
+            // the SystemModel (`--model`) is the primary replay source now.
+            // One-time warning per invocation (there's exactly one call to
+            // `handle_replay` per process); the path itself is NOT removed
+            // this wave (rollback safety, one release's grace) — it still
+            // spawns exactly as before, below.
+            warn!(
+                "record.json replay is deprecated; use the SystemModel \
+                 (`play_launch resolve`/`dump` then `replay --model <system_model.yaml>`). \
+                 Continuing with the legacy --input-file {} path.",
+                input_file.display()
+            );
+            None
+        }
     };
 
     // Phase 45.6 — `--explain` on `replay`: render the STORED model's
@@ -214,15 +226,20 @@ async fn play(
     debug!("Runtime configuration loaded successfully");
 
     debug!("Loading launch dump from: {}", input_file.display());
-    // Phase 46.4 — with a SystemModel given, spawning no longer depends on
-    // this record: `launch_dump` degrades to an empty stand-in when no
-    // record companion is present at `input_file` (the common case for a
-    // model produced without one, or `replay --model` run against the
-    // default "record.json" that simply doesn't exist here). The only
-    // consumers left on the model path are best-effort/informational
-    // (chain-colocation warnings, the web UI's launch-tree scope map) — an
-    // empty dump just means those come back empty, not a hard failure. The
-    // legacy record-only path (no `--model`) is unchanged: a missing/
+    // Phase 46.4/46.5 — with a SystemModel given, spawning no longer depends
+    // on this record: `launch_dump` degrades to an empty stand-in when no
+    // record companion is present at `input_file`. Since 46.5, `resolve`/
+    // `dump` never write a record companion at all, so this is now the
+    // NORMAL case for `replay --model`, not a fallback for a missing
+    // optional file. The only consumers left on the model path are
+    // best-effort/informational (chain-colocation warnings, the web UI's
+    // launch-tree scope map, built below from `launch_dump.scopes`/
+    // `node_scope_map`) — an empty dump just means those come back empty
+    // (the web UI's `/api/launch-tree` returns `{scopes: [], node_scopes:
+    // {}}`, no error), not a hard failure. Model-sourcing them from
+    // `model.structure.scopes` (which does carry an equivalent scope tree)
+    // is a documented follow-up, not done this wave — see the 46.5 report.
+    // The legacy record-only path (no `--model`) is unchanged: a missing/
     // unreadable record.json there is still a hard error.
     let launch_dump = match load_launch_dump(input_file) {
         Ok(d) => d,
@@ -1286,8 +1303,8 @@ async fn play(
 
 /// Load a `SystemModel` for `replay --model` (Phase 46.4). No record
 /// binding is checked here — the model is a self-sufficient spawn source
-/// (46.3b); `meta.record`, if present, is purely informational provenance
-/// from whatever `resolve` invocation produced this model.
+/// (46.3b); `resolve`/`dump` no longer emit a record companion to bind to
+/// (Phase 46.5).
 fn load_system_model(
     model_path: &std::path::Path,
 ) -> eyre::Result<ros_launch_manifest_model::SystemModel> {
