@@ -35,14 +35,16 @@ const EXECUTOR_SPIN_TIMEOUT: std::time::Duration = std::time::Duration::from_mil
 pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     let input_file = &args.input_file;
 
-    // Phase 43.1 — model↔record binding gate: when a SystemModel is given,
-    // the record we are about to run MUST be one of the model's hashed
-    // inputs. The checked artifact and the running artifact stay the same
-    // thing; a stale pair refuses instead of silently diverging.
+    // Phase 46.4 — the Phase 43.1 model↔record binding gate is removed: the
+    // model is now a self-sufficient spawn source (46.3b's
+    // `prepare_*_contexts_from_model` paths build every node/container/
+    // composable-node context straight from `structure.nodes`), so
+    // `replay --model` no longer requires — or even reads — a matching
+    // record companion. `meta.record` stays on the model as informational
+    // provenance only (`resolve` still writes it); it is dropped entirely,
+    // along with `record.json` itself, at 46.5.
     let system_model = match &args.model {
-        Some(model_path) => Some(std::sync::Arc::new(verify_model_record_binding(
-            model_path, input_file,
-        )?)),
+        Some(model_path) => Some(std::sync::Arc::new(load_system_model(model_path)?)),
         None => None,
     };
 
@@ -212,7 +214,39 @@ async fn play(
     debug!("Runtime configuration loaded successfully");
 
     debug!("Loading launch dump from: {}", input_file.display());
-    let launch_dump = load_launch_dump(input_file)?;
+    // Phase 46.4 — with a SystemModel given, spawning no longer depends on
+    // this record: `launch_dump` degrades to an empty stand-in when no
+    // record companion is present at `input_file` (the common case for a
+    // model produced without one, or `replay --model` run against the
+    // default "record.json" that simply doesn't exist here). The only
+    // consumers left on the model path are best-effort/informational
+    // (chain-colocation warnings, the web UI's launch-tree scope map) — an
+    // empty dump just means those come back empty, not a hard failure. The
+    // legacy record-only path (no `--model`) is unchanged: a missing/
+    // unreadable record.json there is still a hard error.
+    let launch_dump = match load_launch_dump(input_file) {
+        Ok(d) => d,
+        Err(e) if system_model.is_some() => {
+            debug!(
+                "No record companion at {} ({e:#}) — model-only replay; \
+                 chain-colocation warnings and the web UI launch tree will be empty",
+                input_file.display()
+            );
+            crate::ros::launch_dump::LaunchDump {
+                node: Vec::new(),
+                load_node: Vec::new(),
+                container: Vec::new(),
+                lifecycle_node: Vec::new(),
+                file_data: HashMap::new(),
+                variables: HashMap::new(),
+                scopes: Vec::new(),
+            }
+        }
+        Err(e) => {
+            return Err(e)
+                .wrap_err_with(|| format!("loading launch dump {}", input_file.display()));
+        }
+    };
     debug!(
         "Launch dump loaded: {} nodes, {} containers, {} composable nodes",
         launch_dump.node.len(),
@@ -1250,48 +1284,17 @@ async fn play(
     Ok(())
 }
 
-/// Phase 43.1 — refuse a (model, record) pair that doesn't match: the
-/// record's sha256 must appear among the model's `meta.inputs` hashes
-/// (`resolve` hashes the record companion / --record file it consumed).
-fn verify_model_record_binding(
+/// Load a `SystemModel` for `replay --model` (Phase 46.4). No record
+/// binding is checked here — the model is a self-sufficient spawn source
+/// (46.3b); `meta.record`, if present, is purely informational provenance
+/// from whatever `resolve` invocation produced this model.
+fn load_system_model(
     model_path: &std::path::Path,
-    record_path: &std::path::Path,
 ) -> eyre::Result<ros_launch_manifest_model::SystemModel> {
-    use sha2::Digest as _;
-
     let yaml = std::fs::read_to_string(model_path)
         .wrap_err_with(|| format!("reading SystemModel {}", model_path.display()))?;
     let model = ros_launch_manifest_model::SystemModel::from_yaml_str(&yaml)
         .map_err(|e| eyre::eyre!("loading SystemModel {}: {e}", model_path.display()))?;
-    let bytes = std::fs::read(record_path)
-        .wrap_err_with(|| format!("reading record {}", record_path.display()))?;
-    let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
-
-    let Some(bound) = &model.meta.record else {
-        eyre::bail!(
-            "SystemModel {} carries no bound record (resolved to stdout?) — \
-             re-run `play_launch resolve -o <file>` so a record companion is \
-             emitted and bound.",
-            model_path.display(),
-        );
-    };
-    if bound.sha256 == digest {
-        info!(
-            "SystemModel {} binds record {} (sha256 {})",
-            model_path.display(),
-            record_path.display(),
-            &digest[..12],
-        );
-        return Ok(model);
-    }
-    eyre::bail!(
-        "record {} (sha256 {digest}) does not match the record bound to \
-         SystemModel {} ({} sha256 {}) — the pair is stale. Re-run \
-         `play_launch resolve`, or pass the record companion emitted next \
-         to the model.",
-        record_path.display(),
-        model_path.display(),
-        bound.path,
-        bound.sha256,
-    );
+    info!("SystemModel: {}", model_path.display());
+    Ok(model)
 }

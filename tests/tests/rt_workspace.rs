@@ -1141,54 +1141,153 @@ fn resolve_without_platform_file_omits_execution_sched() {
     );
 }
 
-/// Phase 43.1: `replay --model` refuses a record that is not the model's
-/// bound companion (stale pair), before any process spawns.
+/// Phase 46.4: the Phase 43.1 model↔record binding gate is removed —
+/// `replay --model` spawns straight from the model's `structure.nodes`, with
+/// no matching (or even present) `--input-file` record companion required.
+/// Resolves `bringup.launch.xml` into a model in one scratch dir, then
+/// replays it from a *different*, empty working directory (so the default
+/// `--input-file record.json` simply doesn't exist there) and asserts the
+/// same 3-process outcome (2 standalone nodes + 1 container; composables
+/// don't get a separate `node/<name>/cmdline`) that `sched_apply_warn_smoke_launch`
+/// proves for the record-driven `launch` path.
 #[test]
-fn replay_model_binding_gate_refuses_stale_record() {
+fn replay_model_spawns_without_record_companion() {
     if !require_rt_workspace() {
         return;
     }
     let env = fixtures::rt_workspace_env();
-    let tmp = tempfile::TempDir::new().expect("tempdir");
-    let out = tmp.path().join("system_model.yaml");
+
+    let resolve_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let model_path = resolve_tmp.path().join("system_model.yaml");
 
     let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
         "resolve",
         "rt_demo",
         "bringup.launch.xml",
         "-o",
-        out.to_str().unwrap(),
+        model_path.to_str().unwrap(),
     ]))
     .expect("spawn resolve");
-    assert!(proc.wait_with_timeout(Duration::from_secs(60)).success());
+    assert!(
+        proc.wait_with_timeout(Duration::from_secs(60)).success(),
+        "play_launch resolve failed"
+    );
+
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let stdout_path = work_tmp.path().join("stdout.log");
+    let stderr_path = work_tmp.path().join("stderr.log");
+    let stdout_file = fs::File::create(&stdout_path).expect("failed to create stdout file");
+    let stderr_file = fs::File::create(&stderr_path).expect("failed to create stderr file");
+
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_tmp.path());
+    cmd.args([
+        "replay",
+        "--model",
+        model_path.to_str().unwrap(),
+        "--disable-web-ui",
+        "--disable-monitoring",
+        "--disable-diagnostics",
+    ]);
+    cmd.stdout(Stdio::from(stdout_file));
+    cmd.stderr(Stdio::from(stderr_file));
+
+    // No record.json exists anywhere under `work_tmp` — proves the model
+    // alone drives the spawn.
+    assert!(!work_tmp.path().join("record.json").exists());
+
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
+
+    let play_log = work_tmp.path().join("play_log/latest");
+    fixtures::wait_for_processes(&play_log, 3, Duration::from_secs(30));
+
+    let actual = fixtures::count_cmdline_files(&play_log);
+    assert_eq!(
+        actual, 3,
+        "process count mismatch: actual={actual}, expected=3 (2 nodes + 1 \
+         container) — replay --model must spawn cleanly with no record \
+         companion present"
+    );
+
+    let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
+    assert!(
+        !stderr.contains("does not match the record bound")
+            && !stderr.contains("carries no bound record"),
+        "the record-binding gate must be gone from the --model path:\n{stderr}"
+    );
+
+    // _proc dropped here — ManagedProcess::drop kills the process group.
+}
+
+/// Phase 46.4 acceptance: `resolve --parser python` produces a spawnable
+/// structure-only SystemModel — the Python parser must keep working as a
+/// first-class model producer, not just a record.json producer, ahead of
+/// record.json's eventual retirement (46.5). Resolves `bringup.launch.xml`
+/// with `--parser python`, asserts the model carries the same 4 nodes
+/// (2 standalone + 1 container + 1 composable) the Rust path produces, then
+/// replays it — with no record companion — and asserts the same 3-process
+/// spawn outcome as the Rust-path test above.
+#[test]
+fn resolve_parser_python_produces_model_that_replays_cleanly() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+
+    let resolve_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let model_path = resolve_tmp.path().join("system_model.yaml");
+
+    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
+        "resolve",
+        "--parser",
+        "python",
+        "rt_demo",
+        "bringup.launch.xml",
+        "-o",
+        model_path.to_str().unwrap(),
+    ]))
+    .expect("spawn resolve --parser python");
+    assert!(
+        proc.wait_with_timeout(Duration::from_secs(120)).success(),
+        "play_launch resolve --parser python failed"
+    );
 
     let model: serde_json::Value =
-        serde_yaml_value(&std::fs::read_to_string(&out).expect("read model"));
-    assert!(
-        model["meta"]["record"]["sha256"].is_string(),
-        "resolve must bind the record companion"
+        serde_yaml_value(&std::fs::read_to_string(&model_path).expect("read system_model.yaml"));
+    let node_count = model["structure"]["nodes"]
+        .as_object()
+        .map(|m| m.len())
+        .unwrap_or(0);
+    assert_eq!(
+        node_count, 4,
+        "expected 4 nodes from the Python parser (matching the Rust-path \
+         model): {model}"
     );
 
-    // A record that is NOT the bound companion (the launch file itself —
-    // which IS among meta.inputs, proving the gate checks meta.record, not
-    // just any input hash).
-    let wrong_record = fixture_dir().join("launch/bringup.launch.xml");
-    let output = fixtures::play_launch_cmd(&env)
-        .args([
-            "replay",
-            "--model",
-            out.to_str().unwrap(),
-            "--input-file",
-            wrong_record.to_str().unwrap(),
-        ])
-        .output()
-        .expect("run replay");
-    assert!(!output.status.success(), "stale pair must refuse");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("does not match the record bound"),
-        "actionable mismatch message expected, got: {stderr}"
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_tmp.path());
+    cmd.args([
+        "replay",
+        "--model",
+        model_path.to_str().unwrap(),
+        "--disable-web-ui",
+        "--disable-monitoring",
+        "--disable-diagnostics",
+    ]);
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
+
+    let play_log = work_tmp.path().join("play_log/latest");
+    fixtures::wait_for_processes(&play_log, 3, Duration::from_secs(30));
+
+    let actual = fixtures::count_cmdline_files(&play_log);
+    assert_eq!(
+        actual, 3,
+        "process count mismatch: actual={actual}, expected=3 (2 nodes + 1 \
+         container) — a Python-parser-produced model must spawn cleanly"
     );
+
+    // _proc dropped here — ManagedProcess::drop kills the process group.
 }
 
 // ---- `check --export-graph` (Phase 42.1) ----
