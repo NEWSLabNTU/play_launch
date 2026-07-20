@@ -18,7 +18,9 @@ use ros_launch_manifest_types::{DropSpec, EndpointProps, QosDecl};
 use sha2::{Digest, Sha256};
 
 use crate::ros::{
-    launch_dump::LaunchDump, manifest_loader::ManifestIndex, sched_loader::DerivedSchedPlan,
+    launch_dump::{LaunchDump, ScopeEntry},
+    manifest_loader::ManifestIndex,
+    sched_loader::DerivedSchedPlan,
 };
 
 /// Scheduling inputs for the execution layer.
@@ -43,20 +45,59 @@ fn fqn(ns: &str, name: &str) -> String {
     }
 }
 
-/// Deterministic, unique scope keys: the scope's namespace, disambiguated
-/// with `#<id>` when several scopes share one namespace.
+/// The nearest enclosing FILE scope for `scope_id`, walking up through any
+/// `<group>` scopes. Every scope chains up to a file scope (the root is one),
+/// so this returns `Some` for any valid id.
+///
+/// Phase 48 (namespace/scope detangle): a scope's identity is STRUCTURAL —
+/// which launch file it came from — not its namespace. `<group>` scopes are a
+/// parser-internal refinement (the Python parser doesn't create them at all;
+/// it scopes only `<include>`), so the model folds them into their file scope.
+fn nearest_file_scope(dump: &LaunchDump, scope_id: usize) -> Option<usize> {
+    let mut cur = Some(scope_id);
+    while let Some(id) = cur {
+        let s = dump.scopes.iter().find(|s| s.id == id)?;
+        if s.is_file_scope() {
+            return Some(id);
+        }
+        cur = s.parent;
+    }
+    None
+}
+
+/// Structural, parser-independent scope label for a FILE scope: its
+/// `<pkg>/<file>` origin (or bare file / `<root>` when unknown).
+fn file_scope_base(s: &ScopeEntry) -> String {
+    match (s.pkg(), s.file()) {
+        (Some(pkg), Some(file)) => format!("{pkg}/{file}"),
+        (_, Some(file)) => file.to_string(),
+        _ => "<root>".to_string(),
+    }
+}
+
+/// Deterministic, unique scope keys for FILE scopes only — keyed by their
+/// `<pkg>/<file>` origin (STRUCTURE, not namespace; Phase 48), disambiguated
+/// with `#<id>` when the same file is included more than once. `<group>`
+/// scopes get no key of their own; consumers resolve a node/parent scope id to
+/// its file scope via [`nearest_file_scope`]. Namespace lives on each node
+/// (`node.namespace`, whence FQNs), never on the scope.
 fn scope_keys(dump: &LaunchDump) -> BTreeMap<usize, String> {
-    let mut count: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut count: BTreeMap<String, usize> = BTreeMap::new();
     for s in &dump.scopes {
-        *count.entry(s.ns.as_str()).or_default() += 1;
+        if s.is_file_scope() {
+            *count.entry(file_scope_base(s)).or_default() += 1;
+        }
     }
     let mut keys = BTreeMap::new();
     for s in &dump.scopes {
-        let base = if s.ns.is_empty() { "/" } else { s.ns.as_str() };
-        let key = if count.get(s.ns.as_str()).copied().unwrap_or(0) > 1 {
+        if !s.is_file_scope() {
+            continue;
+        }
+        let base = file_scope_base(s);
+        let key = if count.get(&base).copied().unwrap_or(0) > 1 {
             format!("{base}#{}", s.id)
         } else {
-            base.to_string()
+            base
         };
         keys.insert(s.id, key);
     }
@@ -263,9 +304,11 @@ pub fn build_system_model(
     input_paths: &BTreeSet<PathBuf>,
 ) -> model::SystemModel {
     let keys = scope_keys(dump);
+    // Resolve any scope id (file OR group) to its file scope's structural key.
     let scope_key = |id: Option<usize>| -> String {
-        id.and_then(|i| keys.get(&i).cloned())
-            .unwrap_or_else(|| "/".to_string())
+        id.and_then(|i| nearest_file_scope(dump, i))
+            .and_then(|fid| keys.get(&fid).cloned())
+            .unwrap_or_else(|| "<root>".to_string())
     };
 
     let mut diagnostics: Vec<String> = Vec::new();
@@ -273,15 +316,26 @@ pub fn build_system_model(
     // --- structure -------------------------------------------------------
     let mut structure = model::Structure::default();
 
+    // structure.scopes is the include (file) tree — group scopes are folded
+    // into their file scope (Phase 48). A file scope's parent is the nearest
+    // file ancestor of its raw parent (skipping intervening groups).
     for s in &dump.scopes {
+        if !s.is_file_scope() {
+            continue;
+        }
         structure.scopes.insert(
             keys[&s.id].clone(),
             model::ScopeInfo {
-                parent: s.parent.map(|p| keys[&p].clone()),
+                parent: s
+                    .parent
+                    .and_then(|p| nearest_file_scope(dump, p))
+                    .and_then(|fid| keys.get(&fid).cloned()),
                 manifest: index
                     .manifests
                     .get(&s.id)
                     .map(|m| m.contract_path.display().to_string()),
+                package: s.pkg().map(str::to_string),
+                file: s.file().map(str::to_string),
             },
         );
     }
@@ -680,43 +734,14 @@ pub fn build_system_model(
         }
         diagnostics.extend(s.derived.warnings.iter().cloned());
 
-        // Phase 45.4 — embed the resolved sched structure into
-        // `execution.sched` (docs/design/system-model-sched-ssot.md): the
-        // SAME single derivation that fed `tiers`/`bindings` above, never
-        // re-derived. `chains`/`nodes`/`ranks` are `s.derived`'s own fields
-        // (Phase 45.4, `sched_loader::derive_sched_plan`) — carried
-        // straight through from the one `MapperInput`/`MapDiagnostics` this
-        // function already built.
-        //
-        // FQN identity: `s.derived.nodes[].name` and `s.derived.chains`'
-        // member FQNs are the SAME identities already used for `bindings`
-        // above (`t.members`, sourced from `scheduled_records_from_dump`'s
-        // `MapperNode::name` / `resolve_chains`'s contract-side resolution)
-        // — no fourth FQN builder introduced here.
-        let requirements: Vec<model::NodeSchedRequirement> = s
-            .derived
-            .nodes
-            .iter()
-            .filter(|n| n.criticality.is_some() || !n.paths.is_empty())
-            .map(|n| model::NodeSchedRequirement {
-                node_fqn: n.name.clone(),
-                criticality: n.criticality,
-                paths: n.paths.clone(),
-            })
-            .collect();
-        let exec_sched = model::ExecutionSched {
-            chains: s.derived.chains.clone(),
-            requirements,
-            mapper: Some(s.derived.mapper.clone()),
-            ranks: s.derived.ranks.clone(),
-            // Phase 45.6 (review) — the overridden-node set the fresh-derive
-            // renderer keyed off, embedded verbatim so a model-sourced
-            // `--explain` reproduces override(...) classification exactly.
-            overrides: s.derived.overrides.clone(),
-        };
-        if !exec_sched.is_empty() {
-            execution.sched = Some(exec_sched);
-        }
+        // Phase 45.10 — the resolved sched PLAN is NOT embedded in the model
+        // (`model.execution.sched` was removed, rlm f090400: the model is
+        // INPUT only; each consumer derives its own realization). The mapper's
+        // output IS already reflected in `tiers`/`bindings` above (the applied
+        // Linux schedule reads those). Chain structure + provenance that
+        // `--explain` and the composable co-location warning used to read back
+        // from `execution.sched` are re-derived at the point of use from the
+        // in-memory `DerivedSchedPlan`/`LaunchDump` (check, launch, replay).
     }
     // deploy: `<node machine="…">` → per-node host (nano-ros #236 /
     // Phase 46.1). Create the `Deploy` entry with `host` set and `target`
@@ -1150,5 +1175,61 @@ mod tests {
         assert!(model.structure.nodes["/perception/real_container"].is_container);
         // The composable is not a container.
         assert!(!model.structure.nodes["/perception/some_node"].is_container);
+    }
+
+    /// Phase 48 — a scope's model identity is its launch FILE, not its
+    /// namespace. `<group>` scopes fold into their file scope: a node in a
+    /// group reports the group's file as its scope, and `structure.scopes` is
+    /// the include tree (no group entries).
+    #[test]
+    fn scope_is_structural_and_groups_fold_into_file() {
+        // scope 0: root file; scope 1: a <group ns="robot"> inside it (no
+        // origin); scope 2: a file <include>d from within that group.
+        let json = serde_json::json!({
+            "node": [
+                {
+                    "executable": "a_node", "exec_name": "a_node",
+                    "package": "p", "name": "a", "namespace": "/robot",
+                    "cmd": ["/bin/a"], "params_files": [], "scope": 1
+                },
+                {
+                    "executable": "b_node", "exec_name": "b_node",
+                    "package": "p", "name": "b", "namespace": "/robot",
+                    "cmd": ["/bin/b"], "params_files": [], "scope": 2
+                }
+            ],
+            "load_node": [], "container": [], "lifecycle_node": [], "file_data": {},
+            "scopes": [
+                {"id": 0, "ns": "/", "parent": null,
+                 "origin": {"pkg": "root_pkg", "file": "root.launch.xml"}},
+                {"id": 1, "ns": "/robot", "parent": 0},
+                {"id": 2, "ns": "/robot", "parent": 1,
+                 "origin": {"pkg": "dep_pkg", "file": "child.launch.xml"}}
+            ]
+        });
+        let dump: LaunchDump = serde_json::from_value(json).expect("valid LaunchDump");
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        // Node in the group folds to the group's FILE scope, not "/robot".
+        assert_eq!(
+            model.structure.nodes["/robot/a"].scope,
+            "root_pkg/root.launch.xml"
+        );
+        // Node in the included child file reports that file.
+        assert_eq!(
+            model.structure.nodes["/robot/b"].scope,
+            "dep_pkg/child.launch.xml"
+        );
+
+        // structure.scopes is the include tree: only the two FILE scopes, and
+        // the child's parent is the root file (the group is folded away).
+        let scopes = &model.structure.scopes;
+        assert_eq!(scopes.len(), 2, "group scope folded out: {scopes:?}");
+        assert!(scopes.contains_key("root_pkg/root.launch.xml"));
+        let child = &scopes["dep_pkg/child.launch.xml"];
+        assert_eq!(child.parent.as_deref(), Some("root_pkg/root.launch.xml"));
+        assert_eq!(child.package.as_deref(), Some("dep_pkg"));
+        assert_eq!(child.file.as_deref(), Some("child.launch.xml"));
     }
 }
