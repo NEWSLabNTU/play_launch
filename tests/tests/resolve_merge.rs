@@ -78,9 +78,21 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
             "{needle} must be hashed into meta.inputs, got {paths:?}"
         );
     }
+    // Phase 46.5 — the record companion (and `meta.record`) is retired:
+    // `resolve` no longer writes one, so there's nothing to bind. Assert
+    // its absence instead of presence (was: `model["meta"]["record"]
+    // ["sha256"].is_string()`), and that no companion landed on disk next
+    // to the model.
     assert!(
-        model["meta"]["record"]["sha256"].is_string(),
-        "record companion bound"
+        model["meta"]["record"].is_null(),
+        "meta.record must be absent — the model↔record binding is retired (46.5): {:?}",
+        model["meta"]["record"]
+    );
+    let companion = out.with_extension("record.json");
+    assert!(
+        !companion.exists(),
+        "resolve must not write a record.json companion next to the model (46.5): {}",
+        companion.display()
     );
 
     // --- structure: scope tree + nodes from BOTH launch files ----------

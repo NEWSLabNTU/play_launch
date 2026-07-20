@@ -1420,3 +1420,38 @@ fn check_export_graph_dot_extension_dispatch() {
     assert!(dot.starts_with("digraph causal {"));
     assert!(dot.contains("/control_node"));
 }
+
+// ---- Phase 46.5 — retirement: resolve drops the record companion ----
+
+/// `resolve -o <path>` must not write a `<path>.record.json` companion next
+/// to the model (Phase 46.5 drops the Phase 43.1 companion write).
+#[test]
+fn resolve_no_longer_writes_record_companion() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let model_path = tmp.path().join("system_model.yaml");
+
+    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
+        "resolve",
+        "rt_demo",
+        "bringup.launch.xml",
+        "-o",
+        model_path.to_str().unwrap(),
+    ]))
+    .expect("spawn resolve");
+    assert!(
+        proc.wait_with_timeout(Duration::from_secs(60)).success(),
+        "play_launch resolve failed"
+    );
+
+    let companion = model_path.with_extension("record.json");
+    assert!(
+        !companion.exists(),
+        "resolve must not write a record.json companion next to the model (Phase 46.5): {}",
+        companion.display()
+    );
+}
