@@ -173,6 +173,7 @@ impl NodeCommandLine {
             respawn: _,
             respawn_delay: _,
             global_params,
+            machine: _,
             scope: _,
         } = record;
 

@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!--
+  Phase 46.1 / nano-ros #236 fixture: a minimal multi-host launch.
+  Two nodes are routed to distinct hosts via `<node machine="…">`; one node
+  is left unhosted. `play_launch resolve` must carry `machine` through to
+  `execution.deploy[fqn].host` for the two hosted nodes and leave the
+  unhosted node without a deploy entry.
+-->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker1" namespace="/robot1" machine="robot1"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker2" namespace="/robot2" machine="robot2"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="hub" namespace="/hub"/>
+</launch>

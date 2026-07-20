@@ -723,7 +723,7 @@ dependencies = [
 
 [[package]]
 name = "diagnostic_msgs"
-version = "4.9.0"
+version = "4.9.1"
 dependencies = [
  "rosidl_runtime_rs",
  "std_msgs",
@@ -2461,7 +2461,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "std_msgs"
-version = "4.9.0"
+version = "4.9.1"
 dependencies = [
  "builtin_interfaces",
  "rosidl_runtime_rs",
@@ -3592,7 +3592,7 @@ version = "0.9.3"
 
 [[patch.unused]]
 name = "geometry_msgs"
-version = "4.9.0"
+version = "4.9.1"
 
 [[patch.unused]]
 name = "rosgraph_msgs"

@@ -333,6 +333,9 @@ pub fn prepare_container_contexts(
                 respawn: container_record.respawn,
                 respawn_delay: container_record.respawn_delay,
                 global_params: container_record.global_params.clone(),
+                // NodeContainerRecord carries no `machine` (the parser only
+                // emits it for regular `<node>` records; see launch_dump.rs).
+                machine: None,
                 scope: container_record.scope,
             };
 

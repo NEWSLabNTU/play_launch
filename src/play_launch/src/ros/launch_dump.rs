@@ -142,6 +142,16 @@ pub struct NodeRecord {
     /// Global parameters from SetParameter action (scope-aware)
     #[serde(default)]
     pub global_params: Option<Vec<(String, ParameterValue)>>,
+    /// `<node machine="…">` — the target host the launch routes this node to
+    /// (ROS 2 multi-host launch). Mirrors `play_launch_parser`'s
+    /// `record::types::NodeRecord::machine` (nano-ros #236); additive so
+    /// existing record.json without the field still deserializes (`None`).
+    /// Only regular `<node>` records carry `machine` — the parser does not
+    /// emit it for `<node_container>`/`<composable_node>` (see
+    /// `ComposableNodeContainerRecord`/`ComposableNodeRecord` below, which
+    /// intentionally have no `machine` field).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
     /// Scope ID referencing the scopes table (launch file origin)
     #[serde(default)]
     pub scope: Option<usize>,
