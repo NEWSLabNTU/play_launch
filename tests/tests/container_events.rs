@@ -2,7 +2,6 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use play_launch_tests::fixtures;
-use play_launch_tests::fixtures::array_len;
 use play_launch_tests::process::ManagedProcess;
 
 fn launch_file() -> String {
@@ -21,34 +20,28 @@ fn isolated_launch_file() -> String {
         .to_string()
 }
 
-// ---- Dump tests ----
+// ---- Resolve tests (Phase 47.B6: model, not record.json) ----
 
 #[test]
-fn test_dump_container_events_rust() {
+fn test_resolve_container_events_rust() {
     let env = fixtures::install_env();
-    let (record, _tmp) = fixtures::dump_launch(&env, &launch_file(), "rust");
+    let (model, _tmp) = fixtures::resolve_model(&env, &launch_file(), None, "rust");
+    let (plain, containers, composables) = fixtures::model_entity_counts(&model);
 
-    assert_eq!(array_len(&record, "node"), 0, "expected 0 standalone nodes");
-    assert_eq!(array_len(&record, "container"), 1, "expected 1 container");
-    assert_eq!(
-        array_len(&record, "load_node"),
-        2,
-        "expected 2 composable nodes"
-    );
+    assert_eq!(plain, 0, "expected 0 standalone nodes");
+    assert_eq!(containers, 1, "expected 1 container");
+    assert_eq!(composables, 2, "expected 2 composable nodes");
 }
 
 #[test]
-fn test_dump_container_events_python() {
+fn test_resolve_container_events_python() {
     let env = fixtures::install_env();
-    let (record, _tmp) = fixtures::dump_launch(&env, &launch_file(), "python");
+    let (model, _tmp) = fixtures::resolve_model(&env, &launch_file(), None, "python");
+    let (plain, containers, composables) = fixtures::model_entity_counts(&model);
 
-    assert_eq!(array_len(&record, "node"), 0, "expected 0 standalone nodes");
-    assert_eq!(array_len(&record, "container"), 1, "expected 1 container");
-    assert_eq!(
-        array_len(&record, "load_node"),
-        2,
-        "expected 2 composable nodes"
-    );
+    assert_eq!(plain, 0, "expected 0 standalone nodes");
+    assert_eq!(containers, 1, "expected 1 container");
+    assert_eq!(composables, 2, "expected 2 composable nodes");
 }
 
 // ---- Parser parity ----
@@ -57,45 +50,37 @@ fn test_dump_container_events_python() {
 fn test_parser_parity_container_events() {
     let env = fixtures::install_env();
     let launch = launch_file();
-    let (rust, _r) = fixtures::dump_launch(&env, &launch, "rust");
-    let (python, _p) = fixtures::dump_launch(&env, &launch, "python");
+    let (rust, _r) = fixtures::resolve_model(&env, &launch, None, "rust");
+    let (python, _p) = fixtures::resolve_model(&env, &launch, None, "python");
 
-    for key in ["node", "container", "load_node"] {
-        assert_eq!(
-            array_len(&rust, key),
-            array_len(&python, key),
-            "{key} count mismatch: rust={}, python={}",
-            array_len(&rust, key),
-            array_len(&python, key)
-        );
-    }
+    assert_eq!(
+        fixtures::model_entity_counts(&rust),
+        fixtures::model_entity_counts(&python),
+        "entity counts mismatch (plain, containers, composables)"
+    );
 }
 
-// ---- Isolated dump test (args attribute) ----
+// ---- Isolated resolve test (args attribute) ----
 
 #[test]
-fn test_dump_isolated_has_args() {
+fn test_resolve_isolated_has_args() {
     let env = fixtures::install_env();
-    let (record, _tmp) = fixtures::dump_launch(&env, &isolated_launch_file(), "rust");
+    let (model, _tmp) = fixtures::resolve_model(&env, &isolated_launch_file(), None, "rust");
+    let (_plain, containers, _composables) = fixtures::model_entity_counts(&model);
+    assert_eq!(containers, 1, "expected 1 container");
 
-    assert_eq!(array_len(&record, "container"), 1, "expected 1 container");
-
-    // Verify the container's cmd contains --isolated
-    let container = &record["container"][0];
-    let cmd = container["cmd"].as_array().expect("cmd should be an array");
-    let has_isolated = cmd.iter().any(|v| v.as_str() == Some("--isolated"));
-    assert!(
-        has_isolated,
-        "expected --isolated in container cmd, got: {:?}",
-        cmd
+    // Verify the container's launch-declared `args` carries --isolated
+    // (Phase 47.B6: the model's `args` field is the launch-declared source
+    // of truth `node_container args="--isolated"` lowers to; the fully
+    // assembled argv record.json's `cmd` used to expose is a replay-time
+    // derivation, not a stored model field).
+    let args = fixtures::first_container_args(&model).expect("expected a container in the model");
+    assert_eq!(
+        args,
+        vec!["--isolated".to_string()],
+        "expected --isolated in container args, got: {:?}",
+        args
     );
-
-    // Verify args field is set
-    let args = container["args"]
-        .as_array()
-        .expect("args should be an array");
-    assert_eq!(args.len(), 1);
-    assert_eq!(args[0].as_str(), Some("--isolated"));
 }
 
 // ---- Launch test ----
@@ -105,9 +90,9 @@ fn test_launch_container_events() {
     let env = fixtures::install_env();
     let launch = launch_file();
 
-    // Dump to get expected process count (1 container)
-    let (record, _tmp) = fixtures::dump_launch(&env, &launch, "rust");
-    let expected = array_len(&record, "node") + array_len(&record, "container");
+    // Resolve to get expected process count (1 container)
+    let (model, _tmp) = fixtures::resolve_model(&env, &launch, None, "rust");
+    let expected = fixtures::count_expected_processes_from_model(&model);
     assert_eq!(expected, 1, "expected 1 process (the container)");
 
     // Use a temp work directory to avoid stale play_log/latest from prior tests

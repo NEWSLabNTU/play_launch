@@ -170,27 +170,11 @@ fn sched_apply_warn_engages_and_launch_succeeds() {
     let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let sched_path = write_sched_toml(tmp.path());
 
-    // First dump to get the expected process count (mirrors
-    // simple_workspace::test_launch_pure_nodes). Phase 46.5: `--format
-    // record` keeps the legacy record.json shape `count_expected_processes`
-    // reads (dump's default is the SystemModel).
-    let record_path = tmp.path().join("record.json");
-    let mut dump_proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
-        "dump",
-        "--output",
-        record_path.to_str().unwrap(),
-        "--format",
-        "record",
-        "launch",
-        "--parser",
-        "rust",
-        launch.to_str().unwrap(),
-    ]))
-    .expect("failed to spawn dump");
-    let status = dump_proc.wait_with_timeout(Duration::from_secs(60));
-    assert!(status.success());
-
-    let expected = fixtures::count_expected_processes(&record_path);
+    // First resolve to get the expected process count (mirrors
+    // simple_workspace::test_launch_pure_nodes). Phase 47.B6: model, not
+    // record.json (`dump`'s only artifact now).
+    let (model, _model_tmp) = fixtures::resolve_model(&env, launch.to_str().unwrap(), None, "rust");
+    let expected = fixtures::count_expected_processes_from_model(&model);
     assert!(expected > 0, "expected at least 1 process");
 
     // Fresh temp work dir: avoids play_log/latest colliding with

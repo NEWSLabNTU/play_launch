@@ -3,7 +3,6 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use play_launch_tests::fixtures;
-use play_launch_tests::fixtures::array_len;
 use play_launch_tests::process::ManagedProcess;
 
 fn parallel_slow_launch() -> String {
@@ -104,7 +103,16 @@ fn wait_for_all_loaded(output_path: &std::path::Path, count: usize, timeout: Dur
 fn web_api_post(port: u16, path: &str) -> (u32, String) {
     let url = format!("http://127.0.0.1:{}{}", port, path);
     let output = std::process::Command::new("curl")
-        .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", &url])
+        .args([
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-X",
+            "POST",
+            &url,
+        ])
         .output()
         .expect("failed to run curl");
     let status: u32 = String::from_utf8_lossy(&output.stdout)
@@ -115,46 +123,40 @@ fn web_api_post(port: u16, path: &str) -> (u32, String) {
     (status, body)
 }
 
-// ---- Dump tests ----
+// ---- Resolve tests (Phase 47.B6: model, not record.json) ----
 
 #[test]
-fn test_dump_parallel_loading() {
+fn test_resolve_parallel_loading() {
     let env = fixtures::install_env();
-    let (record, _tmp) = fixtures::dump_launch(&env, &parallel_slow_launch(), "rust");
+    let (model, _tmp) = fixtures::resolve_model(&env, &parallel_slow_launch(), None, "rust");
+    let (plain, containers, composables) = fixtures::model_entity_counts(&model);
 
-    assert_eq!(array_len(&record, "node"), 0, "expected 0 standalone nodes");
-    assert_eq!(array_len(&record, "container"), 1, "expected 1 container");
+    assert_eq!(plain, 0, "expected 0 standalone nodes");
+    assert_eq!(containers, 1, "expected 1 container");
+    assert_eq!(composables, 2, "expected 2 composable nodes");
+
+    // Verify the container's launch-declared `args` carries --isolated
+    // (Phase 47.B6: the model's `args` field, not record.json's
+    // fully-assembled `cmd` — see container_events.rs's
+    // test_resolve_isolated_has_args for the longer rationale).
+    let args = fixtures::first_container_args(&model).expect("expected a container in the model");
     assert_eq!(
-        array_len(&record, "load_node"),
-        2,
-        "expected 2 composable nodes"
-    );
-
-    // Verify container has --isolated in its args
-    let container = &record["container"][0];
-    let cmd = container["cmd"]
-        .as_array()
-        .expect("cmd should be an array");
-    let has_isolated = cmd.iter().any(|v| v.as_str() == Some("--isolated"));
-    assert!(
-        has_isolated,
-        "expected --isolated in container cmd, got: {:?}",
-        cmd
+        args,
+        vec!["--isolated".to_string()],
+        "expected --isolated in container args, got: {:?}",
+        args
     );
 }
 
 #[test]
-fn test_dump_mixed_fast_slow() {
+fn test_resolve_mixed_fast_slow() {
     let env = fixtures::install_env();
-    let (record, _tmp) = fixtures::dump_launch(&env, &mixed_fast_slow_launch(), "rust");
+    let (model, _tmp) = fixtures::resolve_model(&env, &mixed_fast_slow_launch(), None, "rust");
+    let (plain, containers, composables) = fixtures::model_entity_counts(&model);
 
-    assert_eq!(array_len(&record, "node"), 0, "expected 0 standalone nodes");
-    assert_eq!(array_len(&record, "container"), 1, "expected 1 container");
-    assert_eq!(
-        array_len(&record, "load_node"),
-        2,
-        "expected 2 composable nodes"
-    );
+    assert_eq!(plain, 0, "expected 0 standalone nodes");
+    assert_eq!(containers, 1, "expected 1 container");
+    assert_eq!(composables, 2, "expected 2 composable nodes");
 }
 
 // ---- Launch tests ----
@@ -218,7 +220,10 @@ fn test_parallel_load_completes() {
     eprintln!("--- stdout ({} bytes, last 2000 chars) ---", stdout.len());
     let snippet_start = stdout.len().saturating_sub(2000);
     eprintln!("{}", &stdout[snippet_start..]);
-    eprintln!("loaded_count={loaded_count}, elapsed={:.1}s", elapsed.as_secs_f64());
+    eprintln!(
+        "loaded_count={loaded_count}, elapsed={:.1}s",
+        elapsed.as_secs_f64()
+    );
 
     assert!(
         loaded_count >= 2,
@@ -431,9 +436,7 @@ fn test_unload_and_reload() {
     let stdout_before = std::fs::read_to_string(&output_path).unwrap_or_default();
     let loaded_before = stdout_before
         .lines()
-        .filter(|l| {
-            reload_patterns.iter().any(|p| l.contains(p)) && !l.contains("UNLOADED")
-        })
+        .filter(|l| reload_patterns.iter().any(|p| l.contains(p)) && !l.contains("UNLOADED"))
         .count();
     eprintln!("LOADED events for fast_talker before unload: {loaded_before}");
 
@@ -476,9 +479,7 @@ fn test_unload_and_reload() {
         let stdout = std::fs::read_to_string(&output_path).unwrap_or_default();
         loaded_after = stdout
             .lines()
-            .filter(|l| {
-                reload_patterns.iter().any(|p| l.contains(p)) && !l.contains("UNLOADED")
-            })
+            .filter(|l| reload_patterns.iter().any(|p| l.contains(p)) && !l.contains("UNLOADED"))
             .count();
         if loaded_after > loaded_before {
             break;

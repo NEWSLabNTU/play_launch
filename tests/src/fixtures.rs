@@ -349,48 +349,34 @@ pub fn model_entity_counts(model: &serde_json::Value) -> (usize, usize, usize) {
     (plain, containers, composables)
 }
 
-/// Dump a launch file with the given environment and parser, returning the
-/// parsed `record.json` and the temp directory (kept alive for the caller).
-///
-/// Phase 46.5: `dump`'s default output is now the SystemModel, so this
-/// parser-parity helper (record.json shape: top-level `node`/`container`/
-/// `load_node` arrays) passes `--format record` — the dev/parser-parity
-/// escape hatch `scripts/compare_records.py` and this whole test suite's
-/// cross-parser comparisons depend on.
-pub fn dump_launch(
-    env: &HashMap<String, String>,
-    launch_file: &str,
-    parser: &str,
-) -> (serde_json::Value, tempfile::TempDir) {
-    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
-    let output_path = tmp.path().join("record.json");
-
-    let mut proc = crate::process::ManagedProcess::spawn(play_launch_cmd(env).args([
-        "dump",
-        "--output",
-        output_path.to_str().unwrap(),
-        "--format",
-        "record",
-        "launch",
-        "--parser",
-        parser,
-        launch_file,
-    ]))
-    .expect("failed to spawn play_launch dump");
-
-    let status = proc.wait_with_timeout(std::time::Duration::from_secs(60));
-    assert!(
-        status.success(),
-        "play_launch dump (parser={parser}) failed for {launch_file}"
-    );
-    assert!(
-        output_path.is_file(),
-        "record.json not created for {launch_file}"
-    );
-
-    let data = std::fs::read_to_string(&output_path).expect("failed to read record.json");
-    let record = serde_json::from_str(&data).expect("failed to parse record.json");
-    (record, tmp)
+/// Find the first container's `args` list (extra CLI args appended before
+/// `--ros-args` — e.g. `--isolated` on a `<node_container args="...">`) in a
+/// resolved SystemModel's `structure.nodes`. `None` if no container is
+/// present. Phase 47.B6 — the model-shaped check for what record.json's
+/// `container[0]["args"]`/`["cmd"]` used to assert (the model carries the
+/// launch-declared `args` field directly; the fully-assembled `cmd` argv is
+/// a replay-time derivation, not a stored model field).
+pub fn first_container_args(model: &serde_json::Value) -> Option<Vec<String>> {
+    let nodes = model.get("structure")?.get("nodes")?.as_object()?;
+    for inst in nodes.values() {
+        if inst
+            .get("is_container")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            let args = inst
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            return Some(args);
+        }
+    }
+    None
 }
 
 /// Count non-empty `cmdline` files under `play_log_dir/node/*/cmdline`.
@@ -415,46 +401,15 @@ pub fn count_cmdline_files(play_log_dir: &Path) -> usize {
     count
 }
 
-/// Parse record.json and return `len(node) + len(container)` as the expected
-/// process count.
-pub fn count_expected_processes(record_path: &Path) -> usize {
-    let data = std::fs::read_to_string(record_path).expect("failed to read record.json");
-    let record: serde_json::Value =
-        serde_json::from_str(&data).expect("failed to parse record.json");
-
-    let nodes = record
-        .get("node")
-        .and_then(|v| v.as_array())
-        .map_or(0, |a| a.len());
-    let containers = record
-        .get("container")
-        .and_then(|v| v.as_array())
-        .map_or(0, |a| a.len());
-    nodes + containers
-}
-
-/// Run `scripts/compare_records.py` on two record.json files.
-///
-/// Returns `(success, output)` where `success` is true when the script exits 0
-/// (records are functionally equivalent) and `output` is the combined
-/// stdout+stderr for diagnostic printing on failure.
-pub fn compare_records(rust_record: &Path, python_record: &Path) -> (bool, String) {
-    let script = repo_root().join("scripts/compare_records.py");
-    assert!(script.is_file(), "compare_records.py not found");
-
-    let output = Command::new("python3")
-        .arg(&script)
-        .arg(rust_record)
-        .arg(python_record)
-        .output()
-        .expect("failed to run compare_records.py");
-
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-    (output.status.success(), combined)
+/// Return `plain_nodes + containers` (composable nodes excluded — they're
+/// virtual members hosted inside a container process, not a process of
+/// their own) as the expected process count from an already-parsed
+/// SystemModel. Phase 47.B6 — the model-shaped sibling of the retired
+/// `count_expected_processes(record_path)`, which read `len(node) +
+/// len(container)` off a `record.json`.
+pub fn count_expected_processes_from_model(model: &serde_json::Value) -> usize {
+    let (plain, containers, _composables) = model_entity_counts(model);
+    plain + containers
 }
 
 /// `play_launch resolve` a launch file with the given environment and
@@ -474,6 +429,19 @@ pub fn resolve_model(
     launch_file: Option<&str>,
     parser: &str,
 ) -> (serde_json::Value, tempfile::TempDir) {
+    resolve_model_with_args(env, package_or_path, launch_file, &[], parser)
+}
+
+/// Same as [`resolve_model`], plus `launch_arguments` (`KEY:=VALUE` strings)
+/// appended after the launch file — for fixtures like Autoware that require
+/// them (e.g. `map_path:=...`).
+pub fn resolve_model_with_args(
+    env: &HashMap<String, String>,
+    package_or_path: &str,
+    launch_file: Option<&str>,
+    launch_arguments: &[&str],
+    parser: &str,
+) -> (serde_json::Value, tempfile::TempDir) {
     let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let output_path = tmp.path().join("system_model.yaml");
 
@@ -481,6 +449,7 @@ pub fn resolve_model(
     if let Some(lf) = launch_file {
         args.push(lf);
     }
+    args.extend(launch_arguments.iter().copied());
     args.push("-o");
     let output_str = output_path.to_str().unwrap();
     args.push(output_str);

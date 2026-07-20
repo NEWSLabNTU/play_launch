@@ -1,5 +1,4 @@
 use play_launch_tests::fixtures;
-use play_launch_tests::fixtures::array_len;
 use play_launch_tests::process::ManagedProcess;
 
 fn launch_file() -> String {
@@ -10,34 +9,28 @@ fn launch_file() -> String {
         .to_string()
 }
 
-// ---- Dump tests ----
+// ---- Resolve tests (Phase 47.B6: model, not record.json) ----
 
 #[test]
-fn test_dump_concurrent_rust() {
+fn test_resolve_concurrent_rust() {
     let env = fixtures::install_env();
-    let (record, _tmp) = fixtures::dump_launch(&env, &launch_file(), "rust");
+    let (model, _tmp) = fixtures::resolve_model(&env, &launch_file(), None, "rust");
+    let (plain, containers, composables) = fixtures::model_entity_counts(&model);
 
-    assert_eq!(array_len(&record, "node"), 0, "expected 0 standalone nodes");
-    assert_eq!(array_len(&record, "container"), 4, "expected 4 containers");
-    assert_eq!(
-        array_len(&record, "load_node"),
-        4,
-        "expected 4 composable nodes"
-    );
+    assert_eq!(plain, 0, "expected 0 standalone nodes");
+    assert_eq!(containers, 4, "expected 4 containers");
+    assert_eq!(composables, 4, "expected 4 composable nodes");
 }
 
 #[test]
-fn test_dump_concurrent_python() {
+fn test_resolve_concurrent_python() {
     let env = fixtures::install_env();
-    let (record, _tmp) = fixtures::dump_launch(&env, &launch_file(), "python");
+    let (model, _tmp) = fixtures::resolve_model(&env, &launch_file(), None, "python");
+    let (plain, containers, composables) = fixtures::model_entity_counts(&model);
 
-    assert_eq!(array_len(&record, "node"), 0, "expected 0 standalone nodes");
-    assert_eq!(array_len(&record, "container"), 4, "expected 4 containers");
-    assert_eq!(
-        array_len(&record, "load_node"),
-        4,
-        "expected 4 composable nodes"
-    );
+    assert_eq!(plain, 0, "expected 0 standalone nodes");
+    assert_eq!(containers, 4, "expected 4 containers");
+    assert_eq!(composables, 4, "expected 4 composable nodes");
 }
 
 // ---- Parser parity ----
@@ -46,18 +39,14 @@ fn test_dump_concurrent_python() {
 fn test_parser_parity_concurrent() {
     let env = fixtures::install_env();
     let launch = launch_file();
-    let (rust, _r) = fixtures::dump_launch(&env, &launch, "rust");
-    let (python, _p) = fixtures::dump_launch(&env, &launch, "python");
+    let (rust, _r) = fixtures::resolve_model(&env, &launch, None, "rust");
+    let (python, _p) = fixtures::resolve_model(&env, &launch, None, "python");
 
-    for key in ["node", "container", "load_node"] {
-        assert_eq!(
-            array_len(&rust, key),
-            array_len(&python, key),
-            "{key} count mismatch: rust={}, python={}",
-            array_len(&rust, key),
-            array_len(&python, key)
-        );
-    }
+    assert_eq!(
+        fixtures::model_entity_counts(&rust),
+        fixtures::model_entity_counts(&python),
+        "entity counts mismatch (plain, containers, composables)"
+    );
 }
 
 // ---- Launch test ----
@@ -68,9 +57,9 @@ fn test_launch_concurrent() {
     let launch = launch_file();
     let work_dir = fixtures::test_workspace_path("concurrent_loading");
 
-    // Dump to get expected process count (4 containers)
-    let (record, _tmp) = fixtures::dump_launch(&env, &launch, "rust");
-    let expected = array_len(&record, "node") + array_len(&record, "container");
+    // Resolve to get expected process count (4 containers)
+    let (model, _tmp) = fixtures::resolve_model(&env, &launch, None, "rust");
+    let expected = fixtures::count_expected_processes_from_model(&model);
     assert_eq!(expected, 4, "expected 4 processes (4 containers)");
 
     let mut cmd = fixtures::play_launch_cmd(&env);

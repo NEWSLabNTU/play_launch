@@ -1098,20 +1098,22 @@ fn resolve_without_platform_file_omits_execution_sched() {
     // Match the `sched:` map key at execution-nesting depth, not the
     // `sched_class:` inside a tier platform spec.
     assert!(
-        !yaml.lines().any(|l| l.trim_end() == "sched:" || l.trim() == "sched:"),
+        !yaml
+            .lines()
+            .any(|l| l.trim_end() == "sched:" || l.trim() == "sched:"),
         "resolve with no platform file must not emit execution.sched:\n{yaml}"
     );
 }
 
-/// Phase 46.4: the Phase 43.1 model↔record binding gate is removed —
+/// Phase 46.4/47.B3: the Phase 43.1 model↔record binding gate is removed,
+/// and the legacy `--input-file record.json` compat path is hard-cut —
 /// `replay --model` spawns straight from the model's `structure.nodes`, with
-/// no matching (or even present) `--input-file` record companion required.
-/// Resolves `bringup.launch.xml` into a model in one scratch dir, then
-/// replays it from a *different*, empty working directory (so the default
-/// `--input-file record.json` simply doesn't exist there) and asserts the
-/// same 3-process outcome (2 standalone nodes + 1 container; composables
+/// no record companion required OR possible. Resolves `bringup.launch.xml`
+/// into a model in one scratch dir, then replays it from a *different*,
+/// empty working directory (no `record.json` anywhere near it) and asserts
+/// the same 3-process outcome (2 standalone nodes + 1 container; composables
 /// don't get a separate `node/<name>/cmdline`) that `sched_apply_warn_smoke_launch`
-/// proves for the record-driven `launch` path.
+/// proves for the in-memory `launch` path.
 #[test]
 fn replay_model_spawns_without_record_companion() {
     if !require_rt_workspace() {
@@ -1305,8 +1307,7 @@ fn check_export_graph_json_matches_contract() {
     );
 
     let data = fs::read_to_string(&export_path).expect("failed to read export JSON");
-    let graph: serde_json::Value =
-        serde_json::from_str(&data).expect("export JSON should parse");
+    let graph: serde_json::Value = serde_json::from_str(&data).expect("export JSON should parse");
 
     assert_eq!(graph["version"], 1);
     assert_eq!(
@@ -1508,76 +1509,45 @@ fn resolve_no_longer_writes_record_companion() {
     );
 }
 
-/// `replay --input-file <record.json>` (no `--model`) is the DEPRECATED
-/// compat path (Phase 46.5): still spawns exactly as before (rollback
-/// safety, one release's grace), but must print a one-time deprecation
-/// warning pointing at the SystemModel.
+/// `replay --input-file <path>` is a HARD CUT (Phase 47.B3): the flag is
+/// removed entirely, not silently reinterpreted. clap must reject it
+/// (unrecognized argument, non-zero exit) rather than misparsing it as
+/// something else or falling back to any legacy record-only spawn path —
+/// there is no such path left.
 #[test]
-fn replay_input_file_record_json_is_deprecated_but_still_spawns() {
+fn replay_input_file_flag_is_removed_and_errors_clearly() {
     if !require_rt_workspace() {
         return;
     }
     let env = fixtures::rt_workspace_env();
 
-    // Produce a legacy record.json via the dev/parser-parity escape hatch.
-    let dump_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
-    let record_path = dump_tmp.path().join("record.json");
-    let mut dump_proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
-        "dump",
-        "-o",
-        record_path.to_str().unwrap(),
-        "--format",
-        "record",
-        "launch",
-        "rt_demo",
-        "bringup.launch.xml",
-    ]))
-    .expect("spawn dump --format record");
-    assert!(
-        dump_proc
-            .wait_with_timeout(Duration::from_secs(60))
-            .success(),
-        "play_launch dump --format record failed"
-    );
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.args(["replay", "--input-file", "record.json"]);
+    let mut proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
+    let status = proc.wait_with_timeout(Duration::from_secs(15));
 
-    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
-    let stdout_path = work_tmp.path().join("stdout.log");
-    let stderr_path = work_tmp.path().join("stderr.log");
-    let stdout_file = fs::File::create(&stdout_path).expect("failed to create stdout file");
-    let stderr_file = fs::File::create(&stderr_path).expect("failed to create stderr file");
+    assert!(
+        !status.success(),
+        "replay --input-file must be rejected (the flag is removed, Phase 47.B3), not silently accepted"
+    );
+}
+
+/// `replay` with no model at all (neither positional nor `--model`) must
+/// error clearly asking for one — not panic, not silently no-op.
+#[test]
+fn replay_without_model_errors_clearly() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
 
     let mut cmd = fixtures::play_launch_cmd(&env);
-    cmd.current_dir(work_tmp.path());
-    cmd.args([
-        "replay",
-        "--input-file",
-        record_path.to_str().unwrap(),
-        "--disable-web-ui",
-        "--disable-monitoring",
-        "--disable-diagnostics",
-    ]);
-    cmd.stdout(Stdio::from(stdout_file));
-    cmd.stderr(Stdio::from(stderr_file));
+    cmd.args(["replay", "--disable-web-ui"]);
+    let mut proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
+    let status = proc.wait_with_timeout(Duration::from_secs(15));
 
-    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
-
-    let play_log = work_tmp.path().join("play_log/latest");
-    fixtures::wait_for_processes(&play_log, 3, Duration::from_secs(30));
-    let actual = fixtures::count_cmdline_files(&play_log);
-    assert_eq!(
-        actual, 3,
-        "the deprecated --input-file path must still spawn cleanly: actual={actual}, expected=3"
-    );
-
-    // Tracing output (including this warning) goes to stdout, not stderr —
-    // check both to be robust to that detail.
-    let stdout = fs::read_to_string(&stdout_path).unwrap_or_default();
-    let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
-    let combined = format!("{stdout}\n{stderr}").to_lowercase();
     assert!(
-        combined.contains("deprecated"),
-        "replay --input-file (no --model) must print a deprecation warning:\n{combined}"
+        !status.success(),
+        "replay with no model (no positional, no --model) must error, not silently succeed"
     );
-
-    // _proc dropped here — ManagedProcess::drop kills the process group.
 }

@@ -1,7 +1,6 @@
 use std::process::Command;
 
 use play_launch_tests::fixtures;
-use play_launch_tests::fixtures::array_len;
 use play_launch_tests::process::ManagedProcess;
 
 fn launch_file() -> String {
@@ -23,44 +22,38 @@ fn io_stress_available(env: &std::collections::HashMap<String, String>) -> bool 
         .unwrap_or(false)
 }
 
-// ---- Dump tests ----
+// ---- Resolve tests (Phase 47.B6: model, not record.json) ----
 
 #[test]
-fn test_dump_io_stress_rust() {
+fn test_resolve_io_stress_rust() {
     let env = fixtures::install_env();
     if !io_stress_available(&env) {
         eprintln!("SKIP: io_stress package not built");
         return;
     }
 
-    let (record, _tmp) = fixtures::dump_launch(&env, &launch_file(), "rust");
+    let (model, _tmp) = fixtures::resolve_model(&env, &launch_file(), None, "rust");
+    let (plain, containers, composables) = fixtures::model_entity_counts(&model);
 
-    assert_eq!(array_len(&record, "node"), 10, "expected 10 nodes");
-    assert_eq!(array_len(&record, "container"), 0, "expected 0 containers");
-    assert_eq!(
-        array_len(&record, "load_node"),
-        0,
-        "expected 0 composable nodes"
-    );
+    assert_eq!(plain, 10, "expected 10 nodes");
+    assert_eq!(containers, 0, "expected 0 containers");
+    assert_eq!(composables, 0, "expected 0 composable nodes");
 }
 
 #[test]
-fn test_dump_io_stress_python() {
+fn test_resolve_io_stress_python() {
     let env = fixtures::install_env();
     if !io_stress_available(&env) {
         eprintln!("SKIP: io_stress package not built");
         return;
     }
 
-    let (record, _tmp) = fixtures::dump_launch(&env, &launch_file(), "python");
+    let (model, _tmp) = fixtures::resolve_model(&env, &launch_file(), None, "python");
+    let (plain, containers, composables) = fixtures::model_entity_counts(&model);
 
-    assert_eq!(array_len(&record, "node"), 10, "expected 10 nodes");
-    assert_eq!(array_len(&record, "container"), 0, "expected 0 containers");
-    assert_eq!(
-        array_len(&record, "load_node"),
-        0,
-        "expected 0 composable nodes"
-    );
+    assert_eq!(plain, 10, "expected 10 nodes");
+    assert_eq!(containers, 0, "expected 0 containers");
+    assert_eq!(composables, 0, "expected 0 composable nodes");
 }
 
 // ---- Launch test ----
@@ -76,8 +69,8 @@ fn test_launch_io_stress() {
     let launch = launch_file();
     let work_dir = fixtures::test_workspace_path("io_stress");
 
-    let (record, _tmp) = fixtures::dump_launch(&env, &launch, "rust");
-    let expected = array_len(&record, "node") + array_len(&record, "container");
+    let (model, _tmp) = fixtures::resolve_model(&env, &launch, None, "rust");
+    let expected = fixtures::count_expected_processes_from_model(&model);
     assert_eq!(expected, 10, "expected 10 processes");
 
     let mut cmd = fixtures::play_launch_cmd(&env);

@@ -1,7 +1,6 @@
 use std::process::Stdio;
 
 use play_launch_tests::fixtures;
-use play_launch_tests::fixtures::array_len;
 use play_launch_tests::health::HealthReport;
 use play_launch_tests::process::ManagedProcess;
 
@@ -23,66 +22,41 @@ fn autoware_launch_args() -> Vec<String> {
     ]
 }
 
-/// Dump Autoware with the given parser, returning (parsed JSON, temp dir).
-///
-/// The temp dir is returned so callers can access the record.json file path
-/// (at `tmp.path().join("record.json")`) for script-based comparison.
-fn dump_autoware(parser: &str) -> (serde_json::Value, tempfile::TempDir) {
+/// Resolve Autoware with the given parser, returning (parsed SystemModel
+/// YAML as JSON, temp dir backing the model file). Phase 47.B6 — the
+/// model-shaped sibling of the retired record.json-based `dump_autoware`.
+fn resolve_autoware(parser: &str) -> (serde_json::Value, tempfile::TempDir) {
     require_autoware();
     let env = fixtures::autoware_env();
-    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
-    let output_path = tmp.path().join("record.json");
-
-    // Phase 46.5: `--format record` keeps this parity helper on the legacy
-    // record.json shape (dump's default output is now the SystemModel).
-    let mut args = vec![
-        "dump".to_string(),
-        "--output".to_string(),
-        output_path.to_str().unwrap().to_string(),
-        "--format".to_string(),
-        "record".to_string(),
-        "launch".to_string(),
-        "--parser".to_string(),
-        parser.to_string(),
-    ];
-    args.extend(autoware_launch_args());
-
-    let mut proc = ManagedProcess::spawn(
-        fixtures::play_launch_cmd(&env).args(&args),
+    let map_path_arg = format!("map_path:={}", fixtures::autoware_map_path());
+    fixtures::resolve_model_with_args(
+        &env,
+        "autoware_launch",
+        Some("planning_simulator.launch.xml"),
+        &[&map_path_arg],
+        parser,
     )
-    .expect("failed to spawn play_launch dump");
-
-    let status = proc.wait_with_timeout(std::time::Duration::from_secs(60));
-    assert!(
-        status.success(),
-        "play_launch dump (parser={parser}) failed"
-    );
-
-    let data = std::fs::read_to_string(&output_path).expect("failed to read record.json");
-    let record = serde_json::from_str(&data).expect("failed to parse record.json");
-    (record, tmp)
 }
 
-
-/// Assert that a dump record matches the expected counts from
-/// `activate_autoware.sh`.  When an `EXPECTED_*` variable is set, the count
+/// Assert that a resolved model matches the expected counts from
+/// `activate_autoware.sh`. When an `EXPECTED_*` variable is set, the count
 /// must match exactly; otherwise we just check > 0.
-fn assert_entity_counts(record: &serde_json::Value, parser: &str) {
+fn assert_entity_counts(model: &serde_json::Value, parser: &str) {
     let env = fixtures::autoware_env();
-    let (exp_nodes, exp_containers, exp_load_nodes) =
-        fixtures::autoware_expected_counts(&env);
+    let (exp_nodes, exp_containers, exp_load_nodes) = fixtures::autoware_expected_counts(&env);
+    let (nodes, containers, load_nodes) = fixtures::model_entity_counts(model);
 
-    let checks: &[(&str, Option<usize>)] = &[
-        ("node", exp_nodes),
-        ("container", exp_containers),
-        ("load_node", exp_load_nodes),
+    let checks: &[(&str, usize, Option<usize>)] = &[
+        ("node", nodes, exp_nodes),
+        ("container", containers, exp_containers),
+        ("load_node", load_nodes, exp_load_nodes),
     ];
 
-    for &(key, expected) in checks {
-        let actual = array_len(record, key);
+    for &(key, actual, expected) in checks {
         if let Some(n) = expected {
             assert_eq!(
-                actual, n,
+                actual,
+                n,
                 "{parser} parser: {key} count {actual} != expected {n} \
                  (from EXPECTED_{} in activate_autoware.sh)",
                 key.to_uppercase()
@@ -96,47 +70,43 @@ fn assert_entity_counts(record: &serde_json::Value, parser: &str) {
     }
 }
 
-// ---- Dump tests ----
+// ---- Resolve tests ----
 
 #[test]
-fn test_autoware_dump_rust() {
-    let (record, _tmp) = dump_autoware("rust");
-    assert_entity_counts(&record, "rust");
+fn test_autoware_resolve_rust() {
+    let (model, _tmp) = resolve_autoware("rust");
+    assert_entity_counts(&model, "rust");
 }
 
 #[test]
-fn test_autoware_dump_python() {
-    let (record, _tmp) = dump_autoware("python");
-    assert_entity_counts(&record, "python");
+fn test_autoware_resolve_python() {
+    let (model, _tmp) = resolve_autoware("python");
+    assert_entity_counts(&model, "python");
 }
 
 #[test]
-fn test_autoware_dump_counts_match() {
-    let (rust_record, _r_tmp) = dump_autoware("rust");
-    let (python_record, _p_tmp) = dump_autoware("python");
+fn test_autoware_resolve_counts_match() {
+    let (rust_model, _r_tmp) = resolve_autoware("rust");
+    let (python_model, _p_tmp) = resolve_autoware("python");
 
-    for key in &["node", "container", "load_node"] {
-        assert_eq!(
-            array_len(&rust_record, key),
-            array_len(&python_record, key),
-            "{key} count mismatch: rust={}, python={}",
-            array_len(&rust_record, key),
-            array_len(&python_record, key),
-        );
-    }
+    assert_eq!(
+        fixtures::model_entity_counts(&rust_model),
+        fixtures::model_entity_counts(&python_model),
+        "entity counts mismatch (plain, containers, composables)"
+    );
 }
 
 // ---- Parser parity ----
 
 #[test]
 fn test_autoware_parser_parity() {
-    let (_, rust_tmp) = dump_autoware("rust");
-    let (_, python_tmp) = dump_autoware("python");
+    let (_, rust_tmp) = resolve_autoware("rust");
+    let (_, python_tmp) = resolve_autoware("python");
 
-    let rust_record = rust_tmp.path().join("record.json");
-    let python_record = python_tmp.path().join("record.json");
+    let rust_model = rust_tmp.path().join("system_model.yaml");
+    let python_model = python_tmp.path().join("system_model.yaml");
 
-    let (success, output) = fixtures::compare_records(&rust_record, &python_record);
+    let (success, output) = fixtures::compare_models(&rust_model, &python_model);
     assert!(
         success,
         "Rust vs Python parser comparison failed:\n{output}"
@@ -151,33 +121,9 @@ fn test_autoware_process_count_rust() {
     let env = fixtures::autoware_env();
     let work_dir = fixtures::test_workspace_path("autoware");
 
-    // Dump to get expected count
-    let tmp = tempfile::TempDir::new().unwrap();
-    let record_path = tmp.path().join("record.json");
-
-    // Phase 46.5: `--format record` keeps the legacy record.json shape
-    // `count_expected_processes` reads (dump's default is the SystemModel).
-    let mut dump_args = vec![
-        "dump".to_string(),
-        "--output".to_string(),
-        record_path.to_str().unwrap().to_string(),
-        "--format".to_string(),
-        "record".to_string(),
-        "launch".to_string(),
-        "--parser".to_string(),
-        "rust".to_string(),
-    ];
-    dump_args.extend(autoware_launch_args());
-
-    let mut dump_proc = ManagedProcess::spawn(
-        fixtures::play_launch_cmd(&env).args(&dump_args),
-    )
-    .expect("failed to spawn dump");
-
-    let status = dump_proc.wait_with_timeout(std::time::Duration::from_secs(60));
-    assert!(status.success());
-
-    let expected = fixtures::count_expected_processes(&record_path);
+    // Resolve to get expected count (Phase 47.B6: model, not record.json).
+    let (model, _tmp) = resolve_autoware("rust");
+    let expected = fixtures::count_expected_processes_from_model(&model);
     assert!(expected > 0, "expected at least 1 process from dump");
 
     // Launch
@@ -199,10 +145,7 @@ fn test_autoware_process_count_rust() {
     fixtures::wait_for_processes(&play_log, expected, std::time::Duration::from_secs(60));
 
     let actual = fixtures::count_cmdline_files(&play_log);
-    assert_eq!(
-        actual, expected,
-        "process count: {actual}/{expected}"
-    );
+    assert_eq!(actual, expected, "process count: {actual}/{expected}");
 
     // _proc dropped here — ManagedProcess::drop kills the process group
 }
@@ -211,9 +154,10 @@ fn test_autoware_process_count_rust() {
 
 #[test]
 fn test_autoware_smoke_test() {
-    // 1. Dump record.json to get expected process count
-    let (record, _dump_tmp) = dump_autoware("rust");
-    let expected = array_len(&record, "node") + array_len(&record, "container");
+    // 1. Resolve to get expected process count (Phase 47.B6: model, not
+    // record.json).
+    let (model, _resolve_tmp) = resolve_autoware("rust");
+    let expected = fixtures::count_expected_processes_from_model(&model);
     assert!(expected > 0, "expected at least 1 process from dump");
 
     // 2. Set up stdout capture (play_launch writes tracing output to stdout)
@@ -232,8 +176,7 @@ fn test_autoware_smoke_test() {
     ];
     launch_args.extend(autoware_launch_args());
 
-    let output_file =
-        std::fs::File::create(&output_path).expect("failed to create output file");
+    let output_file = std::fs::File::create(&output_path).expect("failed to create output file");
 
     let mut cmd = fixtures::play_launch_cmd(&env);
     cmd.current_dir(&work_dir);
@@ -274,33 +217,9 @@ fn test_autoware_process_count_python() {
     let env = fixtures::autoware_env();
     let work_dir = fixtures::test_workspace_path("autoware");
 
-    // Dump to get expected count
-    let tmp = tempfile::TempDir::new().unwrap();
-    let record_path = tmp.path().join("record.json");
-
-    // Phase 46.5: `--format record` keeps the legacy record.json shape
-    // `count_expected_processes` reads (dump's default is the SystemModel).
-    let mut dump_args = vec![
-        "dump".to_string(),
-        "--output".to_string(),
-        record_path.to_str().unwrap().to_string(),
-        "--format".to_string(),
-        "record".to_string(),
-        "launch".to_string(),
-        "--parser".to_string(),
-        "python".to_string(),
-    ];
-    dump_args.extend(autoware_launch_args());
-
-    let mut dump_proc = ManagedProcess::spawn(
-        fixtures::play_launch_cmd(&env).args(&dump_args),
-    )
-    .expect("failed to spawn dump");
-
-    let status = dump_proc.wait_with_timeout(std::time::Duration::from_secs(60));
-    assert!(status.success());
-
-    let expected = fixtures::count_expected_processes(&record_path);
+    // Resolve to get expected count (Phase 47.B6: model, not record.json).
+    let (model, _tmp) = resolve_autoware("python");
+    let expected = fixtures::count_expected_processes_from_model(&model);
     assert!(expected > 0, "expected at least 1 process from dump");
 
     // Launch
@@ -322,10 +241,7 @@ fn test_autoware_process_count_python() {
     fixtures::wait_for_processes(&play_log, expected, std::time::Duration::from_secs(60));
 
     let actual = fixtures::count_cmdline_files(&play_log);
-    assert_eq!(
-        actual, expected,
-        "process count: {actual}/{expected}"
-    );
+    assert_eq!(actual, expected, "process count: {actual}/{expected}");
 
     // _proc dropped here — ManagedProcess::drop kills the process group
 }

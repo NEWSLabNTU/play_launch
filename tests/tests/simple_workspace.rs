@@ -1,39 +1,36 @@
 use play_launch_tests::fixtures;
-use play_launch_tests::fixtures::array_len;
 use play_launch_tests::process::ManagedProcess;
 
-fn dump_launch(launch_file: &str, parser: &str) -> serde_json::Value {
+/// `(plain_nodes, containers, composables)` from resolving `launch_file`
+/// with the given parser. Phase 47.B6 — the model-shaped sibling of the
+/// retired record.json-based `dump_launch` helper.
+fn resolve_counts(launch_file: &str, parser: &str) -> (usize, usize, usize) {
     let env = fixtures::install_env();
-    let (record, _tmp) = fixtures::dump_launch(&env, launch_file, parser);
-    record
+    let (model, _tmp) = fixtures::resolve_model(&env, launch_file, None, parser);
+    fixtures::model_entity_counts(&model)
 }
 
-// ---- Dump tests ----
+// ---- Resolve tests ----
 
 #[test]
-fn test_dump_pure_nodes_rust() {
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/pure_nodes.launch.xml");
-    let record = dump_launch(launch.to_str().unwrap(), "rust");
+fn test_resolve_pure_nodes_rust() {
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
+    let (nodes, containers, load_nodes) = resolve_counts(launch.to_str().unwrap(), "rust");
 
-    let nodes = array_len(&record, "node");
     assert!(
         nodes > 0,
         "pure_nodes should produce at least 1 node, got {nodes}"
     );
     // pure_nodes should not have containers or load_nodes
-    assert_eq!(array_len(&record, "container"), 0);
-    assert_eq!(array_len(&record, "load_node"), 0);
+    assert_eq!(containers, 0);
+    assert_eq!(load_nodes, 0);
 }
 
 #[test]
-fn test_dump_composition_rust() {
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/composition.launch.xml");
-    let record = dump_launch(launch.to_str().unwrap(), "rust");
+fn test_resolve_composition_rust() {
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/composition.launch.xml");
+    let (_nodes, containers, load_nodes) = resolve_counts(launch.to_str().unwrap(), "rust");
 
-    let containers = array_len(&record, "container");
-    let load_nodes = array_len(&record, "load_node");
     assert!(
         containers > 0,
         "composition should have at least 1 container, got {containers}"
@@ -45,12 +42,10 @@ fn test_dump_composition_rust() {
 }
 
 #[test]
-fn test_dump_pure_nodes_python() {
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/pure_nodes.launch.xml");
-    let record = dump_launch(launch.to_str().unwrap(), "python");
+fn test_resolve_pure_nodes_python() {
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
+    let (nodes, _containers, _load_nodes) = resolve_counts(launch.to_str().unwrap(), "python");
 
-    let nodes = array_len(&record, "node");
     assert!(
         nodes > 0,
         "pure_nodes (python) should produce at least 1 node, got {nodes}"
@@ -58,13 +53,10 @@ fn test_dump_pure_nodes_python() {
 }
 
 #[test]
-fn test_dump_composition_python() {
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/composition.launch.xml");
-    let record = dump_launch(launch.to_str().unwrap(), "python");
+fn test_resolve_composition_python() {
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/composition.launch.xml");
+    let (_nodes, containers, load_nodes) = resolve_counts(launch.to_str().unwrap(), "python");
 
-    let containers = array_len(&record, "container");
-    let load_nodes = array_len(&record, "load_node");
     assert!(
         containers > 0,
         "composition (python) should have at least 1 container, got {containers}"
@@ -79,59 +71,29 @@ fn test_dump_composition_python() {
 
 #[test]
 fn test_parser_parity_pure_nodes() {
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/pure_nodes.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
     let launch_str = launch.to_str().unwrap();
 
-    let rust = dump_launch(launch_str, "rust");
-    let python = dump_launch(launch_str, "python");
+    let rust = resolve_counts(launch_str, "rust");
+    let python = resolve_counts(launch_str, "python");
 
     assert_eq!(
-        array_len(&rust, "node"),
-        array_len(&python, "node"),
-        "node count mismatch: rust={}, python={}",
-        array_len(&rust, "node"),
-        array_len(&python, "node")
-    );
-    assert_eq!(
-        array_len(&rust, "container"),
-        array_len(&python, "container"),
-    );
-    assert_eq!(
-        array_len(&rust, "load_node"),
-        array_len(&python, "load_node"),
+        rust, python,
+        "entity counts mismatch (plain, containers, composables): rust={rust:?}, python={python:?}"
     );
 }
 
 #[test]
 fn test_parser_parity_composition() {
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/composition.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/composition.launch.xml");
     let launch_str = launch.to_str().unwrap();
 
-    let rust = dump_launch(launch_str, "rust");
-    let python = dump_launch(launch_str, "python");
+    let rust = resolve_counts(launch_str, "rust");
+    let python = resolve_counts(launch_str, "python");
 
     assert_eq!(
-        array_len(&rust, "node"),
-        array_len(&python, "node"),
-        "node count mismatch: rust={}, python={}",
-        array_len(&rust, "node"),
-        array_len(&python, "node")
-    );
-    assert_eq!(
-        array_len(&rust, "container"),
-        array_len(&python, "container"),
-        "container count mismatch: rust={}, python={}",
-        array_len(&rust, "container"),
-        array_len(&python, "container")
-    );
-    assert_eq!(
-        array_len(&rust, "load_node"),
-        array_len(&python, "load_node"),
-        "load_node count mismatch: rust={}, python={}",
-        array_len(&rust, "load_node"),
-        array_len(&python, "load_node")
+        rust, python,
+        "entity counts mismatch (plain, containers, composables): rust={rust:?}, python={python:?}"
     );
 }
 
@@ -140,34 +102,12 @@ fn test_parser_parity_composition() {
 #[test]
 fn test_launch_pure_nodes() {
     let env = fixtures::install_env();
-    let launch = fixtures::test_workspace_path("simple_test")
-        .join("launch/pure_nodes.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
 
-    // First dump to get expected process count
-    let tmp = tempfile::TempDir::new().unwrap();
-    let record_path = tmp.path().join("record.json");
-
-    // Phase 46.5: `--format record` keeps the legacy record.json shape
-    // `count_expected_processes` reads (dump's default is the SystemModel).
-    let mut dump_proc = ManagedProcess::spawn(
-        fixtures::play_launch_cmd(&env).args([
-            "dump",
-            "--output",
-            record_path.to_str().unwrap(),
-            "--format",
-            "record",
-            "launch",
-            "--parser",
-            "rust",
-            launch.to_str().unwrap(),
-        ]),
-    )
-    .expect("failed to spawn dump");
-
-    let status = dump_proc.wait_with_timeout(std::time::Duration::from_secs(60));
-    assert!(status.success());
-
-    let expected = fixtures::count_expected_processes(&record_path);
+    // First resolve to get expected process count (Phase 47.B6: model, not
+    // record.json — `dump`'s only artifact now).
+    let (model, _tmp) = fixtures::resolve_model(&env, launch.to_str().unwrap(), None, "rust");
+    let expected = fixtures::count_expected_processes_from_model(&model);
     assert!(expected > 0, "expected at least 1 process");
 
     // Launch and wait for processes
