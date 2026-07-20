@@ -83,9 +83,16 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
                     // parse path (same `dump_launch_python_wrapper` logic
                     // `dump` uses) straight into the record companion, then
                     // feed the SAME model_builder pipeline as the Rust path.
-                    // The Python parser doesn't produce contract/sched
-                    // facts, so those layers stay empty — a structure-only
-                    // model, by construction, not by special-casing here.
+                    // The contract/sched layers apply on the shared scope
+                    // table (`manifest_loader`/`sched_loader` key off
+                    // `ScopeEntry.origin.path`, Phase 40.1 — both parsers
+                    // emit it), independent of which parser produced the
+                    // dump. They come back populated whenever a contract
+                    // sidecar / platform file (or `--contracts`/`--sched`)
+                    // resolves, and empty only when none does — NOT a Python
+                    // limitation. (For rt_workspace, which ships both
+                    // sidecars, the Python-produced model is byte-identical
+                    // to the Rust one across structure/contracts/execution.)
                     eprintln!("Resolving via Python parser");
                     let companion_path = record_path.clone().unwrap_or_else(|| {
                         std::env::temp_dir().join(format!(

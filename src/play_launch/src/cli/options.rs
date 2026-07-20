@@ -320,10 +320,13 @@ pub struct ResolveArgs {
     pub target: String,
 
     /// Parser backend to use for launch file parsing (Phase 46.4).
-    /// - rust: Use Rust parser (default, full model: structure+contracts+sched)
-    /// - python: Use Python parser (maximum compatibility; structure-only —
-    ///   contracts/sched stay empty since the Python parser doesn't produce
-    ///   those facts)
+    /// - rust: Use Rust parser (default, fast)
+    /// - python: Use Python parser (maximum compatibility)
+    ///
+    /// Both produce the full model — the contract/sched layers apply on the
+    /// shared scope table regardless of parser (Phase 40.1), so they're
+    /// populated whenever a contract sidecar / platform file (or
+    /// --contracts/--sched) resolves, and empty only when none does.
     #[arg(long, value_enum, default_value = "rust")]
     pub parser: ParserBackend,
 

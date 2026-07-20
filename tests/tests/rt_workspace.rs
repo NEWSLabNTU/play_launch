@@ -1220,13 +1220,23 @@ fn replay_model_spawns_without_record_companion() {
 }
 
 /// Phase 46.4 acceptance: `resolve --parser python` produces a spawnable
-/// structure-only SystemModel — the Python parser must keep working as a
-/// first-class model producer, not just a record.json producer, ahead of
-/// record.json's eventual retirement (46.5). Resolves `bringup.launch.xml`
-/// with `--parser python`, asserts the model carries the same 4 nodes
+/// SystemModel — the Python parser must keep working as a first-class model
+/// producer, not just a record.json producer, ahead of record.json's
+/// eventual retirement (46.5). Resolves `bringup.launch.xml` with
+/// `--parser python`, asserts the model carries the same 4 nodes
 /// (2 standalone + 1 container + 1 composable) the Rust path produces, then
 /// replays it — with no record companion — and asserts the same 3-process
 /// spawn outcome as the Rust-path test above.
+///
+/// Asserts only parser-inherent, install-independent facts (node count +
+/// spawnability): the contract/sched layers apply on the shared scope table
+/// regardless of parser (Phase 40.1) and would be full parity with Rust
+/// here (rt_workspace ships both a contract sidecar and a platform file) —
+/// but only when the embedded Python imports a current play_launch package
+/// (the one that emits `ScopeOrigin.path`). A stale pip-installed package
+/// (pre-40.1) silently disables the provider-sidecar channels, so a
+/// contract/sched assertion would be install-flaky; that full-parity check
+/// is demonstrated by the manual acceptance run in the W4 report instead.
 #[test]
 fn resolve_parser_python_produces_model_that_replays_cleanly() {
     if !require_rt_workspace() {
