@@ -7,6 +7,9 @@ Commits:
 - `5d8f278` feat(resolve): drop the record companion (46.5)
 - `525e6f2` feat(dump): emit the SystemModel — one artifact (46.5)
 - `dfd8391` feat(replay): deprecate record.json input (46.5)
+- `2a0b3c5` docs(46.5): W5 retirement-cleanup report
+- `b1e91f8` fix(dump): gate stale-python check at the parse entry point
+  (46.5 review) — addresses the review's 1 Important finding (below)
 
 ## Goal recap
 
@@ -173,19 +176,55 @@ now asserts `model["meta"]["record"].is_null()` and companion-file absence).
 
 ### Stale-Python-install fail-loud (the 46.4 report's CAVEAT)
 
-The Python parser path now detects and refuses a stale pre-Phase-40.1
+The Python parser path detects and refuses a stale pre-Phase-40.1
 `play_launch` Python install (one that predates `ScopeOrigin.path`, which
 silently disables the provider-sidecar contract/sched channels with no
-error otherwise). Detection: after loading the Python-produced
-`LaunchDump`, if any file scope has `origin.is_some()` but
-`origin.path().is_none()`, that's a reliable stale-install signal — the
-current source (`python/play_launch/dump/visitor/
-include_launch_description.py`) always passes `path=` to `push_scope()` for
-every file scope. On detection, `resolve` (and therefore `dump`, which
-delegates to it) `eyre::bail!`s with a message identifying the exact
-scope/file and the two remediations (prepend `PYTHONPATH`, or reinstall the
-wheel) — a hard error, not a warning, since a silently degraded model is
-exactly the failure mode this exists to prevent.
+error otherwise). Detection: after loading a Python-produced `LaunchDump`,
+if any file scope has `origin.is_some()` but `origin.path().is_none()`,
+that's a reliable stale-install signal — the current source
+(`python/play_launch/dump/visitor/include_launch_description.py`) always
+passes `path=` to `push_scope()` for every file scope. On detection the
+command `eyre::bail!`s with a message identifying the exact scope/file and
+the two remediations (prepend `PYTHONPATH`, or reinstall the wheel) — a
+hard error, not a warning, since a silently degraded artifact is exactly
+the failure mode this exists to prevent.
+
+**Review fix (`b1e91f8`) — the guard now gates the parse ENTRY POINT, not
+just model-emit.** My first cut placed the check only on the model-emitting
+path (`resolve`, and `dump` via delegation). The reviewer correctly caught
+that `dump --format record` — the exact path the parser-parity tooling
+(`dump-python`/`compare-dumps` in every fixture justfile,
+`scripts/compare_records.py`) uses — bypassed it, so a stale parser could
+silently produce a record.json that `compare_records.py` scored PASS while
+reflecting the stale April parser rather than current source (reproduced
+on-host). Fix: the check is now a shared `launch_dump::
+ensure_python_scope_paths()` called from BOTH Python-parse sites — the
+model path (`resolve.rs`) AND the record path
+(`dump.rs::dump_launch_python_wrapper`, which `dump --format record` uses).
+The record path loads the just-written record.json READ-ONLY for the check,
+never round-tripping it through Rust's serializer, so the file the parity
+comparison reads stays byte-for-byte what the Python parser wrote. Any
+stale-python usage now fails loud everywhere, including the parity tooling.
+
+Confirmation (rt_workspace, this host's live stale 0.8.2 pip install):
+
+```
+$ cd tests/fixtures/rt_workspace && just dump-python   # no current-source PYTHONPATH
+...
+Error: Python parser produced 1 file scope(s) without `ScopeOrigin.path`
+  (["bringup.launch.xml"]) — this means a STALE `play_launch` Python install
+  (pre-Phase-40.1) is shadowing the current source on PYTHONPATH. ... and a
+  record.json dump would reflect the stale parser while `compare_records.py`/
+  `just compare-dumps` scored it PASS. Fix: ...
+error: recipe `dump-python` failed with exit code 1
+```
+
+(Previously: `dump-python` silently produced a stale record.json and
+`compare-dumps` reported PASS.) With current source on `PYTHONPATH`,
+`dump-both` + `compare-dumps` PASS (2/1/1 entities, functionally
+equivalent). Also dropped the now-stale `#[allow(dead_code)]` +
+"not yet consumed by the executor" doc on `ScopeEntry::path()` — the guard
+consumes it for real (review's cosmetic finding #2).
 
 This actually fired for real during verification: this host has `play_launch
 0.8.2` (April, pre-Phase-40) pip-installed at `~/.local/lib/python3.10/
@@ -311,7 +350,8 @@ starting point.
 - Deprecated compat: `replay --input-file <old record.json>` still spawns
   (3/3 processes) + prints the deprecation warning — automated in
   `replay_input_file_record_json_is_deprecated_but_still_spawns`.
-- `cargo test -p play_launch`: **249 passed, 0 failed**.
+- `cargo test -p play_launch`: **249 passed, 0 failed** (unit) + **21
+  passed** (lib) — re-run after the `b1e91f8` review fix, still green.
 - `cargo test -p play_launch_parser` (untouched crate, sanity check): **53
   passed, 0 failed**.
 - `cd tests && cargo nextest run` on the full `rt_workspace`,
@@ -328,11 +368,18 @@ starting point.
   regression tests (`replay_model_spawns_without_record_companion`,
   `resolve_parser_python_produces_model_that_replays_cleanly` — the latter
   only green with the `PYTHONPATH` fix in place, since it exercises the new
-  stale-install check for real on this host).
+  stale-install check for real on this host). Re-run after `b1e91f8`
+  (which touches the record-path Python parse `dump_parity_bringup`
+  exercises) — still **49 passed, 0 failed**.
+- `just dump-both && just compare-dumps` in rt_workspace (review's explicit
+  re-run ask): with current source on `PYTHONPATH`, PASS (2 nodes / 1
+  container / 1 load_node, functionally equivalent). Without it (this
+  host's stale 0.8.2 pip install), `dump-python` now FAILS LOUD instead of
+  silently passing — pasted in the Stale-Python section above.
 - `clippy --all-targets -- -D warnings`: clean on all touched
   `play_launch` files (`commands/{dump,resolve,replay}.rs`, `cli/
-  options.rs`) and the whole `tests` crate — zero hits when grepped from a
-  full clippy run. **Pre-existing, unrelated** clippy failure in
+  options.rs`, `ros/launch_dump.rs`) and the whole `tests` crate — zero
+  hits when grepped from a full clippy run. **Pre-existing, unrelated** clippy failure in
   `runtime_enforcement/mod.rs:781` (`manual_map`) still blocks a repo-wide
   `-D warnings` run — confirmed via `git diff origin/main -- .../mod.rs`
   (empty diff) — same pre-existing issue the 46.4 report documented, out
@@ -363,7 +410,9 @@ this specific host, not just future-proofing.
 ## What record.json usage REMAINS (deprecated compat surface)
 
 - `dump --format record` — the parser-parity dev escape hatch (explicit
-  opt-in, not the default).
+  opt-in, not the default). Its Python path is now covered by the
+  stale-install guard (`b1e91f8`), so it can't silently emit a stale-parser
+  record.json.
 - `resolve --record <path>` — reuse-mode input (read an existing
   record.json instead of re-parsing a launch file); unaffected by this
   wave, still hashed into `meta.inputs`.
