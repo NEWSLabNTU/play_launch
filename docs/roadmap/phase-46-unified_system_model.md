@@ -19,9 +19,18 @@ perceives one kind of dump.
 - **46.0** Cross-track coordination: confirm the `NodeInstance` launch-field
   set + semantics with the nano-ros track (RFC-0050) before landing 46.1.
   Note like the sched-SSoT handshake.
-- **46.1** `model` crate: `NodeInstance` gains `remaps`, `ros_args`,
-  `respawn`/`respawn_delay`, launch-declared `env` (additive, optional, serde
-  skip-if-empty, backward-compat). **(model crate — cross-track.)**
+- **46.1** `<node machine=>` → `execution.deploy[fqn].host` (nano-ros #236,
+  the real cross-track win): the parser already captures `machine` (ir.rs)
+  but it's dropped — `LaunchDump::NodeRecord` has no `machine` field, so
+  `model_builder` never writes `deploy.host`. Add `machine` to the record
+  path + populate `deploy.host`. Unblocks nano-ros's multihost migration.
+- **46.1b** Linux-serving launch fields (`remaps`, `ros_args`, `respawn`/
+  `respawn_delay`, `env`): the study corrected the earlier assumption —
+  nano-ros does NOT need these (it uses resolved `structure.topics`, has no
+  argv/respawn model). USER DECISION pending (design §Cross-track (a)/(b)):
+  (a) still add to shared `NodeInstance` per the all-launch-info principle
+  (nano-ros ignores), or (b) keep play_launch-side. Either is additive.
+  **(model crate touch only under (a) — cross-track.)**
 - **46.2** Populate: `resolve`/model_builder fill the new fields from the
   parsed launch (they already flow through the LaunchDump the resolver reads).
 - **46.3** Spawn-from-model: relocate cmdline assembly (`node_cmdline.rs`) to

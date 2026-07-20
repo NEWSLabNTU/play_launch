@@ -71,14 +71,34 @@ its own platform specifics" step nano-ros already performs.
 - `launch` = resolve-then-replay over the one model (Phase 43.5 flow, minus the
   record companion).
 
-## Cross-track (nano-ros)
+## Cross-track (nano-ros) — corrected 2026-07-20 after studying their bake
 
-The shared `model` crate's `NodeInstance` gains launch fields (`remaps`,
-`ros_args`, `respawn`/`respawn_delay`, `env`) — additive, nano-ros vendors them
-and uses what it needs (it *wants* remaps; it was previously unable to get them
-since they lived only in Linux `record.json`). No `deny_unknown_fields`, so
-staged rollout is safe. Coordinate the field set + semantics with RFC-0050
-before landing (same handshake as the sched-SSoT reconciliation).
+Studying nano-ros's model bake (`.superpowers/sdd/nano-ros-study.md`)
+**corrected an assumption**: nano-ros does NOT need `remaps`/`ros_args`/
+`respawn`/`env`. It bakes from *resolved topic names* (`structure.topics`),
+not raw remaps (its own finding: "remaps NOT a gap"); embedded targets have no
+argv/process/respawn model, and `ros_args`/`respawn`/`env` appear nowhere in
+its code or docs. So those four fields are **Linux-serving launch info, not a
+shared need**. Two options, user's call:
+- (a) Per the "all launch info in the shared model" principle, still put them
+  in `NodeInstance` (additive; nano-ros ignores them — no
+  `deny_unknown_fields`). Simplest artifact story; slightly heavier shared
+  model.
+- (b) Keep them play_launch-side (the model carries what's genuinely shared;
+  these ride in a play_launch-owned section). Leaner shared model.
+
+**The one field nano-ros genuinely needs and can't get: `<node machine=>`
+(multihost).** It's standard ROS 2, mature in nano-ros since phase-263, and
+the shared model ALREADY has its home — `execution.deploy[fqn].host`. But
+play_launch **drops it**: the parser captures `machine` (ir.rs), yet the
+`LaunchDump` `NodeRecord` has no `machine` field, so it's lost before
+`model_builder` and `execution.deploy.host` stays empty (nano-ros issue #236 —
+blocks their multihost workspace migration). **Fixing this drop is the real
+cross-track win of Phase 46** and belongs here since Phase 46 reworks the
+launch→model field-population path anyway.
+
+Coordinate the (a)/(b) decision + confirm no OTHER field nano-ros reads is
+missing, with RFC-0050, before landing.
 
 ## Migration (Phase 46)
 
