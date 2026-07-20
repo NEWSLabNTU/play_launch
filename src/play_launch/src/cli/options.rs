@@ -40,7 +40,7 @@ pub enum Feature {
 #[command(version)]
 #[command(about = "Record and replay ROS 2 launches with inspection capabilities")]
 #[command(after_help = "Examples:\n  \
-    play_launch launch demo_nodes_cpp talker_listener.launch.py\n  \
+    play_launch launch demo_nodes_cpp topics/talker_listener.launch.py\n  \
     play_launch run demo_nodes_cpp talker\n  \
     play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml\n  \
     play_launch replay --model autoware.yaml")]
@@ -54,7 +54,7 @@ pub struct Options {
 pub enum Command {
     /// Launch a ROS 2 launch file (dump + replay)
     #[command(after_help = "Examples:\n  \
-        play_launch launch demo_nodes_cpp talker_listener.launch.py\n  \
+        play_launch launch demo_nodes_cpp topics/talker_listener.launch.py\n  \
         play_launch launch /path/to/launch.py use_sim_time:=true")]
     Launch(LaunchArgs),
 
