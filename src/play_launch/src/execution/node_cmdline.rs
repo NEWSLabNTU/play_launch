@@ -198,8 +198,7 @@ pub(crate) fn param_value_to_record_string(v: &model::ParamValue) -> String {
 /// pipeline can run unmodified against model-sourced data (Phase 46.3b —
 /// `.superpowers/sdd/p46-w3-analysis.md`). Works for both regular `<node>`
 /// and `<node_container>` instances — the caller (`execution/context.rs`)
-/// applies the container-mode package/executable override afterward, same
-/// as the record path does in `prepare_container_contexts`.
+/// applies the container-mode package/executable override afterward.
 ///
 /// GAP-4 (params/global_params merge) was already resolved at model-BUILD
 /// time (`model_builder::lower_params_merged`), so `global_params` here is
