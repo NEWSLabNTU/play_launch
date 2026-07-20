@@ -291,7 +291,9 @@ pub fn build_system_model(
     // R1-M4 producer side — lower the record's string params into typed
     // ParamValues (bool/int/float sniffed, else string). The embedded
     // consumer reads params from the model (it has no record.json).
-    fn lower_params(params: &[(String, String)]) -> std::collections::BTreeMap<String, model::ParamValue> {
+    fn lower_params(
+        params: &[(String, String)],
+    ) -> std::collections::BTreeMap<String, model::ParamValue> {
         params
             .iter()
             .map(|(k, v)| {
@@ -311,6 +313,26 @@ pub fn build_system_model(
                 (k.clone(), pv)
             })
             .collect()
+    }
+
+    // Phase 46.3a (GAP-4) — merge scope-wide `SetParameter`/global params
+    // (lower precedence) with node-specific inline `<param>` values (higher
+    // precedence) BEFORE lowering into typed `ParamValue`s, matching
+    // `node_cmdline.rs`'s `chain!(global, node_specific).collect()` order
+    // (later entries win on key collision). `global_params` has no
+    // separate model field — it's folded into `NodeInstance::params` here,
+    // per that field's Phase 46.3a doc comment.
+    fn lower_params_merged(
+        global: Option<&[(String, String)]>,
+        node_specific: &[(String, String)],
+    ) -> std::collections::BTreeMap<String, model::ParamValue> {
+        let combined: Vec<(String, String)> = global
+            .unwrap_or(&[])
+            .iter()
+            .cloned()
+            .chain(node_specific.iter().cloned())
+            .collect();
+        lower_params(&combined)
     }
 
     let mut insert_node =
@@ -353,9 +375,20 @@ pub fn build_system_model(
     let mut deploy_hosts: BTreeMap<String, String> = BTreeMap::new();
 
     for n in &dump.node {
-        let Some(name) = n.name.as_deref() else {
-            continue;
-        };
+        // GAP-1 (46.3a) — a regular <node> with no declared `name` must NOT
+        // be dropped from the model. Mirror the `name.or(exec_name)`
+        // fallback `execution/context.rs`/`coordinator/builder.rs` already
+        // use for the record-driven spawn path (CLAUDE.md 2026-03-12 note)
+        // so the model's `structure.nodes` count matches the record path's
+        // spawned-node count. "unknown" is the last-resort fallback only
+        // when BOTH `name` and `exec_name` are absent (raw executables with
+        // no launch-declared name) — same terminal fallback
+        // `prepare_node_contexts` uses.
+        let name = n
+            .name
+            .as_deref()
+            .or(n.exec_name.as_deref())
+            .unwrap_or("unknown");
         let ns = n.namespace.as_deref().unwrap_or("/");
         let node_fqn = fqn(ns, name);
         let decl = find_node_decl(index, dump, n.scope, name);
@@ -373,7 +406,9 @@ pub fn build_system_model(
                 container: None,
                 lifecycle: decl.and_then(|d| d.lifecycle).unwrap_or(false),
                 lifecycle_autostart: None,
-                params: lower_params(&n.params),
+                // GAP-4: global (scope-wide SetParameter) + node-specific,
+                // global first so node-specific overrides on key collision.
+                params: lower_params_merged(n.global_params.as_deref(), &n.params),
                 criticality: decl.and_then(|d| d.criticality.clone()),
                 // regular <node>: LaunchDump::NodeRecord carries all four
                 // launch spawn fields.
@@ -382,6 +417,18 @@ pub fn build_system_model(
                 respawn: n.respawn,
                 respawn_delay: n.respawn_delay,
                 env: lower_env(n.env.as_deref()),
+                // GAP-2: non-ROS CLI args (prepended before --ros-args).
+                args: n.args.clone().unwrap_or_default(),
+                // GAP-3: resolved external param YAML content, verbatim.
+                params_files: n.params_files.clone(),
+                // GAP-5: <executable> tags (no package) carry their raw
+                // command line here; real ROS nodes leave this empty.
+                raw_cmd: if n.package.is_none() {
+                    n.cmd.clone()
+                } else {
+                    Vec::new()
+                },
+                extra_args: Default::default(),
             },
         );
     }
@@ -398,7 +445,13 @@ pub fn build_system_model(
                 container: None,
                 lifecycle: false,
                 lifecycle_autostart: None,
-                params: Default::default(),
+                // GAP-4: same global+node-specific merge as regular nodes —
+                // NodeContainerRecord carries both fields too (a container
+                // is itself a process with its own scope-inherited globals).
+                // Also fixes a pre-existing bug: this previously discarded
+                // `c.params` entirely (`Default::default()`), never lowering
+                // a container's own inline params into the model at all.
+                params: lower_params_merged(c.global_params.as_deref(), &c.params),
                 criticality: None,
                 // <node_container>: LaunchDump::NodeContainerRecord carries
                 // the same four fields as a regular node (it spawns its own
@@ -408,6 +461,11 @@ pub fn build_system_model(
                 respawn: c.respawn,
                 respawn_delay: c.respawn_delay,
                 env: lower_env(c.env.as_deref()),
+                args: c.args.clone().unwrap_or_default(),
+                params_files: c.params_files.clone(),
+                // Containers always have a package/executable — never raw.
+                raw_cmd: Vec::new(),
+                extra_args: Default::default(),
             },
         );
     }
@@ -425,6 +483,9 @@ pub fn build_system_model(
                 container: Some(l.target_container_name.clone()),
                 lifecycle: decl.and_then(|d| d.lifecycle).unwrap_or(false),
                 lifecycle_autostart: None,
+                // Composable nodes have no `global_params` field on
+                // ComposableNodeRecord (no independent process/scope-merge
+                // path of their own) — inline params only, as before.
                 params: lower_params(&l.params),
                 criticality: decl.and_then(|d| d.criticality.clone()),
                 // composable node (`load_node`): LaunchDump::ComposableNodeRecord
@@ -437,6 +498,17 @@ pub fn build_system_model(
                 respawn: None,
                 respawn_delay: None,
                 env: lower_env(l.env.as_deref()),
+                // No non-ROS args / params_files / raw_cmd for composables —
+                // they have no independent process.
+                args: Vec::new(),
+                params_files: Vec::new(),
+                raw_cmd: Vec::new(),
+                // GAP-6: LoadNode extra arguments (⊃ use_intra_process_comms).
+                extra_args: l
+                    .extra_args
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
             },
         );
     }
@@ -811,5 +883,170 @@ mod tests {
         assert_eq!(composable.respawn, None);
         assert_eq!(composable.respawn_delay, None);
         assert!(composable.env.is_empty());
+    }
+
+    /// Phase 46.3a — a `LaunchDump` exercising all six spawn-completeness
+    /// gaps found by the W3 analysis (`.superpowers/sdd/p46-w3-analysis.md`):
+    /// a `name=None` node (GAP-1), external `params_files` content + scope
+    /// `global_params` (GAP-3/GAP-4), non-ROS `args` (GAP-2), a raw
+    /// `<executable>` (no `package`, GAP-5), and a composable node with
+    /// `extra_args` (GAP-6).
+    fn dump_with_gap_fields() -> LaunchDump {
+        let json = serde_json::json!({
+            "node": [
+                {
+                    "executable": "detector_node",
+                    "package": "lidar_centerpoint",
+                    "name": null,
+                    "exec_name": "detector_node",
+                    "namespace": "/perception",
+                    "params": [["max_range", "50.0"]],
+                    "params_files": ["/**:\n  ros__parameters:\n    voxel_size: 0.2\n"],
+                    "cmd": [],
+                    "args": ["--verbose", "--config", "a.yaml"],
+                    "global_params": [["use_sim_time", "true"], ["max_range", "10.0"]],
+                    "remaps": []
+                },
+                {
+                    "executable": "carla-server",
+                    "package": null,
+                    "name": null,
+                    "namespace": null,
+                    "params_files": [],
+                    "cmd": ["/usr/bin/carla-server -quality-level=Low", "-nosound"],
+                    "remaps": []
+                }
+            ],
+            "container": [],
+            "load_node": [{
+                "package": "tracker_pkg",
+                "plugin": "tracker::TrackerNode",
+                "target_container_name": "/perception/pipeline_container",
+                "node_name": "tracker",
+                "namespace": "/perception",
+                "remaps": [],
+                "extra_args": {"use_intra_process_comms": "True"}
+            }],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [
+                {"id": 0, "ns": "/", "parent": null}
+            ]
+        });
+        serde_json::from_value(json).expect("valid LaunchDump")
+    }
+
+    /// GAP-1 — a regular `<node>` with `name=None` must NOT vanish from
+    /// `structure.nodes`; it's keyed by `exec_name` instead (mirroring the
+    /// record-path `name.or(exec_name)` fallback, CLAUDE.md 2026-03-12).
+    #[test]
+    fn name_none_node_falls_back_to_exec_name_key() {
+        let dump = dump_with_gap_fields();
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        assert!(
+            model
+                .structure
+                .nodes
+                .contains_key("/perception/detector_node"),
+            "name=None node must be keyed by exec_name, got keys: {:?}",
+            model.structure.nodes.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// GAP-3 — external `params_files` content (already `$(var …)`-resolved
+    /// by the parser) must land in `NodeInstance::params_files` verbatim,
+    /// not be dropped.
+    #[test]
+    fn params_files_content_lands_verbatim() {
+        let dump = dump_with_gap_fields();
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        let node = &model.structure.nodes["/perception/detector_node"];
+        assert_eq!(
+            node.params_files,
+            vec!["/**:\n  ros__parameters:\n    voxel_size: 0.2\n".to_string()]
+        );
+    }
+
+    /// GAP-4 — scope-wide `global_params` are merged into `params` with
+    /// node-specific values taking precedence on key collision
+    /// (`max_range`: global says 10.0, node-specific says 50.0 — 50.0 wins,
+    /// matching `node_cmdline.rs`'s `chain!(global, node_specific)` order),
+    /// while a global-only key (`use_sim_time`) still comes through.
+    #[test]
+    fn global_params_merge_with_node_specific_precedence() {
+        let dump = dump_with_gap_fields();
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        let node = &model.structure.nodes["/perception/detector_node"];
+        assert_eq!(
+            node.params.get("max_range"),
+            Some(&model::ParamValue::Float(50.0)),
+            "node-specific param must override global on collision"
+        );
+        assert_eq!(
+            node.params.get("use_sim_time"),
+            Some(&model::ParamValue::Bool(true)),
+            "global-only param must still be present"
+        );
+    }
+
+    /// GAP-2 — non-ROS CLI `args` (distinct from `ros_args`) must be
+    /// carried through.
+    #[test]
+    fn non_ros_args_are_carried() {
+        let dump = dump_with_gap_fields();
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        let node = &model.structure.nodes["/perception/detector_node"];
+        assert_eq!(
+            node.args,
+            vec![
+                "--verbose".to_string(),
+                "--config".to_string(),
+                "a.yaml".to_string(),
+            ]
+        );
+    }
+
+    /// GAP-5 — a raw `<executable>` record (`package: None`) must be
+    /// represented in the model via `raw_cmd`, keyed by "unknown" (no
+    /// `name`/`exec_name` at all — the terminal fallback), not silently
+    /// dropped and not treated as a ROS node.
+    #[test]
+    fn raw_executable_carries_raw_cmd() {
+        let dump = dump_with_gap_fields();
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        let node = &model.structure.nodes["/unknown"];
+        assert!(node.pkg.is_none());
+        assert_eq!(
+            node.raw_cmd,
+            vec![
+                "/usr/bin/carla-server -quality-level=Low".to_string(),
+                "-nosound".to_string(),
+            ]
+        );
+    }
+
+    /// GAP-6 — composable-node `extra_args` (⊃ `use_intra_process_comms`)
+    /// must be carried through to the model.
+    #[test]
+    fn composable_extra_args_are_carried() {
+        let dump = dump_with_gap_fields();
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        let composable = &model.structure.nodes["/perception/tracker"];
+        assert_eq!(
+            composable.extra_args.get("use_intra_process_comms"),
+            Some(&"True".to_string())
+        );
     }
 }
