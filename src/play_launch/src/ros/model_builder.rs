@@ -92,7 +92,10 @@ fn find_node_decl<'a>(
 /// `structure.nodes` (e.g. `/control/control_node`). Exact hit wins; else a
 /// UNIQUE bare-name (last path segment) match — the same vocabulary the
 /// sched crate's assign/override selectors use; else the ref is kept as-is.
-fn resolve_node_ref(nodes: &BTreeMap<String, model::NodeInstance>, node_ref: &str) -> String {
+pub(crate) fn resolve_node_ref(
+    nodes: &BTreeMap<String, model::NodeInstance>,
+    node_ref: &str,
+) -> String {
     if nodes.contains_key(node_ref) {
         return node_ref.to_string();
     }
