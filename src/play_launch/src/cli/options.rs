@@ -64,17 +64,17 @@ pub enum Command {
         play_launch run demo_nodes_cpp talker --ros-args -p topic:=chatter")]
     Run(RunArgs),
 
-    /// Dump launch execution without replaying
+    /// Dump launch execution without replaying — emits the SystemModel
+    /// (the only dump artifact; Phase 47.B2 retired `record.json`)
     Dump(DumpArgs),
 
-    /// Replay from a SystemModel (primary; Phase 46.5) or a legacy
-    /// record.json (deprecated compat, warns)
+    /// Replay from a SystemModel (the sole replay source; Phase 47.B3
+    /// retired the legacy `record.json`/`--input-file` compat path)
     #[command(after_help = "Examples:\n  \
-        play_launch replay --model system_model.yaml\n  \
+        play_launch replay system_model.yaml\n  \
         play_launch replay --model system_model.yaml --disable-all\n  \
         play_launch replay --model system_model.yaml --enable monitoring --enable web-ui\n  \
-        play_launch replay --model system_model.yaml --web-addr 0.0.0.0:8080\n  \
-        play_launch replay --input-file record.json   # deprecated: legacy record-only path")]
+        play_launch replay --model system_model.yaml --web-addr 0.0.0.0:8080")]
     Replay(ReplayArgs),
 
     /// Plot resource usage from execution logs
@@ -96,7 +96,10 @@ pub enum Command {
     #[command(name = "verify")]
     Verify,
 
-    /// Extract per-node or per-launch-file context from record.json
+    /// Extract per-node or per-launch-file context from a record.json
+    /// (Phase 47: the last CLI consumer of the retired record.json format —
+    /// there is no CLI path left that produces one; bring your own, e.g. a
+    /// pre-Phase-47 dump or a hand-rolled `play_launch_parser` output)
     #[command(after_help = "Examples:\n  \
         play_launch context record.json --tree\n  \
         play_launch context record.json --node /perception/centerpoint\n  \
@@ -283,16 +286,11 @@ impl CheckArgs {
 /// Arguments for `play_launch resolve`
 #[derive(Args)]
 pub struct ResolveArgs {
-    /// Package name or path to launch file (omit when --record is given)
-    pub package_or_path: Option<String>,
+    /// Package name or path to launch file
+    pub package_or_path: String,
 
     /// Launch file name (if package_or_path is a package name)
     pub launch_file: Option<String>,
-
-    /// Reuse an existing record.json instead of re-parsing the launch file
-    /// (Phase 43.1). The record file is hashed into meta.inputs.
-    #[arg(long, value_name = "PATH", conflicts_with = "package_or_path")]
-    pub record: Option<PathBuf>,
 
     /// Launch arguments in KEY:=VALUE format. Flags may be placed before or
     /// after these (clap parses flags in any position); use `--` to force
@@ -346,16 +344,6 @@ pub struct ResolveArgs {
     pub explain: bool,
 }
 
-impl ResolveArgs {
-    /// Same two-step contract source resolution as `check`.
-    pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
-        crate::ros::manifest_loader::ContractSources {
-            overlay: crate::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
-            provider: !self.no_provider_contracts,
-        }
-    }
-}
-
 /// Arguments for launching a launch file
 #[derive(Args)]
 pub struct LaunchArgs {
@@ -402,40 +390,17 @@ pub struct RunArgs {
     pub common: CommonOptions,
 }
 
-/// `dump`'s output artifact (Phase 46.5 — one user-facing dump: the
-/// SystemModel; `record.json` is a dev/parser-parity escape hatch). Only
-/// meaningful for `dump launch`; `dump run` (a single executable, no launch
-/// scope tree to build a model from) always writes record.json regardless
-/// of this flag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum DumpFormat {
-    /// The SystemModel — same artifact `resolve` produces (default). The
-    /// user-facing "one kind of dump."
-    Model,
-    /// Legacy record.json. Kept for `scripts/compare_records.py` /
-    /// `just compare-dumps` cross-parser parity tooling — not the
-    /// user-facing default.
-    Record,
-}
-
 /// Arguments for dump command
 #[derive(Args)]
 pub struct DumpArgs {
     #[command(subcommand)]
     pub subcommand: DumpSubcommand,
 
-    /// Output file for the dump. Defaults to `system_model.yaml` for the
-    /// SystemModel format (default), or `record.json` for `--format
-    /// record` and `dump run`. May be given before or after the
-    /// `launch`/`run` subcommand and its launch arguments.
+    /// Output file for the dump. Defaults to `system_model.yaml`. May be
+    /// given before or after the `launch` subcommand and its launch
+    /// arguments.
     #[arg(long, short = 'o', global = true)]
     pub output: Option<PathBuf>,
-
-    /// Dump format: `model` (default, the SystemModel) or `record` (legacy
-    /// record.json, dev/parser-parity tooling only). See [`DumpFormat`].
-    /// May be given before or after the subcommand.
-    #[arg(long, value_enum, default_value = "model", global = true)]
-    pub format: DumpFormat,
 
     /// Enable debug output during dump. May be given before or after the
     /// subcommand.
@@ -445,41 +410,47 @@ pub struct DumpArgs {
 
 #[derive(Subcommand)]
 pub enum DumpSubcommand {
-    /// Dump a launch file execution
+    /// Dump a launch file execution — emits the SystemModel
+    /// (`system_model.yaml`), the one dump artifact (Phase 47.B2:
+    /// `record.json`/`--format` retired; `dump` always emits the model).
     Launch(LaunchArgs),
-    /// Dump a single node execution
-    Run(RunArgs),
 }
 
 /// Arguments for replay command
 #[derive(Args, Default)]
 pub struct ReplayArgs {
-    /// Input record.json to replay when `--model` is absent. DEPRECATED
-    /// (Phase 46.5): the SystemModel (`--model`) is the primary replay
-    /// source now; this legacy record-only path prints a one-time
-    /// deprecation warning and is kept as a compat path (no hard removal
-    /// this wave — rollback safety / one release's grace).
-    #[arg(long, default_value = "record.json")]
-    pub input_file: PathBuf,
+    /// SystemModel emitted by `play_launch resolve`/`dump` — the sole
+    /// replay source (Phase 47.B3: the deprecated `--input-file
+    /// record.json` compat path is retired). May be given positionally or
+    /// via `--model`; giving both is an error.
+    #[arg(value_name = "MODEL", conflicts_with = "model")]
+    pub model_path: Option<PathBuf>,
 
-    /// SystemModel emitted by `play_launch resolve`/`dump` (Phase 43/46.5:
-    /// the primary replay source). Spawns directly from the model's
-    /// `structure.nodes` — no accompanying `--input-file` record is
-    /// required (Phase 46.4: the model↔record binding gate was removed
-    /// once the model became a self-sufficient spawn source).
+    /// SystemModel emitted by `play_launch resolve`/`dump`. Equivalent to
+    /// passing the path positionally. Spawns directly from the model's
+    /// `structure.nodes` — no companion file required (Phase 46.4: the
+    /// model↔record binding gate was removed once the model became a
+    /// self-sufficient spawn source).
     #[arg(long, value_name = "PATH")]
     pub model: Option<PathBuf>,
 
     /// Print the merged scheduling plan with provenance per node (Phase
-    /// 45.6), rendered from the given `--model`'s `execution.sched` — same
-    /// table `check --sched --explain`/`resolve --explain` show for the
-    /// same inputs, one renderer, no re-derive. Requires `--model`; a note
-    /// is printed and the replay proceeds otherwise (not an error).
+    /// 45.6), rendered from the model's `execution.sched` — same table
+    /// `check --sched --explain`/`resolve --explain` show for the same
+    /// inputs, one renderer, no re-derive.
     #[arg(long)]
     pub explain: bool,
 
     #[command(flatten)]
     pub common: CommonOptions,
+}
+
+impl ReplayArgs {
+    /// The SystemModel path, however it was given (positional or `--model`).
+    /// `clap`'s `conflicts_with` already rejects both being set.
+    pub fn model_path(&self) -> Option<&PathBuf> {
+        self.model_path.as_ref().or(self.model.as_ref())
+    }
 }
 
 /// Common options shared across all commands
@@ -857,9 +828,9 @@ mod flag_ordering_tests {
             panic!("expected Dump");
         };
         assert_eq!(dump_args.output, Some(PathBuf::from("/tmp/aw.yaml")));
-        let DumpSubcommand::Launch(args) = dump_args.subcommand else {
-            panic!("expected Dump::Launch");
-        };
+        // Phase 47.B2 retired `dump run`: `DumpSubcommand` now has exactly
+        // one variant, so this destructure is irrefutable — no `else` arm.
+        let DumpSubcommand::Launch(args) = dump_args.subcommand;
         assert_eq!(
             args.launch_arguments,
             vec![
