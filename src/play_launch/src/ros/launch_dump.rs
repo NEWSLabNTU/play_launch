@@ -176,7 +176,11 @@ pub struct ComposableNodeRecord {
     #[serde(default)]
     pub extra_args: HashMap<String, String>,
 
-    #[allow(dead_code)]
+    /// Launch-declared env for the composable node. The Rust parser never
+    /// currently populates this (composable nodes have no independent
+    /// process/env of their own — they load into their container's), so in
+    /// practice this is always `None`; carried through for forward-compat
+    /// and read by `model_builder` into `NodeInstance::env` (Phase 46.2).
     pub env: Option<Vec<(String, String)>>,
 
     /// Scope ID referencing the scopes table (launch file origin)

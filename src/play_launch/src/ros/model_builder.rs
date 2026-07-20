@@ -320,6 +320,29 @@ pub fn build_system_model(
             }
         };
 
+    // Phase 46.2 — lower the LaunchDump record's spawn fields into the
+    // model's launch-input fields (`NodeInstance::{remaps,ros_args,respawn,
+    // respawn_delay,env}`, Phase 46.1b). play_launch's spawn path derives
+    // argv/env from these at spawn time (Phase 46.3); nano-ros ignores them.
+    fn lower_remaps(remaps: &[(String, String)]) -> Vec<model::Remap> {
+        remaps
+            .iter()
+            .map(|(from, to)| model::Remap {
+                from: from.clone(),
+                to: to.clone(),
+            })
+            .collect()
+    }
+    fn lower_env(env: Option<&[(String, String)]>) -> Vec<model::EnvVar> {
+        env.unwrap_or(&[])
+            .iter()
+            .map(|(name, value)| model::EnvVar {
+                name: name.clone(),
+                value: value.clone(),
+            })
+            .collect()
+    }
+
     // `<node machine="…">` → `execution.deploy[fqn].host` (nano-ros #236 /
     // Phase 46.1). Collected alongside `structure.nodes` so the key is the
     // SAME reconciled launch-dump FQN (`fqn(ns, name)`) other consumers
@@ -352,6 +375,13 @@ pub fn build_system_model(
                 lifecycle_autostart: None,
                 params: lower_params(&n.params),
                 criticality: decl.and_then(|d| d.criticality.clone()),
+                // regular <node>: LaunchDump::NodeRecord carries all four
+                // launch spawn fields.
+                remaps: lower_remaps(&n.remaps),
+                ros_args: n.ros_args.clone().unwrap_or_default(),
+                respawn: n.respawn,
+                respawn_delay: n.respawn_delay,
+                env: lower_env(n.env.as_deref()),
             },
         );
     }
@@ -370,6 +400,14 @@ pub fn build_system_model(
                 lifecycle_autostart: None,
                 params: Default::default(),
                 criticality: None,
+                // <node_container>: LaunchDump::NodeContainerRecord carries
+                // the same four fields as a regular node (it spawns its own
+                // process too).
+                remaps: lower_remaps(&c.remaps),
+                ros_args: c.ros_args.clone().unwrap_or_default(),
+                respawn: c.respawn,
+                respawn_delay: c.respawn_delay,
+                env: lower_env(c.env.as_deref()),
             },
         );
     }
@@ -389,6 +427,16 @@ pub fn build_system_model(
                 lifecycle_autostart: None,
                 params: lower_params(&l.params),
                 criticality: decl.and_then(|d| d.criticality.clone()),
+                // composable node (`load_node`): LaunchDump::ComposableNodeRecord
+                // has `remaps` and `env`, but no `ros_args`/`respawn`/
+                // `respawn_delay` — a composable node has no CLI process or
+                // independent lifecycle of its own (it lives inside its
+                // container's process).
+                remaps: lower_remaps(&l.remaps),
+                ros_args: Vec::new(),
+                respawn: None,
+                respawn_delay: None,
+                env: lower_env(l.env.as_deref()),
             },
         );
     }
@@ -621,5 +669,147 @@ pub fn build_system_model(
         structure,
         contracts,
         execution,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Phase 46.2 — a node, a container, and a composable node each carrying
+    /// remaps/env, plus respawn/ros_args on the process-having records
+    /// (node, container). `resolve`'s golden/integration coverage
+    /// (`tests/tests/resolve_multihost.rs`-style) exercises the full CLI
+    /// pipeline; this unit test isolates `build_system_model`'s mapping
+    /// logic against a hand-built `LaunchDump`, matching the
+    /// `sched_loader::tests` convention (`serde_json::json!` avoids
+    /// enumerating every field of these large records by hand).
+    fn dump_with_launch_fields() -> LaunchDump {
+        let json = serde_json::json!({
+            "node": [{
+                "executable": "detector_node",
+                "package": "lidar_centerpoint",
+                "name": "detector",
+                "namespace": "/perception",
+                "params_files": [],
+                "cmd": [],
+                "remaps": [["/points", "/sensing/lidar/points"]],
+                "ros_args": ["--log-level", "detector_node:=debug"],
+                "respawn": true,
+                "respawn_delay": 2.5,
+                "env": [["CUDA_VISIBLE_DEVICES", "0"]]
+            }],
+            "container": [{
+                "executable": "component_container",
+                "package": "rclcpp_components",
+                "name": "pipeline_container",
+                "namespace": "/perception",
+                "params_files": [],
+                "cmd": [],
+                "remaps": [["/tf", "/perception/tf"]],
+                "ros_args": ["--log-level", "container:=info"],
+                "respawn": false,
+                "env": [["OMP_NUM_THREADS", "4"]]
+            }],
+            "load_node": [{
+                "package": "tracker_pkg",
+                "plugin": "tracker::TrackerNode",
+                "target_container_name": "/perception/pipeline_container",
+                "node_name": "tracker",
+                "namespace": "/perception",
+                "remaps": [["/input", "/perception/objects"]]
+            }],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [
+                {"id": 0, "ns": "/", "parent": null}
+            ]
+        });
+        serde_json::from_value(json).expect("valid LaunchDump")
+    }
+
+    #[test]
+    fn node_carries_remaps_ros_args_respawn_env() {
+        let dump = dump_with_launch_fields();
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        let node = &model.structure.nodes["/perception/detector"];
+        assert_eq!(
+            node.remaps,
+            vec![model::Remap {
+                from: "/points".to_string(),
+                to: "/sensing/lidar/points".to_string(),
+            }]
+        );
+        assert_eq!(
+            node.ros_args,
+            vec![
+                "--log-level".to_string(),
+                "detector_node:=debug".to_string()
+            ]
+        );
+        assert_eq!(node.respawn, Some(true));
+        assert_eq!(node.respawn_delay, Some(2.5));
+        assert_eq!(
+            node.env,
+            vec![model::EnvVar {
+                name: "CUDA_VISIBLE_DEVICES".to_string(),
+                value: "0".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn container_carries_remaps_ros_args_respawn_env() {
+        let dump = dump_with_launch_fields();
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        let container = &model.structure.nodes["/perception/pipeline_container"];
+        assert_eq!(
+            container.remaps,
+            vec![model::Remap {
+                from: "/tf".to_string(),
+                to: "/perception/tf".to_string(),
+            }]
+        );
+        assert_eq!(
+            container.ros_args,
+            vec!["--log-level".to_string(), "container:=info".to_string()]
+        );
+        assert_eq!(container.respawn, Some(false));
+        assert_eq!(container.respawn_delay, None);
+        assert_eq!(
+            container.env,
+            vec![model::EnvVar {
+                name: "OMP_NUM_THREADS".to_string(),
+                value: "4".to_string(),
+            }]
+        );
+    }
+
+    /// Composable nodes carry `remaps` (and would carry `env` if the parser
+    /// ever populated `ComposableNodeRecord::env` — it currently doesn't)
+    /// but never `ros_args`/`respawn`/`respawn_delay`: they have no CLI
+    /// process or lifecycle independent of their container.
+    #[test]
+    fn composable_node_carries_remaps_only() {
+        let dump = dump_with_launch_fields();
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        let composable = &model.structure.nodes["/perception/tracker"];
+        assert_eq!(
+            composable.remaps,
+            vec![model::Remap {
+                from: "/input".to_string(),
+                to: "/perception/objects".to_string(),
+            }]
+        );
+        assert!(composable.ros_args.is_empty());
+        assert_eq!(composable.respawn, None);
+        assert_eq!(composable.respawn_delay, None);
+        assert!(composable.env.is_empty());
     }
 }
