@@ -398,15 +398,38 @@ pub struct RunArgs {
     pub common: CommonOptions,
 }
 
+/// `dump`'s output artifact (Phase 46.5 — one user-facing dump: the
+/// SystemModel; `record.json` is a dev/parser-parity escape hatch). Only
+/// meaningful for `dump launch`; `dump run` (a single executable, no launch
+/// scope tree to build a model from) always writes record.json regardless
+/// of this flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DumpFormat {
+    /// The SystemModel — same artifact `resolve` produces (default). The
+    /// user-facing "one kind of dump."
+    Model,
+    /// Legacy record.json. Kept for `scripts/compare_records.py` /
+    /// `just compare-dumps` cross-parser parity tooling — not the
+    /// user-facing default.
+    Record,
+}
+
 /// Arguments for dump command
 #[derive(Args)]
 pub struct DumpArgs {
     #[command(subcommand)]
     pub subcommand: DumpSubcommand,
 
-    /// Output file for the dump
-    #[arg(long, short = 'o', default_value = "record.json")]
-    pub output: PathBuf,
+    /// Output file for the dump. Defaults to `system_model.yaml` for the
+    /// SystemModel format (default), or `record.json` for `--format
+    /// record` and `dump run`.
+    #[arg(long, short = 'o')]
+    pub output: Option<PathBuf>,
+
+    /// Dump format: `model` (default, the SystemModel) or `record` (legacy
+    /// record.json, dev/parser-parity tooling only). See [`DumpFormat`].
+    #[arg(long, value_enum, default_value = "model")]
+    pub format: DumpFormat,
 
     /// Enable debug output during dump
     #[arg(long)]
