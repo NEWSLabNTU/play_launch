@@ -5,7 +5,7 @@ Guide for Claude Code when working with this repository.
 ## Project Overview
 
 ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for performance analysis:
-- **play_launch_parser** (Rust): Parses launch files to `record.json` (default, 3-12x faster)
+- **play_launch_parser** (Rust): Parses launch files into the resolved SystemModel (`system_model.yaml`, default, 3-12x faster). `record.json` is a deprecated compat/dev artifact (`dump --format record`, Phase 46.5).
 - **dump_launch** (Python): Alternative parser for maximum compatibility
 - **play_launch** (Rust): Replays with resource monitoring
 - **play_launch_analyzer** (Python): Analyzes and visualizes logs
@@ -18,6 +18,8 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for pe
 **Alternative**: `play_launch launch <pkg> <file> --parser python`
 
 **CRITICAL RULE**: When Rust and Python parser behaviors differ, **Python's behavior is always correct**. Fix Rust, not Python. Validate with `just compare-dumps` in test workspaces.
+
+**Model parity (Phase 46)**: both parsers produce the SAME complete SystemModel — structure, contracts, and scheduling all apply on the shared scope table (`ScopeOrigin.path`, Phase 40.1) independent of which parser built it (`resolve --parser {rust,python}`). Parity comparison (`just compare-dumps`, `scripts/compare_records.py`) still runs on the `record.json` shape (`dump --format record --parser {rust,python}`) since that tooling is deeply record.json-shaped; it is a dev/parser-parity artifact, not the user-facing output.
 
 ### Parser Architecture
 
@@ -33,7 +35,7 @@ Implementation: `src/python/api/utils.rs` (substitution handling), `src/params.r
 
 ### Launch Tree Scoping (Phase 30)
 
-The parser tracks which launch file each node originates from via a **scope table** in `record.json`. Each `<include>` creates a new scope entry with `(pkg, file, ns, args, parent)`. Nodes reference their scope via `scope: Option<usize>`.
+The parser tracks which launch file each node originates from via a **scope table**, carried in the deprecated `record.json` format and in the SystemModel's `structure.scopes`. Each `<include>` creates a new scope entry with `(pkg, file, ns, args, parent)`. Nodes reference their scope via `scope: Option<usize>`.
 
 - **Scope types**: `ScopeEntry`, `ScopeTable` in `record/types.rs` (parser) and `launch_dump.rs` (executor)
 - **Both parsers**: Rust (`include.rs`, `xml_include.rs`, `python_exec.rs`) and Python (`visitor/entity.py`, `visitor/include_launch_description.py`) produce matching scope tables
@@ -42,7 +44,7 @@ The parser tracks which launch file each node originates from via a **scope tabl
 - **Member name mapping**: `node_scope_map` keyed by `name.or(exec_name)` to match actor system member names
 - **CLI**: `play_launch context record.json --tree|--node <FQN>|--launch <pkg> <file>`
 - **Web UI**: "Launch" page (`LaunchTreeView.js`, `LaunchPanel.js`) with tree view + detail panel
-- **API**: `GET /api/launch-tree` returns `{ scopes, node_scopes }`
+- **API**: `GET /api/launch-tree` returns `{ scopes, node_scopes }` — still sourced from `launch_dump` (record.json), not the model; on a model-only `replay --model` (no record companion, the common case since 46.5) this degrades to empty (`{}`), not an error — a documented follow-up is to source it from `model.structure.scopes` instead (`.superpowers/sdd/p46-w5-report.md` §6)
 - **Validation**: `scripts/compare_scopes.py` — self-consistency + cross-parser comparison
 
 ### Launch IR (feature-gated)
@@ -68,7 +70,7 @@ play_launch plot                    # Analysis
 
 ## Architecture
 
-**Execution Flow:** Load `record.json` → classify nodes → spawn async tasks → actor-based lifecycle → logs to `play_log/<timestamp>/`
+**Execution Flow:** Load the SystemModel (`system_model.yaml`, from `resolve`/`dump`/`launch`) → classify nodes → spawn async tasks → actor-based lifecycle → logs to `play_log/<timestamp>/`. `record.json` is a deprecated compat/dev artifact (`dump --format record`; `replay --input-file record.json` still works but warns) — not the runtime's primary input since Phase 46.5.
 
 **Key Concepts:**
 - **Async/Tokio**: All background services run as async tasks
@@ -197,6 +199,21 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-07-20**: Phase 46 (Unified SystemModel) complete — the SystemModel
+  (`system_model.yaml`) is now the one user-facing artifact. `dump <launch>
+  -o m.yaml` (default) and `resolve` emit the same complete model
+  (structure+contracts+sched); `replay --model m.yaml`/`replay <model.yaml>`
+  spawns from it directly, no `record.json` companion required. Both
+  parsers produce the SAME complete model — contracts/sched apply on the
+  shared scope table (`ScopeOrigin.path`, Phase 40.1) independent of parser
+  (`resolve --parser {rust,python}`); a stale pre-40.1 Python install now
+  fails loud instead of silently degrading. `record.json` is DEPRECATED
+  compat/dev surface: `dump --format record` (parser-parity tooling,
+  `just compare-dumps`/`scripts/compare_records.py`) and `replay
+  --input-file record.json` (warns, still spawns, one-release grace) — no
+  hard removal yet. `meta.record` binding + `verify_model_record_binding`
+  removed. Design: `docs/design/unified-system-model.md`. Roadmap:
+  `docs/roadmap/phase-46-unified_system_model.md`.
 - **2026-03-19**: Phase 30 (Launch Tree Scoping) complete. Scope table in `record.json` tracks which launch file each node comes from. Both Rust and Python parsers produce matching scope tables (83 scopes, 119 entities for Autoware). New types: `ScopeEntry`, `ScopeTable` in `record/types.rs`; `scope: Option<usize>` on all record types. New CLI: `play_launch context record.json --tree|--node|--launch`. New web UI: "Launch" page with tree view, expand/collapse, per-node detail panel with logs/params/topics tabs. Cross-parser validation: `scripts/compare_scopes.py`. New API: `GET /api/launch-tree`.
 - **2026-03-12**: Nodes with `name=None` in launch files now use `exec_name` as `__node` remap and FQN map key (`node_cmdline.rs`, `builder.rs`). Web UI: graph panel close button in hint state (`GraphPanel.js`); "Last Activity" sort in Node page sorts by `stderr_last_modified` with 3s polling, container groups use max child activity in tree mode (`NodeList.js`). Build: `just build` now includes `just build-interception`; interception .so required in wheel bundle (`bundle_wheel.sh`); `install-wheel` picks newest `.whl`. CI: `release-wheel.yml` uses `just build`; all GitHub Actions bumped to v5 (Node.js 24).
 - **2026-03-11**: Phase 29 (RCL Interception) integration complete — play_launch consumer wired into replay.rs, 5 integration tests passing (stats, frontier, disabled, defaults, toggles). Bug fix: `rcl_publish`/`rcl_take` hooks now fall back to `lookup_publisher_full()`/`lookup_subscription_full()` for messages without `header.stamp`, dispatching with `stamp: None` so StatsPlugin counts all messages.
@@ -229,6 +246,8 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 - **Design docs**: `docs/design/` — active design documents:
   - `container-isolation.md` — why containers, Linux isolation, RMW consequences
   - `context-unification.md` — parser LaunchContext unification (Phase 17)
+  - `system-model.md` — the SystemModel artifact: layout, layers, producer/consumer split
+  - `unified-system-model.md` — Phase 46: the SystemModel as the ONE complete artifact (`record.json` retired to deprecated compat)
   - Manifest design docs moved to `src/ros-launch-manifest/docs/` (Phase 31)
   - `rcl-interception.md` — RCL interception architecture + graph discovery evolution
   - `record-format.md` — record.json format: current fields + Phase 30 extensions (scopes)

@@ -25,6 +25,15 @@ This guide explains the configuration structure and, precisely, how each
 piece of configuration maps onto the processes and threads the kernel
 actually schedules.
 
+**One artifact (Phase 46):** `play_launch resolve`/`dump` merge the launch
+file, contract, and platform file into one `system_model.yaml` — structure,
+contracts, AND the resolved scheduling plan (`execution.sched`) all live in
+it. `replay --model system_model.yaml` spawns and applies scheduling
+straight from that file; nothing is re-derived from `record.json` at
+runtime. `record.json` still exists as a deprecated dev/parser-parity
+artifact (`dump --format record`) — it plays no role in the scheduling
+apply-layer this guide describes.
+
 ## Quick start
 
 A runnable copy of this example lives at `tests/fixtures/rt_workspace/` — a
@@ -445,8 +454,11 @@ targets:
 
 At startup, before any process spawns:
 
-1. The launch file is parsed to `record.json` (nodes, containers, composables,
-   and the namespace **scope table**).
+1. The launch file is parsed into the shared launch representation (nodes,
+   containers, composables, and the namespace **scope table**) that feeds
+   the SystemModel (`system_model.yaml` — the one artifact `resolve`/`dump`
+   emit and `replay --model` reads; `record.json` is a deprecated
+   compat/dev artifact, `dump --format record`).
 2. Every entity is flattened to a fully-qualified name — its own namespace,
    falling back to the launch scope's namespace: `/perception/lidar/voxel_grid`.
 3. Contract facts (rates, deadlines, criticality) are extracted per node into
@@ -612,7 +624,7 @@ here changes existing behavior.
 | warning citing both a contract and a platform file | a pinned priority order contradicts the contract's declared rate/deadline order | re-check the override, or accept the warning if intentional |
 | `--explain` prints a no-op note | no platform file resolved (no `--sched`, nothing on the overlay/provider channels) | pass `--sched <path>`, or ship one via the overlay/provider channels |
 | `tier 'X': RT priority N out of range 1..=99` at startup (legacy `.toml`) | bad placement value | fix the spec — this is deliberate fail-fast |
-| assign rule error: selector matches nothing (legacy `.toml`) | typo in node name / scope path | check FQNs with `play_launch context record.json --tree` |
+| assign rule error: selector matches nothing (legacy `.toml`) | typo in node name / scope path | check FQNs with `play_launch context record.json --tree` (generate the record with `play_launch dump --format record launch <pkg> <file>` — `dump`'s default output is the SystemModel, not `record.json`) |
 | composable skipped: `pid no longer matches its start_time` | the composable died right after loading; its PID may have been recycled | benign — nothing to schedule |
 | `chrt -p <pid>` shows `SCHED_OTHER` but the node "should" be RT | `chrt -p` reads only the main thread — or the node is in the default tier (no fact, no override) | check all TIDs; check contract facts / overrides coverage |
 | EPERM with caps correct, inside a container/slice | cgroup `rt_runtime = 0` gate (`CONFIG_RT_GROUP_SCHED`) | provision RT bandwidth for the cgroup |

@@ -42,8 +42,8 @@ pub enum Feature {
 #[command(after_help = "Examples:\n  \
     play_launch launch demo_nodes_cpp talker_listener.launch.py\n  \
     play_launch run demo_nodes_cpp talker\n  \
-    play_launch dump launch autoware_launch planning_simulator.launch.xml --output autoware.json\n  \
-    play_launch replay --input-file record.json")]
+    play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml\n  \
+    play_launch replay --model autoware.yaml")]
 #[command(arg_required_else_help = true)]
 pub struct Options {
     #[command(subcommand)]
@@ -67,13 +67,14 @@ pub enum Command {
     /// Dump launch execution without replaying
     Dump(DumpArgs),
 
-    /// Replay from existing record.json
+    /// Replay from a SystemModel (primary; Phase 46.5) or a legacy
+    /// record.json (deprecated compat, warns)
     #[command(after_help = "Examples:\n  \
-        play_launch replay\n  \
-        play_launch replay --input-file autoware.json\n  \
-        play_launch replay --disable-all\n  \
-        play_launch replay --enable monitoring --enable web-ui\n  \
-        play_launch replay --web-addr 0.0.0.0:8080")]
+        play_launch replay --model system_model.yaml\n  \
+        play_launch replay --model system_model.yaml --disable-all\n  \
+        play_launch replay --model system_model.yaml --enable monitoring --enable web-ui\n  \
+        play_launch replay --model system_model.yaml --web-addr 0.0.0.0:8080\n  \
+        play_launch replay --input-file record.json   # deprecated: legacy record-only path")]
     Replay(ReplayArgs),
 
     /// Plot resource usage from execution logs
@@ -114,7 +115,7 @@ pub enum Command {
     /// contract checker reports errors; warnings are embedded in the model.
     #[command(after_help = "Examples:\n  \
         play_launch resolve demo_pkg pipeline.launch.xml --out system_model.yaml\n  \
-        play_launch resolve /path/to/launch.xml mode:=velodyne --sched system.posix.yaml")]
+        play_launch resolve /path/to/launch.xml --sched system.posix.yaml mode:=velodyne")]
     Resolve(ResolveArgs),
 
     /// Manage contract/platform-file overlays (Phase 41.4, design §3.3)

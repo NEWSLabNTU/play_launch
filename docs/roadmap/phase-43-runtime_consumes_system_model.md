@@ -1,6 +1,12 @@
 # Phase 43: Runtime Consumes the SystemModel
 
-**Status:** 🔄 43.1–43.3, 43.5 landed (2026-07-17); 43.4 re-scoped (see below)
+**Status:** 🔄 43.1–43.3, 43.5 landed (2026-07-17); 43.4 re-scoped (see below).
+**Superseded (2026-07-20):** the two-artifact runtime this phase built
+(model + `record.json` companion, bound by `meta.record`) is superseded by
+Phase 46 — `record.json` is no longer a required companion; `resolve`/
+`dump` emit a self-sufficient model and the `meta.record` binding is
+removed. See [docs/design/unified-system-model.md](../design/unified-system-model.md)
+and [phase-46-unified_system_model.md](./phase-46-unified_system_model.md).
 **Design:** [docs/design/system-model.md](../design/system-model.md) (producer side) + nano-ros RFC-0050 (consumer side)
 **Builds on:** `play_launch resolve` (work item 2, landed), the `model` crate in ros-launch-manifest, Phase 36 runtime enforcement, Phase 41 sched v2.
 **Relation to Phase 42:** orthogonal — 42 studies the *content* of the model (chains, mappers); 43 changes *which artifact the runtime reads*. No shared files beyond `replay.rs` plumbing; land in either order.

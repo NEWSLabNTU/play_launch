@@ -1,7 +1,14 @@
 # Unified SystemModel — One Complete Artifact — Design
 
 **Date:** 2026-07-20
-**Status:** Approved (direction), pending implementation (Phase 46)
+**Status:** SHIPPED (2026-07-20) — 46.0–46.5 implemented and merged; 46.6
+(this docs sweep) closes the phase. `record.json` is retired to a
+deprecated compat/dev artifact (`dump --format record`, parser-parity
+tooling only); `system_model.yaml` is the one user-facing artifact
+`dump`/`resolve` emit and `replay --model` (or `replay <model.yaml>`)
+reads. See `docs/roadmap/phase-46-unified_system_model.md` for the
+work-item-by-work-item record and `.superpowers/sdd/p46-w2-report.md`
+through `p46-w6-report.md` for implementation evidence.
 **Revises:** Phase 43's two-artifact decision (`phase-43-runtime_consumes_system_model.md`
 §"Decision: two-artifact runtime") — that decision is superseded.
 **Cross-track:** the `model`-crate field additions are shared with the nano-ros
@@ -62,12 +69,15 @@ its own platform specifics" step nano-ros already performs.
 
 ## The artifact and commands
 
-- One artifact: `system_model.yaml` (the model). `record.json` retires.
+- One artifact: `system_model.yaml` (the model). `record.json` retired to a
+  deprecated compat/dev artifact (`dump --format record`).
 - `play_launch resolve` emits the model (unchanged command; now complete).
-- `play_launch dump` emits the model (was: `record.json`; now the same one
-  artifact — the user perceives one kind of dump).
-- `play_launch replay <model.yaml>` reads the model and spawns (deriving
-  cmd/exec-path); `--input-file` accepts the model.
+- `play_launch dump` emits the model by default (was: `record.json`; now
+  the same one artifact — the user perceives one kind of dump; `--format
+  record` is the deprecated escape hatch for parser-parity tooling).
+- `play_launch replay --model system_model.yaml` reads the model and spawns
+  (deriving cmd/exec-path); `--input-file <record.json>` without `--model`
+  still works as a deprecated, warning compat path (one release's grace).
 - `launch` = resolve-then-replay over the one model (Phase 43.5 flow, minus the
   record companion).
 
@@ -117,33 +127,41 @@ sched-SSoT reconciliation:
 3. nano-ros consumes the new fields on their track (they ignore the
    Linux-serving ones by design).
 
-## Migration (Phase 46) — additive-first, no flag day
+## Migration (Phase 46) — additive-first, no flag day — ALL STEPS SHIPPED
 
-1. **Coordinate** (46.0): note nano-ros, confirm the field set.
-2. **Fix #236 first** (46.1, independent quick win): `<node machine=>` →
+1. ✅ **Coordinate** (46.0): note nano-ros, confirm the field set.
+2. ✅ **Fix #236 first** (46.1, independent quick win): `<node machine=>` →
    `execution.deploy.host`; unblocks nano-ros's paused multihost migration.
    Ships ahead of everything else.
-3. **Shared launch fields** (46.1b/46.2): `NodeInstance` gains
+3. ✅ **Shared launch fields** (46.1b/46.2): `NodeInstance` gains
    `remaps`/`ros_args`/`respawn`/`env` (cross-track, additive); parser +
    `model_builder` populate them.
-4. **Spawn-from-model** (46.3, the load-bearing item): relocate
+4. ✅ **Spawn-from-model** (46.3, the load-bearing item): relocate
    `node_cmdline.rs` so play_launch derives exec path (ament) + argv +
    injected env + materialized param files from the model at spawn; `replay`
    reads the model, not `record.json`. Regression-gated against current
    `record.json`-driven spawns (Autoware + rt_workspace must match).
 
-## Retirement (of the two-artifact runtime)
+## Retirement (of the two-artifact runtime) — SHIPPED (46.4/46.5)
 
-Only after (46.3) proves spawn-from-model matches the `record.json` era:
-5. `dump` emits the one model; **`record.json` retired**; the `meta.record`
-   hash-binding + `verify_model_record_binding` + the `resolve` record
-   companion removed.
-6. Drop the LaunchDump-only artifacts (`file_data` cache, `variables`) from
-   the emitted model; keep whatever the parser needs internally.
-7. Docs + guide: one-artifact story across `dump`/`resolve`/`replay`.
-Rollback safety: through step 4 both paths coexist (the model is additive,
-`record.json` still written); retirement (5+) is the only non-additive step
-and is gated on the spawn-from-model regression suite.
+After (46.3) proved spawn-from-model matches the `record.json` era:
+5. ✅ `dump` emits the one model (default `--format model`); **`record.json`
+   retired** to a deprecated `--format record` / `--input-file` compat
+   surface; the `meta.record` hash-binding + `verify_model_record_binding`
+   + the `resolve` record companion removed.
+6. ✅ Confirmed there was nothing to drop: the model was never built by
+   embedding a `LaunchDump`, so `file_data`/`variables` were never in the
+   emitted artifact in the first place (see `.superpowers/sdd/p46-w5-report.md`
+   §5).
+7. ✅ Docs + guide: one-artifact story across `dump`/`resolve`/`replay`
+   (this document + `docs/guide/rt-scheduling.md` + `CLAUDE.md`, Phase
+   46.6).
+
+Rollback safety held through step 4 (the model was additive, `record.json`
+still written); retirement (5+) was the only non-additive step and was
+gated on the spawn-from-model regression suite — see the W4/W5 reports for
+the acceptance evidence (Python-parser parity, Autoware 119-node parity,
+`replay --model` spawning without a record companion).
 
 ## Non-goals
 

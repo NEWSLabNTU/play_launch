@@ -209,9 +209,9 @@ play_log/<timestamp>/
 play_launch launch <package> <launch_file> [args...]
 play_launch run <package> <executable> [args...]
 
-# Dump and replay
+# Dump and replay (dump emits the SystemModel by default — one artifact)
 play_launch dump launch <package> <launch_file> [args...]
-play_launch replay [--input-file record.json]
+play_launch replay [--model system_model.yaml]
 
 # Parser selection (Rust is default)
 play_launch launch <pkg> <file> --parser rust     # Default, fast

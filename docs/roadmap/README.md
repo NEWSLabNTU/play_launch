@@ -46,7 +46,7 @@ Completed phase docs are in `archive/`.
 | 43 | Runtime Consumes the SystemModel | 🔄 43.1–43.3, 43.5 done; 43.4 re-scoped | — |
 | 44 | Vocabulary v2 + Chain-Aware Mapper | 🔄 44.1–44.6, 44.8 done; 44.7 handoff | — |
 | 45 | Scheduling SSoT Unification | ✅ 45.1–45.8 | 2026-07-19 |
-| 46 | Unified SystemModel (one artifact) | 📋 Planned | — |
+| 46 | Unified SystemModel (one artifact) | ✅ 46.1–46.6 | 2026-07-20 |
 
 ---
 
@@ -152,6 +152,13 @@ Makes the SystemModel the single source of truth for scheduling: `resolve` runs 
 
 See [phase-45-sched_ssot_unification.md](./phase-45-sched_ssot_unification.md).
 Design: [docs/design/system-model-sched-ssot.md](../design/system-model-sched-ssot.md).
+
+### Phase 46: Unified SystemModel — One Complete Artifact (complete)
+
+Makes `system_model.yaml` the ONE user-facing artifact, retiring the Phase 43 two-artifact (model + `record.json`) split. `dump <launch> -o m.yaml` and `resolve` now emit the same complete model (structure + contracts + scheduling) for BOTH parsers — contracts/sched apply on the shared scope table (`ScopeOrigin.path`, Phase 40.1) independent of parser, so `--parser python` gets full parity with Rust, not a structure-only subset; a stale pre-40.1 Python install now fails loud instead of silently degrading. `replay --model system_model.yaml` spawns directly from the model (no `record.json` companion needed) — cmdline assembly (exec path, argv, injected env, materialized param files) relocated from parse-time into `record.json` to spawn-time from the model (46.3). Also fixed nano-ros issue #236: `<node machine=>` now flows into `execution.deploy[fqn].host`. `record.json` is retired to a deprecated compat/dev surface: `dump --format record` (parser-parity tooling, `just compare-dumps`) and `replay --input-file record.json` without `--model` (warns, one release's grace) — no hard removal.
+
+See [phase-46-unified_system_model.md](./phase-46-unified_system_model.md).
+Design: [docs/design/unified-system-model.md](../design/unified-system-model.md).
 
 ---
 
