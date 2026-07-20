@@ -1,10 +1,24 @@
 # P46 W3b Report — spawn from the model (46.3b, load-bearing)
 
-Commit: `90ee3b0` on `worktree-agent-aba387e0918adac9f` (branch name assigned
-by the worktree harness; the brief's suggested `feat/p46-spawn-from-model`
-name wasn't available to request). Built on top of 46.3a (`7c7038a`,
-`a87cbc8`, submodule `ros-launch-manifest` @ `0fefe17`, unchanged by this
-wave — play_launch-only, as scoped). Not pushed.
+Commits on `worktree-agent-aba387e0918adac9f` (not pushed):
+- `90ee3b0` feat(exec): initial spawn-from-model (this report's original body).
+- `7caee0a` docs: this report.
+- `c0c7339` fix(exec): **review follow-up** — closes both Important findings
+  in `.superpowers/sdd/p46-w3b-review.md` by adding provenance to the model,
+  not heuristics. Bumps the `ros-launch-manifest` gitlink from `0fefe17` to
+  **`aa3c9d1`** (submodule branch `feat/p46-provenance-fields`, commit
+  `aa3c9d1` "feat(model): NodeInstance carries declared node_name +
+  is_container").
+
+**See the "Review follow-up (c0c7339)" section at the end** — it supersedes
+the "Node classes that diverged" divergences #1 (name=None `__node`) and #3's
+container-classification framing below, which the review correctly flagged as
+needing a real fix rather than acceptance. The original body is kept intact
+for provenance; the follow-up section states the final, shipped behavior.
+
+Built on top of 46.3a (`7c7038a`, `a87cbc8`); the submodule change here is
+46.3b's own, additive on top of 46.3a's `0fefe17`. play_launch + submodule
+(model schema only), as scoped.
 
 ## Goal recap
 
@@ -380,3 +394,134 @@ real fixture exercising it, per the W3 analysis's own recommendation.
   byte-reproducible across repeated runs and paths; flagged as a
   worthwhile, low-risk, out-of-scope-for-this-wave improvement, not a
   defect this wave introduced.
+
+---
+
+## Review follow-up (`c0c7339`) — both Importants closed, no heuristics
+
+The W3b review (`.superpowers/sdd/p46-w3b-review.md`) raised two Important
+findings and one Cosmetic. Both Importants trace to the same root cause the
+original body already named — the model's `structure.nodes` key is a
+*derived* identity with no stored provenance — and the review's prescription
+matched the body's own recommendation: **add the provenance to the model
+(additive submodule fields), don't infer or always-set.** Done in `c0c7339`
+(+ submodule `aa3c9d1`).
+
+### Submodule change (`aa3c9d1`, branch `feat/p46-provenance-fields`)
+
+Two additive `NodeInstance` fields, both `#[serde(default,
+skip_serializing_if = …)]` (old models parse unchanged — round-trip +
+backward-compat tests added, submodule model crate 17/17 unit + 7/7 golden +
+full workspace 56-test suite green, clippy `-D warnings` clean):
+
+- `node_name: Option<String>` — the name AS DECLARED in the launch
+  (`None` when the launch had `name=None`), distinct from `exec`.
+- `is_container: bool` — true iff the instance came from the record's
+  `dump.container[]` array.
+
+`model_builder.rs` populates them from the record it already has (which
+*knows* both facts unambiguously): `node_name` = `n.name` /
+`Some(c.name)` / `Some(l.node_name)`; `is_container` = `false`/`true`/`false`
+across the node/container/load_node loops.
+
+### Important 1 — `name=None` → `__node` (af7c524 regression) — CLOSED
+
+`node_record_from_instance` now sets `record.name` from `inst.node_name`
+(the declared name), **not** the FQN's last segment. So `from_node_record`
+emits `-r __node:=<name>` **only when a name was actually declared** — byte-
+for-byte matching the record path's conditional, and NOT reintroducing the
+`af7c524` bug (forcing `__node:=exec_name` onto a `name=None` LifecycleNode
+silently renames it away from its internally-hardcoded default). `exec_name`
+still takes the FQN segment (`name.or(exec_name)`) for directory/member
+naming, which is correct on both paths. Guard test added:
+`test_node_record_from_instance_name_none_omits_node_remap` (a `name=None`
+`NodeInstance` → `record.name == None` → `__node` omitted, chained through
+`build_remaps`).
+
+**End-to-end proof (Autoware real-spawn re-diff, both paths, model
+regenerated with the new binary):** the **10** name=None nodes that
+previously force-diverged (`aggregator_node`, `autoware_pose_initializer_node`,
+… — the exact set from the original body) are now **gone from the real-diff
+list entirely** — they match the record path. The model carries exactly 10
+regular nodes with `node_name: None` and 15 with `is_container: true`,
+matching the record's own counts.
+
+### Important 2 — `is_container` heuristic (executable-corruption risk) — CLOSED
+
+The three `prepare_*_contexts_from_model` builders now classify purely off
+the model's explicit `inst.is_container` bit. The `model_container_fqns`
+helper and its `resolve_node_ref` reverse-reference heuristic are **deleted**
+from the spawn path (and `resolve_node_ref`'s `pub(crate)` exposure reverted
+to private — it's back to model-internal manifest reconciliation only). The
+false-positive the review described (a regular node whose bare name collides
+with a dangling/ambiguous composable `container=` target, misclassified and
+then executable-corrupted by the `--container-mode` override) is now
+structurally impossible: classification comes from the record's node kind,
+never from name matching. Guard test added
+(`model_builder::tests::regular_node_colliding_dangling_composable_target_is_not_container`):
+a regular node named `widget` + a composable whose target is the bare name
+`widget` (no such container) → the regular node has `is_container == false`,
+the genuine container has `true`. **End-to-end:** all 15 Autoware containers
+classified correctly (0 misclassified), 49/49 processes, 0 `LOAD_FAILED`,
+both paths.
+
+### Cosmetic 3 — params-file CONTENT coverage in the gate — DONE
+
+Added `spawn_equivalence_test::params_file_content_matches_record_vs_model`:
+a **synthetic in-process** `LaunchDump` (one real `rt_demo/sensor_node`
+carrying inline `<param>` values → `overrides.yaml` AND an external
+`params_files` YAML blob → `0.yaml`), resolved to a `SystemModel` via
+`build_system_model` the same way `play_launch resolve` does, then spawn-
+built via BOTH paths — asserting the **actual bytes** written to
+`overrides.yaml`/`0.yaml` are byte-identical record-vs-model (plus the
+external blob is verbatim per GAP-3, and inline params landed with correct
+types — `100.0` keeps its decimal point, int/bool/string inferred). Chose a
+synthetic dump over modifying the shared `bringup.launch.xml` because ~15
+rt_workspace tests depend on that file's exact node/chain/contract content;
+the synthetic node exercises real params-file materialization through the
+real code path without that blast radius. Skips cleanly if `rt_demo` isn't on
+`AMENT_PREFIX_PATH`.
+
+### Verification (post-fix)
+
+- `cargo test -p play_launch --bin play_launch`: **249 passed, 0 failed**
+  (245 → +4 new: the `name=None` remap guard, the `is_container`
+  false-positive guard, the model_builder `node_name` test, the params-
+  content gate test). Equivalence gate: **5/5** (was 4/4 + the new params-
+  content test).
+- Submodule `cargo test --workspace` + `clippy --workspace -D warnings`:
+  green (model 56-test suite incl. 2 new provenance round-trip/back-compat
+  tests).
+- `cd tests && cargo nextest run -E 'binary(rt_workspace) | binary(manifest_check) | binary(sched_apply) | binary(resolve_multihost) | binary(resolve_launch_fields) | binary(resolve_merge) | binary(container_events)'`
+  (`[workspace]` shim added, ran, reverted — `git diff --stat` clean): **45/45**.
+- Real-spawn re-diff, rt_workspace (all 3 processes identical token-multiset)
+  and Autoware (49/49 both paths, 0 LOAD_FAILED): after the fix, **16
+  identical / 30 benign-ordering-only / 3 container-label-ordering**. The 10
+  name=None `__node` diffs are eliminated. The 3 remaining container diffs
+  are the *same-literal-name dedup-label ordering* the review independently
+  traced and verified benign (§2b of the review) — I re-confirmed end-to-end
+  that the **set** of actual container configs `{(namespace, mt_flag)}` is
+  provably identical across both paths (only which numbered label
+  `container`/`container_2`/`container_3` maps to which namespace differs;
+  every container spawns with its own correct args regardless). This is a
+  runtime-label artifact, does not leak into the persisted model, and is not
+  one of the two Importants — left as-is, consistent with the review's own
+  "benign, verified" classification.
+- clippy on the parent: the one pre-existing `manual_map` failure at
+  `runtime_enforcement/mod.rs:781` persists (untouched by this wave, last
+  changed at `4afecb7`); no clippy hits in any file this follow-up touched.
+  nightly `rustfmt --check` clean on all touched files.
+
+### Residual (unchanged, out of scope)
+
+- The container **dedup-label ordering** (benign §2b) is *not* closed — it
+  would need the model to preserve original declaration order. Not a
+  correctness issue (verified above); flagged for a future wave alongside any
+  other "consumer wants declaration order" need.
+- `NodeCommandLine.remaps`/`.params` remain `HashMap`-backed (pre-existing) —
+  the source of the "ordering-only" diff noise; a `BTreeMap` cleanup would
+  make cmdline files byte-reproducible. Low-risk, out of scope.
+- record.json retirement (46.4/46.5): `load_launch_dump` still unconditional;
+  the web-UI `node_scope_map`, legacy sched path, and
+  `chain_colocation_warnings_for_plan` still read the dump — unchanged by
+  this follow-up.
