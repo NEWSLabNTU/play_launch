@@ -269,28 +269,22 @@ pub fn build_checked_model(
         );
     }
 
-    // Phase 45.6 — `--explain`: render from the SystemModel this invocation
-    // just built (`model.execution.sched`/`tiers`/`bindings`), not from
-    // `derived` — proves the embedded artifact itself carries enough to
-    // render without a fresh derive, the same guarantee `replay --model
-    // --explain` depends on. We still have the fresh `resolved_platform`/
-    // `index` in scope, so the footer is byte-identical to what `check
-    // --sched --explain` would print for the same inputs.
+    // Phase 45.10 — `--explain` renders from the FRESH derive this invocation
+    // already produced (`derived` + `resolved_platform` + `index`), not from
+    // the model (the resolved sched plan is no longer embedded — the model is
+    // INPUT only). Same renderer `check --sched --explain` uses, so output is
+    // byte-identical for the same inputs.
     if explain {
-        if model.execution.sched.is_some() || !model.execution.bindings.is_empty() {
-            let footer = match &resolved_platform {
-                Some(p) => sched_loader::explain_footer(p, Some(&index)),
-                None => sched_loader::explain_footer_from_model(&model),
-            };
-            eprint!(
-                "{}",
-                sched_loader::render_explain_from_model(&model, target, &footer)
-            );
-        } else {
-            eprintln!(
-                "note: --explain has no effect without a resolved scheduling platform file \
-                 (pass --sched <path>, or ship one via the overlay/provider channels)"
-            );
+        match (&derived, &resolved_platform) {
+            (Some((d, _)), Some(platform)) => {
+                sched_loader::print_explain(d, platform, Some(&index));
+            }
+            _ => {
+                eprintln!(
+                    "note: --explain has no effect without a resolved scheduling platform file \
+                     (pass --sched <path>, or ship one via the overlay/provider channels)"
+                );
+            }
         }
     }
 

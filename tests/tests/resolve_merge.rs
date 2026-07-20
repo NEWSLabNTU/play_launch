@@ -101,13 +101,18 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
     assert_eq!(nodes["/planning/planner"]["criticality"], "high");
     assert_eq!(nodes["/perception/detector"]["exec"], "talker");
     assert_eq!(nodes["/perception/detector"]["lifecycle"], true);
+    // Phase 48 — scope ids are STRUCTURAL (the launch file), not namespaces.
+    // The included `perception.launch.xml` is its own file scope, parented to
+    // the root `bringup.launch.xml`.
     let scopes = model["structure"]["scopes"].as_object().expect("scopes");
-    assert!(
-        scopes["/perception"]["parent"].is_string(),
-        "included scope has a parent link"
+    let perception = &scopes["perception.launch.xml"];
+    assert_eq!(
+        perception["parent"], "bringup.launch.xml",
+        "included scope is parented to the root launch file"
     );
+    assert_eq!(perception["file"], "perception.launch.xml");
     assert!(
-        scopes["/perception"]["manifest"]
+        perception["manifest"]
             .as_str()
             .unwrap()
             .ends_with("perception.contract.yaml"),

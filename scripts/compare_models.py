@@ -102,10 +102,12 @@ def normalize_whitespace(value: str) -> str:
 
 
 def strip_scope_disambiguator(scope: str) -> str:
-    """Strip a `#<id>` disambiguation suffix (`scope_keys()` in
-    `model_builder.rs` assigns ids by scope traversal order, which can
-    legitimately differ between the Rust and Python parsers for otherwise
-    identical scope trees)."""
+    """Strip a `#<id>` disambiguation suffix. Since Phase 48 a scope id is
+    STRUCTURAL — the launch file (`<pkg>/<file>`) a node came from — and
+    `scope_keys()` in `model_builder.rs` appends `#<id>` only to disambiguate a
+    file included more than once; that id follows scope traversal order, which
+    can legitimately differ between the Rust and Python parsers for otherwise
+    identical include trees."""
     return re.sub(r'#\d+$', '', scope or '')
 
 
@@ -259,14 +261,14 @@ def structural_diffs(rust: Dict, python: Dict) -> List[str]:
 
 
 def scope_note(rust: Dict, python: Dict) -> Optional[str]:
-    """`scope` (which launch-file/group scope a node originates from) is
-    reported as an ADVISORY note, not a pass/fail diff:
-    `compare_records.py` never compared it either (it's not one of
-    `nodes_equivalent`'s checked fields, and `record.json`'s own
-    `scope: Option<usize>` cross-parser check lives in the separate
-    `scripts/compare_scopes.py` tool, Phase 30) — surfacing but not
-    failing on it here keeps this wave a faithful migration of the
-    EXISTING gate rather than a new, stricter one."""
+    """`scope` — the launch FILE a node originates from (Phase 48: structural,
+    `<pkg>/<file>`, not a namespace) — is reported as an ADVISORY note, not a
+    pass/fail diff. Since Phase 48 both parsers key scopes by the same file
+    identity and fold `<group>` scopes into their file, so this is expected to
+    match; it stays advisory (rather than a hard diff) because a file included
+    more than once carries a traversal-order `#<id>` that can differ between
+    parsers. The dedicated `scope: Option<usize>` cross-parser check lives in
+    `scripts/compare_scopes.py` (Phase 30)."""
     r_scope = strip_scope_disambiguator(rust.get('scope', ''))
     p_scope = strip_scope_disambiguator(python.get('scope', ''))
     if r_scope != p_scope:

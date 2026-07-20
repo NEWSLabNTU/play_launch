@@ -230,23 +230,14 @@ impl SchedPlan {
             by_fqn,
             mode,
             warnings,
-            // Phase 45.5: reconstructed from the model's OWN embedded
-            // structure (`execution.sched.chains`) — the exact same
-            // `ResolvedChain`/`ChainElement` walk `derive_sched_plan` runs
-            // over a freshly-built `MapperInput::chains`
-            // (`chain_member_nodes_from_chains`, shared by both). No mapper
-            // re-run, no ManifestIndex re-parse: a pure field read. Empty
-            // when the model carries no `execution.sched` at all (older
-            // artifacts, or a `resolve` with no platform file) — this is a
-            // legitimate "no chains declared" state, not a gap to fall back
-            // from (see [`chain_colocation_warnings_for_plan`], which no
-            // longer needs a ManifestIndex fallback because of this).
-            chain_member_nodes: model
-                .execution
-                .sched
-                .as_ref()
-                .map(|s| crate::ros::sched_loader::chain_member_nodes_from_chains(&s.chains))
-                .unwrap_or_default(),
+            // Phase 45.10 — resolved chains are no longer embedded in the
+            // model, so the model-only apply path (`replay --model`) has no
+            // chain membership to key the composable co-location warning off:
+            // it degrades to empty (best-effort warning, same class of
+            // model-path degradation as the launch-tree scope map). The
+            // launch/replay-with-dump path (`SchedPlan::build`) still populates
+            // this from its fresh derive.
+            chain_member_nodes: std::collections::BTreeSet::new(),
         })
     }
 }
@@ -790,87 +781,36 @@ mod model_tests {
         assert_eq!(warnings.len(), 1, "suffix match must resolve the container");
     }
 
-    /// Phase 45.5: the default `launch` path builds its plan via
-    /// `SchedPlan::from_model` — `chain_member_nodes` must now come straight
-    /// from the model's own `execution.sched.chains` (no ManifestIndex
-    /// involved at all), and the co-location warning must still fire under
-    /// stock container mode from that reconstructed set.
+    /// Phase 45.10: the resolved chain structure is no longer embedded in the
+    /// model (`execution.sched` removed), so the model-only apply path
+    /// (`SchedPlan::from_model`, used by `replay --model`) has no chain
+    /// membership and its composable co-location warning DEGRADES to empty —
+    /// a best-effort warning, same class of model-path degradation as the
+    /// launch-tree scope map. The launch/replay-with-dump path
+    /// (`SchedPlan::build`) still fires it from a fresh derive
+    /// (`colocation_warning_fires` above).
     #[test]
-    fn colocation_warning_fires_through_model_path_from_embedded_chains() {
-        use ros_launch_manifest_sched::{
-            ChainElement, ChainSemantics as SchedChainSemantics, Criticality, ResolvedChain,
-            SegmentNode,
-        };
-
+    fn from_model_degrades_colocation_warning_to_empty() {
         let dump = dump_with_colocated_chain_members();
-
-        // Model carries the resolved chain directly (as `resolve` would
-        // have embedded it) — no ManifestIndex anywhere in this test.
-        let mut model = ros_launch_manifest_model::SystemModel::default();
-        model.execution.sched = Some(ros_launch_manifest_model::ExecutionSched {
-            chains: vec![ResolvedChain {
-                name: "pipeline".to_string(),
-                criticality: Criticality::Medium,
-                max_latency_ms: 500.0,
-                semantics: SchedChainSemantics::Reaction,
-                elements: vec![ChainElement::Segment {
-                    nodes_in_topo_order: vec![
-                        SegmentNode {
-                            node: "/perception/chain_a".to_string(),
-                            path: "tick".to_string(),
-                        },
-                        SegmentNode {
-                            node: "/perception/chain_b".to_string(),
-                            path: "react".to_string(),
-                        },
-                    ],
-                }],
-            }],
-            requirements: vec![],
-            mapper: Some("chain_aware".to_string()),
-            ranks: vec![],
-            overrides: Default::default(),
-        });
-
+        let model = model_with_binding(true);
         let plan =
             SchedPlan::from_model(&model, "posix", SchedApplyMode::Warn).expect("build plan");
-        assert_eq!(
-            plan.chain_member_nodes,
-            BTreeSet::from([
-                "/perception/chain_a".to_string(),
-                "/perception/chain_b".to_string(),
-            ]),
-            "from_model must reconstruct membership from execution.sched.chains"
+        assert!(
+            plan.chain_member_nodes.is_empty(),
+            "model path carries no chain membership since Phase 45.10"
         );
-
         let warnings = chain_colocation_warnings_for_plan(&dump, ContainerMode::Stock, &plan);
-        assert_eq!(warnings.len(), 1, "got: {warnings:?}");
         assert!(
-            warnings[0].contains("/perception/shared_container"),
-            "{}",
-            warnings[0]
+            warnings.is_empty(),
+            "co-location warning degrades to empty on the model path: {warnings:?}"
         );
-        assert!(
-            warnings[0].contains("/perception/chain_a")
-                && warnings[0].contains("/perception/chain_b"),
-            "{}",
-            warnings[0]
-        );
-
-        // And the isolated mode stays silent through the same wrapper.
-        let none = chain_colocation_warnings_for_plan(&dump, ContainerMode::Isolated, &plan);
-        assert!(none.is_empty(), "got: {none:?}");
     }
 
-    /// Backward-compat (45.5): a model with NO `execution.sched` at all
-    /// (older artifact, or `resolve` with no platform file) must still
-    /// produce an empty `chain_member_nodes` and never panic — the same
-    /// behavior `from_model` had before this wave, just via a different
-    /// (now-always-safe) code path.
+    /// A model with no scheduling bindings still produces an empty
+    /// `chain_member_nodes` and never panics.
     #[test]
     fn from_model_with_no_sched_layer_has_empty_chain_member_nodes() {
         let model = model_with_binding(true);
-        assert!(model.execution.sched.is_none());
         let plan = SchedPlan::from_model(&model, "posix", SchedApplyMode::Warn).expect("plan");
         assert!(plan.chain_member_nodes.is_empty());
     }

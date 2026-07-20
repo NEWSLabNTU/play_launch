@@ -48,7 +48,7 @@ Completed phase docs are in `archive/`.
 | 45 | Scheduling SSoT Unification | ✅ 45.1–45.8 | 2026-07-19 |
 | 46 | Unified SystemModel (one artifact) | ✅ 46.1–46.6 | 2026-07-20 |
 | 47 | CLI cleanup + hard record.json removal | ✅ A1–A2, B1–B6 | 2026-07-20 |
-| 48 | Detangle namespace from scope tree | 📋 Planned (minimal fix shipped) | 2026-07-20 |
+| 48 | Detangle namespace from scope tree | ✅ minimal + full | 2026-07-20 |
 
 ---
 

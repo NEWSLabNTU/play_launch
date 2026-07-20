@@ -144,6 +144,21 @@ nano-ros RFC-0050/0052; rlm `docs/scheduling.md` §"Cross-repo design agreement"
 - **45.10.c — keep per-consumer derivation**: `sched_derive` (play_launch,
   `LaunchDump → MapperInput`) stays; nano-ros writes its own
   `SystemModel → MapperInput` (nano-ros phase-296 W5). Shared type: `MapperInput`.
+- **45.10.d — play_launch adopts the reverted model — ✅ DONE** (2026-07-21):
+  bumped the model gitlink to the sched-revert + mapper-split. `model_builder`
+  no longer populates `execution.sched` (the field is gone); the applied Linux
+  schedule still rides `execution.tiers`+`bindings` (the mapper's projected
+  outcome), so `sched-apply` is unchanged. Removed the 45.4 embedding fields
+  from `DerivedSchedPlan` (`chains`/`nodes`/`ranks`/`overrides`) — they existed
+  only to feed the embed. `--explain` re-derives fresh in `resolve`/`check`
+  (`explain_rows_from_derived`); `replay --model --explain` DEGRADES to a
+  tier-based table (no chains/ranks embedded to read) — same class of model-
+  path degradation as the launch-tree scope map + composable co-location
+  warning (`SchedPlan::from_model` now yields empty `chain_member_nodes`). The
+  three 45.6 model↔derive byte-identical explain-parity tests were retired
+  (that parity is intentionally gone); `rt_workspace` embedding test rewritten
+  to assert non-embedding + `check --explain` chain-aware provenance. 250 unit
+  + 39 sched/rt/contracts green.
 
 Cross-track: nano-ros consumes (a) + writes its RTOS realizer in **phase-296 W5**.
 

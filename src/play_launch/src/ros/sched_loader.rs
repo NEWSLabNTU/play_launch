@@ -11,10 +11,9 @@ use std::{
 
 use eyre::Result;
 use ros_launch_manifest_sched::{
-    ChainAwareDetail, ChainElement, Contradiction, MapError, MapWarning, MapperNode,
-    MapperRegistry, PlatformResources, ResolvedChain, ResolvedTier, ResolvedTierTable, SchedNode,
-    band_violations, deadline_priority_contradictions, parse_platform_file,
-    rate_priority_contradictions,
+    ChainAwareDetail, ChainElement, Contradiction, MapError, MapWarning, MapperRegistry,
+    PlatformResources, ResolvedChain, ResolvedTier, ResolvedTierTable, SchedNode, band_violations,
+    deadline_priority_contradictions, parse_platform_file, rate_priority_contradictions,
 };
 use tracing::{debug, info};
 
@@ -288,35 +287,12 @@ pub struct DerivedSchedPlan {
     /// intended or override-derivative noise (45.1b) — surfaced in the
     /// structured summary line (45.1c) so suppression is visible, not silent.
     pub suppressed_contradictions: usize,
-    /// Phase 45.4 — the resolved chains this derivation fed to the mapper
-    /// (`MapperInput::chains`, built by `sched_derive::resolve_chains`),
-    /// carried straight through so `model_builder` can embed them verbatim
-    /// in `execution.sched.chains` — the model's SHARED STRUCTURE (design
-    /// `docs/design/system-model-sched-ssot.md`). Never re-derived by the
-    /// model builder: this is the single derivation call's output.
-    pub chains: Vec<ResolvedChain>,
-    /// Phase 45.4 — every schedulable node's extracted timing/criticality/
-    /// path facts (`MapperInput::nodes`), carried through so `model_builder`
-    /// can translate each into a `model::NodeSchedRequirement` for
-    /// `execution.sched.requirements` — the model's SHARED STRUCTURE
-    /// (per-(node,path) trigger/deadline/budget + per-node criticality).
-    pub nodes: Vec<MapperNode>,
-    /// Phase 45.4 — per-(node, path) `chain_aware` PiCAS ranks
-    /// (`MapDiagnostics::details`), carried through so `model_builder` can
-    /// embed them in `execution.sched.ranks` — the model's LINUX
-    /// REALIZATION. Empty for mappers other than `chain_aware` (which is
-    /// the only built-in that populates diagnostics `details`).
-    pub ranks: Vec<ChainAwareDetail>,
-    /// Phase 45.6 (review) — FQNs whose final placement was pinned by an
-    /// explicit platform-file `overrides.<selector>` entry (the keys of the
-    /// internal `overridden` map `build_provenance` reads to label a node
-    /// `Provenance::Override`). Carried through so `model_builder` can embed
-    /// it in `execution.sched.overrides` — the fact a model-sourced
-    /// `--explain` needs to reproduce the fresh-derive renderer's
-    /// override-vs-derived classification EXACTLY, without the
-    /// priority-equality heuristic that misfires when an override coincides
-    /// with the derived value.
-    pub overrides: BTreeSet<String>,
+    // Phase 45.10 — the 45.4 embedding fields (`chains`/`nodes`/`ranks`/
+    // `overrides`) were removed: the resolved plan is no longer embedded in
+    // the model (`execution.sched` is gone), so there is nothing to carry
+    // through to `model_builder`. `--explain` reads `provenance` above; the
+    // co-location warning reads `chain_member_nodes`. Each consumer derives
+    // its own realization from the shared `MapperInput`/chain algorithm.
 }
 
 /// Why a node ended up with its final scheduling placement (design §7
@@ -803,18 +779,6 @@ pub fn derive_sched_plan(
         provenance,
         chain_member_nodes,
         suppressed_contradictions,
-        // Phase 45.4 — single-derive wiring: `input`/`diagnostics` were
-        // already fully consumed above (contradiction scans, provenance);
-        // move their chain/node/rank facts out here rather than re-deriving
-        // them a second time for the model's `execution.sched`.
-        chains: input.chains,
-        nodes: input.nodes,
-        ranks: diagnostics.details,
-        // Phase 45.6 (review) — the exact set of overridden node FQNs the
-        // provenance renderer keyed off (`overridden`'s keys), carried out
-        // for the model so a model-sourced `--explain` classifies
-        // override(...) from fact, not from a priority-equality heuristic.
-        overrides: overridden.into_keys().collect(),
     })
 }
 
@@ -1268,23 +1232,13 @@ pub(crate) fn explain_rows_from_model(
     model: &ros_launch_manifest_model::SystemModel,
     target: &str,
 ) -> Vec<ExplainRow> {
-    let sched = model.execution.sched.as_ref();
-    let mapper_name = sched.and_then(|s| s.mapper.clone());
-    let empty_overrides = std::collections::BTreeSet::new();
-    let overrides = sched.map(|s| &s.overrides).unwrap_or(&empty_overrides);
-
-    let mut ranks_by_node: HashMap<&str, Vec<&ChainAwareDetail>> = HashMap::new();
-    let mut req_by_node: HashMap<&str, &ros_launch_manifest_model::NodeSchedRequirement> =
-        HashMap::new();
-    if let Some(s) = sched {
-        for d in &s.ranks {
-            ranks_by_node.entry(d.node.as_str()).or_default().push(d);
-        }
-        for r in &s.requirements {
-            req_by_node.insert(r.node_fqn.as_str(), r);
-        }
-    }
-
+    // Phase 45.10 — the resolved sched plan (mapper/ranks/chains/requirements/
+    // overrides) is no longer embedded in the model, so a model-only caller
+    // (`replay --model`) renders the APPLIED tier assignment it still carries:
+    // class/priority/core from `tiers`+`bindings`, provenance = "tier '<name>'
+    // → prio <p>". Full mapper provenance (chain-aware ranks, override
+    // classification) needs a fresh derive — `check`/`resolve --explain` show
+    // it via `explain_rows_from_derived`.
     let mut rows = Vec::new();
     for fqn in model.structure.nodes.keys() {
         let Some(tier_name) = model.execution.bindings.get(fqn) else {
@@ -1304,38 +1258,6 @@ pub(crate) fn explain_rows_from_model(
             continue;
         };
 
-        // Mirror `build_provenance`'s classification order exactly: override
-        // FIRST (from fact, not a priority heuristic — Phase 45.6 review
-        // Finding 1), then chain-aware ranks, then generic derived.
-        let provenance = if overrides.contains(fqn) {
-            Provenance::Override {
-                selector: bare_node_name(fqn),
-            }
-        } else if let Some(ds) = ranks_by_node.get(fqn.as_str()) {
-            let winner = ds
-                .iter()
-                .max_by(|a, b| {
-                    a.priority
-                        .cmp(&b.priority)
-                        .then_with(|| a.path.cmp(&b.path))
-                })
-                .expect("ranks_by_node groups are always non-empty");
-            let mut line = winner.provenance.clone();
-            if ds.len() > 1 {
-                line.push_str(&format!(" (max over {} paths)", ds.len()));
-            }
-            Provenance::ChainAware { line }
-        } else {
-            let mapper = mapper_name.clone().unwrap_or_else(|| "manual".to_string());
-            let fact = derived_fact_from_model(
-                &mapper,
-                req_by_node.get(fqn.as_str()).copied(),
-                tier_name,
-                spec.priority,
-            );
-            Provenance::Derived { mapper, fact }
-        };
-
         rows.push(ExplainRow {
             fqn: fqn.clone(),
             class: spec
@@ -1344,58 +1266,13 @@ pub(crate) fn explain_rows_from_model(
                 .unwrap_or_else(|| "SCHED_OTHER".to_string()),
             priority: spec.priority,
             core: spec.core,
-            provenance,
+            provenance: Provenance::Derived {
+                mapper: "(applied)".to_string(),
+                fact: format!("tier '{tier_name}' → prio {}", spec.priority),
+            },
         });
     }
     rows
-}
-
-/// Model-sourced analogue of [`describe_derived_fact`] (Phase 45.6 review,
-/// Finding 2): reproduce the fresh-derive renderer's per-node "fact" text
-/// from the model's `execution.sched.requirements` where the fact is
-/// embedded. `deadline_monotonic`'s deadline is
-/// `min(paths[].max_latency_ms)` — embedded — so its
-/// `"<deadline_us> us deadline → prio <p>"` line matches `check` exactly.
-/// `rate_monotonic`'s rate fact is NOT embedded (different source; see
-/// [`explain_rows_from_model`]'s doc comment), so it — like `manual` and any
-/// unknown mapper — falls back to the tier-name description, matching
-/// `describe_derived_fact`'s own `manual`/fallback arm.
-fn derived_fact_from_model(
-    mapper: &str,
-    req: Option<&ros_launch_manifest_model::NodeSchedRequirement>,
-    tier_name: &str,
-    priority: i64,
-) -> String {
-    if mapper == "deadline_monotonic"
-        && let Some(deadline_us) = req.and_then(min_deadline_us_from_requirement)
-    {
-        return format!("{deadline_us} us deadline → prio {priority}");
-    }
-    format!("tier '{tier_name}' → prio {priority}")
-}
-
-/// The tightest declared deadline across a node's paths, in microseconds —
-/// `min(paths[].max_latency_ms) * 1000`, rounded — matching
-/// `sched_derive::extract_path_facts`' `deadline_us` derivation exactly (the
-/// value `deadline_monotonic` ranks on). `None` when the node declares no
-/// path with a `max_latency_ms`.
-fn min_deadline_us_from_requirement(
-    req: &ros_launch_manifest_model::NodeSchedRequirement,
-) -> Option<u64> {
-    req.paths
-        .iter()
-        .filter_map(|p| p.max_latency_ms)
-        .fold(None, |acc: Option<f64>, v| {
-            Some(acc.map_or(v, |a| a.min(v)))
-        })
-        .map(|ms| (ms * 1000.0).round() as u64)
-}
-
-/// The bare (last path segment) name of an FQN, e.g. `/a/b/c` → `c` — the
-/// override-selector convention every rt_workspace/Autoware platform file
-/// observed so far uses (see [`explain_rows_from_model`]'s doc comment).
-fn bare_node_name(fqn: &str) -> String {
-    fqn.rsplit('/').next().unwrap_or(fqn).to_string()
 }
 
 /// Pure table formatter shared by every `--explain` source (Phase 45.6,
@@ -1482,23 +1359,21 @@ pub(crate) fn explain_footer(
 pub(crate) fn explain_footer_from_model(model: &ros_launch_manifest_model::SystemModel) -> String {
     use std::fmt::Write as _;
 
+    // Phase 45.10 — the resolved sched plan (mapper/ranks/chains) is no longer
+    // embedded in the model; a model-only caller (`replay --model`) can only
+    // report the applied tier assignments it still carries, so the footer is
+    // generic. A fresh-derive caller (`resolve`/`check`) uses `explain_footer`
+    // with the real platform file instead.
     let mut out = String::new();
-    match model
-        .execution
-        .sched
-        .as_ref()
-        .and_then(|s| s.mapper.as_deref())
-    {
-        Some(mapper) => {
-            let _ = writeln!(out, "system file: (embedded in model; mapper={mapper})");
-        }
-        None => {
-            let _ = writeln!(
-                out,
-                "system file: (embedded in model; no scheduling platform file resolved)"
-            );
-        }
-    }
+    let _ = if model.execution.bindings.is_empty() {
+        writeln!(out, "system file: (none — no scheduling applied)")
+    } else {
+        writeln!(
+            out,
+            "system file: (applied tiers embedded in model; run `check --sched --explain` \
+             for full mapper provenance)"
+        )
+    };
     out
 }
 
@@ -3037,305 +2912,6 @@ resources:
             let text = render_explain(&derived, &resolved, None);
             assert!(text.contains("default (no timing facts)"), "{text}");
             assert!(text.contains("system file: provider("), "{text}");
-        });
-    }
-
-    // ── Phase 45.6: model-sourced --explain ──
-
-    /// Phase 45.6 parity test (the brief's core deliverable): render
-    /// `--explain` from a fresh derive (the `check` path,
-    /// `explain_rows_from_derived`/`render_explain`) and from the SAME
-    /// derivation embedded into a `SystemModel` the way `resolve` actually
-    /// builds it (`model_builder::build_system_model`, the `resolve`/
-    /// `replay --model` path, `explain_rows_from_model`/
-    /// `render_explain_from_model`) — the two must show byte-identical
-    /// per-node rows (chain-aware provenance included) and, since `resolve`
-    /// still has the fresh `ResolvedPlatformFile`/`ManifestIndex` in scope,
-    /// a byte-identical footer too.
-    #[test]
-    fn model_sourced_explain_matches_fresh_derive_for_chain_aware_plan() {
-        let dump = dump_two_plain_nodes();
-        let index = index_with_chain();
-        with_temp_file("yaml", V2_CHAIN_AWARE_BAND, |path| {
-            let derived =
-                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
-                    .expect("derive");
-            assert_eq!(derived.mapper, "chain_aware");
-
-            // Build the model exactly the way `resolve` does (same
-            // `SchedInputs` shape `model_builder::build_system_model`
-            // expects) — no separate/hand-rolled construction.
-            let sched_inputs = crate::ros::model_builder::SchedInputs {
-                derived: &derived,
-                declared_tiers: None,
-            };
-            let model = crate::ros::model_builder::build_system_model(
-                &dump,
-                &index,
-                Some(&sched_inputs),
-                Default::default(),
-                &Default::default(),
-            );
-            assert!(
-                model.execution.sched.is_some(),
-                "chain_aware mapper must embed execution.sched"
-            );
-
-            let resolved = ResolvedPlatformFile {
-                path: path.to_path_buf(),
-                channel: PlatformFileChannel::Explicit,
-            };
-            let check_text = render_explain(&derived, &resolved, Some(&index));
-            let footer = explain_footer(&resolved, Some(&index));
-            let model_text = render_explain_from_model(&model, "posix", &footer);
-
-            eprintln!("--- check --sched --explain ---\n{check_text}");
-            eprintln!("--- resolve/replay --model --explain ---\n{model_text}");
-
-            // Chain-aware provenance: exact per-node row parity for both
-            // chain members (design requirement: "chain provenance from
-            // ranks... must be equivalent").
-            for fqn in ["/fast_node", "/slow_node"] {
-                let check_row = check_text
-                    .lines()
-                    .find(|l| l.trim_start().starts_with(fqn))
-                    .unwrap_or_else(|| {
-                        panic!("check --explain row for {fqn} missing:\n{check_text}")
-                    });
-                let model_row = model_text
-                    .lines()
-                    .find(|l| l.trim_start().starts_with(fqn))
-                    .unwrap_or_else(|| {
-                        panic!("model --explain row for {fqn} missing:\n{model_text}")
-                    });
-                assert_eq!(check_row, model_row, "row mismatch for {fqn}");
-                assert!(check_row.contains("derived(chain_aware:"), "{check_row}");
-            }
-
-            // Footer parity: `resolve` has the same `ResolvedPlatformFile`/
-            // `ManifestIndex` in scope as `check`, so the footer is
-            // byte-identical, not just "equivalent".
-            let check_footer: Vec<&str> = check_text
-                .lines()
-                .skip_while(|l| !l.starts_with("system file:"))
-                .collect();
-            let model_footer: Vec<&str> = model_text
-                .lines()
-                .skip_while(|l| !l.starts_with("system file:"))
-                .collect();
-            assert_eq!(check_footer, model_footer);
-        });
-    }
-
-    /// Phase 45.6 review, Finding 1 (correctness): an override whose applied
-    /// priority COINCIDES with what the mapper would have derived anyway must
-    /// still be labeled `override(...)` on the model path — not silently
-    /// misclassified as `derived(chain_aware: ...)` by a priority-equality
-    /// heuristic. `/fast_node`'s chain_aware-derived priority under
-    /// `V2_CHAIN_AWARE_BAND` is 44; pinning it to exactly 44 via an override
-    /// is the reviewer's reproduction. `execution.sched.overrides` (the exact
-    /// overridden-node set `resolve` embeds) is what makes this exact.
-    #[test]
-    fn model_sourced_explain_override_coinciding_with_derived_is_still_override() {
-        let dump = dump_two_plain_nodes();
-        let index = index_with_chain();
-        // chain_aware, band 5..45, override fast_node to its OWN derived 44.
-        let yaml = "\
-target: posix
-mapper: chain_aware
-resources:
-  rt_priority_band: { min: 5, max: 45 }
-overrides:
-  fast_node: { priority: 44 }
-";
-        with_temp_file("yaml", yaml, |path| {
-            let derived =
-                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
-                    .expect("derive");
-            // Precondition: the override value really does coincide with the
-            // derived rank (else the test isn't exercising the coincidence).
-            let rank = derived
-                .ranks
-                .iter()
-                .find(|d| d.node == "/fast_node")
-                .expect("fast_node ranked");
-            assert_eq!(
-                rank.priority, 44,
-                "test premise: fast_node's derived rank must equal the override value"
-            );
-            assert!(
-                derived.overrides.contains("/fast_node"),
-                "fast_node must be in the derived overrides set"
-            );
-
-            let sched_inputs = crate::ros::model_builder::SchedInputs {
-                derived: &derived,
-                declared_tiers: None,
-            };
-            let model = crate::ros::model_builder::build_system_model(
-                &dump,
-                &index,
-                Some(&sched_inputs),
-                Default::default(),
-                &Default::default(),
-            );
-            // The overridden-node set is embedded in the model.
-            assert!(
-                model
-                    .execution
-                    .sched
-                    .as_ref()
-                    .unwrap()
-                    .overrides
-                    .contains("/fast_node"),
-                "execution.sched.overrides must carry fast_node"
-            );
-
-            let resolved = ResolvedPlatformFile {
-                path: path.to_path_buf(),
-                channel: PlatformFileChannel::Explicit,
-            };
-            let check_text = render_explain(&derived, &resolved, Some(&index));
-            let footer = explain_footer(&resolved, Some(&index));
-            let model_text = render_explain_from_model(&model, "posix", &footer);
-
-            let check_row = check_text
-                .lines()
-                .find(|l| l.trim_start().starts_with("/fast_node"))
-                .expect("check fast_node row");
-            let model_row = model_text
-                .lines()
-                .find(|l| l.trim_start().starts_with("/fast_node"))
-                .expect("model fast_node row");
-
-            // check labels it override(...) (reads its live overridden map);
-            // the model path must match — NOT `derived(chain_aware: ...)`.
-            assert!(
-                check_row.contains("override(fast_node)"),
-                "check row should be override: {check_row}"
-            );
-            assert!(
-                model_row.contains("override(fast_node)"),
-                "model row must classify override (Finding 1 fix): {model_row}"
-            );
-            assert!(
-                !model_row.contains("derived(chain_aware:"),
-                "model row must NOT misclassify a coinciding override as derived: {model_row}"
-            );
-            assert_eq!(check_row, model_row, "coincidence-override row must match");
-        });
-    }
-
-    /// Phase 45.6 review, Finding 2 (accuracy): `deadline_monotonic`'s
-    /// derived fact — `min(paths[].max_latency_ms)` — IS embedded in the
-    /// model (`execution.sched.requirements`), so the model-path renderer
-    /// reproduces `check`'s `"<deadline_us> us deadline → prio <p>"` exactly,
-    /// not the generic tier-name fallback.
-    #[test]
-    fn model_sourced_explain_deadline_monotonic_shows_deadline_fact() {
-        use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedNodePath};
-        use ros_launch_manifest_types::{PathDecl, Trigger};
-
-        let dump = dump_two_plain_nodes();
-        // Two nodes with declared path deadlines (no chains): fast_node 5ms,
-        // slow_node 20ms → deadline_monotonic ranks fast_node higher.
-        let mut index = ManifestIndex::default();
-        index.node_paths.push(ResolvedNodePath {
-            node_fqn: "/fast_node".to_string(),
-            path_name: "p".to_string(),
-            path: PathDecl {
-                trigger: Some(Trigger::Input(vec!["in".to_string()])),
-                max_latency_ms: Some(5.0),
-                ..Default::default()
-            },
-            scope_id: 0,
-        });
-        index.node_paths.push(ResolvedNodePath {
-            node_fqn: "/slow_node".to_string(),
-            path_name: "p".to_string(),
-            path: PathDecl {
-                trigger: Some(Trigger::Input(vec!["in".to_string()])),
-                max_latency_ms: Some(20.0),
-                ..Default::default()
-            },
-            scope_id: 0,
-        });
-        index.manifests.insert(
-            0,
-            ResolvedManifest {
-                scope_id: 0,
-                pkg: Some("dm_fixture".to_string()),
-                file: "two_nodes.launch.xml".to_string(),
-                ns: "/".to_string(),
-                channel: ContractChannel::Provider,
-                contract_path: PathBuf::from(
-                    "/opt/share/dm_fixture/launch/two_nodes.contract.yaml",
-                ),
-                manifest: Default::default(),
-                source: String::new(),
-                diagnostics: vec![],
-            },
-        );
-        let yaml = "\
-target: posix
-mapper: deadline_monotonic
-resources:
-  rt_priority_band: { min: 10, max: 40 }
-";
-        with_temp_file("yaml", yaml, |path| {
-            let derived =
-                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
-                    .expect("derive");
-            assert_eq!(derived.mapper, "deadline_monotonic");
-            assert!(
-                derived.ranks.is_empty(),
-                "deadline_monotonic emits no ranks"
-            );
-
-            let sched_inputs = crate::ros::model_builder::SchedInputs {
-                derived: &derived,
-                declared_tiers: None,
-            };
-            let model = crate::ros::model_builder::build_system_model(
-                &dump,
-                &index,
-                Some(&sched_inputs),
-                Default::default(),
-                &Default::default(),
-            );
-
-            let resolved = ResolvedPlatformFile {
-                path: path.to_path_buf(),
-                channel: PlatformFileChannel::Explicit,
-            };
-            let check_text = render_explain(&derived, &resolved, Some(&index));
-            let footer = explain_footer(&resolved, Some(&index));
-            let model_text = render_explain_from_model(&model, "posix", &footer);
-
-            for fqn in ["/fast_node", "/slow_node"] {
-                let check_row = check_text
-                    .lines()
-                    .find(|l| l.trim_start().starts_with(fqn))
-                    .unwrap_or_else(|| panic!("check row for {fqn}:\n{check_text}"));
-                let model_row = model_text
-                    .lines()
-                    .find(|l| l.trim_start().starts_with(fqn))
-                    .unwrap_or_else(|| panic!("model row for {fqn}:\n{model_text}"));
-                assert!(
-                    check_row.contains("us deadline → prio"),
-                    "check row should cite the deadline fact: {check_row}"
-                );
-                assert_eq!(
-                    check_row, model_row,
-                    "deadline_monotonic row must match on the model path for {fqn}"
-                );
-            }
-            // Specifically the tighter 5ms → 5000us deadline, embedded and
-            // reproduced (not a tier-name fallback).
-            assert!(
-                model_text.contains("5000 us deadline → prio"),
-                "{model_text}"
-            );
         });
     }
 

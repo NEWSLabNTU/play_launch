@@ -1,7 +1,9 @@
 # Phase 48: Detangle Namespace from the Scope Tree
 
-**Status:** 📋 Planned. A **minimal** alignment fix already shipped (see
-"Shipped: minimal fix" below); this phase is the **full** detangle.
+**Status:** ✅ Complete (2026-07-20). The **minimal** alignment fix shipped
+first (see "Shipped: minimal fix"); the **full** detangle then shipped (see
+"Shipped: full detangle"). `structure.scopes` is now the include tree keyed by
+launch file; namespace is exclusively a per-node property.
 **Motivated by:** the 8 Autoware "scope advisories" (`/control` vs `/`)
 surfaced while fixing the parser param-FQN bugs (2026-07-20). Root-cause
 discussion: the parser conflates two orthogonal axes — **scope** (structural:
@@ -82,6 +84,34 @@ Make the model say what's true: scope = structure, namespace = per-node.
   (parent chain + origin) instead of ns.
 - **48.5 Contracts**: confirm `find_node_decl` (parent-chain) and
   `resolve_node_ref` (FQN) are unaffected; re-key `scope_paths`.
+
+## Shipped: full detangle
+
+Landed entirely in the model builder + model schema; the parser scope table is
+unchanged (it still tracks file + group scopes for the launch-tree UI, which
+reads the in-memory `LaunchDump`, not the model).
+
+- **`model_builder.rs`**: `scope_keys()` now keys FILE scopes by their
+  `<pkg>/<file>` origin (structure, not namespace), disambiguated with `#<id>`
+  for a file included more than once. `nearest_file_scope()` folds `<group>`
+  scopes into their enclosing file; `scope_key()` resolves any node/parent
+  scope id through it. `structure.scopes` iterates file scopes only → it is the
+  include tree, with each entry's parent being the nearest file ancestor.
+- **`model::ScopeInfo`**: gained `package` + `file`; the map-key doc now says
+  the scope id is the launch file, not a namespace path.
+- **Result on Autoware**: both parsers emit the SAME 83 scope entries, keyed by
+  file (e.g. `tier4_control_launch/control.launch.xml`); `vehicle_cmd_gate`'s
+  scope is that file, not `/control`. 119/119 parity, contracts/sched/rt all
+  green. `NodeInstance.scope` is now purely "which launch file", and namespace
+  is read only from `NodeInstance.namespace`.
+- Unit test `model_builder::tests::scope_is_structural_and_groups_fold_into_file`;
+  `compare_models.py` scope note updated (structural, still advisory for the
+  `#<id>` duplicate-include case).
+
+What was NOT needed (from the original plan): no launch-tree UI change (it uses
+the LaunchDump, not the model); `find_node_decl`/`resolve_node_ref` were already
+structural/FQN-based; nano-ros doesn't read scopes (verified) so no wire
+coordination blocked landing.
 
 ## Coordination (nano-ros track)
 
