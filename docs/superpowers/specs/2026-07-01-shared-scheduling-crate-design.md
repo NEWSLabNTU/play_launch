@@ -237,3 +237,39 @@ scattered `[package.metadata.nros.node].callback_groups` +
   fields) under `posix` in `play_launch` and under an RTOS target in
   `nano-ros`.
 - `play_launch check` integration test over a fixture launch + system file.
+
+## 2026-07-20 — reverted model-embedding; agnostic-core / realizer split
+
+Maintainer decision (with the nano-ros track; nano-ros RFC-0050/0052,
+`src/ros-launch-manifest/docs/scheduling.md` §"Cross-repo design agreement"):
+
+- **The SystemModel is INPUT only.** The Phase-45 "Scheduling SSoT" embedding
+  of the resolved plan into `model.execution.sched` (`ExecutionSched`, rlm
+  `78f637d`/`5016b4d`/`c47c5bd`) is **reverted** (rlm `f090400`). play_launch
+  is a *parser* — it gathers all input (launch + contracts + system config +
+  declared `deploy`/`tiers`/`bindings`) into the model; it does not embed a
+  resolved sched plan. Phase-46 (unified **input** model, `record.json`
+  merge) continues.
+- **Execution modeling is the consumer's job; the *algorithm* is shared, not
+  the output.** `ros-launch-manifest-sched` (this crate) stays the shared,
+  pure crate. Split `chain_aware_mapper` into:
+  - **(a) a platform-agnostic core** — feasibility + clock-segmentation +
+    chain/segment **ranking**, producing a *priorityless* ordered/segmented
+    structure. Both runtimes call this.
+  - **(b) the Linux realizer** — `rt_priority_band` compression →
+    `ResolvedTierTable` (PiCAS priorities). `posix`-tagged; play_launch's
+    Linux runtime applies it. nano-ros does NOT use (b) — it writes its own
+    RTOS realizer (EDF / preemption-threshold / sporadic / affinity).
+- **Derivation stays per-consumer, sharing the `MapperInput` type.**
+  play_launch keeps `sched_derive` (`LaunchDump`+manifests → `MapperInput`,
+  parser-coupled, Linux-side). nano-ros derives `MapperInput` from the
+  SystemModel (`node_paths` + wiring + declared tiers). Each then calls the
+  agnostic core (a) + its own realizer.
+- **Runtime E2E monitoring stays stamp-based** — `age = now − header.stamp` at
+  the sink; no chain-id on the wire.
+
+Rework: (1) revert the model embedding — **done** (rlm `f090400`); (2) split
+`chain_aware_mapper` into core + `posix` realizer (this crate), exposing the
+priorityless ranked/segmented output; (3) nano-ros builds its own derivation +
+RTOS realizer over that core (nano-ros phase-296 W5). See also
+`2026-07-17-chain-aware-mapper-design.md` §"agnostic-core split".

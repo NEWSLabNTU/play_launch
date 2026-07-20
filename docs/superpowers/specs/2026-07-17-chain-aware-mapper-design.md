@@ -171,7 +171,13 @@ and resolved chains (additive). Companion checker rules land with the
 vocabulary-v2 implementation. Implementation phasing belongs to a future phase
 doc (not 42 — the study phase ends with this spec).
 
-## Reachability & artifact embedding (2026-07-18 decision; SHIPPED Phase 45)
+## Reachability & artifact embedding (2026-07-18 decision; SHIPPED Phase 45 — REVERTED 2026-07-20)
+
+> **REVERTED 2026-07-20 (maintainer decision).** The `execution.sched`
+> embedding described below was backed out (rlm `f090400`). The SystemModel
+> is INPUT only; the chain structure is not serialized into it. Consumers
+> derive `MapperInput` themselves and call the shared agnostic core (see
+> §"Agnostic-core split" below). This section is kept for provenance.
 
 Originally the chain structure this design computes (S·B·S decomposition,
 per-path ranks, provenance strings) was reachable only via `check`/`--sched`
@@ -200,3 +206,25 @@ warning volume on real Autoware output
 (`.superpowers/sdd/warning-diagnosis-study.md`). Phase 45.1 makes the
 detector chain-aware (suppress when the higher-priority side is a chain
 member) as the resolution.
+## Agnostic-core split (2026-07-20)
+
+The mapper as specified above produces **Linux** priorities (§Algorithm step
+5: `rt_priority_band` compression; step 6: per-node max projection → a
+`ResolvedTierTable`). To let nano-ros reuse the algorithm without inheriting
+the Linux realization, `chain_aware_mapper` splits into two:
+
+- **Agnostic core** — steps 1–4 (feasibility, chain ordering, sink-to-source
+  segment/boundary ranking). Output: a **priorityless** ordered/segmented
+  ranking (dense ranks + segment membership + the per-path facts), no
+  `rt_priority_band`, no `ResolvedTierTable`. Both runtimes call this.
+- **Linux realizer** — steps 5–6 (`rt_priority_band` dense-rank→priority
+  compression, per-node max projection). `posix`-tagged; play_launch's Linux
+  apply layer consumes it. nano-ros ignores it and writes its own RTOS
+  realizer (EDF / preemption-threshold / sporadic / affinity), consuming the
+  same priorityless ranking.
+
+Derivation (`MapperInput` from input) stays per-consumer: play_launch's
+`sched_derive` (from `LaunchDump`) vs nano-ros's `SystemModel → MapperInput`.
+Both feed the shared agnostic core. Rationale + cross-repo agreement:
+`2026-07-01-shared-scheduling-crate-design.md` §"2026-07-20"; nano-ros
+RFC-0052 §"nano-ros execution modeling".
