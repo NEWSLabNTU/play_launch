@@ -1,14 +1,29 @@
 # Record Format (record.json)
 
+> **Status (Phase 47.B2–B4): `record.json` is retired as a disk artifact.**
+> `dump`/`resolve`/`launch`/`replay` never read or write it on any primary
+> path — the SystemModel (`system_model.yaml`) is the one user-facing
+> artifact (see `docs/design/unified-system-model.md`). The schema
+> documented below still exists, unchanged, as `LaunchDump` — the parser's
+> **in-memory** intermediate: `resolve`/`launch` parse straight into it
+> (Rust: JSON round-trip entirely in memory; Python: a private OS-temp
+> scratch file, deleted before the caller sees it) and build the SystemModel
+> from it without ever touching a `record.json` path. The one residual CLI
+> consumer of an on-disk file in this shape is `play_launch context
+> record.json` (dev tool, reads a pre-existing file — old dump, or a
+> hand-rolled `play_launch_parser` output — nothing produces one anymore).
+
 ## Overview
 
-`record.json` is the primary artifact produced by the parser and consumed
-by the executor. It captures everything needed to replay a ROS 2 launch
-without re-parsing: node processes, container processes, composable node
-loads, parameter files, and resolved variables.
+`LaunchDump` (formerly written to disk as `record.json`, Phase 47: an
+in-memory intermediate only) captures everything needed to build a
+SystemModel without re-parsing: node processes, container processes,
+composable node loads, parameter files, and resolved variables.
 
 Source: `src/play_launch_parser/.../record/types.rs` (parser)
-Consumer: `src/play_launch/src/ros/launch_dump.rs` (executor)
+Consumer: `src/play_launch/src/ros/launch_dump.rs` (`resolve`/`launch` build
+the SystemModel from it in memory; `context` is the only remaining reader
+of an on-disk copy)
 
 ## Current Format
 

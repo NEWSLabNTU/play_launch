@@ -55,32 +55,27 @@ play_launch run demo_nodes_cpp talker --ros-args -p topic:=chatter
 ### Dump Only (No Replay)
 
 ```bash
-# `dump`'s own flags (--output/-o, --format, --debug) may be given anywhere
-# on the command line — before `launch`/`run`, or after, or interleaved
-# with the KEY:=VALUE launch arguments (47.A1: they're declared `global`,
-# so clap recognizes them at any position in the nested subcommand).
+# `dump`'s own flags (--output/-o, --debug) may be given anywhere on the
+# command line — before `launch`, or after, or interleaved with the
+# KEY:=VALUE launch arguments (47.A1: they're declared `global`, so clap
+# recognizes them at any position in the nested subcommand).
 play_launch dump [dump_options...] launch <package_name> <launch_file> [key:=value...] [dump_options...]
 play_launch dump [dump_options...] launch <launch_file_path> [key:=value...] [dump_options...]
-
-# Dump node execution
-play_launch dump [dump_options...] run <package_name> <executable> [args...]
 ```
 
 **Dump-Specific Options:**
-- `--output <file>` or `-o <file>`: Output file (default: `system_model.yaml`
-  for `dump launch`'s default `--format model`; `record.json` for
-  `--format record` and for `dump run`, which has no launch scope tree to
-  build a model from)
-- `--format <model|record>`: Dump format (default `model`, the SystemModel —
-  the one user-facing dump). `record` emits the legacy `record.json` — kept
-  as a deprecated dev/parser-parity escape hatch (`scripts/compare_records.py`,
-  `just compare-dumps`), not the user-facing default (Phase 46.5)
+- `--output <file>` or `-o <file>`: Output file (default: `system_model.yaml`)
 - `--debug`: Enable debug output during dump
+
+`dump` always emits the SystemModel — the one dump artifact (Phase 47.B2
+removed `--format`/`DumpFormat` and `dump run`; `record.json` is no longer
+produced anywhere). `dump run` had no SystemModel form (a single executable
+has no launch scope tree to build one from) — use `play_launch run` for the
+single-node dump+replay-in-one case instead.
 
 **Examples:**
 ```bash
-# Dump to a custom SystemModel file (default format) — flags before the
-# KEY:=VALUE launch arguments
+# Dump to a custom SystemModel file — flags before the KEY:=VALUE launch arguments
 play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
 
@@ -90,11 +85,6 @@ play_launch dump launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning \
     --output autoware.yaml
 
-# Dump the legacy record.json (deprecated; parser-parity tooling only)
-play_launch dump --format record --output autoware_dump.json \
-    launch autoware_launch planning_simulator.launch.xml \
-    map_path:=$HOME/autoware_map/sample-map-planning
-
 # Dump with debug output
 play_launch dump --debug launch demo_nodes_cpp topics/talker_listener.launch.py
 ```
@@ -102,12 +92,10 @@ play_launch dump --debug launch demo_nodes_cpp topics/talker_listener.launch.py
 ### Replay Only
 
 ```bash
-# Replay from a SystemModel (primary path, Phase 46)
+# Replay from a SystemModel — the sole replay source (Phase 47.B3 hard-cut
+# the legacy record.json/--input-file path). Positional or --model, not both.
+play_launch replay <system_model.yaml> [options...]
 play_launch replay --model <system_model.yaml> [options...]
-
-# Replay from a legacy record.json without --model (deprecated, warns,
-# spawns the same as before — Phase 46.5 compat)
-play_launch replay --input-file <record.json> [options...]
 ```
 
 **Examples:**
@@ -125,11 +113,10 @@ These options apply to `launch`, `run`, and `replay` subcommands:
 
 ### Output Configuration
 - `--log-dir <path>`: Log directory for execution outputs (default: `play_log`)
-- `--model <path>`: SystemModel to replay from (primary source since Phase
-  46 — spawns from `structure.nodes`, no companion record required)
-- `--input-file <path>`: Legacy record.json to replay when `--model` is
-  absent (default: `record.json`). Deprecated (Phase 46.5): prints a
-  one-time warning and still spawns, kept for one release's rollback grace
+- `<system_model.yaml>` (positional) or `--model <path>`: SystemModel to
+  replay from — required (`replay` errors clearly if neither is given);
+  spawns from `structure.nodes`, no companion record file. Giving both is
+  an error.
 
 ### Monitoring & Performance
 - `--config <path>` or `-c <path>`: Runtime configuration YAML file
@@ -165,25 +152,26 @@ See `tests/fixtures/autoware/autoware_config.yaml` for a full config YAML exampl
 
 ## Workflow Explanation
 
-### Automatic Dump-Resolve-Replay (`launch` and `run`)
+### Automatic Parse-Resolve-Replay (`launch` and `run`)
 
-When you use `play_launch launch` (Phase 43/46 — the SystemModel path is
-the default):
+When you use `play_launch launch` (Phase 47.B4 — fully in-memory, no
+record.json anywhere):
 
-1. **Dump phase**: records launch execution to a `record.json` internally
-   (nodes, composable nodes, containers, parameters, remappings) — this is
-   an internal working file for the `launch` flow, not the artifact you're
-   expected to keep or hand-edit.
+1. **Parse phase**: parses the launch file into an in-memory `LaunchDump`
+   (nodes, composable nodes, containers, parameters, remappings). The Rust
+   parser path never touches disk; the Python parser path round-trips
+   through a private OS-temp scratch file that's deleted before this step
+   returns — neither is a `record.json` left for you to keep or hand-edit.
 
-2. **Resolve phase**: builds `system_model.yaml` from that record + contract
-   manifests + scheduling platform file (the same pipeline as
-   `play_launch resolve`)
+2. **Resolve phase**: builds the SystemModel from that in-memory dump +
+   contract manifests + scheduling platform file (the same pipeline as
+   `play_launch resolve`, called in-process)
    - Contract **errors refuse the launch** — the model is checked by
      construction; warnings embed in the model
-   - Since Phase 46.5 there is no cryptographic model↔record binding —
-     the model is a complete, self-sufficient artifact on its own
 
-3. **Replay phase**: executes the launch **from the SystemModel**
+3. **Replay phase**: executes the launch **from the SystemModel**, calling
+   the same replay engine `play_launch replay` uses, directly (no second
+   CLI invocation)
    - Spawns nodes and containers from `structure.nodes`; loads composable
      nodes via RCL services
    - The rule engine, blocking allowlist, and lifecycle wiring read the
@@ -199,27 +187,20 @@ contracts to check.
 | Verb | Role |
 |---|---|
 | `check` | diagnostic front-end — full source excerpts, `--explain`, rule filters |
-| `resolve` / `dump` | the build step — both emit the same checked `system_model.yaml` (the one user-facing artifact, Phase 46.5) |
-| `replay --model` | the runtime — spawns and applies contracts/scheduling from the model, no companion record required |
-
-`replay --input-file <record.json>` without `--model` remains a **deprecated**
-legacy path (re-loads manifests and re-derives the sched plan from the
-platform file at replay time) — it still spawns, prints a one-time
-deprecation warning, and is kept for one release's rollback grace. There is
-no model↔record binding to go stale: since 46.5 the two are independent
-artifacts, not a checked pair.
+| `resolve` / `dump` | the build step — both emit the same checked `system_model.yaml` (the one user-facing artifact) |
+| `replay <model>` / `replay --model <model>` | the runtime — spawns and applies contracts/scheduling from the model; it's the ONLY replay source (Phase 47.B3 removed the record.json fallback) |
 
 ### Manual Workflow
 
 For more control, you can separate the dump and replay steps:
 
-`dump`'s own flags (`--output`, `--format`) and `resolve`'s own flags (`-o`,
-`--sched`, `--contracts`, ...) may be given before or after the `launch`/`run`
-subcommand and the `KEY:=VALUE` launch arguments — clap parses flags in any
-position (47.A1). Putting them first, as below, is just a style choice:
+`dump`'s own flags (`--output`) and `resolve`'s own flags (`-o`, `--sched`,
+`--contracts`, ...) may be given before or after the `launch` subcommand and
+the `KEY:=VALUE` launch arguments — clap parses flags in any position
+(47.A1). Putting them first, as below, is just a style choice:
 
 ```bash
-# Step 1: Dump the SystemModel directly (default format — no record.json involved)
+# Step 1: Dump the SystemModel
 play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
 
@@ -238,22 +219,6 @@ play_launch resolve -o autoware.yaml --sched system.posix.yaml \
     autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
 play_launch replay --model autoware.yaml
-```
-
-**Legacy record.json path (deprecated, dev/parser-parity tooling only):**
-
-```bash
-# Dump the legacy record.json
-play_launch dump --format record --output autoware_planning.json \
-    launch autoware_launch planning_simulator.launch.xml \
-    map_path:=$HOME/autoware_map/sample-map-planning
-
-# Resolve reuses an existing record.json instead of re-parsing the launch file
-play_launch resolve --record autoware_planning.json \
-    --sched system.posix.yaml -o autoware.yaml
-
-# Replay from the legacy record without --model (warns, still spawns)
-play_launch replay --input-file autoware_planning.json --log-dir logs/run1
 ```
 
 ## Environment Requirements

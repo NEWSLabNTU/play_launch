@@ -5,7 +5,7 @@ Guide for Claude Code when working with this repository.
 ## Project Overview
 
 ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for performance analysis:
-- **play_launch_parser** (Rust): Parses launch files into the resolved SystemModel (`system_model.yaml`, default, 3-12x faster). `record.json` is a deprecated compat/dev artifact (`dump --format record`, Phase 46.5).
+- **play_launch_parser** (Rust): Parses launch files into the resolved SystemModel (`system_model.yaml`, the ONE user-facing artifact — Phase 47 hard-removed `record.json` as a dump/replay artifact).
 - **dump_launch** (Python): Alternative parser for maximum compatibility
 - **play_launch** (Rust): Replays with resource monitoring
 - **play_launch_analyzer** (Python): Analyzes and visualizes logs
@@ -19,7 +19,7 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for pe
 
 **CRITICAL RULE**: When Rust and Python parser behaviors differ, **Python's behavior is always correct**. Fix Rust, not Python. Validate with `just compare-dumps` in test workspaces.
 
-**Model parity (Phase 46)**: both parsers produce the SAME complete SystemModel — structure, contracts, and scheduling all apply on the shared scope table (`ScopeOrigin.path`, Phase 40.1) independent of which parser built it (`resolve --parser {rust,python}`). Parity comparison (`just compare-dumps`, `scripts/compare_records.py`) still runs on the `record.json` shape (`dump --format record --parser {rust,python}`) since that tooling is deeply record.json-shaped; it is a dev/parser-parity artifact, not the user-facing output.
+**Model parity (Phase 46, moved onto models in Phase 47.B1)**: both parsers produce the SAME complete SystemModel — structure, contracts, and scheduling all apply on the shared scope table (`ScopeOrigin.path`, Phase 40.1) independent of which parser built it (`resolve --parser {rust,python}`). Parity comparison (`just compare-dumps`, `scripts/compare_models.py`) runs on the SystemModel itself — `record.json` and `scripts/compare_records.py` are retired (Phase 47.B2/B5).
 
 ### Parser Architecture
 
@@ -35,7 +35,7 @@ Implementation: `src/python/api/utils.rs` (substitution handling), `src/params.r
 
 ### Launch Tree Scoping (Phase 30)
 
-The parser tracks which launch file each node originates from via a **scope table**, carried in the deprecated `record.json` format and in the SystemModel's `structure.scopes`. Each `<include>` creates a new scope entry with `(pkg, file, ns, args, parent)`. Nodes reference their scope via `scope: Option<usize>`.
+The parser tracks which launch file each node originates from via a **scope table**, carried in the parser's in-memory `LaunchDump` intermediate (Phase 47: no longer written to disk as `record.json`) and in the SystemModel's `structure.scopes`. Each `<include>` creates a new scope entry with `(pkg, file, ns, args, parent)`. Nodes reference their scope via `scope: Option<usize>`.
 
 - **Scope types**: `ScopeEntry`, `ScopeTable` in `record/types.rs` (parser) and `launch_dump.rs` (executor)
 - **Both parsers**: Rust (`include.rs`, `xml_include.rs`, `python_exec.rs`) and Python (`visitor/entity.py`, `visitor/include_launch_description.py`) produce matching scope tables
@@ -44,7 +44,7 @@ The parser tracks which launch file each node originates from via a **scope tabl
 - **Member name mapping**: `node_scope_map` keyed by `name.or(exec_name)` to match actor system member names
 - **CLI**: `play_launch context record.json --tree|--node <FQN>|--launch <pkg> <file>`
 - **Web UI**: "Launch" page (`LaunchTreeView.js`, `LaunchPanel.js`) with tree view + detail panel
-- **API**: `GET /api/launch-tree` returns `{ scopes, node_scopes }` — still sourced from `launch_dump` (record.json), not the model; on a model-only `replay --model` (no record companion, the common case since 46.5) this degrades to empty (`{}`), not an error — a documented follow-up is to source it from `model.structure.scopes` instead (`.superpowers/sdd/p46-w5-report.md` §6)
+- **API**: `GET /api/launch-tree` returns `{ scopes, node_scopes }` — sourced from the in-memory `LaunchDump` `replay`/`launch` build for the invocation (Phase 47: no `record.json` on disk anywhere). `launch`'s in-memory round-trip passes the real parsed dump, so this stays populated there; standalone `replay --model <path>` (no launch step) has no dump to read and degrades to empty (`{}`), not an error — a documented follow-up is to source it from `model.structure.scopes` instead (`.superpowers/sdd/p46-w5-report.md` §6)
 - **Validation**: `scripts/compare_scopes.py` — self-consistency + cross-parser comparison
 
 ### Launch IR (feature-gated)
@@ -70,7 +70,7 @@ play_launch plot                    # Analysis
 
 ## Architecture
 
-**Execution Flow:** Load the SystemModel (`system_model.yaml`, from `resolve`/`dump`/`launch`) → classify nodes → spawn async tasks → actor-based lifecycle → logs to `play_log/<timestamp>/`. `record.json` is a deprecated compat/dev artifact (`dump --format record`; `replay --input-file record.json` still works but warns) — not the runtime's primary input since Phase 46.5.
+**Execution Flow:** Load the SystemModel (`system_model.yaml`, from `resolve`/`dump`, or built in-memory by `launch`) → classify nodes → spawn async tasks → actor-based lifecycle → logs to `play_log/<timestamp>/`. `replay` requires a SystemModel (positional `<model.yaml>` or `--model <path>`) — Phase 47 hard-removed the legacy `--input-file record.json` compat path (and `dump --format record`/`--format` entirely); `record.json` is no longer a user-facing artifact anywhere. `LaunchDump` (the parser's JSON-serializable record shape) still exists as an in-memory intermediate `resolve`/`launch` build the model from — it just never touches disk on the primary paths anymore.
 
 **Key Concepts:**
 - **Async/Tokio**: All background services run as async tasks
@@ -195,10 +195,57 @@ Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests 
 
 **DDS isolation**: `play_launch_cmd()` in `tests/src/fixtures.rs` assigns a unique `ROS_DOMAIN_ID` per invocation (PID + counter) so concurrent nextest processes don't cross-talk over DDS.
 
-Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading,rt_workspace}/` — each has `just dump-rust`, `just dump-python`, `just compare-dumps`. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; build with its own `just build`, tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`, skip when unbuilt).
+Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading,rt_workspace}/` — 4 of them (`autoware`, `simple_test`, `container_events`, `rt_workspace`) have a `just compare-dumps` recipe (model-based parser parity, self-contained — resolves both parsers itself; Phase 47.B5 removed the `dump-rust`/`dump-python`/`dump-both`/`compare-dumps-record` record.json-based recipes). `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; build with its own `just build`, tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`, skip when unbuilt).
 
 ## Key Recent Changes
 
+- **2026-07-20**: Phase 47 (Wave B, 47.B2–B6) — hard removal of `record.json`
+  as a user-facing artifact. `dump` no longer has `--format`/`DumpFormat` —
+  it always emits the SystemModel; `dump run` (no SystemModel form) is
+  removed (`play_launch run` covers single-node dump+replay-in-one).
+  `replay` requires a SystemModel (positional `<model.yaml>` or `--model
+  <path>`, mutually exclusive) — the deprecated `--input-file record.json`
+  path is gone; `replay --input-file ...` now fails clap parsing
+  (`error: unexpected argument`), not a silent misparse. `resolve --record
+  <path>` (record-reuse mode) is removed along with it —
+  `package_or_path` is a required positional now. `launch`'s internal
+  round-trip is fully in-memory: parses straight into a `LaunchDump` (Rust
+  parser: JSON round-trip in memory, no disk; Python parser: a private
+  OS-temp scratch file, deleted before returning — not a `record.json` left
+  for the user), builds the SystemModel via the same `resolve` pipeline
+  (`commands::resolve::build_checked_model`), and calls the shared
+  `commands::replay::play()` engine directly — no second CLI invocation, no
+  file round-trip. `play()` now takes an owned `LaunchDump` + `Arc
+  <SystemModel>` instead of a record.json path + optional model; standalone
+  `replay` passes an empty dump (best-effort consumers — chain-colocation
+  warnings, the web UI launch-tree scope map — degrade to empty, same
+  documented limitation as before), `launch` passes the real one it just
+  parsed (those consumers stay populated there). The record-path spawn
+  functions (`prepare_container_contexts`/`prepare_composable_node_contexts`,
+  non-`_from_model`) are unreachable outside `#[cfg(test)]` now — kept
+  `#[allow(dead_code)]` for `run` (single-node path, unaffected) and the
+  `execution::spawn_equivalence_test` gate that proves the model-sourced
+  and record-sourced spawn paths agree. Retired
+  `scripts/compare_records.py` + `scripts/compare_parsers.sh`
+  (`scripts/compare_models.py` from Phase 47.B1 is the parity tool now);
+  fixture justfiles (`autoware`, `rt_workspace`, `simple_test`,
+  `container_events`) dropped their `dump-rust`/`dump-python`/`dump-both`/
+  `compare-dumps-record` recipes, keeping only the model-based
+  `compare-dumps`. `scripts/count_processes.py` now reads a SystemModel
+  YAML (`.yaml`/`.yml`) as primary input, with a legacy `.json` (record)
+  fallback for old files. Migrated the 9 integration test files that
+  dumped/compared via record.json (`autoware`, `simple_workspace`,
+  `container_events`, `sequential_loading`, `concurrent_loading`,
+  `mixed_loading`, `io_stress`, `parallel_loading`, `sched_apply`) onto
+  `resolve`/model comparison; `rt_workspace.rs`'s deprecation-warning test
+  was replaced with two hard-cut tests (`--input-file` rejected, no-model
+  errors clearly). Residual record.json reader: `play_launch context
+  record.json` — the CLI's last consumer, kept as a dev tool for old/
+  hand-produced record.json files (the model's `structure.scopes` lacks
+  the `ns`/`args`/file granularity `context` needs; migrating it is a
+  data-model expansion out of scope for this wave). Design:
+  `docs/roadmap/phase-47-cli_and_record_hard_removal.md` §B. Report:
+  `.superpowers/sdd/p47-wB-report.md`.
 - **2026-07-20**: Phase 46 (Unified SystemModel) complete — the SystemModel
   (`system_model.yaml`) is now the one user-facing artifact. `dump <launch>
   -o m.yaml` (default) and `resolve` emit the same complete model

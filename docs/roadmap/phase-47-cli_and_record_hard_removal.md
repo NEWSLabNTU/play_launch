@@ -1,6 +1,10 @@
 # Phase 47: CLI Flag Cleanup + Hard record.json Removal
 
-**Status:** 📋 Planned
+**Status:** ✅ Complete (2026-07-20) — A1–A3 and B1–B6 all shipped.
+`record.json` is no longer a user-facing artifact anywhere; `dump`/`resolve`/
+`replay`/`launch` are model-only. See `.superpowers/sdd/p47-wB1-report.md`
+(B1, the parity-to-models gate) and `.superpowers/sdd/p47-wB-report.md`
+(B2–B6, the hard removal) for implementation evidence.
 **Builds on:** Phase 46 (unified SystemModel; `record.json` retired to deprecated dev/compat).
 **Follow-ups source:** `.superpowers/sdd/p46-w5-report.md`, `p46-w6-report.md`, `.superpowers/sdd/p46-progress.md` (Phase 46 tracked follow-ups).
 

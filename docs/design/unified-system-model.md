@@ -2,13 +2,20 @@
 
 **Date:** 2026-07-20
 **Status:** SHIPPED (2026-07-20) — 46.0–46.5 implemented and merged; 46.6
-(this docs sweep) closes the phase. `record.json` is retired to a
-deprecated compat/dev artifact (`dump --format record`, parser-parity
-tooling only); `system_model.yaml` is the one user-facing artifact
-`dump`/`resolve` emit and `replay --model` (or `replay <model.yaml>`)
-reads. See `docs/roadmap/phase-46-unified_system_model.md` for the
+(this docs sweep) closes the phase. `system_model.yaml` is the one
+user-facing artifact `dump`/`resolve` emit and `replay <model.yaml>`/`replay
+--model` reads. See `docs/roadmap/phase-46-unified_system_model.md` for the
 work-item-by-work-item record and `.superpowers/sdd/p46-w2-report.md`
 through `p46-w6-report.md` for implementation evidence.
+**Phase 47 update:** the deprecated `record.json` compat/dev surface this
+doc describes below (`dump --format record`, `replay --input-file`) was
+HARD-REMOVED in Phase 47.B2/B3 (not just deprecated) — `dump` has no
+`--format` flag anymore, and `replay` requires a SystemModel (positional or
+`--model`; `--input-file` is gone, not a warn-and-continue path). The
+sections below describing the deprecated path are kept as historical
+record of the Phase 46 decision; see
+`docs/roadmap/phase-47-cli_and_record_hard_removal.md` §B and
+`.superpowers/sdd/p47-wB-report.md` for the removal.
 **Revises:** Phase 43's two-artifact decision (`phase-43-runtime_consumes_system_model.md`
 §"Decision: two-artifact runtime") — that decision is superseded.
 **Cross-track:** the `model`-crate field additions are shared with the nano-ros
