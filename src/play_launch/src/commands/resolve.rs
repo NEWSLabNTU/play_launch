@@ -37,10 +37,13 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    // Phase 43.1 — two record modes. Either way `record_path` names the
-    // spawn-info companion on disk, whose sha256 lands in meta.inputs so
-    // `replay --model` can refuse a mismatched (model, record) pair.
-    let (dump, launch_path, record_path): (
+    // Phase 46.5 — the record companion is retired: `resolve` no longer
+    // writes a `<out>.record.json` next to the model (the model has been a
+    // self-sufficient spawn source since 46.3b/46.4). `--record <path>`
+    // (reuse mode) still reads an EXISTING record.json someone else
+    // produced — that's a read path, not the companion write this wave
+    // drops — and its path still lands in `meta.inputs` for provenance.
+    let (dump, launch_path, record_reuse_path): (
         crate::ros::launch_dump::LaunchDump,
         Option<std::path::PathBuf>,
         Option<std::path::PathBuf>,
@@ -57,34 +60,22 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
             })?;
             let launch_path = super::launch::resolve_launch_file(pkg_or_path, launch_file)?;
             eprintln!("Resolving launch file: {}", launch_path.display());
-            // Emit the spawn-info companion next to the model so the pair
-            // ships together (skipped for stdout mode — nothing to bind).
-            let record_path = if args.out == "-" {
-                None
-            } else {
-                Some(std::path::PathBuf::from(&args.out).with_extension("record.json"))
-            };
             let dump: crate::ros::launch_dump::LaunchDump = match args.parser {
                 ParserBackend::Rust => {
                     let record =
                         play_launch_parser::parse_launch_file(&launch_path, cli_args.clone())
                             .map_err(|e| eyre::eyre!("Parser error: {e}"))?;
                     let json = serde_json::to_string_pretty(&record)?;
-                    if let Some(p) = &record_path {
-                        std::fs::write(p, &json).wrap_err_with(|| {
-                            format!("writing record companion {}", p.display())
-                        })?;
-                        eprintln!("Record companion: {}", p.display());
-                    }
                     serde_json::from_str(&json)?
                 }
                 ParserBackend::Python => {
                     // Phase 46.4 — one-step Python→model: run the Python
                     // parse path (same `dump_launch_python_wrapper` logic
-                    // `dump` uses) straight into the record companion, then
-                    // feed the SAME model_builder pipeline as the Rust path.
-                    // The contract/sched layers apply on the shared scope
-                    // table (`manifest_loader`/`sched_loader` key off
+                    // `dump` uses) into a SCRATCH temp file (never a
+                    // record.json companion — 46.5 drops that artifact),
+                    // then feed the SAME model_builder pipeline as the Rust
+                    // path. The contract/sched layers apply on the shared
+                    // scope table (`manifest_loader`/`sched_loader` key off
                     // `ScopeEntry.origin.path`, Phase 40.1 — both parsers
                     // emit it), independent of which parser produced the
                     // dump. They come back populated whenever a contract
@@ -94,40 +85,61 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
                     // sidecars, the Python-produced model is byte-identical
                     // to the Rust one across structure/contracts/execution.)
                     eprintln!("Resolving via Python parser");
-                    let companion_path = record_path.clone().unwrap_or_else(|| {
-                        std::env::temp_dir().join(format!(
-                            "play_launch-resolve-{}.record.json",
-                            std::process::id()
-                        ))
-                    });
+                    let scratch_path = std::env::temp_dir().join(format!(
+                        "play_launch-resolve-{}.record.json",
+                        std::process::id()
+                    ));
                     let runtime = super::common::build_tokio_runtime()?;
                     runtime.block_on(async {
                         let launcher = crate::python::dump_launcher::DumpLauncher::new().wrap_err(
                             "Failed to initialize dump_launch. Ensure ROS workspace is sourced.",
                         )?;
                         launcher
-                            .dump_launch(
-                                pkg_or_path,
-                                launch_file,
-                                &launch_arguments,
-                                &companion_path,
-                            )
+                            .dump_launch(pkg_or_path, launch_file, &launch_arguments, &scratch_path)
                             .await
                     })?;
-                    let dump = crate::ros::launch_dump::load_launch_dump(&companion_path)
+                    let dump = crate::ros::launch_dump::load_launch_dump(&scratch_path)
                         .wrap_err_with(|| {
-                            format!("loading Python-parsed record {}", companion_path.display())
+                            format!("loading Python-parsed record {}", scratch_path.display())
                         })?;
-                    if record_path.is_some() {
-                        eprintln!("Record companion: {}", companion_path.display());
-                    } else {
-                        // stdout mode — nothing binds to the temp file.
-                        let _ = std::fs::remove_file(&companion_path);
+                    let _ = std::fs::remove_file(&scratch_path);
+
+                    // Phase 46.5 CAVEAT (from the 46.4 report): a stale
+                    // pip-installed `play_launch` Python package (pre-Phase
+                    // 40.1) silently omits `ScopeOrigin.path`, which
+                    // disables the provider-sidecar contract + platform-file
+                    // channels with NO error — producing a silently
+                    // degraded model. Every file scope from a current
+                    // install carries `path` (see
+                    // `python/play_launch/dump/visitor/include_launch_description.py`);
+                    // its absence is a reliable stale-install signal. Fail
+                    // loud here instead of letting `dump`/`resolve` hand
+                    // back a quietly incomplete model.
+                    let stale: Vec<&str> = dump
+                        .scopes
+                        .iter()
+                        .filter(|s| s.is_file_scope() && s.path().is_none())
+                        .filter_map(|s| s.file())
+                        .collect();
+                    if !stale.is_empty() {
+                        eyre::bail!(
+                            "Python parser produced {} file scope(s) without \
+                             `ScopeOrigin.path` ({stale:?}) — this means a STALE \
+                             `play_launch` Python install (pre-Phase-40.1) is shadowing \
+                             the current source on PYTHONPATH. Contract/sched sidecar \
+                             resolution would silently find nothing and the model would \
+                             be missing the contracts/execution layers with no error. \
+                             Fix: prepend the current source's `python/` dir to \
+                             PYTHONPATH (`export PYTHONPATH=<repo>/python:$PYTHONPATH`), \
+                             or reinstall the current wheel \
+                             (`pip install --force-reinstall --no-deps dist/play_launch-*.whl`).",
+                            stale.len()
+                        );
                     }
                     dump
                 }
             };
-            (dump, Some(launch_path), record_path)
+            (dump, Some(launch_path), None)
         }
     };
 
@@ -168,7 +180,7 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
     if let Some(lp) = &launch_path {
         input_paths.insert(canon(lp.clone()));
     }
-    if let Some(rp) = &record_path {
+    if let Some(rp) = &record_reuse_path {
         input_paths.insert(canon(rp.clone()));
     }
     for s in &dump.scopes {
@@ -237,19 +249,12 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         arg_binding,
         &input_paths,
     );
-    // Phase 43.1 — bind the spawn-info companion explicitly (the gate
-    // `replay --model` checks; a bare inputs match is too loose, since the
-    // launch file itself is also hashed).
-    if let Some(rp) = &record_path {
-        use sha2::Digest as _;
-        let bytes = std::fs::read(rp)
-            .wrap_err_with(|| format!("hashing record companion {}", rp.display()))?;
-        let canon_rp = std::fs::canonicalize(rp).unwrap_or_else(|_| rp.clone());
-        model.meta.record = Some(ros_launch_manifest_model::InputHash {
-            path: canon_rp.display().to_string(),
-            sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
-        });
-    }
+    // Phase 46.5 — the model↔record hash binding (`meta.record`,
+    // `verify_model_record_binding`) is retired along with the companion:
+    // the model has been a self-sufficient spawn source since 46.3b/46.4,
+    // so there is no longer a second artifact to bind or mismatch. (The
+    // `record_reuse_path`, when `--record <path>` was given, is already
+    // folded into `meta.inputs` above — that's still real provenance.)
 
     // R1-P1 — integrator system config fills the execution layer
     // (deploy/transports/bridges/features). Fail-loud on unplaced nodes;
