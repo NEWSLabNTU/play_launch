@@ -1,6 +1,17 @@
 # Phase 45: Scheduling SSoT Unification
 
-**Status:** ✅ 45.1–45.8 shipped (2026-07-19); 45.9 = this doc sweep
+> **⚠ SUPERSEDED 2026-07-20 (maintainer decision).** The core SSoT premise —
+> `resolve` embedding the resolved sched plan into `model.execution.sched` so
+> every consumer reads it (45.2/45.3) — is **reverted** (rlm `f090400`). The
+> SystemModel is INPUT only; execution modeling is each consumer's job. The
+> algorithm is shared instead of the output: `chain_aware_mapper` splits into
+> a platform-agnostic core + a `posix` Linux realizer, and each runtime derives
+> its own `MapperInput`. See **§45.10** below and
+> `docs/superpowers/specs/2026-07-01-shared-scheduling-crate-design.md`
+> §"2026-07-20". The non-embedding items (45.1 diagnostic collapse, 45.7 FQN
+> unification, 45.8) stand.
+
+**Status:** 45.1/45.7/45.8 shipped; **45.2/45.3 (model embedding) REVERTED**; 45.10 = revert + split (in progress)
 **Design of record:** [docs/design/system-model-sched-ssot.md](../design/system-model-sched-ssot.md)
 **Builds on:** Phase 41 (sched v2), Phase 42 (study), Phase 43 (SystemModel runtime), Phase 44 (vocab v2 + chain_aware).
 **Cross-track:** the `model`-crate work items (45.2, 45.3) are shared with the
@@ -108,3 +119,35 @@ are cross-track gates (model crate); coordinate before 45.4 depends on them.
 Spawn-artifact changes (record.json stays); callback-level POSIX apply;
 nano-ros's consumption of embedded chains; forcing platform-file/system.toml
 convergence.
+
+## 45.10 — Revert model-embedding + agnostic-core split (2026-07-20)
+
+Replaces the SSoT-embedding direction (45.2/45.3) per the maintainer decision.
+Design: `docs/superpowers/specs/2026-07-01-shared-scheduling-crate-design.md`
+§"2026-07-20" + `2026-07-17-chain-aware-mapper-design.md` §"Agnostic-core split";
+nano-ros RFC-0050/0052; rlm `docs/scheduling.md` §"Cross-repo design agreement".
+
+- **45.10.a — revert the model embedding — ✅ DONE** (rlm `f090400`): removed
+  `model.execution.sched` / `ExecutionSched` / `NodeSchedRequirement` + tests;
+  the `sched` chain algorithm (`chain.rs`) is kept intact. Full rlm workspace
+  green. `model.execution.sched` no longer exists; the model is INPUT only.
+- **45.10.b — split `chain_aware_mapper`** (rlm `ros-launch-manifest-sched`): into
+  (a) a platform-agnostic **core** — §Algorithm steps 1–4 (feasibility +
+  clock-segmentation + chain/segment ranking), output a **priorityless**
+  ordered/segmented ranking — and (b) the **Linux realizer** — steps 5–6
+  (`rt_priority_band` compression, per-node max projection → `ResolvedTierTable`),
+  `posix`-tagged. play_launch's Linux apply layer consumes (b); nano-ros consumes
+  (a). **Done when:** the existing `chain_aware` outputs are byte-identical
+  through core+posix-realizer vs the old combined path (regression parity), and
+  the core is callable without producing priorities.
+- **45.10.c — keep per-consumer derivation**: `sched_derive` (play_launch,
+  `LaunchDump → MapperInput`) stays; nano-ros writes its own
+  `SystemModel → MapperInput` (nano-ros phase-296 W5). Shared type: `MapperInput`.
+
+Cross-track: nano-ros consumes (a) + writes its RTOS realizer in **phase-296 W5**.
+
+## Order and dependencies (45.10)
+
+45.10.a (done) → 45.10.b (split) → nano-ros phase-296 W5 (consume core + RTOS
+realizer). 45.10.c is parallel (derivation stays where it is; only the shared
+`MapperInput` type matters).
