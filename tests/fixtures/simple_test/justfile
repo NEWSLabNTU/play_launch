@@ -47,56 +47,9 @@ run-all:
 plot:
     @play_launch plot
 
-# Dump composition.launch.xml using Rust parser
-dump-rust:
-    #!/usr/bin/env bash
-    set -e
-    echo "Dumping composition.launch.xml with Rust parser..."
-    . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../../install/setup.bash
-    play_launch dump --output record_rust.json --format record launch \
-        --parser rust \
-        launch/composition.launch.xml
-    echo "✓ Rust parser dump complete: record_rust.json"
-
-# Dump composition.launch.xml using Python parser
-dump-python:
-    #!/usr/bin/env bash
-    set -e
-    echo "Dumping composition.launch.xml with Python parser..."
-    . /opt/ros/{{ros_distro}}/setup.bash
-    . ../../../install/setup.bash
-    play_launch dump --output record_python.json --format record launch \
-        --parser python \
-        launch/composition.launch.xml
-    echo "✓ Python parser dump complete: record_python.json"
-
-# Dump with both parsers
-dump-both: dump-rust dump-python
-
-# Compare Rust and Python parser outputs — record.json shape (legacy,
-# dev/parser-parity escape hatch; requires `just dump-both` first).
-compare-dumps-record:
-    #!/usr/bin/env bash
-    set -e
-    if [ ! -f "record_rust.json" ]; then
-        echo "ERROR: record_rust.json not found. Run 'just dump-rust' first."
-        exit 1
-    fi
-    if [ ! -f "record_python.json" ]; then
-        echo "ERROR: record_python.json not found. Run 'just dump-python' first."
-        exit 1
-    fi
-    echo "Comparing Rust and Python parser outputs..."
-    echo ""
-    python3 ../../../scripts/compare_records.py record_rust.json record_python.json
-    echo ""
-    echo "Comparison complete."
-
-# Compare Rust and Python parser outputs — SystemModel shape (Phase
-# 47.B1: the parser-parity gate now runs on the model, not record.json).
-# Self-contained: resolves both parsers itself (no dump-rust/dump-python
-# prerequisite).
+# Compare Rust and Python parser outputs — SystemModel shape (Phase 47:
+# the parser-parity gate runs on the model; record.json is retired).
+# Self-contained: resolves both parsers itself.
 compare-dumps:
     #!/usr/bin/env bash
     set -e

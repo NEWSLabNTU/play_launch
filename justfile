@@ -418,13 +418,41 @@ test-autoware:
     cd tests
     cargo nextest run -E 'binary(autoware)' --no-fail-fast --failure-output final
 
-# Compare Rust vs Python parser outputs
+# Compare Rust vs Python parser outputs — SystemModel shape (Phase 47:
+# scripts/compare_records.py + compare_parsers.sh are retired; the
+# parser-parity gate runs on the model now, scripts/compare_models.py).
 compare-parsers:
     #!/usr/bin/env bash
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
     source install/setup.bash
-    ./scripts/compare_parsers.sh
+    # Put the colcon-built binary ahead of PATH — a stale pip-installed
+    # play_launch on the host would otherwise silently win (same fix the
+    # fixture justfiles' compare-dumps recipes already apply).
+    export PATH="$(pwd)/install/play_launch/lib/play_launch:$PATH"
+    export PYTHONPATH="$(pwd)/python:$PYTHONPATH"
+    TMPDIR=$(mktemp -d)
+    trap "rm -rf $TMPDIR" EXIT
+    FAILED=0
+    for case in \
+        "tests/fixtures/simple_test/launch/pure_nodes.launch.xml:Simple nodes" \
+        "tests/fixtures/simple_test/launch/composition.launch.xml:Composable nodes" \
+    ; do
+        file="${case%%:*}"
+        desc="${case##*:}"
+        echo "----------------------------------------"
+        echo "Test: $desc ($file)"
+        play_launch resolve --parser rust -o "$TMPDIR/rust.yaml" "$file"
+        play_launch resolve --parser python -o "$TMPDIR/python.yaml" "$file"
+        if python3 scripts/compare_models.py "$TMPDIR/rust.yaml" "$TMPDIR/python.yaml"; then
+            echo "PASS: $desc"
+        else
+            echo "FAIL: $desc"
+            FAILED=1
+        fi
+        echo ""
+    done
+    exit $FAILED
 
 # Compare scope tables between Rust and Python parsers
 compare-scopes PKG LAUNCH *ARGS:

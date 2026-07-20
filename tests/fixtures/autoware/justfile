@@ -98,82 +98,9 @@ run-demo: check-autoware
 plot:
     @play_launch plot
 
-# Dump launch file using Rust parser
-dump-rust: check-autoware
-    #!/usr/bin/env bash
-    set -e
-    SCRIPT_DIR="{{script_dir}}"
-    cd "$SCRIPT_DIR"
-
-    MAP_PATH="{{map_path}}"
-
-    # Source ROS and Autoware setup
-    source ../../../install/setup.bash
-    source activate_autoware.sh
-
-    echo "Dumping with Rust parser..."
-    play_launch dump --output record_rust.json --format record launch \
-        --parser rust \
-        autoware_launch planning_simulator.launch.xml \
-        map_path:="$MAP_PATH"
-
-    echo "✓ Rust parser dump complete: record_rust.json"
-
-# Dump launch file using Python parser
-dump-python: check-autoware
-    #!/usr/bin/env bash
-    set -e
-    SCRIPT_DIR="{{script_dir}}"
-    cd "$SCRIPT_DIR"
-
-    MAP_PATH="{{map_path}}"
-
-    # Source ROS and Autoware setup
-    source ../../../install/setup.bash
-    source activate_autoware.sh
-
-    echo "Dumping with Python parser..."
-    play_launch dump --output record_python.json --format record launch \
-        --parser python \
-        autoware_launch planning_simulator.launch.xml \
-        map_path:="$MAP_PATH"
-
-    echo "✓ Python parser dump complete: record_python.json"
-
-# Dump with both parsers
-dump-both: dump-rust dump-python
-
-# Compare Rust and Python parser outputs — record.json shape (legacy,
-# dev/parser-parity escape hatch; requires `just dump-both` first).
-compare-dumps-record:
-    #!/usr/bin/env bash
-    set -e
-    SCRIPT_DIR="{{script_dir}}"
-    cd "$SCRIPT_DIR"
-
-    if [ ! -f "record_rust.json" ]; then
-        echo "ERROR: record_rust.json not found. Run 'just dump-rust' first."
-        exit 1
-    fi
-
-    if [ ! -f "record_python.json" ]; then
-        echo "ERROR: record_python.json not found. Run 'just dump-python' first."
-        exit 1
-    fi
-
-    echo "Comparing Rust and Python parser outputs..."
-    echo ""
-
-    # Use the compare_records.py script from the repo root
-    python3 ../../../scripts/compare_records.py record_rust.json record_python.json
-
-    echo ""
-    echo "Comparison complete."
-
-# Compare Rust and Python parser outputs — SystemModel shape (Phase
-# 47.B1: the parser-parity gate now runs on the model, not record.json).
-# Self-contained: resolves both parsers itself (no dump-rust/dump-python
-# prerequisite).
+# Compare Rust and Python parser outputs — SystemModel shape (Phase 47:
+# the parser-parity gate runs on the model; record.json is retired).
+# Self-contained: resolves both parsers itself.
 compare-dumps: check-autoware
     #!/usr/bin/env bash
     set -e
@@ -212,7 +139,7 @@ compare-dumps: check-autoware
     echo ""
     echo "Comparison complete."
 
-# Count running processes vs expected (from record.json)
+# Count running processes vs expected (from the resolved SystemModel)
 count-processes PARSER="rust": check-autoware
     #!/usr/bin/env bash
     set -e
@@ -230,14 +157,13 @@ count-processes PARSER="rust": check-autoware
     # Clean previous play_log
     rm -rf play_log/latest 2>/dev/null || true
 
-    # Dump record.json to get expected counts
-    echo "Dumping with $PARSER parser to get expected counts..."
-    play_launch dump --output record_count.json --format record launch \
-        --parser "$PARSER" \
+    # Resolve to get expected counts (Phase 47.B5: model, not record.json)
+    echo "Resolving with $PARSER parser to get expected counts..."
+    play_launch resolve --parser "$PARSER" -o model_count.yaml \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
 
-    EXPECTED=$(python3 -c "import json; r=json.load(open('record_count.json')); print(len(r.get('node',[])) + len(r.get('container',[])))")
+    EXPECTED=$(python3 -c "import yaml; m = yaml.safe_load(open('model_count.yaml')) or dict(); nodes = (m.get('structure') or dict()).get('nodes') or dict(); containers = sum(1 for n in nodes.values() if n.get('is_container')); composables = sum(1 for n in nodes.values() if not n.get('is_container') and n.get('plugin')); print(len(nodes) - containers - composables + containers)")
     echo "Expected processes: $EXPECTED"
 
     # Start play_launch in background
@@ -301,11 +227,11 @@ count-processes PARSER="rust": check-autoware
 
     echo ""
     set +e
-    python3 ../../../scripts/count_processes.py record_count.json --play-log-dir play_log/latest
+    python3 ../../../scripts/count_processes.py model_count.yaml --play-log-dir play_log/latest
     RESULT=$?
     set -e
 
-    rm -f record_count.json
+    rm -f model_count.yaml
     exit $RESULT
 
 # Count processes using Rust parser
