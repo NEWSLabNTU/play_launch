@@ -220,12 +220,15 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
   `replay` passes an empty dump (best-effort consumers — chain-colocation
   warnings, the web UI launch-tree scope map — degrade to empty, same
   documented limitation as before), `launch` passes the real one it just
-  parsed (those consumers stay populated there). The record-path spawn
-  functions (`prepare_container_contexts`/`prepare_composable_node_contexts`,
-  non-`_from_model`) are unreachable outside `#[cfg(test)]` now — kept
-  `#[allow(dead_code)]` for `run` (single-node path, unaffected) and the
-  `execution::spawn_equivalence_test` gate that proves the model-sourced
-  and record-sourced spawn paths agree. Retired
+  parsed (those consumers stay populated there). The container/composable
+  record-path spawn builders (`prepare_container_contexts`/
+  `prepare_composable_node_contexts`) and their static-equivalence gate
+  (`execution::spawn_equivalence_test`) were DELETED (review fix) once the
+  record.json artifact retirement left them with no reachable caller — the
+  gate had become a vacuous skip (it needed a record.json it could no
+  longer produce). `prepare_node_contexts` (the plain-node record-path
+  builder) stays LIVE — `run` (single-node dump+replay) still uses it.
+  Retired
   `scripts/compare_records.py` + `scripts/compare_parsers.sh`
   (`scripts/compare_models.py` from Phase 47.B1 is the parity tool now);
   fixture justfiles (`autoware`, `rt_workspace`, `simple_test`,

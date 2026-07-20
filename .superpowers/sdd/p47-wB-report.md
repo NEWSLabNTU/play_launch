@@ -342,3 +342,107 @@ exactly as instructed.
   `tests/Cargo.toml` to run `cargo build`/`clippy`/`nextest` directly (not
   through `just`, which shells out per-recipe and doesn't hit this). Added
   before verification, reverted before every commit below.
+
+## Review fixes (post-APPROVE, `.superpowers/sdd/p47-wB-review.md`)
+
+Three follow-ups from the review, addressed in commits after the initial
+B2–B6 set:
+
+### Fix 1 (Important) — remove the now-dead record-spawn scaffolding
+
+The review correctly caught that `execution/spawn_equivalence_test.rs` (5
+tests) had become VACUOUSLY SKIPPING: it required
+`rt_workspace/record.json`, and B1 + this wave removed every way to
+generate one, so the gate `return`ed early every run and tested nothing
+(and `cargo test -p play_launch`, where it lives, isn't part of `just
+test-all`, which is how it slipped). The record-vs-model migration is done
+— removed the scaffolding:
+
+- **Deleted `src/play_launch/src/execution/spawn_equivalence_test.rs`** and
+  its `#[cfg(test)] mod spawn_equivalence_test;` in `execution/mod.rs`.
+- **Deleted the two genuinely-unreachable record-path spawn builders**
+  `prepare_container_contexts` and `prepare_composable_node_contexts` from
+  `execution/context.rs` (their only remaining caller was the deleted test)
+  — along with the `#[allow(dead_code)]` I'd added to mask them in the
+  original B3 commit. No `#[allow(dead_code)]` remains on any record-spawn
+  code (`git diff | grep 'allow(dead_code)'` on the wave: none added).
+- **Kept what's still LIVE, precisely as the review directed:**
+  - `prepare_node_contexts` (`context.rs`) — still called by `run.rs`
+    (single-node dump+replay); doc comment updated to say so.
+  - `node_cmdline::from_node_record` / `node_record_from_instance` — the
+    model path's `from_node_instance` builds a synthetic `NodeRecord` then
+    delegates to `from_node_record`, so both stay.
+  - `ContractView::from_manifest_index` + `runtime_enforcement::qualify` —
+    untouched (still `#[allow(dead_code)]` from the B3 commit, but that's
+    correct: `from_model_matches_from_manifest_index` exercises it with
+    synthetic in-memory data — NOT a fixture-file skip — and `check` uses
+    the manifest path; the review explicitly said these stay).
+  - Updated the stale doc/comment references to the deleted functions
+    (intra-doc `[...]` links in the model-sourced builders, `replay.rs`'s
+    context-prep comment, `node_cmdline.rs`'s doc) so nothing dangles.
+
+Result: `cargo build -p play_launch` clean (no dead_code warnings, no
+allows masking record-spawn code); `cargo test -p play_launch` → **252
+passed, 0 failed, 0 skipped** (was 257 — the 5 spawn_equivalence tests
+gone; no runtime SKIP output remains). The 16 `#[ignore]` in
+`parser_integration_test.rs` and the one `/etc/play_launch/contracts`
+environmental skip in `manifest_loader.rs` are PRE-EXISTING and unrelated
+to record.json (not vacuous — genuine env guards) — untouched.
+
+### Fix 2 (Important) — helpful migration error for record.json replay
+
+`replay --input-file record.json` gave a bare clap `unexpected argument`,
+and a `*.record.json` positional gave an opaque YAML-parse failure — poor
+UX for users with old files. Now both give a helpful, actionable error
+matching the "no model" error's quality:
+
+- Added a HIDDEN `--input-file <PATH>` arg on `ReplayArgs` (`hide = true`
+  — absent from `replay --help`'s OPTIONS list) purely so the removed flag
+  is recognized and routed to the helpful message instead of clap's
+  generic rejection.
+- `handle_replay` now: (a) if `--input-file` was given, bail with the
+  migration message; (b) if the positional model path `looks_like_record_json`
+  (basename `record.json` or `*.record.json` suffix), bail with the same
+  message BEFORE attempting a YAML parse.
+- The message (`record_json_replay_removed_msg`): "record.json replay was
+  removed in Phase 47 (unified SystemModel) (<path>). A pre-Phase-47
+  record.json cannot be replayed directly anymore — regenerate the model
+  from the launch file: `play_launch resolve <pkg> <launch_file> -o
+  model.yaml` (or `play_launch dump ...`), then `play_launch replay
+  --model model.yaml`."
+
+Verified manually (all exit 1, clean, helpful text):
+`replay --input-file record.json`, `replay old_dump.record.json`, `replay
+record.json` all print the migration message; `replay --help` OPTIONS list
+does not contain the hidden `--input-file`.
+
+### Fix 3 (Cosmetic) — strengthen the 2 hard-cut tests
+
+`replay_input_file_flag_is_removed_and_errors_clearly` and
+`replay_without_model_errors_clearly` (`rt_workspace.rs`) previously
+asserted only non-zero exit. Now (via a new `run_capture` helper that
+captures stdout+stderr) they assert a CLEAN error — `status.code().is_some()`
+(exited deliberately, not killed by a signal) AND `code != Some(101)` (not
+a Rust panic) AND non-zero — plus the expected message: the first test
+covers BOTH `--input-file record.json` AND an `old_dump.record.json`
+positional (both must print the record.json migration message pointing at
+`replay --model`); the second asserts the "requires a SystemModel"
+guidance. Both PASS in `just test-all`.
+
+### Re-verification after the review fixes
+
+- `cargo build -p play_launch`: clean.
+- `cargo test -p play_launch`: 252 passed, 0 failed, 0 skipped (+ 21 sched
+  + 2 io_helper + 0 rt_helper unit-test binaries, all green; 16 pre-existing
+  `#[ignore]` parser integration tests unchanged).
+- `cargo clippy --all-targets --all-features -- -D warnings` (play_launch):
+  clean. `cargo clippy --tests -- -D warnings` (tests crate): clean.
+- `just test-all`: parser unit **420 passed, 0 skipped**; integration
+  **103 passed, 0 failed, 0 skipped** (the integration half run directly
+  via nextest with the documented temp `[workspace]` shim — the
+  nested-worktree quirk hits `just test-all`'s `cd tests && cargo nextest`
+  step; shim reverted before commit). Includes the 2 strengthened hard-cut
+  tests, both PASS.
+- fmt: all touched files clean (`rt_helper_client.rs`/`sched.rs`/
+  `sched_protocol.rs` show pre-existing nightly-vs-stable rustfmt diffs on
+  code this wave never touched — left as-is).
