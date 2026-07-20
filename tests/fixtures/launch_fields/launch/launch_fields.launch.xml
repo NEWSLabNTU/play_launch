@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!--
+  Phase 46.1b/46.2 fixture: a node carrying remaps/env/respawn/respawn_delay
+  and a composable node carrying remaps, to exercise `NodeInstance`'s new
+  launch spawn fields end to end through `play_launch resolve`.
+
+  Container-level remaps/env are NOT exercised here: the Rust XML parser's
+  `<node_container>` handler currently skips `<remap>`/`<env>`/`<param>`
+  children ("containers don't typically have their own params" —
+  `play_launch_parser` `actions/container.rs::ContainerAction::from_entity`),
+  so there is no XML syntax today that reaches `NodeContainerRecord::remaps`/
+  `env`. `model_builder`'s container-side mapping is covered directly by
+  `play_launch`'s `model_builder::tests::container_carries_remaps_ros_args_
+  respawn_env` unit test instead (constructs a `NodeContainerRecord` with the
+  fields set, bypassing the parser gap).
+-->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker" namespace="/chatter"
+        respawn="true" respawn_delay="2.5">
+    <remap from="chatter" to="/chatter/renamed"/>
+    <env name="TALKER_LOG_LEVEL" value="debug"/>
+  </node>
+
+  <node_container pkg="rclcpp_components" exec="component_container"
+                  name="composable_container" namespace="/chatter">
+    <composable_node pkg="composition" plugin="composition::Talker"
+                     name="composed_talker" namespace="/chatter">
+      <remap from="chatter" to="/chatter/composed"/>
+    </composable_node>
+  </node_container>
+</launch>
