@@ -88,6 +88,26 @@ pub struct LaunchDump {
     pub scopes: Vec<ScopeEntry>,
 }
 
+impl LaunchDump {
+    /// An empty dump — used by `replay --model` (Phase 47.B3: there is no
+    /// record.json companion to read anymore), whose best-effort/
+    /// informational consumers (chain-colocation warnings, the web UI's
+    /// launch-tree scope map) degrade to empty rather than erroring. `launch`
+    /// (Phase 47.B4) instead passes the REAL in-memory dump it just parsed,
+    /// so those consumers stay populated on that path.
+    pub fn empty() -> Self {
+        Self {
+            node: Vec::new(),
+            load_node: Vec::new(),
+            container: Vec::new(),
+            lifecycle_node: Vec::new(),
+            file_data: HashMap::new(),
+            variables: HashMap::new(),
+            scopes: Vec::new(),
+        }
+    }
+}
+
 /// The serialization format for a node container record.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NodeContainerRecord {
@@ -208,19 +228,19 @@ pub fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
 /// Phase 46.5 — fail loud on a stale pre-Phase-40.1 `play_launch` Python
 /// install. Such an install silently omits `ScopeOrigin.path`, which
 /// disables the provider-sidecar contract + platform-file channels with NO
-/// error — producing a silently degraded model AND a record.json that
-/// `compare_records.py`/`just compare-dumps` would score as PASS while
-/// actually reflecting the stale parser, not the current source.
+/// error — producing a silently degraded model that `scripts/compare_models.py`/
+/// `just compare-dumps` would score as PASS while actually reflecting the
+/// stale parser, not the current source.
 ///
 /// Every file scope emitted by the CURRENT Python source carries `path`
 /// (see `python/play_launch/dump/visitor/include_launch_description.py`,
 /// which always passes `path=` to `push_scope()`); the Rust parser likewise
 /// emits it. So a file scope with `origin.is_some()` but `path().is_none()`
-/// is a reliable stale-install signal. This guard must fire on ANY Python
-/// parse — the model-emitting path (`resolve`/`dump` default) AND the
-/// record-emitting path (`dump --format record`, the parser-parity escape
-/// hatch) — so stale usage can never silently pass anywhere, including the
-/// parity tooling.
+/// is a reliable stale-install signal. This guard fires on every Python
+/// parse this in-memory `LaunchDump` intermediate feeds (`resolve`/`dump`/
+/// `launch`, Phase 47: all model-building, no record.json artifact) — so
+/// stale usage can never silently pass anywhere, including the parity
+/// tooling.
 pub fn ensure_python_scope_paths(dump: &LaunchDump) -> eyre::Result<()> {
     let stale: Vec<&str> = dump
         .scopes
@@ -234,9 +254,9 @@ pub fn ensure_python_scope_paths(dump: &LaunchDump) -> eyre::Result<()> {
              ({stale:?}) — this means a STALE `play_launch` Python install \
              (pre-Phase-40.1) is shadowing the current source on PYTHONPATH. \
              Contract/sched sidecar resolution would silently find nothing (a \
-             degraded model), and a record.json dump would reflect the stale \
-             parser while `compare_records.py`/`just compare-dumps` scored it \
-             PASS. Fix: prepend the current source's `python/` dir to PYTHONPATH \
+             degraded model) that `scripts/compare_models.py`/`just \
+             compare-dumps` would score as PASS while reflecting the stale \
+             parser. Fix: prepend the current source's `python/` dir to PYTHONPATH \
              (`export PYTHONPATH=<repo>/python:$PYTHONPATH`), or reinstall the \
              current wheel (`pip install --force-reinstall --no-deps \
              dist/play_launch-*.whl`).",

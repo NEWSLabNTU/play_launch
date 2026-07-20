@@ -8,15 +8,15 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use eyre::{Context, Result};
 use ros_launch_manifest_check::Severity;
 
 use crate::{
-    cli::options::{ParserBackend, ResolveArgs},
-    ros::{manifest_loader, model_builder, sched_loader},
+    cli::options::ResolveArgs,
+    ros::{launch_dump::LaunchDump, manifest_loader, model_builder, sched_loader},
 };
 
 pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
@@ -31,94 +31,99 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         launch_arguments.insert(0, lf.to_string());
         launch_file = None;
     }
-    let cli_args = super::parse_launch_arguments(&launch_arguments);
-    let arg_binding: BTreeMap<String, String> = cli_args
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
+
+    let runtime = super::common::build_tokio_runtime()?;
+    let (dump, launch_path) = runtime.block_on(super::common::parse_to_launch_dump(
+        &args.package_or_path,
+        launch_file,
+        &launch_arguments,
+        args.parser,
+    ))?;
+
+    let arg_binding: BTreeMap<String, String> = super::parse_launch_arguments(&launch_arguments)
+        .into_iter()
         .collect();
 
-    // Phase 46.5 — the record companion is retired: `resolve` no longer
-    // writes a `<out>.record.json` next to the model (the model has been a
-    // self-sufficient spawn source since 46.3b/46.4). `--record <path>`
-    // (reuse mode) still reads an EXISTING record.json someone else
-    // produced — that's a read path, not the companion write this wave
-    // drops — and its path still lands in `meta.inputs` for provenance.
-    let (dump, launch_path, record_reuse_path): (
-        crate::ros::launch_dump::LaunchDump,
-        Option<std::path::PathBuf>,
-        Option<std::path::PathBuf>,
-    ) = match &args.record {
-        Some(rec) => {
-            eprintln!("Resolving from record: {}", rec.display());
-            let dump = crate::ros::launch_dump::load_launch_dump(rec)
-                .wrap_err_with(|| format!("loading record {}", rec.display()))?;
-            (dump, None, Some(rec.clone()))
-        }
-        None => {
-            let pkg_or_path = args.package_or_path.as_deref().ok_or_else(|| {
-                eyre::eyre!("either a launch file (package/path) or --record is required")
-            })?;
-            let launch_path = super::launch::resolve_launch_file(pkg_or_path, launch_file)?;
-            eprintln!("Resolving launch file: {}", launch_path.display());
-            let dump: crate::ros::launch_dump::LaunchDump = match args.parser {
-                ParserBackend::Rust => {
-                    let record =
-                        play_launch_parser::parse_launch_file(&launch_path, cli_args.clone())
-                            .map_err(|e| eyre::eyre!("Parser error: {e}"))?;
-                    let json = serde_json::to_string_pretty(&record)?;
-                    serde_json::from_str(&json)?
-                }
-                ParserBackend::Python => {
-                    // Phase 46.4 — one-step Python→model: run the Python
-                    // parse path (same `dump_launch_python_wrapper` logic
-                    // `dump` uses) into a SCRATCH temp file (never a
-                    // record.json companion — 46.5 drops that artifact),
-                    // then feed the SAME model_builder pipeline as the Rust
-                    // path. The contract/sched layers apply on the shared
-                    // scope table (`manifest_loader`/`sched_loader` key off
-                    // `ScopeEntry.origin.path`, Phase 40.1 — both parsers
-                    // emit it), independent of which parser produced the
-                    // dump. They come back populated whenever a contract
-                    // sidecar / platform file (or `--contracts`/`--sched`)
-                    // resolves, and empty only when none does — NOT a Python
-                    // limitation. (For rt_workspace, which ships both
-                    // sidecars, the Python-produced model is byte-identical
-                    // to the Rust one across structure/contracts/execution.)
-                    eprintln!("Resolving via Python parser");
-                    let scratch_path = std::env::temp_dir().join(format!(
-                        "play_launch-resolve-{}.record.json",
-                        std::process::id()
-                    ));
-                    let runtime = super::common::build_tokio_runtime()?;
-                    runtime.block_on(async {
-                        let launcher = crate::python::dump_launcher::DumpLauncher::new().wrap_err(
-                            "Failed to initialize dump_launch. Ensure ROS workspace is sourced.",
-                        )?;
-                        launcher
-                            .dump_launch(pkg_or_path, launch_file, &launch_arguments, &scratch_path)
-                            .await
-                    })?;
-                    let dump = crate::ros::launch_dump::load_launch_dump(&scratch_path)
-                        .wrap_err_with(|| {
-                            format!("loading Python-parsed record {}", scratch_path.display())
-                        })?;
-                    let _ = std::fs::remove_file(&scratch_path);
+    let model = build_checked_model(ModelBuildInputs {
+        dump: &dump,
+        launch_path: Some(&launch_path),
+        arg_binding,
+        contracts: args.contracts.as_deref(),
+        no_provider_contracts: args.no_provider_contracts,
+        sched: args.sched.as_deref(),
+        system: args.system.as_deref(),
+        target: args.target.as_str(),
+        explain: args.explain,
+    })?;
 
-                    // Phase 46.5 — fail loud on a stale pre-Phase-40.1
-                    // Python install (missing `ScopeOrigin.path`, the 46.4
-                    // report's caveat). Shared with the `dump --format
-                    // record` path so stale usage can never silently pass
-                    // anywhere, incl. the parser-parity tooling.
-                    crate::ros::launch_dump::ensure_python_scope_paths(&dump)?;
-                    dump
-                }
-            };
-            (dump, Some(launch_path), None)
-        }
+    let yaml = model
+        .to_yaml_string()
+        .wrap_err("serializing SystemModel to YAML")?;
+
+    if args.out == "-" {
+        print!("{yaml}");
+    } else {
+        std::fs::write(&args.out, &yaml)
+            .wrap_err_with(|| format!("writing SystemModel to {}", args.out))?;
+        eprintln!(
+            "SystemModel: {} ({} nodes, {} topics, {} contracts-carrying endpoints, \
+             {} tier(s), {} warning(s))",
+            args.out,
+            model.structure.nodes.len(),
+            model.structure.topics.len(),
+            model.contracts.pub_endpoints.len()
+                + model.contracts.sub_endpoints.len()
+                + model.contracts.srv_endpoints.len(),
+            model.execution.tiers.len(),
+            model.meta.diagnostics.len(),
+        );
+    }
+    Ok(())
+}
+
+/// Shared inputs for building a checked SystemModel from an in-memory
+/// [`LaunchDump`] — used by both `resolve` (file-based, above) and
+/// `launch`'s in-memory internal round-trip (`commands::launch`, Phase
+/// 47.B4: no `record.json` is written on either path).
+pub struct ModelBuildInputs<'a> {
+    pub dump: &'a LaunchDump,
+    pub launch_path: Option<&'a Path>,
+    pub arg_binding: BTreeMap<String, String>,
+    pub contracts: Option<&'a Path>,
+    pub no_provider_contracts: bool,
+    pub sched: Option<&'a Path>,
+    pub system: Option<&'a Path>,
+    pub target: &'a str,
+    pub explain: bool,
+}
+
+/// Build a checked [`ros_launch_manifest_model::SystemModel`] from an
+/// in-memory launch dump: resolve contracts, gate on checker errors, derive
+/// the scheduling plan, and (optionally) apply an integrator system config.
+/// No disk I/O beyond reading the inputs the caller already resolved
+/// (`sched`/`system` paths) — the model itself is returned in memory; it's
+/// the caller's job to write it out (or not, on the `launch` in-memory
+/// path).
+pub fn build_checked_model(
+    inputs: ModelBuildInputs<'_>,
+) -> Result<ros_launch_manifest_model::SystemModel> {
+    let ModelBuildInputs {
+        dump,
+        launch_path,
+        arg_binding,
+        contracts,
+        no_provider_contracts,
+        sched,
+        system,
+        target,
+        explain,
+    } = inputs;
+
+    let sources = crate::ros::manifest_loader::ContractSources {
+        overlay: manifest_loader::discover_overlay_root(contracts),
+        provider: !no_provider_contracts,
     };
-
-    let sources = args.contract_sources();
-    let index = manifest_loader::load_manifests(&dump, &sources)?;
+    let index = manifest_loader::load_manifests(dump, &sources)?;
 
     // Gate: Error severity anywhere refuses emission (validity by
     // construction — RFC-0050).
@@ -148,14 +153,11 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
     }
 
     // Provenance inputs: the root launch file, every file-scope launch
-    // file, every resolved contract file, and (below) the platform file.
+    // file, and every resolved contract file (the platform file, below).
     let canon = |p: PathBuf| std::fs::canonicalize(&p).unwrap_or(p);
     let mut input_paths: BTreeSet<PathBuf> = BTreeSet::new();
-    if let Some(lp) = &launch_path {
-        input_paths.insert(canon(lp.clone()));
-    }
-    if let Some(rp) = &record_reuse_path {
-        input_paths.insert(canon(rp.clone()));
+    if let Some(lp) = launch_path {
+        input_paths.insert(canon(lp.to_path_buf()));
     }
     for s in &dump.scopes {
         if let Some(p) = s.path() {
@@ -170,11 +172,11 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
     // provider sidecar). Optional — a model without an execution layer is
     // still a valid structure+contracts artifact.
     let resolved_platform = sched_loader::resolve_platform_file(
-        &dump,
-        args.sched.as_deref(),
+        dump,
+        sched,
         sources.overlay.as_deref(),
         sources.provider,
-        &args.target,
+        target,
     );
     let derived = match &resolved_platform {
         Some(resolved) => {
@@ -187,10 +189,10 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
                 std::fs::canonicalize(&resolved.path).unwrap_or_else(|_| resolved.path.clone()),
             );
             let derived = sched_loader::derive_sched_plan(
-                &dump,
+                dump,
                 Some(&index),
                 &resolved.path,
-                &args.target,
+                target,
                 crate::execution::sched_apply::SchedApplyMode::Warn,
             )?;
             // Single authoritative surfacing point for `resolve` (45.1a) —
@@ -217,23 +219,17 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         });
 
     let mut model = model_builder::build_system_model(
-        &dump,
+        dump,
         &index,
         sched_inputs.as_ref(),
         arg_binding,
         &input_paths,
     );
-    // Phase 46.5 — the model↔record hash binding (`meta.record`,
-    // `verify_model_record_binding`) is retired along with the companion:
-    // the model has been a self-sufficient spawn source since 46.3b/46.4,
-    // so there is no longer a second artifact to bind or mismatch. (The
-    // `record_reuse_path`, when `--record <path>` was given, is already
-    // folded into `meta.inputs` above — that's still real provenance.)
 
     // R1-P1 — integrator system config fills the execution layer
     // (deploy/transports/bridges/features). Fail-loud on unplaced nodes;
     // lenient diagnostics embed like checker warnings.
-    if let Some(sys_path) = &args.system {
+    if let Some(sys_path) = system {
         let text = std::fs::read_to_string(sys_path)
             .wrap_err_with(|| format!("reading system config {}", sys_path.display()))?;
         let cfg = ros_launch_manifest_model::system_config::parse_system_config(&text)
@@ -254,7 +250,7 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         {
             use sha2::Digest as _;
             let bytes = std::fs::read(sys_path)?;
-            let canon = std::fs::canonicalize(sys_path).unwrap_or_else(|_| sys_path.clone());
+            let canon = std::fs::canonicalize(sys_path).unwrap_or_else(|_| sys_path.to_path_buf());
             model
                 .meta
                 .inputs
@@ -273,14 +269,14 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         );
     }
 
-    // Phase 45.6 — `--explain` on `resolve`: render from the SystemModel
-    // this invocation just built (`model.execution.sched`/`tiers`/
-    // `bindings`), not from `derived` — proves the embedded artifact itself
-    // carries enough to render without a fresh derive, the same guarantee
-    // `replay --model --explain` depends on. We still have the fresh
-    // `resolved_platform`/`index` in scope, so the footer is byte-identical
-    // to what `check --sched --explain` would print for the same inputs.
-    if args.explain {
+    // Phase 45.6 — `--explain`: render from the SystemModel this invocation
+    // just built (`model.execution.sched`/`tiers`/`bindings`), not from
+    // `derived` — proves the embedded artifact itself carries enough to
+    // render without a fresh derive, the same guarantee `replay --model
+    // --explain` depends on. We still have the fresh `resolved_platform`/
+    // `index` in scope, so the footer is byte-identical to what `check
+    // --sched --explain` would print for the same inputs.
+    if explain {
         if model.execution.sched.is_some() || !model.execution.bindings.is_empty() {
             let footer = match &resolved_platform {
                 Some(p) => sched_loader::explain_footer(p, Some(&index)),
@@ -288,7 +284,7 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
             };
             eprint!(
                 "{}",
-                sched_loader::render_explain_from_model(&model, &args.target, &footer)
+                sched_loader::render_explain_from_model(&model, target, &footer)
             );
         } else {
             eprintln!(
@@ -298,27 +294,5 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         }
     }
 
-    let yaml = model
-        .to_yaml_string()
-        .wrap_err("serializing SystemModel to YAML")?;
-
-    if args.out == "-" {
-        print!("{yaml}");
-    } else {
-        std::fs::write(&args.out, &yaml)
-            .wrap_err_with(|| format!("writing SystemModel to {}", args.out))?;
-        eprintln!(
-            "SystemModel: {} ({} nodes, {} topics, {} contracts-carrying endpoints, \
-             {} tier(s), {} warning(s))",
-            args.out,
-            model.structure.nodes.len(),
-            model.structure.topics.len(),
-            model.contracts.pub_endpoints.len()
-                + model.contracts.sub_endpoints.len()
-                + model.contracts.srv_endpoints.len(),
-            model.execution.tiers.len(),
-            model.meta.diagnostics.len(),
-        );
-    }
-    Ok(())
+    Ok(model)
 }
