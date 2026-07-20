@@ -11,7 +11,7 @@
 > §"2026-07-20". The non-embedding items (45.1 diagnostic collapse, 45.7 FQN
 > unification, 45.8) stand.
 
-**Status:** 45.1/45.7/45.8 shipped; **45.2/45.3 (model embedding) REVERTED**; 45.10 = revert + split (in progress)
+**Status:** 45.1/45.7/45.8 shipped; **45.2/45.3 (model embedding) REVERTED**; 45.10.a (revert) + 45.10.b (mapper split) ✅ done — nano-ros phase-296 W5 consumes the core next
 **Design of record:** [docs/design/system-model-sched-ssot.md](../design/system-model-sched-ssot.md)
 **Builds on:** Phase 41 (sched v2), Phase 42 (study), Phase 43 (SystemModel runtime), Phase 44 (vocab v2 + chain_aware).
 **Cross-track:** the `model`-crate work items (45.2, 45.3) are shared with the
@@ -131,15 +131,16 @@ nano-ros RFC-0050/0052; rlm `docs/scheduling.md` §"Cross-repo design agreement"
   `model.execution.sched` / `ExecutionSched` / `NodeSchedRequirement` + tests;
   the `sched` chain algorithm (`chain.rs`) is kept intact. Full rlm workspace
   green. `model.execution.sched` no longer exists; the model is INPUT only.
-- **45.10.b — split `chain_aware_mapper`** (rlm `ros-launch-manifest-sched`): into
-  (a) a platform-agnostic **core** — §Algorithm steps 1–4 (feasibility +
-  clock-segmentation + chain/segment ranking), output a **priorityless**
-  ordered/segmented ranking — and (b) the **Linux realizer** — steps 5–6
-  (`rt_priority_band` compression, per-node max projection → `ResolvedTierTable`),
-  `posix`-tagged. play_launch's Linux apply layer consumes (b); nano-ros consumes
-  (a). **Done when:** the existing `chain_aware` outputs are byte-identical
-  through core+posix-realizer vs the old combined path (regression parity), and
-  the core is callable without producing priorities.
+- **45.10.b — split `chain_aware_mapper` — ✅ DONE** (rlm `f5c0403`): into
+  (a) a platform-agnostic **core** `chain_aware_rank(&MapperInput) -> RankedPlan`
+  — §Algorithm steps 1–4 (feasibility + clock-segmentation + chain/segment
+  ranking), a **priorityless** ordered/segmented `Vec<RankItem>` (order = priority
+  order; `fine_group` = segment membership) — and (b) the **Linux realizer**
+  `realize_posix` — steps 5–6 (`rt_priority_band` compression, per-node max
+  projection → `ResolvedTierTable`), `posix`-tagged. `SchedMapper::map` stays
+  `realize_posix(chain_aware_rank(..))` — byte-identical (regression parity
+  asserted). `RankItem`/`RankedPlan`/`chain_aware_rank` exported. play_launch's
+  Linux apply layer consumes (b) unchanged; nano-ros consumes (a).
 - **45.10.c — keep per-consumer derivation**: `sched_derive` (play_launch,
   `LaunchDump → MapperInput`) stays; nano-ros writes its own
   `SystemModel → MapperInput` (nano-ros phase-296 W5). Shared type: `MapperInput`.
