@@ -39,9 +39,14 @@ perceives one kind of dump.
   `record.json`-driven spawns).
 - **46.4** (Python-parser preservation FIRST — the acceptance gate): make
   `dump` emit a SystemModel for BOTH parsers — `--parser rust` → full model
-  (structure+contracts+sched), `--parser python` → structure-only model
-  (Python parse → LaunchDump → model_builder; contracts/sched empty, since
-  the Python parser doesn't support them). Remove the now-vestigial
+  (structure+contracts+sched), `--parser python` → the SAME complete model
+  (Python parse → LaunchDump → model_builder). CORRECTION 2026-07-20:
+  contracts/sched apply on the shared scope table regardless of parser
+  (Phase 40.1 `ScopeOrigin.path`) — Python gets FULL parity with Rust
+  (verified byte-identical structure/contracts/execution), NOT structure-only.
+  Layers are empty only when no sidecar/`--sched` input resolves. CAVEAT for
+  46.5: a stale pip install silently drops `ScopeOrigin.path` → silent
+  contract/sched loss; dump→model convergence must use current source or fail loud. Remove the now-vestigial
   `meta.record` binding gate (`verify_model_record_binding`) so
   `replay --model` spawns from the self-sufficient model (46.3b) without a
   record companion. **ACCEPTANCE (must pass before 46.5): `dump --parser
