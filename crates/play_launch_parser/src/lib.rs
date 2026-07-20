@@ -476,10 +476,27 @@ test_node:
 
         let record = parse_launch_file(file.path(), HashMap::new()).unwrap();
         assert_eq!(record.node.len(), 2);
+        // Node FQNs pick up the sequential push-ros-namespace (per-node).
         assert_eq!(record.node[0].namespace, Some("/robot1".to_string()));
         assert_eq!(
             record.node[1].namespace,
             Some("/robot1/sensors".to_string())
+        );
+
+        // But the GROUP scopes inherit their parent scope's ns (the enclosing
+        // FILE scope), NOT the accumulated `current_namespace()`. Both nodes
+        // live in group scopes under the root file scope, so both scope ns are
+        // "/" — matching the Python parser (scopes only for <include>, ns =
+        // ros_namespace at include). Namespace is per-node, not per-scope.
+        let node_scope_ns = |i: usize| -> &str {
+            let sid = record.node[i].scope.expect("node has a scope");
+            record.scopes[sid].ns.as_str()
+        };
+        assert_eq!(node_scope_ns(0), "/", "outer group scope ns inherits root");
+        assert_eq!(
+            node_scope_ns(1),
+            "/",
+            "nested group scope ns inherits parent, not accumulated /robot1/sensors"
         );
     }
 

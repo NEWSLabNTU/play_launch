@@ -105,25 +105,39 @@ impl LaunchTraverser {
                     None
                 };
 
-                // Push a group scope for scoped groups.
-                // This creates an anonymous scope entry so the launch tree
-                // reflects the group nesting structure.
                 // `<group ns="…">`: push the group's namespace onto the stack
                 // for its body — the launch-XML sugar for a leading
-                // <push-ros-namespace>. Must precede the group-scope entry so
-                // the scope records the pushed namespace, and precede child
-                // traversal so nodes inherit it via `current_namespace()`.
-                // `save_scope`/`restore_scope` (scoped groups) pops it; an
-                // unscoped group intentionally leaks it to siblings.
+                // <push-ros-namespace>. Must precede child traversal so nodes
+                // inherit it via `current_namespace()` (this is what makes node
+                // FQNs correct). `save_scope`/`restore_scope` (scoped groups)
+                // pops it; an unscoped group intentionally leaks it to siblings.
                 if let Some(ref ns_subs) = group.namespace
                     && let Ok(namespace) = resolve_substitutions(ns_subs, &self.context)
                 {
                     self.context.push_namespace(namespace);
                 }
 
+                // Push a group scope for scoped groups so the launch tree
+                // reflects the group nesting structure.
+                //
+                // A group scope's `ns` INHERITS its parent scope's `ns` — it is
+                // NOT the accumulated `current_namespace()`. Namespace is a
+                // sequential per-member property (`<push-ros-namespace>` can
+                // appear zero-or-many times anywhere in a group), so it cannot
+                // be faithfully summarized on a scope; the correct per-node
+                // namespace lives on each node (`node.namespace`, whence FQNs).
+                // Inheriting the parent's ns keeps a node's scope-ns equal to
+                // the ns of its enclosing FILE scope — matching the Python
+                // parser, which only creates scopes for `<include>` (scope ns =
+                // ros_namespace at include time) and never for `<group>`. A
+                // full detangle of namespace from the scope tree is Phase 48.
                 let prev_scope_id = self.current_scope_id;
                 if group.scoped {
-                    let group_ns = self.context.current_namespace();
+                    let group_ns = self
+                        .scope_table
+                        .get(self.current_scope_id)
+                        .map(|s| s.ns.clone())
+                        .unwrap_or_default();
                     let group_scope_id = self
                         .scope_table
                         .push_group(group_ns, Some(self.current_scope_id));
