@@ -33,8 +33,13 @@ const EXECUTOR_SPIN_TIMEOUT: std::time::Duration = std::time::Duration::from_mil
 pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     // Phase 47.B3 — the deprecated `--input-file record.json` compat path is
     // retired: the SystemModel is the sole replay source now (hard cut, not
-    // a fallback). `clap`'s `conflicts_with` already rejects both the
-    // positional and `--model` being given together.
+    // a fallback). `clap`'s `conflicts_with` already rejects the positional
+    // and `--model` being given together. The removed `--input-file` flag
+    // (retained hidden) and any `record.json`-shaped path get a helpful
+    // migration error instead of a bare clap/YAML-parse failure.
+    if let Some(record) = &args.input_file {
+        eyre::bail!(record_json_replay_removed_msg(Some(record)));
+    }
     let model_path = args.model_path().ok_or_else(|| {
         eyre::eyre!(
             "replay requires a SystemModel: `play_launch replay <system_model.yaml>` or \
@@ -42,6 +47,9 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
              `play_launch dump`)"
         )
     })?;
+    if looks_like_record_json(model_path) {
+        eyre::bail!(record_json_replay_removed_msg(Some(model_path)));
+    }
     let system_model = std::sync::Arc::new(load_system_model(model_path)?);
 
     // Phase 45.6 — `--explain` on `replay`: render the STORED model's
@@ -454,18 +462,12 @@ pub(crate) async fn play(
         None
     };
 
-    // Prepare node and container execution contexts. Phase 46.3b: when a
-    // SystemModel was given, the spawn context (argv/env/params-files/
-    // LoadNode requests) is built from the model's `structure.nodes`
-    // instead of the LaunchDump — both paths produce the same
-    // `NodeContext`/`NodeContainerContext`/`ComposableNodeContext` types
-    // (proven equal by the static-equivalence gate,
-    // `execution::spawn_equivalence_test`), so everything downstream
-    // (interception injection, actor spawn, metadata) is unchanged. The
-    // record path (`prepare_node_contexts`/etc., still used by `run` and
-    // proven equivalent by `execution::spawn_equivalence_test`) is retired
-    // from replay/launch — the SystemModel is the sole spawn source now
-    // (Phase 47.B3/B4).
+    // Prepare node and container execution contexts. Phase 46.3b/47.B3: the
+    // spawn context (argv/env/params-files/LoadNode requests) is built from
+    // the model's `structure.nodes` — the SystemModel is the sole spawn
+    // source now. Everything downstream (interception injection, actor
+    // spawn, metadata) is source-agnostic. (`run`'s single-node path still
+    // uses the LaunchDump-sourced `prepare_node_contexts`.)
     debug!("Preparing node execution contexts...");
     info!("Spawn source: SystemModel (structure.nodes)");
     let mut pure_node_contexts = prepare_node_contexts_from_model(&system_model, &node_log_dir)?;
@@ -1203,4 +1205,31 @@ fn load_system_model(
         .map_err(|e| eyre::eyre!("loading SystemModel {}: {e}", model_path.display()))?;
     info!("SystemModel: {}", model_path.display());
     Ok(model)
+}
+
+/// Whether `path` looks like a legacy `record.json` (the retired replay
+/// artifact) — a `*.record.json` suffix or a bare `record.json` basename.
+/// Used to give `replay` users with old files a helpful migration error
+/// (Phase 47.B3) instead of an opaque YAML-parse failure.
+fn looks_like_record_json(path: &std::path::Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    name == "record.json" || name.ends_with(".record.json")
+}
+
+/// The migration error shown when someone tries to replay a `record.json`
+/// (via the removed `--input-file` flag, or a `record.json`-shaped path).
+/// Matches the quality of the "no model given" error: names the recipe to
+/// produce a SystemModel from the launch file.
+fn record_json_replay_removed_msg(path: Option<&std::path::Path>) -> String {
+    let which = match path {
+        Some(p) => format!(" ({})", p.display()),
+        None => String::new(),
+    };
+    format!(
+        "record.json replay was removed in Phase 47 (unified SystemModel){which}. \
+         A pre-Phase-47 record.json cannot be replayed directly anymore — regenerate \
+         the model from the launch file: `play_launch resolve <pkg> <launch_file> -o \
+         model.yaml` (or `play_launch dump <pkg> <launch_file> -o model.yaml`), then \
+         `play_launch replay --model model.yaml`."
+    )
 }

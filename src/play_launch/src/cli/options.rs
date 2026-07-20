@@ -441,6 +441,14 @@ pub struct ReplayArgs {
     #[arg(long)]
     pub explain: bool,
 
+    /// (removed) The Phase 46 `--input-file record.json` replay flag.
+    /// Retained HIDDEN only so `replay --input-file ...` produces a helpful
+    /// migration error (see `handle_replay`) instead of clap's bare
+    /// "unexpected argument" — Phase 47.B3 removed record.json replay
+    /// entirely. Never used as a value.
+    #[arg(long, hide = true, value_name = "PATH")]
+    pub input_file: Option<PathBuf>,
+
     #[command(flatten)]
     pub common: CommonOptions,
 }

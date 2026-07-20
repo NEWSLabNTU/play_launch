@@ -1509,11 +1509,41 @@ fn resolve_no_longer_writes_record_companion() {
     );
 }
 
-/// `replay --input-file <path>` is a HARD CUT (Phase 47.B3): the flag is
-/// removed entirely, not silently reinterpreted. clap must reject it
-/// (unrecognized argument, non-zero exit) rather than misparsing it as
-/// something else or falling back to any legacy record-only spawn path —
-/// there is no such path left.
+/// Run `play_launch <args>` capturing stdout+stderr, returning
+/// `(ExitStatus, combined_output)`. For the CLI-rejection tests below —
+/// they error before spawning any node, so no process-group cleanup dance
+/// is needed beyond `ManagedProcess`'s own Drop.
+fn run_capture(
+    env: &std::collections::HashMap<String, String>,
+    args: &[&str],
+) -> (std::process::ExitStatus, String) {
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let out_path = tmp.path().join("stdout.log");
+    let err_path = tmp.path().join("stderr.log");
+    let out_file = fs::File::create(&out_path).expect("create stdout");
+    let err_file = fs::File::create(&err_path).expect("create stderr");
+
+    let mut cmd = fixtures::play_launch_cmd(env);
+    cmd.args(args);
+    cmd.stdout(Stdio::from(out_file));
+    cmd.stderr(Stdio::from(err_file));
+    let mut proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch");
+    let status = proc.wait_with_timeout(Duration::from_secs(15));
+
+    let combined = format!(
+        "{}\n{}",
+        fs::read_to_string(&out_path).unwrap_or_default(),
+        fs::read_to_string(&err_path).unwrap_or_default()
+    );
+    (status, combined)
+}
+
+/// `replay --input-file <path>` and a `record.json`-shaped positional are a
+/// HARD CUT (Phase 47.B3): the record.json replay surface is removed
+/// entirely. Both must fail with a CLEAN error (a deliberate non-zero exit
+/// code, NOT a signal-kill or a Rust panic/exit-101) carrying the helpful
+/// migration message pointing at `resolve`/`replay --model` — not clap's
+/// bare "unexpected argument" and not an opaque YAML-parse failure.
 #[test]
 fn replay_input_file_flag_is_removed_and_errors_clearly() {
     if !require_rt_workspace() {
@@ -1521,19 +1551,35 @@ fn replay_input_file_flag_is_removed_and_errors_clearly() {
     }
     let env = fixtures::rt_workspace_env();
 
-    let mut cmd = fixtures::play_launch_cmd(&env);
-    cmd.args(["replay", "--input-file", "record.json"]);
-    let mut proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
-    let status = proc.wait_with_timeout(Duration::from_secs(15));
+    for args in [
+        &["replay", "--input-file", "record.json"][..],
+        &["replay", "old_dump.record.json"][..],
+    ] {
+        let (status, output) = run_capture(&env, args);
 
-    assert!(
-        !status.success(),
-        "replay --input-file must be rejected (the flag is removed, Phase 47.B3), not silently accepted"
-    );
+        // Clean error: exited deliberately (has an exit code — not killed by
+        // a signal), non-zero, and not a Rust panic (exit 101).
+        let code = status.code();
+        assert!(
+            code.is_some(),
+            "replay {args:?} must exit with a code (clean error), not be killed by a signal:\n{output}"
+        );
+        assert!(
+            !status.success() && code != Some(101),
+            "replay {args:?} must fail cleanly (deliberate non-zero exit, not a panic/exit-101): code={code:?}\n{output}"
+        );
+        // Helpful migration message, not a bare clap/YAML error.
+        let lower = output.to_lowercase();
+        assert!(
+            lower.contains("record.json replay was removed") && lower.contains("replay --model"),
+            "replay {args:?} must print the Phase 47 record.json migration message pointing at `replay --model`:\n{output}"
+        );
+    }
 }
 
 /// `replay` with no model at all (neither positional nor `--model`) must
-/// error clearly asking for one — not panic, not silently no-op.
+/// fail with a CLEAN error (deliberate non-zero exit, not a crash) carrying
+/// the "requires a SystemModel" message — not panic, not silently no-op.
 #[test]
 fn replay_without_model_errors_clearly() {
     if !require_rt_workspace() {
@@ -1541,13 +1587,19 @@ fn replay_without_model_errors_clearly() {
     }
     let env = fixtures::rt_workspace_env();
 
-    let mut cmd = fixtures::play_launch_cmd(&env);
-    cmd.args(["replay", "--disable-web-ui"]);
-    let mut proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
-    let status = proc.wait_with_timeout(Duration::from_secs(15));
+    let (status, output) = run_capture(&env, &["replay", "--disable-web-ui"]);
 
+    let code = status.code();
     assert!(
-        !status.success(),
-        "replay with no model (no positional, no --model) must error, not silently succeed"
+        code.is_some(),
+        "replay with no model must exit with a code (clean error), not be killed by a signal:\n{output}"
+    );
+    assert!(
+        !status.success() && code != Some(101),
+        "replay with no model must fail cleanly (deliberate non-zero exit, not a panic): code={code:?}\n{output}"
+    );
+    assert!(
+        output.to_lowercase().contains("requires a systemmodel"),
+        "replay with no model must print the 'requires a SystemModel' guidance:\n{output}"
     );
 }
