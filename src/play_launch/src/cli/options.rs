@@ -203,8 +203,9 @@ pub struct CheckArgs {
     /// Launch file name (if package_or_path is a package name)
     pub launch_file: Option<String>,
 
-    /// Launch arguments in KEY:=VALUE format
-    #[arg(trailing_var_arg = true)]
+    /// Launch arguments in KEY:=VALUE format. Flags may be placed before or
+    /// after these (clap parses flags in any position); use `--` to force
+    /// remaining tokens to be treated as positional launch arguments.
     pub launch_arguments: Vec<String>,
 
     /// Overlay root for user-supplied contracts, mirroring the launch tree:
@@ -293,8 +294,9 @@ pub struct ResolveArgs {
     #[arg(long, value_name = "PATH", conflicts_with = "package_or_path")]
     pub record: Option<PathBuf>,
 
-    /// Launch arguments in KEY:=VALUE format
-    #[arg(trailing_var_arg = true)]
+    /// Launch arguments in KEY:=VALUE format. Flags may be placed before or
+    /// after these (clap parses flags in any position); use `--` to force
+    /// remaining tokens to be treated as positional launch arguments.
     pub launch_arguments: Vec<String>,
 
     /// Overlay root for user-supplied contracts (see `check --contracts`).
@@ -363,8 +365,9 @@ pub struct LaunchArgs {
     /// Launch file name (if package_or_path is a package name)
     pub launch_file: Option<String>,
 
-    /// Launch arguments in KEY:=VALUE format
-    #[arg(trailing_var_arg = true)]
+    /// Launch arguments in KEY:=VALUE format. Flags may be placed before or
+    /// after these (clap parses flags in any position); use `--` to force
+    /// remaining tokens to be treated as positional launch arguments.
     pub launch_arguments: Vec<String>,
 
     /// Parser backend to use for launch file parsing.
@@ -423,17 +426,20 @@ pub struct DumpArgs {
 
     /// Output file for the dump. Defaults to `system_model.yaml` for the
     /// SystemModel format (default), or `record.json` for `--format
-    /// record` and `dump run`.
-    #[arg(long, short = 'o')]
+    /// record` and `dump run`. May be given before or after the
+    /// `launch`/`run` subcommand and its launch arguments.
+    #[arg(long, short = 'o', global = true)]
     pub output: Option<PathBuf>,
 
     /// Dump format: `model` (default, the SystemModel) or `record` (legacy
     /// record.json, dev/parser-parity tooling only). See [`DumpFormat`].
-    #[arg(long, value_enum, default_value = "model")]
+    /// May be given before or after the subcommand.
+    #[arg(long, value_enum, default_value = "model", global = true)]
     pub format: DumpFormat,
 
-    /// Enable debug output during dump
-    #[arg(long)]
+    /// Enable debug output during dump. May be given before or after the
+    /// subcommand.
+    #[arg(long, global = true)]
     pub debug: bool,
 }
 
@@ -732,4 +738,190 @@ pub struct PlotArgs {
     /// List available metrics and exit
     #[arg(long)]
     pub list_metrics: bool,
+}
+
+#[cfg(test)]
+mod flag_ordering_tests {
+    //! 47.A1/47.A3: `launch_arguments` (`KEY:=VALUE`) used to be declared
+    //! `#[arg(trailing_var_arg = true)]`, which made clap swallow *every*
+    //! token after the first positional — including recognized flags —
+    //! into the `Vec<String>` verbatim. That silently dropped flags placed
+    //! after a launch argument (e.g. `dump launch pkg file mode:=v
+    //! --output x.yaml` never honored `--output`). Removing
+    //! `trailing_var_arg` restores clap's default behavior: a `Vec`-typed
+    //! positional stops consuming once it hits a token that matches a
+    //! known flag, so flags now parse in any position. These tests pin
+    //! that behavior for every affected subcommand, both orders (flags
+    //! before vs. after the launch arguments), and confirm an unrecognized
+    //! bare flag still produces a clear parse error rather than being
+    //! absorbed as a launch argument.
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Options, clap::Error> {
+        let mut full = vec!["play_launch"];
+        full.extend_from_slice(args);
+        Options::try_parse_from(full)
+    }
+
+    #[test]
+    fn launch_flag_after_launch_arguments() {
+        let opts = parse(&[
+            "launch",
+            "pkg",
+            "file.launch.xml",
+            "mode:=velodyne",
+            "--parser",
+            "python",
+        ])
+        .expect("flag after KEY:=VALUE must parse");
+        let Command::Launch(args) = opts.command else {
+            panic!("expected Launch");
+        };
+        assert_eq!(args.launch_arguments, vec!["mode:=velodyne".to_string()]);
+        assert_eq!(args.parser, ParserBackend::Python);
+    }
+
+    #[test]
+    fn launch_flag_before_launch_arguments_still_works() {
+        let opts = parse(&[
+            "launch",
+            "pkg",
+            "file.launch.xml",
+            "--parser",
+            "python",
+            "mode:=velodyne",
+        ])
+        .expect("flag before KEY:=VALUE must still parse");
+        let Command::Launch(args) = opts.command else {
+            panic!("expected Launch");
+        };
+        assert_eq!(args.launch_arguments, vec!["mode:=velodyne".to_string()]);
+        assert_eq!(args.parser, ParserBackend::Python);
+    }
+
+    #[test]
+    fn resolve_flag_after_launch_arguments() {
+        let opts = parse(&[
+            "resolve",
+            "pkg",
+            "file.launch.xml",
+            "mode:=velodyne",
+            "--sched",
+            "system.posix.yaml",
+            "-o",
+            "model.yaml",
+        ])
+        .expect("--sched/-o after KEY:=VALUE must parse");
+        let Command::Resolve(args) = opts.command else {
+            panic!("expected Resolve");
+        };
+        assert_eq!(args.launch_arguments, vec!["mode:=velodyne".to_string()]);
+        assert_eq!(args.sched, Some(PathBuf::from("system.posix.yaml")));
+        assert_eq!(args.out, "model.yaml");
+    }
+
+    #[test]
+    fn check_flag_after_launch_arguments() {
+        let opts = parse(&[
+            "check",
+            "pkg",
+            "file.launch.xml",
+            "mode:=velodyne",
+            "--sched",
+            "system.posix.yaml",
+        ])
+        .expect("--sched after KEY:=VALUE must parse");
+        let Command::Check(args) = opts.command else {
+            panic!("expected Check");
+        };
+        assert_eq!(args.launch_arguments, vec!["mode:=velodyne".to_string()]);
+        assert_eq!(args.sched, Some(PathBuf::from("system.posix.yaml")));
+    }
+
+    #[test]
+    fn dump_launch_flag_after_two_launch_arguments() {
+        // The exact Autoware shape this wave must verify end-to-end:
+        // multiple KEY:=VALUE args, then a flag, all after `dump launch`.
+        let opts = parse(&[
+            "dump",
+            "launch",
+            "pkg",
+            "file.launch.xml",
+            "vehicle_model:=sample_vehicle",
+            "sensor_model:=sample_sensor_kit",
+            "--output",
+            "/tmp/aw.yaml",
+        ])
+        .expect("--output after KEY:=VALUE launch args must parse (dump's global flags)");
+        let Command::Dump(dump_args) = opts.command else {
+            panic!("expected Dump");
+        };
+        assert_eq!(dump_args.output, Some(PathBuf::from("/tmp/aw.yaml")));
+        let DumpSubcommand::Launch(args) = dump_args.subcommand else {
+            panic!("expected Dump::Launch");
+        };
+        assert_eq!(
+            args.launch_arguments,
+            vec![
+                "vehicle_model:=sample_vehicle".to_string(),
+                "sensor_model:=sample_sensor_kit".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn dump_launch_flag_before_subcommand_still_works() {
+        let opts = parse(&[
+            "dump",
+            "--output",
+            "/tmp/aw.yaml",
+            "launch",
+            "pkg",
+            "file.launch.xml",
+            "vehicle_model:=sample_vehicle",
+        ])
+        .expect("--output before `launch` must still parse");
+        let Command::Dump(dump_args) = opts.command else {
+            panic!("expected Dump");
+        };
+        assert_eq!(dump_args.output, Some(PathBuf::from("/tmp/aw.yaml")));
+    }
+
+    #[test]
+    fn unrecognized_flag_in_launch_arguments_errors_clearly() {
+        // A bare unknown flag among launch arguments must be rejected by
+        // clap with a clear error, not silently absorbed into
+        // `launch_arguments` (the old trailing_var_arg behavior).
+        let result = parse(&[
+            "check",
+            "pkg",
+            "file.launch.xml",
+            "mode:=velodyne",
+            "--not-a-real-flag",
+        ]);
+        let err = match result {
+            Ok(_) => panic!("unknown flag must not be silently swallowed"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn double_dash_separator_forces_positional_launch_arguments() {
+        // `--` still works as an explicit separator: everything after it
+        // is treated as a positional launch argument even if it looks
+        // like a flag.
+        let opts = parse(&[
+            "launch",
+            "pkg",
+            "file.launch.xml",
+            "--",
+            "--looks-like-flag",
+        ])
+        .expect("-- separator must force positional parsing");
+        let Command::Launch(args) = opts.command else {
+            panic!("expected Launch");
+        };
+        assert_eq!(args.launch_arguments, vec!["--looks-like-flag".to_string()]);
+    }
 }
