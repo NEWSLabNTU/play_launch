@@ -2,7 +2,7 @@
 
 ## Overview
 
-`play_launch` provides a unified command-line interface that mimics ROS 2 standard commands while enabling launch inspection, recording, and replay capabilities. The tool automatically invokes `dump_launch` to record launch executions and then replays them using the optimized Rust runtime.
+`play_launch` provides a unified command-line interface that mimics ROS 2 standard commands while enabling launch inspection, recording, and replay capabilities. The tool automatically dumps (parses) the launch execution into a SystemModel and then replays it using the optimized Rust runtime.
 
 ## Command Syntax
 
@@ -16,6 +16,10 @@ play_launch launch <package_name> <launch_file> [key:=value...] [options...]
 play_launch launch <launch_file_path> [key:=value...] [options...]
 ```
 
+Flags may be placed before or after the `KEY:=VALUE` launch arguments — clap
+parses flags in any position (47.A1). Use `--` to force any remaining token
+to be treated as a positional launch argument instead.
+
 **Examples:**
 ```bash
 # Launch Autoware planning simulator
@@ -25,9 +29,11 @@ play_launch launch autoware_launch planning_simulator.launch.xml \
 # Launch from absolute path
 play_launch launch /path/to/my_launch.py use_sim_time:=true
 
-# Launch with monitoring enabled
-play_launch launch demo_nodes_cpp talker_listener.launch.py \
-    --enable-monitoring --monitor-interval-ms 500
+# Launch with a custom monitoring interval (monitoring is on by default;
+# see --disable-monitoring to turn it off). The flag works just as well
+# after the launch arguments as before them.
+play_launch launch demo_nodes_cpp topics/talker_listener.launch.py \
+    --monitor-interval-ms 500
 ```
 
 ### Running Nodes
@@ -49,11 +55,12 @@ play_launch run demo_nodes_cpp talker --ros-args -p topic:=chatter
 ### Dump Only (No Replay)
 
 ```bash
-# Dump launch execution without replaying (dump-level options go BEFORE
-# the `launch`/`run` subcommand — they belong to `dump`, not to the
-# launch-argument list, which greedily captures everything after it)
-play_launch dump [dump_options...] launch <package_name> <launch_file> [key:=value...]
-play_launch dump [dump_options...] launch <launch_file_path> [key:=value...]
+# `dump`'s own flags (--output/-o, --format, --debug) may be given anywhere
+# on the command line — before `launch`/`run`, or after, or interleaved
+# with the KEY:=VALUE launch arguments (47.A1: they're declared `global`,
+# so clap recognizes them at any position in the nested subcommand).
+play_launch dump [dump_options...] launch <package_name> <launch_file> [key:=value...] [dump_options...]
+play_launch dump [dump_options...] launch <launch_file_path> [key:=value...] [dump_options...]
 
 # Dump node execution
 play_launch dump [dump_options...] run <package_name> <executable> [args...]
@@ -72,9 +79,16 @@ play_launch dump [dump_options...] run <package_name> <executable> [args...]
 
 **Examples:**
 ```bash
-# Dump to a custom SystemModel file (default format)
+# Dump to a custom SystemModel file (default format) — flags before the
+# KEY:=VALUE launch arguments
 play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
+
+# Equivalently, flags after the launch arguments — both orders work
+play_launch dump launch autoware_launch planning_simulator.launch.xml \
+    vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit \
+    map_path:=$HOME/autoware_map/sample-map-planning \
+    --output autoware.yaml
 
 # Dump the legacy record.json (deprecated; parser-parity tooling only)
 play_launch dump --format record --output autoware_dump.json \
@@ -82,7 +96,7 @@ play_launch dump --format record --output autoware_dump.json \
     map_path:=$HOME/autoware_map/sample-map-planning
 
 # Dump with debug output
-play_launch dump --debug launch demo_nodes_cpp talker_listener.launch.py
+play_launch dump --debug launch demo_nodes_cpp topics/talker_listener.launch.py
 ```
 
 ### Replay Only
@@ -119,24 +133,35 @@ These options apply to `launch`, `run`, and `replay` subcommands:
 
 ### Monitoring & Performance
 - `--config <path>` or `-c <path>`: Runtime configuration YAML file
-- `--enable-monitoring`: Enable resource monitoring for all nodes
+- Monitoring, diagnostics, and the web UI are all **on by default** — there
+  is no `--enable-monitoring` flag. Turn features off individually
+  (`--disable-monitoring`, `--disable-diagnostics`, `--disable-web-ui`,
+  `--disable-all`), or flip to an allow-list with `--enable <FEATURE>`
+  (repeatable; values: `monitoring`, `diagnostics`, `web-ui` — when `--enable`
+  is used at all, only the listed features are on).
 - `--monitor-interval-ms <ms>`: Sampling interval in milliseconds
 
 ### Composable Node Loading
-- `--delay-load-node-millis <ms>`: Delay before loading composable nodes (default: 2000)
-- `--load-node-timeout-millis <ms>`: Timeout for loading each composable node (default: 30000)
-- `--load-node-attempts <n>`: Max retry attempts for loading (default: 3)
-- `--max-concurrent-load-node-spawn <n>`: Concurrent loading limit (default: 10)
+These are **not CLI flags** — they're fields of the `composable_node_loading`
+section in the `--config`/`-c` YAML file (`ComposableNodeLoadingSettings` in
+`src/play_launch/src/cli/config.rs`):
+- `delay_load_node_millis` (default: 2000): Delay before loading composable nodes
+- `load_node_timeout_millis` (default: 30000): Timeout for loading each composable node
+- `load_node_attempts` (default: 3): Max retry attempts for loading
+- `max_concurrent_load_node_spawn` (default: 10): Concurrent loading limit
+
+The following two ARE CLI flags (shared with the config file's semantics):
 - `--standalone-composable-nodes`: Run composable nodes in standalone mode
 - `--load-orphan-composable-nodes`: Load composable nodes without matching containers
 
 ### Container Readiness
-- `--wait-for-service-ready`: Wait for container services via ROS service discovery
-- `--service-ready-timeout-secs <n>`: Max wait time for container services (default: 120, 0=unlimited)
-- `--service-poll-interval-ms <ms>`: Polling interval for service discovery (default: 500)
+Also **not CLI flags** — fields of the `container_readiness` section in the
+`--config` YAML (`ContainerReadinessSettings`), enabled by default:
+- `wait_for_service_ready` (default: true): Wait for container services via ROS service discovery
+- `service_ready_timeout_secs` (default: 120, 0=unlimited): Max wait time for container services
+- `service_poll_interval_ms` (default: 500): Polling interval for service discovery
 
-### Other
-- `--print-shell`: Generate shell script instead of executing
+See `tests/fixtures/autoware/autoware_config.yaml` for a full config YAML example.
 
 ## Workflow Explanation
 
@@ -188,10 +213,10 @@ artifacts, not a checked pair.
 
 For more control, you can separate the dump and replay steps:
 
-Dump-level options (`--output`, `--format`) go BEFORE the `launch`/`run`
-subcommand — they belong to `dump`, not to the trailing launch-argument
-list, which greedily captures every token after it (including ones that
-look like flags):
+`dump`'s own flags (`--output`, `--format`) and `resolve`'s own flags (`-o`,
+`--sched`, `--contracts`, ...) may be given before or after the `launch`/`run`
+subcommand and the `KEY:=VALUE` launch arguments — clap parses flags in any
+position (47.A1). Putting them first, as below, is just a style choice:
 
 ```bash
 # Step 1: Dump the SystemModel directly (default format — no record.json involved)
@@ -206,9 +231,7 @@ play_launch replay \
 ```
 
 Equivalently, `resolve` builds the same model straight from the launch file
-(skipping a separate dump step) and can add a scheduling platform file. Like
-`dump`, put `resolve`'s own flags (`-o`, `--sched`, `--contracts`, ...)
-before any `KEY:=VALUE` launch argument, for the same reason:
+(skipping a separate dump step) and can add a scheduling platform file:
 
 ```bash
 play_launch resolve -o autoware.yaml --sched system.posix.yaml \
@@ -235,18 +258,19 @@ play_launch replay --input-file autoware_planning.json --log-dir logs/run1
 
 ## Environment Requirements
 
-Both `dump_launch` and `play_launch` must be available in PATH:
+`play_launch` must be available in PATH (there is no separate `dump_launch`
+binary — Python-parser dumping is embedded in `play_launch` itself via PyO3,
+selected with `--parser python`; see `docs/guide/parser-migration.md`):
 
 ```bash
 # Build the workspace
 cd /path/to/play_launch
-make build
+just build
 
 # Source the workspace
 source install/setup.bash
 
-# Verify binaries are available
-which dump_launch  # Should show path in install/
+# Verify the binary is available
 which play_launch  # Should show path in install/
 ```
 
@@ -290,48 +314,47 @@ processes:
 EOF
 
 # Launch with config
-play_launch launch demo_nodes_cpp talker_listener.launch.py \
+play_launch launch demo_nodes_cpp topics/talker_listener.launch.py \
     --config config.yaml
 ```
 
 ### Container Service Readiness
 
-For large launches like Autoware, ensure all container services are ready before loading composable nodes:
+For large launches like Autoware, container-readiness and composable-node-loading
+timing are config-file settings, not CLI flags — service readiness checking is
+already enabled by default. Tune it via `--config`:
+
+```bash
+# tuned_config.yaml
+container_readiness:
+  wait_for_service_ready: true
+  service_ready_timeout_secs: 300
+composable_node_loading:
+  load_node_timeout_millis: 60000
+```
 
 ```bash
 play_launch launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning \
-    --wait-for-service-ready \
-    --service-ready-timeout-secs 300 \
-    --load-node-timeout-millis 60000
-```
-
-### Generating Shell Scripts
-
-Export the launch as a shell script for debugging or manual execution:
-
-```bash
-play_launch launch demo_nodes_cpp talker_listener.launch.py \
-    --print-shell > launch_script.sh
-
-# Review and execute manually
-bash launch_script.sh
+    --config tuned_config.yaml
 ```
 
 ## Troubleshooting
 
-### dump_launch not found
+### play_launch not found
 
 Ensure the workspace is sourced:
 ```bash
 source install/setup.bash
-which dump_launch
+which play_launch
 ```
 
 ### Composable nodes fail to load
 
-1. Enable service readiness checking: `--wait-for-service-ready`
-2. Increase timeout: `--load-node-timeout-millis 60000`
+1. Service readiness checking is on by default; if it's been disabled in a
+   `--config` file, re-enable `container_readiness.wait_for_service_ready`
+2. Increase `composable_node_loading.load_node_timeout_millis` in `--config`
+   (default: 30000)
 3. Check container logs in `play_log/node/` directories
 
 ### Orphan composable nodes warning

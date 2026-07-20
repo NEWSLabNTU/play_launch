@@ -40,7 +40,7 @@ play_launch setcap
 Launch any ROS 2 package with monitoring and Web UI enabled by default:
 
 ```bash
-play_launch launch demo_nodes_cpp talker_listener.launch.py
+play_launch launch demo_nodes_cpp topics/talker_listener.launch.py
 ```
 
 Access Web UI at `http://127.0.0.1:8080` for real-time node management and log streaming.
