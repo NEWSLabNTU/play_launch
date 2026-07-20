@@ -24,13 +24,11 @@ perceives one kind of dump.
   but it's dropped — `LaunchDump::NodeRecord` has no `machine` field, so
   `model_builder` never writes `deploy.host`. Add `machine` to the record
   path + populate `deploy.host`. Unblocks nano-ros's multihost migration.
-- **46.1b** Linux-serving launch fields (`remaps`, `ros_args`, `respawn`/
-  `respawn_delay`, `env`): the study corrected the earlier assumption —
-  nano-ros does NOT need these (it uses resolved `structure.topics`, has no
-  argv/respawn model). USER DECISION pending (design §Cross-track (a)/(b)):
-  (a) still add to shared `NodeInstance` per the all-launch-info principle
-  (nano-ros ignores), or (b) keep play_launch-side. Either is additive.
-  **(model crate touch only under (a) — cross-track.)**
+- **46.1b** Shared launch fields (DECIDED 2026-07-20: option a): add
+  `remaps`, `ros_args`, `respawn`/`respawn_delay`, launch-declared `env` to
+  the shared `NodeInstance` per the all-launch-info principle (nano-ros
+  ignores the ones it doesn't consume — no `deny_unknown_fields`). Additive,
+  optional, backward-compat. **(model crate — cross-track.)**
 - **46.2** Populate: `resolve`/model_builder fill the new fields from the
   parsed launch (they already flow through the LaunchDump the resolver reads).
 - **46.3** Spawn-from-model: relocate cmdline assembly (`node_cmdline.rs`) to
@@ -47,10 +45,21 @@ perceives one kind of dump.
 
 ## Order and dependencies
 
-46.0 → 46.1 → 46.2 → 46.3 → 46.4 → 46.5 → 46.6. 46.3 is the largest and
-riskiest (core spawn path); gate it behind thorough regression (Autoware +
-rt_workspace spawns must match record.json-era behavior). 46.1 is the
-cross-track gate.
+46.0 (coordinate) → **46.1 (machine=/#236 — ships first, quick unblock for
+nano-ros)** → 46.1b/46.2 (shared launch fields) → 46.3 (spawn-from-model —
+largest/riskiest, regression-gated: Autoware + rt_workspace spawns must match
+record.json-era) → **retirement 46.4/46.5 (non-additive, gated on 46.3's
+regression suite)** → 46.6 docs. Through 46.3 both paths coexist (additive
+model + record.json still written); retirement is the only non-additive step.
+
+**Coordination (46.0):** note nano-ros (issue #236 + RFC-0050) with the
+unified-model design + the incoming schema additions; confirm no field they
+read is omitted. Same handshake as the sched-SSoT reconciliation.
+
+**Retirement (46.4/46.5), only after 46.3 proves parity:** `dump` emits the
+one model; `record.json`, `meta.record` binding, `verify_model_record_binding`,
+and the `resolve` record companion are removed; `file_data`/`variables` dropped
+from the emitted model.
 
 ## Out of scope
 

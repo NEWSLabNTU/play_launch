@@ -97,18 +97,53 @@ blocks their multihost workspace migration). **Fixing this drop is the real
 cross-track win of Phase 46** and belongs here since Phase 46 reworks the
 launch→model field-population path anyway.
 
-Coordinate the (a)/(b) decision + confirm no OTHER field nano-ros reads is
-missing, with RFC-0050, before landing.
+**Decision (2026-07-20): option (a).** `remaps`, `ros_args`, `respawn`/
+`respawn_delay`, and launch-declared `env` are added to the shared
+`NodeInstance` per the all-launch-info principle. nano-ros ignores what it
+doesn't consume (no `deny_unknown_fields`); the model is the one complete
+record of the launch. This keeps a single artifact story and lets any future
+consumer read any launch fact without a play_launch-specific side channel.
 
-## Migration (Phase 46)
+## Coordination (nano-ros / RFC-0050)
 
-Additive-first, no flag day:
-1. `model` crate `NodeInstance` gains the launch fields (cross-track).
-2. `resolve`/parser populate them into the model.
-3. play_launch spawn path derives cmd/exec-path/env from the model (the
-   relocation of `node_cmdline.rs`); `replay` reads the model, not `record.json`.
-4. `dump` emits the model; `record.json` retired; `meta.record` binding removed.
-5. Docs + guide; nano-ros consumes the new fields (their track).
+The shared `model` crate is vendored by nano-ros; every `NodeInstance` /
+`Deploy` addition here is a schema change they inherit. Same handshake as the
+sched-SSoT reconciliation:
+1. **Note them first** (nano-ros issue #236 + RFC-0050): our unified-model
+   design, the `machine=`→`deploy.host` fix landing now, and the additive
+   launch fields coming. Confirm they've seen the design and flag any field
+   they read that the model still omits.
+2. Land additive schema changes (backward-compat; old models parse).
+3. nano-ros consumes the new fields on their track (they ignore the
+   Linux-serving ones by design).
+
+## Migration (Phase 46) — additive-first, no flag day
+
+1. **Coordinate** (46.0): note nano-ros, confirm the field set.
+2. **Fix #236 first** (46.1, independent quick win): `<node machine=>` →
+   `execution.deploy.host`; unblocks nano-ros's paused multihost migration.
+   Ships ahead of everything else.
+3. **Shared launch fields** (46.1b/46.2): `NodeInstance` gains
+   `remaps`/`ros_args`/`respawn`/`env` (cross-track, additive); parser +
+   `model_builder` populate them.
+4. **Spawn-from-model** (46.3, the load-bearing item): relocate
+   `node_cmdline.rs` so play_launch derives exec path (ament) + argv +
+   injected env + materialized param files from the model at spawn; `replay`
+   reads the model, not `record.json`. Regression-gated against current
+   `record.json`-driven spawns (Autoware + rt_workspace must match).
+
+## Retirement (of the two-artifact runtime)
+
+Only after (46.3) proves spawn-from-model matches the `record.json` era:
+5. `dump` emits the one model; **`record.json` retired**; the `meta.record`
+   hash-binding + `verify_model_record_binding` + the `resolve` record
+   companion removed.
+6. Drop the LaunchDump-only artifacts (`file_data` cache, `variables`) from
+   the emitted model; keep whatever the parser needs internally.
+7. Docs + guide: one-artifact story across `dump`/`resolve`/`replay`.
+Rollback safety: through step 4 both paths coexist (the model is additive,
+`record.json` still written); retirement (5+) is the only non-additive step
+and is gated on the spawn-from-model regression suite.
 
 ## Non-goals
 
