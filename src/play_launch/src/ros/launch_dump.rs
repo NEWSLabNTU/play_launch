@@ -55,10 +55,10 @@ impl ScopeEntry {
     }
 
     /// Canonicalized absolute path of the launch file (if file scope with a
-    /// known path). Not yet consumed by the executor (reserved for the
-    /// Phase 40 provider-sidecar contract lookup); kept alongside `pkg()`/
-    /// `file()` for API symmetry.
-    #[allow(dead_code)]
+    /// known path). Drives the Phase 40 provider-sidecar contract + platform-
+    /// file lookup, and (Phase 46.5) the stale-Python-install guard
+    /// [`ensure_python_scope_paths`] — a file scope missing this is the
+    /// signal of a pre-Phase-40.1 parser.
     pub fn path(&self) -> Option<&str> {
         self.origin.as_ref().and_then(|o| o.path.as_deref())
     }
@@ -203,6 +203,47 @@ pub fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
     debug!("JSON deserialization complete!");
 
     Ok(launch_dump)
+}
+
+/// Phase 46.5 — fail loud on a stale pre-Phase-40.1 `play_launch` Python
+/// install. Such an install silently omits `ScopeOrigin.path`, which
+/// disables the provider-sidecar contract + platform-file channels with NO
+/// error — producing a silently degraded model AND a record.json that
+/// `compare_records.py`/`just compare-dumps` would score as PASS while
+/// actually reflecting the stale parser, not the current source.
+///
+/// Every file scope emitted by the CURRENT Python source carries `path`
+/// (see `python/play_launch/dump/visitor/include_launch_description.py`,
+/// which always passes `path=` to `push_scope()`); the Rust parser likewise
+/// emits it. So a file scope with `origin.is_some()` but `path().is_none()`
+/// is a reliable stale-install signal. This guard must fire on ANY Python
+/// parse — the model-emitting path (`resolve`/`dump` default) AND the
+/// record-emitting path (`dump --format record`, the parser-parity escape
+/// hatch) — so stale usage can never silently pass anywhere, including the
+/// parity tooling.
+pub fn ensure_python_scope_paths(dump: &LaunchDump) -> eyre::Result<()> {
+    let stale: Vec<&str> = dump
+        .scopes
+        .iter()
+        .filter(|s| s.is_file_scope() && s.path().is_none())
+        .filter_map(|s| s.file())
+        .collect();
+    if !stale.is_empty() {
+        eyre::bail!(
+            "Python parser produced {} file scope(s) without `ScopeOrigin.path` \
+             ({stale:?}) — this means a STALE `play_launch` Python install \
+             (pre-Phase-40.1) is shadowing the current source on PYTHONPATH. \
+             Contract/sched sidecar resolution would silently find nothing (a \
+             degraded model), and a record.json dump would reflect the stale \
+             parser while `compare_records.py`/`just compare-dumps` scored it \
+             PASS. Fix: prepend the current source's `python/` dir to PYTHONPATH \
+             (`export PYTHONPATH=<repo>/python:$PYTHONPATH`), or reinstall the \
+             current wheel (`pip install --force-reinstall --no-deps \
+             dist/play_launch-*.whl`).",
+            stale.len()
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
