@@ -104,38 +104,12 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
                         })?;
                     let _ = std::fs::remove_file(&scratch_path);
 
-                    // Phase 46.5 CAVEAT (from the 46.4 report): a stale
-                    // pip-installed `play_launch` Python package (pre-Phase
-                    // 40.1) silently omits `ScopeOrigin.path`, which
-                    // disables the provider-sidecar contract + platform-file
-                    // channels with NO error — producing a silently
-                    // degraded model. Every file scope from a current
-                    // install carries `path` (see
-                    // `python/play_launch/dump/visitor/include_launch_description.py`);
-                    // its absence is a reliable stale-install signal. Fail
-                    // loud here instead of letting `dump`/`resolve` hand
-                    // back a quietly incomplete model.
-                    let stale: Vec<&str> = dump
-                        .scopes
-                        .iter()
-                        .filter(|s| s.is_file_scope() && s.path().is_none())
-                        .filter_map(|s| s.file())
-                        .collect();
-                    if !stale.is_empty() {
-                        eyre::bail!(
-                            "Python parser produced {} file scope(s) without \
-                             `ScopeOrigin.path` ({stale:?}) — this means a STALE \
-                             `play_launch` Python install (pre-Phase-40.1) is shadowing \
-                             the current source on PYTHONPATH. Contract/sched sidecar \
-                             resolution would silently find nothing and the model would \
-                             be missing the contracts/execution layers with no error. \
-                             Fix: prepend the current source's `python/` dir to \
-                             PYTHONPATH (`export PYTHONPATH=<repo>/python:$PYTHONPATH`), \
-                             or reinstall the current wheel \
-                             (`pip install --force-reinstall --no-deps dist/play_launch-*.whl`).",
-                            stale.len()
-                        );
-                    }
+                    // Phase 46.5 — fail loud on a stale pre-Phase-40.1
+                    // Python install (missing `ScopeOrigin.path`, the 46.4
+                    // report's caveat). Shared with the `dump --format
+                    // record` path so stale usage can never silently pass
+                    // anywhere, incl. the parser-parity tooling.
+                    crate::ros::launch_dump::ensure_python_scope_paths(&dump)?;
                     dump
                 }
             };

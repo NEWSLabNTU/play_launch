@@ -198,6 +198,23 @@ fn dump_launch_python_wrapper(
         Ok::<(), eyre::Report>(())
     })?;
 
+    // Phase 46.5 — fail loud on a stale pre-Phase-40.1 Python install
+    // (missing `ScopeOrigin.path`) on the RECORD path too, not just the
+    // model path: `dump --format record` is what the parser-parity tooling
+    // (`just compare-dumps`/`compare_records.py`) uses, and a stale parser
+    // would otherwise let it score PASS while reflecting the stale April
+    // parser rather than current source. Load the just-written record
+    // read-only (the file on disk stays exactly as the Python parser wrote
+    // it — no round-trip through Rust's serializer, which would perturb the
+    // bytes the parity comparison depends on) and run the shared guard.
+    let dump = crate::ros::launch_dump::load_launch_dump(output).wrap_err_with(|| {
+        format!(
+            "loading Python-parsed record {} for staleness check",
+            output.display()
+        )
+    })?;
+    crate::ros::launch_dump::ensure_python_scope_paths(&dump)?;
+
     let elapsed = start.elapsed();
     info!(
         "Parsing completed in {:.2}s (Python parser)",
