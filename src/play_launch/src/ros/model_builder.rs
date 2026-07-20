@@ -92,10 +92,7 @@ fn find_node_decl<'a>(
 /// `structure.nodes` (e.g. `/control/control_node`). Exact hit wins; else a
 /// UNIQUE bare-name (last path segment) match — the same vocabulary the
 /// sched crate's assign/override selectors use; else the ref is kept as-is.
-pub(crate) fn resolve_node_ref(
-    nodes: &BTreeMap<String, model::NodeInstance>,
-    node_ref: &str,
-) -> String {
+fn resolve_node_ref(nodes: &BTreeMap<String, model::NodeInstance>, node_ref: &str) -> String {
     if nodes.contains_key(node_ref) {
         return node_ref.to_string();
     }
@@ -432,6 +429,13 @@ pub fn build_system_model(
                     Vec::new()
                 },
                 extra_args: Default::default(),
+                // 46.3b: the DECLARED name (`None` when the launch had
+                // `name=None`), distinct from the `name.or(exec_name)` FQN
+                // key above — the spawn path emits `-r __node:=<name>` iff
+                // this is `Some`, matching the record path's conditional
+                // (`af7c524`); a regular `<node>` is never a container.
+                node_name: n.name.clone(),
+                is_container: false,
             },
         );
     }
@@ -469,6 +473,13 @@ pub fn build_system_model(
                 // Containers always have a package/executable — never raw.
                 raw_cmd: Vec::new(),
                 extra_args: Default::default(),
+                // 46.3b: `NodeContainerRecord.name` is non-optional (a
+                // container always has a name); THIS is the bit the spawn
+                // path keys the --container-mode override off, so a
+                // consumer never has to infer container-ness by
+                // reverse-resolving composable `container=` refs.
+                node_name: Some(c.name.clone()),
+                is_container: true,
             },
         );
     }
@@ -512,6 +523,11 @@ pub fn build_system_model(
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect(),
+                // 46.3b: `ComposableNodeRecord.node_name` is non-optional; a
+                // composable is not a container (it's distinguished by
+                // `plugin.is_some()` anyway).
+                node_name: Some(l.node_name.clone()),
+                is_container: false,
             },
         );
     }
@@ -1051,5 +1067,88 @@ mod tests {
             composable.extra_args.get("use_intra_process_comms"),
             Some(&"True".to_string())
         );
+    }
+
+    /// 46.3b — `node_name` carries the DECLARED name distinctly, `None`
+    /// for a `name=None` node (so the spawn path can withhold `__node`),
+    /// `Some` for a declared node, container, and composable.
+    #[test]
+    fn node_name_carries_declared_name_none_when_unnamed() {
+        let dump = dump_with_gap_fields();
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        // name=None regular node → node_name None.
+        assert_eq!(
+            model.structure.nodes["/perception/detector_node"].node_name,
+            None
+        );
+        // composable → node_name Some (ComposableNodeRecord.node_name is
+        // non-optional).
+        assert_eq!(
+            model.structure.nodes["/perception/tracker"]
+                .node_name
+                .as_deref(),
+            Some("tracker")
+        );
+    }
+
+    /// 46.3b — the classification bit is populated from the record's actual
+    /// node kind, NOT inferred by reverse-resolving composable `container=`
+    /// references. A regular node whose name collides with a DANGLING
+    /// composable target (no such container exists) must NOT be classified
+    /// as a container — the pre-46.3b `resolve_node_ref` bare-name-suffix
+    /// heuristic would have misclassified it and then corrupted its
+    /// executable via the `--container-mode` override.
+    #[test]
+    fn regular_node_colliding_dangling_composable_target_is_not_container() {
+        let json = serde_json::json!({
+            "node": [{
+                "executable": "widget_node",
+                "package": "widget_pkg",
+                "name": "widget",
+                "exec_name": "widget_node",
+                "namespace": "/tools",
+                "params_files": [],
+                "cmd": [],
+                "remaps": []
+            }],
+            "container": [{
+                "executable": "component_container",
+                "package": "rclcpp_components",
+                "name": "real_container",
+                "namespace": "/perception",
+                "params_files": [],
+                "cmd": [],
+                "remaps": []
+            }],
+            "load_node": [{
+                "package": "some_pkg",
+                "plugin": "some::Plugin",
+                // Dangling/ambiguous relative target that bare-name-matches
+                // the REGULAR node `widget`, not the real container.
+                "target_container_name": "widget",
+                "node_name": "some_node",
+                "namespace": "/perception",
+                "remaps": []
+            }],
+            "lifecycle_node": [],
+            "file_data": {},
+            "scopes": [{"id": 0, "ns": "/", "parent": null}]
+        });
+        let dump: LaunchDump = serde_json::from_value(json).expect("valid LaunchDump");
+        let index = ManifestIndex::default();
+        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
+
+        // The regular node is NOT a container despite the dangling
+        // composable target colliding on its bare name.
+        assert!(
+            !model.structure.nodes["/tools/widget"].is_container,
+            "regular node must not be misclassified as a container"
+        );
+        // The genuine container IS flagged.
+        assert!(model.structure.nodes["/perception/real_container"].is_container);
+        // The composable is not a container.
+        assert!(!model.structure.nodes["/perception/some_node"].is_container);
     }
 }

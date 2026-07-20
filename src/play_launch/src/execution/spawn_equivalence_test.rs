@@ -31,9 +31,15 @@ use super::context::{
     prepare_composable_node_contexts_from_model, prepare_container_contexts,
     prepare_container_contexts_from_model, prepare_node_contexts, prepare_node_contexts_from_model,
 };
-use crate::{cli::options::ContainerMode, ros::launch_dump::LaunchDump};
+use crate::{
+    cli::options::ContainerMode,
+    ros::{launch_dump::LaunchDump, manifest_loader::ManifestIndex, model_builder},
+};
 use ros_launch_manifest_model::SystemModel;
-use std::path::PathBuf;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 fn fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/rt_workspace")
@@ -285,4 +291,142 @@ fn rt_workspace_nodes_write_no_params_files_either_path() {
             ctx.record.name
         );
     }
+}
+
+/// Item 3 (46.3b review) — the equivalence gate must exercise materialized
+/// params-file CONTENT, not just presence. rt_workspace's own launch has
+/// no params, and its shared `bringup.launch.xml` is depended on by ~15
+/// other tests (node counts, chain derivation, contract endpoints), so
+/// rather than perturb it, this builds a SYNTHETIC `LaunchDump` in-process
+/// — a single `rt_demo/sensor_node` (the real, built binary, resolved via
+/// ament) carrying BOTH inline `<param>` values (→ `overrides.yaml`) AND an
+/// external `params_files` YAML blob (→ `0.yaml`) — resolves it to a
+/// `SystemModel` the same way `play_launch resolve` does
+/// (`build_system_model`), then builds the spawn context via BOTH paths and
+/// asserts the actual bytes written to `overrides.yaml`/`0.yaml` are
+/// identical record-vs-model. Skips (not fails) if `rt_demo` isn't on
+/// `AMENT_PREFIX_PATH` (fixture unbuilt / env not sourced), mirroring
+/// `load_fixture`.
+#[test]
+fn params_file_content_matches_record_vs_model() {
+    // The one real dependency of this test (not the fixture files): the
+    // rt_demo package resolvable via ament so `from_node_record` can find
+    // the executable. Skip cleanly otherwise.
+    if crate::ros::ament_index::find_executable("rt_demo", "sensor_node").is_err() {
+        eprintln!(
+            "SKIP: rt_demo/sensor_node not resolvable via ament — build the \
+             rt_workspace fixture and source its install/setup.bash first"
+        );
+        return;
+    }
+
+    let external_yaml = "/**:\n  ros__parameters:\n    external_gain: 0.25\n    \
+                         external_mode: fast\n    external_count: 7\n";
+    let dump: LaunchDump = serde_json::from_value(serde_json::json!({
+        "node": [{
+            "executable": "sensor_node",
+            "package": "rt_demo",
+            "name": "sensor_node",
+            "exec_name": "sensor_node",
+            "namespace": "/perception",
+            // inline params → overrides.yaml (mix of float/string/int/bool
+            // to exercise the type-inference round-trip too)
+            "params": [
+                ["publish_rate_hz", "100.0"],
+                ["label", "primary"],
+                ["retries", "3"],
+                ["verbose", "true"]
+            ],
+            // external param file content → 0.yaml, verbatim
+            "params_files": [external_yaml],
+            "cmd": [],
+            "remaps": []
+        }],
+        "container": [],
+        "load_node": [],
+        "lifecycle_node": [],
+        "file_data": {},
+        "scopes": [{"id": 0, "ns": "/", "parent": null}]
+    }))
+    .expect("valid synthetic LaunchDump");
+
+    let model = model_builder::build_system_model(
+        &dump,
+        &ManifestIndex::default(),
+        None,
+        BTreeMap::new(),
+        &BTreeSet::new(),
+    );
+
+    let record_tmp = tempfile::TempDir::new().expect("tempdir");
+    let model_tmp = tempfile::TempDir::new().expect("tempdir");
+
+    let record_nodes =
+        prepare_node_contexts(&dump, record_tmp.path()).expect("record-path node contexts");
+    let model_nodes = prepare_node_contexts_from_model(&model, model_tmp.path())
+        .expect("model-path node contexts");
+
+    assert_eq!(record_nodes.len(), 1);
+    assert_eq!(model_nodes.len(), 1);
+    let r = &record_nodes[0];
+    let m = &model_nodes[0];
+
+    // Path-independent fields equal (the two params-file PATHS embed each
+    // run's own temp dir, so the full-struct `PartialEq` can't be used here
+    // — the CONTENT is asserted below, which is the point).
+    assert_eq!(r.cmdline.command, m.cmdline.command, "command mismatch");
+    assert_eq!(
+        r.cmdline.user_args, m.cmdline.user_args,
+        "user_args mismatch"
+    );
+    assert_eq!(r.cmdline.remaps, m.cmdline.remaps, "remaps mismatch");
+    assert_eq!(
+        r.cmdline.params, m.cmdline.params,
+        "inline -p params mismatch"
+    );
+    assert_eq!(r.cmdline.env, m.cmdline.env, "env mismatch");
+
+    // Both paths must have written exactly one external file + one
+    // overrides file.
+    assert_eq!(
+        r.cmdline.params_files.len(),
+        1,
+        "record path should materialize the one external params file"
+    );
+    assert!(
+        r.cmdline.overrides_file.is_some(),
+        "record path overrides.yaml"
+    );
+    assert_eq!(m.cmdline.params_files.len(), 1);
+    assert!(m.cmdline.overrides_file.is_some());
+
+    // The CONTENT diff the review asked for: read the actual bytes each
+    // path wrote and assert equality.
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).expect("read params file");
+
+    let r_external = read(r.cmdline.params_files.iter().next().unwrap());
+    let m_external = read(m.cmdline.params_files.iter().next().unwrap());
+    assert_eq!(
+        r_external, m_external,
+        "external params-file CONTENT diverges record-vs-model"
+    );
+    // And it's the verbatim source blob (GAP-3: not re-parsed/re-emitted).
+    assert_eq!(r_external, external_yaml, "external content not verbatim");
+
+    let r_overrides = read(r.cmdline.overrides_file.as_ref().unwrap());
+    let m_overrides = read(m.cmdline.overrides_file.as_ref().unwrap());
+    assert_eq!(
+        r_overrides, m_overrides,
+        "overrides.yaml (inline params) CONTENT diverges record-vs-model:\n\
+         record:\n{r_overrides}\nmodel:\n{m_overrides}"
+    );
+    // Sanity: the inline params actually landed with correct types (float
+    // keeps its decimal point, int/bool/string inferred).
+    assert!(
+        r_overrides.contains("publish_rate_hz: 100.0"),
+        "{r_overrides}"
+    );
+    assert!(r_overrides.contains("retries: 3"), "{r_overrides}");
+    assert!(r_overrides.contains("verbose: true"), "{r_overrides}");
+    assert!(r_overrides.contains("label: primary"), "{r_overrides}");
 }

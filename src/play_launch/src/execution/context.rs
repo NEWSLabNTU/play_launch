@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use ros_launch_manifest_model as model;
 use serde::Serialize;
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     fs,
     fs::File,
     io::prelude::*,
@@ -479,37 +479,6 @@ pub fn prepare_composable_node_contexts(
 // 46.3b report for the full design + the static-equivalence gate that
 // proves these produce the same spawn as the record path.
 
-/// Resolve every composable node's `container` reference against
-/// `structure.nodes`' own FQN keys (exact match, else the same unique
-/// bare-name suffix fallback `model_builder::resolve_node_ref` already
-/// uses to reconcile manifest-declared node refs — reused here, not
-/// reimplemented, so there is exactly one FQN-matching algorithm in the
-/// codebase for this purpose, not a second one for the spawn path).
-///
-/// This is how the model-sourced spawn path tells a `<node_container>`
-/// instance apart from a regular `<node>` instance: `model::NodeInstance`
-/// itself carries no `is_container` flag — `model_builder.rs`'s
-/// `dump.container` loop produces the exact same shape as its `dump.node`
-/// loop (`plugin: None, container: None` either way). This is a gap the
-/// W3-analysis field-completeness matrix didn't anticipate (it only
-/// considered whether fields needed for *argv assembly* were present, not
-/// node-vs-container classification on the consume side) — see the 46.3b
-/// report. Every `<node_container>` that hosts at least one composable
-/// node (the overwhelming real-world case — a static launch declaring an
-/// empty component container with nothing to load is a degenerate,
-/// vanishingly rare pattern) is correctly classified via this heuristic. A
-/// zero-composable container would be misclassified as a regular node,
-/// losing the `--container-mode` executable override — a documented,
-/// narrow limitation, not silently papered over.
-fn model_container_fqns(structure: &model::Structure) -> BTreeSet<String> {
-    structure
-        .nodes
-        .values()
-        .filter_map(|inst| inst.container.as_ref())
-        .map(|target| crate::ros::model_builder::resolve_node_ref(&structure.nodes, target))
-        .collect()
-}
-
 /// Sequential dedup pass shared by the three model-sourced builders below:
 /// mirrors the record path's two-phase `build_name_map` dedup (`{base}`,
 /// `{base}_2`, `{base}_3`, ... on collision), keyed by the FQN's last path
@@ -535,18 +504,22 @@ fn dedup_model_dir_names(entries: &[(&String, &model::NodeInstance)]) -> Vec<Str
 
 /// Model-sourced equivalent of [`prepare_node_contexts`]: regular `<node>`
 /// instances — every `structure.nodes` entry that is neither a composable
-/// (`plugin.is_some()`) nor a container (see [`model_container_fqns`]).
+/// (`plugin.is_some()`) nor a container (`is_container`). Classification is
+/// the model's own `is_container` bit (46.3b), populated by
+/// `model_builder` from the record's `dump.container[]` array — NOT
+/// inferred by reverse-resolving composable `container=` references, which
+/// could misclassify a regular node whose name collides with a dangling/
+/// ambiguous composable target and then corrupt its executable via the
+/// `--container-mode` override.
 pub fn prepare_node_contexts_from_model(
     system_model: &model::SystemModel,
     node_log_dir: &Path,
 ) -> eyre::Result<Vec<NodeContext>> {
-    let container_fqns = model_container_fqns(&system_model.structure);
-
     let entries: Vec<(&String, &model::NodeInstance)> = system_model
         .structure
         .nodes
         .iter()
-        .filter(|(fqn, inst)| inst.plugin.is_none() && !container_fqns.contains(*fqn))
+        .filter(|(_, inst)| inst.plugin.is_none() && !inst.is_container)
         .collect();
     let dir_names = dedup_model_dir_names(&entries);
 
@@ -593,13 +566,11 @@ pub fn prepare_container_contexts_from_model(
     container_log_dir: &Path,
     container_mode: ContainerMode,
 ) -> eyre::Result<Vec<NodeContainerContext>> {
-    let container_fqns = model_container_fqns(&system_model.structure);
-
     let entries: Vec<(&String, &model::NodeInstance)> = system_model
         .structure
         .nodes
         .iter()
-        .filter(|(fqn, _)| container_fqns.contains(*fqn))
+        .filter(|(_, inst)| inst.is_container)
         .collect();
     let dir_names = dedup_model_dir_names(&entries);
 

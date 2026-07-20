@@ -205,31 +205,31 @@ pub(crate) fn param_value_to_record_string(v: &model::ParamValue) -> String {
 /// time (`model_builder::lower_params_merged`), so `global_params` here is
 /// always `None` — nothing left to merge.
 ///
-/// Two **documented, narrow divergences** from the record path, both
-/// stemming from the same root cause: the model's `structure.nodes` key is
-/// a *reconciled* FQN (Phase 46.3a's `name.or(exec_name)` fallback), and
-/// carries no signal for which optional launch field (`name=`/`namespace=`)
-/// was actually declared vs. defaulted:
+/// **Declared name (46.3b)**: `record.name` is set from `inst.node_name`
+/// (the name AS DECLARED in the launch, `None` when the launch had
+/// `name=None`), NOT from the FQN's last segment. This is what makes the
+/// model path emit `-r __node:=<name>` *only* when a name was actually
+/// declared — matching `from_node_record`'s conditional exactly and NOT
+/// reintroducing the `af7c524` bug (forcing `__node` onto a `name=None`
+/// node silently renames it away from its internally-hardcoded default,
+/// breaking e.g. LifecycleNode service discovery). `record.exec_name` still
+/// takes the FQN segment (`name.or(exec_name)`), which is the correct
+/// directory/member-name fallback on both paths: identical to the real
+/// `exec_name` when `name=None` (the FQN segment IS the exec_name then),
+/// and a harmless display-only value when a name was declared (member-name
+/// resolution prefers `name` anyway).
 ///
-/// 1. **`name` is always `Some(..)`** here (the FQN's last segment).
-///    `from_node_record` only emits the `__node` remap when
-///    `record.name.is_some()` — deliberately *omitted* when the launch
-///    declared no `name=` (`af7c524`, so LifecycleNodes keep their
-///    internally-declared default name). A model-sourced spawn therefore
-///    always sets `__node`, which is a no-op when the launch DID declare a
-///    name (the overwhelming majority) but is a real, functional divergence
-///    for `name=None` nodes specifically. See the 46.3b report for the
-///    concrete count (Autoware: ~10/119) and recommended follow-up (a
-///    `NodeInstance` field carrying whether `name` was explicitly declared).
-/// 2. **`namespace` is `None` only when the FQN is root** (`/name`) —
-///    collapsing "no `namespace=` attribute" (record path: `None`, no
-///    `__ns` remap) and an explicit `namespace="/"` (record path: `Some("/")`,
-///    emits `-r __ns:=/`) into the same model representation. Both are
-///    behaviorally identical (ROS's own default namespace is `/`), so this
-///    only produces a textual (not functional) argv difference, and only
-///    for the rare explicit-root-namespace case.
+/// One remaining **documented, narrow divergence** (textual, not
+/// functional): **`namespace` is `None` only when the FQN is root**
+/// (`/name`) — collapsing "no `namespace=` attribute" (record path: `None`,
+/// no `__ns` remap) and an explicit `namespace="/"` (record path:
+/// `Some("/")`, emits `-r __ns:=/`) into the same model representation.
+/// Both are behaviorally identical (ROS's own default namespace is `/`).
+/// Containers are handled separately by the caller
+/// (`prepare_container_contexts_from_model` forces `Some`, matching the
+/// record path's non-optional container namespace).
 pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeRecord {
-    let (ns, name) = split_model_fqn(fqn);
+    let (ns, fqn_name) = split_model_fqn(fqn);
 
     let params: Vec<(String, String)> = inst
         .params
@@ -253,9 +253,13 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
     NodeRecord {
         executable: inst.exec.clone().unwrap_or_default(),
         package: inst.pkg.clone(),
-        name: Some(name.to_string()),
+        // The DECLARED name (drives the conditional `__node` remap) —
+        // `None` when the launch had `name=None`, NOT the FQN segment.
+        name: inst.node_name.clone(),
         namespace: (!ns.is_empty()).then(|| ns.to_string()),
-        exec_name: Some(name.to_string()),
+        // Directory/member-name fallback: the FQN's last segment
+        // (`name.or(exec_name)`) — see the doc comment.
+        exec_name: Some(fqn_name.to_string()),
         params,
         params_files: inst.params_files.clone(),
         remaps,
@@ -1141,15 +1145,18 @@ mod tests {
             params_files: vec!["/**:\n  ros__parameters:\n    voxel_size: 0.2\n".to_string()],
             raw_cmd: Vec::new(),
             extra_args: Default::default(),
+            node_name: Some("detector".to_string()),
+            is_container: false,
         };
 
-        let record = node_record_from_instance("/perception/detector_node", &inst);
+        let record = node_record_from_instance("/perception/detector", &inst);
 
         assert_eq!(record.package.as_deref(), Some("lidar_centerpoint"));
         assert_eq!(record.executable, "detector_node");
-        assert_eq!(record.name.as_deref(), Some("detector_node"));
+        // The DECLARED name (drives __node), distinct from the executable.
+        assert_eq!(record.name.as_deref(), Some("detector"));
         assert_eq!(record.namespace.as_deref(), Some("/perception"));
-        assert_eq!(record.exec_name.as_deref(), Some("detector_node"));
+        assert_eq!(record.exec_name.as_deref(), Some("detector"));
         assert_eq!(
             record.remaps,
             vec![("/points".to_string(), "/sensing/lidar/points".to_string())]
@@ -1206,10 +1213,65 @@ mod tests {
             params_files: Vec::new(),
             raw_cmd: Vec::new(),
             extra_args: Default::default(),
+            node_name: Some("talker".to_string()),
+            is_container: false,
         };
         let record = node_record_from_instance("/talker", &inst);
         assert_eq!(record.namespace, None);
         assert_eq!(record.name.as_deref(), Some("talker"));
+    }
+
+    /// 46.3b — a `name=None` node (`node_name: None`) must produce
+    /// `record.name == None`, so `from_node_record` does NOT emit the
+    /// `-r __node:=…` remap (via `test_node_remap_without_name_omits_node`'s
+    /// verified logic) — matching the record path exactly and NOT
+    /// reintroducing the `af7c524` bug (forcing `__node:=exec_name` renames
+    /// a `name=None` node away from its internally-hardcoded default,
+    /// breaking e.g. LifecycleNode service discovery). `exec_name` still
+    /// carries the FQN segment (from the `name.or(exec_name)` key) for
+    /// directory/member naming.
+    #[test]
+    fn test_node_record_from_instance_name_none_omits_node_remap() {
+        let inst = model::NodeInstance {
+            scope: "/".to_string(),
+            pkg: Some("some_pkg".to_string()),
+            exec: Some("lifecycle_thing".to_string()),
+            plugin: None,
+            container: None,
+            lifecycle: true,
+            lifecycle_autostart: None,
+            params: Default::default(),
+            criticality: None,
+            remaps: Vec::new(),
+            ros_args: Vec::new(),
+            respawn: None,
+            respawn_delay: None,
+            env: Vec::new(),
+            args: Vec::new(),
+            params_files: Vec::new(),
+            raw_cmd: Vec::new(),
+            extra_args: Default::default(),
+            // name=None: the FQN's last segment came from the exec_name
+            // fallback, so node_name is None.
+            node_name: None,
+            is_container: false,
+        };
+        let record = node_record_from_instance("/some_ns/lifecycle_thing", &inst);
+        // The whole point: no declared name → record.name is None → no
+        // __node remap.
+        assert_eq!(record.name, None);
+        // exec_name still populated (FQN segment) for dir/member naming.
+        assert_eq!(record.exec_name.as_deref(), Some("lifecycle_thing"));
+        assert_eq!(record.namespace.as_deref(), Some("/some_ns"));
+
+        // Chain to the actual remap construction: a record with name=None
+        // omits __node (this is `from_node_record`'s conditional, exercised
+        // directly here rather than through ament).
+        let remaps = build_remaps(record.name.as_deref(), record.exec_name.as_deref(), None);
+        assert!(
+            !remaps.contains_key("__node"),
+            "name=None model node must not force __node (af7c524 regression guard)"
+        );
     }
 
     /// GAP-5: a raw `<executable>` instance (`pkg: None`) round-trips its
@@ -1239,6 +1301,8 @@ mod tests {
                 "-nosound".to_string(),
             ],
             extra_args: Default::default(),
+            node_name: None,
+            is_container: false,
         };
         let record = node_record_from_instance("/unknown", &inst);
         assert!(record.package.is_none());
