@@ -36,6 +36,14 @@ A slimmed per-FQN exec record (replacing LaunchDump wholesale) is
 explicitly out of scope (revisit after 43 lands, if ever — LaunchDump
 already does the job and record/replay tooling depends on it).
 
+> **SUPERSEDED (2026-07-20, Phase 46):** this two-artifact split assumed most
+> spawn detail was Linux-only; in fact most (pkg/node/params/remaps/ros_args/
+> respawn) is launch-derived and wanted by both runtimes. Phase 46 unifies to
+> ONE complete SystemModel carrying all launch info; each consumer derives its
+> own platform specifics (exec path, argv). `record.json` retires. See
+> [unified-system-model.md](../design/unified-system-model.md) /
+> [phase-46](./phase-46-unified_system_model.md).
+
 ## Work items
 
 ### 43.1 — Bind model ↔ record
