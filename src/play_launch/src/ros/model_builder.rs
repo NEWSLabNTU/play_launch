@@ -320,6 +320,15 @@ pub fn build_system_model(
             }
         };
 
+    // `<node machine="…">` → `execution.deploy[fqn].host` (nano-ros #236 /
+    // Phase 46.1). Collected alongside `structure.nodes` so the key is the
+    // SAME reconciled launch-dump FQN (`fqn(ns, name)`) other consumers
+    // (bindings, sched) already use — populated into `execution` below,
+    // once that layer exists. `target` is left at its `Default` (`linux`)
+    // so a later `--system` config pass can fill/override it without this
+    // step guessing platform placement.
+    let mut deploy_hosts: BTreeMap<String, String> = BTreeMap::new();
+
     for n in &dump.node {
         let Some(name) = n.name.as_deref() else {
             continue;
@@ -327,6 +336,9 @@ pub fn build_system_model(
         let ns = n.namespace.as_deref().unwrap_or("/");
         let node_fqn = fqn(ns, name);
         let decl = find_node_decl(index, dump, n.scope, name);
+        if let Some(machine) = &n.machine {
+            deploy_hosts.insert(node_fqn.clone(), machine.clone());
+        }
         insert_node(
             &mut structure,
             node_fqn,
@@ -567,8 +579,16 @@ pub fn build_system_model(
             execution.sched = Some(exec_sched);
         }
     }
-    // deploy: integrator-owned placement lands here once the system config
-    // grows a [deploy] section (RFC-0050 open question); empty = all-linux.
+    // deploy: `<node machine="…">` → per-node host (nano-ros #236 /
+    // Phase 46.1). Create the `Deploy` entry with `host` set and `target`
+    // left at its `Default` (`linux`) — an explicit `--system` config pass
+    // (`resolve.rs`, `SystemConfigToml::apply_to`) owns platform placement
+    // and fills/overrides `target` afterwards. Nodes without `machine` get
+    // no entry here, so `execution.deploy` stays empty for single-host
+    // launches exactly as before (backward-compatible).
+    for (node_fqn, host) in deploy_hosts {
+        execution.deploy.entry(node_fqn).or_default().host = Some(host);
+    }
 
     // --- embedded checker warnings -----------------------------------------
     for m in index.manifests.values() {

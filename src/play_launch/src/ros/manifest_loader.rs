@@ -2148,6 +2148,7 @@ mod tests {
             respawn: None,
             respawn_delay: None,
             global_params: None,
+            machine: None,
             scope: Some(0),
         });
 
@@ -2192,6 +2193,7 @@ mod tests {
             respawn: None,
             respawn_delay: None,
             global_params: None,
+            machine: None,
             scope: Some(0),
         });
 
@@ -2300,6 +2302,7 @@ mod tests {
             respawn: None,
             respawn_delay: None,
             global_params: None,
+            machine: None,
             scope: Some(1),
         });
 
