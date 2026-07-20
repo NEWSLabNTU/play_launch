@@ -1,91 +1,17 @@
-//! Launch command - record and replay launch file execution
+//! Launch command - parse, resolve, and replay a launch file in one shot
+//!
+//! Phase 47.B4 — the internal round-trip is fully in-memory: no
+//! `record.json` (or any other file) is written to disk anywhere on this
+//! path. The launch file is parsed straight into a [`LaunchDump`], a
+//! SystemModel is built from it in memory, and both are handed directly to
+//! the replay engine (`commands::replay::play`) — the same function
+//! `play_launch replay` uses, just called in-process instead of through a
+//! second CLI invocation.
 
-use crate::cli::options::{LaunchArgs, ParserBackend};
-use eyre::{Context, Result};
-use std::{collections::HashMap, path::PathBuf, time::Instant};
-use tracing::{debug, info, warn};
-
-/// Dump launch file using Rust parser
-fn dump_launch_rust(args: &LaunchArgs) -> Result<()> {
-    let start = Instant::now();
-
-    // 1. Resolve launch file path
-    let launch_path = resolve_launch_file(&args.package_or_path, args.launch_file.as_deref())?;
-
-    debug!("Parsing launch file: {}", launch_path.display());
-
-    // 2. Parse launch arguments (KEY:=VALUE format)
-    let cli_args: HashMap<String, String> = args
-        .launch_arguments
-        .iter()
-        .filter_map(|arg| {
-            let parts: Vec<&str> = arg.splitn(2, ":=").collect();
-            if parts.len() == 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
-            } else {
-                warn!(
-                    "Ignoring invalid launch argument (expected KEY:=VALUE): {}",
-                    arg
-                );
-                None
-            }
-        })
-        .collect();
-
-    // 3. Call Rust parser
-    let record = play_launch_parser::parse_launch_file(&launch_path, cli_args)
-        .map_err(|e| eyre::eyre!("Rust parser error: {}\n\nHint: If you encounter parsing issues, try the Python parser:\n  play_launch launch {} {} --parser python",
-            e,
-            args.package_or_path,
-            args.launch_file.as_deref().unwrap_or(""),
-        ))?;
-
-    // 4. Write record.json
-    let output_path = PathBuf::from("record.json");
-    let json_output =
-        serde_json::to_string_pretty(&record).wrap_err("Failed to serialize record.json")?;
-
-    std::fs::write(&output_path, json_output)
-        .wrap_err_with(|| format!("Failed to write record.json to {}", output_path.display()))?;
-
-    let elapsed = start.elapsed();
-    info!(
-        "Parsing completed in {:.2}s (Rust parser)",
-        elapsed.as_secs_f64()
-    );
-
-    Ok(())
-}
-
-/// Dump launch file using Python parser (fallback)
-async fn dump_launch_python(args: &LaunchArgs) -> Result<()> {
-    use crate::python::dump_launcher::DumpLauncher;
-
-    let start = Instant::now();
-
-    let launcher = DumpLauncher::new()
-        .wrap_err("Failed to initialize dump_launch. Ensure ROS workspace is sourced.")?;
-
-    // Use default record.json in current directory
-    let record_path = PathBuf::from("record.json");
-
-    launcher
-        .dump_launch(
-            &args.package_or_path,
-            args.launch_file.as_deref(),
-            &args.launch_arguments,
-            &record_path,
-        )
-        .await?;
-
-    let elapsed = start.elapsed();
-    info!(
-        "Parsing completed in {:.2}s (Python parser)",
-        elapsed.as_secs_f64()
-    );
-
-    Ok(())
-}
+use crate::cli::options::LaunchArgs;
+use eyre::Result;
+use std::{collections::BTreeMap, path::PathBuf};
+use tracing::info;
 
 /// Resolve launch file path from package name or direct path
 pub(super) fn resolve_launch_file(
@@ -149,71 +75,45 @@ pub(super) fn resolve_launch_file(
     ))
 }
 
-/// Handle the 'launch' subcommand
+/// Handle the 'launch' subcommand: parse → resolve → replay, all in memory.
 pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
-    info!("Step 1/3: Recording launch execution...");
-
     play_launch_parser::block_command_substitution(args.block_commands);
 
-    // Choose parser based on selection
-    match args.parser {
-        ParserBackend::Rust => {
-            // Rust mode (default) - fail if error, no fallback
-            info!("Using Rust parser");
-            dump_launch_rust(args)?;
-        }
-        ParserBackend::Python => {
-            // Python mode
-            info!("Using Python parser");
+    let runtime = super::common::build_tokio_runtime()?;
+    runtime.block_on(async move {
+        info!("Step 1/3: Parsing launch file...");
+        let (dump, launch_path) = super::common::parse_to_launch_dump(
+            &args.package_or_path,
+            args.launch_file.as_deref(),
+            &args.launch_arguments,
+            args.parser,
+        )
+        .await?;
+        info!(
+            "Parsed: {} node(s), {} container(s), {} composable node(s)",
+            dump.node.len(),
+            dump.container.len(),
+            dump.load_node.len()
+        );
 
-            // Create tokio runtime for Python parser (async)
-            let worker_threads = std::cmp::min(num_cpus::get(), 8);
-            let max_blocking = worker_threads * 2;
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(worker_threads)
-                .max_blocking_threads(max_blocking)
-                .thread_name("play_launch-worker")
-                .enable_all()
-                .build()?;
+        info!("Step 2/3: Resolving SystemModel...");
+        let arg_binding: BTreeMap<String, String> =
+            super::parse_launch_arguments(&args.launch_arguments)
+                .into_iter()
+                .collect();
+        let model = super::resolve::build_checked_model(super::resolve::ModelBuildInputs {
+            dump: &dump,
+            launch_path: Some(&launch_path),
+            arg_binding,
+            contracts: args.common.contracts.as_deref(),
+            no_provider_contracts: args.common.no_provider_contracts,
+            sched: args.common.sched.as_deref(),
+            system: None,
+            target: args.common.target.as_str(),
+            explain: false,
+        })?;
 
-            runtime.block_on(async { dump_launch_python(args).await })?;
-        }
-    }
-
-    // Phase 43.5 — the model path is launch's default: resolve the record
-    // just written into a checked SystemModel (contract Errors refuse the
-    // launch — validity by construction), then replay from the bound pair.
-    info!("Step 2/3: Resolving SystemModel from the record...");
-    let resolve_args = crate::cli::options::ResolveArgs {
-        package_or_path: None,
-        launch_file: None,
-        record: Some(PathBuf::from("record.json")),
-        launch_arguments: args.launch_arguments.clone(),
-        // `--record` mode is used above, so `resolve` re-reads the record
-        // this step already dumped with `args.parser` — this field is
-        // unused on that path (kept in sync for documentation purposes).
-        parser: args.parser,
-        contracts: args.common.contracts.clone(),
-        no_provider_contracts: args.common.no_provider_contracts,
-        sched: args.common.sched.clone(),
-        system: None,
-        target: args.common.target.clone(),
-        out: "system_model.yaml".to_string(),
-        explain: false,
-    };
-    super::resolve::handle_resolve(&resolve_args)?;
-
-    info!("Step 3/3: Replaying launch execution...");
-
-    // Create replay args and call handle_replay
-    let replay_args = crate::cli::options::ReplayArgs {
-        input_file: PathBuf::from("record.json"),
-        model: Some(PathBuf::from("system_model.yaml")),
-        explain: false,
-        common: args.common.clone(),
-    };
-
-    super::replay::handle_replay(&replay_args)?;
-
-    Ok(())
+        info!("Step 3/3: Replaying launch execution...");
+        super::replay::play(dump, std::sync::Arc::new(model), &args.common).await
+    })
 }
