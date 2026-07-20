@@ -37,8 +37,19 @@ perceives one kind of dump.
   is the load-bearing item — the Linux spawn path must reproduce today's
   behavior from the model inputs (regression-test against current
   `record.json`-driven spawns).
-- **46.4** `dump` emits the model; retire `record.json`, `meta.record`
-  binding, `verify_model_record_binding`, the record companion in `resolve`.
+- **46.4** (Python-parser preservation FIRST — the acceptance gate): make
+  `dump` emit a SystemModel for BOTH parsers — `--parser rust` → full model
+  (structure+contracts+sched), `--parser python` → structure-only model
+  (Python parse → LaunchDump → model_builder; contracts/sched empty, since
+  the Python parser doesn't support them). Remove the now-vestigial
+  `meta.record` binding gate (`verify_model_record_binding`) so
+  `replay --model` spawns from the self-sufficient model (46.3b) without a
+  record companion. **ACCEPTANCE (must pass before 46.5): `dump --parser
+  python <standard launch>` → `replay --model` spawns cleanly** (rt_workspace
+  + a standard-ROS launch), AND the Rust path keeps its Autoware parity.
+  Verified 2026-07-20: Python→record→model bridge already produces a valid
+  structure-only model that drives spawning; only the binding gate causes
+  friction (removed here).
 - **46.5** Drop the dead LaunchDump-only artifacts (`file_data`, `variables`)
   from the emitted artifact; keep whatever the parser needs internally.
 - **46.6** Docs: guide + design cross-refs; `dump`/`replay`/`resolve` one-artifact story.
