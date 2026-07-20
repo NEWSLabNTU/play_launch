@@ -38,29 +38,4 @@ impl DumpLauncher {
         })
         .await?
     }
-
-    /// Execute dump_launch for a single node (run mode)
-    ///
-    /// # Arguments
-    /// * `package` - Package name
-    /// * `executable` - Executable name
-    /// * `args` - Node arguments
-    /// * `output` - Path where record.json will be written
-    pub async fn dump_run(
-        &self,
-        package: &str,
-        executable: &str,
-        args: &[String],
-        output: &Path,
-    ) -> Result<()> {
-        let package = package.to_string();
-        let executable = executable.to_string();
-        let args = args.to_vec();
-        let output = output.to_path_buf();
-
-        tokio::task::spawn_blocking(move || {
-            python_bridge::run_dump_run(&package, &executable, &args, &output)
-        })
-        .await?
-    }
 }
