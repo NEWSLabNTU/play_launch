@@ -5,9 +5,10 @@ use crate::{
 };
 use eyre::bail;
 use rayon::prelude::*;
+use ros_launch_manifest_model as model;
 use serde::Serialize;
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fs,
     fs::File,
     io::prelude::*,
@@ -68,6 +69,14 @@ pub struct ComposableNodeContext {
     pub log_name: String,
     pub output_dir: PathBuf,
     pub record: ComposableNodeRecord,
+    /// The model's `structure.nodes` FQN this context was built from
+    /// (Phase 46.3b) — `None` for record-sourced contexts. Lets the model
+    /// spawn path resolve sched-plan bindings (`SchedPlan::for_fqn`)
+    /// directly from the already-known, single-source-of-truth FQN instead
+    /// of recomputing it via `sched_loader::fqn_for(&launch_dump, ...)`
+    /// (which needs a `LaunchDump` numeric scope id this context doesn't
+    /// carry).
+    pub model_fqn: Option<String>,
 }
 
 /// The context contains all essential data to execute a ROS node.
@@ -75,6 +84,8 @@ pub struct NodeContext {
     pub record: NodeRecord,
     pub cmdline: NodeCommandLine,
     pub output_dir: PathBuf,
+    /// See [`ComposableNodeContext::model_fqn`].
+    pub model_fqn: Option<String>,
 }
 
 impl NodeContext {
@@ -83,6 +94,7 @@ impl NodeContext {
             record,
             cmdline,
             output_dir,
+            model_fqn: _,
         } = self;
 
         // Raw executables (from <executable> tags) have no package or exec_name.
@@ -239,6 +251,7 @@ pub fn prepare_node_contexts(
                 record: (*record).clone(),
                 cmdline,
                 output_dir,
+                model_fqn: None,
             })
         })
         .collect();
@@ -392,6 +405,7 @@ pub fn prepare_container_contexts(
                 record: node_record,
                 cmdline,
                 output_dir,
+                model_fqn: None,
             };
 
             eyre::Ok(NodeContainerContext { node_context })
@@ -442,10 +456,317 @@ pub fn prepare_composable_node_contexts(
                 record: (*record).clone(),
                 log_name,
                 output_dir,
+                model_fqn: None,
             })
         })
         .collect();
     let load_node_contexts = load_node_contexts?;
+
+    Ok(ComposableNodeContextSet { load_node_contexts })
+}
+
+// ---------------------------------------------------------------------
+// Phase 46.3b — spawn context from the SystemModel
+// ---------------------------------------------------------------------
+//
+// The three functions below are model-sourced siblings of
+// `prepare_node_contexts`/`prepare_container_contexts`/
+// `prepare_composable_node_contexts` above: same argv-assembly pipeline
+// (`NodeCommandLine::from_node_record`, via the
+// `node_cmdline::node_record_from_instance` adapter), same output-dir/
+// metadata.json conventions, different input (`model::SystemModel` instead
+// of `LaunchDump`). See `.superpowers/sdd/p46-w3-analysis.md` and the
+// 46.3b report for the full design + the static-equivalence gate that
+// proves these produce the same spawn as the record path.
+
+/// Resolve every composable node's `container` reference against
+/// `structure.nodes`' own FQN keys (exact match, else the same unique
+/// bare-name suffix fallback `model_builder::resolve_node_ref` already
+/// uses to reconcile manifest-declared node refs — reused here, not
+/// reimplemented, so there is exactly one FQN-matching algorithm in the
+/// codebase for this purpose, not a second one for the spawn path).
+///
+/// This is how the model-sourced spawn path tells a `<node_container>`
+/// instance apart from a regular `<node>` instance: `model::NodeInstance`
+/// itself carries no `is_container` flag — `model_builder.rs`'s
+/// `dump.container` loop produces the exact same shape as its `dump.node`
+/// loop (`plugin: None, container: None` either way). This is a gap the
+/// W3-analysis field-completeness matrix didn't anticipate (it only
+/// considered whether fields needed for *argv assembly* were present, not
+/// node-vs-container classification on the consume side) — see the 46.3b
+/// report. Every `<node_container>` that hosts at least one composable
+/// node (the overwhelming real-world case — a static launch declaring an
+/// empty component container with nothing to load is a degenerate,
+/// vanishingly rare pattern) is correctly classified via this heuristic. A
+/// zero-composable container would be misclassified as a regular node,
+/// losing the `--container-mode` executable override — a documented,
+/// narrow limitation, not silently papered over.
+fn model_container_fqns(structure: &model::Structure) -> BTreeSet<String> {
+    structure
+        .nodes
+        .values()
+        .filter_map(|inst| inst.container.as_ref())
+        .map(|target| crate::ros::model_builder::resolve_node_ref(&structure.nodes, target))
+        .collect()
+}
+
+/// Sequential dedup pass shared by the three model-sourced builders below:
+/// mirrors the record path's two-phase `build_name_map` dedup (`{base}`,
+/// `{base}_2`, `{base}_3`, ... on collision), keyed by the FQN's last path
+/// segment instead of `NodeRecord.name`.
+fn dedup_model_dir_names(entries: &[(&String, &model::NodeInstance)]) -> Vec<String> {
+    let base_names: Vec<String> = entries
+        .iter()
+        .map(|(fqn, _)| super::node_cmdline::split_model_fqn(fqn).1.to_string())
+        .collect();
+    let name_map = build_name_map(base_names.clone());
+    let mut name_indices: HashMap<String, usize> = HashMap::new();
+    base_names
+        .iter()
+        .map(|base_name| {
+            let index = name_indices.entry(base_name.clone()).or_insert(0);
+            let unique_names = name_map.get(base_name).unwrap();
+            let dir_name = unique_names[*index].clone();
+            *index += 1;
+            dir_name
+        })
+        .collect()
+}
+
+/// Model-sourced equivalent of [`prepare_node_contexts`]: regular `<node>`
+/// instances — every `structure.nodes` entry that is neither a composable
+/// (`plugin.is_some()`) nor a container (see [`model_container_fqns`]).
+pub fn prepare_node_contexts_from_model(
+    system_model: &model::SystemModel,
+    node_log_dir: &Path,
+) -> eyre::Result<Vec<NodeContext>> {
+    let container_fqns = model_container_fqns(&system_model.structure);
+
+    let entries: Vec<(&String, &model::NodeInstance)> = system_model
+        .structure
+        .nodes
+        .iter()
+        .filter(|(fqn, inst)| inst.plugin.is_none() && !container_fqns.contains(*fqn))
+        .collect();
+    let dir_names = dedup_model_dir_names(&entries);
+
+    let mut node_contexts = Vec::with_capacity(entries.len());
+    for ((fqn, inst), dir_name) in entries.iter().zip(dir_names.iter()) {
+        let output_dir = node_log_dir.join(dir_name);
+        let params_files_dir = output_dir.join("params_files");
+        fs::create_dir_all(&params_files_dir)?;
+
+        let record = super::node_cmdline::node_record_from_instance(fqn, inst);
+        let cmdline =
+            NodeCommandLine::from_node_record(&record, &params_files_dir, &HashMap::new())?;
+
+        let metadata = NodeMetadata {
+            node_type: "node".to_string(),
+            package: record.package.clone(),
+            executable: record.executable.clone(),
+            exec_name: record.exec_name.clone(),
+            name: record.name.clone(),
+            namespace: record.namespace.clone(),
+            is_container: false,
+            container_full_name: None,
+            duplicate_index: None,
+            note: None,
+        };
+        let metadata_path = output_dir.join("metadata.json");
+        fs::write(metadata_path, serde_json::to_string_pretty(&metadata)?)?;
+
+        node_contexts.push(NodeContext {
+            record,
+            cmdline,
+            output_dir,
+            model_fqn: Some((*fqn).clone()),
+        });
+    }
+
+    Ok(node_contexts)
+}
+
+/// Model-sourced equivalent of [`prepare_container_contexts`]: applies the
+/// exact same `--container-mode` package/executable override.
+pub fn prepare_container_contexts_from_model(
+    system_model: &model::SystemModel,
+    container_log_dir: &Path,
+    container_mode: ContainerMode,
+) -> eyre::Result<Vec<NodeContainerContext>> {
+    let container_fqns = model_container_fqns(&system_model.structure);
+
+    let entries: Vec<(&String, &model::NodeInstance)> = system_model
+        .structure
+        .nodes
+        .iter()
+        .filter(|(fqn, _)| container_fqns.contains(*fqn))
+        .collect();
+    let dir_names = dedup_model_dir_names(&entries);
+
+    let mut container_contexts = Vec::with_capacity(entries.len());
+    for ((fqn, inst), dir_name) in entries.iter().zip(dir_names.iter()) {
+        let mut record = super::node_cmdline::node_record_from_instance(fqn, inst);
+
+        // `node_record_from_instance` collapses a root-level FQN's
+        // namespace to `None` (omitting `__ns`) to match the common
+        // "no `namespace=` attribute" case for regular `<node>`s, where
+        // `NodeRecord.namespace` is genuinely `Option`. Containers are
+        // different: `NodeContainerRecord.namespace: String` is NOT
+        // optional — `prepare_container_contexts` always wraps it
+        // `Some(container_record.namespace.clone())` (context.rs, the
+        // record-sourced sibling), so the record path emits `__ns` for
+        // EVERY container, including root-namespaced ones
+        // (`-r __ns:=/`). Empirically found on Autoware's
+        // `pointcloud_container` (root-namespaced): the record path keeps
+        // `__ns:=/`, the generic root-collapse would have dropped it. Force
+        // `Some` here to match.
+        record.namespace = Some(record.namespace.unwrap_or_else(|| "/".to_string()));
+
+        // Same override logic as `prepare_container_contexts`.
+        let (package, executable, mut extra_args) = match container_mode {
+            ContainerMode::Stock => (
+                record.package.clone().unwrap_or_default(),
+                record.executable.clone(),
+                Vec::<String>::new(),
+            ),
+            ContainerMode::Observable | ContainerMode::Isolated => {
+                let mut args = Vec::new();
+                if record.executable == "component_container_mt" {
+                    args.push("--use_multi_threaded_executor".to_string());
+                }
+                if container_mode == ContainerMode::Isolated {
+                    args.push("--isolated".to_string());
+                }
+                (
+                    "play_launch_container".to_string(),
+                    "component_container".to_string(),
+                    args,
+                )
+            }
+        };
+        let final_args = if extra_args.is_empty() {
+            record.args.clone()
+        } else {
+            if let Some(mut existing) = record.args.clone() {
+                extra_args.append(&mut existing);
+            }
+            Some(extra_args)
+        };
+        record.package = Some(package);
+        record.executable = executable;
+        record.args = final_args;
+
+        let output_dir = container_log_dir.join(dir_name);
+        let params_files_dir = output_dir.join("params_files");
+        fs::create_dir_all(&params_files_dir)?;
+
+        let cmdline =
+            NodeCommandLine::from_node_record(&record, &params_files_dir, &HashMap::new())?;
+
+        let metadata = NodeMetadata {
+            node_type: "container".to_string(),
+            package: record.package.clone(),
+            executable: record.executable.clone(),
+            exec_name: record.exec_name.clone(),
+            name: record.name.clone(),
+            namespace: record.namespace.clone(),
+            is_container: true,
+            container_full_name: Some((*fqn).clone()),
+            duplicate_index: None,
+            note: None,
+        };
+        let metadata_path = output_dir.join("metadata.json");
+        fs::write(metadata_path, serde_json::to_string_pretty(&metadata)?)?;
+
+        container_contexts.push(NodeContainerContext {
+            node_context: NodeContext {
+                record,
+                cmdline,
+                output_dir,
+                model_fqn: Some((*fqn).clone()),
+            },
+        });
+    }
+
+    Ok(container_contexts)
+}
+
+/// Model-sourced equivalent of [`prepare_composable_node_contexts`]: every
+/// `structure.nodes` entry carrying a `plugin`. Composable nodes have no
+/// argv/process of their own (`NodeCommandLine` is not involved), matching
+/// the record path's own LoadNode-request-only treatment — GAP-6's
+/// `extra_args` (⊃ `use_intra_process_comms`) rides straight through.
+pub fn prepare_composable_node_contexts_from_model(
+    system_model: &model::SystemModel,
+    load_node_log_dir: &Path,
+) -> eyre::Result<ComposableNodeContextSet> {
+    let entries: Vec<(&String, &model::NodeInstance)> = system_model
+        .structure
+        .nodes
+        .iter()
+        .filter(|(_, inst)| inst.plugin.is_some())
+        .collect();
+    let dir_names = dedup_model_dir_names(&entries);
+
+    let mut load_node_contexts = Vec::with_capacity(entries.len());
+    for ((fqn, inst), dir_name) in entries.iter().zip(dir_names.iter()) {
+        let (ns, name) = super::node_cmdline::split_model_fqn(fqn);
+        let namespace = if ns.is_empty() {
+            "/".to_string()
+        } else {
+            ns.to_string()
+        };
+
+        let params: Vec<(String, String)> = inst
+            .params
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    super::node_cmdline::param_value_to_record_string(v),
+                )
+            })
+            .collect();
+        let remaps: Vec<(String, String)> = inst
+            .remaps
+            .iter()
+            .map(|r| (r.from.clone(), r.to.clone()))
+            .collect();
+        let env = (!inst.env.is_empty()).then(|| {
+            inst.env
+                .iter()
+                .map(|e| (e.name.clone(), e.value.clone()))
+                .collect()
+        });
+
+        let record = ComposableNodeRecord {
+            package: inst.pkg.clone().unwrap_or_default(),
+            plugin: inst.plugin.clone().unwrap_or_default(),
+            target_container_name: inst.container.clone().unwrap_or_default(),
+            node_name: name.to_string(),
+            namespace,
+            log_level: None,
+            remaps,
+            params,
+            extra_args: inst
+                .extra_args
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            env,
+            scope: None,
+        };
+
+        let output_dir = load_node_log_dir.join(dir_name);
+        let log_name = format!("COMPOSABLE_NODE '{}'", dir_name);
+
+        load_node_contexts.push(ComposableNodeContext {
+            record,
+            log_name,
+            output_dir,
+            model_fqn: Some((*fqn).clone()),
+        });
+    }
 
     Ok(ComposableNodeContextSet { load_node_contexts })
 }

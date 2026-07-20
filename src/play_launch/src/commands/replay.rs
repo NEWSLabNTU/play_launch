@@ -8,8 +8,10 @@ use crate::{
     cli,
     cli::config::load_runtime_config,
     execution::context::{
-        ComposableNodeContextSet, prepare_composable_node_contexts, prepare_container_contexts,
-        prepare_node_contexts,
+        ComposableNodeContextSet, prepare_composable_node_contexts,
+        prepare_composable_node_contexts_from_model, prepare_container_contexts,
+        prepare_container_contexts_from_model, prepare_node_contexts,
+        prepare_node_contexts_from_model,
     },
     monitoring::resource_monitor::MonitorConfig,
     ros::{container_readiness::SERVICE_DISCOVERY_HANDLE, launch_dump::load_launch_dump},
@@ -482,17 +484,37 @@ async fn play(
         None
     };
 
-    // Prepare node and container execution contexts
+    // Prepare node and container execution contexts. Phase 46.3b: when a
+    // SystemModel was given, the spawn context (argv/env/params-files/
+    // LoadNode requests) is built from the model's `structure.nodes`
+    // instead of the LaunchDump — both paths produce the same
+    // `NodeContext`/`NodeContainerContext`/`ComposableNodeContext` types
+    // (proven equal by the static-equivalence gate,
+    // `execution::spawn_equivalence_test`), so everything downstream
+    // (interception injection, actor spawn, metadata) is unchanged. The
+    // record path stays the default (and the only source for the
+    // sched/manifest/web-UI-scope-map consumers not yet migrated — Phase
+    // 46.4/46.5 retirement).
     debug!("Preparing node execution contexts...");
-    let mut pure_node_contexts = prepare_node_contexts(&launch_dump, &node_log_dir)?;
+    let mut pure_node_contexts = match &system_model {
+        Some(m) => {
+            info!("Spawn source: SystemModel (structure.nodes)");
+            prepare_node_contexts_from_model(m, &node_log_dir)?
+        }
+        None => prepare_node_contexts(&launch_dump, &node_log_dir)?,
+    };
 
     debug!("Preparing container execution contexts...");
-    let mut container_contexts =
-        prepare_container_contexts(&launch_dump, &node_log_dir, common.container_mode)?;
+    let mut container_contexts = match &system_model {
+        Some(m) => prepare_container_contexts_from_model(m, &node_log_dir, common.container_mode)?,
+        None => prepare_container_contexts(&launch_dump, &node_log_dir, common.container_mode)?,
+    };
 
     // Prepare LoadNode request execution contexts
-    let ComposableNodeContextSet { load_node_contexts } =
-        prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?;
+    let ComposableNodeContextSet { load_node_contexts } = match &system_model {
+        Some(m) => prepare_composable_node_contexts_from_model(m, &load_node_log_dir)?,
+        None => prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?,
+    };
 
     // Phase 36.7: write the topic-FQN allowlist file when
     // `--block-unauthorized-endpoints` is set. Children's
@@ -744,12 +766,19 @@ async fn play(
             output_dir: context.output_dir.clone(),
             pgid: Some(pgid),
             sched: sched_plan.as_ref().and_then(|p| {
-                let fqn = crate::ros::sched_loader::fqn_for(
-                    &launch_dump,
-                    context.record.namespace.as_deref(),
-                    &member_name,
-                    context.record.scope,
-                );
+                // Phase 46.3b: the model already knows its own canonical
+                // FQN (`structure.nodes`'s key) — use it directly rather
+                // than recomputing via `fqn_for(&launch_dump, ...)`, which
+                // needs a `LaunchDump` numeric scope id this context
+                // doesn't carry on the model path.
+                let fqn = context.model_fqn.clone().unwrap_or_else(|| {
+                    crate::ros::sched_loader::fqn_for(
+                        &launch_dump,
+                        context.record.namespace.as_deref(),
+                        &member_name,
+                        context.record.scope,
+                    )
+                });
                 p.for_fqn(&fqn).cloned()
             }),
             sched_mode: common.sched_apply,
@@ -784,12 +813,14 @@ async fn play(
             output_dir: context.node_context.output_dir.clone(),
             pgid: Some(pgid),
             sched: sched_plan.as_ref().and_then(|p| {
-                let fqn = crate::ros::sched_loader::fqn_for(
-                    &launch_dump,
-                    context.node_context.record.namespace.as_deref(),
-                    &member_name,
-                    context.node_context.record.scope,
-                );
+                let fqn = context.node_context.model_fqn.clone().unwrap_or_else(|| {
+                    crate::ros::sched_loader::fqn_for(
+                        &launch_dump,
+                        context.node_context.record.namespace.as_deref(),
+                        &member_name,
+                        context.node_context.record.scope,
+                    )
+                });
                 p.for_fqn(&fqn).cloned()
             }),
             sched_mode: common.sched_apply,
@@ -819,12 +850,14 @@ async fn play(
         // Phase 38.9: resolve this composable's tier at the builder (Option B) —
         // no FQN recompute at apply time, no C++/Rust FQN-format dependency.
         let composable_tier = sched_plan.as_ref().and_then(|p| {
-            let fqn = crate::ros::sched_loader::fqn_for(
-                &launch_dump,
-                Some(&context.record.namespace),
-                &context.record.node_name,
-                context.record.scope,
-            );
+            let fqn = context.model_fqn.clone().unwrap_or_else(|| {
+                crate::ros::sched_loader::fqn_for(
+                    &launch_dump,
+                    Some(&context.record.namespace),
+                    &context.record.node_name,
+                    context.record.scope,
+                )
+            });
             p.for_fqn(&fqn).cloned()
         });
 

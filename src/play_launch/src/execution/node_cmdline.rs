@@ -1,6 +1,7 @@
 use crate::ros::launch_dump::NodeRecord;
 use eyre::{Context, bail};
 use itertools::{Itertools, chain};
+use ros_launch_manifest_model as model;
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, Cow},
@@ -145,7 +146,167 @@ pub(crate) fn eval_python_str(expr: &str) -> Option<String> {
     Python::with_gil(|py| py.eval(&code, None, None).ok()?.extract::<String>().ok())
 }
 
+/// Split a canonical model FQN (`model::Structure::nodes` key, e.g.
+/// `/perception/detector` or `/detector`) into `(namespace, name)`,
+/// inverting `model_builder::fqn`'s forward join. `namespace` is `""` for a
+/// root-level FQN (`/name`) — the caller treats that the same as "no
+/// `namespace=` attribute declared" (matching `NodeRecord.namespace: None`),
+/// which is the common case and round-trips exactly through
+/// `model_builder::fqn`'s own `unwrap_or("/")` default. See
+/// `node_record_from_instance`'s doc comment for the (narrow, documented)
+/// divergence this collapsing causes.
+pub(crate) fn split_model_fqn(fqn: &str) -> (&str, &str) {
+    match fqn.rsplit_once('/') {
+        Some((ns, name)) if !ns.is_empty() => (ns, name),
+        Some((_, name)) => ("", name),
+        None => ("", fqn),
+    }
+}
+
+/// Render a typed model parameter value back into the resolved-string form
+/// `from_node_record`'s pipeline expects (it re-infers the YAML type itself
+/// via `str_to_yaml`). Bool/Int/Str round-trip exactly. Float is the one
+/// case needing care: `f64::to_string()` drops the decimal point for whole
+/// numbers (`50.0` -> `"50"`), which `str_to_yaml` would then re-infer as an
+/// **Integer**, silently changing the ROS parameter type (CLAUDE.md: "Float
+/// parameters: always include decimal point"). Force one back on when
+/// missing. `StrList` has no producer today (`model_builder::lower_params`
+/// never emits it — it only recognizes Bool/Int/Float/Str) so it's handled
+/// defensively (best-effort join), not exercised by the equivalence gate.
+pub(crate) fn param_value_to_record_string(v: &model::ParamValue) -> String {
+    match v {
+        model::ParamValue::Bool(b) => b.to_string(),
+        model::ParamValue::Int(i) => i.to_string(),
+        model::ParamValue::Float(f) => {
+            if !f.is_finite() {
+                return f.to_string();
+            }
+            let s = f.to_string();
+            if s.contains('.') || s.contains('e') || s.contains('E') {
+                s
+            } else {
+                format!("{s}.0")
+            }
+        }
+        model::ParamValue::Str(s) => s.clone(),
+        model::ParamValue::StrList(items) => items.join(","),
+    }
+}
+
+/// Build a synthetic [`NodeRecord`] from a resolved model [`model::NodeInstance`]
+/// so the existing, well-tested `from_node_record`/`to_cmdline` argv-assembly
+/// pipeline can run unmodified against model-sourced data (Phase 46.3b —
+/// `.superpowers/sdd/p46-w3-analysis.md`). Works for both regular `<node>`
+/// and `<node_container>` instances — the caller (`execution/context.rs`)
+/// applies the container-mode package/executable override afterward, same
+/// as the record path does in `prepare_container_contexts`.
+///
+/// GAP-4 (params/global_params merge) was already resolved at model-BUILD
+/// time (`model_builder::lower_params_merged`), so `global_params` here is
+/// always `None` — nothing left to merge.
+///
+/// Two **documented, narrow divergences** from the record path, both
+/// stemming from the same root cause: the model's `structure.nodes` key is
+/// a *reconciled* FQN (Phase 46.3a's `name.or(exec_name)` fallback), and
+/// carries no signal for which optional launch field (`name=`/`namespace=`)
+/// was actually declared vs. defaulted:
+///
+/// 1. **`name` is always `Some(..)`** here (the FQN's last segment).
+///    `from_node_record` only emits the `__node` remap when
+///    `record.name.is_some()` — deliberately *omitted* when the launch
+///    declared no `name=` (`af7c524`, so LifecycleNodes keep their
+///    internally-declared default name). A model-sourced spawn therefore
+///    always sets `__node`, which is a no-op when the launch DID declare a
+///    name (the overwhelming majority) but is a real, functional divergence
+///    for `name=None` nodes specifically. See the 46.3b report for the
+///    concrete count (Autoware: ~10/119) and recommended follow-up (a
+///    `NodeInstance` field carrying whether `name` was explicitly declared).
+/// 2. **`namespace` is `None` only when the FQN is root** (`/name`) —
+///    collapsing "no `namespace=` attribute" (record path: `None`, no
+///    `__ns` remap) and an explicit `namespace="/"` (record path: `Some("/")`,
+///    emits `-r __ns:=/`) into the same model representation. Both are
+///    behaviorally identical (ROS's own default namespace is `/`), so this
+///    only produces a textual (not functional) argv difference, and only
+///    for the rare explicit-root-namespace case.
+pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeRecord {
+    let (ns, name) = split_model_fqn(fqn);
+
+    let params: Vec<(String, String)> = inst
+        .params
+        .iter()
+        .map(|(k, v)| (k.clone(), param_value_to_record_string(v)))
+        .collect();
+
+    let env = (!inst.env.is_empty()).then(|| {
+        inst.env
+            .iter()
+            .map(|e| (e.name.clone(), e.value.clone()))
+            .collect()
+    });
+
+    let remaps: Vec<(String, String)> = inst
+        .remaps
+        .iter()
+        .map(|r| (r.from.clone(), r.to.clone()))
+        .collect();
+
+    NodeRecord {
+        executable: inst.exec.clone().unwrap_or_default(),
+        package: inst.pkg.clone(),
+        name: Some(name.to_string()),
+        namespace: (!ns.is_empty()).then(|| ns.to_string()),
+        exec_name: Some(name.to_string()),
+        params,
+        params_files: inst.params_files.clone(),
+        remaps,
+        ros_args: (!inst.ros_args.is_empty()).then(|| inst.ros_args.clone()),
+        args: (!inst.args.is_empty()).then(|| inst.args.clone()),
+        cmd: inst.raw_cmd.clone(),
+        env,
+        respawn: inst.respawn,
+        respawn_delay: inst.respawn_delay,
+        // Already merged into `params` at model-build time (GAP-4).
+        global_params: None,
+        // Not a spawn input either way — `from_node_record` ignores it
+        // (`machine: _`), it only affects placement (Phase 46.1).
+        machine: None,
+        // Model-path sched-tier lookups use the already-known model FQN
+        // directly (`NodeContext::model_fqn`), not this numeric scope id —
+        // there is no equivalent to recover from the model alone.
+        scope: None,
+    }
+}
+
 impl NodeCommandLine {
+    /// Construct from a resolved model node instance (Phase 46.3b). Adapter
+    /// over [`node_record_from_instance`] + [`Self::from_node_record`] — see
+    /// both doc comments for the field mapping and documented divergences.
+    /// `variables` is normally empty: the model is early-bound
+    /// (`docs/design/unified-system-model.md`) so `$(var ...)` patterns
+    /// should never survive into `NodeInstance::exec`; passed through
+    /// anyway so a stray unresolved pattern degrades the same way the
+    /// record path does (left verbatim) rather than panicking.
+    ///
+    /// Not called from `execution/context.rs`'s model-sourced builders
+    /// today — they need the intermediate [`NodeRecord`] too (for
+    /// `NodeContext::record`, and containers mutate it for the
+    /// `--container-mode` override before building the cmdline), so they
+    /// call [`node_record_from_instance`] + [`Self::from_node_record`]
+    /// directly. Kept as the tested, symmetrical public entry point (mirrors
+    /// [`Self::from_node_record`] exactly) — exercised by the static
+    /// equivalence gate and available for a future caller that only needs
+    /// the `NodeCommandLine`.
+    #[allow(dead_code)]
+    pub fn from_node_instance(
+        fqn: &str,
+        inst: &model::NodeInstance,
+        params_files_dir: &Path,
+        variables: &HashMap<String, String>,
+    ) -> eyre::Result<Self> {
+        let record = node_record_from_instance(fqn, inst);
+        Self::from_node_record(&record, params_files_dir, variables)
+    }
+
     /// Construct from a ROS node record in the launch dump.
     pub fn from_node_record(
         record: &NodeRecord,
@@ -873,6 +1034,220 @@ mod tests {
                 .1
                 .contains("overrides"),
             "overrides.yaml should be the last --params-file"
+        );
+    }
+
+    // -- Phase 46.3b: from_node_instance / node_record_from_instance -----
+
+    /// `split_model_fqn` inverts `model_builder::fqn`'s forward join.
+    #[test]
+    fn test_split_model_fqn() {
+        assert_eq!(
+            split_model_fqn("/perception/detector"),
+            ("/perception", "detector")
+        );
+        assert_eq!(split_model_fqn("/detector"), ("", "detector"));
+        assert_eq!(
+            split_model_fqn("/perception/sub/detector"),
+            ("/perception/sub", "detector")
+        );
+    }
+
+    /// The float-formatting risk documented on `param_value_to_record_string`:
+    /// `f64::to_string()` drops the decimal point for whole numbers (Rust's
+    /// `10.0_f64.to_string() == "10"`), which would make `str_to_yaml`
+    /// re-infer an Integer instead of a Float, silently changing the ROS
+    /// parameter type. Must always come back with a decimal point (or
+    /// scientific notation).
+    #[test]
+    fn test_param_value_to_record_string_preserves_float_type() {
+        assert_eq!(
+            param_value_to_record_string(&model::ParamValue::Float(50.0)),
+            "50.0"
+        );
+        assert_eq!(
+            param_value_to_record_string(&model::ParamValue::Float(0.2)),
+            "0.2"
+        );
+        assert_eq!(
+            param_value_to_record_string(&model::ParamValue::Float(-3.0)),
+            "-3.0"
+        );
+        assert_eq!(
+            param_value_to_record_string(&model::ParamValue::Int(3)),
+            "3"
+        );
+        assert_eq!(
+            param_value_to_record_string(&model::ParamValue::Bool(true)),
+            "true"
+        );
+        assert_eq!(
+            param_value_to_record_string(&model::ParamValue::Bool(false)),
+            "false"
+        );
+        assert_eq!(
+            param_value_to_record_string(&model::ParamValue::Str("hello".to_string())),
+            "hello"
+        );
+        // str_to_yaml (params_to_yaml's type inference) requires '.'/'e'/'E'
+        // to recognize a Float — assert the invariant this function exists
+        // to guarantee, not just the literal string.
+        for v in [
+            model::ParamValue::Float(50.0),
+            model::ParamValue::Float(1e10),
+            model::ParamValue::Float(-3.0),
+        ] {
+            let s = param_value_to_record_string(&v);
+            assert!(
+                s.contains('.') || s.contains('e') || s.contains('E'),
+                "Float {v:?} rendered as {s:?} would be re-inferred as an Integer by str_to_yaml"
+            );
+        }
+    }
+
+    /// `node_record_from_instance` field mapping: GAP-1..6 fields round-trip
+    /// from a typed `model::NodeInstance` into the record shape
+    /// `from_node_record` expects — fixture-independent (doesn't touch
+    /// ament_index), the counterpart to the fixture-driven equivalence gate
+    /// in `execution::spawn_equivalence_test`.
+    #[test]
+    fn test_node_record_from_instance_field_mapping() {
+        let inst = model::NodeInstance {
+            scope: "/".to_string(),
+            pkg: Some("lidar_centerpoint".to_string()),
+            exec: Some("detector_node".to_string()),
+            plugin: None,
+            container: None,
+            lifecycle: false,
+            lifecycle_autostart: None,
+            params: std::collections::BTreeMap::from([
+                ("max_range".to_string(), model::ParamValue::Float(50.0)),
+                ("use_sim_time".to_string(), model::ParamValue::Bool(true)),
+                ("retries".to_string(), model::ParamValue::Int(3)),
+            ]),
+            criticality: None,
+            remaps: vec![model::Remap {
+                from: "/points".to_string(),
+                to: "/sensing/lidar/points".to_string(),
+            }],
+            ros_args: vec!["--log-level".to_string(), "detector:=debug".to_string()],
+            respawn: Some(true),
+            respawn_delay: Some(2.5),
+            env: vec![model::EnvVar {
+                name: "CUDA_VISIBLE_DEVICES".to_string(),
+                value: "0".to_string(),
+            }],
+            args: vec!["--verbose".to_string()],
+            params_files: vec!["/**:\n  ros__parameters:\n    voxel_size: 0.2\n".to_string()],
+            raw_cmd: Vec::new(),
+            extra_args: Default::default(),
+        };
+
+        let record = node_record_from_instance("/perception/detector_node", &inst);
+
+        assert_eq!(record.package.as_deref(), Some("lidar_centerpoint"));
+        assert_eq!(record.executable, "detector_node");
+        assert_eq!(record.name.as_deref(), Some("detector_node"));
+        assert_eq!(record.namespace.as_deref(), Some("/perception"));
+        assert_eq!(record.exec_name.as_deref(), Some("detector_node"));
+        assert_eq!(
+            record.remaps,
+            vec![("/points".to_string(), "/sensing/lidar/points".to_string())]
+        );
+        assert_eq!(
+            record.ros_args,
+            Some(vec![
+                "--log-level".to_string(),
+                "detector:=debug".to_string()
+            ])
+        );
+        assert_eq!(record.args, Some(vec!["--verbose".to_string()]));
+        assert_eq!(record.respawn, Some(true));
+        assert_eq!(record.respawn_delay, Some(2.5));
+        assert_eq!(
+            record.env,
+            Some(vec![("CUDA_VISIBLE_DEVICES".to_string(), "0".to_string())])
+        );
+        // GAP-3: params_files carried verbatim, not re-parsed.
+        assert_eq!(record.params_files, inst.params_files);
+        // GAP-4: already merged at model-build time — nothing left here.
+        assert!(record.global_params.is_none());
+        // Params: typed values rendered back to their resolved-string form
+        // (order-independent — params round-trips through a HashMap in
+        // from_node_record anyway).
+        let params: std::collections::HashMap<_, _> = record.params.into_iter().collect();
+        assert_eq!(params.get("max_range").map(String::as_str), Some("50.0"));
+        assert_eq!(params.get("use_sim_time").map(String::as_str), Some("true"));
+        assert_eq!(params.get("retries").map(String::as_str), Some("3"));
+    }
+
+    /// Root-namespaced FQN (`/name`, no deeper path segment) maps to
+    /// `namespace: None` — matching "no `namespace=` attribute declared" in
+    /// the record path (the common case), per `node_record_from_instance`'s
+    /// documented divergence for the rarer explicit `namespace="/"` case.
+    #[test]
+    fn test_node_record_from_instance_root_namespace_omits_namespace() {
+        let inst = model::NodeInstance {
+            scope: "/".to_string(),
+            pkg: Some("demo_nodes_cpp".to_string()),
+            exec: Some("talker".to_string()),
+            plugin: None,
+            container: None,
+            lifecycle: false,
+            lifecycle_autostart: None,
+            params: Default::default(),
+            criticality: None,
+            remaps: Vec::new(),
+            ros_args: Vec::new(),
+            respawn: None,
+            respawn_delay: None,
+            env: Vec::new(),
+            args: Vec::new(),
+            params_files: Vec::new(),
+            raw_cmd: Vec::new(),
+            extra_args: Default::default(),
+        };
+        let record = node_record_from_instance("/talker", &inst);
+        assert_eq!(record.namespace, None);
+        assert_eq!(record.name.as_deref(), Some("talker"));
+    }
+
+    /// GAP-5: a raw `<executable>` instance (`pkg: None`) round-trips its
+    /// `raw_cmd` into `NodeRecord.cmd`, which is what `from_raw_executable`
+    /// reads.
+    #[test]
+    fn test_node_record_from_instance_raw_executable() {
+        let inst = model::NodeInstance {
+            scope: "/".to_string(),
+            pkg: None,
+            exec: None,
+            plugin: None,
+            container: None,
+            lifecycle: false,
+            lifecycle_autostart: None,
+            params: Default::default(),
+            criticality: None,
+            remaps: Vec::new(),
+            ros_args: Vec::new(),
+            respawn: None,
+            respawn_delay: None,
+            env: Vec::new(),
+            args: Vec::new(),
+            params_files: Vec::new(),
+            raw_cmd: vec![
+                "/usr/bin/carla-server -quality-level=Low".to_string(),
+                "-nosound".to_string(),
+            ],
+            extra_args: Default::default(),
+        };
+        let record = node_record_from_instance("/unknown", &inst);
+        assert!(record.package.is_none());
+        assert_eq!(
+            record.cmd,
+            vec![
+                "/usr/bin/carla-server -quality-level=Low".to_string(),
+                "-nosound".to_string(),
+            ]
         );
     }
 }
