@@ -1111,8 +1111,10 @@ mod tests {
     /// `node_record_from_instance` field mapping: GAP-1..6 fields round-trip
     /// from a typed `model::NodeInstance` into the record shape
     /// `from_node_record` expects — fixture-independent (doesn't touch
-    /// ament_index), the counterpart to the fixture-driven equivalence gate
-    /// in `execution::spawn_equivalence_test`.
+    /// ament_index). This is now the primary coverage that the model-sourced
+    /// spawn record matches what the argv pipeline expects (Phase 47.B
+    /// review retired the fixture-driven record-vs-model equivalence gate
+    /// once the record path was removed).
     #[test]
     fn test_node_record_from_instance_field_mapping() {
         let inst = model::NodeInstance {
