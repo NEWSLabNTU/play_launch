@@ -47,6 +47,7 @@ Completed phase docs are in `archive/`.
 | 44 | Vocabulary v2 + Chain-Aware Mapper | 🔄 44.1–44.6, 44.8 done; 44.7 handoff | — |
 | 45 | Scheduling SSoT Unification | ✅ 45.1–45.8 | 2026-07-19 |
 | 46 | Unified SystemModel (one artifact) | ✅ 46.1–46.6 | 2026-07-20 |
+| 47 | CLI cleanup + hard record.json removal | 📋 Planned | — |
 
 ---
 
