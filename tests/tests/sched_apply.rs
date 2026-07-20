@@ -171,12 +171,16 @@ fn sched_apply_warn_engages_and_launch_succeeds() {
     let sched_path = write_sched_toml(tmp.path());
 
     // First dump to get the expected process count (mirrors
-    // simple_workspace::test_launch_pure_nodes).
+    // simple_workspace::test_launch_pure_nodes). Phase 46.5: `--format
+    // record` keeps the legacy record.json shape `count_expected_processes`
+    // reads (dump's default is the SystemModel).
     let record_path = tmp.path().join("record.json");
     let mut dump_proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
         "dump",
         "--output",
         record_path.to_str().unwrap(),
+        "--format",
+        "record",
         "launch",
         "--parser",
         "rust",

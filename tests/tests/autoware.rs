@@ -33,10 +33,14 @@ fn dump_autoware(parser: &str) -> (serde_json::Value, tempfile::TempDir) {
     let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let output_path = tmp.path().join("record.json");
 
+    // Phase 46.5: `--format record` keeps this parity helper on the legacy
+    // record.json shape (dump's default output is now the SystemModel).
     let mut args = vec![
         "dump".to_string(),
         "--output".to_string(),
         output_path.to_str().unwrap().to_string(),
+        "--format".to_string(),
+        "record".to_string(),
         "launch".to_string(),
         "--parser".to_string(),
         parser.to_string(),
@@ -151,10 +155,14 @@ fn test_autoware_process_count_rust() {
     let tmp = tempfile::TempDir::new().unwrap();
     let record_path = tmp.path().join("record.json");
 
+    // Phase 46.5: `--format record` keeps the legacy record.json shape
+    // `count_expected_processes` reads (dump's default is the SystemModel).
     let mut dump_args = vec![
         "dump".to_string(),
         "--output".to_string(),
         record_path.to_str().unwrap().to_string(),
+        "--format".to_string(),
+        "record".to_string(),
         "launch".to_string(),
         "--parser".to_string(),
         "rust".to_string(),
@@ -270,10 +278,14 @@ fn test_autoware_process_count_python() {
     let tmp = tempfile::TempDir::new().unwrap();
     let record_path = tmp.path().join("record.json");
 
+    // Phase 46.5: `--format record` keeps the legacy record.json shape
+    // `count_expected_processes` reads (dump's default is the SystemModel).
     let mut dump_args = vec![
         "dump".to_string(),
         "--output".to_string(),
         record_path.to_str().unwrap().to_string(),
+        "--format".to_string(),
+        "record".to_string(),
         "launch".to_string(),
         "--parser".to_string(),
         "python".to_string(),

@@ -32,7 +32,7 @@ dump-rust:
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../../install/setup.bash
     . install/setup.bash
-    {{play_launch}} dump --output record_rust.json launch \
+    {{play_launch}} dump --output record_rust.json --format record launch \
         --parser rust \
         rt_demo bringup.launch.xml
     echo "Rust parser dump complete: record_rust.json"
@@ -45,7 +45,7 @@ dump-python:
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../../install/setup.bash
     . install/setup.bash
-    {{play_launch}} dump --output record_python.json launch \
+    {{play_launch}} dump --output record_python.json --format record launch \
         --parser python \
         rt_demo bringup.launch.xml
     echo "Python parser dump complete: record_python.json"

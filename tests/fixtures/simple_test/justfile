@@ -54,7 +54,7 @@ dump-rust:
     echo "Dumping composition.launch.xml with Rust parser..."
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../../install/setup.bash
-    play_launch dump --output record_rust.json launch \
+    play_launch dump --output record_rust.json --format record launch \
         --parser rust \
         launch/composition.launch.xml
     echo "✓ Rust parser dump complete: record_rust.json"
@@ -66,7 +66,7 @@ dump-python:
     echo "Dumping composition.launch.xml with Python parser..."
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../../install/setup.bash
-    play_launch dump --output record_python.json launch \
+    play_launch dump --output record_python.json --format record launch \
         --parser python \
         launch/composition.launch.xml
     echo "✓ Python parser dump complete: record_python.json"

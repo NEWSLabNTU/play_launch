@@ -78,10 +78,16 @@ fn dump_bringup(
     let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let output_path = tmp.path().join("record.json");
 
+    // Phase 46.5: `dump`'s default output is the SystemModel now —
+    // `--format record` keeps this parity helper on the legacy record.json
+    // shape (`array_len`/`compare_records.py` need top-level node/container
+    // arrays).
     let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(env).args([
         "dump",
         "--output",
         output_path.to_str().unwrap(),
+        "--format",
+        "record",
         "launch",
         "--parser",
         parser,
@@ -1419,6 +1425,96 @@ fn check_export_graph_dot_extension_dispatch() {
     let dot = fs::read_to_string(&export_path).expect("failed to read export DOT");
     assert!(dot.starts_with("digraph causal {"));
     assert!(dot.contains("/control_node"));
+}
+
+// ---- Phase 46.5 — retirement: dump emits the model, no record companion,
+// deprecated record.json replay ----
+
+/// `dump <launch> -o <path>` with no `--format` (the new default) must
+/// produce the SystemModel — the exact same artifact `resolve` produces —
+/// not a record.json, and must NOT leave a `<path>.record.json` companion
+/// on disk. Then `replay --model <path>` must spawn cleanly from it (same
+/// 3-process outcome `replay_model_spawns_without_record_companion`
+/// proves for `resolve`), confirming `dump` and `resolve` fully converged.
+#[test]
+fn dump_default_emits_model_and_replays_cleanly() {
+    if !require_rt_workspace() {
+        return;
+    }
+    let env = fixtures::rt_workspace_env();
+
+    let dump_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let model_path = dump_tmp.path().join("m.yaml");
+
+    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
+        "dump",
+        "-o",
+        model_path.to_str().unwrap(),
+        "launch",
+        "rt_demo",
+        "bringup.launch.xml",
+    ]))
+    .expect("spawn dump");
+    assert!(
+        proc.wait_with_timeout(Duration::from_secs(60)).success(),
+        "play_launch dump (default format) failed"
+    );
+
+    // No record.json companion anywhere near the model.
+    let companion = dump_tmp.path().join("m.record.json");
+    assert!(
+        !companion.exists(),
+        "dump must not write a record.json companion next to the model (Phase 46.5): {}",
+        companion.display()
+    );
+
+    // The output IS the SystemModel (structure.nodes present, no top-level
+    // record.json `node` array — the two artifacts have disjoint shapes).
+    let yaml = fs::read_to_string(&model_path).expect("failed to read dump output");
+    let model = serde_yaml_value(&yaml);
+    assert!(
+        model.get("structure").is_some(),
+        "dump's default output must be the SystemModel (structure.* present):\n{yaml}"
+    );
+    assert!(
+        model.get("node").is_none(),
+        "dump's default output must NOT be the legacy record.json shape (top-level `node`):\n{yaml}"
+    );
+    let nodes = model["structure"]["nodes"]
+        .as_object()
+        .expect("structure.nodes");
+    assert_eq!(
+        nodes.len(),
+        4,
+        "rt_demo bringup: 2 nodes + 1 container + 1 composable"
+    );
+
+    // And it replays cleanly, from a separate empty dir, with no record.json
+    // anywhere — same acceptance `replay_model_spawns_without_record_companion`
+    // runs for `resolve`.
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.current_dir(work_tmp.path());
+    cmd.args([
+        "replay",
+        "--model",
+        model_path.to_str().unwrap(),
+        "--disable-web-ui",
+        "--disable-monitoring",
+        "--disable-diagnostics",
+    ]);
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
+
+    let play_log = work_tmp.path().join("play_log/latest");
+    fixtures::wait_for_processes(&play_log, 3, Duration::from_secs(30));
+    let actual = fixtures::count_cmdline_files(&play_log);
+    assert_eq!(
+        actual, 3,
+        "process count mismatch: actual={actual}, expected=3 (2 nodes + 1 container) — \
+         replay --model must spawn cleanly from a `dump`-produced model"
+    );
+
+    // _proc dropped here — ManagedProcess::drop kills the process group.
 }
 
 // ---- Phase 46.5 — retirement: resolve drops the record companion ----

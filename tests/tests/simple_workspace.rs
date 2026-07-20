@@ -147,11 +147,15 @@ fn test_launch_pure_nodes() {
     let tmp = tempfile::TempDir::new().unwrap();
     let record_path = tmp.path().join("record.json");
 
+    // Phase 46.5: `--format record` keeps the legacy record.json shape
+    // `count_expected_processes` reads (dump's default is the SystemModel).
     let mut dump_proc = ManagedProcess::spawn(
         fixtures::play_launch_cmd(&env).args([
             "dump",
             "--output",
             record_path.to_str().unwrap(),
+            "--format",
+            "record",
             "launch",
             "--parser",
             "rust",

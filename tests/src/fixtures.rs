@@ -277,6 +277,26 @@ pub fn play_launch_cmd(env: &HashMap<String, String>) -> Command {
     let mut cmd = Command::new(play_launch_bin());
     cmd.env_clear();
     cmd.envs(env);
+    // Phase 46.5 — prepend the current worktree's `python/` source ahead of
+    // whatever `PYTHONPATH` the sourced env carried (or a stale pip install
+    // on user site-packages, which is always importable regardless of
+    // PYTHONPATH). The colcon install/ tree doesn't ship the embedded
+    // PyO3 dump_launch python package — only a `pip install` does — so
+    // without this, `--parser python` tests silently pick up whatever
+    // `play_launch` happens to be pip-installed on the host, which can
+    // predate Phase 40.1's `ScopeOrigin.path` and trip the stale-install
+    // check `resolve`/`dump --parser python` now fail loud on (see
+    // `commands/resolve.rs`). This mirrors exactly what the 46.4 report's
+    // manual acceptance run did by hand
+    // (`export PYTHONPATH=<repo>/python:$PYTHONPATH`).
+    let source_python = repo_root().join("python");
+    let pythonpath = match env.get("PYTHONPATH") {
+        Some(existing) if !existing.is_empty() => {
+            format!("{}:{existing}", source_python.display())
+        }
+        _ => source_python.display().to_string(),
+    };
+    cmd.env("PYTHONPATH", pythonpath);
     // Unique DDS domain per invocation — prevents cross-talk between
     // concurrent tests that spawn containers on the same machine.
     cmd.env("ROS_DOMAIN_ID", next_domain_id().to_string());
@@ -300,6 +320,12 @@ pub fn array_len(val: &serde_json::Value, key: &str) -> usize {
 
 /// Dump a launch file with the given environment and parser, returning the
 /// parsed `record.json` and the temp directory (kept alive for the caller).
+///
+/// Phase 46.5: `dump`'s default output is now the SystemModel, so this
+/// parser-parity helper (record.json shape: top-level `node`/`container`/
+/// `load_node` arrays) passes `--format record` — the dev/parser-parity
+/// escape hatch `scripts/compare_records.py` and this whole test suite's
+/// cross-parser comparisons depend on.
 pub fn dump_launch(
     env: &HashMap<String, String>,
     launch_file: &str,
@@ -312,6 +338,8 @@ pub fn dump_launch(
         "dump",
         "--output",
         output_path.to_str().unwrap(),
+        "--format",
+        "record",
         "launch",
         "--parser",
         parser,

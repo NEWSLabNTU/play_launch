@@ -112,7 +112,7 @@ dump-rust: check-autoware
     source activate_autoware.sh
 
     echo "Dumping with Rust parser..."
-    play_launch dump --output record_rust.json launch \
+    play_launch dump --output record_rust.json --format record launch \
         --parser rust \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
@@ -133,7 +133,7 @@ dump-python: check-autoware
     source activate_autoware.sh
 
     echo "Dumping with Python parser..."
-    play_launch dump --output record_python.json launch \
+    play_launch dump --output record_python.json --format record launch \
         --parser python \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
@@ -189,7 +189,7 @@ count-processes PARSER="rust": check-autoware
 
     # Dump record.json to get expected counts
     echo "Dumping with $PARSER parser to get expected counts..."
-    play_launch dump --output record_count.json launch \
+    play_launch dump --output record_count.json --format record launch \
         --parser "$PARSER" \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
