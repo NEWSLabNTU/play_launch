@@ -319,6 +319,14 @@ pub struct ResolveArgs {
     #[arg(long, default_value = "posix")]
     pub target: String,
 
+    /// Parser backend to use for launch file parsing (Phase 46.4).
+    /// - rust: Use Rust parser (default, full model: structure+contracts+sched)
+    /// - python: Use Python parser (maximum compatibility; structure-only —
+    ///   contracts/sched stay empty since the Python parser doesn't produce
+    ///   those facts)
+    #[arg(long, value_enum, default_value = "rust")]
+    pub parser: ParserBackend,
+
     /// Output path for the SystemModel YAML. `-` writes to stdout.
     #[arg(long, short = 'o', default_value = "system_model.yaml")]
     pub out: String,
@@ -417,9 +425,11 @@ pub struct ReplayArgs {
     #[arg(long, default_value = "record.json")]
     pub input_file: PathBuf,
 
-    /// SystemModel emitted by `play_launch resolve` (Phase 43). The record
-    /// must be one of the model's hashed inputs — a mismatched pair refuses
-    /// to run (the checked artifact must be the thing that runs).
+    /// SystemModel emitted by `play_launch resolve` (Phase 43). Spawns
+    /// directly from the model's `structure.nodes` — no accompanying
+    /// `--input-file` record is required (Phase 46.4: the model↔record
+    /// binding gate was removed once the model became a self-sufficient
+    /// spawn source).
     #[arg(long, value_name = "PATH")]
     pub model: Option<PathBuf>,
 

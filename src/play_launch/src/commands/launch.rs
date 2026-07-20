@@ -189,6 +189,10 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
         launch_file: None,
         record: Some(PathBuf::from("record.json")),
         launch_arguments: args.launch_arguments.clone(),
+        // `--record` mode is used above, so `resolve` re-reads the record
+        // this step already dumped with `args.parser` — this field is
+        // unused on that path (kept in sync for documentation purposes).
+        parser: args.parser,
         contracts: args.common.contracts.clone(),
         no_provider_contracts: args.common.no_provider_contracts,
         sched: args.common.sched.clone(),

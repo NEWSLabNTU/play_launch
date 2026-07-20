@@ -15,7 +15,7 @@ use eyre::{Context, Result};
 use ros_launch_manifest_check::Severity;
 
 use crate::{
-    cli::options::ResolveArgs,
+    cli::options::{ParserBackend, ResolveArgs},
     ros::{manifest_loader, model_builder, sched_loader},
 };
 
@@ -57,20 +57,68 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
             })?;
             let launch_path = super::launch::resolve_launch_file(pkg_or_path, launch_file)?;
             eprintln!("Resolving launch file: {}", launch_path.display());
-            let record = play_launch_parser::parse_launch_file(&launch_path, cli_args.clone())
-                .map_err(|e| eyre::eyre!("Parser error: {e}"))?;
-            let json = serde_json::to_string_pretty(&record)?;
-            let dump: crate::ros::launch_dump::LaunchDump = serde_json::from_str(&json)?;
             // Emit the spawn-info companion next to the model so the pair
             // ships together (skipped for stdout mode — nothing to bind).
             let record_path = if args.out == "-" {
                 None
             } else {
-                let p = std::path::PathBuf::from(&args.out).with_extension("record.json");
-                std::fs::write(&p, &json)
-                    .wrap_err_with(|| format!("writing record companion {}", p.display()))?;
-                eprintln!("Record companion: {}", p.display());
-                Some(p)
+                Some(std::path::PathBuf::from(&args.out).with_extension("record.json"))
+            };
+            let dump: crate::ros::launch_dump::LaunchDump = match args.parser {
+                ParserBackend::Rust => {
+                    let record =
+                        play_launch_parser::parse_launch_file(&launch_path, cli_args.clone())
+                            .map_err(|e| eyre::eyre!("Parser error: {e}"))?;
+                    let json = serde_json::to_string_pretty(&record)?;
+                    if let Some(p) = &record_path {
+                        std::fs::write(p, &json).wrap_err_with(|| {
+                            format!("writing record companion {}", p.display())
+                        })?;
+                        eprintln!("Record companion: {}", p.display());
+                    }
+                    serde_json::from_str(&json)?
+                }
+                ParserBackend::Python => {
+                    // Phase 46.4 — one-step Python→model: run the Python
+                    // parse path (same `dump_launch_python_wrapper` logic
+                    // `dump` uses) straight into the record companion, then
+                    // feed the SAME model_builder pipeline as the Rust path.
+                    // The Python parser doesn't produce contract/sched
+                    // facts, so those layers stay empty — a structure-only
+                    // model, by construction, not by special-casing here.
+                    eprintln!("Resolving via Python parser");
+                    let companion_path = record_path.clone().unwrap_or_else(|| {
+                        std::env::temp_dir().join(format!(
+                            "play_launch-resolve-{}.record.json",
+                            std::process::id()
+                        ))
+                    });
+                    let runtime = super::common::build_tokio_runtime()?;
+                    runtime.block_on(async {
+                        let launcher = crate::python::dump_launcher::DumpLauncher::new().wrap_err(
+                            "Failed to initialize dump_launch. Ensure ROS workspace is sourced.",
+                        )?;
+                        launcher
+                            .dump_launch(
+                                pkg_or_path,
+                                launch_file,
+                                &launch_arguments,
+                                &companion_path,
+                            )
+                            .await
+                    })?;
+                    let dump = crate::ros::launch_dump::load_launch_dump(&companion_path)
+                        .wrap_err_with(|| {
+                            format!("loading Python-parsed record {}", companion_path.display())
+                        })?;
+                    if record_path.is_some() {
+                        eprintln!("Record companion: {}", companion_path.display());
+                    } else {
+                        // stdout mode — nothing binds to the temp file.
+                        let _ = std::fs::remove_file(&companion_path);
+                    }
+                    dump
+                }
             };
             (dump, Some(launch_path), record_path)
         }
