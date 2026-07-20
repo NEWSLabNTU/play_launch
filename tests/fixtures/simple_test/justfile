@@ -74,8 +74,9 @@ dump-python:
 # Dump with both parsers
 dump-both: dump-rust dump-python
 
-# Compare Rust and Python parser outputs
-compare-dumps:
+# Compare Rust and Python parser outputs — record.json shape (legacy,
+# dev/parser-parity escape hatch; requires `just dump-both` first).
+compare-dumps-record:
     #!/usr/bin/env bash
     set -e
     if [ ! -f "record_rust.json" ]; then
@@ -92,10 +93,40 @@ compare-dumps:
     echo ""
     echo "Comparison complete."
 
+# Compare Rust and Python parser outputs — SystemModel shape (Phase
+# 47.B1: the parser-parity gate now runs on the model, not record.json).
+# Self-contained: resolves both parsers itself (no dump-rust/dump-python
+# prerequisite).
+compare-dumps:
+    #!/usr/bin/env bash
+    set -e
+    REPO_ROOT="$(cd ../../.. && pwd)"
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . "$REPO_ROOT/install/setup.bash"
+    # Phase 46.5/47.B1 — colcon-built binary + current worktree's
+    # `python/` package ahead of PATH/PYTHONPATH so this never silently
+    # runs a stale pip install (the `--parser python` stale-scope-path
+    # guard fails loud on that instead).
+    export PATH="$REPO_ROOT/install/play_launch/lib/play_launch:$PATH"
+    export PYTHONPATH="$REPO_ROOT/python:$PYTHONPATH"
+
+    echo "Resolving with Rust parser..."
+    play_launch resolve --parser rust -o model_rust.yaml launch/composition.launch.xml
+
+    echo "Resolving with Python parser..."
+    play_launch resolve --parser python -o model_python.yaml launch/composition.launch.xml
+
+    echo ""
+    echo "Comparing Rust and Python SystemModels..."
+    echo ""
+    python3 "$REPO_ROOT/scripts/compare_models.py" model_rust.yaml model_python.yaml
+    echo ""
+    echo "Comparison complete."
+
 # Clean generated files
 clean:
     #!/usr/bin/env bash
     set -e
     echo "Cleaning up..."
-    rm -rf play_log record*.json
+    rm -rf play_log record*.json model_rust.yaml model_python.yaml
     echo "Cleanup complete"

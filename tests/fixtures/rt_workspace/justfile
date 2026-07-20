@@ -53,8 +53,9 @@ dump-python:
 # Dump with both parsers
 dump-both: dump-rust dump-python
 
-# Compare Rust and Python parser outputs (record.json parity)
-compare-dumps:
+# Compare Rust and Python parser outputs — record.json shape (legacy,
+# dev/parser-parity escape hatch; requires `just dump-both` first).
+compare-dumps-record:
     #!/usr/bin/env bash
     set -e
     if [ ! -f "record_rust.json" ]; then
@@ -67,6 +68,34 @@ compare-dumps:
     fi
     echo "Comparing Rust and Python parser outputs..."
     python3 ../../../scripts/compare_records.py record_rust.json record_python.json
+    echo "Comparison complete."
+
+# Compare Rust and Python parser outputs — SystemModel shape (Phase
+# 47.B1: the parser-parity gate now runs on the model, not record.json).
+# Self-contained: resolves both parsers itself (no dump-rust/dump-python
+# prerequisite). Also exercises the contracts/scheduling layers — this
+# fixture ships both a provider contract sidecar (`launch/bringup.contract.yaml`)
+# and platform file (`launch/bringup.system.posix.yaml`), auto-discovered
+# by channel resolution with no `--contracts`/`--sched` flag needed.
+compare-dumps:
+    #!/usr/bin/env bash
+    set -e
+    . /opt/ros/{{ros_distro}}/setup.bash
+    . ../../../install/setup.bash
+    . install/setup.bash
+    # Phase 46.5/47.B1 — current worktree's `python/` package ahead of
+    # PYTHONPATH so `--parser python` never silently runs a stale pip
+    # install (the stale-scope-path guard fails loud on that instead).
+    export PYTHONPATH="$(cd ../../.. && pwd)/python:$PYTHONPATH"
+
+    echo "Resolving with Rust parser..."
+    {{play_launch}} resolve --parser rust -o model_rust.yaml rt_demo bringup.launch.xml
+
+    echo "Resolving with Python parser..."
+    {{play_launch}} resolve --parser python -o model_python.yaml rt_demo bringup.launch.xml
+
+    echo "Comparing Rust and Python SystemModels..."
+    python3 ../../../scripts/compare_models.py model_rust.yaml model_python.yaml
     echo "Comparison complete."
 
 # Validate contracts + scheduling: v2 channel resolution/--explain/overlay,
@@ -139,5 +168,5 @@ clean:
     #!/usr/bin/env bash
     set -e
     echo "Cleaning up..."
-    rm -rf play_log record*.json build install log
+    rm -rf play_log record*.json model_rust.yaml model_python.yaml build install log
     echo "Cleanup complete"

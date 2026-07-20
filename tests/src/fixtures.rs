@@ -318,6 +318,37 @@ pub fn array_len(val: &serde_json::Value, key: &str) -> usize {
         .map_or(0, |a| a.len())
 }
 
+/// Classify a SystemModel's `structure.nodes` map into `(plain_nodes,
+/// containers, composables)` counts — the model-shaped sibling of
+/// `array_len(record, "node"|"container"|"load_node")`. Mirrors the
+/// classification `scripts/compare_models.py::classify_nodes` uses:
+/// `is_container: true` -> container, `plugin` set -> composable,
+/// otherwise a plain node.
+pub fn model_entity_counts(model: &serde_json::Value) -> (usize, usize, usize) {
+    let empty = serde_json::Map::new();
+    let nodes = model
+        .get("structure")
+        .and_then(|s| s.get("nodes"))
+        .and_then(|n| n.as_object())
+        .unwrap_or(&empty);
+
+    let mut containers = 0;
+    let mut composables = 0;
+    for inst in nodes.values() {
+        if inst
+            .get("is_container")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            containers += 1;
+        } else if !inst.get("plugin").is_none_or(|v| v.is_null()) {
+            composables += 1;
+        }
+    }
+    let plain = nodes.len() - containers - composables;
+    (plain, containers, composables)
+}
+
 /// Dump a launch file with the given environment and parser, returning the
 /// parsed `record.json` and the temp directory (kept alive for the caller).
 ///
@@ -417,6 +448,73 @@ pub fn compare_records(rust_record: &Path, python_record: &Path) -> (bool, Strin
         .arg(python_record)
         .output()
         .expect("failed to run compare_records.py");
+
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    (output.status.success(), combined)
+}
+
+/// `play_launch resolve` a launch file with the given environment and
+/// parser, returning the parsed SystemModel YAML (as `serde_json::Value` —
+/// `serde_yaml_ng` deserializes into any `Deserialize` target, and
+/// `serde_json::Value` is the convenient one for ad hoc field access in
+/// tests) and the temp directory backing the model file (kept alive for
+/// the caller, e.g. for `compare_models`).
+///
+/// Phase 47.B1 — the model-shaped sibling of `dump_launch`: parser-parity
+/// verification moves off `record.json` onto the model
+/// (`scripts/compare_models.py`), the gate before `record.json`'s hard
+/// removal (Phase 47.B2+).
+pub fn resolve_model(
+    env: &HashMap<String, String>,
+    package_or_path: &str,
+    launch_file: Option<&str>,
+    parser: &str,
+) -> (serde_json::Value, tempfile::TempDir) {
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let output_path = tmp.path().join("system_model.yaml");
+
+    let mut args: Vec<&str> = vec!["resolve", "--parser", parser, package_or_path];
+    if let Some(lf) = launch_file {
+        args.push(lf);
+    }
+    args.push("-o");
+    let output_str = output_path.to_str().unwrap();
+    args.push(output_str);
+
+    let mut proc = crate::process::ManagedProcess::spawn(play_launch_cmd(env).args(&args))
+        .expect("failed to spawn play_launch resolve");
+
+    let status = proc.wait_with_timeout(std::time::Duration::from_secs(60));
+    assert!(
+        status.success(),
+        "play_launch resolve (parser={parser}) failed for {package_or_path}"
+    );
+
+    let data = std::fs::read_to_string(&output_path).expect("failed to read system_model.yaml");
+    let model: serde_json::Value =
+        serde_yaml_ng::from_str(&data).expect("failed to parse system_model.yaml");
+    (model, tmp)
+}
+
+/// Run `scripts/compare_models.py` on two SystemModel YAML files.
+///
+/// Returns `(success, output)` where `success` is true when the script
+/// exits 0 (models are functionally equivalent) and `output` is the
+/// combined stdout+stderr for diagnostic printing on failure.
+pub fn compare_models(rust_model: &Path, python_model: &Path) -> (bool, String) {
+    let script = repo_root().join("scripts/compare_models.py");
+    assert!(script.is_file(), "compare_models.py not found");
+
+    let output = Command::new("python3")
+        .arg(&script)
+        .arg(rust_model)
+        .arg(python_model)
+        .output()
+        .expect("failed to run compare_models.py");
 
     let combined = format!(
         "{}\n{}",

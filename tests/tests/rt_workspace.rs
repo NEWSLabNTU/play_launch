@@ -12,7 +12,7 @@
 //! included in `just test-all`. All tests skip cleanly (not fail) if the
 //! fixture hasn't been built (`cd tests/fixtures/rt_workspace && just build`).
 
-use std::{collections::HashMap, fs, path::PathBuf, process::Stdio, time::Duration};
+use std::{fs, path::PathBuf, process::Stdio, time::Duration};
 
 use play_launch_tests::{fixtures, fixtures::array_len, process::ManagedProcess};
 
@@ -67,53 +67,20 @@ fn host_has_sched_privilege() -> bool {
     false
 }
 
-/// Dump `bringup.launch.xml` (package mode: `rt_demo bringup.launch.xml`)
-/// with the given parser, returning the parsed record and the temp dir
-/// backing `record.json` (kept alive for the caller, e.g. for
-/// `compare_records`).
-fn dump_bringup(
-    env: &HashMap<String, String>,
-    parser: &str,
-) -> (serde_json::Value, tempfile::TempDir) {
-    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
-    let output_path = tmp.path().join("record.json");
-
-    // Phase 46.5: `dump`'s default output is the SystemModel now —
-    // `--format record` keeps this parity helper on the legacy record.json
-    // shape (`array_len`/`compare_records.py` need top-level node/container
-    // arrays).
-    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(env).args([
-        "dump",
-        "--output",
-        output_path.to_str().unwrap(),
-        "--format",
-        "record",
-        "launch",
-        "--parser",
-        parser,
-        "rt_demo",
-        "bringup.launch.xml",
-    ]))
-    .expect("failed to spawn play_launch dump");
-
-    let status = proc.wait_with_timeout(Duration::from_secs(60));
-    assert!(
-        status.success(),
-        "play_launch dump (parser={parser}) failed"
-    );
-
-    let data = std::fs::read_to_string(&output_path).expect("failed to read record.json");
-    let record = serde_json::from_str(&data).expect("failed to parse record.json");
-    (record, tmp)
-}
-
-// ---- Dump parity ----
+// ---- Dump parity (Phase 47.B1 — moved onto the SystemModel) ----
 
 /// Rust vs Python parse of `bringup.launch.xml` must agree on entity counts
-/// (2 nodes, 1 container, 1 load_node — `sensor_node`, `control_node`,
+/// (2 nodes, 1 container, 1 composable — `sensor_node`, `control_node`,
 /// `perception_container`, `filter_component`) and be functionally
-/// equivalent per `scripts/compare_records.py` (same check as the fixture's
+/// equivalent per `scripts/compare_models.py` (same check as the fixture's
 /// own `just compare-dumps`).
+///
+/// Phase 47.B1 — the parser-parity gate moved off `record.json` onto the
+/// unified SystemModel (`play_launch resolve`), the prerequisite for
+/// hard-removing `record.json` in 47.B2+. This fixture also exercises the
+/// contracts/scheduling layers (`bringup.contract.yaml` +
+/// `bringup.system.posix.yaml`, auto-discovered by channel resolution),
+/// which `compare_models.py` compares whenever either side is non-empty.
 #[test]
 fn dump_parity_bringup() {
     if !require_rt_workspace() {
@@ -121,44 +88,33 @@ fn dump_parity_bringup() {
     }
     let env = fixtures::rt_workspace_env();
 
-    let (rust_record, rust_tmp) = dump_bringup(&env, "rust");
-    let (python_record, python_tmp) = dump_bringup(&env, "python");
+    let (rust_model, rust_tmp) =
+        fixtures::resolve_model(&env, "rt_demo", Some("bringup.launch.xml"), "rust");
+    let (python_model, python_tmp) =
+        fixtures::resolve_model(&env, "rt_demo", Some("bringup.launch.xml"), "python");
 
-    assert_eq!(array_len(&rust_record, "node"), 2, "rust: expected 2 nodes");
-    assert_eq!(
-        array_len(&rust_record, "container"),
-        1,
-        "rust: expected 1 container"
-    );
-    assert_eq!(
-        array_len(&rust_record, "load_node"),
-        1,
-        "rust: expected 1 load_node"
-    );
+    let (rust_nodes, rust_containers, rust_composables) =
+        fixtures::model_entity_counts(&rust_model);
+    assert_eq!(rust_nodes, 2, "rust: expected 2 nodes");
+    assert_eq!(rust_containers, 1, "rust: expected 1 container");
+    assert_eq!(rust_composables, 1, "rust: expected 1 composable");
 
+    let (python_nodes, python_containers, python_composables) =
+        fixtures::model_entity_counts(&python_model);
     assert_eq!(
-        array_len(&python_record, "node"),
-        array_len(&rust_record, "node"),
-        "node count mismatch: rust={}, python={}",
-        array_len(&rust_record, "node"),
-        array_len(&python_record, "node")
+        python_nodes, rust_nodes,
+        "node count mismatch: rust={rust_nodes}, python={python_nodes}"
     );
-    assert_eq!(
-        array_len(&python_record, "container"),
-        array_len(&rust_record, "container"),
-    );
-    assert_eq!(
-        array_len(&python_record, "load_node"),
-        array_len(&rust_record, "load_node"),
-    );
+    assert_eq!(python_containers, rust_containers);
+    assert_eq!(python_composables, rust_composables);
 
-    let (ok, output) = fixtures::compare_records(
-        &rust_tmp.path().join("record.json"),
-        &python_tmp.path().join("record.json"),
+    let (ok, output) = fixtures::compare_models(
+        &rust_tmp.path().join("system_model.yaml"),
+        &python_tmp.path().join("system_model.yaml"),
     );
     assert!(
         ok,
-        "compare_records.py reported a mismatch between rust and python dumps:\n{output}"
+        "compare_models.py reported a mismatch between rust and python models:\n{output}"
     );
 }
 

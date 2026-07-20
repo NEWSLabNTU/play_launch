@@ -143,8 +143,9 @@ dump-python: check-autoware
 # Dump with both parsers
 dump-both: dump-rust dump-python
 
-# Compare Rust and Python parser outputs
-compare-dumps:
+# Compare Rust and Python parser outputs — record.json shape (legacy,
+# dev/parser-parity escape hatch; requires `just dump-both` first).
+compare-dumps-record:
     #!/usr/bin/env bash
     set -e
     SCRIPT_DIR="{{script_dir}}"
@@ -165,6 +166,48 @@ compare-dumps:
 
     # Use the compare_records.py script from the repo root
     python3 ../../../scripts/compare_records.py record_rust.json record_python.json
+
+    echo ""
+    echo "Comparison complete."
+
+# Compare Rust and Python parser outputs — SystemModel shape (Phase
+# 47.B1: the parser-parity gate now runs on the model, not record.json).
+# Self-contained: resolves both parsers itself (no dump-rust/dump-python
+# prerequisite).
+compare-dumps: check-autoware
+    #!/usr/bin/env bash
+    set -e
+    SCRIPT_DIR="{{script_dir}}"
+    cd "$SCRIPT_DIR"
+    REPO_ROOT="$SCRIPT_DIR/../../.."
+
+    MAP_PATH="{{map_path}}"
+
+    # Source ROS and Autoware setup
+    source "$REPO_ROOT/install/setup.bash"
+    source activate_autoware.sh
+    # Phase 46.5/47.B1 — put the colcon-built binary and the current
+    # worktree's `python/` package ahead of PATH/PYTHONPATH so this never
+    # silently exercises a stale pip install (the `--parser python`
+    # stale-scope-path guard fails loud on a pre-Phase-40.1 install
+    # instead — this just avoids tripping it on a perfectly good repo).
+    export PATH="$REPO_ROOT/install/play_launch/lib/play_launch:$PATH"
+    export PYTHONPATH="$REPO_ROOT/python:$PYTHONPATH"
+
+    echo "Resolving with Rust parser..."
+    play_launch resolve --parser rust -o model_rust.yaml \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="$MAP_PATH"
+
+    echo "Resolving with Python parser..."
+    play_launch resolve --parser python -o model_python.yaml \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="$MAP_PATH"
+
+    echo ""
+    echo "Comparing Rust and Python SystemModels..."
+    echo ""
+    python3 "$REPO_ROOT/scripts/compare_models.py" model_rust.yaml model_python.yaml
 
     echo ""
     echo "Comparison complete."
