@@ -1,6 +1,6 @@
 //! Mock Node class for launch_ros.actions
 
-use super::helpers::{is_yaml_file, load_yaml_params};
+use super::helpers::is_yaml_file;
 use crate::{
     captures::NodeCapture,
     python::bridge::{capture_node, get_current_ros_namespace},
@@ -281,22 +281,17 @@ impl Node {
 
             // Case 1: String (parameter file path or literal value)
             if let Ok(path) = param_any.extract::<String>() {
-                // Check if it's a YAML parameter file
-                if is_yaml_file(&path) {
-                    // Load and expand YAML parameter file
-                    match load_yaml_params(&path) {
-                        Ok(yaml_params) => {
-                            log::debug!("Loaded {} parameters from {}", yaml_params.len(), path);
-                            parsed_params.extend(yaml_params);
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to load parameter file {}: {}", path, e);
-                            // Fallback: store as __param_file for backward compatibility
-                            parsed_params.push(("__param_file".to_string(), path));
-                        }
-                    }
-                } else if path.contains('/') {
-                    // Looks like a file path but not YAML - store as reference
+                // A YAML parameter file (or any path-like reference) is kept as a
+                // params_files REFERENCE, not flattened inline: a regular <node>
+                // receives its params via `--params-file`, so the real node
+                // filters the file's per-node (`/**`, FQN) sections at runtime.
+                // Flattening inline would merge every section into this node
+                // (leaking other nodes' params + wrong last-wins values). This
+                // matches the Python parser (dump_launch keeps `--params-file`
+                // paths) and the XML `<param from=...>` path. Composable nodes
+                // differ — they carry an explicit LoadNode param list, so they
+                // filter by FQN at parse time (see `load_yaml_params_for_node`).
+                if is_yaml_file(&path) || path.contains('/') {
                     parsed_params.push(("__param_file".to_string(), path));
                 } else {
                     // Treat as a literal parameter value
@@ -321,7 +316,8 @@ impl Node {
                 continue;
             }
 
-            // Case 4: ParameterFile object -- load YAML and expand inline
+            // Case 4: ParameterFile object -- kept as a params_files reference
+            // (runtime `--params-file` filtering; see Case 1).
             let type_name = param_any
                 .get_type()
                 .name()
@@ -331,24 +327,7 @@ impl Node {
                 if let Ok(str_val) = param_any.call_method0("__str__")
                     && let Ok(path) = str_val.extract::<String>()
                 {
-                    if is_yaml_file(&path) {
-                        match load_yaml_params(&path) {
-                            Ok(yaml_params) => {
-                                log::debug!(
-                                    "Loaded {} parameters from ParameterFile {}",
-                                    yaml_params.len(),
-                                    path
-                                );
-                                parsed_params.extend(yaml_params);
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to load ParameterFile {}: {}", path, e);
-                                parsed_params.push(("__param_file".to_string(), path));
-                            }
-                        }
-                    } else {
-                        parsed_params.push(("__param_file".to_string(), path));
-                    }
+                    parsed_params.push(("__param_file".to_string(), path));
                 }
                 continue;
             }
@@ -358,10 +337,9 @@ impl Node {
                 && let Ok(s) = str_val.extract::<String>()
             {
                 if is_yaml_file(&s) {
-                    match load_yaml_params(&s) {
-                        Ok(yaml_params) => parsed_params.extend(yaml_params),
-                        Err(_) => parsed_params.push(("substitution".to_string(), s)),
-                    }
+                    // A substitution resolving to a param file -> keep as a
+                    // params_files reference (runtime filtering; see Case 1).
+                    parsed_params.push(("__param_file".to_string(), s));
                 } else {
                     parsed_params.push(("substitution".to_string(), s));
                 }

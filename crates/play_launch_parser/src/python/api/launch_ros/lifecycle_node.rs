@@ -1,6 +1,6 @@
 //! Mock LifecycleNode and LifecycleTransition classes for launch_ros.actions
 
-use super::helpers::{is_yaml_file, load_yaml_params};
+use super::helpers::is_yaml_file;
 use pyo3::{prelude::*, types::PyDict};
 
 /// Mock LifecycleNode class
@@ -233,32 +233,15 @@ impl LifecycleNode {
                 continue;
             }
 
-            // Try to extract as string (path to YAML parameter file)
+            // Try to extract as string (path to YAML parameter file). Kept as a
+            // params_files REFERENCE (runtime `--params-file` filtering), not
+            // flattened inline — see the Node Case 1 comment for why.
             if let Ok(path_str) = param_any.extract::<String>() {
-                // Check if it's a YAML parameter file
-                if is_yaml_file(&path_str) {
-                    // Load and expand YAML parameter file
-                    match load_yaml_params(&path_str) {
-                        Ok(yaml_params) => {
-                            log::debug!(
-                                "Loaded {} parameters from {}",
-                                yaml_params.len(),
-                                path_str
-                            );
-                            parsed_params.extend(yaml_params);
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to load parameter file {}: {}", path_str, e);
-                            parsed_params.push(("__param_file".to_string(), path_str));
-                        }
-                    }
-                } else {
-                    parsed_params.push(("__param_file".to_string(), path_str));
-                }
+                parsed_params.push(("__param_file".to_string(), path_str));
                 continue;
             }
 
-            // ParameterFile object — load YAML and expand inline
+            // ParameterFile object — kept as a params_files reference.
             let type_name = param_any
                 .get_type()
                 .name()
@@ -268,24 +251,7 @@ impl LifecycleNode {
                 if let Ok(str_val) = param_any.call_method0("__str__")
                     && let Ok(path) = str_val.extract::<String>()
                 {
-                    if is_yaml_file(&path) {
-                        match load_yaml_params(&path) {
-                            Ok(yaml_params) => {
-                                log::debug!(
-                                    "Loaded {} parameters from ParameterFile {}",
-                                    yaml_params.len(),
-                                    path
-                                );
-                                parsed_params.extend(yaml_params);
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to load ParameterFile {}: {}", path, e);
-                                parsed_params.push(("__param_file".to_string(), path));
-                            }
-                        }
-                    } else {
-                        parsed_params.push(("__param_file".to_string(), path));
-                    }
+                    parsed_params.push(("__param_file".to_string(), path));
                 }
                 continue;
             }
@@ -295,10 +261,7 @@ impl LifecycleNode {
                 && let Ok(s) = str_val.extract::<String>()
             {
                 if is_yaml_file(&s) {
-                    match load_yaml_params(&s) {
-                        Ok(yaml_params) => parsed_params.extend(yaml_params),
-                        Err(_) => parsed_params.push(("substitution".to_string(), s)),
-                    }
+                    parsed_params.push(("__param_file".to_string(), s));
                 } else {
                     parsed_params.push(("substitution".to_string(), s));
                 }

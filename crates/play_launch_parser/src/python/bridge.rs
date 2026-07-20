@@ -18,8 +18,18 @@ impl NodeCapture {
         // Generate ROS command line (now includes global params)
         let cmd = self.generate_command(global_params);
 
-        // Extract parameter files from command (--params-file arguments)
-        let params_files = self.extract_params_files_from_cmd(&cmd);
+        // Extract parameter files from command (--params-file arguments), then
+        // resolve each path to its raw YAML CONTENT — the model's `params_files`
+        // holds file contents (mirrors the native XML path via
+        // `generator.rs::load_and_resolve_param_file`, and dump_launch which
+        // reads `--params-file` targets verbatim). Storing content keeps the
+        // file's per-node (`/**`, FQN) sections intact so the real node filters
+        // them at runtime, instead of flattening every section into this node.
+        let params_files = self
+            .extract_params_files_from_cmd(&cmd)
+            .into_iter()
+            .map(|path| std::fs::read_to_string(&path).unwrap_or(path))
+            .collect();
 
         Ok(NodeRecord {
             args: if self.arguments.is_empty() {

@@ -503,6 +503,72 @@ fn test_parse_python_parameters() {
     );
 }
 
+/// A regular `<node>` that loads a multi-section params file must keep the
+/// whole file as a `params_files` REFERENCE (the real node filters its own
+/// per-node/`/**` sections at runtime via `--params-file`) — NOT flatten every
+/// section into the node's inline `params` (which leaked other nodes' params
+/// and produced wrong last-wins values, e.g. `update_rate`). Regression for the
+/// composable/regular-node param-FQN fix.
+#[test]
+fn test_regular_node_multi_section_param_file_kept_as_reference() {
+    let _guard = python_test_guard();
+
+    // A shared params file with `/**` plus two per-node FQN sections that
+    // collide on `update_rate` — the classic Autoware default_adapi shape.
+    let mut param_file = tempfile::Builder::new().suffix(".yaml").tempfile().unwrap();
+    param_file
+        .write_all(
+            b"/**:\n  ros__parameters:\n    shared_param: 1.0\n\
+              /my_ns/node_a:\n  ros__parameters:\n    only_a: 100\n    update_rate: 10.0\n\
+              /my_ns/node_b:\n  ros__parameters:\n    only_b: 200\n    update_rate: 99.0\n",
+        )
+        .unwrap();
+    let param_path = param_file.path().to_str().unwrap().to_string();
+
+    let launch = format!(
+        "from launch import LaunchDescription\n\
+         from launch_ros.actions import Node\n\
+         def generate_launch_description():\n\
+         \x20   return LaunchDescription([\n\
+         \x20       Node(package='demo_nodes_cpp', executable='talker', name='node_a',\n\
+         \x20            namespace='my_ns', parameters=[{param_path:?}]),\n\
+         \x20   ])\n"
+    );
+    let launch_file = write_temp_launch_file(&launch);
+
+    let record =
+        parse_launch_file(launch_file.path(), HashMap::new()).expect("parse should succeed");
+    let json = serde_json::to_value(&record).unwrap();
+    let node = &json["node"].as_array().unwrap()[0];
+
+    // The file is carried as a params_files reference, not flattened inline.
+    let params_files = node["params_files"].as_array().unwrap();
+    assert_eq!(
+        params_files.len(),
+        1,
+        "the shared file is one params_files entry"
+    );
+
+    // Inline params must NOT contain any section's keys — no cross-node leak.
+    let param_keys: Vec<&str> = node["params"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| {
+            p.as_array()
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+        })
+        .collect();
+    for leaked in ["only_a", "only_b", "update_rate", "shared_param"] {
+        assert!(
+            !param_keys.contains(&leaked),
+            "param file section key `{leaked}` must not be flattened into inline params; \
+             got {param_keys:?}"
+        );
+    }
+}
+
 #[test]
 fn test_parse_python_conditions() {
     let _guard = python_test_guard();
