@@ -8,13 +8,11 @@ use crate::{
     cli,
     cli::config::load_runtime_config,
     execution::context::{
-        ComposableNodeContextSet, prepare_composable_node_contexts,
-        prepare_composable_node_contexts_from_model, prepare_container_contexts,
-        prepare_container_contexts_from_model, prepare_node_contexts,
-        prepare_node_contexts_from_model,
+        ComposableNodeContextSet, prepare_composable_node_contexts_from_model,
+        prepare_container_contexts_from_model, prepare_node_contexts_from_model,
     },
     monitoring::resource_monitor::MonitorConfig,
-    ros::{container_readiness::SERVICE_DISCOVERY_HANDLE, launch_dump::load_launch_dump},
+    ros::{container_readiness::SERVICE_DISCOVERY_HANDLE, launch_dump::LaunchDump},
     util::{log_dir::create_log_dir, logging::is_verbose},
     web,
 };
@@ -24,7 +22,7 @@ use rclrs::IntoPrimitiveOptions;
 use std::{
     collections::HashMap,
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 use tracing::{debug, error, info, warn};
@@ -33,32 +31,18 @@ use tracing::{debug, error, info, warn};
 const EXECUTOR_SPIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
 
 pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
-    let input_file = &args.input_file;
-
-    // Phase 46.4 — the Phase 43.1 model↔record binding gate is removed: the
-    // model is now a self-sufficient spawn source (46.3b's
-    // `prepare_*_contexts_from_model` paths build every node/container/
-    // composable-node context straight from `structure.nodes`), so
-    // `replay --model` no longer requires — or even reads — a matching
-    // record companion.
-    let system_model = match &args.model {
-        Some(model_path) => Some(std::sync::Arc::new(load_system_model(model_path)?)),
-        None => {
-            // Phase 46.5 — record.json replay is the deprecated compat path:
-            // the SystemModel (`--model`) is the primary replay source now.
-            // One-time warning per invocation (there's exactly one call to
-            // `handle_replay` per process); the path itself is NOT removed
-            // this wave (rollback safety, one release's grace) — it still
-            // spawns exactly as before, below.
-            warn!(
-                "record.json replay is deprecated; use the SystemModel \
-                 (`play_launch resolve`/`dump` then `replay --model <system_model.yaml>`). \
-                 Continuing with the legacy --input-file {} path.",
-                input_file.display()
-            );
-            None
-        }
-    };
+    // Phase 47.B3 — the deprecated `--input-file record.json` compat path is
+    // retired: the SystemModel is the sole replay source now (hard cut, not
+    // a fallback). `clap`'s `conflicts_with` already rejects both the
+    // positional and `--model` being given together.
+    let model_path = args.model_path().ok_or_else(|| {
+        eyre::eyre!(
+            "replay requires a SystemModel: `play_launch replay <system_model.yaml>` or \
+             `play_launch replay --model <path>` (produce one with `play_launch resolve` or \
+             `play_launch dump`)"
+        )
+    })?;
+    let system_model = std::sync::Arc::new(load_system_model(model_path)?);
 
     // Phase 45.6 — `--explain` on `replay`: render the STORED model's
     // `execution.sched`/`tiers`/`bindings` — no fresh derive, no
@@ -68,22 +52,15 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     // (`sched_loader::render_explain_from_model`) — this is the third and
     // final caller.
     if args.explain {
-        match &system_model {
-            Some(m) => {
-                let footer = crate::ros::sched_loader::explain_footer_from_model(m);
-                eprint!(
-                    "{}",
-                    crate::ros::sched_loader::render_explain_from_model(
-                        m,
-                        &args.common.target,
-                        &footer
-                    )
-                );
-            }
-            None => {
-                eprintln!("note: --explain has no effect without --model (nothing to render)");
-            }
-        }
+        let footer = crate::ros::sched_loader::explain_footer_from_model(&system_model);
+        eprint!(
+            "{}",
+            crate::ros::sched_loader::render_explain_from_model(
+                &system_model,
+                &args.common.target,
+                &footer
+            )
+        );
     }
 
     // Verify all required ROS 2 system packages are installed
@@ -161,14 +138,20 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     // Note: ROS service discovery and anchor process now started in play() async function (Phase 2, 4)
 
     let runtime = build_tokio_runtime()?;
-    runtime.block_on(play(input_file, &args.common, system_model))
+    runtime.block_on(play(LaunchDump::empty(), system_model, &args.common))
 }
 
-/// Play the launch according to the launch record.
-async fn play(
-    input_file: &Path,
+/// Play the launch: spawn every node/container/composable-node context the
+/// `system_model` describes. `launch_dump` is the parser-agnostic in-memory
+/// intermediate (Phase 47: no longer a `record.json` on disk) that feeds the
+/// best-effort/informational consumers not yet model-sourced (chain-
+/// colocation warnings, the web UI's launch-tree scope map) — real when
+/// called from `launch` (which just parsed it), empty when called from
+/// standalone `replay --model` (no companion dump exists to read anymore).
+pub(crate) async fn play(
+    launch_dump: LaunchDump,
+    system_model: std::sync::Arc<ros_launch_manifest_model::SystemModel>,
     common: &cli::options::CommonOptions,
-    system_model: Option<std::sync::Arc<ros_launch_manifest_model::SystemModel>>,
 ) -> eyre::Result<()> {
     debug!("=== Starting play() function ===");
 
@@ -225,91 +208,27 @@ async fn play(
     )?;
     debug!("Runtime configuration loaded successfully");
 
-    debug!("Loading launch dump from: {}", input_file.display());
-    // Phase 46.4/46.5 — with a SystemModel given, spawning no longer depends
-    // on this record: `launch_dump` degrades to an empty stand-in when no
-    // record companion is present at `input_file`. Since 46.5, `resolve`/
-    // `dump` never write a record companion at all, so this is now the
-    // NORMAL case for `replay --model`, not a fallback for a missing
-    // optional file. The only consumers left on the model path are
-    // best-effort/informational (chain-colocation warnings, the web UI's
-    // launch-tree scope map, built below from `launch_dump.scopes`/
-    // `node_scope_map`) — an empty dump just means those come back empty
-    // (the web UI's `/api/launch-tree` returns `{scopes: [], node_scopes:
-    // {}}`, no error), not a hard failure. Model-sourcing them from
-    // `model.structure.scopes` (which does carry an equivalent scope tree)
-    // is a documented follow-up, not done this wave — see the 46.5 report.
-    // The legacy record-only path (no `--model`) is unchanged: a missing/
-    // unreadable record.json there is still a hard error.
-    let launch_dump = match load_launch_dump(input_file) {
-        Ok(d) => d,
-        Err(e) if system_model.is_some() => {
-            debug!(
-                "No record companion at {} ({e:#}) — model-only replay; \
-                 chain-colocation warnings and the web UI launch tree will be empty",
-                input_file.display()
-            );
-            crate::ros::launch_dump::LaunchDump {
-                node: Vec::new(),
-                load_node: Vec::new(),
-                container: Vec::new(),
-                lifecycle_node: Vec::new(),
-                file_data: HashMap::new(),
-                variables: HashMap::new(),
-                scopes: Vec::new(),
-            }
-        }
-        Err(e) => {
-            return Err(e)
-                .wrap_err_with(|| format!("loading launch dump {}", input_file.display()));
-        }
-    };
     debug!(
-        "Launch dump loaded: {} nodes, {} containers, {} composable nodes",
+        "Launch dump: {} nodes, {} containers, {} composable nodes ({})",
         launch_dump.node.len(),
         launch_dump.container.len(),
-        launch_dump.load_node.len()
+        launch_dump.load_node.len(),
+        if launch_dump.scopes.is_empty() {
+            "empty — standalone replay, no dump companion"
+        } else {
+            "from launch (in-memory)"
+        }
     );
 
-    // Resolve contract sources (overlay > provider sidecar) and load
-    // manifests. The provider channel is on by default, so this runs even
-    // when no manifest flags are given — scopes simply have nothing to
-    // load when no contract file exists in any channel.
-    let contract_sources = common.contract_sources();
-    let _manifest_index = {
-        debug!(
-            "Resolving contracts: overlay={:?}, provider={}",
-            contract_sources.overlay, contract_sources.provider
-        );
-        let index = crate::ros::manifest_loader::load_manifests(&launch_dump, &contract_sources)?;
-        if index.total_errors > 0 {
-            warn!(
-                "Manifest static checks found {} error(s) — contracts may not hold",
-                index.total_errors
-            );
-        }
-        Some(index)
-    };
-
-    // Phase 43.2 — the rule engine, blocking allowlist, and lifecycle
-    // wiring read a source-agnostic ContractView: from the checked
-    // SystemModel when `--model` was given, else from the manifest tree
-    // loaded above. (The sched plan still reads the manifest index until
-    // 43.3 lands.)
-    let contract_view: Option<std::sync::Arc<crate::runtime_enforcement::ContractView>> =
-        match &system_model {
-            Some(m) => {
-                info!("Contract source: SystemModel (checked at resolve time)");
-                Some(std::sync::Arc::new(
-                    crate::runtime_enforcement::ContractView::from_model(m),
-                ))
-            }
-            None => _manifest_index.as_ref().map(|i| {
-                std::sync::Arc::new(
-                    crate::runtime_enforcement::ContractView::from_manifest_index(i),
-                )
-            }),
-        };
+    // Phase 47.B3 — the SystemModel is the sole replay source now: contract
+    // checking already ran at resolve/dump time (a model in hand is always
+    // a checked one), so there is no manifest tree to re-load or fall back
+    // to here.
+    info!("Contract source: SystemModel (checked at resolve time)");
+    let contract_view: std::sync::Arc<crate::runtime_enforcement::ContractView> =
+        std::sync::Arc::new(crate::runtime_enforcement::ContractView::from_model(
+            &system_model,
+        ));
 
     // Prepare directories
     debug!("Creating log directories...");
@@ -543,29 +462,21 @@ async fn play(
     // (proven equal by the static-equivalence gate,
     // `execution::spawn_equivalence_test`), so everything downstream
     // (interception injection, actor spawn, metadata) is unchanged. The
-    // record path stays the default (and the only source for the
-    // sched/manifest/web-UI-scope-map consumers not yet migrated — Phase
-    // 46.4/46.5 retirement).
+    // record path (`prepare_node_contexts`/etc., still used by `run` and
+    // proven equivalent by `execution::spawn_equivalence_test`) is retired
+    // from replay/launch — the SystemModel is the sole spawn source now
+    // (Phase 47.B3/B4).
     debug!("Preparing node execution contexts...");
-    let mut pure_node_contexts = match &system_model {
-        Some(m) => {
-            info!("Spawn source: SystemModel (structure.nodes)");
-            prepare_node_contexts_from_model(m, &node_log_dir)?
-        }
-        None => prepare_node_contexts(&launch_dump, &node_log_dir)?,
-    };
+    info!("Spawn source: SystemModel (structure.nodes)");
+    let mut pure_node_contexts = prepare_node_contexts_from_model(&system_model, &node_log_dir)?;
 
     debug!("Preparing container execution contexts...");
-    let mut container_contexts = match &system_model {
-        Some(m) => prepare_container_contexts_from_model(m, &node_log_dir, common.container_mode)?,
-        None => prepare_container_contexts(&launch_dump, &node_log_dir, common.container_mode)?,
-    };
+    let mut container_contexts =
+        prepare_container_contexts_from_model(&system_model, &node_log_dir, common.container_mode)?;
 
     // Prepare LoadNode request execution contexts
-    let ComposableNodeContextSet { load_node_contexts } = match &system_model {
-        Some(m) => prepare_composable_node_contexts_from_model(m, &load_node_log_dir)?,
-        None => prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?,
-    };
+    let ComposableNodeContextSet { load_node_contexts } =
+        prepare_composable_node_contexts_from_model(&system_model, &load_node_log_dir)?;
 
     // Phase 36.7: write the topic-FQN allowlist file when
     // `--block-unauthorized-endpoints` is set. Children's
@@ -576,11 +487,11 @@ async fn play(
     // source was configured". An EMPTY index must not produce an empty
     // allowlist — that would block every rcl endpoint in every child. Blocking
     // enforcement only engages when at least one authorized topic exists.
-    let has_authorized_topics = contract_view.as_ref().is_some_and(|v| !v.is_empty());
+    let has_authorized_topics = !contract_view.is_empty();
     let allowlist_file: Option<std::path::PathBuf> = if common.block_unauthorized_endpoints
         && has_authorized_topics
     {
-        let view = contract_view.as_ref().unwrap();
+        let view = &contract_view;
         let path = log_dir.join("expected_graph.txt");
         let mut contents = String::with_capacity(view.topics.len() * 32);
         contents.push_str("# Phase 36.7 allowlist — every topic FQN authorized in this launch\n");
@@ -667,50 +578,24 @@ async fn play(
     // explicit `--sched <path>` > overlay > provider sidecar. Reuses the
     // overlay root already discovered for contracts above, so both channels
     // agree on which root is in play for this invocation.
-    // Phase 43.3 — when a SystemModel with an execution layer was given,
-    // the plan comes from it directly (derive/override/band-validate ran at
-    // resolve time); the platform-file channels are only consulted on the
-    // legacy path.
-    let model_plan: Option<crate::execution::sched_plan::SchedPlan> = match &system_model {
-        Some(m) if !m.execution.is_empty() => {
+    // Phase 43.3/47.B3 — the plan comes from the SystemModel's execution
+    // layer directly (derive/override/band-validate ran at resolve time);
+    // the platform-file channels (`--sched`, overlay, provider sidecar) are
+    // resolve-time-only concerns now — there is no legacy record-only
+    // replay path left to consult them from.
+    let model_plan: Option<crate::execution::sched_plan::SchedPlan> =
+        if !system_model.execution.is_empty() {
             info!("Scheduling source: SystemModel execution layer");
             Some(crate::execution::sched_plan::SchedPlan::from_model(
-                m,
+                &system_model,
                 &common.target,
                 common.sched_apply,
             )?)
-        }
-        Some(_) => {
+        } else {
             info!("SystemModel carries no execution layer — scheduling disabled");
             None
-        }
-        None => None,
-    };
-    let resolved_sched = if system_model.is_some() {
-        None
-    } else {
-        crate::ros::sched_loader::resolve_platform_file(
-            &launch_dump,
-            common.sched.as_deref(),
-            contract_sources.overlay.as_deref(),
-            contract_sources.provider,
-            &common.target,
-        )
-    };
-    let legacy_plan = if let Some(resolved) = &resolved_sched {
-        Some(crate::execution::sched_plan::SchedPlan::build(
-            &launch_dump,
-            _manifest_index.as_ref(),
-            &resolved.path,
-            &common.target,
-            common.sched_apply,
-        )?)
-    } else {
-        None
-    };
-    let (sched_plan, sched_helper, sched_helper_join) = if let Some(mut plan) =
-        model_plan.or(legacy_plan)
-    {
+        };
+    let (sched_plan, sched_helper, sched_helper_join) = if let Some(mut plan) = model_plan {
         // Phase 44.4 §4: chain-member composable nodes co-located in a
         // non-isolated container can't receive distinct priorities —
         // best-effort warning, computed here (not at `check` time) since
@@ -1138,11 +1023,15 @@ async fn play(
         // Phase 36.3: construct RuleEngine if a contract source resolved
         // and --enforce-rules is not Off. The engine observes every
         // event the listener dispatches.
-        let rule_engine = match (contract_view.as_ref(), common.enforce_rules) {
-            (Some(view), mode) if !matches!(mode, crate::cli::options::EnforceMode::Off) => Some(
-                crate::runtime_enforcement::RuleEngine::new(view.clone(), mode, &log_dir),
-            ),
-            _ => None,
+        let rule_engine = if !matches!(common.enforce_rules, crate::cli::options::EnforceMode::Off)
+        {
+            Some(crate::runtime_enforcement::RuleEngine::new(
+                contract_view.clone(),
+                common.enforce_rules,
+                &log_dir,
+            ))
+        } else {
+            None
         };
 
         // Phase 36.6.1: wire lifecycle transition-event subscriptions

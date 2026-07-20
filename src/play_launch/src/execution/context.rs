@@ -265,6 +265,14 @@ pub fn prepare_node_contexts(
 /// When `container_mode` is `Observable` or `Isolated`, the container package/executable
 /// is overridden to use `play_launch_container` instead of the stock container from the
 /// launch file.
+///
+/// Phase 47.B3: `replay`/`launch` now spawn exclusively from
+/// [`prepare_container_contexts_from_model`] — this LaunchDump-sourced twin
+/// is unreachable in a plain (non-test) build. Kept, not deleted: it's the
+/// reference implementation [`crate::execution::spawn_equivalence_test`]
+/// proves the model-sourced path against (`#[cfg(test)]`, so this shows as
+/// dead code outside `cargo test`).
+#[allow(dead_code)]
 pub fn prepare_container_contexts(
     launch_dump: &LaunchDump,
     container_log_dir: &Path,
@@ -416,6 +424,10 @@ pub fn prepare_container_contexts(
 }
 
 /// Load composable node records in the dump.
+///
+/// Phase 47.B3: unreachable in a plain (non-test) build for the same reason
+/// as [`prepare_container_contexts`] — see its doc comment.
+#[allow(dead_code)]
 pub fn prepare_composable_node_contexts(
     launch_dump: &LaunchDump,
     load_node_log_dir: &Path,

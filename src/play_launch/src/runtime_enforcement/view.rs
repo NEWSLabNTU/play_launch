@@ -54,6 +54,14 @@ impl ContractView {
     }
 
     /// Legacy source: the manifest tree loaded at replay time.
+    ///
+    /// Phase 47.B3: `replay`'s only remaining contract source is
+    /// [`Self::from_model`] (the record-only replay path this fed is
+    /// retired), so this is unreachable in a plain (non-test) build. Kept,
+    /// not deleted: `from_model_matches_from_manifest_index` below (and
+    /// several other unit tests in `runtime_enforcement::mod`) use it as
+    /// the independent reference to prove `from_model` agrees with it.
+    #[allow(dead_code)]
     pub fn from_manifest_index(index: &ManifestIndex) -> Self {
         let mut view = ContractView::default();
 

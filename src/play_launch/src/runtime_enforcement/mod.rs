@@ -778,13 +778,13 @@ impl RuleEngine {
         let Some(fqn) = self.topic_hash_to_fqn.get(&topic_hash).cloned() else {
             return;
         };
-        let declared_type = if let Some(topic) = self.view.topics.get(&fqn) {
-            Some(topic.msg_type.clone())
-        } else {
-            // External topics don't carry a declared type — skip to
-            // avoid false positives.
-            None
-        };
+        // External topics don't carry a declared type — skip to avoid false
+        // positives.
+        let declared_type = self
+            .view
+            .topics
+            .get(&fqn)
+            .map(|topic| topic.msg_type.clone());
         let Some(declared) = declared_type else {
             return;
         };
@@ -1113,6 +1113,10 @@ fn split_endpoint_ref(ep_ref: &str) -> Option<(String, String)> {
     Some((node.to_string(), ep.to_string()))
 }
 
+/// Phase 47.B3: only `ContractView::from_manifest_index` calls this now,
+/// and that's `#[allow(dead_code)]`-kept for tests only — see its doc
+/// comment.
+#[allow(dead_code)]
 pub(crate) fn qualify(ns: &str, name: &str) -> String {
     if name.starts_with('/') {
         return name.to_string();
