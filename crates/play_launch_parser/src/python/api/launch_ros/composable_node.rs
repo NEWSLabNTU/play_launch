@@ -1,7 +1,7 @@
 //! Mock ComposableNode class for launch_ros.descriptions
 
 use super::{
-    helpers::{is_yaml_file, load_yaml_params},
+    helpers::{is_yaml_file, load_yaml_params_for_node},
     node::Node,
 };
 use crate::{captures::LoadNodeCapture, python::bridge::capture_load_node};
@@ -141,23 +141,6 @@ impl ComposableNode {
         container_namespace: &Option<String>,
         ros_namespace: &str,
     ) {
-        // Parse parameters and remappings from Python objects
-        let parameters = Python::with_gil(|py| self.parse_parameters(py).unwrap_or_default());
-        let remappings = Python::with_gil(|py| self.parse_remappings(py).unwrap_or_default());
-
-        // Build full target container name: namespace + name
-        // Normalize to ensure consistent path format with leading slash
-        let target_container_name = if let Some(ns) = container_namespace {
-            Self::normalize_namespace_path(ns, container_name)
-        } else {
-            // If no namespace, assume root and add leading slash
-            if container_name.starts_with('/') {
-                container_name.to_string()
-            } else {
-                format!("/{}", container_name)
-            }
-        };
-
         // Resolve node namespace using ROS context namespace (from push-ros-namespace).
         // This matches ROS2's get_composable_node_load_request() behavior:
         // - If the node has an explicit namespace: resolve relative to ROS context
@@ -179,6 +162,31 @@ impl ComposableNode {
         } else {
             // No explicit namespace — use the ROS context namespace
             ros_namespace.to_string()
+        };
+
+        // Fully-qualified node name (no leading slash) — used to filter
+        // per-node sections of any shared params file, matching launch_ros
+        // `to_parameters_list`. Must be resolved BEFORE parsing parameters.
+        let node_fqn = Self::normalize_namespace_path(&normalized_namespace, &self.name)
+            .trim_start_matches('/')
+            .to_string();
+
+        // Parse parameters and remappings from Python objects
+        let parameters =
+            Python::with_gil(|py| self.parse_parameters(py, &node_fqn).unwrap_or_default());
+        let remappings = Python::with_gil(|py| self.parse_remappings(py).unwrap_or_default());
+
+        // Build full target container name: namespace + name
+        // Normalize to ensure consistent path format with leading slash
+        let target_container_name = if let Some(ns) = container_namespace {
+            Self::normalize_namespace_path(ns, container_name)
+        } else {
+            // If no namespace, assume root and add leading slash
+            if container_name.starts_with('/') {
+                container_name.to_string()
+            } else {
+                format!("/{}", container_name)
+            }
         };
 
         let capture = LoadNodeCapture {
@@ -235,8 +243,13 @@ impl ComposableNode {
         format!("{}/{}", ns, name)
     }
 
-    /// Parse Python parameters to string tuples (same logic as Node)
-    fn parse_parameters(&self, py: Python) -> PyResult<Vec<(String, String)>> {
+    /// Parse Python parameters to string tuples (same logic as Node).
+    ///
+    /// `node_fqn` is the composable node's fully-qualified name (no leading
+    /// slash), used to filter per-node sections of any shared params file to
+    /// only those that apply to THIS node (matches launch_ros
+    /// `to_parameters_list`).
+    fn parse_parameters(&self, py: Python, node_fqn: &str) -> PyResult<Vec<(String, String)>> {
         let mut parsed_params = Vec::new();
 
         for param_obj in &self.parameters {
@@ -247,7 +260,7 @@ impl ComposableNode {
                 // Check if it's a YAML parameter file
                 if is_yaml_file(&path) {
                     // Load and expand YAML parameter file
-                    match load_yaml_params(&path) {
+                    match load_yaml_params_for_node(&path, node_fqn) {
                         Ok(yaml_params) => {
                             log::debug!("Loaded {} parameters from {}", yaml_params.len(), path);
                             parsed_params.extend(yaml_params);
@@ -295,7 +308,7 @@ impl ComposableNode {
                     && let Ok(path) = str_val.extract::<String>()
                 {
                     if is_yaml_file(&path) {
-                        match load_yaml_params(&path) {
+                        match load_yaml_params_for_node(&path, node_fqn) {
                             Ok(yaml_params) => {
                                 log::debug!(
                                     "Loaded {} parameters from ParameterFile {}",
@@ -321,7 +334,7 @@ impl ComposableNode {
                 && let Ok(s) = str_val.extract::<String>()
             {
                 if is_yaml_file(&s) {
-                    match load_yaml_params(&s) {
+                    match load_yaml_params_for_node(&s, node_fqn) {
                         Ok(yaml_params) => parsed_params.extend(yaml_params),
                         Err(_) => parsed_params.push(("substitution".to_string(), s)),
                     }
