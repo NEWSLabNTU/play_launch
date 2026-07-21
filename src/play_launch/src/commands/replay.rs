@@ -52,13 +52,13 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     }
     let system_model = std::sync::Arc::new(load_system_model(model_path)?);
 
-    // Phase 45.6 — `--explain` on `replay`: render the STORED model's
-    // `execution.sched`/`tiers`/`bindings` — no fresh derive, no
-    // ManifestIndex needed, so this works off-host too (the design doc's
-    // "consumers become readers" guarantee). `check --explain` and
-    // `resolve --explain` share the same renderer
-    // (`sched_loader::render_explain_from_model`) — this is the third and
-    // final caller.
+    // `--explain` on `replay --model`: renders a TIER-BASED table from the
+    // model's `tiers`+`bindings` (the applied schedule) — Phase 45.10 removed
+    // the embedded `execution.sched`, so the chain-aware ranks / override
+    // classification are NOT available here (they need a fresh derive). This is
+    // the accepted degradation (Phase 49.B3): the applied priorities are
+    // faithful; for full mapper provenance run `check --sched --explain`, which
+    // re-derives. Works off-host (no ManifestIndex needed).
     if args.explain {
         let footer = crate::ros::sched_loader::explain_footer_from_model(&system_model);
         eprint!(
@@ -151,11 +151,12 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
 
 /// Play the launch: spawn every node/container/composable-node context the
 /// `system_model` describes. `launch_dump` is the parser-agnostic in-memory
-/// intermediate (Phase 47: no longer a `record.json` on disk) that feeds the
-/// best-effort/informational consumers not yet model-sourced (chain-
-/// colocation warnings, the web UI's launch-tree scope map) — real when
-/// called from `launch` (which just parsed it), empty when called from
-/// standalone `replay --model` (no companion dump exists to read anymore).
+/// intermediate (Phase 47: no longer a `record.json` on disk) — real when
+/// called from `launch` (which just parsed it), empty from standalone `replay
+/// --model`. The web launch-tree is now model-sourced when the dump is empty
+/// (Phase 49.B1, `launch_tree_from_model`); the composable chain-colocation
+/// warning still degrades to empty on the dumpless path (chains aren't in the
+/// model, Phase 45.10 — Phase 49.B2).
 pub(crate) async fn play(
     launch_dump: LaunchDump,
     system_model: std::sync::Arc<ros_launch_manifest_model::SystemModel>,
@@ -833,32 +834,37 @@ pub(crate) async fn play(
         let state_broadcaster = std::sync::Arc::new(web::StateEventBroadcaster::new());
 
         // Start web server
-        // Build node→scope mapping from launch dump.
-        // Keys must match the member names used by the actor system:
-        //   nodes: name.or(exec_name)  (see context.rs line 153)
-        //   containers: name.or(exec_name)
-        //   composable nodes: node_name
-        let mut node_scope_map = std::collections::HashMap::new();
-        for n in &launch_dump.node {
-            if let Some(scope) = n.scope {
-                let member_name = n.name.as_ref().or(n.exec_name.as_ref());
-                if let Some(name) = member_name {
-                    node_scope_map.insert(name.clone(), scope);
+        // Launch tree for the web UI. The in-memory `launch_dump` carries it
+        // when we parsed this run (`launch`/`run`); standalone `replay --model`
+        // has an empty dump, so source it from the model's `structure.scopes`
+        // instead (Phase 49.B1) — the Launch page works on model replay too.
+        //
+        // node_scope_map keys must match the actor-system member names:
+        //   nodes: name.or(exec_name); containers: name; composables: node_name.
+        let (scopes, node_scope_map) = if launch_dump.scopes.is_empty() {
+            launch_tree_from_model(&system_model)
+        } else {
+            let mut node_scope_map = std::collections::HashMap::new();
+            for n in &launch_dump.node {
+                if let Some(scope) = n.scope {
+                    let member_name = n.name.as_ref().or(n.exec_name.as_ref());
+                    if let Some(name) = member_name {
+                        node_scope_map.insert(name.clone(), scope);
+                    }
                 }
             }
-        }
-        for c in &launch_dump.container {
-            if let Some(scope) = c.scope {
-                // Container member name is c.name (matching actor system in context.rs)
-                let member_name: &str = &c.name;
-                node_scope_map.insert(member_name.to_string(), scope);
+            for c in &launch_dump.container {
+                if let Some(scope) = c.scope {
+                    node_scope_map.insert(c.name.clone(), scope);
+                }
             }
-        }
-        for ln in &launch_dump.load_node {
-            if let Some(scope) = ln.scope {
-                node_scope_map.insert(ln.node_name.clone(), scope);
+            for ln in &launch_dump.load_node {
+                if let Some(scope) = ln.scope {
+                    node_scope_map.insert(ln.node_name.clone(), scope);
+                }
             }
-        }
+            (launch_dump.scopes.clone(), node_scope_map)
+        };
 
         let web_state = std::sync::Arc::new(web::WebState::new(
             member_handle.clone(),
@@ -866,7 +872,7 @@ pub(crate) async fn play(
             state_broadcaster.clone(),
             diagnostic_registry.clone(),
             metrics_broadcaster.clone(),
-            launch_dump.scopes.clone(),
+            scopes,
             node_scope_map,
         ));
         let web_shutdown = shutdown_signal.clone();
@@ -1196,6 +1202,63 @@ pub(crate) async fn play(
 /// binding is checked here — the model is a self-sufficient spawn source
 /// (46.3b); `resolve`/`dump` no longer emit a record companion to bind to
 /// (Phase 46.5).
+/// Build the web launch-tree (Phase 30 shape — `Vec<ScopeEntry>` + member-name
+/// → scope-id map) from a SystemModel's `structure.scopes`/`nodes`. Used on the
+/// standalone `replay --model` path, where there is no in-memory `LaunchDump`
+/// to source it from (Phase 49.B1). File scopes only (the model folds `<group>`
+/// scopes into their file); namespace is a per-node property, so
+/// `ScopeEntry.ns` is left empty. Scope ids are assigned by the model's stable
+/// `structure.scopes` key order.
+fn launch_tree_from_model(
+    model: &ros_launch_manifest_model::SystemModel,
+) -> (
+    Vec<crate::ros::launch_dump::ScopeEntry>,
+    std::collections::HashMap<String, usize>,
+) {
+    use crate::ros::launch_dump::{ScopeEntry, ScopeOrigin};
+
+    let ids: std::collections::HashMap<&str, usize> = model
+        .structure
+        .scopes
+        .keys()
+        .enumerate()
+        .map(|(i, k)| (k.as_str(), i))
+        .collect();
+
+    let scopes = model
+        .structure
+        .scopes
+        .iter()
+        .map(|(key, info)| ScopeEntry {
+            id: ids[key.as_str()],
+            origin: Some(ScopeOrigin {
+                pkg: info.package.clone(),
+                file: info.file.clone().unwrap_or_else(|| key.clone()),
+                path: None,
+            }),
+            ns: String::new(),
+            args: info
+                .args
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            parent: info.parent.as_deref().and_then(|p| ids.get(p).copied()),
+        })
+        .collect();
+
+    let node_scope_map = model
+        .structure
+        .nodes
+        .iter()
+        .filter_map(|(fqn, inst)| {
+            let member = fqn.rsplit('/').next().unwrap_or(fqn).to_string();
+            ids.get(inst.scope.as_str()).map(|&id| (member, id))
+        })
+        .collect();
+
+    (scopes, node_scope_map)
+}
+
 fn load_system_model(
     model_path: &std::path::Path,
 ) -> eyre::Result<ros_launch_manifest_model::SystemModel> {
@@ -1232,4 +1295,62 @@ fn record_json_replay_removed_msg(path: Option<&std::path::Path>) -> String {
          model.yaml` (or `play_launch dump <pkg> <launch_file> -o model.yaml`), then \
          `play_launch replay --model model.yaml`."
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ros_launch_manifest_model::{NodeInstance, ScopeInfo, SystemModel};
+
+    /// Phase 49.B1 — the web launch-tree is sourced from `structure.scopes`
+    /// when there is no in-memory dump (standalone `replay --model`): file
+    /// scopes become `ScopeEntry`s with stable ids + a parent link, and each
+    /// node's member name maps to its scope id.
+    #[test]
+    fn launch_tree_from_model_builds_scopes_and_node_map() {
+        let mut model = SystemModel::default();
+        model.structure.scopes.insert(
+            "root_pkg/root.launch.xml".to_string(),
+            ScopeInfo {
+                file: Some("root.launch.xml".to_string()),
+                package: Some("root_pkg".to_string()),
+                ..Default::default()
+            },
+        );
+        model.structure.scopes.insert(
+            "dep_pkg/child.launch.xml".to_string(),
+            ScopeInfo {
+                parent: Some("root_pkg/root.launch.xml".to_string()),
+                file: Some("child.launch.xml".to_string()),
+                package: Some("dep_pkg".to_string()),
+                ..Default::default()
+            },
+        );
+        model.structure.nodes.insert(
+            "/robot/talker".to_string(),
+            NodeInstance {
+                scope: "dep_pkg/child.launch.xml".to_string(),
+                ..Default::default()
+            },
+        );
+
+        let (scopes, node_scope_map) = launch_tree_from_model(&model);
+
+        assert_eq!(scopes.len(), 2);
+        // Ids follow BTreeMap key order: dep_pkg/... < root_pkg/...
+        let child = scopes
+            .iter()
+            .find(|s| s.file() == Some("child.launch.xml"))
+            .unwrap();
+        let root = scopes
+            .iter()
+            .find(|s| s.file() == Some("root.launch.xml"))
+            .unwrap();
+        assert_eq!(child.parent, Some(root.id), "child scope links to root");
+        assert!(root.parent.is_none(), "root has no parent");
+        assert_eq!(child.pkg(), Some("dep_pkg"));
+
+        // The node's member name maps to its (child) scope id.
+        assert_eq!(node_scope_map.get("talker"), Some(&child.id));
+    }
 }

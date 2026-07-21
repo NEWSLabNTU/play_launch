@@ -1,6 +1,8 @@
 # Phase 49: Retire the last `record.json` reader + close the `replay --model` degradations
 
-**Status:** 📋 Planned.
+**Status:** 🔄 A + B1 shipped (2026-07-21); B2/B3 documented as accepted
+degradations. A: `context` reads the SystemModel (record.json has zero readers).
+B1: standalone `replay --model` sources the web launch-tree from the model.
 **Motivated by:** Phase 47 removed `record.json` as a user artifact but left one
 CLI reader (`context`), and Phase 47/48/45.10 left `replay --model` (standalone,
 no in-memory `LaunchDump`) degrading several best-effort features to empty.

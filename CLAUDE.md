@@ -42,7 +42,7 @@ The parser tracks which launch file each node originates from via a **scope tabl
 - **record.json**: `scopes: [...]` (top-level) + `scope: N` (per node/container/load_node)
 - **Scope stamping**: captures stamped with `scope_id` during include processing; records stamped in `entity.rs`
 - **Member name mapping**: `node_scope_map` keyed by `name.or(exec_name)` to match actor system member names
-- **CLI**: `play_launch context record.json --tree|--node <FQN>|--launch <pkg> <file>`
+- **CLI**: `play_launch context <system_model.yaml> --tree|--node <FQN>|--launch <pkg> <file>` (Phase 49: reads the SystemModel, not the retired record.json)
 - **Web UI**: "Launch" page (`LaunchTreeView.js`, `LaunchPanel.js`) with tree view + detail panel
 - **API**: `GET /api/launch-tree` returns `{ scopes, node_scopes }` — sourced from the in-memory `LaunchDump` `replay`/`launch` build for the invocation (Phase 47: no `record.json` on disk anywhere). `launch`'s in-memory round-trip passes the real parsed dump, so this stays populated there; standalone `replay --model <path>` (no launch step) has no dump to read and degrades to empty (`{}`), not an error — a documented follow-up is to source it from `model.structure.scopes` instead (`.superpowers/sdd/p46-w5-report.md` §6)
 - **Validation**: `scripts/compare_scopes.py` — self-consistency + cross-parser comparison
@@ -188,7 +188,7 @@ just test-unit         # Parser unit tests only
 just test-integration  # All integration tests (simple + Autoware)
 cargo test -p play_launch_parser --features ir  # IR tests (42 tests, not included in default)
 just compare-scopes <pkg> <launch> [args...]    # Cross-parser scope comparison
-play_launch context record.json --tree          # Launch tree inspection
+play_launch context system_model.yaml --tree    # Launch tree inspection
 ```
 
 Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests (`tests/`, excluded from workspace). Integration tests use `ManagedProcess` RAII guard (`tests/src/process.rs`) for guaranteed cleanup via `setsid()` + `PR_SET_PDEATHSIG` + PGID kill on Drop.

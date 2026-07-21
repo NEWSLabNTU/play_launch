@@ -336,6 +336,9 @@ pub fn build_system_model(
                     .map(|m| m.contract_path.display().to_string()),
                 package: s.pkg().map(str::to_string),
                 file: s.file().map(str::to_string),
+                // Resolved include args (49.A2) — for `context` launch-tree
+                // inspection off the model.
+                args: s.args.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
             },
         );
     }
