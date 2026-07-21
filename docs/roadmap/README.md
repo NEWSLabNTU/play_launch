@@ -49,6 +49,7 @@ Completed phase docs are in `archive/`.
 | 46 | Unified SystemModel (one artifact) | ✅ 46.1–46.6 | 2026-07-20 |
 | 47 | CLI cleanup + hard record.json removal | ✅ A1–A2, B1–B6 | 2026-07-20 |
 | 48 | Detangle namespace from scope tree | ✅ minimal + full | 2026-07-20 |
+| 49 | Retire last record.json reader + replay --model degradations | 📋 Planned | — |
 
 ---
 
