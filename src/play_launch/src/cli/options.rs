@@ -96,14 +96,14 @@ pub enum Command {
     #[command(name = "verify")]
     Verify,
 
-    /// Extract per-node or per-launch-file context from a record.json
-    /// (Phase 47: the last CLI consumer of the retired record.json format —
-    /// there is no CLI path left that produces one; bring your own, e.g. a
-    /// pre-Phase-47 dump or a hand-rolled `play_launch_parser` output)
+    /// Extract per-node or per-launch-file context from a SystemModel
+    /// (`system_model.yaml`) — the launch include tree, per-node origin +
+    /// launch fields, and per-include args (Phase 49: reads the model, not the
+    /// retired record.json)
     #[command(after_help = "Examples:\n  \
-        play_launch context record.json --tree\n  \
-        play_launch context record.json --node /perception/centerpoint\n  \
-        play_launch context record.json --launch tier4_system_launch system.launch.xml")]
+        play_launch context system_model.yaml --tree\n  \
+        play_launch context system_model.yaml --node /perception/centerpoint\n  \
+        play_launch context system_model.yaml --launch tier4_system_launch system.launch.xml")]
     Context(ContextArgs),
 
     /// Check manifest contracts against a launch file
@@ -173,8 +173,8 @@ pub struct ContractEjectArgs {
 /// Arguments for the context extraction command
 #[derive(Args)]
 pub struct ContextArgs {
-    /// Path to record.json
-    pub record: String,
+    /// Path to a SystemModel (`system_model.yaml`, from `resolve`/`dump`)
+    pub model: String,
 
     /// Show context for a specific node (by FQN)
     #[arg(long)]
@@ -184,11 +184,8 @@ pub struct ContextArgs {
     #[arg(long, num_args = 2, value_names = ["PKG", "FILE"])]
     pub launch: Option<Vec<String>>,
 
-    /// Disambiguate launch file by namespace
-    #[arg(long)]
-    pub namespace: Option<String>,
-
-    /// Show all invocations of a launch file
+    /// Show all invocations of a launch file (when a file is included more
+    /// than once); otherwise a single match is shown and duplicates are listed.
     #[arg(long)]
     pub all: bool,
 
