@@ -426,9 +426,10 @@ pub fn build_system_model(
     // Phase 46.1). Collected alongside `structure.nodes` so the key is the
     // SAME reconciled launch-dump FQN (`fqn(ns, name)`) other consumers
     // (bindings, sched) already use — populated into `execution` below,
-    // once that layer exists. `target` is left at its `Default` (`linux`)
-    // so a later `--system` config pass can fill/override it without this
-    // step guessing platform placement.
+    // once that layer exists. `target` stays `None` (UNPLACED — the model
+    // names no board; the consuming entry's board decides, nano-ros #236)
+    // so a later `--system` config pass can set a real placement without
+    // this step guessing.
     let mut deploy_hosts: BTreeMap<String, String> = BTreeMap::new();
 
     for n in &dump.node {
@@ -748,9 +749,10 @@ pub fn build_system_model(
     }
     // deploy: `<node machine="…">` → per-node host (nano-ros #236 /
     // Phase 46.1). Create the `Deploy` entry with `host` set and `target`
-    // left at its `Default` (`linux`) — an explicit `--system` config pass
-    // (`resolve.rs`, `SystemConfigToml::apply_to`) owns platform placement
-    // and fills/overrides `target` afterwards. Nodes without `machine` get
+    // `None` (UNPLACED — board is entry-determined; nano-ros #236) — an
+    // explicit `--system` config pass (`resolve.rs`,
+    // `SystemConfigToml::apply_to`) owns platform placement and sets a
+    // real `Some(target)` afterwards. Nodes without `machine` get
     // no entry here, so `execution.deploy` stays empty for single-host
     // launches exactly as before (backward-compatible).
     for (node_fqn, host) in deploy_hosts {

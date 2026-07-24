@@ -76,6 +76,15 @@ fn resolve_carries_node_machine_into_deploy_host() {
         "deploy: {deploy:?}"
     );
 
+    // A machine-derived deploy is UNPLACED (nano-ros #236): no `target` key —
+    // the launch names no board placement, so the consuming entry's own board
+    // decides (board is orthogonal to host: one host can be realized by
+    // different boards). Only a `--system` config pass sets a real target.
+    assert!(
+        deploy["/robot1/talker1"].get("target").is_none(),
+        "machine-only deploy must stay unplaced (no target): {deploy:?}"
+    );
+
     // Unhosted node: no deploy entry (backward-compatible — single-host
     // launches produce an empty execution.deploy exactly as before).
     assert!(
