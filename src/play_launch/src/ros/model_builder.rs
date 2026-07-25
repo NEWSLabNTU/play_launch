@@ -268,6 +268,11 @@ fn synthesize_tiers(derived: &DerivedSchedPlan) -> BTreeMap<String, TierDef> {
             sched_class: t.sched_class.clone(),
             preempt_threshold: t.preempt_threshold,
             deadline_us: None,
+            // rlm 6a8e287 — per-platform sporadic overrides; the legacy
+            // derived-tier lowering has only tier-level budget/period (set
+            // on TierDef below), no sub-table split.
+            budget_us: None,
+            period_us: None,
         };
         let mut def = TierDef {
             class: t.class.clone(),
