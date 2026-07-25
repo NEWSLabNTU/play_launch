@@ -105,11 +105,11 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
             dump: &dump,
             launch_path: Some(&launch_path),
             arg_binding,
-            contracts: args.common.contracts.as_deref(),
-            no_provider_contracts: args.common.no_provider_contracts,
-            sched: args.common.sched.as_deref(),
+            contracts: args.common.contract_opts.contracts.as_deref(),
+            no_provider_contracts: args.common.contract_opts.no_provider_contracts,
+            sched: args.common.sched_opts.sched.as_deref(),
             system: None,
-            target: args.common.target.as_str(),
+            target: args.common.sched_opts.target.as_str(),
             explain: false,
         })?;
 
