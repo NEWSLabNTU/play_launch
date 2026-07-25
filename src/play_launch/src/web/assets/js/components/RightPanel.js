@@ -69,13 +69,17 @@ export function RightPanel() {
     // Composable nodes with their own logs (isolated mode) stream directly;
     // others fall back to the container's log stream.
     const hasOwnLogs = storeNode?.has_own_logs;
-    const containerName = (isComposable && !hasOwnLogs) ? storeNode?.container_name : null;
+    // Log fallback routes through the container's API id (phase-50)
+    const containerName = (isComposable && !hasOwnLogs)
+        ? (storeNode?.container_id || storeNode?.container_name)
+        : null;
+    const displayName = storeNode?.name || name;
 
     return html`
         <div class="right-panel open">
             <div class="right-panel-header">
                 <span class="right-panel-title">
-                    <span>${name}</span>
+                    <span title=${name}>${displayName}</span>
                     ${status && html`<span class="state-badge ${statusStr}">${statusStr}</span>`}
                 </span>
                 <button class="close-btn" onClick=${close}>${'\u00D7'}</button>

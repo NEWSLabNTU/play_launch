@@ -4,7 +4,8 @@ use super::{
     CONTROL_CHANNEL_SIZE, MemberMetadata, STATE_EVENT_CHANNEL_SIZE, handle::MemberHandle,
     runner::MemberRunner,
 };
-use crate::member_actor::web_query::{MemberState, MemberType};
+use crate::member_actor::member_id::{IdAllocator, MemberKind};
+use crate::member_actor::web_query::{BlockReason, MemberState, MemberType};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, warn};
@@ -70,6 +71,7 @@ impl MemberCoordinatorBuilder {
         process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
     ) {
         let metadata = MemberMetadata {
+            id: String::new(), // assigned by the IdAllocator in spawn() (phase-50)
             name: name.clone(),
             member_type: MemberType::Node,
             package: context.record.package.clone(),
@@ -111,6 +113,7 @@ impl MemberCoordinatorBuilder {
         let (state_tx, state_rx) = tokio::sync::oneshot::channel();
 
         let metadata = MemberMetadata {
+            id: String::new(), // assigned by the IdAllocator in spawn() (phase-50)
             name: name.clone(),
             member_type: MemberType::Container,
             package: context.record.package.clone(),
@@ -150,6 +153,7 @@ impl MemberCoordinatorBuilder {
         let target_container_name = context.record.target_container_name.clone();
 
         let metadata = MemberMetadata {
+            id: String::new(), // assigned by the IdAllocator in spawn() (phase-50)
             name: name.clone(),
             member_type: MemberType::ComposableNode,
             package: Some(context.record.package.clone()),
@@ -193,11 +197,20 @@ impl MemberCoordinatorBuilder {
         // (We'll populate shared_state before spawning to avoid race conditions)
 
         // Spawn regular nodes
+        // Phase-50: every registry keys on the canonical collision-proof id;
+        // bare display names collide (issue 0001) and silently overwrote.
+        let mut id_alloc = IdAllocator::new();
+
         for def in self.regular_nodes {
+            let member_id = id_alloc.allocate(
+                MemberKind::Node,
+                def.metadata.namespace.as_deref(),
+                &def.name,
+            );
             let (control_tx, control_rx) = mpsc::channel(CONTROL_CHANNEL_SIZE);
 
             let actor = crate::member_actor::regular_node_actor::RegularNodeActor::new(
-                def.name.clone(),
+                member_id.clone(),
                 def.context,
                 def.config,
                 control_rx,
@@ -212,9 +225,11 @@ impl MemberCoordinatorBuilder {
                 actor.run().await
             });
 
-            tasks.insert(def.name.clone(), task);
-            control_channels.insert(def.name.clone(), control_tx);
-            metadata_map.insert(def.name.clone(), def.metadata);
+            tasks.insert(member_id.clone(), task);
+            control_channels.insert(member_id.clone(), control_tx);
+            let mut metadata = def.metadata;
+            metadata.id = member_id.clone();
+            metadata_map.insert(member_id, metadata);
         }
 
         // Spawn containers and collect their state receivers and load control channels
@@ -229,19 +244,13 @@ impl MemberCoordinatorBuilder {
         let mut container_load_control_map = HashMap::new();
         let mut container_controls = HashMap::new(); // member_name -> control_tx
 
-        // Track base names for deduplication (e.g., "container" -> 1, 2, 3...)
-        let mut name_counts = HashMap::<String, usize>::new();
-
         for def in self.containers {
-            // Generate unique member name FIRST (before creating actor)
-            let base_name = def.name.clone();
-            let count = name_counts.entry(base_name.clone()).or_insert(0);
-            *count += 1;
-            let unique_member_name = if *count == 1 {
-                base_name
-            } else {
-                format!("{}_{}", base_name, count)
-            };
+            // Phase-50: canonical id replaces the container-only `_N` dedup.
+            let unique_member_name = id_alloc.allocate(
+                MemberKind::Container,
+                def.metadata.namespace.as_deref(),
+                &def.name,
+            );
 
             // Build the full node name BEFORE moving def.context
             // This matches what composable nodes use in target_container_name
@@ -308,9 +317,8 @@ impl MemberCoordinatorBuilder {
                 unique_member_name, container_name
             );
 
-            // Update metadata name to match unique member name (for Web UI)
             let mut metadata = def.metadata;
-            metadata.name = unique_member_name.clone();
+            metadata.id = unique_member_name.clone();
 
             container_full_names.insert(unique_member_name.clone(), container_name.clone());
             container_actors.insert(unique_member_name.clone(), actor);
@@ -323,6 +331,13 @@ impl MemberCoordinatorBuilder {
         let mut virtual_member_routing = HashMap::new();
 
         for def in self.composable_nodes {
+            // Phase-50: canonical id (collision-proof across namespaces,
+            // containers, and kinds).
+            let member_id = id_alloc.allocate(
+                MemberKind::Composable,
+                def.metadata.namespace.as_deref(),
+                &def.name,
+            );
             // Normalize target_container_name to ensure it starts with "/"
             // Some nodes have "pointcloud_container" while containers use "/pointcloud_container"
             let normalized_target = if def.target_container_name.starts_with('/') {
@@ -404,8 +419,9 @@ impl MemberCoordinatorBuilder {
                             sched: def.sched.clone(),
                         };
 
-                    // Add composable node to container
-                    container_actor.add_composable_node(def.name.clone(), node_metadata);
+                    // Add composable node to container (keyed by canonical id;
+                    // the actor's shared_state/StateEvent writes use this key)
+                    container_actor.add_composable_node(member_id.clone(), node_metadata);
 
                     // Add metadata for this virtual member
                     tracing::debug!(
@@ -413,10 +429,12 @@ impl MemberCoordinatorBuilder {
                         def.name,
                         def.metadata.member_type
                     );
-                    metadata_map.insert(def.name.clone(), def.metadata.clone());
+                    let mut metadata = def.metadata.clone();
+                    metadata.id = member_id.clone();
+                    metadata_map.insert(member_id.clone(), metadata);
 
                     // Populate virtual member routing
-                    virtual_member_routing.insert(def.name.clone(), container_member_name.clone());
+                    virtual_member_routing.insert(member_id.clone(), container_member_name.clone());
 
                     debug!(
                         "Added composable node '{}' as virtual member of container '{}'",
@@ -429,14 +447,27 @@ impl MemberCoordinatorBuilder {
                     );
                 }
             } else {
+                // Phase-50 (issue 0001 cause 2): REGISTER the orphan visibly
+                // instead of dropping it — it shows in the web UI as
+                // Blocked{ContainerNotFound} with its metadata intact.
                 warn!(
-                    "Container '{}' not found for composable node '{}', skipping (normalized: '{}')",
+                    "Container '{}' not found for composable node '{}' — registering as \
+                     Blocked(ContainerNotFound) (normalized: '{}')",
                     def.target_container_name, def.name, normalized_target
                 );
                 debug!(
                     "Available containers ({}): {:?}",
                     container_full_names.len(),
                     container_full_names.values().collect::<Vec<_>>()
+                );
+                let mut metadata = def.metadata.clone();
+                metadata.id = member_id.clone();
+                metadata_map.insert(member_id.clone(), metadata);
+                shared_state.insert(
+                    member_id.clone(),
+                    MemberState::Blocked {
+                        reason: BlockReason::ContainerNotFound,
+                    },
                 );
             }
         }
@@ -476,6 +507,49 @@ impl MemberCoordinatorBuilder {
             };
             // Use entry API to avoid overwriting actor state updates
             shared_state.entry(name.clone()).or_insert(initial_state);
+        }
+
+        // Phase-50: registered == spawned is the invariant that used to break
+        // silently via bare-name key collisions (issue 0001). Count and check.
+        // Orphaned composables (Blocked{ContainerNotFound}) are registered but
+        // unrouted, so they're excluded from the routing side of the check.
+        let mut n_nodes = 0usize;
+        let mut n_containers = 0usize;
+        let mut n_composables = 0usize;
+        for meta in metadata_map.values() {
+            match meta.member_type {
+                MemberType::Node => n_nodes += 1,
+                MemberType::Container => n_containers += 1,
+                MemberType::ComposableNode => n_composables += 1,
+            }
+        }
+        let orphaned = metadata_map
+            .iter()
+            .filter(|(id, meta)| {
+                meta.member_type == MemberType::ComposableNode
+                    && !virtual_member_routing.contains_key(*id)
+            })
+            .count();
+        tracing::info!(
+            "Registered {} members ({} nodes, {} containers, {} composables{})",
+            metadata_map.len(),
+            n_nodes,
+            n_containers,
+            n_composables,
+            if orphaned > 0 {
+                format!(", {} orphaned", orphaned)
+            } else {
+                String::new()
+            }
+        );
+        let routed = tasks.len() + virtual_member_routing.len() + orphaned;
+        if metadata_map.len() != routed {
+            tracing::warn!(
+                "MEMBER REGISTRY MISMATCH: {} registered vs {} spawned/routed — \
+                 some members are invisible or unroutable (issue 0001 class)",
+                metadata_map.len(),
+                routed
+            );
         }
 
         // Phase 12: Build virtual member routing map for composable nodes

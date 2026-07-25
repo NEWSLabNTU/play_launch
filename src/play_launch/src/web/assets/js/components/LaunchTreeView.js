@@ -5,8 +5,7 @@ import { useState, useEffect, useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import {
     launchTree, launchTreeExpanded, launchTreeSelection,
-    nodes, getStatusString,
-} from '../store.js';
+    nodes, getStatusString, getNodeByKey } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -95,7 +94,7 @@ function getGroupLabel(scope, scopes, scopeChildren) {
 
 /** Check if a node has recent stderr activity. Returns 'hot'|'warm'|null. */
 function getNodeActivity(nodeName) {
-    const node = nodes.value.get(nodeName);
+    const node = getNodeByKey(nodeName);
     if (!node || !node.stderr_last_modified || !node.stderr_size) return null;
     const elapsed = Math.floor(Date.now() / 1000) - node.stderr_last_modified;
     if (elapsed < 10) return 'hot';
@@ -126,7 +125,7 @@ function getSubtreeActivity(scopeId, scopeChildren, scopeNodes) {
 /** Activity icon for a node — same pattern as NodeCard's StderrIcon. */
 function ActivityIcon({ nodeName }) {
     const [, setTick] = useState(0);
-    const node = nodes.value.get(nodeName);
+    const node = getNodeByKey(nodeName);
     const mtime = node?.stderr_last_modified;
     const size = node?.stderr_size || 0;
 
@@ -180,7 +179,7 @@ function ScopeActivityIcon({ scopeId, scopeChildren, scopeNodes }) {
 
 /** Get status string for a node. */
 function statusClass(name) {
-    const node = nodes.value.get(name);
+    const node = getNodeByKey(name);
     if (!node) return 'stopped';
     return getStatusString(node.status);
 }
@@ -301,7 +300,7 @@ function ScopeRow({ scope, scopes, depth, isExpanded, hasChildren, scopeId, scop
 function NodeRow({ name, depth }) {
     const sel = launchTreeSelection.value;
     const isSelected = sel?.type === 'node' && sel?.name === name;
-    const storeNode = nodes.value.get(name);
+    const storeNode = getNodeByKey(name);
     const status = storeNode ? getStatusString(storeNode.status) : 'stopped';
     const nodeType = storeNode?.node_type || 'node';
     const shortName = name.split('/').filter(Boolean).pop() || name;

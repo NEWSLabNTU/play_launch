@@ -51,8 +51,8 @@ pub async fn list_nodes(
     let coordinator = &state.member_handle;
     let nodes = coordinator.list_members().await;
 
-    // Build container ROS-name → member-name lookup map
-    let mut container_lookup: HashMap<String, String> = HashMap::new();
+    // Build container ROS-name → (member id, display name) lookup map
+    let mut container_lookup: HashMap<String, (String, String)> = HashMap::new();
     for member in &nodes {
         if member.is_container {
             let ros_name = if let Some(ns) = &member.namespace {
@@ -67,7 +67,7 @@ pub async fn list_nodes(
             } else {
                 format!("/{}", member.name)
             };
-            container_lookup.insert(ros_name, member.name.clone());
+            container_lookup.insert(ros_name, (member.id.clone(), member.name.clone()));
         }
     }
 
@@ -86,10 +86,13 @@ pub async fn list_nodes(
                 } else {
                     format!("/{}", target)
                 };
-                summary.container_name = container_lookup
+                if let Some((id, name)) = container_lookup
                     .get(&normalized)
                     .or_else(|| container_lookup.get(target))
-                    .cloned();
+                {
+                    summary.container_id = Some(id.clone());
+                    summary.container_name = Some(name.clone());
+                }
             }
             summary
         })
@@ -137,7 +140,7 @@ pub async fn get_node(State(state): State<Arc<WebState>>, Path(name): Path<Strin
                         };
                         ros_name == normalized_target
                     })
-                    .map(|container| container.name.clone())
+                    .map(|container| (container.id.clone(), container.name.clone()))
             } else {
                 None
             }
@@ -146,12 +149,14 @@ pub async fn get_node(State(state): State<Arc<WebState>>, Path(name): Path<Strin
         };
 
         Json(json!({
+            "id": node.id,
             "name": node.name,
             "package": node.package,
             "executable": node.executable,
             "namespace": node.namespace,
             "target_container": node.target_container,
-            "container_name": container_member_name,
+            "container_id": container_member_name.as_ref().map(|(id, _)| id.clone()),
+            "container_name": container_member_name.as_ref().map(|(_, name)| name.clone()),
             "status": node.status,
             "pid": node.pid,
             "is_container": node.is_container,
@@ -266,7 +271,7 @@ pub async fn load_node(State(state): State<Arc<WebState>>, Path(name): Path<Stri
 
             // Get the updated node state and return as JSON
             let nodes = coordinator.list_members().await;
-            if let Some(node) = nodes.iter().find(|n| n.name == name) {
+            if let Some(node) = nodes.iter().find(|n| n.id == name) {
                 let node_summary = super::web_types::NodeSummary::from_member_summary(node);
                 Json(node_summary).into_response()
             } else {
@@ -302,7 +307,7 @@ pub async fn unload_node(State(state): State<Arc<WebState>>, Path(name): Path<St
 
             // Get the updated node state and return as JSON
             let nodes = coordinator.list_members().await;
-            if let Some(node) = nodes.iter().find(|n| n.name == name) {
+            if let Some(node) = nodes.iter().find(|n| n.id == name) {
                 let node_summary = super::web_types::NodeSummary::from_member_summary(node);
                 Json(node_summary).into_response()
             } else {

@@ -1,6 +1,6 @@
 # Phase 50: FQN member identity + full web visibility
 
-**Status:** 📋 Planned (2026-07-25).
+**Status:** ✅ Done (2026-07-25).
 **Fixes:** issues 0001 (GH #1), 0006-partial (GH #6).
 **Design:** docs/design/member-identity.md, docs/design/web-ui-organization.md.
 
@@ -38,3 +38,31 @@ every launched member visible, exactly once.
   totals match spawn counts, start/stop routes to the right member.
 - Cold Autoware receipt (simple-autoware-safety-island `just demo-all`)
   still PASS; node count on the page == "Spawning N" log line.
+
+## Outcome (2026-07-25)
+
+All work items landed; deviations from plan:
+
+- **Fifth drop mechanism found:** the SystemModel itself
+  (`structure.nodes: BTreeMap<FQN, NodeInstance>`, sole spawn source since
+  47.B3) silently overwrote true duplicates in `model_builder`. Fixed with
+  ordinal `#N` model keys — both instances spawn; the ROS `__node` remap
+  derives from `inst.node_name`, so the suffix stays out of process args.
+- **50.5 delivered as targeted refetch,** not `member_added/removed` SSE:
+  membership is static after the builder today (no event source exists);
+  `applyStateEvent` on an unknown id now triggers a debounced
+  `fetchNodes()` instead of silently dropping. Real membership events
+  belong with the phase-51 state-reducer, which will own the channel.
+  The 3s activity poll stays — it refreshes stderr mtimes, not membership.
+- **Launch-tree scope map residue:** `node_scope_map` still keys by display
+  name (built pre-builder from the dump); the frontend falls back to a
+  name-scan (`getNodeByKey`). Duplicates resolve to the first match there —
+  same as pre-phase-50. Rekey belongs to phase-51's builder-ordered rework.
+
+Acceptance: synthetic collision launch → 8/8 members on the node page
+(`node:/robot1/camera`, `node:/robot2/camera`, `node:/listener`,
+`node:/listener#2`, `node:/pipeline`, `container:/pipeline`,
+`composable:/comp_talker` loaded, `composable:/orphan_comp` blocked);
+`Registered 8` == `Spawning 8`; stop of `node:/robot2/camera` left its
+cross-ns twin and both listeners running. Cold Autoware receipt
+(`just demo-all`, simple-autoware-safety-island): PASS.

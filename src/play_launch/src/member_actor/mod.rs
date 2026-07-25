@@ -41,6 +41,7 @@
 //! ```
 
 pub mod actor_traits;
+pub mod member_id;
 pub mod container_actor;
 pub mod container_control;
 pub mod coordinator;

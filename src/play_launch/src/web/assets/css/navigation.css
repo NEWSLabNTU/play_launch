@@ -145,3 +145,8 @@
     padding: 16px;
 }
 
+
+/* Phase-50: clickable health strip */
+.badge-clickable { cursor: pointer; }
+.badge-clickable:hover { filter: brightness(1.1); }
+.badge-failed { background: #dc2626; color: #fff; }

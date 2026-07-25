@@ -54,6 +54,9 @@ pub enum MemberState {
 #[serde(rename_all = "snake_case")]
 #[allow(clippy::enum_variant_names)] // "Container" prefix is meaningful and clear
 pub enum BlockReason {
+    /// No container matched the composable's target_container_name at
+    /// registration (phase-50: registered visibly instead of dropped)
+    ContainerNotFound,
     /// Container was stopped by user
     ContainerStopped,
     /// Container crashed or failed
@@ -67,6 +70,10 @@ pub enum BlockReason {
 /// Summary information about a member (for web UI listings)
 #[derive(Debug, Clone, Serialize)]
 pub struct MemberSummary {
+    /// Canonical collision-proof id (`kind:/ns/name[#N]`) — the key for
+    /// every registry and REST path (phase-50, docs/design/member-identity.md)
+    pub id: String,
+    /// Display name (bare)
     pub name: String,
     pub member_type: MemberType,
     pub state: MemberState,

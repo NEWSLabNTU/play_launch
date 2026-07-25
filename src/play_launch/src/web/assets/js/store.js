@@ -22,6 +22,10 @@ export const activeTab = signal('stderr');
 export const theme = signal(localStorage.getItem('theme') || 'light');
 export const currentView = signal('nodes');
 
+/** Status facet for the node list (phase-50): 'all' | 'active' | 'transitioning'
+ *  | 'failed' | 'inactive' | 'blocked'. Set by the header health strip too. */
+export const statusFacet = signal('all');
+
 // --- Connection state ---
 
 /** SSE connection state: null = initial (never connected), true = connected, false = lost. */
@@ -143,6 +147,21 @@ export function getStatusString(status) {
     return 'unknown';
 }
 
+/** Look up a member by canonical id, falling back to display name.
+ *
+ * Launch-tree scope maps still key by display name (phase-50 residue);
+ * duplicates resolve to the first match there — same as pre-phase-50.
+ * @param {string} key
+ */
+export function getNodeByKey(key) {
+    const map = nodes.value;
+    if (map.has(key)) return map.get(key);
+    for (const n of map.values()) {
+        if (n.name === key) return n;
+    }
+    return undefined;
+}
+
 // --- Actions ---
 
 /** Replace all node state from GET /api/nodes response.
@@ -151,7 +170,9 @@ export function getStatusString(status) {
 export function loadNodes(nodeArray) {
     const map = new Map();
     for (const node of nodeArray) {
-        map.set(node.name, node);
+        // Phase-50: canonical id (`kind:/ns/name[#N]`) is THE key — bare
+        // names collide (issue 0001). Fallback keeps old servers working.
+        map.set(node.id || node.name, node);
     }
     nodes.value = map;
 }
@@ -166,12 +187,19 @@ export function loadNodes(nodeArray) {
  * @param {import('./types').StateEvent} event
  */
 export function applyStateEvent(event) {
+    // Actors are named by canonical member id (phase-50), so event.name IS
+    // the store key.
     const name = event.name;
     if (!name) return;
 
     const map = new Map(nodes.value);
     const node = map.get(name);
-    if (!node) return; // unknown node — wait for full resync
+    if (!node) {
+        // Unknown member — refetch instead of silently dropping the event
+        // (store.js:174 antipattern from the 2026-07 audit).
+        debounceFetchNodes();
+        return;
+    }
 
     // Clone to trigger signal update
     const updated = { ...node };
@@ -293,6 +321,16 @@ export async function fetchLaunchTree() {
     } catch (e) {
         console.warn('[store] Failed to fetch launch tree:', e);
     }
+}
+
+/** Debounced node-list refetch — called when SSE mentions an unknown member. */
+let _nodesDebounceTimer = null;
+export function debounceFetchNodes() {
+    if (_nodesDebounceTimer) return;
+    _nodesDebounceTimer = setTimeout(() => {
+        _nodesDebounceTimer = null;
+        fetchNodes();
+    }, 300);
 }
 
 /** Debounced graph refetch — called on state-changing events. */

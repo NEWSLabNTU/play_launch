@@ -399,9 +399,26 @@ pub fn build_system_model(
 
     let mut insert_node =
         |structure: &mut model::Structure, node_fqn: String, inst: model::NodeInstance| {
-            if structure.nodes.insert(node_fqn.clone(), inst).is_some() {
-                diagnostics.push(format!("structure: duplicate node instance {node_fqn}"));
+            // Phase-50 (issue 0001): TRUE duplicates keep BOTH instances —
+            // the later one gets an ordinal `#N` key instead of silently
+            // overwriting the earlier. `structure.nodes` is the sole spawn
+            // source (47.B3), so an overwrite here means a node is never
+            // spawned at all. `node_record_from_instance` derives the ROS
+            // name from `inst.node_name`, so the suffix never reaches the
+            // actual `__node` remap — it only disambiguates the model key,
+            // the log dir, and the member id.
+            let mut key = node_fqn.clone();
+            let mut n = 1usize;
+            while structure.nodes.contains_key(&key) {
+                n += 1;
+                key = format!("{node_fqn}#{n}");
             }
+            if n > 1 {
+                diagnostics.push(format!(
+                    "structure: duplicate node instance {node_fqn} kept as {key}"
+                ));
+            }
+            structure.nodes.insert(key, inst);
         };
 
     // Phase 46.2 — lower the LaunchDump record's spawn fields into the

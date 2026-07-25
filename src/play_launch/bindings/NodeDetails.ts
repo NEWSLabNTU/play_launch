@@ -5,7 +5,16 @@ import type { UnifiedStatus } from "./UnifiedStatus";
 /**
  * Detailed information about a node (for API responses)
  */
-export type NodeDetails = { cmdline?: string | null, name: string, node_type: NodeType, status: UnifiedStatus, pid: number | null, package: string | null, executable: string, namespace: string | null, target_container?: string | null, container_name?: string | null, is_container: boolean, exec_name?: string | null, node_name?: string | null, 
+export type NodeDetails = { cmdline?: string | null, 
+/**
+ * Canonical collision-proof member id (`kind:/ns/name[#N]`, phase-50).
+ * THE key for API routes and frontend maps; `name` is display-only.
+ */
+id: string, name: string, node_type: NodeType, status: UnifiedStatus, pid: number | null, package: string | null, executable: string, namespace: string | null, target_container?: string | null, container_name?: string | null, 
+/**
+ * Canonical id of the resolved parent container (phase-50)
+ */
+container_id?: string | null, is_container: boolean, exec_name?: string | null, node_name?: string | null, 
 /**
  * Unix timestamp (seconds) when stderr was last modified
  */

@@ -4,7 +4,7 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useMemo, useCallback, useEffect } from '../vendor/hooks.module.js';
 import { useSignal } from '../vendor/signals.module.js';
 import htm from '../vendor/htm.module.js';
-import { nodeList, selectedNode, nodePanelOpen, activeTab, getStatusString, fetchNodes } from '../store.js';
+import { nodeList, selectedNode, nodePanelOpen, activeTab, getStatusString, fetchNodes, statusFacet } from '../store.js';
 import { NodeCard } from './NodeCard.js';
 
 const html = htm.bind(h);
@@ -42,13 +42,28 @@ function makeSorter(sortBy) {
     };
 }
 
-/** Check if a node matches the search term. */
-function matchesFilter(node, term) {
+/** Map a node's status string onto a facet bucket (phase-50). */
+function facetOf(node) {
+    const val = getStatusString(node.status);
+    if (val === 'running' || val === 'loaded') return 'active';
+    if (val === 'loading' || val === 'unloading' || val === 'pending') return 'transitioning';
+    if (val === 'failed') return 'failed';
+    if (val === 'blocked') return 'blocked';
+    return 'inactive'; // stopped, unloaded, unknown
+}
+
+/** Check if a node matches the search term + facet + kind. */
+function matchesFilter(node, term, facet, kind) {
+    if (facet && facet !== 'all' && facetOf(node) !== facet) return false;
+    if (kind && kind !== 'all' && node.node_type !== kind) return false;
     if (!term) return true;
     const lower = term.toLowerCase();
     const name = (node.name || '').toLowerCase();
     const rosName = buildRosName(node).toLowerCase();
-    return name.includes(lower) || rosName.includes(lower);
+    const pkg = (node.package || '').toLowerCase();
+    const exec = (node.executable || '').toLowerCase();
+    return name.includes(lower) || rosName.includes(lower)
+        || pkg.includes(lower) || exec.includes(lower);
 }
 
 function buildRosName(node) {
@@ -60,10 +75,34 @@ function buildRosName(node) {
     return ns + '/' + (nn || '');
 }
 
+/** Facet chip strip with live counts (phase-50). */
+function FacetBar({ nodes, facet, setFacet }) {
+    const counts = { all: nodes.length, active: 0, transitioning: 0, failed: 0, inactive: 0, blocked: 0 };
+    for (const n of nodes) counts[facetOf(n)]++;
+    const chips = [
+        ['all', 'All'], ['active', 'Active'], ['transitioning', 'Transitioning'],
+        ['failed', 'Failed'], ['inactive', 'Inactive'], ['blocked', 'Blocked'],
+    ];
+    return html`
+        <div class="facet-bar">
+            ${chips.map(([key, label]) => (key === 'all' || counts[key] > 0) && html`
+                <button key=${key}
+                    class="facet-chip facet-${key} ${facet === key ? 'active' : ''}"
+                    onClick=${() => setFacet(facet === key ? 'all' : key)}>
+                    ${label} <span class="facet-count">${counts[key]}</span>
+                </button>
+            `)}
+        </div>
+    `;
+}
+
 export function NodeList() {
     const [sortBy, setSortBy] = useState('name');
     const [filterTerm, setFilterTerm] = useState('');
     const [treeView, setTreeView] = useState(true);
+    const [collapsedNs, setCollapsedNs] = useState(new Set());
+    const facet = statusFacet.value;
+    const setFacet = useCallback((f) => { statusFacet.value = f; }, []);
 
     // Poll node data periodically when sorting by activity so timestamps stay fresh.
     useEffect(() => {
@@ -76,15 +115,17 @@ export function NodeList() {
 
     const grouped = useMemo(() => {
         const sorter = makeSorter(sortBy);
+        const matches = (n) => matchesFilter(n, filterTerm, facet, 'all');
 
         if (!treeView) {
             // Flat mode: all nodes sorted together, no parent-child grouping
-            const flat = allNodes.filter(n => matchesFilter(n, filterTerm));
+            const flat = allNodes.filter(matches);
             flat.sort(sorter);
             return flat.map(node => ({ node, isChild: false }));
         }
 
-        // Tree mode: containers with their composable children grouped together
+        // Tree mode: namespace groups; containers with their composable
+        // children grouped together. All keying by canonical id (phase-50).
         const containerChildren = new Map();
         const containers = [];
         const regularNodes = [];
@@ -92,14 +133,14 @@ export function NodeList() {
         for (const node of allNodes) {
             if (node.node_type === 'container') {
                 containers.push(node);
-                if (!containerChildren.has(node.name)) {
-                    containerChildren.set(node.name, []);
+                if (!containerChildren.has(node.id)) {
+                    containerChildren.set(node.id, []);
                 }
-            } else if (node.node_type === 'composable_node' && node.container_name) {
-                if (!containerChildren.has(node.container_name)) {
-                    containerChildren.set(node.container_name, []);
+            } else if (node.node_type === 'composable_node' && node.container_id) {
+                if (!containerChildren.has(node.container_id)) {
+                    containerChildren.set(node.container_id, []);
                 }
-                containerChildren.get(node.container_name).push(node);
+                containerChildren.get(node.container_id).push(node);
             } else {
                 regularNodes.push(node);
             }
@@ -113,14 +154,14 @@ export function NodeList() {
         const topLevel = []; // { node, type: 'regular'|'container' }
 
         for (const node of regularNodes) {
-            if (matchesFilter(node, filterTerm)) {
+            if (matches(node)) {
                 topLevel.push({ node, type: 'regular' });
             }
         }
         for (const container of containers) {
-            const children = containerChildren.get(container.name) || [];
-            const containerMatches = matchesFilter(container, filterTerm);
-            const matchingChildren = children.filter(c => matchesFilter(c, filterTerm));
+            const children = containerChildren.get(container.id) || [];
+            const containerMatches = matches(container);
+            const matchingChildren = children.filter(matches);
             if (containerMatches || matchingChildren.length > 0) {
                 topLevel.push({ node: container, type: 'container', children, containerMatches, matchingChildren });
             }
@@ -131,7 +172,7 @@ export function NodeList() {
             const effectiveActivity = (entry) => {
                 let t = entry.node.stderr_last_modified || 0;
                 if (entry.type === 'container') {
-                    for (const child of (containerChildren.get(entry.node.name) || [])) {
+                    for (const child of (containerChildren.get(entry.node.id) || [])) {
                         t = Math.max(t, child.stderr_last_modified || 0);
                     }
                 }
@@ -147,9 +188,11 @@ export function NodeList() {
             topLevel.sort((a, b) => sorter(a.node, b.node));
         }
 
-        // Flatten: emit each top-level entry, expanding container groups
-        const result = [];
-        for (const entry of topLevel) {
+        // Group top-level entries by namespace (collapsible headers),
+        // preserving the chosen sort inside each group. Skipped under
+        // activity sort — interleaving matters more there.
+        const useNsGroups = sortBy !== 'activity';
+        const emit = (result, entry) => {
             result.push({ node: entry.node, isChild: false });
             if (entry.type === 'container') {
                 const childrenToShow = entry.containerMatches ? entry.children : entry.matchingChildren;
@@ -157,10 +200,28 @@ export function NodeList() {
                     result.push({ node: child, isChild: true });
                 }
             }
+        };
+
+        const result = [];
+        if (!useNsGroups) {
+            for (const entry of topLevel) emit(result, entry);
+            return result;
         }
 
+        const nsGroups = new Map(); // ns -> entries, insertion keeps sort inside group
+        for (const entry of topLevel) {
+            const ns = entry.node.namespace || '/';
+            if (!nsGroups.has(ns)) nsGroups.set(ns, []);
+            nsGroups.get(ns).push(entry);
+        }
+        for (const ns of Array.from(nsGroups.keys()).sort()) {
+            const entries = nsGroups.get(ns);
+            result.push({ nsHeader: ns, count: entries.length });
+            if (collapsedNs.has(ns)) continue;
+            for (const entry of entries) emit(result, entry);
+        }
         return result;
-    }, [allNodes, sortBy, filterTerm, treeView]);
+    }, [allNodes, sortBy, filterTerm, facet, treeView, collapsedNs]);
 
     const onFilterNamespace = useCallback((ns) => {
         setFilterTerm(ns);
@@ -190,14 +251,27 @@ export function NodeList() {
                         <span class="toggle-label">Tree</span>
                     </label>
                 </div>
-                <input type="text" class="search-box" id="search" placeholder="Filter nodes..."
+                <input type="text" class="search-box" id="search" placeholder="Filter nodes (name, ns, package, exec)..."
                     value=${filterTerm} onInput=${(e) => setFilterTerm(e.target.value)} />
                 <${BulkOperations} />
             </div>
+            <${FacetBar} nodes=${allNodes} facet=${facet} setFacet=${setFacet} />
             <div class="node-list">
                 ${grouped.length === 0 && html`<div class="no-nodes">No nodes found</div>`}
-                ${grouped.map(({ node, isChild }) => html`
-                    <${NodeCard} key=${node.name} node=${node} isChild=${isChild}
+                ${grouped.map((entry) => entry.nsHeader !== undefined ? html`
+                    <div key=${'ns:' + entry.nsHeader} class="ns-group-header"
+                        onClick=${() => {
+                            const next = new Set(collapsedNs);
+                            if (next.has(entry.nsHeader)) next.delete(entry.nsHeader);
+                            else next.add(entry.nsHeader);
+                            setCollapsedNs(next);
+                        }}>
+                        <span class="ns-group-arrow">${collapsedNs.has(entry.nsHeader) ? '▸' : '▾'}</span>
+                        <span class="ns-group-name">${entry.nsHeader}</span>
+                        <span class="ns-group-count">${entry.count}</span>
+                    </div>
+                ` : html`
+                    <${NodeCard} key=${entry.node.id} node=${entry.node} isChild=${entry.isChild}
                         onFilterNamespace=${onFilterNamespace} onViewNode=${onViewNode} />
                 `)}
             </div>

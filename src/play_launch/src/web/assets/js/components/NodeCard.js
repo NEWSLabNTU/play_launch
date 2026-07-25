@@ -208,14 +208,19 @@ function ComposableButton({ name, statusStr, pendingAction, setPendingAction }) 
 
 /** NodeCard component. */
 export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
+    // Phase-50: id is THE key (API routes, selection, topic counts);
+    // name is display-only.
+    const id = node.id || node.name;
     const name = node.name;
     const statusStr = getStatusString(node.status);
     const isProcess = node.node_type === 'node' || node.node_type === 'container';
     const isComposable = node.node_type === 'composable_node';
     const isContainer = node.node_type === 'container';
-    const isSelected = selectedNode.value === name;
+    const isSelected = selectedNode.value === id;
     const isRunning = statusStr === 'running' || statusStr === 'loaded';
-    const topicCounts = nodeTopicCounts.value.get(name);
+    const topicCounts = nodeTopicCounts.value.get(id);
+    // Ordinal suffix marks TRUE duplicates (same kind + same FQN)
+    const ordinal = id.includes('#') ? id.slice(id.indexOf('#')) : null;
 
     const [pendingAction, setPendingAction] = useState(null);
 
@@ -230,15 +235,16 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
     if (isSelected) cardClass += ' selected';
 
     const handleView = useCallback(() => {
-        onViewNode(name);
-    }, [name, onViewNode]);
+        onViewNode(id);
+    }, [id, onViewNode]);
 
     return html`
-        <div class=${cardClass} data-node=${name}>
+        <div class=${cardClass} data-node=${id}>
             <div class="node-info">
                 <div class="node-header">
                     <span class="node-type ${getTypeClass(node.node_type)}">${getTypeLabel(node.node_type)}</span>
                     <span class="node-name">${name}</span>
+                    ${ordinal && html`<span class="node-ordinal" title="Duplicate name — canonical id ${id}">${ordinal}</span>`}
                     ${node.pid != null && html`<span class="node-pid">PID ${node.pid}</span>`}
                     <${StderrIcon} node=${node} />
                 </div>
@@ -258,30 +264,30 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
                 ${isProcess && node.respawn_enabled !== undefined && html`
                     <label class="toggle-checkbox" onClick=${(e) => e.stopPropagation()}>
                         <input type="checkbox" checked=${node.respawn_enabled}
-                            onChange=${(e) => postAction('/api/nodes/' + encodeURIComponent(name) + '/respawn/' + toBoolParam(e.target.checked))} />
+                            onChange=${(e) => postAction('/api/nodes/' + encodeURIComponent(id) + '/respawn/' + toBoolParam(e.target.checked))} />
                         <span class="toggle-label">Auto-restart</span>
                     </label>
                 `}
                 ${isComposable && node.auto_load !== undefined && html`
                     <label class="toggle-checkbox" onClick=${(e) => e.stopPropagation()}>
                         <input type="checkbox" checked=${node.auto_load}
-                            onChange=${(e) => postAction('/api/nodes/' + encodeURIComponent(name) + '/auto-load/' + toBoolParam(e.target.checked))} />
+                            onChange=${(e) => postAction('/api/nodes/' + encodeURIComponent(id) + '/auto-load/' + toBoolParam(e.target.checked))} />
                         <span class="toggle-label">Auto-load</span>
                     </label>
                 `}
                 ${isProcess && html`
-                    <${ProcessButton} name=${name} statusStr=${statusStr}
+                    <${ProcessButton} name=${id} statusStr=${statusStr}
                         pendingAction=${pendingAction} setPendingAction=${setPendingAction} />
                 `}
                 ${isComposable && html`
-                    <${ComposableButton} name=${name} statusStr=${statusStr}
+                    <${ComposableButton} name=${id} statusStr=${statusStr}
                         pendingAction=${pendingAction} setPendingAction=${setPendingAction} />
                 `}
                 ${isContainer && statusStr === 'running' && html`
-                    <button class="btn-load-all" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/load-all')}>
+                    <button class="btn-load-all" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(id) + '/load-all')}>
                         Load All
                     </button>
-                    <button class="btn-unload-all" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(name) + '/unload-all')}>
+                    <button class="btn-unload-all" onClick=${() => postAction('/api/nodes/' + encodeURIComponent(id) + '/unload-all')}>
                         Unload All
                     </button>
                 `}

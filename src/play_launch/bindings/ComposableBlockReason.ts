@@ -3,4 +3,4 @@
 /**
  * Reason why a composable node is blocked
  */
-export type ComposableBlockReason = "container_stopped" | "container_failed" | "container_not_started" | "shutdown";
+export type ComposableBlockReason = "container_stopped" | "container_failed" | "container_not_started" | "shutdown" | "container_not_found";

@@ -9,9 +9,6 @@ plans in `docs/roadmap/` phase docs.
 
 ## Open
 
-**#0001** — node page misses nodes: bare-name keys silently collide across
-namespaces/types; orphaned composables dropped. See `0001-*`. (GH #1)
-
 **#0002** — composable state triple-write (actor entry + shared_state +
 ignored StateEvent), duplicated BlockReason enums. See `0002-*`. (GH #2)
 
@@ -26,3 +23,10 @@ sends; unbounded ComponentEvent channel; stringly eyre. See `0005-*`. (GH #5)
 
 **#0006** — web UI organization: bare-name-first list, container-only
 tree, no status facets, three freshness mechanisms. See `0006-*`. (GH #6)
+
+## Resolved
+
+**#0001** — node page misses nodes (bare-name key collisions; orphaned
+composables dropped). Fixed by phase-50 canonical member ids
+(`kind:/ns/name[#N]`) end-to-end + model-key ordinal dedup. See `0001-*`.
+(GH #1)

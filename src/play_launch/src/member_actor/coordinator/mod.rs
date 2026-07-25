@@ -28,6 +28,9 @@ pub(super) const NOISY_STDERR_THRESHOLD: u64 = 10 * 1024;
 /// Metadata about a member for web UI queries
 #[derive(Clone)]
 pub struct MemberMetadata {
+    /// Canonical collision-proof id (phase-50); assigned by the builder's
+    /// IdAllocator at spawn — empty until then.
+    pub id: String,
     pub name: String,
     pub member_type: MemberType,
     pub package: Option<String>,

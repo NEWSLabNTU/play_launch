@@ -6,8 +6,7 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import {
-    launchTree, launchTreeSelection, nodes, getStatusString,
-} from '../store.js';
+    launchTree, launchTreeSelection, nodes, getStatusString, getNodeByKey } from '../store.js';
 import { InfoTab } from './InfoTab.js';
 import { LogTab } from './LogTab.js';
 import { ParametersTab } from './ParametersTab.js';
@@ -99,7 +98,7 @@ function ScopeInfoTab({ scope, scopes, nodeScopes }) {
                     <div class="lp-label">Entities (${entities.length})</div>
                     <div class="lp-entities">
                         ${entities.map(name => {
-                            const node = nodes.value.get(name);
+                            const node = getNodeByKey(name);
                             const status = node ? getStatusString(node.status) : 'unknown';
                             return html`
                                 <div class="lp-entity" key=${name}
@@ -218,7 +217,7 @@ function NodeDetail({ name, tab, setTab }) {
     }, [name]);
 
     // Use store node as fallback for live data
-    const storeNode = nodes.value.get(name);
+    const storeNode = getNodeByKey(name);
     const displayData = nodeData || storeNode;
     const isComposable = storeNode?.node_type === 'composable_node';
     const hasOwnLogs = storeNode?.has_own_logs;
@@ -311,7 +310,7 @@ export function LaunchPanel() {
         : sel.name;
 
     const statusStr = sel.type === 'node'
-        ? getStatusString(nodes.value.get(sel.name)?.status)
+        ? getStatusString(getNodeByKey(sel.name)?.status)
         : null;
 
     return html`

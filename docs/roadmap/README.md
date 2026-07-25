@@ -171,6 +171,6 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
 - **Future ideas**: [future-considerations.md](./future-considerations.md)
 - **Archived phase docs**: `archive/`
 
-- **Phase 50** — FQN member identity + full web visibility (issues 0001/0006)
+- **Phase 50** — ✅ FQN member identity + full web visibility (issue 0001 resolved, 0006 partial)
 - **Phase 51** — state ownership refactor: reducer + container split (issues 0002/0003)
 - **Phase 52** — timing config + failure surfacing (issues 0004/0005)

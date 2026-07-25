@@ -43,6 +43,9 @@ pub enum ComposableBlockReason {
     ContainerNotStarted,
     /// Shutdown signal received
     Shutdown,
+    /// Target container missing from the launch description (phase-50 —
+    /// orphaned composables are registered instead of dropped)
+    ContainerNotFound,
 }
 
 /// Status for composable nodes (loaded into containers)
@@ -101,6 +104,9 @@ pub enum NodeType {
 #[cfg_attr(test, derive(TS))]
 #[cfg_attr(test, ts(export))]
 pub struct NodeSummary {
+    /// Canonical collision-proof member id (`kind:/ns/name[#N]`, phase-50).
+    /// THE key for API routes and frontend maps; `name` is display-only.
+    pub id: String,
     pub name: String,
     pub node_type: NodeType,
     pub status: UnifiedStatus,
@@ -114,6 +120,10 @@ pub struct NodeSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional = nullable))]
     pub container_name: Option<String>,
+    /// Canonical id of the resolved parent container (phase-50)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub container_id: Option<String>,
     pub is_container: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional = nullable))]
@@ -168,6 +178,7 @@ impl NodeSummary {
             && (member.output_dir.join("out").exists() || member.output_dir.join("err").exists());
 
         Self {
+            id: member.id.clone(),
             name: member.name.clone(),
             node_type,
             status,
@@ -176,8 +187,9 @@ impl NodeSummary {
             executable: member.executable.clone(),
             namespace: member.namespace.clone(),
             target_container: member.target_container.clone(),
-            // Container name will be set dynamically in the handler for composable nodes
+            // Container name/id set dynamically in the handler for composable nodes
             container_name: None,
+            container_id: None,
             is_container: member.is_container,
             exec_name: member.exec_name.clone(),
             node_name: member.node_name.clone(),
@@ -216,6 +228,9 @@ impl NodeSummary {
                         ComposableBlockReason::ContainerNotStarted
                     }
                     ActorBlockReason::Shutdown => ComposableBlockReason::Shutdown,
+                    ActorBlockReason::ContainerNotFound => {
+                        ComposableBlockReason::ContainerNotFound
+                    }
                 };
                 UnifiedStatus::Composable(ComposableNodeStatus::Blocked(web_reason))
             }

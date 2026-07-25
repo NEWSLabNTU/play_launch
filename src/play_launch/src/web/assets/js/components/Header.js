@@ -3,19 +3,35 @@
 import { h } from '../vendor/preact.module.js';
 import { useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
-import { currentView, theme, healthSummary, diagnostics, systemMetrics, graphSelectedElement } from '../store.js';
+import { currentView, theme, healthSummary, diagnostics, systemMetrics, graphSelectedElement, statusFacet, nodeList, getStatusString } from '../store.js';
 
 const html = htm.bind(h);
 
 function HealthBar() {
     const hs = healthSummary.value;
+    // Clickable status strip (phase-50): jump to the node list with a facet.
+    const jump = (facet) => {
+        statusFacet.value = facet;
+        graphSelectedElement.value = null;
+        currentView.value = 'nodes';
+    };
+    let failed = 0;
+    for (const n of nodeList.value) {
+        if (getStatusString(n.status) === 'failed') failed++;
+    }
     return html`
         <div class="badge-group">
             <span class="badge-label">Nodes:</span>
             <div class="health-summary">
-                <span class="badge badge-nodes">${hs.nodes_running}/${hs.nodes_total} nodes</span>
-                <span class="badge badge-containers">${hs.containers_running}/${hs.containers_total} containers</span>
-                <span class="badge badge-composable">${hs.composable_loaded}/${hs.composable_total} composable</span>
+                <span class="badge badge-nodes badge-clickable" title="Show all members"
+                    onClick=${() => jump('all')}>${hs.nodes_running}/${hs.nodes_total} nodes</span>
+                <span class="badge badge-containers badge-clickable" title="Show all members"
+                    onClick=${() => jump('all')}>${hs.containers_running}/${hs.containers_total} containers</span>
+                <span class="badge badge-composable badge-clickable" title="Show all members"
+                    onClick=${() => jump('all')}>${hs.composable_loaded}/${hs.composable_total} composable</span>
+                ${failed > 0 && html`
+                    <span class="badge badge-failed badge-clickable" title="Show failed members"
+                        onClick=${() => jump('failed')}>${failed} failed</span>`}
             </div>
         </div>
     `;

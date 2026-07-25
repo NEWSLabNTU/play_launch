@@ -100,6 +100,7 @@ impl MemberHandle {
                 };
 
             summaries.push(MemberSummary {
+                id: meta.id.clone(),
                 name: meta.name.clone(),
                 member_type: meta.member_type,
                 state,
@@ -165,6 +166,7 @@ impl MemberHandle {
             };
 
         Some(MemberSummary {
+            id: meta.id.clone(),
             name: meta.name.clone(),
             member_type: meta.member_type,
             state,
