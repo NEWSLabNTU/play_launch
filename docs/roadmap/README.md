@@ -170,3 +170,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
 - **Phase 20** (Web UI Modernization): [phase-20-web_ui_modernization.md](./phase-20-web_ui_modernization.md) — Preact + htm architecture reference
 - **Future ideas**: [future-considerations.md](./future-considerations.md)
 - **Archived phase docs**: `archive/`
+
+- **Phase 50** — FQN member identity + full web visibility (issues 0001/0006)
+- **Phase 51** — state ownership refactor: reducer + container split (issues 0002/0003)
+- **Phase 52** — timing config + failure surfacing (issues 0004/0005)
