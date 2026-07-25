@@ -125,3 +125,19 @@ button:hover:not(:disabled) {
         z-index: 1000;
     }
 }
+
+/* Phase-52.3: persistent failure banner */
+.failure-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    background: #dc2626;
+    color: #fff;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.failure-banner:hover { background: #b91c1c; }
+
+.failure-banner-icon { font-size: 15px; }

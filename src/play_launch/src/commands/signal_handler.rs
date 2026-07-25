@@ -436,10 +436,19 @@ pub(crate) async fn wait_for_completion_windows<F>(
     cleanup_guard.disable();
 }
 
-/// Print periodic startup progress (every 10s while loading, immediate completion message)
+/// Print periodic startup progress (every 10s while loading, immediate completion message).
+///
+/// Phase-52.3: on startup-complete-with-failures, names the failed members,
+/// emits a machine-readable `STARTUP_SUMMARY` line, and — under
+/// `--on-startup-failure exit` — flags the failure and initiates shutdown
+/// (the caller turns the flag into a non-zero exit).
 pub(crate) async fn print_periodic_statistics(
     member_handle: std::sync::Arc<crate::member_actor::MemberHandle>,
     mut shutdown_signal: tokio::sync::watch::Receiver<bool>,
+    on_startup_failure: crate::cli::options::OnStartupFailure,
+    startup_failed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+    pgid: i32,
 ) {
     // Print progress every 10 seconds while loading
     let mut progress_interval = tokio::time::interval(PROGRESS_INTERVAL);
@@ -502,6 +511,56 @@ pub(crate) async fn print_periodic_statistics(
                             health.composable_loaded,
                             health.composable_total
                         );
+
+                        // Phase-52.3: name the failed members + machine-readable summary
+                        let failed: Vec<String> = member_handle
+                            .list_members()
+                            .await
+                            .into_iter()
+                            .filter(|m| {
+                                matches!(m.state, crate::member_actor::MemberState::Failed { .. })
+                            })
+                            .map(|m| m.id)
+                            .collect();
+                        for id in &failed {
+                            warn!("Failed member: {}", id);
+                        }
+                        info!(
+                            "STARTUP_SUMMARY {}",
+                            serde_json::json!({
+                                "ok": false,
+                                "nodes_running": health.nodes_running,
+                                "nodes_total": health.nodes_total,
+                                "containers_running": health.containers_running,
+                                "containers_total": health.containers_total,
+                                "composable_loaded": health.composable_loaded,
+                                "composable_total": health.composable_total,
+                                "failed_members": failed,
+                            })
+                        );
+
+                        if on_startup_failure == crate::cli::options::OnStartupFailure::Exit {
+                            error!(
+                                "--on-startup-failure exit: {} member(s) failed — shutting down",
+                                failed.len()
+                            );
+                            startup_failed.store(true, std::sync::atomic::Ordering::Release);
+                            // Mirror the signal path EXACTLY: the replay-level
+                            // watch stops background tasks, member_handle
+                            // .shutdown() reaches the ACTORS (separate channel
+                            // created in the builder), and the process GROUP
+                            // gets SIGTERM (on Unix actors wait for their
+                            // child to exit rather than killing it).
+                            let _ = shutdown_tx.send(true);
+                            let _ = member_handle.shutdown();
+                            #[cfg(unix)]
+                            crate::process::kill_process_group(
+                                pgid,
+                                nix::sys::signal::Signal::SIGTERM,
+                            );
+                            #[cfg(not(unix))]
+                            let _ = pgid;
+                        }
                     }
 
                     debug!("Startup complete, stopping periodic progress updates");

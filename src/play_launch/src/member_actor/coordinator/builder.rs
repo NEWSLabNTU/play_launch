@@ -52,6 +52,8 @@ pub struct MemberCoordinatorBuilder {
     regular_nodes: Vec<RegularNodeDefinition>,
     containers: Vec<ContainerDefinition>,
     composable_nodes: Vec<ComposableNodeDefinition>,
+    /// LoadNode-path timings applied to every container (phase-52.2)
+    load_timings: crate::member_actor::container_actor::LoadTimings,
 }
 
 impl MemberCoordinatorBuilder {
@@ -61,7 +63,14 @@ impl MemberCoordinatorBuilder {
             regular_nodes: Vec::new(),
             containers: Vec::new(),
             composable_nodes: Vec::new(),
+            load_timings: Default::default(),
         }
+    }
+
+    /// Set the LoadNode-path timings applied to every container
+    /// (config `composable_node_loading` + CLI overrides; phase-52.2).
+    pub fn set_load_timings(&mut self, timings: crate::member_actor::container_actor::LoadTimings) {
+        self.load_timings = timings;
     }
 
     /// Add a regular node to be spawned later
@@ -292,6 +301,7 @@ impl MemberCoordinatorBuilder {
                     process_registry: def.process_registry,
                     ros_node: shared_ros_node.clone(),
                     use_component_events: def.use_component_events,
+                    timings: self.load_timings,
                 },
                 control_rx,
                 state_tx.clone(),

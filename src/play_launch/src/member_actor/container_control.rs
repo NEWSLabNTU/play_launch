@@ -8,6 +8,36 @@ use eyre::Result;
 use std::{path::PathBuf, time::Instant};
 use tokio::sync::oneshot;
 
+/// Typed failure of the LoadNode path (phase-52.4, issue 0005) — callers
+/// can distinguish a busy container from a hard rejection instead of
+/// pattern-matching eyre strings. `Display` prefixes the kind, so the
+/// web UI's Failed error text carries it too.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum LoadError {
+    /// No LoadNode client — the container never started properly.
+    #[error("service-missing: no LoadNode service client for container {container}")]
+    ServiceMissing { container: String },
+    /// The LoadNode service never appeared within the timeout.
+    #[error("service-not-ready: LoadNode service not available after {secs}s")]
+    ServiceNotReady { secs: u64 },
+    /// The service call itself errored (transport/serialization).
+    #[error("call-failed: {message}")]
+    CallFailed { message: String },
+    /// Every attempt timed out and ListNodes proved the component absent.
+    #[error("timeout: LoadNode timed out after {attempts} attempts (component never appeared)")]
+    TimedOut { attempts: usize },
+    /// The container stayed busy past the total budget — no resend
+    /// (LoadNode is not idempotent; a resend would double-load).
+    #[error("container-busy: unresponsive for {budget_secs}s while loading {composable}")]
+    Unresponsive {
+        budget_secs: u64,
+        composable: String,
+    },
+    /// Request construction failed (parameter conversion etc.).
+    #[error("bad-request: {message}")]
+    BadRequest { message: String },
+}
+
 /// Response from loading a composable node
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoadNodeResponse {
@@ -116,7 +146,7 @@ pub(super) struct LoadParams {
 /// Completion of a LoadNode service call (sent from spawned task back to actor)
 pub(super) struct LoadCompletion {
     pub composable_name: String,
-    pub result: Result<LoadNodeResponse>,
+    pub result: Result<LoadNodeResponse, LoadError>,
 }
 
 /// Current unload being processed

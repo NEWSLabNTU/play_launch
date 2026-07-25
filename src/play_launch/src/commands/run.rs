@@ -57,7 +57,7 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         ros_args: None,
         args: Some(args.args.clone()),
         cmd,
-        respawn: args.common.disable_respawn.then_some(false),
+        respawn: args.common.containers.disable_respawn.then_some(false),
         respawn_delay: Some(0.0),
         machine: None,
         scope: None,
@@ -122,7 +122,7 @@ async fn run_direct(
     let runtime_config = load_runtime_config(
         common.config.as_deref(),
         common.is_monitoring_enabled(),
-        common.monitor_interval_ms,
+        common.features.monitor_interval_ms,
         common.is_diagnostics_enabled(),
     )?;
     info!("Runtime configuration loaded successfully");
@@ -209,10 +209,10 @@ async fn run_direct(
     let sched_sources = common.contract_sources();
     let resolved_sched = crate::ros::sched_loader::resolve_platform_file(
         launch_dump,
-        common.sched.as_deref(),
+        common.sched_opts.sched.as_deref(),
         sched_sources.overlay.as_deref(),
         sched_sources.provider,
-        &common.target,
+        &common.sched_opts.target,
     );
     let (sched_plan, sched_helper, sched_helper_join) = if let Some(resolved) = &resolved_sched {
         let path = &resolved.path;
@@ -224,11 +224,11 @@ async fn run_direct(
             launch_dump,
             None,
             path,
-            &common.target,
-            common.sched_apply,
+            &common.sched_opts.target,
+            common.sched_opts.sched_apply,
         )?;
 
-        let (sched_helper, sched_helper_join) = if common.sched_apply
+        let (sched_helper, sched_helper_join) = if common.sched_opts.sched_apply
             != crate::execution::sched_apply::SchedApplyMode::Off
         {
             // Privilege is about whether the apply can SUCCEED, which is
@@ -239,7 +239,9 @@ async fn run_direct(
                 || crate::commands::capabilities::rt_helper_has_cap_sys_nice();
             if !privileged {
                 let msg = "scheduling: no privilege to apply; run `play_launch setcap` (grants cap_sys_nice to play_launch_rt_helper) or run as root";
-                if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
+                if common.sched_opts.sched_apply
+                    == crate::execution::sched_apply::SchedApplyMode::Strict
+                {
                     eyre::bail!("{msg}");
                 }
                 tracing::warn!("{msg}; scheduling will not be applied");
@@ -259,7 +261,7 @@ async fn run_direct(
                         let msg = format!(
                             "scheduling: RT helper failed to start ({e:#}); cannot apply without root"
                         );
-                        if common.sched_apply
+                        if common.sched_opts.sched_apply
                             == crate::execution::sched_apply::SchedApplyMode::Strict
                         {
                             eyre::bail!("{msg}");
@@ -300,7 +302,8 @@ async fn run_direct(
 
         // Create actor config
         let actor_config = ActorConfig {
-            respawn_enabled: !common.disable_respawn && context.record.respawn.unwrap_or(false),
+            respawn_enabled: !common.containers.disable_respawn
+                && context.record.respawn.unwrap_or(false),
             respawn_delay: context.record.respawn_delay.unwrap_or(0.0),
             max_respawn_attempts: None,
             output_dir: context.output_dir.clone(),
@@ -314,7 +317,7 @@ async fn run_direct(
                 );
                 p.for_fqn(&fqn).cloned()
             }),
-            sched_mode: common.sched_apply,
+            sched_mode: common.sched_opts.sched_apply,
             sched_helper: sched_helper.clone(),
         };
 

@@ -159,7 +159,15 @@ fn default_ring_capacity() -> usize {
     65536
 }
 
-/// Composable node loading settings
+/// Composable node loading settings (phase-52: wired into the container
+/// LoadNode path via `container_actor::timing::LoadTimings`).
+///
+/// Autoware-scale guidance: composable ctors that block for minutes (e.g.
+/// TensorRT engine builds on first run) hold a blocking container's
+/// executor — raise `load_total_budget_secs` (and consider
+/// `load_retry_timeout_millis`) rather than the base timeout; the loader
+/// polls ListNodes during the budget instead of resending (LoadNode is
+/// not idempotent).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ComposableNodeLoadingSettings {
     /// Delay before loading composable nodes (milliseconds)
@@ -167,20 +175,44 @@ pub struct ComposableNodeLoadingSettings {
     #[allow(dead_code)]
     pub delay_load_node_millis: u64,
 
-    /// Timeout for loading each composable node (milliseconds)
+    /// Timeout for the FIRST LoadNode service call per composable (milliseconds)
     #[serde(default = "default_load_node_timeout_millis")]
-    #[allow(dead_code)]
     pub load_node_timeout_millis: u64,
 
-    /// Maximum retry attempts for loading composable nodes
+    /// Maximum LoadNode attempts (first + retries) per composable
     #[serde(default = "default_load_node_attempts")]
-    #[allow(dead_code)]
     pub load_node_attempts: usize,
 
     /// Maximum concurrent composable node loading operations
     #[serde(default = "default_max_concurrent_load_node_spawn")]
     #[allow(dead_code)]
     pub max_concurrent_load_node_spawn: usize,
+
+    /// Timeout for retry LoadNode calls (milliseconds) — longer than the
+    /// first call because a busy single-threaded container answers late
+    #[serde(default = "default_load_retry_timeout_millis")]
+    pub load_retry_timeout_millis: u64,
+
+    /// Total per-composable budget while the container is busy/unresponsive
+    /// (seconds). The loader polls ListNodes within this budget instead of
+    /// resending LoadNode. Raise for multi-minute ctors (TensorRT).
+    #[serde(default = "default_load_total_budget_secs")]
+    pub load_total_budget_secs: u64,
+
+    /// Pause between ListNodes verification polls while busy (seconds)
+    #[serde(default = "default_load_verify_poll_interval_secs")]
+    pub load_verify_poll_interval_secs: u64,
+
+    /// How long a composable may sit in Loading with a known unique_id
+    /// before being promoted to Loaded (seconds) — covers DDS event loss
+    #[serde(default = "default_loading_event_timeout_secs")]
+    pub loading_event_timeout_secs: u64,
+
+    /// Warmup delay after the LoadNode service appears before calling it
+    /// (milliseconds) — the executor may register the service before it
+    /// starts processing requests
+    #[serde(default = "default_post_service_ready_warmup_ms")]
+    pub post_service_ready_warmup_ms: u64,
 }
 
 impl Default for ComposableNodeLoadingSettings {
@@ -190,6 +222,11 @@ impl Default for ComposableNodeLoadingSettings {
             load_node_timeout_millis: default_load_node_timeout_millis(),
             load_node_attempts: default_load_node_attempts(),
             max_concurrent_load_node_spawn: default_max_concurrent_load_node_spawn(),
+            load_retry_timeout_millis: default_load_retry_timeout_millis(),
+            load_total_budget_secs: default_load_total_budget_secs(),
+            load_verify_poll_interval_secs: default_load_verify_poll_interval_secs(),
+            loading_event_timeout_secs: default_loading_event_timeout_secs(),
+            post_service_ready_warmup_ms: default_post_service_ready_warmup_ms(),
         }
     }
 }
@@ -205,6 +242,21 @@ fn default_load_node_attempts() -> usize {
 }
 fn default_max_concurrent_load_node_spawn() -> usize {
     10
+}
+fn default_load_retry_timeout_millis() -> u64 {
+    60000
+}
+fn default_load_total_budget_secs() -> u64 {
+    600
+}
+fn default_load_verify_poll_interval_secs() -> u64 {
+    5
+}
+fn default_loading_event_timeout_secs() -> u64 {
+    10
+}
+fn default_post_service_ready_warmup_ms() -> u64 {
+    200
 }
 
 /// Container readiness checking settings
@@ -286,7 +338,6 @@ impl ProcessConfig {
 #[derive(Debug, Clone)]
 pub struct ResolvedRuntimeConfig {
     pub monitoring: ResolvedMonitoringConfig,
-    #[allow(dead_code)]
     pub composable_node_loading: ComposableNodeLoadingSettings,
     pub container_readiness: ContainerReadinessSettings,
     pub diagnostics: DiagnosticsSettings,

@@ -8,7 +8,7 @@
 use super::{
     ros_client::ContainerClients,
     supervisor::{ComposableNodeMetadata, ComposableSupervisor},
-    timing::LOADING_CHECK_INTERVAL,
+    timing::{LOADING_CHECK_INTERVAL, LoadTimings},
 };
 use crate::{
     execution::context::NodeContext,
@@ -38,6 +38,8 @@ pub struct ContainerActorParams {
     pub process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     pub ros_node: Option<Arc<rclrs::Node>>,
     pub use_component_events: bool,
+    /// Tunable LoadNode-path timings (phase-52.2)
+    pub timings: LoadTimings,
 }
 
 /// Container actor that supervises composable nodes
@@ -83,7 +85,7 @@ impl ContainerActor {
         load_control_rx: mpsc::Receiver<ContainerControlEvent>,
     ) -> Self {
         let (container_state_tx, _container_state_rx) = watch::channel(ContainerState::Pending);
-        let supervisor = ComposableSupervisor::new(name.clone(), state_tx.clone());
+        let supervisor = ComposableSupervisor::new(name.clone(), state_tx.clone(), params.timings);
 
         Self {
             name,

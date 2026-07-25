@@ -3,7 +3,10 @@
 //! former ContainerActor god struct. The supervisor owns the composables;
 //! the actor owns the container process; `ros_client` owns the ROS side.
 
-use super::ros_client::{self, ContainerClients};
+use super::{
+    ros_client::{self, ContainerClients},
+    timing::LoadTimings,
+};
 use crate::member_actor::{
     container_control::{ContainerControlEvent, CurrentUnload, LoadCompletion, LoadRequest},
     events::{StateEvent, emit},
@@ -71,10 +74,16 @@ pub(super) struct ComposableSupervisor {
     pub(super) load_completion_rx: mpsc::UnboundedReceiver<LoadCompletion>,
     /// Currently processing unload
     pub(super) current_unload: Option<CurrentUnload>,
+    /// Tunable LoadNode-path timings (phase-52.2)
+    pub(super) timings: LoadTimings,
 }
 
 impl ComposableSupervisor {
-    pub(super) fn new(container_name: String, state_tx: mpsc::Sender<StateEvent>) -> Self {
+    pub(super) fn new(
+        container_name: String,
+        state_tx: mpsc::Sender<StateEvent>,
+        timings: LoadTimings,
+    ) -> Self {
         let (load_completion_tx, load_completion_rx) = mpsc::unbounded_channel();
         Self {
             container_name,
@@ -84,6 +93,7 @@ impl ComposableSupervisor {
             load_completion_tx,
             load_completion_rx,
             current_unload: None,
+            timings,
         }
     }
 
@@ -168,6 +178,7 @@ impl ComposableSupervisor {
             let load_client = clients.load_client.clone();
             let list_client = clients.list_client.clone();
             let has_event_sub = clients.has_event_sub();
+            let timings = self.timings;
             let params = crate::member_actor::container_control::LoadParams {
                 composable_name: request.composable_name,
                 package: request.package,
@@ -187,6 +198,7 @@ impl ComposableSupervisor {
                     load_client,
                     list_client,
                     has_event_sub,
+                    timings,
                     params,
                     start_time,
                 )
@@ -280,9 +292,11 @@ impl ComposableSupervisor {
                 }
             }
             Err(e) => {
-                // Service call error/timeout
+                // Typed load failure (phase-52.4) — Display carries the kind
+                // prefix (timeout:/container-busy:/…), so the web UI's Failed
+                // text distinguishes them too.
                 if matches!(entry.state, ComposableState::Loading { .. }) {
-                    let error_msg = format!("{:#}", e);
+                    let error_msg = e.to_string();
                     entry.state = ComposableState::Failed {
                         error: error_msg.clone(),
                     };
@@ -469,9 +483,15 @@ impl ComposableSupervisor {
                 let container_name = self.container_name.clone();
                 let unload_client = clients.unload_client.clone();
 
+                let unload_timeout = self.timings.service_call_timeout;
                 let task = tokio::spawn(async move {
-                    ros_client::call_unload_node_service(container_name, unload_client, unique_id)
-                        .await
+                    ros_client::call_unload_node_service(
+                        container_name,
+                        unload_client,
+                        unique_id,
+                        unload_timeout,
+                    )
+                    .await
                 });
 
                 // Track the unload operation (will be polled in select! loop)
@@ -662,12 +682,17 @@ impl ComposableSupervisor {
     ) {
         let container_name = self.container_name.clone();
         let unload_client = clients.unload_client.clone();
+        let unload_timeout = self.timings.service_call_timeout;
 
         // Spawn service call as a task (so it doesn't block the actor)
         tokio::spawn(async move {
-            let result =
-                ros_client::call_unload_node_service(container_name, unload_client, unique_id)
-                    .await;
+            let result = ros_client::call_unload_node_service(
+                container_name,
+                unload_client,
+                unique_id,
+                unload_timeout,
+            )
+            .await;
 
             // Send response back
             if let Err(result) = response_tx.send(result) {

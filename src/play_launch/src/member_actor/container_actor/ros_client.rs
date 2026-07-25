@@ -5,15 +5,20 @@
 //! Grep gate: `format!("…/_container/…")` exists only here.
 
 use super::timing::{
-    LIST_VERIFY_TIMEOUT, LOAD_MAX_ATTEMPTS, LOAD_RETRY_TIMEOUT, LOAD_TOTAL_BUDGET,
-    LOAD_VERIFY_POLL_INTERVAL, POST_SERVICE_READY_WARMUP, SERVICE_CALL_TIMEOUT,
-    SERVICE_NOT_READY_LOG_INTERVAL, SERVICE_POLL_INTERVAL,
+    LIST_VERIFY_TIMEOUT, LoadTimings, SERVICE_NOT_READY_LOG_INTERVAL, SERVICE_POLL_INTERVAL,
 };
-use crate::member_actor::container_control::{LoadNodeResponse, LoadParams};
+use crate::member_actor::container_control::{LoadError, LoadNodeResponse, LoadParams};
 use eyre::{Context as _, Result};
 use rclrs::IntoPrimitiveOptions;
 use std::sync::Arc;
 use tracing::{debug, warn};
+
+/// Capacity of the ComponentEvent bridge channel (phase-52.5, issue 0005).
+/// The producer is the DDS callback thread; the old unbounded channel had
+/// no backpressure. On overflow the NEWEST event is dropped (try_send) and
+/// counted — the stuck-Loading promoter and ListNodes verification recover
+/// from individual lost events, so dropping beats unbounded growth.
+const COMPONENT_EVENT_BRIDGE_CAPACITY: usize = 1024;
 
 /// The per-kind suffix of a container's `_container` interfaces.
 #[derive(Debug, Clone, Copy)]
@@ -67,8 +72,9 @@ pub(super) struct ContainerClients {
     pub(super) component_event_sub:
         Option<rclrs::Subscription<play_launch_msgs::msg::ComponentEvent>>,
     /// Receiver for ComponentEvent messages bridged from ROS callback
+    /// (bounded — see [`COMPONENT_EVENT_BRIDGE_CAPACITY`])
     pub(super) component_event_rx:
-        Option<tokio::sync::mpsc::UnboundedReceiver<play_launch_msgs::msg::ComponentEvent>>,
+        Option<tokio::sync::mpsc::Receiver<play_launch_msgs::msg::ComponentEvent>>,
 }
 
 impl ContainerClients {
@@ -165,7 +171,9 @@ impl ContainerClients {
                 actor_name, event_topic
             );
 
-            let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (event_tx, event_rx) = tokio::sync::mpsc::channel(COMPONENT_EVENT_BRIDGE_CAPACITY);
+            let dropped = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let actor_name_owned = actor_name.to_string();
             match ros_node.create_subscription(
                 event_topic
                     .as_str()
@@ -173,7 +181,18 @@ impl ContainerClients {
                     .transient_local()
                     .keep_last(100),
                 move |msg: play_launch_msgs::msg::ComponentEvent| {
-                    let _ = event_tx.send(msg);
+                    if event_tx.try_send(msg).is_err() {
+                        // Bridge full (or actor gone): drop + count. Power-of-two
+                        // logging keeps the DDS callback thread cheap.
+                        let n = dropped.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        if n.is_power_of_two() {
+                            tracing::warn!(
+                                "{}: {} ComponentEvent(s) dropped (bridge full/closed)",
+                                actor_name_owned,
+                                n
+                            );
+                        }
+                    }
                 },
             ) {
                 Ok(sub) => {
@@ -208,15 +227,13 @@ pub(super) async fn call_load_node_service(
     load_client: Option<rclrs::Client<composition_interfaces::srv::LoadNode>>,
     list_client: Option<rclrs::Client<composition_interfaces::srv::ListNodes>>,
     has_event_sub: bool,
+    timings: LoadTimings,
     params: LoadParams,
     start_time: std::time::Instant,
-) -> Result<LoadNodeResponse> {
+) -> Result<LoadNodeResponse, LoadError> {
     // Check if client exists
-    let client = load_client.ok_or_else(|| {
-        eyre::eyre!(
-            "No LoadNode service client available for container {}",
-            container_name
-        )
+    let client = load_client.ok_or_else(|| LoadError::ServiceMissing {
+        container: container_name.clone(),
     })?;
 
     // Create per-node output directory for isolated container logging
@@ -231,8 +248,12 @@ pub(super) async fn call_load_node_service(
     }
 
     // Build LoadNode request
-    let mut extra_arguments =
-        crate::ros::parameter_conversion::convert_parameters_to_ros(&params.extra_args)?;
+    let mut extra_arguments = crate::ros::parameter_conversion::convert_parameters_to_ros(
+        &params.extra_args,
+    )
+    .map_err(|e| LoadError::BadRequest {
+        message: format!("{e:#}"),
+    })?;
 
     // Inject log_dir so the isolated container can redirect stdout/stderr
     if !output_dir.as_os_str().is_empty() {
@@ -260,9 +281,10 @@ pub(super) async fn call_load_node_service(
         node_namespace: params.node_namespace.clone(),
         log_level: 0, // Default log level
         remap_rules: params.remap_rules,
-        parameters: crate::ros::parameter_conversion::convert_parameters_to_ros(
-            &params.parameters,
-        )?,
+        parameters: crate::ros::parameter_conversion::convert_parameters_to_ros(&params.parameters)
+            .map_err(|e| LoadError::BadRequest {
+                message: format!("{e:#}"),
+            })?,
         extra_arguments,
     };
 
@@ -274,7 +296,7 @@ pub(super) async fn call_load_node_service(
     );
 
     let service_wait_start = std::time::Instant::now();
-    let service_timeout = SERVICE_CALL_TIMEOUT;
+    let service_timeout = timings.service_call_timeout;
     let mut last_log_time = service_wait_start;
 
     loop {
@@ -302,9 +324,9 @@ pub(super) async fn call_load_node_service(
         }
 
         if service_wait_start.elapsed() > service_timeout {
-            return Err(eyre::eyre!(
-                "LoadNode service not available after 30s (container may not have started properly)"
-            ));
+            return Err(LoadError::ServiceNotReady {
+                secs: service_timeout.as_secs(),
+            });
         }
 
         // Sleep briefly before checking again
@@ -328,10 +350,11 @@ pub(super) async fn call_load_node_service(
     // This is especially common after container restart when service registration happens
     // faster than executor startup.
     debug!(
-        "{}: Waiting 200ms for container executor to start processing requests",
-        container_name
+        "{}: Waiting {}ms for container executor to start processing requests",
+        container_name,
+        timings.warmup.as_millis()
     );
-    tokio::time::sleep(POST_SERVICE_READY_WARMUP).await;
+    tokio::time::sleep(timings.warmup).await;
 
     // Attempt loop with post-timeout verification. A single-threaded
     // container executes composable ctors SERIALLY, so a later load's
@@ -353,18 +376,20 @@ pub(super) async fn call_load_node_service(
         attempt += 1;
         debug!(
             "{}: Initiating LoadNode service call for {} (attempt {}/{})",
-            container_name, params.composable_name, attempt, LOAD_MAX_ATTEMPTS
+            container_name, params.composable_name, attempt, timings.max_attempts
         );
 
         let response_future: rclrs::Promise<composition_interfaces::srv::LoadNode_Response> =
             client
                 .call(&ros_request)
-                .context("Failed to initiate LoadNode service call")?;
+                .map_err(|e| LoadError::CallFailed {
+                    message: format!("failed to initiate LoadNode service call: {e:?}"),
+                })?;
 
         let this_timeout = if attempt == 1 {
-            SERVICE_CALL_TIMEOUT
+            timings.service_call_timeout
         } else {
-            LOAD_RETRY_TIMEOUT
+            timings.retry_timeout
         };
         match tokio::time::timeout(this_timeout, response_future).await {
             Ok(Ok(response)) => {
@@ -412,7 +437,9 @@ pub(super) async fn call_load_node_service(
                     "{}: LoadNode service call ERROR for {}: {:?}",
                     container_name, params.composable_name, e
                 );
-                return Err(eyre::eyre!("Service call failed: {:?}", e));
+                return Err(LoadError::CallFailed {
+                    message: format!("{e:?}"),
+                });
             }
             Err(_) => {
                 warn!(
@@ -421,7 +448,7 @@ pub(super) async fn call_load_node_service(
                     this_timeout.as_secs(),
                     params.composable_name,
                     attempt,
-                    LOAD_MAX_ATTEMPTS
+                    timings.max_attempts
                 );
 
                 // play_launch containers (event sub present) are AUTHORITATIVE
@@ -469,13 +496,11 @@ pub(super) async fn call_load_node_service(
                         VerifyOutcome::Present(unique_id) => break Some(unique_id),
                         VerifyOutcome::Absent => break None,
                         VerifyOutcome::Unavailable => {
-                            if start_time.elapsed() > LOAD_TOTAL_BUDGET {
-                                return Err(eyre::eyre!(
-                                    "container unresponsive for {}s while loading {} — \
-                                     giving up without resend (avoids double-load)",
-                                    LOAD_TOTAL_BUDGET.as_secs(),
-                                    params.composable_name
-                                ));
+                            if start_time.elapsed() > timings.total_budget {
+                                return Err(LoadError::Unresponsive {
+                                    budget_secs: timings.total_budget.as_secs(),
+                                    composable: params.composable_name.clone(),
+                                });
                             }
                             debug!(
                                 "{}: container busy; re-polling ListNodes for {} ({}s elapsed)",
@@ -483,7 +508,7 @@ pub(super) async fn call_load_node_service(
                                 params.composable_name,
                                 start_time.elapsed().as_secs()
                             );
-                            tokio::time::sleep(LOAD_VERIFY_POLL_INTERVAL).await;
+                            tokio::time::sleep(timings.verify_poll_interval).await;
                         }
                     }
                 };
@@ -509,12 +534,10 @@ pub(super) async fn call_load_node_service(
                     });
                 }
 
-                if attempt >= LOAD_MAX_ATTEMPTS {
-                    return Err(eyre::eyre!(
-                        "LoadNode timed out after {} attempts (container answered \
-                         ListNodes but the component never appeared)",
-                        LOAD_MAX_ATTEMPTS
-                    ));
+                if attempt >= timings.max_attempts {
+                    return Err(LoadError::TimedOut {
+                        attempts: timings.max_attempts,
+                    });
                 }
                 // Definitive absence — safe to resend.
             }
@@ -563,6 +586,7 @@ pub(super) async fn call_unload_node_service(
     container_name: String,
     unload_client: Option<rclrs::Client<composition_interfaces::srv::UnloadNode>>,
     unique_id: u64,
+    service_call_timeout: tokio::time::Duration,
 ) -> Result<crate::member_actor::container_control::UnloadNodeResponse> {
     // Check if client exists
     let client = unload_client.ok_or_else(|| {
@@ -585,7 +609,7 @@ pub(super) async fn call_unload_node_service(
         .call(&ros_request)
         .context("Failed to initiate UnloadNode service call")?;
 
-    let service_timeout = SERVICE_CALL_TIMEOUT;
+    let service_timeout = service_call_timeout;
     match tokio::time::timeout(service_timeout, response_future).await {
         Ok(Ok(response)) => {
             debug!(

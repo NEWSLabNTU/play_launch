@@ -65,7 +65,7 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
             "{}",
             crate::ros::sched_loader::render_explain_from_model(
                 &system_model,
-                &args.common.target,
+                &args.common.sched_opts.target,
                 &footer
             )
         );
@@ -92,7 +92,7 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     let runtime_config = cli::config::load_runtime_config(
         args.common.config.as_deref(),
         args.common.is_monitoring_enabled(),
-        args.common.monitor_interval_ms,
+        args.common.features.monitor_interval_ms,
         args.common.is_diagnostics_enabled(),
     )?;
 
@@ -212,7 +212,7 @@ pub(crate) async fn play(
     let runtime_config = load_runtime_config(
         common.config.as_deref(),
         common.is_monitoring_enabled(),
-        common.monitor_interval_ms,
+        common.features.monitor_interval_ms,
         common.is_diagnostics_enabled(),
     )?;
     debug!("Runtime configuration loaded successfully");
@@ -474,8 +474,11 @@ pub(crate) async fn play(
     let mut pure_node_contexts = prepare_node_contexts_from_model(&system_model, &node_log_dir)?;
 
     debug!("Preparing container execution contexts...");
-    let mut container_contexts =
-        prepare_container_contexts_from_model(&system_model, &node_log_dir, common.container_mode)?;
+    let mut container_contexts = prepare_container_contexts_from_model(
+        &system_model,
+        &node_log_dir,
+        common.containers.container_mode,
+    )?;
 
     // Prepare LoadNode request execution contexts
     let ComposableNodeContextSet { load_node_contexts } =
@@ -491,39 +494,39 @@ pub(crate) async fn play(
     // allowlist — that would block every rcl endpoint in every child. Blocking
     // enforcement only engages when at least one authorized topic exists.
     let has_authorized_topics = !contract_view.is_empty();
-    let allowlist_file: Option<std::path::PathBuf> = if common.block_unauthorized_endpoints
-        && has_authorized_topics
-    {
-        let view = &contract_view;
-        let path = log_dir.join("expected_graph.txt");
-        let mut contents = String::with_capacity(view.topics.len() * 32);
-        contents.push_str("# Phase 36.7 allowlist — every topic FQN authorized in this launch\n");
-        for fqn in view.topics.keys() {
-            contents.push_str(fqn);
-            contents.push('\n');
-        }
-        for fqn in &view.externals {
-            contents.push_str(fqn);
-            contents.push('\n');
-        }
-        std::fs::write(&path, contents).wrap_err("write allowlist file")?;
-        info!(
-            "Blocking enforcement: allowlist written to {} ({} topics + {} externals)",
-            path.display(),
-            view.topics.len(),
-            view.externals.len()
-        );
-        Some(path)
-    } else {
-        if common.block_unauthorized_endpoints {
-            warn!(
-                "--block-unauthorized-endpoints requested but no contract declares any \
+    let allowlist_file: Option<std::path::PathBuf> =
+        if common.contract_opts.block_unauthorized_endpoints && has_authorized_topics {
+            let view = &contract_view;
+            let path = log_dir.join("expected_graph.txt");
+            let mut contents = String::with_capacity(view.topics.len() * 32);
+            contents
+                .push_str("# Phase 36.7 allowlist — every topic FQN authorized in this launch\n");
+            for fqn in view.topics.keys() {
+                contents.push_str(fqn);
+                contents.push('\n');
+            }
+            for fqn in &view.externals {
+                contents.push_str(fqn);
+                contents.push('\n');
+            }
+            std::fs::write(&path, contents).wrap_err("write allowlist file")?;
+            info!(
+                "Blocking enforcement: allowlist written to {} ({} topics + {} externals)",
+                path.display(),
+                view.topics.len(),
+                view.externals.len()
+            );
+            Some(path)
+        } else {
+            if common.contract_opts.block_unauthorized_endpoints {
+                warn!(
+                    "--block-unauthorized-endpoints requested but no contract declares any \
                      topic (no overlay or provider contract resolved) — blocking \
                      enforcement DISABLED; an empty allowlist would block every endpoint"
-            );
-        }
-        None
-    };
+                );
+            }
+            None
+        };
 
     // Setup interception if enabled (Phase 29)
     let mut interception_consumers: Vec<crate::interception::ChildConsumer> = Vec::new();
@@ -591,8 +594,8 @@ pub(crate) async fn play(
             info!("Scheduling source: SystemModel execution layer");
             Some(crate::execution::sched_plan::SchedPlan::from_model(
                 &system_model,
-                &common.target,
-                common.sched_apply,
+                &common.sched_opts.target,
+                common.sched_opts.sched_apply,
             )?)
         } else {
             info!("SystemModel carries no execution layer — scheduling disabled");
@@ -609,14 +612,14 @@ pub(crate) async fn play(
         // `chain_colocation_warnings_for_plan`'s doc comment.
         for msg in crate::execution::sched_plan::chain_colocation_warnings_for_plan(
             &launch_dump,
-            common.container_mode,
+            common.containers.container_mode,
             &plan,
         ) {
             tracing::warn!("{msg}");
             plan.warnings.push(msg);
         }
 
-        let (sched_helper, sched_helper_join) = if common.sched_apply
+        let (sched_helper, sched_helper_join) = if common.sched_opts.sched_apply
             != crate::execution::sched_apply::SchedApplyMode::Off
         {
             // Privilege is about whether the apply can SUCCEED, which is
@@ -627,7 +630,9 @@ pub(crate) async fn play(
                 || crate::commands::capabilities::rt_helper_has_cap_sys_nice();
             if !privileged {
                 let msg = "scheduling: no privilege to apply; run `play_launch setcap` (grants cap_sys_nice to play_launch_rt_helper) or run as root";
-                if common.sched_apply == crate::execution::sched_apply::SchedApplyMode::Strict {
+                if common.sched_opts.sched_apply
+                    == crate::execution::sched_apply::SchedApplyMode::Strict
+                {
                     eyre::bail!("{msg}");
                 }
                 tracing::warn!("{msg}; scheduling will not be applied");
@@ -647,7 +652,7 @@ pub(crate) async fn play(
                         let msg = format!(
                             "scheduling: RT helper failed to start ({e:#}); cannot apply without root"
                         );
-                        if common.sched_apply
+                        if common.sched_opts.sched_apply
                             == crate::execution::sched_apply::SchedApplyMode::Strict
                         {
                             eyre::bail!("{msg}");
@@ -674,6 +679,28 @@ pub(crate) async fn play(
     debug!("Creating MemberCoordinatorBuilder...");
     let mut builder = crate::member_actor::MemberCoordinatorBuilder::new();
 
+    // Phase 52.2: LoadNode-path timings — config section + CLI overrides.
+    let load_timings = {
+        let mut settings = runtime_config.composable_node_loading.clone();
+        if let Some(secs) = common.containers.load_total_budget {
+            settings.load_total_budget_secs = secs;
+        }
+        if let Some(secs) = common.containers.load_node_timeout {
+            settings.load_node_timeout_millis = secs * 1000;
+        }
+        crate::member_actor::container_actor::LoadTimings::from_settings(&settings)
+    };
+    info!(
+        "Load timings: first_call={}s retry={}s attempts={} busy_budget={}s verify_poll={}s warmup={}ms",
+        load_timings.service_call_timeout.as_secs(),
+        load_timings.retry_timeout.as_secs(),
+        load_timings.max_attempts,
+        load_timings.total_budget.as_secs(),
+        load_timings.verify_poll_interval.as_secs(),
+        load_timings.warmup.as_millis(),
+    );
+    builder.set_load_timings(load_timings);
+
     // Print summary of nodes to spawn
     let num_pure_nodes = pure_node_contexts.len();
     let num_containers = container_contexts.len();
@@ -699,7 +726,8 @@ pub(crate) async fn play(
             .unwrap_or_else(|| "unknown".to_string());
 
         let actor_config = crate::member_actor::ActorConfig {
-            respawn_enabled: !common.disable_respawn && context.record.respawn.unwrap_or(false),
+            respawn_enabled: !common.containers.disable_respawn
+                && context.record.respawn.unwrap_or(false),
             respawn_delay: context.record.respawn_delay.unwrap_or(0.0),
             max_respawn_attempts: None,
             output_dir: context.output_dir.clone(),
@@ -720,7 +748,7 @@ pub(crate) async fn play(
                 });
                 p.for_fqn(&fqn).cloned()
             }),
-            sched_mode: common.sched_apply,
+            sched_mode: common.sched_opts.sched_apply,
             sched_helper: sched_helper.clone(),
         };
 
@@ -745,7 +773,7 @@ pub(crate) async fn play(
             .unwrap_or_else(|| "unknown".to_string());
 
         let actor_config = crate::member_actor::ActorConfig {
-            respawn_enabled: !common.disable_respawn
+            respawn_enabled: !common.containers.disable_respawn
                 && context.node_context.record.respawn.unwrap_or(false),
             respawn_delay: context.node_context.record.respawn_delay.unwrap_or(0.0),
             max_respawn_attempts: None,
@@ -762,13 +790,13 @@ pub(crate) async fn play(
                 });
                 p.for_fqn(&fqn).cloned()
             }),
-            sched_mode: common.sched_apply,
+            sched_mode: common.sched_opts.sched_apply,
             sched_helper: sched_helper.clone(),
         };
 
         // Add container (oneshot receiver is ignored since composable nodes will be matched internally)
         let use_component_events =
-            common.container_mode != crate::cli::options::ContainerMode::Stock;
+            common.containers.container_mode != crate::cli::options::ContainerMode::Stock;
         std::mem::drop(builder.add_container(
             member_name.clone(),
             context.node_context,
@@ -814,11 +842,23 @@ pub(crate) async fn play(
     debug!("All actors spawned successfully");
 
     // Setup periodic statistics output task (runs every 10 seconds)
+    let startup_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stats_task = {
         let stats_handle = member_handle.clone();
         let stats_shutdown = shutdown_signal.clone();
+        let stats_policy = common.containers.on_startup_failure;
+        let stats_flag = startup_failed.clone();
+        let stats_shutdown_tx = shutdown_tx.clone();
         tokio::spawn(async move {
-            signal_handler::print_periodic_statistics(stats_handle, stats_shutdown).await;
+            signal_handler::print_periodic_statistics(
+                stats_handle,
+                stats_shutdown,
+                stats_policy,
+                stats_flag,
+                stats_shutdown_tx,
+                pgid,
+            )
+            .await;
             Ok(())
         })
     };
@@ -1031,11 +1071,13 @@ pub(crate) async fn play(
         // Phase 36.3: construct RuleEngine if a contract source resolved
         // and --enforce-rules is not Off. The engine observes every
         // event the listener dispatches.
-        let rule_engine = if !matches!(common.enforce_rules, crate::cli::options::EnforceMode::Off)
-        {
+        let rule_engine = if !matches!(
+            common.contract_opts.enforce_rules,
+            crate::cli::options::EnforceMode::Off
+        ) {
             Some(crate::runtime_enforcement::RuleEngine::new(
                 contract_view.clone(),
-                common.enforce_rules,
+                common.contract_opts.enforce_rules,
                 &log_dir,
             ))
         } else {
@@ -1099,7 +1141,7 @@ pub(crate) async fn play(
         // Strict listens for it.
         let strict_handle = rule_engine.as_ref().and_then(|re| {
             matches!(
-                common.enforce_rules,
+                common.contract_opts.enforce_rules,
                 crate::cli::options::EnforceMode::Strict
             )
             .then(|| re.strict_violated_handle())
@@ -1192,6 +1234,13 @@ pub(crate) async fn play(
             Ok(Err(e)) => warn!("RT helper owner task panicked: {:#}", e),
             Err(_) => warn!("RT helper owner task did not shut down within timeout"),
         }
+    }
+
+    // Phase-52.3: --on-startup-failure exit ends the run non-zero
+    if startup_failed.load(std::sync::atomic::Ordering::Acquire) {
+        return Err(eyre::eyre!(
+            "startup completed with failed members (--on-startup-failure exit)"
+        ));
     }
 
     debug!("play() function completed, returning");

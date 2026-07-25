@@ -5,7 +5,7 @@
 //! to track composable node lifecycle (LOADED, LOAD_FAILED, UNLOADED, CRASHED).
 //! Also handles loading timeout fallback for DDS event loss scenarios.
 
-use super::{supervisor::ComposableSupervisor, timing::LOADING_TIMEOUT};
+use super::supervisor::ComposableSupervisor;
 use crate::member_actor::{
     events::{StateEvent, emit},
     model::{ActorConfig, BlockReason, ComposableState},
@@ -360,7 +360,7 @@ impl ComposableSupervisor {
                 // Only promote if LoadNode succeeded (we have a unique_id)
                 // and the timeout has elapsed
                 if let Some(uid) = entry.unique_id
-                    && started_at.elapsed() > LOADING_TIMEOUT
+                    && started_at.elapsed() > self.timings.loading_event_timeout
                 {
                     promoted.push((name.clone(), uid));
                 }
@@ -374,7 +374,7 @@ impl ComposableSupervisor {
                 self.name(),
                 name,
                 unique_id,
-                LOADING_TIMEOUT.as_secs()
+                self.timings.loading_event_timeout.as_secs()
             );
 
             if let Some(entry) = self.composable_nodes.get_mut(&name) {

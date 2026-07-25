@@ -1,6 +1,6 @@
 # Phase 52: Timing config + failure surfacing
 
-**Status:** 📋 Planned (2026-07-25). Independent of 50/51 except timing.rs
+**Status:** ✅ Done (2026-07-25). Independent of 50/51 except timing.rs
 placement (51.4).
 **Fixes:** issues 0004 (GH #4), 0005 (GH #5).
 
@@ -30,3 +30,50 @@ placement (51.4).
 - Kill a node binary pre-launch → exit mode returns non-zero with the
   member named; continue mode shows the web banner.
 - Cold Autoware receipt PASS.
+
+## Outcome (2026-07-25)
+
+- **52.1 grouped CLI**: `CommonOptions` split into `#[command(flatten)]`
+  concern structs — `FeatureOptions` / `ContainerOptions` / `WebOptions` /
+  `ContractOptions` / `SchedOptions`. Flag names unchanged; help output
+  now grouped. Config-file parity via the existing `RuntimeConfig`
+  sections (load knobs live in `composable_node_loading`).
+- **52.2 timing knobs**: `LoadTimings` (container_actor/timing.rs) built
+  from `composable_node_loading` config + CLI overrides
+  (`--load-total-budget SECS`, `--load-node-timeout SECS`), threaded
+  builder → actor → supervisor → ros_client. New config fields:
+  `load_retry_timeout_millis`, `load_total_budget_secs`,
+  `load_verify_poll_interval_secs`, `loading_event_timeout_secs`,
+  `post_service_ready_warmup_ms`; the previously parsed-but-ignored
+  `load_node_timeout_millis`/`load_node_attempts` are now honored.
+  Defaults = former consts. Effective values logged at startup
+  ("Load timings: …"). SSE reconnect sleeps NOT wired (server-side
+  internals, no tuning story found — dropped from scope).
+- **52.3 startup failure surfacing**: `--on-startup-failure
+  {continue|exit}` (default continue). Exit mode names each failed
+  member, emits machine-readable `STARTUP_SUMMARY {json}`, and shuts
+  down non-zero. Two shutdown-plumbing traps found live: the actors
+  listen to the BUILDER's watch channel (`member_handle.shutdown()`),
+  not the replay-level one, and on Unix actors wait for the process
+  GROUP SIGTERM instead of killing their own child — the exit path now
+  mirrors the signal path exactly (watch + handle.shutdown + PGID kill).
+  Continue mode: persistent web failure banner (click → failed facet).
+- **52.4 typed load errors**: `LoadError` (thiserror) —
+  ServiceMissing / ServiceNotReady / CallFailed / TimedOut /
+  Unresponsive / BadRequest — replaces stringly eyre on the whole
+  LoadNode path (`LoadCompletion.result: Result<_, LoadError>`).
+  `Display` prefixes the kind (`timeout:`, `container-busy:`, …), so the
+  web UI's Failed text carries it without a wire change.
+- **52.5 channel hygiene**: the ComponentEvent bridge is bounded (1024,
+  try_send) with drop-newest + power-of-two-counted warnings; the
+  stuck-Loading promoter + ListNodes verification recover from
+  individual losses. Remaining unbounded channels are bounded by
+  construction (load completions ≤ outstanding loads) or negligible-rate
+  (/parameter_events) — left documented. Blanket `let _ = state-event
+  send` was already removed in phase-51 (`events::emit`).
+
+Acceptance: `--load-total-budget 1200` visible in the startup log; bad
+composable plugin + `exit` mode → exit 1 with `Failed member:
+composable:/doomed` + STARTUP_SUMMARY, no orphan processes; continue
+mode keeps running with the member failed in /api/nodes + banner. 288
+tests green; cold Autoware receipt PASS.

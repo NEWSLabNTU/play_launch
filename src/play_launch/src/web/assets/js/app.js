@@ -47,6 +47,26 @@ function ConnectionOverlay() {
     `;
 }
 
+/** Persistent failure banner (phase-52.3): shown while any member is
+ * failed; click jumps to the node list filtered to failures. */
+function FailureBanner() {
+    const failed = store.nodeList.value.filter(
+        n => store.getStatusString(n.status) === 'failed');
+    if (failed.length === 0) { return null; }
+    const shown = failed.slice(0, 4).map(n => n.name).join(', ');
+    const more = failed.length > 4 ? ` +${failed.length - 4} more` : '';
+    return html`
+        <div class="failure-banner" title="Show failed members"
+            onClick=${() => {
+                store.statusFacet.value = 'failed';
+                store.currentView.value = 'nodes';
+            }}>
+            <span class="failure-banner-icon">${'⚠'}</span>
+            <span>${failed.length} member${failed.length > 1 ? 's' : ''} failed: ${shown}${more}</span>
+        </div>
+    `;
+}
+
 function App() {
     const view = store.currentView.value;
     const launchPanelOpen = view === 'launch-tree' && store.launchTreeSelection.value !== null;
@@ -56,6 +76,7 @@ function App() {
 
     return html`
         <${Header} />
+        <${FailureBanner} />
         <div class="main-container">
             <div class="left-panel ${isOpen ? 'with-sidebar' : ''}"
                  style=${{ display: view === 'nodes' ? '' : 'none' }}>

@@ -7,8 +7,7 @@
 use crate::cli::options::ContextArgs;
 use eyre::{Result, WrapErr, bail};
 use ros_launch_manifest_model::{NodeInstance, ParamValue, ScopeInfo, SystemModel};
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 pub fn handle_context(args: &ContextArgs) -> Result<()> {
     let path = Path::new(&args.model);

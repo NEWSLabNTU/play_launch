@@ -26,3 +26,4 @@ mod timing;
 
 pub use actor::{ContainerActor, ContainerActorParams};
 pub use supervisor::ComposableNodeMetadata;
+pub use timing::LoadTimings;

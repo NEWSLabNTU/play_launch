@@ -1,7 +1,7 @@
 ---
 id: 5
 title: "Failure swallowing — startup-with-failures continues silently; dropped sends; unbounded event channel; stringly errors"
-status: open
+status: resolved
 type: tech-debt
 severity: medium
 github: https://github.com/NEWSLabNTU/play_launch/issues/5
@@ -18,3 +18,12 @@ github: https://github.com/NEWSLabNTU/play_launch/issues/5
   can't distinguish busy/missing/rejected.
 
 Plan: `docs/roadmap/phase-52-config-and-failure-surfacing.md`.
+
+## Resolution (phase-52, 2026-07-25)
+
+`--on-startup-failure {continue|exit}`: exit mode names failed members,
+emits `STARTUP_SUMMARY {json}`, exits non-zero (and correctly reaches the
+actors' shutdown channel + PGID); continue mode shows a persistent web
+banner. Typed `LoadError` replaces eyre on the load path. ComponentEvent
+bridge bounded (1024, drop-newest + counted). State-event send drops were
+eliminated in phase-51 (`events::emit`).

@@ -9,16 +9,16 @@ plans in `docs/roadmap/` phase docs.
 
 ## Open
 
-**#0004** — 12+ hardcoded timeout Durations (LOAD_TOTAL_BUDGET 600s,
-200ms warmup sleep), none configurable; flat 59-flag CLI. See `0004-*`. (GH #4)
-
-**#0005** — "Startup complete with failures" warn-and-continue; swallowed
-sends; unbounded ComponentEvent channel; stringly eyre. See `0005-*`. (GH #5)
-
 **#0006** — web UI organization: bare-name-first list, container-only
 tree, no status facets, three freshness mechanisms. See `0006-*`. (GH #6)
 
 ## Resolved
+
+**#0004** — hardcoded timeouts / flat CLI. Fixed by phase-52 LoadTimings
+config+CLI knobs and grouped CommonOptions. See `0004-*`. (GH #4)
+
+**#0005** — failure swallowing. Fixed by phase-52 --on-startup-failure,
+typed LoadError, bounded event bridge (+51's emit). See `0005-*`. (GH #5)
 
 **#0002** — composable state triple-write + duplicated BlockReason.
 Fixed by phase-51 state reducer + model/ unification. See `0002-*`. (GH #2)
