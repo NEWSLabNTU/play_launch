@@ -47,6 +47,14 @@ const LOAD_RETRY_TIMEOUT: Duration = Duration::from_secs(60);
 const LOAD_MAX_ATTEMPTS: usize = 3;
 /// Budget for the post-timeout ListNodes verification call.
 const LIST_VERIFY_TIMEOUT: Duration = Duration::from_secs(10);
+/// While a blocking-mode container is BUSY (a composable ctor can hold the
+/// executor for minutes — e.g. TensorRT engine loads), we keep polling
+/// ListNodes rather than resending LoadNode (NOT idempotent — a resend into
+/// a busy container double-loads once the ctor finishes). This caps the
+/// total wait per composable before declaring the container unresponsive.
+const LOAD_TOTAL_BUDGET: Duration = Duration::from_secs(600);
+/// Pause between ListNodes verification polls while the container is busy.
+const LOAD_VERIFY_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Interval for checking whether nodes stuck in Loading state should be
 /// promoted to Loaded (handles DDS event loss).

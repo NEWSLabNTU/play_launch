@@ -5,9 +5,19 @@
 
 use super::{
     ContainerActor, LIST_VERIFY_TIMEOUT, LOAD_MAX_ATTEMPTS, LOAD_RETRY_TIMEOUT,
-    POST_SERVICE_READY_WARMUP, SERVICE_CALL_TIMEOUT, SERVICE_NOT_READY_LOG_INTERVAL,
-    SERVICE_POLL_INTERVAL,
+    LOAD_TOTAL_BUDGET, LOAD_VERIFY_POLL_INTERVAL, POST_SERVICE_READY_WARMUP,
+    SERVICE_CALL_TIMEOUT, SERVICE_NOT_READY_LOG_INTERVAL, SERVICE_POLL_INTERVAL,
 };
+
+/// Outcome of a post-timeout ListNodes verification.
+enum VerifyOutcome {
+    /// Component is present; carries its unique_id.
+    Present(u64),
+    /// Container answered and the component is definitively absent.
+    Absent,
+    /// Container did not answer (busy executor / blocked ctor) — unknown.
+    Unavailable,
+}
 use crate::member_actor::container_control::{LoadNodeResponse, LoadParams};
 use eyre::{Context as _, Result};
 use tracing::{debug, warn};
@@ -236,14 +246,42 @@ impl ContainerActor {
                         LOAD_MAX_ATTEMPTS
                     );
 
-                    // Did the load actually land? (response lost / late)
-                    if let Some(unique_id) = Self::verify_component_loaded(
-                        &container_name,
-                        &list_client,
-                        &expected_full_name,
-                    )
-                    .await
-                    {
+                    // Poll verification until DEFINITIVE. A busy blocking-mode
+                    // container (multi-minute composable ctor, e.g. a TensorRT
+                    // engine load) can't answer ListNodes either — resending
+                    // LoadNode there would DOUBLE-LOAD once the ctor returns,
+                    // so on Unavailable we wait and poll, never resend.
+                    let verdict = loop {
+                        match Self::verify_component_loaded(
+                            &container_name,
+                            &list_client,
+                            &expected_full_name,
+                        )
+                        .await
+                        {
+                            VerifyOutcome::Present(unique_id) => break Some(unique_id),
+                            VerifyOutcome::Absent => break None,
+                            VerifyOutcome::Unavailable => {
+                                if start_time.elapsed() > LOAD_TOTAL_BUDGET {
+                                    return Err(eyre::eyre!(
+                                        "container unresponsive for {}s while loading {} — \
+                                         giving up without resend (avoids double-load)",
+                                        LOAD_TOTAL_BUDGET.as_secs(),
+                                        params.composable_name
+                                    ));
+                                }
+                                debug!(
+                                    "{}: container busy; re-polling ListNodes for {} ({}s elapsed)",
+                                    container_name,
+                                    params.composable_name,
+                                    start_time.elapsed().as_secs()
+                                );
+                                tokio::time::sleep(LOAD_VERIFY_POLL_INTERVAL).await;
+                            }
+                        }
+                    };
+
+                    if let Some(unique_id) = verdict {
                         warn!(
                             "{}: {} confirmed loaded via ListNodes after timeout (unique_id={})",
                             container_name, params.composable_name, unique_id
@@ -268,39 +306,49 @@ impl ContainerActor {
 
                     if attempt >= LOAD_MAX_ATTEMPTS {
                         return Err(eyre::eyre!(
-                            "LoadNode timed out after {} attempts (container busy?)",
+                            "LoadNode timed out after {} attempts (container answered \
+                             ListNodes but the component never appeared)",
                             LOAD_MAX_ATTEMPTS
                         ));
                     }
-                    // Not loaded — safe to retry.
+                    // Definitive absence — safe to resend.
                 }
             }
         }
     }
 
-    /// Post-timeout verification: does the container already report
-    /// `expected_full_name` among its loaded nodes? Returns its unique_id.
+    /// Post-timeout verification: tri-state — Present(unique_id) when the
+    /// container reports `expected_full_name`, Absent when it answered
+    /// without it, Unavailable when it could not answer (busy/blocked).
     async fn verify_component_loaded(
         container_name: &str,
         list_client: &Option<rclrs::Client<composition_interfaces::srv::ListNodes>>,
         expected_full_name: &str,
-    ) -> Option<u64> {
-        let client = list_client.as_ref()?;
+    ) -> VerifyOutcome {
+        let Some(client) = list_client.as_ref() else {
+            return VerifyOutcome::Unavailable;
+        };
         let request = composition_interfaces::srv::ListNodes_Request::default();
-        let future: rclrs::Promise<composition_interfaces::srv::ListNodes_Response> =
-            client.call(&request).ok()?;
+        let Ok(future) = client.call(&request) else {
+            return VerifyOutcome::Unavailable;
+        };
+        let future: rclrs::Promise<composition_interfaces::srv::ListNodes_Response> = future;
         match tokio::time::timeout(LIST_VERIFY_TIMEOUT, future).await {
-            Ok(Ok(response)) => response
+            Ok(Ok(response)) => match response
                 .full_node_names
                 .iter()
                 .position(|n| n == expected_full_name)
-                .and_then(|i| response.unique_ids.get(i).copied()),
+                .and_then(|i| response.unique_ids.get(i).copied())
+            {
+                Some(id) => VerifyOutcome::Present(id),
+                None => VerifyOutcome::Absent,
+            },
             _ => {
                 debug!(
                     "{}: ListNodes verification unavailable for {}",
                     container_name, expected_full_name
                 );
-                None
+                VerifyOutcome::Unavailable
             }
         }
     }
