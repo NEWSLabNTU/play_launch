@@ -103,13 +103,22 @@ mod tests {
         // name=null nodes falling back to a shared exec_name (issue 0001
         // cause 2), and the literal "unknown" bucket.
         let mut a = IdAllocator::new();
-        assert_eq!(a.allocate(MemberKind::Node, None, "lidar_driver"), "node:/lidar_driver");
+        assert_eq!(
+            a.allocate(MemberKind::Node, None, "lidar_driver"),
+            "node:/lidar_driver"
+        );
         assert_eq!(
             a.allocate(MemberKind::Node, None, "lidar_driver"),
             "node:/lidar_driver#2"
         );
-        assert_eq!(a.allocate(MemberKind::Node, None, "unknown"), "node:/unknown");
-        assert_eq!(a.allocate(MemberKind::Node, None, "unknown"), "node:/unknown#2");
+        assert_eq!(
+            a.allocate(MemberKind::Node, None, "unknown"),
+            "node:/unknown"
+        );
+        assert_eq!(
+            a.allocate(MemberKind::Node, None, "unknown"),
+            "node:/unknown#2"
+        );
     }
 
     #[test]

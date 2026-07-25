@@ -204,7 +204,7 @@ impl NodeSummary {
     }
 
     fn convert_state(state: &ActorMemberState) -> UnifiedStatus {
-        use crate::member_actor::web_query::BlockReason as ActorBlockReason;
+        use crate::member_actor::model::BlockReason as ActorBlockReason;
 
         match state {
             ActorMemberState::Pending => UnifiedStatus::Process(NodeStatus::Pending),
@@ -228,9 +228,7 @@ impl NodeSummary {
                         ComposableBlockReason::ContainerNotStarted
                     }
                     ActorBlockReason::Shutdown => ComposableBlockReason::Shutdown,
-                    ActorBlockReason::ContainerNotFound => {
-                        ComposableBlockReason::ContainerNotFound
-                    }
+                    ActorBlockReason::ContainerNotFound => ComposableBlockReason::ContainerNotFound,
                 };
                 UnifiedStatus::Composable(ComposableNodeStatus::Blocked(web_reason))
             }

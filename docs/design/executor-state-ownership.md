@@ -1,7 +1,6 @@
 # Design: Executor State Ownership — one owner per fact
 
-**Status:** Draft (2026-07-25). Closes issues 0002/0003 (GH #2/#3).
-Implementation: roadmap phase-51.
+**Status:** Implemented (2026-07-25, phase-51). Closes issues 0002/0003 (GH #2/#3).
 
 ## Problem
 

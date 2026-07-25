@@ -1,10 +1,10 @@
 //! External handle for controlling and querying members
 
-use super::{MemberMetadata, NOISY_STDERR_THRESHOLD, read_last_n_lines};
+use super::{MemberMetadata, NOISY_STDERR_THRESHOLD};
 use crate::{
     member_actor::{
         events::ControlEvent,
-        web_query::{HealthSummary, MemberState, MemberSummary, MemberType},
+        model::{HealthSummary, MemberState, MemberSummary, MemberType},
     },
     ros::parameter_types::{ParamEntry, ParamValue, SetParamResult},
 };
@@ -56,136 +56,34 @@ impl MemberHandle {
 
     /// Get list of all members with current state
     pub async fn list_members(&self) -> Vec<MemberSummary> {
-        let mut summaries = Vec::new();
-
         let metadata_guard = self.metadata.read().await;
         tracing::debug!(
             "list_members: metadata_guard has {} entries",
             metadata_guard.len()
         );
-        for (name, meta) in metadata_guard.iter() {
-            // Read state from DashMap
-            let state = self
-                .shared_state
-                .get(name)
-                .map(|entry| entry.value().clone())
-                .unwrap_or(MemberState::Pending);
-
-            let pid = match &state {
-                MemberState::Running { pid } => Some(*pid),
-                _ => None,
-            };
-
-            // Read stderr info from log files
-            let stderr_path = meta.output_dir.join("err");
-            let (stderr_last_modified, stderr_size, stderr_preview) =
-                if let Ok(metadata) = std::fs::metadata(&stderr_path) {
-                    let size = metadata.len();
-                    let modified = metadata.modified().ok().and_then(|t| {
-                        t.duration_since(std::time::UNIX_EPOCH)
-                            .ok()
-                            .map(|d| d.as_secs())
-                    });
-
-                    // Read last 5 lines for preview
-                    let preview = if size > 0 {
-                        read_last_n_lines(&stderr_path, 5).ok()
-                    } else {
-                        None
-                    };
-
-                    (modified, size, preview)
-                } else {
-                    (None, 0, None)
-                };
-
-            summaries.push(MemberSummary {
-                id: meta.id.clone(),
-                name: meta.name.clone(),
-                member_type: meta.member_type,
-                state,
-                pid,
-                package: meta.package.clone(),
-                executable: meta.executable.clone(),
-                namespace: meta.namespace.clone(),
-                target_container: meta.target_container.clone(),
-                is_container: meta.member_type == MemberType::Container,
-                exec_name: meta.exec_name.clone(),
-                node_name: meta.node_name.clone(),
-                stderr_last_modified,
-                stderr_size,
-                stderr_preview,
-                respawn_enabled: meta.respawn_enabled,
-                respawn_delay: meta.respawn_delay,
-                auto_load: meta.auto_load,
-                output_dir: meta.output_dir.clone(),
-            });
-        }
-
-        summaries
+        metadata_guard
+            .iter()
+            .map(|(name, meta)| {
+                let state = self
+                    .shared_state
+                    .get(name)
+                    .map(|entry| entry.value().clone())
+                    .unwrap_or(MemberState::Pending);
+                super::summary::build_summary(meta, state)
+            })
+            .collect()
     }
 
     /// Get detailed state for a specific member
     pub async fn get_member_state(&self, name: &str) -> Option<MemberSummary> {
         let metadata_guard = self.metadata.read().await;
         let meta = metadata_guard.get(name)?;
-
-        // Read state from DashMap
         let state = self
             .shared_state
             .get(name)
             .map(|entry| entry.value().clone())
             .unwrap_or(MemberState::Pending);
-
-        let pid = match &state {
-            MemberState::Running { pid } => Some(*pid),
-            _ => None,
-        };
-
-        // Read stderr info from log files
-        let stderr_path = meta.output_dir.join("err");
-        let (stderr_last_modified, stderr_size, stderr_preview) =
-            if let Ok(metadata) = std::fs::metadata(&stderr_path) {
-                let size = metadata.len();
-                let modified = metadata.modified().ok().and_then(|t| {
-                    t.duration_since(std::time::UNIX_EPOCH)
-                        .ok()
-                        .map(|d| d.as_secs())
-                });
-
-                // Read last 5 lines for preview
-                let preview = if size > 0 {
-                    read_last_n_lines(&stderr_path, 5).ok()
-                } else {
-                    None
-                };
-
-                (modified, size, preview)
-            } else {
-                (None, 0, None)
-            };
-
-        Some(MemberSummary {
-            id: meta.id.clone(),
-            name: meta.name.clone(),
-            member_type: meta.member_type,
-            state,
-            pid,
-            package: meta.package.clone(),
-            executable: meta.executable.clone(),
-            namespace: meta.namespace.clone(),
-            target_container: meta.target_container.clone(),
-            is_container: meta.member_type == MemberType::Container,
-            exec_name: meta.exec_name.clone(),
-            node_name: meta.node_name.clone(),
-            stderr_last_modified,
-            stderr_size,
-            stderr_preview,
-            respawn_enabled: meta.respawn_enabled,
-            respawn_delay: meta.respawn_delay,
-            auto_load: meta.auto_load,
-            output_dir: meta.output_dir.clone(),
-        })
+        Some(super::summary::build_summary(meta, state))
     }
 
     /// Get health summary statistics
@@ -417,8 +315,7 @@ impl MemberHandle {
     /// Request a composable node to load (retry loading)
     pub async fn load_member(&self, name: &str) -> Result<()> {
         // Immediately update shared_state to Loading for instant Web UI feedback
-        self.shared_state
-            .insert(name.to_string(), MemberState::Loading);
+        super::state_reducer::set(&self.shared_state, name, MemberState::Loading);
 
         self.send_control(name, ControlEvent::Load).await
     }
@@ -426,8 +323,7 @@ impl MemberHandle {
     /// Request a composable node to unload
     pub async fn unload_member(&self, name: &str) -> Result<()> {
         // Immediately update shared_state to Unloading for instant Web UI feedback
-        self.shared_state
-            .insert(name.to_string(), MemberState::Unloading);
+        super::state_reducer::set(&self.shared_state, name, MemberState::Unloading);
 
         self.send_control(name, ControlEvent::Unload).await
     }

@@ -250,9 +250,9 @@ export function applyStateEvent(event) {
             break;
 
         case 'blocked':
-            // Note: SSE BlockReason uses PascalCase ("NotStarted") while REST API
-            // ComposableBlockReason uses snake_case ("container_not_started").
-            // The UI only checks the status string, not the reason value.
+            // One BlockReason since phase-51: snake_case ("container_not_started")
+            // on both the SSE and REST wires. The UI only checks the status
+            // string, not the reason value.
             updated.status = {
                 type: 'Composable',
                 value: { status: 'blocked', reason: /** @type {any} */ (event.reason) },

@@ -1,8 +1,13 @@
-//! Web UI query types for member actors
+//! Web-facing derived view of member state.
 //!
-//! These types provide a clean interface for the web UI to query actor state
-//! without depending on the event_driven module.
+//! `MemberState` is a MIRROR of the actor-side state machines — it is
+//! produced from them via the `From` impls below (used by the phase-51
+//! state reducer), never hand-encoded at call sites.
 
+use super::{
+    composable_state::{BlockReason, ComposableState},
+    node_state::NodeState,
+};
 use serde::Serialize;
 use std::path::PathBuf;
 #[cfg(test)]
@@ -49,22 +54,35 @@ pub enum MemberState {
     },
 }
 
-/// Reason why a composable node is blocked
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-#[allow(clippy::enum_variant_names)] // "Container" prefix is meaningful and clear
-pub enum BlockReason {
-    /// No container matched the composable's target_container_name at
-    /// registration (phase-50: registered visibly instead of dropped)
-    ContainerNotFound,
-    /// Container was stopped by user
-    ContainerStopped,
-    /// Container crashed or failed
-    ContainerFailed,
-    /// Container hasn't started yet
-    ContainerNotStarted,
-    /// Shutdown signal received
-    Shutdown,
+impl From<&NodeState> for MemberState {
+    fn from(state: &NodeState) -> Self {
+        match state {
+            NodeState::Pending => MemberState::Pending,
+            NodeState::Running { pid, .. } => MemberState::Running { pid: *pid },
+            NodeState::Respawning { attempt, .. } => MemberState::Respawning { attempt: *attempt },
+            NodeState::Stopped { .. } => MemberState::Stopped,
+            NodeState::Failed { error } => MemberState::Failed {
+                error: error.clone(),
+            },
+        }
+    }
+}
+
+impl From<&ComposableState> for MemberState {
+    fn from(state: &ComposableState) -> Self {
+        match state {
+            ComposableState::Blocked { reason } => MemberState::Blocked { reason: *reason },
+            ComposableState::Unloaded => MemberState::Unloaded,
+            ComposableState::Loading { .. } => MemberState::Loading,
+            ComposableState::Unloading { .. } => MemberState::Unloading,
+            ComposableState::Loaded { unique_id } => MemberState::Loaded {
+                unique_id: *unique_id,
+            },
+            ComposableState::Failed { error } => MemberState::Failed {
+                error: error.clone(),
+            },
+        }
+    }
 }
 
 /// Summary information about a member (for web UI listings)
@@ -138,4 +156,47 @@ pub struct HealthSummary {
 
     /// Number of nodes with significant stderr output (>10KB)
     pub noisy: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_node_state() {
+        assert_eq!(MemberState::from(&NodeState::Pending), MemberState::Pending);
+        assert_eq!(
+            MemberState::from(&NodeState::Stopped { exit_code: Some(0) }),
+            MemberState::Stopped
+        );
+        assert_eq!(
+            MemberState::from(&NodeState::Respawning {
+                exit_code: None,
+                attempt: 3
+            }),
+            MemberState::Respawning { attempt: 3 }
+        );
+    }
+
+    #[test]
+    fn from_composable_state() {
+        assert_eq!(
+            MemberState::from(&ComposableState::Loaded { unique_id: 7 }),
+            MemberState::Loaded { unique_id: 7 }
+        );
+        assert_eq!(
+            MemberState::from(&ComposableState::Blocked {
+                reason: BlockReason::ContainerNotStarted
+            }),
+            MemberState::Blocked {
+                reason: BlockReason::ContainerNotStarted
+            }
+        );
+        assert_eq!(
+            MemberState::from(&ComposableState::Loading {
+                started_at: std::time::Instant::now()
+            }),
+            MemberState::Loading
+        );
+    }
 }

@@ -1,6 +1,12 @@
-//! Runner that waits for all actors to complete
+//! Runner that owns the StateEvent stream and waits for all actors.
+//!
+//! Phase-51.3 inversion: actors no longer write the shared web-state map —
+//! the runner folds every StateEvent through `state_reducer::apply` (the
+//! sole writer) as it passes the event on. Before this, the drain here was
+//! a documented no-op and every actor triple-wrote its transitions.
 
-use crate::member_actor::{events::StateEvent, web_query::MemberState};
+use super::state_reducer;
+use crate::member_actor::{events::StateEvent, model::MemberState};
 use eyre::Result;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -12,7 +18,8 @@ pub struct MemberRunner {
     tasks: HashMap<String, JoinHandle<Result<()>>>,
     /// Receiver for state events from actors
     state_rx: mpsc::Receiver<StateEvent>,
-    /// Shared state map (actors write directly, runner only reads for logging)
+    /// Shared state map — written ONLY via `state_reducer` from the event
+    /// stream owned here
     shared_state: Arc<dashmap::DashMap<String, MemberState>>,
 }
 
@@ -30,9 +37,13 @@ impl MemberRunner {
         }
     }
 
-    /// Get the next state event (for web UI forwarding)
+    /// Get the next state event (for web UI forwarding). Applies the state
+    /// reducer before handing the event out, so the web mirror is updated
+    /// no matter what the caller does with the event.
     pub async fn next_state_event(&mut self) -> Option<StateEvent> {
-        self.state_rx.recv().await
+        let event = self.state_rx.recv().await?;
+        state_reducer::apply(&self.shared_state, &event);
+        Some(event)
     }
 
     /// Wait for all actors to complete (takes mut self!)
@@ -43,7 +54,7 @@ impl MemberRunner {
         let Self {
             tasks,
             mut state_rx,
-            shared_state: _shared_state,
+            shared_state,
         } = self;
 
         // Track task count before moving into FuturesUnordered
@@ -64,10 +75,10 @@ impl MemberRunner {
         // Process state events and task completions concurrently
         loop {
             tokio::select! {
-                // Drain state events (actors write directly to shared_state)
+                // Reduce state events into the shared web mirror
                 Some(event) = state_rx.recv() => {
                     tracing::debug!("State event: {:?}", event);
-                    // Actors update shared_state directly, no need to update from events
+                    state_reducer::apply(&shared_state, &event);
                 }
 
                 // Process task completions

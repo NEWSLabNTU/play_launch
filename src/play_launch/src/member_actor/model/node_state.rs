@@ -1,12 +1,8 @@
-//! State types for member actors
-//!
-//! This module defines the state machines and configuration for member actors.
+//! Process-side state machines (regular nodes and containers) and actor
+//! configuration. Moved from `member_actor/state.rs` in phase-51.
 
-use serde::Serialize;
 use std::path::PathBuf;
 use tokio::process::Child;
-#[cfg(test)]
-use ts_rs::TS;
 
 /// Configuration for a member actor
 #[derive(Debug, Clone)]
@@ -65,62 +61,6 @@ pub enum NodeState {
     },
 }
 
-/// State machine for composable nodes
-///
-/// State transitions:
-/// - Blocked (container not running) → Unloaded (container starts)
-/// - Unloaded (never loaded) → Loading (auto-trigger load)
-/// - Loading (in-flight) → Loaded (success) | Failed (error) | Blocked (container crash)
-/// - Loaded (success) → Blocked (container crash)
-/// - Failed (error) → stays Failed (no auto-retry, wait for manual trigger or container restart)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub enum ComposableState {
-    /// Container NOT running (Pending/Stopped/Failed)
-    Blocked {
-        /// Reason for blocking
-        reason: BlockReason,
-    },
-    /// Container running, load never attempted
-    Unloaded,
-    /// Container running, load request in-flight
-    Loading {
-        /// When the load started (for metrics)
-        #[serde(skip)]
-        started_at: std::time::Instant,
-    },
-    /// Container running, unload request in-flight
-    Unloading {
-        /// When the unload started (for metrics)
-        #[serde(skip)]
-        started_at: std::time::Instant,
-    },
-    /// Container running, last load succeeded
-    Loaded {
-        /// Unique ID from LoadNode response
-        unique_id: u64,
-    },
-    /// Container running, last load failed (no auto-retry)
-    Failed {
-        /// Error message from load failure
-        error: String,
-    },
-}
-
-/// Reason why a composable node is blocked
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[cfg_attr(test, derive(TS))]
-#[cfg_attr(test, ts(export))]
-pub enum BlockReason {
-    /// Container hasn't started yet (Pending)
-    NotStarted,
-    /// Container was stopped by user
-    Stopped,
-    /// Container crashed or failed
-    Failed,
-    /// Shutdown signal received
-    Shutdown,
-}
-
 /// Container state (for supervision)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerState {
@@ -142,25 +82,6 @@ impl NodeState {
     #[allow(dead_code)] // Used in tests, semantic API for state machines
     pub fn is_terminal(&self) -> bool {
         matches!(self, NodeState::Stopped { .. } | NodeState::Failed { .. })
-    }
-}
-
-impl ComposableState {
-    /// Check if the state is terminal (actor should stop)
-    #[allow(dead_code)] // Used in tests, semantic API for state machines
-    pub fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            ComposableState::Blocked {
-                reason: BlockReason::Shutdown
-            }
-        )
-    }
-
-    /// Check if loaded successfully
-    #[allow(dead_code)] // Used in tests, semantic API for state machines
-    pub fn is_loaded(&self) -> bool {
-        matches!(self, ComposableState::Loaded { .. })
     }
 }
 
@@ -192,18 +113,6 @@ mod tests {
                 attempt: 0
             }
             .is_terminal()
-        );
-    }
-
-    #[test]
-    fn test_composable_state_loaded() {
-        assert!(ComposableState::Loaded { unique_id: 123 }.is_loaded());
-        assert!(!ComposableState::Unloaded.is_loaded());
-        assert!(
-            !ComposableState::Loading {
-                started_at: std::time::Instant::now()
-            }
-            .is_loaded()
         );
     }
 

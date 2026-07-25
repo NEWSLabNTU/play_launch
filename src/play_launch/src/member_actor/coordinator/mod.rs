@@ -8,12 +8,14 @@
 mod builder;
 mod handle;
 mod runner;
+mod state_reducer;
+mod summary;
 
 pub use builder::MemberCoordinatorBuilder;
 pub use handle::MemberHandle;
 pub use runner::MemberRunner;
 
-use super::web_query::MemberType;
+use super::model::MemberType;
 use std::path::PathBuf;
 
 /// Channel capacity for state events (node status changes → web UI)

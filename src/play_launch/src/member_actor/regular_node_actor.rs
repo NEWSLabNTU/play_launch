@@ -8,7 +8,7 @@
 use super::{
     actor_traits::MemberActor,
     events::{ControlEvent, StateEvent},
-    state::{ActorConfig, NodeState},
+    model::{ActorConfig, NodeState},
 };
 use crate::{execution::context::NodeContext, util::logging::is_verbose};
 use eyre::{Context as _, Result};
@@ -86,8 +86,6 @@ pub struct RegularNodeActor {
     process_registry: Option<
         std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u32, std::path::PathBuf>>>,
     >,
-    /// Shared state map for direct state updates
-    shared_state: std::sync::Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
 }
 
 impl RegularNodeActor {
@@ -103,7 +101,6 @@ impl RegularNodeActor {
         process_registry: Option<
             std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u32, std::path::PathBuf>>>,
         >,
-        shared_state: std::sync::Arc<dashmap::DashMap<String, super::web_query::MemberState>>,
     ) -> Self {
         Self {
             name,
@@ -114,7 +111,6 @@ impl RegularNodeActor {
             state_tx,
             shutdown_rx,
             process_registry,
-            shared_state,
         }
     }
 
@@ -198,7 +194,8 @@ impl RegularNodeActor {
                     self.name, tier.tier_name, pid
                 ),
                 Err(e) => {
-                    if self.config.sched_mode == crate::execution::sched_apply::SchedApplyMode::Strict
+                    if self.config.sched_mode
+                        == crate::execution::sched_apply::SchedApplyMode::Strict
                     {
                         self.transition_to_failed(format!("sched apply failed: {e}"))
                             .await?;
@@ -213,19 +210,14 @@ impl RegularNodeActor {
         self.state = NodeState::Running { child, pid };
 
         // Send Started event
-        self.state_tx
-            .send(StateEvent::Started {
+        super::events::emit(
+            &self.state_tx,
+            StateEvent::Started {
                 name: self.name.clone(),
                 pid,
-            })
-            .await
-            .ok();
-
-        // Update shared state directly
-        self.shared_state.insert(
-            self.name.clone(),
-            super::web_query::MemberState::Running { pid },
-        );
+            },
+        )
+        .await;
 
         if is_verbose() {
             info!("[{}] Started with PID {}", self.name, pid);
@@ -265,10 +257,10 @@ impl RegularNodeActor {
                 };
 
                 // Send Exited event
-                self.state_tx.send(StateEvent::Exited {
+                super::events::emit(&self.state_tx, StateEvent::Exited {
                     name: self.name.clone(),
                     exit_code,
-                }).await.ok();
+                }).await;
 
                 // Decide next state
                 if self.config.respawn_enabled {
@@ -357,22 +349,15 @@ impl RegularNodeActor {
         let delay = Duration::from_secs_f64(self.config.respawn_delay);
 
         // Send Respawning event
-        self.state_tx
-            .send(StateEvent::Respawning {
+        super::events::emit(
+            &self.state_tx,
+            StateEvent::Respawning {
                 name: self.name.clone(),
                 attempt: attempt + 1,
                 delay: self.config.respawn_delay,
-            })
-            .await
-            .ok();
-
-        // Update shared state directly
-        self.shared_state.insert(
-            self.name.clone(),
-            super::web_query::MemberState::Respawning {
-                attempt: attempt + 1,
             },
-        );
+        )
+        .await;
 
         if is_verbose() {
             info!(
@@ -506,21 +491,6 @@ impl RegularNodeActor {
                 Ok(true) // Continue
             }
 
-            #[cfg(unix)]
-            ControlEvent::Kill(signal) => {
-                info!("[{}] Sending signal {:?}", self.name, signal);
-
-                if let NodeState::Running { pid, .. } = &self.state {
-                    use nix::{sys::signal, unistd::Pid};
-
-                    if let Err(e) = signal::kill(Pid::from_raw(*pid as i32), signal) {
-                        warn!("[{}] Failed to send signal: {}", self.name, e);
-                    }
-                }
-
-                Ok(true) // Continue
-            }
-
             ControlEvent::LoadComposable { .. } => {
                 warn!(
                     "[{}] LoadComposable not supported for regular nodes",
@@ -589,16 +559,13 @@ impl RegularNodeActor {
         self.state = NodeState::Stopped { exit_code };
 
         // Send Terminated event
-        self.state_tx
-            .send(StateEvent::Terminated {
+        super::events::emit(
+            &self.state_tx,
+            StateEvent::Terminated {
                 name: self.name.clone(),
-            })
-            .await
-            .ok();
-
-        // Update shared state directly
-        self.shared_state
-            .insert(self.name.clone(), super::web_query::MemberState::Stopped);
+            },
+        )
+        .await;
 
         if is_verbose() {
             info!("[{}] Stopped", self.name);
@@ -614,19 +581,14 @@ impl RegularNodeActor {
         };
 
         // Send Failed event
-        self.state_tx
-            .send(StateEvent::Failed {
+        super::events::emit(
+            &self.state_tx,
+            StateEvent::Failed {
                 name: self.name.clone(),
                 error: error.clone(),
-            })
-            .await
-            .ok();
-
-        // Update shared state directly
-        self.shared_state.insert(
-            self.name.clone(),
-            super::web_query::MemberState::Failed { error },
-        );
+            },
+        )
+        .await;
 
         error!("[{}] Failed", self.name);
 

@@ -1,19 +1,114 @@
-//! Composable node management for container actors.
-//!
-//! Methods for loading, unloading, and managing the lifecycle of composable
-//! nodes within a container. Handles the LoadNode queue, dispatch of parallel
-//! load requests, and state transitions for individual composable nodes.
+//! Composable-node supervision (phase-51.4): the composable map, the
+//! load/unload queue, dispatch, and completion handling — split out of the
+//! former ContainerActor god struct. The supervisor owns the composables;
+//! the actor owns the container process; `ros_client` owns the ROS side.
 
-use super::ContainerActor;
+use super::ros_client::{self, ContainerClients};
 use crate::member_actor::{
-    container_control::{ContainerControlEvent, LoadCompletion, LoadRequest},
-    events::StateEvent,
-    state::ComposableState,
+    container_control::{ContainerControlEvent, CurrentUnload, LoadCompletion, LoadRequest},
+    events::{StateEvent, emit},
+    model::{BlockReason, ComposableState},
 };
-use std::time::Instant;
+use std::{
+    collections::{HashMap, VecDeque},
+    path::PathBuf,
+    time::Instant,
+};
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-impl ContainerActor {
+/// Metadata for a composable node (Phase 12)
+#[derive(Debug, Clone)]
+pub struct ComposableNodeMetadata {
+    /// Package containing the component
+    pub package: String,
+    /// Plugin name (fully qualified class name)
+    pub plugin: String,
+    /// ROS node name
+    pub node_name: String,
+    /// ROS namespace
+    pub namespace: String,
+    /// Remap rules
+    pub remap_rules: Vec<String>,
+    /// Parameters (key-value pairs)
+    pub parameters: Vec<rcl_interfaces::msg::Parameter>,
+    /// Extra arguments
+    pub extra_args: Vec<rcl_interfaces::msg::Parameter>,
+    /// Auto-load on container startup
+    pub auto_load: bool,
+    /// Output directory for per-node logging (isolated mode)
+    pub output_dir: PathBuf,
+    /// Phase 38.9: resolved posix scheduling for this composable (None = no tier).
+    pub sched: Option<crate::execution::sched_apply::AppliedTier>,
+}
+
+/// Entry for a composable node managed by this container (Phase 12)
+#[derive(Debug)]
+pub(super) struct ComposableNodeEntry {
+    /// Metadata for this composable node
+    pub(super) metadata: ComposableNodeMetadata,
+    /// Current state
+    pub(super) state: ComposableState,
+    /// Unique ID from LoadNode response (if loaded)
+    pub(super) unique_id: Option<u64>,
+    /// When the load started (for timeout detection)
+    pub(super) load_started_at: Option<Instant>,
+}
+
+/// Supervises the composable nodes of one container: composable map,
+/// pending-load queue, parallel dispatch, and completion handling.
+pub(super) struct ComposableSupervisor {
+    /// The owning container actor's name (canonical member id) — logs only
+    container_name: String,
+    /// Channel to send state events (shared with the actor)
+    state_tx: mpsc::Sender<StateEvent>,
+    /// Composable nodes managed by this container (member id -> entry)
+    pub(super) composable_nodes: HashMap<String, ComposableNodeEntry>,
+    /// Queue of pending load requests
+    pending_loads: VecDeque<LoadRequest>,
+    /// Channel for load completion notifications (parallel dispatch)
+    load_completion_tx: mpsc::UnboundedSender<LoadCompletion>,
+    pub(super) load_completion_rx: mpsc::UnboundedReceiver<LoadCompletion>,
+    /// Currently processing unload
+    pub(super) current_unload: Option<CurrentUnload>,
+}
+
+impl ComposableSupervisor {
+    pub(super) fn new(container_name: String, state_tx: mpsc::Sender<StateEvent>) -> Self {
+        let (load_completion_tx, load_completion_rx) = mpsc::unbounded_channel();
+        Self {
+            container_name,
+            state_tx,
+            composable_nodes: HashMap::new(),
+            pending_loads: VecDeque::new(),
+            load_completion_tx,
+            load_completion_rx,
+            current_unload: None,
+        }
+    }
+
+    pub(super) fn name(&self) -> &str {
+        &self.container_name
+    }
+
+    pub(super) fn state_tx(&self) -> &mpsc::Sender<StateEvent> {
+        &self.state_tx
+    }
+
+    /// Add a composable node to be managed by this container (Phase 12)
+    pub(super) fn add_composable_node(&mut self, name: String, metadata: ComposableNodeMetadata) {
+        let entry = ComposableNodeEntry {
+            metadata,
+            state: ComposableState::Blocked {
+                reason: BlockReason::ContainerNotStarted,
+            },
+            unique_id: None,
+            load_started_at: None,
+        };
+
+        self.composable_nodes.insert(name, entry);
+    }
+
     /// Convert ROS parameters to string tuples.
     pub(super) fn ros_params_to_strings(
         params: &[rcl_interfaces::msg::Parameter],
@@ -57,23 +152,23 @@ impl ContainerActor {
     /// Dispatch ALL pending loads concurrently (no serialization gate).
     /// Each load is spawned as an independent tokio task that sends its
     /// result back via the load_completion channel.
-    pub(super) fn dispatch_pending_loads(&mut self) {
+    pub(super) fn dispatch_pending_loads(&mut self, clients: &ContainerClients) {
         while let Some(request) = self.pending_loads.pop_front() {
             let start_time = std::time::Instant::now();
             let queue_wait_ms = start_time.duration_since(request.request_time).as_millis() as u64;
 
             debug!(
                 "{}: Dispatching load for {} (queue wait: {}ms)",
-                self.name, request.composable_name, queue_wait_ms
+                self.container_name, request.composable_name, queue_wait_ms
             );
 
             let tx = self.load_completion_tx.clone();
             let composable_name = request.composable_name.clone();
-            let container_name = self.name.clone();
-            let load_client = self.load_client.clone();
-            let list_client = self.list_client.clone();
-            let has_event_sub = self.component_event_sub.is_some();
-            let params = super::super::container_control::LoadParams {
+            let container_name = self.container_name.clone();
+            let load_client = clients.load_client.clone();
+            let list_client = clients.list_client.clone();
+            let has_event_sub = clients.has_event_sub();
+            let params = crate::member_actor::container_control::LoadParams {
                 composable_name: request.composable_name,
                 package: request.package,
                 plugin: request.plugin,
@@ -87,16 +182,15 @@ impl ContainerActor {
             };
 
             tokio::spawn(async move {
-                let result =
-                    Self::call_load_node_service(
-                        container_name,
-                        load_client,
-                        list_client,
-                        has_event_sub,
-                        params,
-                        start_time,
-                    )
-                    .await;
+                let result = ros_client::call_load_node_service(
+                    container_name,
+                    load_client,
+                    list_client,
+                    has_event_sub,
+                    params,
+                    start_time,
+                )
+                .await;
                 let _ = tx.send(LoadCompletion {
                     composable_name,
                     result,
@@ -106,14 +200,17 @@ impl ContainerActor {
     }
 
     /// Handle a completed LoadNode service call.
-    pub(super) async fn handle_load_completion(&mut self, completion: LoadCompletion) {
+    pub(super) async fn handle_load_completion(
+        &mut self,
+        completion: LoadCompletion,
+        has_event_sub: bool,
+    ) {
         let composable_name = &completion.composable_name;
-        let has_event_sub = self.component_event_sub.is_some();
 
         let Some(entry) = self.composable_nodes.get_mut(composable_name) else {
             warn!(
                 "{}: Load completion for unknown composable '{}'",
-                self.name, composable_name
+                self.container_name, composable_name
             );
             return;
         };
@@ -137,24 +234,18 @@ impl ContainerActor {
 
                         debug!(
                             "{}: Successfully loaded composable node '{}' (unique_id: {})",
-                            self.name, composable_name, response.unique_id
+                            self.container_name, composable_name, response.unique_id
                         );
 
-                        self.shared_state.insert(
-                            composable_name.clone(),
-                            super::super::web_query::MemberState::Loaded {
-                                unique_id: response.unique_id,
-                            },
-                        );
-
-                        let _ = self
-                            .state_tx
-                            .send(StateEvent::LoadSucceeded {
+                        emit(
+                            &self.state_tx,
+                            StateEvent::LoadSucceeded {
                                 name: composable_name.clone(),
                                 full_node_name: response.full_node_name.clone(),
                                 unique_id: response.unique_id,
-                            })
-                            .await;
+                            },
+                        )
+                        .await;
                     }
                 }
                 // play_launch_container (with event sub): service responds immediately
@@ -175,23 +266,17 @@ impl ContainerActor {
 
                     warn!(
                         "{}: Failed to load composable node '{}': {}",
-                        self.name, composable_name, response.error_message
+                        self.container_name, composable_name, response.error_message
                     );
 
-                    self.shared_state.insert(
-                        composable_name.clone(),
-                        super::super::web_query::MemberState::Failed {
-                            error: response.error_message.clone(),
-                        },
-                    );
-
-                    let _ = self
-                        .state_tx
-                        .send(StateEvent::LoadFailed {
+                    emit(
+                        &self.state_tx,
+                        StateEvent::LoadFailed {
                             name: composable_name.clone(),
                             error: response.error_message,
-                        })
-                        .await;
+                        },
+                    )
+                    .await;
                 }
             }
             Err(e) => {
@@ -205,23 +290,17 @@ impl ContainerActor {
 
                     warn!(
                         "{}: LoadNode service call failed for '{}': {:#}",
-                        self.name, composable_name, e
+                        self.container_name, composable_name, e
                     );
 
-                    self.shared_state.insert(
-                        composable_name.clone(),
-                        super::super::web_query::MemberState::Failed {
-                            error: error_msg.clone(),
-                        },
-                    );
-
-                    let _ = self
-                        .state_tx
-                        .send(StateEvent::LoadFailed {
+                    emit(
+                        &self.state_tx,
+                        StateEvent::LoadFailed {
                             name: composable_name.clone(),
                             error: error_msg,
-                        })
-                        .await;
+                        },
+                    )
+                    .await;
                 }
             }
         }
@@ -237,7 +316,7 @@ impl ContainerActor {
         if let Some(unload) = self.current_unload.take() {
             debug!(
                 "{}: Cancelling current unload for {}: {}",
-                self.name, unload.composable_name, error
+                self.container_name, unload.composable_name, error
             );
         }
 
@@ -246,21 +325,27 @@ impl ContainerActor {
         if queue_len > 0 {
             debug!(
                 "{}: Draining {} queued load requests: {}",
-                self.name, queue_len, error
+                self.container_name, queue_len, error
             );
         }
         self.pending_loads.clear();
     }
 
     /// Handle LoadComposable control event.
-    pub(super) async fn handle_load_composable(&mut self, name: &str) {
-        debug!("{}: Handling LoadComposable for '{}'", self.name, name);
+    pub(super) async fn handle_load_composable(&mut self, name: &str, clients: &ContainerClients) {
+        debug!(
+            "{}: Handling LoadComposable for '{}'",
+            self.container_name, name
+        );
 
         // Check if composable node exists
         let entry = match self.composable_nodes.get_mut(name) {
             Some(e) => e,
             None => {
-                warn!("{}: Composable node '{}' not found", self.name, name);
+                warn!(
+                    "{}: Composable node '{}' not found",
+                    self.container_name, name
+                );
                 return;
             }
         };
@@ -273,21 +358,19 @@ impl ContainerActor {
                 entry.state = ComposableState::Loading { started_at };
                 entry.load_started_at = Some(started_at);
 
-                debug!("{}: Transitioning '{}' to Loading state", self.name, name);
+                debug!(
+                    "{}: Transitioning '{}' to Loading state",
+                    self.container_name, name
+                );
 
                 // Emit LoadStarted event
-                let _ = self
-                    .state_tx
-                    .send(StateEvent::LoadStarted {
+                emit(
+                    &self.state_tx,
+                    StateEvent::LoadStarted {
                         name: name.to_string(),
-                    })
-                    .await;
-
-                // Update shared state directly for composable node
-                self.shared_state.insert(
-                    name.to_string(),
-                    super::super::web_query::MemberState::Loading,
-                );
+                    },
+                )
+                .await;
 
                 // Phase 12: Queue LoadNode request and dispatch immediately
                 if let Some(entry) = self.composable_nodes.get(name) {
@@ -309,36 +392,46 @@ impl ContainerActor {
                     };
 
                     self.pending_loads.push_back(request);
-                    self.dispatch_pending_loads();
+                    self.dispatch_pending_loads(clients);
                 }
             }
             ComposableState::Loading { .. } => {
-                debug!("{}: '{}' already loading, ignoring", self.name, name);
+                debug!(
+                    "{}: '{}' already loading, ignoring",
+                    self.container_name, name
+                );
             }
             ComposableState::Unloading { .. } => {
                 debug!(
                     "{}: '{}' is unloading, ignoring load request",
-                    self.name, name
+                    self.container_name, name
                 );
             }
             ComposableState::Loaded { .. } => {
-                debug!("{}: '{}' already loaded, ignoring", self.name, name);
+                debug!(
+                    "{}: '{}' already loaded, ignoring",
+                    self.container_name, name
+                );
             }
             ComposableState::Blocked { .. } => {
-                warn!("{}: Cannot load '{}' - container blocked", self.name, name);
+                warn!(
+                    "{}: Cannot load '{}' - container blocked",
+                    self.container_name, name
+                );
             }
         }
     }
 
     /// Handle UnloadComposable control event.
-    pub(super) async fn handle_unload_composable(&mut self, name: &str) {
-        debug!("{}: Handling UnloadComposable for '{}'", self.name, name);
-
-        // Debug: Log all composable node states
-        debug!("{}: Current composable node states:", self.name);
-        for (node_name, node_entry) in self.composable_nodes.iter() {
-            debug!("  - {}: {:?}", node_name, node_entry.state);
-        }
+    pub(super) async fn handle_unload_composable(
+        &mut self,
+        name: &str,
+        clients: &ContainerClients,
+    ) {
+        debug!(
+            "{}: Handling UnloadComposable for '{}'",
+            self.container_name, name
+        );
 
         // Check if composable node exists
         let entry = match self.composable_nodes.get_mut(name) {
@@ -346,11 +439,11 @@ impl ContainerActor {
             None => {
                 warn!(
                     "{}: Composable node '{}' not found in composable_nodes HashMap",
-                    self.name, name
+                    self.container_name, name
                 );
                 warn!(
                     "{}: Available composable nodes: {:?}",
-                    self.name,
+                    self.container_name,
                     self.composable_nodes.keys().collect::<Vec<_>>()
                 );
                 return;
@@ -365,29 +458,24 @@ impl ContainerActor {
 
                 debug!(
                     "{}: Unloading '{}' (unique_id: {})",
-                    self.name, name, unique_id
+                    self.container_name, name, unique_id
                 );
 
                 // Transition to Unloading state
                 entry.state = ComposableState::Unloading { started_at };
                 entry.load_started_at = Some(started_at);
 
-                // Update shared_state to Unloading for Web UI
-                self.shared_state.insert(
-                    name.to_string(),
-                    super::super::web_query::MemberState::Unloading,
-                );
-
                 // Spawn UnloadNode service call as a tracked task
-                let container_name = self.name.clone();
-                let unload_client = self.unload_client.clone();
+                let container_name = self.container_name.clone();
+                let unload_client = clients.unload_client.clone();
 
                 let task = tokio::spawn(async move {
-                    Self::call_unload_node_service(container_name, unload_client, unique_id).await
+                    ros_client::call_unload_node_service(container_name, unload_client, unique_id)
+                        .await
                 });
 
                 // Track the unload operation (will be polled in select! loop)
-                self.current_unload = Some(super::super::container_control::CurrentUnload {
+                self.current_unload = Some(CurrentUnload {
                     composable_name: name.to_string(),
                     task,
                 });
@@ -395,37 +483,37 @@ impl ContainerActor {
             _ => {
                 warn!(
                     "{}: Cannot unload '{}' - not in Loaded state (current: {:?})",
-                    self.name, name, entry.state
+                    self.container_name, name, entry.state
                 );
             }
         }
     }
 
     /// Handle LoadAllComposables control event.
-    pub(super) async fn handle_load_all_composables(&mut self) {
-        debug!("{}: Handling LoadAllComposables", self.name);
+    pub(super) async fn handle_load_all_composables(&mut self, clients: &ContainerClients) {
+        debug!("{}: Handling LoadAllComposables", self.container_name);
 
         // Log state of all composable nodes for debugging
         let total_nodes = self.composable_nodes.len();
-        let state_summary: std::collections::HashMap<String, usize> = self
-            .composable_nodes
-            .values()
-            .fold(std::collections::HashMap::new(), |mut acc, entry| {
-                let state_name = match &entry.state {
-                    ComposableState::Blocked { .. } => "Blocked",
-                    ComposableState::Unloaded => "Unloaded",
-                    ComposableState::Loading { .. } => "Loading",
-                    ComposableState::Unloading { .. } => "Unloading",
-                    ComposableState::Loaded { .. } => "Loaded",
-                    ComposableState::Failed { .. } => "Failed",
-                };
-                *acc.entry(state_name.to_string()).or_insert(0) += 1;
-                acc
-            });
+        let state_summary: HashMap<String, usize> =
+            self.composable_nodes
+                .values()
+                .fold(HashMap::new(), |mut acc, entry| {
+                    let state_name = match &entry.state {
+                        ComposableState::Blocked { .. } => "Blocked",
+                        ComposableState::Unloaded => "Unloaded",
+                        ComposableState::Loading { .. } => "Loading",
+                        ComposableState::Unloading { .. } => "Unloading",
+                        ComposableState::Loaded { .. } => "Loaded",
+                        ComposableState::Failed { .. } => "Failed",
+                    };
+                    *acc.entry(state_name.to_string()).or_insert(0) += 1;
+                    acc
+                });
 
         debug!(
             "{}: Composable node states: {} total ({:?})",
-            self.name, total_nodes, state_summary
+            self.container_name, total_nodes, state_summary
         );
 
         // Collect names of nodes to load (to avoid borrowing issues)
@@ -445,12 +533,12 @@ impl ContainerActor {
         if nodes_to_load.is_empty() {
             debug!(
                 "{}: No composable nodes to load (all {} nodes already loaded or not marked for auto_load)",
-                self.name, total_nodes
+                self.container_name, total_nodes
             );
         } else {
             debug!(
                 "{}: Queueing {} composable nodes for loading: {:?}",
-                self.name,
+                self.container_name,
                 nodes_to_load.len(),
                 nodes_to_load
             );
@@ -458,7 +546,7 @@ impl ContainerActor {
 
         // Load each node
         for name in nodes_to_load {
-            self.handle_load_composable(&name).await;
+            self.handle_load_composable(&name, clients).await;
         }
     }
 
@@ -466,7 +554,7 @@ impl ContainerActor {
     pub(super) async fn handle_toggle_composable_auto_load(&mut self, name: &str, enabled: bool) {
         debug!(
             "{}: Handling ToggleComposableAutoLoad for '{}' (enabled: {})",
-            self.name, name, enabled
+            self.container_name, name, enabled
         );
 
         // Find and update the composable node's auto_load setting
@@ -474,19 +562,19 @@ impl ContainerActor {
             entry.metadata.auto_load = enabled;
             debug!(
                 "{}: Updated auto_load for '{}' to {}",
-                self.name, name, enabled
+                self.container_name, name, enabled
             );
         } else {
             warn!(
                 "{}: Cannot toggle auto_load for '{}': composable node not found",
-                self.name, name
+                self.container_name, name
             );
         }
     }
 
     /// Handle UnloadAllComposables control event.
-    pub(super) async fn handle_unload_all_composables(&mut self) {
-        debug!("{}: Handling UnloadAllComposables", self.name);
+    pub(super) async fn handle_unload_all_composables(&mut self, clients: &ContainerClients) {
+        debug!("{}: Handling UnloadAllComposables", self.container_name);
 
         // Collect names of loaded nodes
         let nodes_to_unload: Vec<String> = self
@@ -498,18 +586,22 @@ impl ContainerActor {
 
         debug!(
             "{}: Unloading {} loaded composable nodes",
-            self.name,
+            self.container_name,
             nodes_to_unload.len()
         );
 
         // Unload each node
         for name in nodes_to_unload {
-            self.handle_unload_composable(&name).await;
+            self.handle_unload_composable(&name, clients).await;
         }
     }
 
     /// Handle a load control event (LoadNode / UnloadNode from the control channel).
-    pub(super) async fn handle_load_control_event(&mut self, event: ContainerControlEvent) {
+    pub(super) async fn handle_load_control_event(
+        &mut self,
+        event: ContainerControlEvent,
+        clients: &ContainerClients,
+    ) {
         match event {
             ContainerControlEvent::LoadNode {
                 composable_name,
@@ -524,7 +616,7 @@ impl ContainerActor {
             } => {
                 debug!(
                     "{}: Received load request for {}",
-                    self.name, composable_name
+                    self.container_name, composable_name
                 );
 
                 let request = LoadRequest {
@@ -541,7 +633,7 @@ impl ContainerActor {
                 };
 
                 self.pending_loads.push_back(request);
-                self.dispatch_pending_loads();
+                self.dispatch_pending_loads(clients);
             }
             ContainerControlEvent::UnloadNode {
                 composable_name,
@@ -550,19 +642,48 @@ impl ContainerActor {
             } => {
                 debug!(
                     "{}: Received unload request for {} (unique_id: {})",
-                    self.name, composable_name, unique_id
+                    self.container_name, composable_name, unique_id
                 );
-                self.handle_unload_request(composable_name, unique_id, response_tx)
+                self.handle_unload_request(composable_name, unique_id, response_tx, clients)
                     .await;
             }
         }
+    }
+
+    /// Handle an UnloadNode request by spawning a service call task.
+    pub(super) async fn handle_unload_request(
+        &self,
+        composable_name: String,
+        unique_id: u64,
+        response_tx: tokio::sync::oneshot::Sender<
+            eyre::Result<crate::member_actor::container_control::UnloadNodeResponse>,
+        >,
+        clients: &ContainerClients,
+    ) {
+        let container_name = self.container_name.clone();
+        let unload_client = clients.unload_client.clone();
+
+        // Spawn service call as a task (so it doesn't block the actor)
+        tokio::spawn(async move {
+            let result =
+                ros_client::call_unload_node_service(container_name, unload_client, unique_id)
+                    .await;
+
+            // Send response back
+            if let Err(result) = response_tx.send(result) {
+                warn!(
+                    "Failed to send UnloadNode response for {}: {:?}",
+                    composable_name, result
+                );
+            }
+        });
     }
 
     /// Handle completion of an UnloadNode service call task.
     pub(super) async fn handle_unload_completion(
         &mut self,
         result: Result<
-            eyre::Result<super::super::container_control::UnloadNodeResponse>,
+            eyre::Result<crate::member_actor::container_control::UnloadNodeResponse>,
             tokio::task::JoinError,
         >,
         composable_name: String,
@@ -580,28 +701,23 @@ impl ContainerActor {
 
                             debug!(
                                 "{}: Successfully unloaded composable node '{}'",
-                                self.name, composable_name
-                            );
-
-                            // Update shared state directly for composable node
-                            self.shared_state.insert(
-                                composable_name.clone(),
-                                super::super::web_query::MemberState::Unloaded,
+                                self.container_name, composable_name
                             );
 
                             // Emit Unloaded event
-                            let _ = self
-                                .state_tx
-                                .send(StateEvent::Unloaded {
+                            emit(
+                                &self.state_tx,
+                                StateEvent::Unloaded {
                                     name: composable_name.clone(),
-                                })
-                                .await;
+                                },
+                            )
+                            .await;
                         }
                         Ok(response) => {
                             // UnloadNode service returned failure - keep in current state
                             warn!(
                                 "{}: Failed to unload composable node '{}': {}",
-                                self.name, composable_name, response.error_message
+                                self.container_name, composable_name, response.error_message
                             );
                             // Transition back to Loaded state since unload failed
                             // Note: We don't have unique_id anymore, so this is a problem
@@ -611,7 +727,7 @@ impl ContainerActor {
                             // Service call error - keep in current state
                             warn!(
                                 "{}: UnloadNode service call failed for '{}': {:#}",
-                                self.name, composable_name, e
+                                self.container_name, composable_name, e
                             );
                             // Keep in Unloading state for retry
                         }
@@ -622,7 +738,7 @@ impl ContainerActor {
                 // Task panicked
                 warn!(
                     "{}: UnloadNode task panicked for {}: {:#}",
-                    self.name, composable_name, e
+                    self.container_name, composable_name, e
                 );
             }
         }

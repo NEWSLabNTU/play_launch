@@ -50,7 +50,7 @@ pub struct WebState {
     pub diagnostic_registry: Arc<DiagnosticRegistry>,
     /// Broadcaster for system metrics to SSE clients (None when monitoring disabled)
     pub metrics_broadcaster: Option<Arc<SystemMetricsBroadcaster>>,
-    /// Launch tree scope table (from record.json, static after load)
+    /// Launch tree scope table (from the SystemModel / in-memory dump, static after load)
     pub scopes: Vec<ScopeEntry>,
     /// Node name → scope ID mapping (built from record.json at startup)
     pub node_scope_map: std::collections::HashMap<String, usize>,

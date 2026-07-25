@@ -9,12 +9,6 @@ plans in `docs/roadmap/` phase docs.
 
 ## Open
 
-**#0002** — composable state triple-write (actor entry + shared_state +
-ignored StateEvent), duplicated BlockReason enums. See `0002-*`. (GH #2)
-
-**#0003** — ContainerActor god struct: lifecycle + supervision + ROS
-clients + web state in one 20-field struct. See `0003-*`. (GH #3)
-
 **#0004** — 12+ hardcoded timeout Durations (LOAD_TOTAL_BUDGET 600s,
 200ms warmup sleep), none configurable; flat 59-flag CLI. See `0004-*`. (GH #4)
 
@@ -25,6 +19,12 @@ sends; unbounded ComponentEvent channel; stringly eyre. See `0005-*`. (GH #5)
 tree, no status facets, three freshness mechanisms. See `0006-*`. (GH #6)
 
 ## Resolved
+
+**#0002** — composable state triple-write + duplicated BlockReason.
+Fixed by phase-51 state reducer + model/ unification. See `0002-*`. (GH #2)
+
+**#0003** — ContainerActor god struct. Fixed by phase-51 split
+(actor/supervisor/ros_client/timing). See `0003-*`. (GH #3)
 
 **#0001** — node page misses nodes (bare-name key collisions; orphaned
 composables dropped). Fixed by phase-50 canonical member ids

@@ -4,8 +4,10 @@ use super::{
     CONTROL_CHANNEL_SIZE, MemberMetadata, STATE_EVENT_CHANNEL_SIZE, handle::MemberHandle,
     runner::MemberRunner,
 };
-use crate::member_actor::member_id::{IdAllocator, MemberKind};
-use crate::member_actor::web_query::{BlockReason, MemberState, MemberType};
+use crate::member_actor::{
+    member_id::{IdAllocator, MemberKind},
+    model::{BlockReason, MemberState, MemberType},
+};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, warn};
@@ -14,7 +16,7 @@ use tracing::{debug, warn};
 struct RegularNodeDefinition {
     name: String,
     context: crate::execution::context::NodeContext,
-    config: crate::member_actor::state::ActorConfig,
+    config: crate::member_actor::model::ActorConfig,
     process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
     metadata: MemberMetadata,
 }
@@ -23,12 +25,12 @@ struct RegularNodeDefinition {
 struct ContainerDefinition {
     name: String,
     context: crate::execution::context::NodeContext,
-    config: crate::member_actor::state::ActorConfig,
+    config: crate::member_actor::model::ActorConfig,
     process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
     metadata: MemberMetadata,
     /// Channel to send container state receiver back to caller
     state_tx: Option<
-        tokio::sync::oneshot::Sender<watch::Receiver<crate::member_actor::state::ContainerState>>,
+        tokio::sync::oneshot::Sender<watch::Receiver<crate::member_actor::model::ContainerState>>,
     >,
     /// Whether to subscribe to ComponentEvent topic (only for play_launch_container)
     use_component_events: bool,
@@ -67,7 +69,7 @@ impl MemberCoordinatorBuilder {
         &mut self,
         name: String,
         context: crate::execution::context::NodeContext,
-        config: crate::member_actor::state::ActorConfig,
+        config: crate::member_actor::model::ActorConfig,
         process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
     ) {
         let metadata = MemberMetadata {
@@ -105,10 +107,10 @@ impl MemberCoordinatorBuilder {
         &mut self,
         name: String,
         context: crate::execution::context::NodeContext,
-        config: crate::member_actor::state::ActorConfig,
+        config: crate::member_actor::model::ActorConfig,
         process_registry: Option<Arc<std::sync::Mutex<HashMap<u32, PathBuf>>>>,
         use_component_events: bool,
-    ) -> tokio::sync::oneshot::Receiver<watch::Receiver<crate::member_actor::state::ContainerState>>
+    ) -> tokio::sync::oneshot::Receiver<watch::Receiver<crate::member_actor::model::ContainerState>>
     {
         let (state_tx, state_rx) = tokio::sync::oneshot::channel();
 
@@ -217,7 +219,6 @@ impl MemberCoordinatorBuilder {
                 state_tx.clone(),
                 shutdown_rx.clone(),
                 def.process_registry,
-                shared_state.clone(),
             );
 
             let task = tokio::spawn(async move {
@@ -290,7 +291,6 @@ impl MemberCoordinatorBuilder {
                     config: def.config,
                     process_registry: def.process_registry,
                     ros_node: shared_ros_node.clone(),
-                    shared_state: shared_state.clone(),
                     use_component_events: def.use_component_events,
                 },
                 control_rx,
@@ -463,8 +463,9 @@ impl MemberCoordinatorBuilder {
                 let mut metadata = def.metadata.clone();
                 metadata.id = member_id.clone();
                 metadata_map.insert(member_id.clone(), metadata);
-                shared_state.insert(
-                    member_id.clone(),
+                super::state_reducer::set(
+                    &shared_state,
+                    &member_id,
                     MemberState::Blocked {
                         reason: BlockReason::ContainerNotFound,
                     },
@@ -505,8 +506,8 @@ impl MemberCoordinatorBuilder {
             } else {
                 MemberState::Pending
             };
-            // Use entry API to avoid overwriting actor state updates
-            shared_state.entry(name.clone()).or_insert(initial_state);
+            // Never overwrites a state the reducer already derived
+            super::state_reducer::init(&shared_state, name, initial_state);
         }
 
         // Phase-50: registered == spawned is the invariant that used to break

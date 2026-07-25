@@ -3,7 +3,7 @@
 use super::WebState;
 use crate::{
     diagnostics::{DiagnosticCounts, DiagnosticStatus},
-    member_actor::web_query::HealthSummary,
+    member_actor::model::HealthSummary,
 };
 use axum::{
     Json,

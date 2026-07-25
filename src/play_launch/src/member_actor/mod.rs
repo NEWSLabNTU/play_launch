@@ -41,17 +41,15 @@
 //! ```
 
 pub mod actor_traits;
-pub mod member_id;
 pub mod container_actor;
 pub mod container_control;
 pub mod coordinator;
 pub mod events;
+pub mod member_id;
+pub mod model;
 pub mod regular_node_actor;
-pub mod state;
-pub mod web_query;
 
 // Re-export commonly used types
 pub use coordinator::{MemberCoordinatorBuilder, MemberHandle, MemberRunner};
 pub use events::StateEvent;
-pub use state::ActorConfig;
-pub use web_query::{MemberState, MemberSummary, MemberType};
+pub use model::{ActorConfig, MemberState, MemberSummary, MemberType};

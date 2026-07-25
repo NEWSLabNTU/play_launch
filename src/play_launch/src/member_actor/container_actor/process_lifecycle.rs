@@ -7,7 +7,7 @@
 use super::ContainerActor;
 use crate::member_actor::{
     events::{ControlEvent, StateEvent},
-    state::{BlockReason, ContainerState, NodeState},
+    model::{BlockReason, ContainerState, NodeState},
 };
 use eyre::{Context as _, Result};
 use tokio::{
@@ -35,6 +35,7 @@ impl ContainerActor {
 
         // Add composable node information
         let composable_nodes_info: Vec<serde_json::Value> = self
+            .supervisor
             .composable_nodes
             .iter()
             .map(|(name, entry)| {
@@ -50,7 +51,8 @@ impl ContainerActor {
             .collect();
 
         metadata["composable_nodes"] = serde_json::json!(composable_nodes_info);
-        metadata["composable_node_count"] = serde_json::json!(self.composable_nodes.len());
+        metadata["composable_node_count"] =
+            serde_json::json!(self.supervisor.composable_nodes.len());
 
         // Write back
         let updated_json =
@@ -60,7 +62,7 @@ impl ContainerActor {
         debug!(
             "{}: Updated metadata.json with {} composable nodes",
             self.name,
-            self.composable_nodes.len()
+            self.supervisor.composable_nodes.len()
         );
 
         Ok(())
@@ -68,10 +70,7 @@ impl ContainerActor {
 
     /// Clear ROS service clients and event subscription so they're recreated on restart.
     pub(super) fn clear_ros_clients(&mut self) {
-        self.load_client = None;
-        self.unload_client = None;
-        self.component_event_sub = None;
-        self.component_event_rx = None;
+        self.clients.clear();
     }
 
     /// Build the full node name from namespace and name.
@@ -124,25 +123,27 @@ impl ContainerActor {
         self.unregister_process(pid);
 
         // Drain load queue (container crashed)
-        self.drain_queue("Container crashed");
+        self.supervisor.drain_queue("Container crashed");
 
         self.clear_ros_clients();
 
         // Phase 12: Transition composable nodes to Blocked
-        self.transition_all_composables_to_blocked(BlockReason::Failed)
+        self.supervisor
+            .transition_all_composables_to_blocked(BlockReason::ContainerFailed)
             .await;
 
         // Broadcast stopped state to composable nodes
         let _ = self.container_state_tx.send(ContainerState::Stopped);
 
         // Send state event
-        let _ = self
-            .state_tx
-            .send(StateEvent::Exited {
+        crate::member_actor::events::emit(
+            &self.state_tx,
+            StateEvent::Exited {
                 name: self.name.clone(),
                 exit_code,
-            })
-            .await;
+            },
+        )
+        .await;
 
         // Check if respawn is enabled
         if self.config.respawn_enabled {
@@ -152,18 +153,13 @@ impl ContainerActor {
             };
         } else {
             self.state = NodeState::Stopped { exit_code };
-            let _ = self
-                .state_tx
-                .send(StateEvent::Terminated {
+            crate::member_actor::events::emit(
+                &self.state_tx,
+                StateEvent::Terminated {
                     name: self.name.clone(),
-                })
-                .await;
-
-            // Update shared state directly
-            self.shared_state.insert(
-                self.name.clone(),
-                super::super::web_query::MemberState::Stopped,
-            );
+                },
+            )
+            .await;
         }
 
         Ok(true) // Continue (respawn or keep alive for Start commands)
@@ -189,7 +185,7 @@ impl ContainerActor {
         self.unregister_process(pid);
 
         // Drain load queue
-        self.drain_queue("Container stopped");
+        self.supervisor.drain_queue("Container stopped");
 
         self.clear_ros_clients();
 
@@ -197,27 +193,23 @@ impl ContainerActor {
         debug!(
             "{}: Transitioning {} composable nodes to Blocked state (reason: Stopped)",
             self.name,
-            self.composable_nodes.len()
+            self.supervisor.composable_nodes.len()
         );
-        self.transition_all_composables_to_blocked(BlockReason::Stopped)
+        self.supervisor
+            .transition_all_composables_to_blocked(BlockReason::ContainerStopped)
             .await;
 
         // Broadcast stopped state
         let _ = self.container_state_tx.send(ContainerState::Stopped);
 
         self.state = NodeState::Stopped { exit_code: None };
-        let _ = self
-            .state_tx
-            .send(StateEvent::Terminated {
+        crate::member_actor::events::emit(
+            &self.state_tx,
+            StateEvent::Terminated {
                 name: self.name.clone(),
-            })
-            .await;
-
-        // Update shared state directly
-        self.shared_state.insert(
-            self.name.clone(),
-            super::super::web_query::MemberState::Stopped,
-        );
+            },
+        )
+        .await;
 
         Ok(true) // Keep actor alive to receive Start commands
     }
@@ -241,12 +233,13 @@ impl ContainerActor {
         self.unregister_process(pid);
 
         // Drain load queue
-        self.drain_queue("Container restarting");
+        self.supervisor.drain_queue("Container restarting");
 
         self.clear_ros_clients();
 
         // Phase 12: Transition composable nodes to Blocked (will be reloaded on restart)
-        self.transition_all_composables_to_blocked(BlockReason::Stopped)
+        self.supervisor
+            .transition_all_composables_to_blocked(BlockReason::ContainerStopped)
             .await;
 
         // Transition to Pending to respawn
@@ -266,10 +259,11 @@ impl ContainerActor {
         );
 
         // Drain load queue before shutting down
-        self.drain_queue("Shutdown");
+        self.supervisor.drain_queue("Shutdown");
 
         // Phase 12: Transition composable nodes to Blocked
-        self.transition_all_composables_to_blocked(BlockReason::Shutdown)
+        self.supervisor
+            .transition_all_composables_to_blocked(BlockReason::Shutdown)
             .await;
 
         // On Unix, kill_process_group() already sent SIGTERM to all processes
@@ -293,18 +287,13 @@ impl ContainerActor {
         let _ = self.container_state_tx.send(ContainerState::Stopped);
 
         self.state = NodeState::Stopped { exit_code: None };
-        let _ = self
-            .state_tx
-            .send(StateEvent::Terminated {
+        crate::member_actor::events::emit(
+            &self.state_tx,
+            StateEvent::Terminated {
                 name: self.name.clone(),
-            })
-            .await;
-
-        // Update shared state directly
-        self.shared_state.insert(
-            self.name.clone(),
-            super::super::web_query::MemberState::Stopped,
-        );
+            },
+        )
+        .await;
 
         Ok(false) // Stop actor
     }
@@ -318,20 +307,15 @@ impl ContainerActor {
         );
 
         // Send respawning event
-        let _ = self
-            .state_tx
-            .send(StateEvent::Respawning {
+        crate::member_actor::events::emit(
+            &self.state_tx,
+            StateEvent::Respawning {
                 name: self.name.clone(),
                 attempt,
                 delay,
-            })
-            .await;
-
-        // Update shared state directly
-        self.shared_state.insert(
-            self.name.clone(),
-            super::super::web_query::MemberState::Respawning { attempt },
-        );
+            },
+        )
+        .await;
 
         // Check if max attempts reached
         if let Some(max_attempts) = self.config.max_respawn_attempts
@@ -349,19 +333,14 @@ impl ContainerActor {
             // Broadcast failed state
             let _ = self.container_state_tx.send(ContainerState::Failed);
 
-            let _ = self
-                .state_tx
-                .send(StateEvent::Failed {
+            crate::member_actor::events::emit(
+                &self.state_tx,
+                StateEvent::Failed {
                     name: self.name.clone(),
                     error: error_msg.clone(),
-                })
-                .await;
-
-            // Update shared state directly
-            self.shared_state.insert(
-                self.name.clone(),
-                super::super::web_query::MemberState::Failed { error: error_msg },
-            );
+                },
+            )
+            .await;
 
             return Ok(false); // Stop actor
         }
@@ -385,13 +364,9 @@ impl ContainerActor {
                         // Broadcast stopped state
                         let _ = self.container_state_tx.send(ContainerState::Stopped);
 
-                        let _ = self.state_tx.send(StateEvent::Terminated {
+                        crate::member_actor::events::emit(&self.state_tx, StateEvent::Terminated {
                             name: self.name.clone(),
                         }).await;
-
-                        // Update shared state directly
-                        self.shared_state
-                            .insert(self.name.clone(), super::super::web_query::MemberState::Stopped);
 
                         Ok(true) // Keep actor alive to receive Start commands
                     }
@@ -406,13 +381,9 @@ impl ContainerActor {
                     // Broadcast stopped state
                     let _ = self.container_state_tx.send(ContainerState::Stopped);
 
-                    let _ = self.state_tx.send(StateEvent::Terminated {
+                    crate::member_actor::events::emit(&self.state_tx, StateEvent::Terminated {
                         name: self.name.clone(),
                     }).await;
-
-                    // Update shared state directly
-                    self.shared_state
-                        .insert(self.name.clone(), super::super::web_query::MemberState::Stopped);
 
                     Ok(false) // Stop actor
                 } else {

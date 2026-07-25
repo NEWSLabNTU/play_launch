@@ -22,10 +22,6 @@ pub enum ControlEvent {
     ToggleRespawn(bool),
     /// Toggle auto-load on/off (composable nodes only)
     ToggleAutoLoad(bool),
-    /// Send specific signal to process (Unix only)
-    #[allow(dead_code)] // Semantic completeness — Web UI signal sending planned
-    #[cfg(unix)]
-    Kill(nix::sys::signal::Signal),
     /// Load a composable node (container actors only)
     LoadComposable {
         /// Name of the composable node
@@ -132,7 +128,7 @@ pub enum StateEvent {
         /// Composable node name
         name: String,
         /// Reason for blocking
-        reason: super::state::BlockReason,
+        reason: super::model::BlockReason,
     },
     /// Parameter(s) changed on a managed node (Phase 24)
     ParameterChanged {
@@ -143,9 +139,24 @@ pub enum StateEvent {
     },
 }
 
+/// Send a state event, logging instead of silently dropping on failure
+/// (phase-51.3: the reducer derives the web mirror from this stream, so a
+/// dropped event is a lost web transition — a real defect, not noise).
+/// `send().await` on the bounded channel only fails when the receiver is
+/// gone (shutdown teardown), so this logs at debug during normal exit
+/// paths would be noise — error is right: it should never happen mid-run.
+pub async fn emit(tx: &tokio::sync::mpsc::Sender<StateEvent>, event: StateEvent) {
+    if let Err(e) = tx.send(event).await {
+        tracing::error!(
+            "StateEvent for '{}' dropped — receiver gone: {:?}",
+            e.0.member_name(),
+            e.0
+        );
+    }
+}
+
 impl StateEvent {
-    /// Get the member name from this event
-    #[allow(dead_code)] // Used in tests, useful for event routing
+    /// Get the member name from this event (the reducer's map key)
     pub fn member_name(&self) -> &str {
         match self {
             StateEvent::Started { name, .. }
