@@ -38,6 +38,16 @@ use tracing::{debug, error, warn};
 /// Timeout for LoadNode/UnloadNode service calls.
 const SERVICE_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Follow-up LoadNode attempts get a longer budget: a busy single-threaded
+/// container executes composable ctors serially, so a later load's response
+/// legitimately arrives after Σ(preceding ctor times) — seen live with
+/// Autoware's adapi container (autoware_state/heartbeat) behind slow loads.
+const LOAD_RETRY_TIMEOUT: Duration = Duration::from_secs(60);
+/// Total LoadNode attempts (first + retries) before giving up.
+const LOAD_MAX_ATTEMPTS: usize = 3;
+/// Budget for the post-timeout ListNodes verification call.
+const LIST_VERIFY_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Interval for checking whether nodes stuck in Loading state should be
 /// promoted to Loaded (handles DDS event loss).
 const LOADING_TIMEOUT: Duration = Duration::from_secs(10);
@@ -136,6 +146,9 @@ pub struct ContainerActor {
     ros_node: Option<Arc<rclrs::Node>>,
     /// ROS service client for LoadNode
     load_client: Option<rclrs::Client<composition_interfaces::srv::LoadNode>>,
+    /// ListNodes client — verifies whether a timed-out LoadNode actually
+    /// landed before retrying (LoadNode is not idempotent).
+    list_client: Option<rclrs::Client<composition_interfaces::srv::ListNodes>>,
     /// ROS service client for UnloadNode
     unload_client: Option<rclrs::Client<composition_interfaces::srv::UnloadNode>>,
     /// ROS subscription for ComponentEvent messages (Phase 19.4a)
@@ -183,6 +196,7 @@ impl ContainerActor {
             load_control_rx,
             ros_node: params.ros_node,
             load_client: None,
+            list_client: None,
             unload_client: None,
             component_event_sub: None,
             component_event_rx: None,
@@ -309,6 +323,23 @@ impl ContainerActor {
                                     self.name, e
                                 );
                                 // Don't fail the container - composable nodes will get errors when trying to load
+                            }
+                        }
+
+                        // ListNodes client (for post-timeout load verification)
+                        let list_service_name =
+                            format!("{}/_container/list_nodes", self.full_node_name());
+                        match ros_node.create_client::<composition_interfaces::srv::ListNodes>(
+                            &list_service_name,
+                        ) {
+                            Ok(client) => {
+                                self.list_client = Some(client);
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "{}: Failed to create ListNodes service client: {:#}",
+                                    self.name, e
+                                );
                             }
                         }
 

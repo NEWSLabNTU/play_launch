@@ -4,8 +4,9 @@
 //! for loading and unloading composable nodes in a container.
 
 use super::{
-    ContainerActor, POST_SERVICE_READY_WARMUP, SERVICE_CALL_TIMEOUT,
-    SERVICE_NOT_READY_LOG_INTERVAL, SERVICE_POLL_INTERVAL,
+    ContainerActor, LIST_VERIFY_TIMEOUT, LOAD_MAX_ATTEMPTS, LOAD_RETRY_TIMEOUT,
+    POST_SERVICE_READY_WARMUP, SERVICE_CALL_TIMEOUT, SERVICE_NOT_READY_LOG_INTERVAL,
+    SERVICE_POLL_INTERVAL,
 };
 use crate::member_actor::container_control::{LoadNodeResponse, LoadParams};
 use eyre::{Context as _, Result};
@@ -18,6 +19,7 @@ impl ContainerActor {
     pub(super) async fn call_load_node_service(
         container_name: String,
         load_client: Option<rclrs::Client<composition_interfaces::srv::LoadNode>>,
+        list_client: Option<rclrs::Client<composition_interfaces::srv::ListNodes>>,
         params: LoadParams,
         start_time: std::time::Instant,
     ) -> Result<LoadNodeResponse> {
@@ -143,78 +145,162 @@ impl ContainerActor {
         );
         tokio::time::sleep(POST_SERVICE_READY_WARMUP).await;
 
-        // Phase 19.5b: Call service with 30s timeout (safety net -- ComponentEvent should arrive first)
-        debug!(
-            "{}: Initiating LoadNode service call for {}",
-            container_name, params.composable_name
-        );
+        // Attempt loop with post-timeout verification. A single-threaded
+        // container executes composable ctors SERIALLY, so a later load's
+        // response can legitimately exceed the flat timeout while the load
+        // still succeeds server-side. LoadNode is NOT idempotent, so before
+        // any retry we verify via ListNodes whether the component landed.
+        let expected_full_name = if params.node_namespace == "/" {
+            format!("/{}", params.node_name)
+        } else {
+            format!(
+                "{}/{}",
+                params.node_namespace.trim_end_matches('/'),
+                params.node_name
+            )
+        };
 
-        let response_future: rclrs::Promise<composition_interfaces::srv::LoadNode_Response> =
-            client
-                .call(&ros_request)
-                .context("Failed to initiate LoadNode service call")?;
+        let mut attempt = 0usize;
+        loop {
+            attempt += 1;
+            debug!(
+                "{}: Initiating LoadNode service call for {} (attempt {}/{})",
+                container_name, params.composable_name, attempt, LOAD_MAX_ATTEMPTS
+            );
 
-        debug!(
-            "{}: Waiting for LoadNode response for {}",
-            container_name, params.composable_name
-        );
+            let response_future: rclrs::Promise<composition_interfaces::srv::LoadNode_Response> =
+                client
+                    .call(&ros_request)
+                    .context("Failed to initiate LoadNode service call")?;
 
-        let service_timeout = SERVICE_CALL_TIMEOUT;
-        match tokio::time::timeout(service_timeout, response_future).await {
-            Ok(Ok(response)) => {
-                // Calculate timing metrics
-                let service_call_ms = start_time.elapsed().as_millis() as u64;
-                let queue_wait_ms =
-                    start_time.duration_since(params.request_time).as_millis() as u64;
-                let total_duration_ms = params.request_time.elapsed().as_millis() as u64;
+            let this_timeout = if attempt == 1 {
+                SERVICE_CALL_TIMEOUT
+            } else {
+                LOAD_RETRY_TIMEOUT
+            };
+            match tokio::time::timeout(this_timeout, response_future).await {
+                Ok(Ok(response)) => {
+                    let service_call_ms = start_time.elapsed().as_millis() as u64;
+                    let queue_wait_ms =
+                        start_time.duration_since(params.request_time).as_millis() as u64;
+                    let total_duration_ms = params.request_time.elapsed().as_millis() as u64;
 
-                if response.success {
-                    debug!(
-                        "{}: LoadNode SUCCESS for {}: unique_id={}, queue={}ms, service={}ms, total={}ms",
-                        container_name,
-                        params.composable_name,
-                        response.unique_id,
-                        queue_wait_ms,
-                        service_call_ms,
-                        total_duration_ms
-                    );
-                } else {
-                    warn!(
-                        "{}: LoadNode FAILED for {}: error='{}', queue={}ms, service={}ms, total={}ms",
-                        container_name,
-                        params.composable_name,
-                        response.error_message,
-                        queue_wait_ms,
-                        service_call_ms,
-                        total_duration_ms
-                    );
+                    if response.success {
+                        debug!(
+                            "{}: LoadNode SUCCESS for {}: unique_id={}, queue={}ms, service={}ms, total={}ms",
+                            container_name,
+                            params.composable_name,
+                            response.unique_id,
+                            queue_wait_ms,
+                            service_call_ms,
+                            total_duration_ms
+                        );
+                    } else {
+                        warn!(
+                            "{}: LoadNode FAILED for {}: error='{}', queue={}ms, service={}ms, total={}ms",
+                            container_name,
+                            params.composable_name,
+                            response.error_message,
+                            queue_wait_ms,
+                            service_call_ms,
+                            total_duration_ms
+                        );
+                    }
+
+                    return Ok(LoadNodeResponse {
+                        success: response.success,
+                        error_message: response.error_message.clone(),
+                        full_node_name: response.full_node_name.clone(),
+                        unique_id: response.unique_id,
+                        timing: crate::member_actor::container_control::LoadTimingMetrics {
+                            queue_wait_ms,
+                            service_call_ms,
+                            total_duration_ms,
+                        },
+                    });
                 }
+                Ok(Err(e)) => {
+                    warn!(
+                        "{}: LoadNode service call ERROR for {}: {:?}",
+                        container_name, params.composable_name, e
+                    );
+                    return Err(eyre::eyre!("Service call failed: {:?}", e));
+                }
+                Err(_) => {
+                    warn!(
+                        "{}: LoadNode service call timed out after {}s for {} (attempt {}/{})",
+                        container_name,
+                        this_timeout.as_secs(),
+                        params.composable_name,
+                        attempt,
+                        LOAD_MAX_ATTEMPTS
+                    );
 
-                Ok(LoadNodeResponse {
-                    success: response.success,
-                    error_message: response.error_message.clone(),
-                    full_node_name: response.full_node_name.clone(),
-                    unique_id: response.unique_id,
-                    timing: crate::member_actor::container_control::LoadTimingMetrics {
-                        queue_wait_ms,
-                        service_call_ms,
-                        total_duration_ms,
-                    },
-                })
+                    // Did the load actually land? (response lost / late)
+                    if let Some(unique_id) = Self::verify_component_loaded(
+                        &container_name,
+                        &list_client,
+                        &expected_full_name,
+                    )
+                    .await
+                    {
+                        warn!(
+                            "{}: {} confirmed loaded via ListNodes after timeout (unique_id={})",
+                            container_name, params.composable_name, unique_id
+                        );
+                        let service_call_ms = start_time.elapsed().as_millis() as u64;
+                        let queue_wait_ms =
+                            start_time.duration_since(params.request_time).as_millis() as u64;
+                        return Ok(LoadNodeResponse {
+                            success: true,
+                            error_message: String::new(),
+                            full_node_name: expected_full_name,
+                            unique_id,
+                            timing:
+                                crate::member_actor::container_control::LoadTimingMetrics {
+                                    queue_wait_ms,
+                                    service_call_ms,
+                                    total_duration_ms: params.request_time.elapsed().as_millis()
+                                        as u64,
+                                },
+                        });
+                    }
+
+                    if attempt >= LOAD_MAX_ATTEMPTS {
+                        return Err(eyre::eyre!(
+                            "LoadNode timed out after {} attempts (container busy?)",
+                            LOAD_MAX_ATTEMPTS
+                        ));
+                    }
+                    // Not loaded — safe to retry.
+                }
             }
-            Ok(Err(e)) => {
-                warn!(
-                    "{}: LoadNode service call ERROR for {}: {:?}",
-                    container_name, params.composable_name, e
+        }
+    }
+
+    /// Post-timeout verification: does the container already report
+    /// `expected_full_name` among its loaded nodes? Returns its unique_id.
+    async fn verify_component_loaded(
+        container_name: &str,
+        list_client: &Option<rclrs::Client<composition_interfaces::srv::ListNodes>>,
+        expected_full_name: &str,
+    ) -> Option<u64> {
+        let client = list_client.as_ref()?;
+        let request = composition_interfaces::srv::ListNodes_Request::default();
+        let future: rclrs::Promise<composition_interfaces::srv::ListNodes_Response> =
+            client.call(&request).ok()?;
+        match tokio::time::timeout(LIST_VERIFY_TIMEOUT, future).await {
+            Ok(Ok(response)) => response
+                .full_node_names
+                .iter()
+                .position(|n| n == expected_full_name)
+                .and_then(|i| response.unique_ids.get(i).copied()),
+            _ => {
+                debug!(
+                    "{}: ListNodes verification unavailable for {}",
+                    container_name, expected_full_name
                 );
-                Err(eyre::eyre!("Service call failed: {:?}", e))
-            }
-            Err(_) => {
-                warn!(
-                    "{}: LoadNode service call timed out after 30s for {}",
-                    container_name, params.composable_name
-                );
-                Err(eyre::eyre!("LoadNode service call timed out after 30s"))
+                None
             }
         }
     }

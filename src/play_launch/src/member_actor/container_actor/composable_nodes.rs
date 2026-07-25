@@ -71,6 +71,7 @@ impl ContainerActor {
             let composable_name = request.composable_name.clone();
             let container_name = self.name.clone();
             let load_client = self.load_client.clone();
+            let list_client = self.list_client.clone();
             let params = super::super::container_control::LoadParams {
                 composable_name: request.composable_name,
                 package: request.package,
@@ -86,8 +87,14 @@ impl ContainerActor {
 
             tokio::spawn(async move {
                 let result =
-                    Self::call_load_node_service(container_name, load_client, params, start_time)
-                        .await;
+                    Self::call_load_node_service(
+                        container_name,
+                        load_client,
+                        list_client,
+                        params,
+                        start_time,
+                    )
+                    .await;
                 let _ = tx.send(LoadCompletion {
                     composable_name,
                     result,
