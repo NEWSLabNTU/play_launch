@@ -30,6 +30,7 @@ impl ContainerActor {
         container_name: String,
         load_client: Option<rclrs::Client<composition_interfaces::srv::LoadNode>>,
         list_client: Option<rclrs::Client<composition_interfaces::srv::ListNodes>>,
+        has_event_sub: bool,
         params: LoadParams,
         start_time: std::time::Instant,
     ) -> Result<LoadNodeResponse> {
@@ -245,6 +246,37 @@ impl ContainerActor {
                         attempt,
                         LOAD_MAX_ATTEMPTS
                     );
+
+                    // play_launch containers (event sub present) are AUTHORITATIVE
+                    // via ComponentEvent: the isolated manager pre-assigns the id
+                    // and responds fast, and its ListNodes deliberately HIDES
+                    // mid-construction nodes — an Absent verdict here would lie
+                    // and a resend would double-load. Hand the outcome to the
+                    // event path instead (name-fallback matching + the stuck-
+                    // Loading promoter cover event loss).
+                    if has_event_sub {
+                        warn!(
+                            "{}: LoadNode response lost for {} — deferring to ComponentEvent",
+                            container_name, params.composable_name
+                        );
+                        let service_call_ms = start_time.elapsed().as_millis() as u64;
+                        let queue_wait_ms =
+                            start_time.duration_since(params.request_time).as_millis() as u64;
+                        return Ok(LoadNodeResponse {
+                            success: true,
+                            error_message:
+                                "LoadNode response lost; awaiting ComponentEvent".to_string(),
+                            full_node_name: expected_full_name,
+                            unique_id: 0,
+                            timing:
+                                crate::member_actor::container_control::LoadTimingMetrics {
+                                    queue_wait_ms,
+                                    service_call_ms,
+                                    total_duration_ms: params.request_time.elapsed().as_millis()
+                                        as u64,
+                                },
+                        });
+                    }
 
                     // Poll verification until DEFINITIVE. A busy blocking-mode
                     // container (multi-minute composable ctor, e.g. a TensorRT

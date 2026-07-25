@@ -26,6 +26,17 @@ fn pid_identity_ok(event: &play_launch_msgs::msg::ComponentEvent) -> bool {
         || play_launch::sched::proc_start_time(event.pid as u32) == Some(event.start_time)
 }
 
+/// Expected fully-qualified node name for a composable entry
+/// (namespace-joined; used for name-fallback ComponentEvent matching when
+/// the LoadNode response was lost and no unique_id is known).
+fn full_node_name_of(meta: &super::ComposableNodeMetadata) -> String {
+    if meta.namespace == "/" || meta.namespace.is_empty() {
+        format!("/{}", meta.node_name)
+    } else {
+        format!("{}/{}", meta.namespace.trim_end_matches('/'), meta.node_name)
+    }
+}
+
 impl ContainerActor {
     /// Handle a ComponentEvent message from the container (Phase 19.5a).
     ///
@@ -62,7 +73,19 @@ impl ContainerActor {
             .composable_nodes
             .iter()
             .find(|(_, e)| e.unique_id == Some(event.unique_id))
-            .map(|(name, _)| name.clone());
+            .map(|(name, _)| name.clone())
+            // Fallback: a lost LoadNode response leaves the entry Loading
+            // with unique_id None — claim it by full node name.
+            .or_else(|| {
+                self.composable_nodes
+                    .iter()
+                    .find(|(_, e)| {
+                        e.unique_id.is_none()
+                            && matches!(e.state, ComposableState::Loading { .. })
+                            && full_node_name_of(&e.metadata) == event.full_node_name
+                    })
+                    .map(|(name, _)| name.clone())
+            });
         let Some(composable_name) = found else {
             return; // No matching entry, ignore
         };
@@ -70,6 +93,7 @@ impl ContainerActor {
             if !matches!(entry.state, ComposableState::Loading { .. }) {
                 return; // Already handled by service response
             }
+            entry.unique_id = Some(event.unique_id);
             entry.state = ComposableState::Loaded {
                 unique_id: event.unique_id,
             };
@@ -160,12 +184,28 @@ impl ContainerActor {
         &mut self,
         event: &play_launch_msgs::msg::ComponentEvent,
     ) {
-        // Match by unique_id across ALL entries (parallel dispatch)
+        // Match by unique_id across ALL entries (parallel dispatch);
+        // name-fallback for lost-LoadNode-response entries (unique_id None).
+        // LOAD_FAILED may carry an empty full_node_name (ctor never ran), so
+        // fall back further to package+plugin for a Loading no-id entry.
         let found = self
             .composable_nodes
             .iter()
             .find(|(_, e)| e.unique_id == Some(event.unique_id))
-            .map(|(name, _)| name.clone());
+            .map(|(name, _)| name.clone())
+            .or_else(|| {
+                self.composable_nodes
+                    .iter()
+                    .find(|(_, e)| {
+                        e.unique_id.is_none()
+                            && matches!(e.state, ComposableState::Loading { .. })
+                            && (full_node_name_of(&e.metadata) == event.full_node_name
+                                || (event.full_node_name.is_empty()
+                                    && e.metadata.package == event.package_name
+                                    && e.metadata.plugin == event.plugin_name))
+                    })
+                    .map(|(name, _)| name.clone())
+            });
         let Some(composable_name) = found else {
             return;
         };

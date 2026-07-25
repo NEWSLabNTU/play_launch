@@ -72,6 +72,7 @@ impl ContainerActor {
             let container_name = self.name.clone();
             let load_client = self.load_client.clone();
             let list_client = self.list_client.clone();
+            let has_event_sub = self.component_event_sub.is_some();
             let params = super::super::container_control::LoadParams {
                 composable_name: request.composable_name,
                 package: request.package,
@@ -91,6 +92,7 @@ impl ContainerActor {
                         container_name,
                         load_client,
                         list_client,
+                        has_event_sub,
                         params,
                         start_time,
                     )
@@ -118,7 +120,12 @@ impl ContainerActor {
 
         match completion.result {
             Ok(response) if response.success => {
-                entry.unique_id = Some(response.unique_id);
+                // unique_id 0 = synthesized "response lost, awaiting
+                // ComponentEvent" — keep None so the event path's
+                // name-fallback matching can claim this entry.
+                if response.unique_id != 0 {
+                    entry.unique_id = Some(response.unique_id);
+                }
 
                 if !has_event_sub {
                     // Stock container: service response is the only signal, treat as loaded.
