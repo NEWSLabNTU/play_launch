@@ -5,6 +5,10 @@ UI, interception layer, and shared memory subsystems.
 
 ## Documents
 
+- [architecture-2026-07.md](architecture-2026-07.md) — 2026-07 refresh:
+  executor structure, antipatterns, web UI; root-cause of the
+  missing-nodes bug (GitHub issues #1-#6)
+
 - [security.md](security.md) — Security issues and mitigations
 - [bugs.md](bugs.md) — Bugs and code quality issues
 
