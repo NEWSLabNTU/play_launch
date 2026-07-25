@@ -640,6 +640,8 @@ mod model_tests {
                 sched_class: Some("SCHED_FIFO".to_string()),
                 preempt_threshold: None,
                 deadline_us: None,
+                budget_us: None,
+                period_us: None,
             });
         }
         m.execution.tiers.insert("ctrl".to_string(), tier);
