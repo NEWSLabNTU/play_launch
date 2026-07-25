@@ -75,13 +75,21 @@ function buildRosName(node) {
     return ns + '/' + (nn || '');
 }
 
-/** Facet chip strip with live counts (phase-50). */
-function FacetBar({ nodes, facet, setFacet }) {
+/** Facet chip strips with live counts: status (phase-50) + kind (phase-53). */
+function FacetBar({ nodes, facet, setFacet, kind, setKind }) {
     const counts = { all: nodes.length, active: 0, transitioning: 0, failed: 0, inactive: 0, blocked: 0 };
-    for (const n of nodes) counts[facetOf(n)]++;
+    const kindCounts = { all: nodes.length, node: 0, container: 0, composable_node: 0 };
+    for (const n of nodes) {
+        counts[facetOf(n)]++;
+        if (n.node_type in kindCounts) kindCounts[n.node_type]++;
+    }
     const chips = [
         ['all', 'All'], ['active', 'Active'], ['transitioning', 'Transitioning'],
         ['failed', 'Failed'], ['inactive', 'Inactive'], ['blocked', 'Blocked'],
+    ];
+    const kindChips = [
+        ['all', 'All kinds'], ['node', 'Nodes'],
+        ['container', 'Containers'], ['composable_node', 'Composables'],
     ];
     return html`
         <div class="facet-bar">
@@ -90,6 +98,14 @@ function FacetBar({ nodes, facet, setFacet }) {
                     class="facet-chip facet-${key} ${facet === key ? 'active' : ''}"
                     onClick=${() => setFacet(facet === key ? 'all' : key)}>
                     ${label} <span class="facet-count">${counts[key]}</span>
+                </button>
+            `)}
+            <span class="facet-divider"></span>
+            ${kindChips.map(([key, label]) => (key === 'all' || kindCounts[key] > 0) && html`
+                <button key=${'k:' + key}
+                    class="facet-chip ${kind === key ? 'active' : ''}"
+                    onClick=${() => setKind(kind === key ? 'all' : key)}>
+                    ${label} <span class="facet-count">${kindCounts[key]}</span>
                 </button>
             `)}
         </div>
@@ -101,6 +117,7 @@ export function NodeList() {
     const [filterTerm, setFilterTerm] = useState('');
     const [treeView, setTreeView] = useState(true);
     const [collapsedNs, setCollapsedNs] = useState(new Set());
+    const [kindFacet, setKindFacet] = useState('all');
     const facet = statusFacet.value;
     const setFacet = useCallback((f) => { statusFacet.value = f; }, []);
 
@@ -115,7 +132,7 @@ export function NodeList() {
 
     const grouped = useMemo(() => {
         const sorter = makeSorter(sortBy);
-        const matches = (n) => matchesFilter(n, filterTerm, facet, 'all');
+        const matches = (n) => matchesFilter(n, filterTerm, facet, kindFacet);
 
         if (!treeView) {
             // Flat mode: all nodes sorted together, no parent-child grouping
@@ -192,36 +209,66 @@ export function NodeList() {
         // preserving the chosen sort inside each group. Skipped under
         // activity sort — interleaving matters more there.
         const useNsGroups = sortBy !== 'activity';
-        const emit = (result, entry) => {
-            result.push({ node: entry.node, isChild: false });
+        const emit = (result, entry, depth) => {
+            result.push({ node: entry.node, isChild: false, depth });
             if (entry.type === 'container') {
                 const childrenToShow = entry.containerMatches ? entry.children : entry.matchingChildren;
                 for (const child of childrenToShow) {
-                    result.push({ node: child, isChild: true });
+                    result.push({ node: child, isChild: true, depth });
                 }
             }
         };
 
         const result = [];
         if (!useNsGroups) {
-            for (const entry of topLevel) emit(result, entry);
+            for (const entry of topLevel) emit(result, entry, 0);
             return result;
         }
 
-        const nsGroups = new Map(); // ns -> entries, insertion keeps sort inside group
+        // Phase-53.4: TRUE nested namespace tree — one level per namespace
+        // segment, collapsible at any level. Entries render before child
+        // namespaces; the chosen sort is preserved within each level.
+        const root = { path: '/', children: new Map(), entries: [] };
         for (const entry of topLevel) {
             const ns = entry.node.namespace || '/';
-            if (!nsGroups.has(ns)) nsGroups.set(ns, []);
-            nsGroups.get(ns).push(entry);
+            const segs = ns === '/' ? [] : ns.split('/').filter(Boolean);
+            let cur = root;
+            let path = '';
+            for (const seg of segs) {
+                path += '/' + seg;
+                if (!cur.children.has(seg)) {
+                    cur.children.set(seg, { path, children: new Map(), entries: [] });
+                }
+                cur = cur.children.get(seg);
+            }
+            cur.entries.push(entry);
         }
-        for (const ns of Array.from(nsGroups.keys()).sort()) {
-            const entries = nsGroups.get(ns);
-            result.push({ nsHeader: ns, count: entries.length });
-            if (collapsedNs.has(ns)) continue;
-            for (const entry of entries) emit(result, entry);
-        }
+
+        // Cards in a subtree = entries + their visible composable children
+        const cardCount = (n) => {
+            let c = 0;
+            for (const e of n.entries) {
+                c += 1;
+                if (e.type === 'container') {
+                    c += (e.containerMatches ? e.children : e.matchingChildren).length;
+                }
+            }
+            for (const child of n.children.values()) c += cardCount(child);
+            return c;
+        };
+
+        const walk = (n, depth) => {
+            for (const entry of n.entries) emit(result, entry, depth);
+            for (const seg of Array.from(n.children.keys()).sort()) {
+                const child = n.children.get(seg);
+                result.push({ nsHeader: child.path, seg, depth, count: cardCount(child) });
+                if (collapsedNs.has(child.path)) continue;
+                walk(child, depth + 1);
+            }
+        };
+        walk(root, 0);
         return result;
-    }, [allNodes, sortBy, filterTerm, facet, treeView, collapsedNs]);
+    }, [allNodes, sortBy, filterTerm, facet, kindFacet, treeView, collapsedNs]);
 
     const onFilterNamespace = useCallback((ns) => {
         setFilterTerm(ns);
@@ -255,11 +302,13 @@ export function NodeList() {
                     value=${filterTerm} onInput=${(e) => setFilterTerm(e.target.value)} />
                 <${BulkOperations} />
             </div>
-            <${FacetBar} nodes=${allNodes} facet=${facet} setFacet=${setFacet} />
+            <${FacetBar} nodes=${allNodes} facet=${facet} setFacet=${setFacet} kind=${kindFacet} setKind=${setKindFacet} />
             <div class="node-list">
                 ${grouped.length === 0 && html`<div class="no-nodes">No nodes found</div>`}
                 ${grouped.map((entry) => entry.nsHeader !== undefined ? html`
                     <div key=${'ns:' + entry.nsHeader} class="ns-group-header"
+                        style=${{ marginLeft: (entry.depth || 0) * 16 + 'px' }}
+                        title=${entry.nsHeader}
                         onClick=${() => {
                             const next = new Set(collapsedNs);
                             if (next.has(entry.nsHeader)) next.delete(entry.nsHeader);
@@ -267,12 +316,14 @@ export function NodeList() {
                             setCollapsedNs(next);
                         }}>
                         <span class="ns-group-arrow">${collapsedNs.has(entry.nsHeader) ? '▸' : '▾'}</span>
-                        <span class="ns-group-name">${entry.nsHeader}</span>
+                        <span class="ns-group-name">${entry.seg ? '/' + entry.seg : entry.nsHeader}</span>
                         <span class="ns-group-count">${entry.count}</span>
                     </div>
                 ` : html`
-                    <${NodeCard} key=${entry.node.id} node=${entry.node} isChild=${entry.isChild}
-                        onFilterNamespace=${onFilterNamespace} onViewNode=${onViewNode} />
+                    <div key=${entry.node.id} style=${{ marginLeft: (entry.depth || 0) * 16 + 'px' }}>
+                        <${NodeCard} node=${entry.node} isChild=${entry.isChild}
+                            onFilterNamespace=${onFilterNamespace} onViewNode=${onViewNode} />
+                    </div>
                 `)}
             </div>
         </div>

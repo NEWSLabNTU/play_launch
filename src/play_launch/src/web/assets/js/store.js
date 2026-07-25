@@ -114,13 +114,6 @@ export const nodeTopicCounts = computed(() => {
         }
     }
 
-    if (snap.services) {
-        for (const svc of snap.services) {
-            for (const server of svc.servers) {
-                // servers are FQN strings — need reverse lookup, skip for now
-            }
-        }
-    }
 
     return counts;
 });

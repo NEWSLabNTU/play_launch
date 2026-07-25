@@ -9,10 +9,11 @@ plans in `docs/roadmap/` phase docs.
 
 ## Open
 
-**#0006** — web UI organization: bare-name-first list, container-only
-tree, no status facets, three freshness mechanisms. See `0006-*`. (GH #6)
-
 ## Resolved
+
+**#0006** — web UI organization. Fixed by phases 50+53 (nested ns tree,
+facets, health strip, banner, backend dedup); membership SSE + CSS
+bundling deferred by design. See `0006-*`. (GH #6)
 
 **#0004** — hardcoded timeouts / flat CLI. Fixed by phase-52 LoadTimings
 config+CLI knobs and grouped CommonOptions. See `0004-*`. (GH #4)

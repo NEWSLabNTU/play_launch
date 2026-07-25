@@ -474,3 +474,11 @@ button:hover:not(:disabled) {
     background: #78350f;
     color: #fcd34d;
 }
+
+/* Phase-53: facet divider between status and kind chips */
+.facet-divider {
+    width: 1px;
+    align-self: stretch;
+    background: var(--border-color, #d1d5db);
+    margin: 0 4px;
+}
