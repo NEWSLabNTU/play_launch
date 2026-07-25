@@ -458,7 +458,8 @@ impl ReplayArgs {
     }
 }
 
-/// Common options shared across all commands
+/// Common options shared across all commands (phase-52.1: grouped into
+/// `#[command(flatten)]` concern structs — flag names are unchanged).
 #[derive(Args, Clone)]
 pub struct CommonOptions {
     /// Log directory for execution outputs
@@ -471,6 +472,31 @@ pub struct CommonOptions {
     #[arg(long, short = 'c', value_name = "PATH")]
     pub config: Option<PathBuf>,
 
+    /// Enable verbose output (INFO level logging).
+    /// Without this flag, only warnings and errors are shown.
+    /// Use RUST_LOG env var for debug-level logging.
+    #[arg(long, short = 'v')]
+    pub verbose: bool,
+
+    #[command(flatten)]
+    pub features: FeatureOptions,
+
+    #[command(flatten)]
+    pub containers: ContainerOptions,
+
+    #[command(flatten)]
+    pub web: WebOptions,
+
+    #[command(flatten)]
+    pub contract_opts: ContractOptions,
+
+    #[command(flatten)]
+    pub sched_opts: SchedOptions,
+}
+
+/// Feature toggles (monitoring / diagnostics / web UI)
+#[derive(Args, Clone, Default)]
+pub struct FeatureOptions {
     /// Enable only specific features. Can be specified multiple times.
     /// When used, only the specified features are enabled (others are disabled).
     /// Available features: monitoring, diagnostics, web-ui
@@ -496,13 +522,11 @@ pub struct CommonOptions {
     /// Resource sampling interval in milliseconds (overrides config file).
     #[arg(long, value_name = "MS")]
     pub monitor_interval_ms: Option<u64>,
+}
 
-    /// Enable verbose output (INFO level logging).
-    /// Without this flag, only warnings and errors are shown.
-    /// Use RUST_LOG env var for debug-level logging.
-    #[arg(long, short = 'v')]
-    pub verbose: bool,
-
+/// Container / composable-node behavior
+#[derive(Args, Clone)]
+pub struct ContainerOptions {
     /// Run composable nodes in standalone mode instead of loading into containers
     #[arg(long)]
     pub standalone_composable_nodes: bool,
@@ -522,11 +546,40 @@ pub struct CommonOptions {
     #[arg(long, value_enum, default_value = "isolated")]
     pub container_mode: ContainerMode,
 
+    /// Phase 52: per-composable total LoadNode budget in SECONDS while a
+    /// container is busy (overrides config
+    /// `composable_node_loading.load_total_budget_secs`, default 600).
+    /// Raise for containers whose composable ctors block for minutes
+    /// (e.g. TensorRT engine builds).
+    #[arg(long, value_name = "SECS")]
+    pub load_total_budget: Option<u64>,
+
+    /// Phase 52: timeout in SECONDS for the first LoadNode call per
+    /// composable (overrides config
+    /// `composable_node_loading.load_node_timeout_millis`, default 30s).
+    #[arg(long, value_name = "SECS")]
+    pub load_node_timeout: Option<u64>,
+
+    /// Phase 52: what to do when startup completes with failed members.
+    /// `continue`: keep running (web UI shows the failures) — the
+    /// pre-phase-52 behavior. `exit`: shut everything down and exit
+    /// non-zero, naming the failed members (CI mode).
+    #[arg(long, value_enum, default_value = "continue")]
+    pub on_startup_failure: OnStartupFailure,
+}
+
+/// Web UI options
+#[derive(Args, Clone)]
+pub struct WebOptions {
     /// Web UI address in IP:PORT format (default: 127.0.0.1:8080).
     /// Use 0.0.0.0:8080 to expose to network (insecure, use with caution).
     #[arg(long, value_name = "IP:PORT", default_value = "127.0.0.1:8080")]
     pub web_addr: String,
+}
 
+/// Contract / runtime-enforcement options
+#[derive(Args, Clone)]
+pub struct ContractOptions {
     /// Overlay root for user-supplied contracts, mirroring the launch tree:
     /// <dir>/<pkg>/launch/<stem>.contract.yaml. Checked before provider
     /// sidecars.
@@ -558,7 +611,11 @@ pub struct CommonOptions {
     /// default because nodes that don't handle init failure may crash.
     #[arg(long, default_value_t = false)]
     pub block_unauthorized_endpoints: bool,
+}
 
+/// Scheduling (Phase 38) options
+#[derive(Args, Clone)]
+pub struct SchedOptions {
     /// Phase 38: path to a scheduling platform file — v2 `.yaml` schema
     /// (mapper + resources + overrides) or legacy `.toml` (dispatched by
     /// extension; Phase 41.2). When set, replay derives + validates a plan
@@ -582,6 +639,15 @@ pub struct CommonOptions {
     pub sched_apply: SchedApplyMode,
 }
 
+/// Policy for a startup that completes with failed members (phase-52.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum OnStartupFailure {
+    /// Keep running; failures stay visible in the web UI and logs.
+    Continue,
+    /// Initiate shutdown and exit non-zero, naming the failed members.
+    Exit,
+}
+
 /// Runtime enforcement mode for manifest contracts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum EnforceMode {
@@ -600,22 +666,52 @@ impl Default for CommonOptions {
         Self {
             log_dir: PathBuf::from("play_log"),
             config: None,
-            enable: Vec::new(),
-            disable_monitoring: false,
-            disable_diagnostics: false,
-            disable_web_ui: false,
-            disable_all: false,
-            monitor_interval_ms: None,
             verbose: false,
+            features: FeatureOptions::default(),
+            containers: ContainerOptions::default(),
+            web: WebOptions::default(),
+            contract_opts: ContractOptions::default(),
+            sched_opts: SchedOptions::default(),
+        }
+    }
+}
+
+impl Default for ContainerOptions {
+    fn default() -> Self {
+        Self {
             standalone_composable_nodes: false,
             load_orphan_composable_nodes: false,
             disable_respawn: false,
             container_mode: ContainerMode::Isolated,
+            load_total_budget: None,
+            load_node_timeout: None,
+            on_startup_failure: OnStartupFailure::Continue,
+        }
+    }
+}
+
+impl Default for WebOptions {
+    fn default() -> Self {
+        Self {
             web_addr: "127.0.0.1:8080".to_string(),
+        }
+    }
+}
+
+impl Default for ContractOptions {
+    fn default() -> Self {
+        Self {
             contracts: None,
             no_provider_contracts: false,
             enforce_rules: EnforceMode::Warn,
             block_unauthorized_endpoints: false,
+        }
+    }
+}
+
+impl Default for SchedOptions {
+    fn default() -> Self {
+        Self {
             sched: None,
             target: "posix".to_string(),
             sched_apply: SchedApplyMode::Warn,
@@ -627,40 +723,40 @@ impl CommonOptions {
     /// Check if resource monitoring is enabled
     pub fn is_monitoring_enabled(&self) -> bool {
         // If --enable is used, check if monitoring is in the list
-        if !self.enable.is_empty() {
-            return self.enable.contains(&Feature::Monitoring);
+        if !self.features.enable.is_empty() {
+            return self.features.enable.contains(&Feature::Monitoring);
         }
         // Otherwise, enabled by default unless explicitly disabled
-        !self.disable_monitoring && !self.disable_all
+        !self.features.disable_monitoring && !self.features.disable_all
     }
 
     /// Check if diagnostic monitoring is enabled
     pub fn is_diagnostics_enabled(&self) -> bool {
         // If --enable is used, check if diagnostics is in the list
-        if !self.enable.is_empty() {
-            return self.enable.contains(&Feature::Diagnostics);
+        if !self.features.enable.is_empty() {
+            return self.features.enable.contains(&Feature::Diagnostics);
         }
         // Otherwise, enabled by default unless explicitly disabled
-        !self.disable_diagnostics && !self.disable_all
+        !self.features.disable_diagnostics && !self.features.disable_all
     }
 
     /// Check if web UI is enabled
     pub fn is_web_ui_enabled(&self) -> bool {
         // If --enable is used, check if web-ui is in the list
-        if !self.enable.is_empty() {
-            return self.enable.contains(&Feature::WebUi);
+        if !self.features.enable.is_empty() {
+            return self.features.enable.contains(&Feature::WebUi);
         }
         // Otherwise, enabled by default unless explicitly disabled
-        !self.disable_web_ui && !self.disable_all
+        !self.features.disable_web_ui && !self.features.disable_all
     }
 
     /// Parse web address into (IP, port) tuple
     pub fn parse_web_addr(&self) -> eyre::Result<(String, u16)> {
-        let parts: Vec<&str> = self.web_addr.rsplitn(2, ':').collect();
+        let parts: Vec<&str> = self.web.web_addr.rsplitn(2, ':').collect();
         if parts.len() != 2 {
             return Err(eyre::eyre!(
                 "Invalid web address format '{}'. Expected IP:PORT (e.g., 127.0.0.1:8080)",
-                self.web_addr
+                self.web.web_addr
             ));
         }
 
@@ -671,7 +767,7 @@ impl CommonOptions {
             eyre::eyre!(
                 "Invalid port number '{}' in web address '{}'",
                 port_str,
-                self.web_addr
+                self.web.web_addr
             )
         })?;
 
@@ -686,8 +782,10 @@ impl CommonOptions {
     /// `/etc/play_launch/contracts` — first existing wins.
     pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
         crate::ros::manifest_loader::ContractSources {
-            overlay: crate::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
-            provider: !self.no_provider_contracts,
+            overlay: crate::ros::manifest_loader::discover_overlay_root(
+                self.contract_opts.contracts.as_deref(),
+            ),
+            provider: !self.contract_opts.no_provider_contracts,
         }
     }
 }
