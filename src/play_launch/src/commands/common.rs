@@ -133,6 +133,7 @@ impl Drop for CleanupGuard {
     }
 }
 
+#[cfg(feature = "runtime")]
 /// Forward state events from runner to SSE broadcaster, then wait for all actors to complete.
 ///
 /// Combines event forwarding with completion waiting in a single task.

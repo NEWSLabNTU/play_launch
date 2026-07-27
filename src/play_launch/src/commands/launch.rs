@@ -74,6 +74,7 @@ pub(super) fn resolve_launch_file(
         package_or_path
     ))
 }
+#[cfg(feature = "runtime")]
 
 /// Handle the 'launch' subcommand: parse → resolve → replay, all in memory.
 pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
