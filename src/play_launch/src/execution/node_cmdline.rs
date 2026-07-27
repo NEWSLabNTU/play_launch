@@ -1,4 +1,4 @@
-use crate::ros::launch_dump::NodeRecord;
+use crate::ros::launch_dump::{NodeRecord, ParamSource};
 use eyre::{Context, bail};
 use itertools::{Itertools, chain};
 use ros_launch_manifest_model as model;
@@ -258,6 +258,24 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         .map(|r| (r.from.clone(), r.to.clone()))
         .collect();
 
+    // Phase-54 (issue 0007) — carry the ORDERED source list back onto the
+    // record, so a spawn driven from the MODEL (rather than a fresh dump)
+    // applies sources in ROS order instead of falling back to the split
+    // `params`/`params_files` views, where inline always wins.
+    let param_sources: Vec<ParamSource> = inst
+        .param_sources
+        .iter()
+        .map(|src| match src {
+            model::ParamSource::Inline { name, value } => ParamSource::Inline {
+                name: name.clone(),
+                value: param_value_to_record_string(value),
+            },
+            model::ParamSource::File { content } => ParamSource::File {
+                content: content.clone(),
+            },
+        })
+        .collect();
+
     NodeRecord {
         executable: inst.exec.clone().unwrap_or_default(),
         package: inst.pkg.clone(),
@@ -270,7 +288,7 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         exec_name: Some(fqn_name.to_string()),
         params,
         params_files: inst.params_files.clone(),
-        param_sources: Vec::new(),
+        param_sources,
         remaps,
         ros_args: (!inst.ros_args.is_empty()).then(|| inst.ros_args.clone()),
         args: (!inst.args.is_empty()).then(|| inst.args.clone()),
@@ -434,11 +452,10 @@ impl NodeCommandLine {
         // internal ordering conflict). Empty `param_sources` (older records)
         // falls through to the legacy set + overrides-last path below.
         let ordered_params_files: Vec<PathBuf> = {
-            use crate::ros::launch_dump::ParamSource;
             let mut out: Vec<PathBuf> = Vec::new();
             let mut run: Vec<(String, String)> = Vec::new();
             let mut idx = 0usize;
-            let mut flush_run =
+            let flush_run =
                 |run: &mut Vec<(String, String)>, idx: &mut usize, out: &mut Vec<PathBuf>| -> eyre::Result<()> {
                     if run.is_empty() {
                         return Ok(());
@@ -1290,6 +1307,7 @@ mod tests {
                 value: "0".to_string(),
             }],
             args: vec!["--verbose".to_string()],
+            param_sources: Vec::new(),
             params_files: vec!["/**:\n  ros__parameters:\n    voxel_size: 0.2\n".to_string()],
             raw_cmd: Vec::new(),
             extra_args: Default::default(),
@@ -1351,6 +1369,7 @@ mod tests {
             lifecycle: false,
             lifecycle_autostart: None,
             params: Default::default(),
+            param_sources: Vec::new(),
             criticality: None,
             remaps: Vec::new(),
             ros_args: Vec::new(),
@@ -1389,6 +1408,7 @@ mod tests {
             lifecycle: true,
             lifecycle_autostart: None,
             params: Default::default(),
+            param_sources: Vec::new(),
             criticality: None,
             remaps: Vec::new(),
             ros_args: Vec::new(),
@@ -1436,6 +1456,7 @@ mod tests {
             lifecycle: false,
             lifecycle_autostart: None,
             params: Default::default(),
+            param_sources: Vec::new(),
             criticality: None,
             remaps: Vec::new(),
             ros_args: Vec::new(),
