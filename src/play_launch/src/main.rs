@@ -1,18 +1,8 @@
-mod cli;
-mod commands;
-mod diagnostics;
-mod execution;
-mod interception;
-mod member_actor;
-mod monitoring;
-mod process;
-mod python;
-mod ros;
-mod runtime_enforcement;
-mod util;
-mod web;
+//! Thin entry point. All modules live in the library crate (see `lib.rs`) so
+//! that nano-ros can link the resolve pipeline instead of shelling out to a
+//! `play_launch` binary resolved through PATH (nano-ros #285).
 
-use crate::{cli::options::Options, util::logging::init_verbose};
+use play_launch::{cli::options::Options, util::logging::init_verbose};
 use clap::Parser;
 use tracing::{debug, warn};
 
@@ -47,39 +37,39 @@ fn main() -> eyre::Result<()> {
 
     // Route to appropriate handler based on subcommand
     match &opts.command {
-        cli::options::Command::Launch(args) => {
-            commands::handle_launch(args)?;
+        play_launch::cli::options::Command::Launch(args) => {
+            play_launch::commands::handle_launch(args)?;
         }
-        cli::options::Command::Run(args) => {
-            commands::handle_run(args)?;
+        play_launch::cli::options::Command::Run(args) => {
+            play_launch::commands::handle_run(args)?;
         }
-        cli::options::Command::Dump(args) => {
-            commands::handle_dump(args)?;
+        play_launch::cli::options::Command::Dump(args) => {
+            play_launch::commands::handle_dump(args)?;
         }
-        cli::options::Command::Replay(args) => {
-            commands::handle_replay(args)?;
+        play_launch::cli::options::Command::Replay(args) => {
+            play_launch::commands::handle_replay(args)?;
         }
-        cli::options::Command::Plot(args) => {
-            commands::handle_plot(args)?;
+        play_launch::cli::options::Command::Plot(args) => {
+            play_launch::commands::handle_plot(args)?;
         }
-        cli::options::Command::Setcap => {
-            commands::handle_setcap()?;
+        play_launch::cli::options::Command::Setcap => {
+            play_launch::commands::handle_setcap()?;
         }
-        cli::options::Command::Verify => {
-            commands::handle_verify()?;
+        play_launch::cli::options::Command::Verify => {
+            play_launch::commands::handle_verify()?;
         }
-        cli::options::Command::Context(args) => {
-            commands::handle_context(args)?;
+        play_launch::cli::options::Command::Context(args) => {
+            play_launch::commands::handle_context(args)?;
         }
-        cli::options::Command::Check(args) => {
-            commands::handle_check_manifest(args)?;
+        play_launch::cli::options::Command::Check(args) => {
+            play_launch::commands::handle_check_manifest(args)?;
         }
-        cli::options::Command::Resolve(args) => {
-            commands::handle_resolve(args)?;
+        play_launch::cli::options::Command::Resolve(args) => {
+            play_launch::commands::handle_resolve(args)?;
         }
-        cli::options::Command::Contract(args) => match &args.subcommand {
-            cli::options::ContractSubcommand::Eject(eject_args) => {
-                commands::handle_contract_eject(eject_args)?;
+        play_launch::cli::options::Command::Contract(args) => match &args.subcommand {
+            play_launch::cli::options::ContractSubcommand::Eject(eject_args) => {
+                play_launch::commands::handle_contract_eject(eject_args)?;
             }
         },
     }
