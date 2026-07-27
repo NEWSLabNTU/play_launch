@@ -1,6 +1,6 @@
 # Phase 54: Parameter source ordering — one ordered list, ROS-faithful
 
-**Status:** 🚧 In progress (2026-07-27) — 54.1/54.2/54.3 + the cmdline half of 54.5 landed; 54.4 (shared model crate) next.
+**Status:** ✅ Complete (2026-07-27) — 54.1–54.5 landed; nano-ros pin bump follows in that repo.
 **Fixes:** issue 0007 — inline `<param>` always wins over a later
 `<param from=>`, diverging from ROS 2.
 **Design:** issue 0007 §"Verified against ROS 2" + §"A vs B, decided"
@@ -62,13 +62,32 @@ longer have precedence — only position does.
   fold it with file semantics (`ros__parameters` sections, wildcards), never
   as a bare key/value overlay.
   **Done when:** `resolved_params` (nano-ros side) can fold the list in order;
-  model golden round-trip green.
+  model golden round-trip green. ✅ DONE — rlm `c4683d4`:
+  `NodeInstance.param_sources` + `ParamSource::{Inline,File}`; when the list is
+  non-empty `resolved_params` folds it IN ORDER and ignores the legacy split
+  entirely (folding both would restore "inline always wins"). Pre-54 models,
+  which carry only the split view, resolve exactly as before. The per-file
+  merge was factored into `merge_param_file` so both paths share one matcher.
+  Wired on the play_launch side in BOTH directions: `model_builder` lowers the
+  record's list into the model, and `node_record_from_instance` carries it back
+  onto the record — without the second half a spawn driven from a MODEL rather
+  than a fresh dump silently kept the old bug.
 
 - **54.5 — regression fixture + tests.** A launch with
   `<param name="a" value="1"/>` then `<param from="a_is_2.yaml"/>`, asserted
   on BOTH paths: the resolved model (later file wins → 2) and the spawned
   cmdline (the file appears after the inline chunk). Plus the mirror case
   (file then inline → inline wins) so the fix is not just an inversion.
+  ✅ DONE, in three places:
+  - cmdline (`node_cmdline`): `ordered_params_files_render_in_list_order_and_suppress_overrides`
+    + `legacy_path_still_renders_overrides_last`.
+  - model fold (rlm `params_projection`): `inline_then_file_lets_the_file_win`,
+    `file_then_inline_lets_the_inline_win` (the mirror case),
+    `ordered_list_shadows_the_legacy_split_views`,
+    `empty_ordered_list_falls_back_to_the_legacy_split`,
+    `file_sources_fold_left_to_right`.
+  - lowering (`model_builder`): `param_sources_lower_in_order_and_the_later_file_wins`
+    — record → model → `resolved_params` end to end.
 
 ## Non-goals
 
@@ -86,3 +105,16 @@ old readers green; 54.3 flips the spawn path to consume it; 54.4 propagates to
 the shared model crate (pin bump on the nano-ros side follows). The two
 `params`/`params_files` views are removed in a later release once no consumer
 reads them.
+
+## Follow-on (other repo)
+
+nano-ros vendors the same `model` crate: bump its
+`packages/cli/third-party/ros-launch-manifest` pin to `c4683d4` so the
+compile-time bake folds in ROS order. No nano-ros code change is needed —
+`resolved_params` is the seam, and it now prefers the ordered list itself.
+
+## Known-unrelated breakage seen while testing
+
+`src/play_launch/src/member_actor/mod.rs` (test target) fails to compile:
+`MemberCoordinator` no longer exists (only `MemberCoordinatorBuilder`).
+Pre-existing on main, untouched by this phase.
