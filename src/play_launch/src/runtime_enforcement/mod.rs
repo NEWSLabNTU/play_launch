@@ -31,10 +31,7 @@ use std::{
 use serde::Serialize;
 use tracing::{debug, warn};
 
-use crate::{
-    cli::options::EnforceMode,
-    interception::{EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk},
-};
+use crate::{cli::options::EnforceMode, interception::{EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk}};
 pub mod view;
 pub use view::ContractView;
 
@@ -1174,7 +1171,7 @@ fn durability_name(v: i32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ros::manifest_loader::ManifestIndex;
+    use ros_launch_resolve::ros::manifest_loader::ManifestIndex;
 
     #[test]
     fn reliability_matrix() {
@@ -1194,10 +1191,8 @@ mod tests {
 
     #[test]
     fn qos_match_runtime_fires_on_incompatible_pair() {
-        use crate::{
-            interception::{EventKind, InterceptionEvent},
-            ros::manifest_loader::ResolvedTopic,
-        };
+        use crate::{interception::{EventKind, InterceptionEvent}};
+use ros_launch_resolve::ros::manifest_loader::ResolvedTopic;
 
         // Build a minimal ManifestIndex containing one topic.
         let mut index = ManifestIndex::default();
@@ -1311,10 +1306,8 @@ mod tests {
 
     #[test]
     fn lifecycle_gating_default_unknown_blocks_check() {
-        use crate::{
-            interception::{EventKind, InterceptionEvent},
-            ros::manifest_loader::{ResolvedManifest, ResolvedTopic},
-        };
+        use crate::{interception::{EventKind, InterceptionEvent}};
+use ros_launch_resolve::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
         use ros_launch_manifest_types::{Manifest, NodeDecl};
 
         // Build a manifest where `talker` is lifecycle=true and publishes
@@ -1341,7 +1334,7 @@ mod tests {
             pkg: None,
             file: String::new(),
             ns: "/".to_string(),
-            channel: crate::ros::manifest_loader::ContractChannel::Provider,
+            channel: ros_launch_resolve::ros::manifest_loader::ContractChannel::Provider,
             contract_path: std::path::PathBuf::new(),
             manifest,
             source: String::new(),
@@ -1416,10 +1409,8 @@ mod tests {
 
     #[test]
     fn consistency_runtime_fires_on_type_mismatch() {
-        use crate::{
-            interception::{EventKind, InterceptionEvent},
-            ros::manifest_loader::ResolvedTopic,
-        };
+        use crate::{interception::{EventKind, InterceptionEvent}};
+use ros_launch_resolve::ros::manifest_loader::ResolvedTopic;
 
         let mut index = ManifestIndex::default();
         let fqn = "/chatter".to_string();
@@ -1474,10 +1465,8 @@ mod tests {
 
     #[test]
     fn max_age_runtime_fires_when_stamp_too_old() {
-        use crate::{
-            interception::{EventKind, InterceptionEvent},
-            ros::manifest_loader::{ResolvedManifest, ResolvedTopic},
-        };
+        use crate::{interception::{EventKind, InterceptionEvent}};
+use ros_launch_resolve::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
         use ros_launch_manifest_types::{Manifest, NodeDecl};
 
         // Build manifest: subscriber declares max_age_ms=10.
@@ -1500,7 +1489,7 @@ mod tests {
             pkg: None,
             file: String::new(),
             ns: "/".to_string(),
-            channel: crate::ros::manifest_loader::ContractChannel::Provider,
+            channel: ros_launch_resolve::ros::manifest_loader::ContractChannel::Provider,
             contract_path: std::path::PathBuf::new(),
             manifest,
             source: String::new(),

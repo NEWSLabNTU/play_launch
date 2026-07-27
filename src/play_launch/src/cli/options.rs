@@ -64,10 +64,6 @@ pub enum Command {
         play_launch run demo_nodes_cpp talker --ros-args -p topic:=chatter")]
     Run(RunArgs),
 
-    /// Dump launch execution without replaying — emits the SystemModel
-    /// (the only dump artifact; Phase 47.B2 retired `record.json`)
-    Dump(DumpArgs),
-
     /// Replay from a SystemModel (the sole replay source; Phase 47.B3
     /// retired the legacy `record.json`/`--input-file` compat path)
     #[command(after_help = "Examples:\n  \
@@ -77,12 +73,6 @@ pub enum Command {
         play_launch replay --model system_model.yaml --web-addr 0.0.0.0:8080")]
     Replay(ReplayArgs),
 
-    /// Plot resource usage from execution logs
-    #[command(after_help = "Examples:\n  \
-        play_launch plot\n  \
-        play_launch plot --log-dir play_log/2025-10-28_16-17-56\n  \
-        play_launch plot --metrics cpu memory")]
-    Plot(PlotArgs),
 
     /// Grant CAP_SYS_PTRACE to the I/O helper (for per-process I/O
     /// monitoring). Requires sudo. NOTE: the main binary is deliberately NOT
@@ -121,11 +111,6 @@ pub enum Command {
         play_launch resolve /path/to/launch.xml --sched system.posix.yaml mode:=velodyne")]
     Resolve(ResolveArgs),
 
-    /// Manage contract/platform-file overlays (Phase 41.4, design §3.3)
-    #[command(after_help = "Examples:\n  \
-        play_launch contract eject rt_demo bringup.launch.xml\n  \
-        play_launch contract eject rt_demo bringup.launch.xml --into ~/.config/play_launch/contracts")]
-    Contract(ContractArgs),
 }
 
 /// Arguments for `play_launch contract`
@@ -272,9 +257,9 @@ impl CheckArgs {
     /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
     /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
     /// `/etc/play_launch/contracts` — first existing wins.
-    pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
-        crate::ros::manifest_loader::ContractSources {
-            overlay: crate::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
+    pub fn contract_sources(&self) -> ros_launch_resolve::ros::manifest_loader::ContractSources {
+        ros_launch_resolve::ros::manifest_loader::ContractSources {
+            overlay: ros_launch_resolve::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
             provider: !self.no_provider_contracts,
         }
     }
@@ -780,9 +765,9 @@ impl CommonOptions {
     /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
     /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
     /// `/etc/play_launch/contracts` — first existing wins.
-    pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
-        crate::ros::manifest_loader::ContractSources {
-            overlay: crate::ros::manifest_loader::discover_overlay_root(
+    pub fn contract_sources(&self) -> ros_launch_resolve::ros::manifest_loader::ContractSources {
+        ros_launch_resolve::ros::manifest_loader::ContractSources {
+            overlay: ros_launch_resolve::ros::manifest_loader::discover_overlay_root(
                 self.contract_opts.contracts.as_deref(),
             ),
             provider: !self.contract_opts.no_provider_contracts,

@@ -24,42 +24,22 @@ path = "src/bin/play_launch_io_helper/main.rs"
 name = "play_launch_rt_helper"
 path = "src/bin/play_launch_rt_helper/main.rs"
 
-[features]
-# nano-ros #285 / RFC-0059 — `runtime` carries everything that talks to a live
-# ROS graph: rclrs + the colcon-generated `play_launch_msgs`. Those are not
-# ordinary registry deps; `colcon-cargo-ros2` generates them from the ament
-# environment and patches them in, which is why they are pinned `"*"`. Anything
-# that links them therefore needs play_launch's full colcon setup to build.
-#
-# The `resolve` pipeline (launch_dump -> manifest_loader -> model_builder ->
-# sched_loader) touches none of it, so `--no-default-features` yields a
-# library that builds under plain cargo with no ROS, no ament and no colcon.
-# That is what lets nano-ros link the resolver into its own small helper.
-default = ["runtime"]
-runtime = [
-    "dep:rclrs",
-    "dep:play_launch_msgs",
-    "dep:composition_interfaces",
-    "dep:diagnostic_msgs",
-    "dep:lifecycle_msgs",
-    "dep:rcl_interfaces",
-]
-
 [dependencies]
 chrono = "0.4"
 clap = { version = "4.5.16", features = ["derive"] }
-composition_interfaces = { version = "*", optional = true }
+composition_interfaces = "*"
 csv = "1.3"
 dashmap = "6.1"
-diagnostic_msgs = { version = "*", optional = true }
-lifecycle_msgs = { version = "*", optional = true }
+diagnostic_msgs = "*"
+lifecycle_msgs = "*"
 eyre = "0.6.12"
-play_launch_msgs = { version = "*", optional = true }
-play_launch_parser = { path = "../play_launch_parser/crates/play_launch_parser" }
-ros-launch-manifest-types = { path = "../ros-launch-manifest/types" }
-ros-launch-manifest-check = { path = "../ros-launch-manifest/check" }
-ros-launch-manifest-sched = { path = "../ros-launch-manifest/sched" }
-ros-launch-manifest-model = { path = "../ros-launch-manifest/model" }
+play_launch_msgs = "*"
+play_launch_parser = { path = "../ros-launch-resolve/parser/crates/play_launch_parser" }
+ros-launch-resolve = { path = "../ros-launch-resolve/resolve" }
+ros-launch-manifest-types = { path = "../ros-launch-resolve/third-party/ros-launch-manifest/types" }
+ros-launch-manifest-check = { path = "../ros-launch-resolve/third-party/ros-launch-manifest/check" }
+ros-launch-manifest-sched = { path = "../ros-launch-resolve/third-party/ros-launch-manifest/sched" }
+ros-launch-manifest-model = { path = "../ros-launch-resolve/third-party/ros-launch-manifest/model" }
 spsc_shm = { path = "../spsc_shm" }
 futures = "0.3.30"
 glob = "0.3"
@@ -69,9 +49,9 @@ libc = "0.2"
 nix = { version = "0.29", features = ["signal", "process"] }
 num_cpus = "1.16"
 nvml-wrapper = "0.11"
-rcl_interfaces = { version = "*", optional = true }
+rcl_interfaces = "*"
 thiserror = "1.0"
-rclrs = { version = "0.7", optional = true }
+rclrs = "0.7"
 rayon = "1.10.0"
 serde = { version = "1.0.209", features = ["derive"] }
 sha2 = "0.10"

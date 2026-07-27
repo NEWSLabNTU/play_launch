@@ -43,14 +43,8 @@ fn main() -> eyre::Result<()> {
         play_launch::cli::options::Command::Run(args) => {
             play_launch::commands::handle_run(args)?;
         }
-        play_launch::cli::options::Command::Dump(args) => {
-            play_launch::commands::handle_dump(args)?;
-        }
         play_launch::cli::options::Command::Replay(args) => {
             play_launch::commands::handle_replay(args)?;
-        }
-        play_launch::cli::options::Command::Plot(args) => {
-            play_launch::commands::handle_plot(args)?;
         }
         play_launch::cli::options::Command::Setcap => {
             play_launch::commands::handle_setcap()?;
@@ -67,11 +61,6 @@ fn main() -> eyre::Result<()> {
         play_launch::cli::options::Command::Resolve(args) => {
             play_launch::commands::handle_resolve(args)?;
         }
-        play_launch::cli::options::Command::Contract(args) => match &args.subcommand {
-            play_launch::cli::options::ContractSubcommand::Eject(eject_args) => {
-                play_launch::commands::handle_contract_eject(eject_args)?;
-            }
-        },
     }
 
     Ok(())

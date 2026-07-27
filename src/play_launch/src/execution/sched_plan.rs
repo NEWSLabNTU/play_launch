@@ -21,15 +21,12 @@ use std::{
 use eyre::Result;
 use ros_launch_manifest_sched::DEFAULT_TIER;
 
-use crate::{
-    cli::options::ContainerMode,
-    execution::sched_apply::{AppliedTier, SchedApplyMode, SchedPolicy},
-    ros::{
-        launch_dump::LaunchDump,
-        manifest_loader::ManifestIndex,
-        sched_loader::{derive_sched_plan, fqn_for},
-    },
+use ros_launch_resolve::ros::{
+    launch_dump::LaunchDump,
+    manifest_loader::ManifestIndex,
+    sched_loader::{derive_sched_plan, fqn_for},
 };
+use crate::{cli::options::ContainerMode, execution::sched_apply::{AppliedTier, SchedApplyMode, SchedPolicy}, };
 
 /// Per-FQN scheduling plan, resolved once at startup and consulted by actors
 /// as processes come up.
@@ -41,7 +38,7 @@ pub struct SchedPlan {
     pub warnings: Vec<String>,
     /// Every node FQN that participates in a resolved `chains:` declaration
     /// (Phase 44.4) — threaded through from
-    /// [`crate::ros::sched_loader::DerivedSchedPlan::chain_member_nodes`],
+    /// [`ros_launch_resolve::ros::sched_loader::DerivedSchedPlan::chain_member_nodes`],
     /// consumed by [`chain_container_colocation_warnings`]. Empty for
     /// [`SchedPlan::from_model`] (the Phase 43.3 `SystemModel` execution
     /// layer carries bindings, not chain structure — a known gap, not this
@@ -53,7 +50,7 @@ impl SchedPlan {
     /// Parse the scheduling platform file at `sched_path` (v2 `.yaml` or
     /// legacy `.toml`, dispatched by extension), run the full
     /// derive→override→validate pipeline
-    /// (`ros::sched_loader::derive_sched_plan`) for `target`, and invert the
+    /// (`ros_launch_resolve::ros::sched_loader::derive_sched_plan`) for `target`, and invert the
     /// resulting tier membership into a per-FQN lookup.
     ///
     /// `index` is the resolved contract index (if any manifests were
@@ -265,7 +262,7 @@ pub fn chain_colocation_warnings_for_plan(
 /// **Placement decision**: computed here, at launch/replay time
 /// (`commands::replay`, after `container_contexts`/`SchedPlan` are both
 /// built), rather than at `check` time
-/// (`ros::sched_loader::derive_sched_plan`/`check_sched`). `--container-mode`
+/// (`ros_launch_resolve::ros::sched_loader::derive_sched_plan`/`check_sched`). `--container-mode`
 /// is a *runtime replay flag* with no equivalent at `check` time (`check`
 /// only parses+validates a launch file and its contracts — it never decides
 /// how containers will actually be spawned), so the mode this warning keys

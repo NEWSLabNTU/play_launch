@@ -4,18 +4,11 @@ use super::{
     common::{CleanupGuard, build_tokio_runtime, forward_state_events_and_wait},
     signal_handler::{self, CompletionContext},
 };
-use crate::{
-    cli,
-    cli::config::load_runtime_config,
-    execution::context::{
+use ros_launch_resolve::ros::launch_dump::LaunchDump;
+use crate::{cli, cli::config::load_runtime_config, execution::context::{
         ComposableNodeContextSet, prepare_composable_node_contexts_from_model,
         prepare_container_contexts_from_model, prepare_node_contexts_from_model,
-    },
-    monitoring::resource_monitor::MonitorConfig,
-    ros::{container_readiness::SERVICE_DISCOVERY_HANDLE, launch_dump::LaunchDump},
-    util::{log_dir::create_log_dir, logging::is_verbose},
-    web,
-};
+    }, monitoring::resource_monitor::MonitorConfig, ros::{container_readiness::SERVICE_DISCOVERY_HANDLE, }, util::{log_dir::create_log_dir, logging::is_verbose}, web};
 use eyre::Context;
 use futures::stream::FuturesUnordered;
 use rclrs::IntoPrimitiveOptions;
@@ -60,10 +53,10 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     // faithful; for full mapper provenance run `check --sched --explain`, which
     // re-derives. Works off-host (no ManifestIndex needed).
     if args.explain {
-        let footer = crate::ros::sched_loader::explain_footer_from_model(&system_model);
+        let footer = ros_launch_resolve::ros::sched_loader::explain_footer_from_model(&system_model);
         eprint!(
             "{}",
-            crate::ros::sched_loader::render_explain_from_model(
+            ros_launch_resolve::ros::sched_loader::render_explain_from_model(
                 &system_model,
                 &args.common.sched_opts.target,
                 &footer
@@ -739,7 +732,7 @@ pub(crate) async fn play(
                 // needs a `LaunchDump` numeric scope id this context
                 // doesn't carry on the model path.
                 let fqn = context.model_fqn.clone().unwrap_or_else(|| {
-                    crate::ros::sched_loader::fqn_for(
+                    ros_launch_resolve::ros::sched_loader::fqn_for(
                         &launch_dump,
                         context.record.namespace.as_deref(),
                         &member_name,
@@ -781,7 +774,7 @@ pub(crate) async fn play(
             pgid: Some(pgid),
             sched: sched_plan.as_ref().and_then(|p| {
                 let fqn = context.node_context.model_fqn.clone().unwrap_or_else(|| {
-                    crate::ros::sched_loader::fqn_for(
+                    ros_launch_resolve::ros::sched_loader::fqn_for(
                         &launch_dump,
                         context.node_context.record.namespace.as_deref(),
                         &member_name,
@@ -818,7 +811,7 @@ pub(crate) async fn play(
         // no FQN recompute at apply time, no C++/Rust FQN-format dependency.
         let composable_tier = sched_plan.as_ref().and_then(|p| {
             let fqn = context.model_fqn.clone().unwrap_or_else(|| {
-                crate::ros::sched_loader::fqn_for(
+                ros_launch_resolve::ros::sched_loader::fqn_for(
                     &launch_dump,
                     Some(&context.record.namespace),
                     &context.record.node_name,
@@ -1261,10 +1254,10 @@ pub(crate) async fn play(
 fn launch_tree_from_model(
     model: &ros_launch_manifest_model::SystemModel,
 ) -> (
-    Vec<crate::ros::launch_dump::ScopeEntry>,
+    Vec<ros_launch_resolve::ros::launch_dump::ScopeEntry>,
     std::collections::HashMap<String, usize>,
 ) {
-    use crate::ros::launch_dump::{ScopeEntry, ScopeOrigin};
+    use ros_launch_resolve::ros::launch_dump::{ScopeEntry, ScopeOrigin};
 
     let ids: std::collections::HashMap<&str, usize> = model
         .structure

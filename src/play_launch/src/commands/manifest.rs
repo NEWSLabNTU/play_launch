@@ -1,6 +1,7 @@
 //! `play_launch check` — parse a launch file and check manifest contracts.
 
-use crate::{cli::options::CheckArgs, ros::manifest_loader};
+use crate::{cli::options::CheckArgs};
+use ros_launch_resolve::ros::manifest_loader;
 use eyre::Result;
 use ros_launch_manifest_check::{
     Diagnostic, Severity, emit::diagnostic::emit_diagnostics, run_checks_with_spans,
@@ -24,7 +25,7 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
 
     // Convert to LaunchDump (reuse existing deserialization path)
     let json = serde_json::to_string(&record)?;
-    let dump: crate::ros::launch_dump::LaunchDump = serde_json::from_str(&json)?;
+    let dump: ros_launch_resolve::ros::launch_dump::LaunchDump = serde_json::from_str(&json)?;
 
     eprintln!(
         "Parsed: {} scopes, {} nodes, {} containers, {} composable nodes",
@@ -44,7 +45,7 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
     // a validation step — it runs regardless of rule filters/errors below
     // and doesn't affect the exit code.
     if let Some(export_path) = &args.export_graph {
-        crate::ros::causal_graph::export_to_file(&index, export_path)?;
+        ros_launch_resolve::ros::causal_graph::export_to_file(&index, export_path)?;
         eprintln!("Exported causal graph to {}", export_path.display());
     }
 
@@ -57,7 +58,7 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
     // `sources.overlay` is already the discovered root (see
     // `CheckArgs::contract_sources`), so both channels agree on which root
     // is in play.
-    let resolved_platform = crate::ros::sched_loader::resolve_platform_file(
+    let resolved_platform = ros_launch_resolve::ros::sched_loader::resolve_platform_file(
         &dump,
         args.sched.as_deref(),
         sources.overlay.as_deref(),
@@ -70,14 +71,14 @@ pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
             resolved.channel,
             resolved.path.display()
         );
-        let derived = crate::ros::sched_loader::check_sched(
+        let derived = ros_launch_resolve::ros::sched_loader::check_sched(
             &dump,
             Some(&index),
             &resolved.path,
             &args.target,
         )?;
         if args.explain {
-            crate::ros::sched_loader::print_explain(&derived, resolved, Some(&index));
+            ros_launch_resolve::ros::sched_loader::print_explain(&derived, resolved, Some(&index));
         }
     } else if args.explain {
         eprintln!(

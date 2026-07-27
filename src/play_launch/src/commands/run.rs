@@ -1,17 +1,8 @@
 //! Run command - execute a single ROS node
 
 use super::common::{CleanupGuard, build_tokio_runtime, forward_state_events_and_wait};
-use crate::{
-    cli,
-    cli::config::load_runtime_config,
-    execution::context::prepare_node_contexts,
-    member_actor::{ActorConfig, MemberCoordinatorBuilder},
-    monitoring::resource_monitor::MonitorConfig,
-    process::kill_process_group,
-    ros::launch_dump::LaunchDump,
-    util::{log_dir::create_log_dir, logging::is_verbose},
-    web,
-};
+use crate::{cli, cli::config::load_runtime_config, execution::context::prepare_node_contexts, member_actor::{ActorConfig, MemberCoordinatorBuilder}, monitoring::resource_monitor::MonitorConfig, process::kill_process_group, util::{log_dir::create_log_dir, logging::is_verbose}, web};
+use ros_launch_resolve::ros::launch_dump::LaunchDump;
 use eyre::WrapErr;
 use futures::stream::{FuturesUnordered, StreamExt};
 use std::{
@@ -29,7 +20,7 @@ const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from
 const SHUTDOWN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
-    use crate::ros::launch_dump::{LaunchDump, NodeRecord};
+    use ros_launch_resolve::ros::launch_dump::{LaunchDump, NodeRecord};
 
     info!("Running single node: {} {}", args.package, args.executable);
 
@@ -208,7 +199,7 @@ async fn run_direct(
     // (`CommonOptions::contract_sources`) are shared with contract
     // resolution regardless.
     let sched_sources = common.contract_sources();
-    let resolved_sched = crate::ros::sched_loader::resolve_platform_file(
+    let resolved_sched = ros_launch_resolve::ros::sched_loader::resolve_platform_file(
         launch_dump,
         common.sched_opts.sched.as_deref(),
         sched_sources.overlay.as_deref(),
@@ -310,7 +301,7 @@ async fn run_direct(
             output_dir: context.output_dir.clone(),
             pgid: Some(pgid),
             sched: sched_plan.as_ref().and_then(|p| {
-                let fqn = crate::ros::sched_loader::fqn_for(
+                let fqn = ros_launch_resolve::ros::sched_loader::fqn_for(
                     launch_dump,
                     context.record.namespace.as_deref(),
                     &member_name,

@@ -1,8 +1,6 @@
 use super::node_cmdline::NodeCommandLine;
-use crate::{
-    cli::options::ContainerMode,
-    ros::launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord},
-};
+use crate::{cli::options::ContainerMode};
+use ros_launch_resolve::ros::launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord};
 use eyre::bail;
 use rayon::prelude::*;
 use ros_launch_manifest_model as model;

@@ -74,7 +74,6 @@ pub(super) fn resolve_launch_file(
         package_or_path
     ))
 }
-#[cfg(feature = "runtime")]
 
 /// Handle the 'launch' subcommand: parse → resolve → replay, all in memory.
 pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
@@ -102,7 +101,7 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
             super::parse_launch_arguments(&args.launch_arguments)
                 .into_iter()
                 .collect();
-        let model = super::resolve::build_checked_model(super::resolve::ModelBuildInputs {
+        let model = ros_launch_resolve::model::build_checked_model(ros_launch_resolve::model::ModelBuildInputs {
             dump: &dump,
             launch_path: Some(&launch_path),
             arg_binding,

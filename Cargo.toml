@@ -2,10 +2,12 @@
 resolver = "3"
 members = [
     "src/play_launch",
-    "src/play_launch_parser/crates/play_launch_parser",
 ]
 exclude = [
     "tests",
+    # RFC-0060 layer 2 — its own workspace, vendored as a submodule. Listing it
+    # as a member here would merge the two graphs and defeat the split.
+    "src/ros-launch-resolve",
     "src/vendor/rcl_interception_sys",
     "src/spsc_shm",
 ]

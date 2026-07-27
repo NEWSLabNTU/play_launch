@@ -28,7 +28,7 @@ pub(crate) fn build_tokio_runtime() -> eyre::Result<tokio::runtime::Runtime> {
     Ok(runtime)
 }
 
-/// Parse a launch file into an in-memory [`crate::ros::launch_dump::LaunchDump`]
+/// Parse a launch file into an in-memory [`ros_launch_resolve::ros::launch_dump::LaunchDump`]
 /// — the parser-agnostic intermediate `resolve`/`launch` build a SystemModel
 /// from. Phase 47.B4/B5: no user-facing artifact results from this. The
 /// Rust parser path never touches disk (parse → JSON string → deserialize,
@@ -46,7 +46,7 @@ pub(crate) async fn parse_to_launch_dump(
     launch_file: Option<&str>,
     launch_arguments: &[String],
     parser: ParserBackend,
-) -> eyre::Result<(crate::ros::launch_dump::LaunchDump, std::path::PathBuf)> {
+) -> eyre::Result<(ros_launch_resolve::ros::launch_dump::LaunchDump, std::path::PathBuf)> {
     let launch_path = super::launch::resolve_launch_file(package_or_path, launch_file)?;
 
     let dump = match parser {
@@ -84,7 +84,7 @@ pub(crate) async fn parse_to_launch_dump(
                 )
                 .await?;
             let dump =
-                crate::ros::launch_dump::load_launch_dump(&scratch_path).wrap_err_with(|| {
+                ros_launch_resolve::ros::launch_dump::load_launch_dump(&scratch_path).wrap_err_with(|| {
                     format!("loading Python-parsed record {}", scratch_path.display())
                 })?;
             let _ = std::fs::remove_file(&scratch_path);
@@ -92,7 +92,7 @@ pub(crate) async fn parse_to_launch_dump(
             // Phase 46.5 — fail loud on a stale pre-Phase-40.1 Python install
             // (missing `ScopeOrigin.path`). Shared across every caller so
             // stale usage can never silently pass anywhere.
-            crate::ros::launch_dump::ensure_python_scope_paths(&dump)?;
+            ros_launch_resolve::ros::launch_dump::ensure_python_scope_paths(&dump)?;
             dump
         }
     };
@@ -133,7 +133,6 @@ impl Drop for CleanupGuard {
     }
 }
 
-#[cfg(feature = "runtime")]
 /// Forward state events from runner to SSE broadcaster, then wait for all actors to complete.
 ///
 /// Combines event forwarding with completion waiting in a single task.

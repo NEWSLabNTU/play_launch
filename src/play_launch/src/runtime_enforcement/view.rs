@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ros_launch_manifest_model as model;
 
-use crate::ros::manifest_loader::ManifestIndex;
+use ros_launch_resolve::ros::manifest_loader::ManifestIndex;
 
 /// What the engine needs of one declared topic.
 #[derive(Debug, Clone, Default)]
@@ -173,7 +173,7 @@ mod tests {
         let mut index = ManifestIndex::default();
         index.topics.insert(
             "/a/points".to_string(),
-            crate::ros::manifest_loader::ResolvedTopic {
+            ros_launch_resolve::ros::manifest_loader::ResolvedTopic {
                 fqn: "/a/points".to_string(),
                 msg_type: "sensor_msgs/msg/PointCloud2".to_string(),
                 qos: None,
@@ -212,12 +212,12 @@ mod tests {
         manifest.nodes.insert("filter".to_string(), sub_node);
         index.manifests.insert(
             0,
-            crate::ros::manifest_loader::ResolvedManifest {
+            ros_launch_resolve::ros::manifest_loader::ResolvedManifest {
                 scope_id: 0,
                 pkg: None,
                 file: "x.yaml".to_string(),
                 ns: "/a".to_string(),
-                channel: crate::ros::manifest_loader::ContractChannel::Provider,
+                channel: ros_launch_resolve::ros::manifest_loader::ContractChannel::Provider,
                 contract_path: std::path::PathBuf::from("x.yaml"),
                 manifest,
                 source: String::new(),

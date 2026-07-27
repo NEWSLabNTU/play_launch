@@ -1,6 +1,3 @@
-[submodule "src/play_launch_parser"]
-	path = src/play_launch_parser
-	url = https://github.com/jerry73204/play_launch_parser.git
 [submodule "src/vendor/ros2_rust"]
 	path = src/vendor/ros2_rust
 	url = https://github.com/jerry73204/ros2_rust.git
@@ -10,12 +7,12 @@
 [submodule "src/vendor/rcl_interception_sys"]
 	path = src/vendor/rcl_interception_sys
 	url = https://github.com/jerry73204/rcl_interception_sys.git
-[submodule "src/ros-launch-manifest"]
-	path = src/ros-launch-manifest
-	url = https://github.com/NEWSLabNTU/ros-launch-manifest.git
 [submodule "src/play_launch_container"]
 	path = src/play_launch_container
 	url = https://github.com/NEWSLabNTU/play_launch_container.git
 [submodule "src/play_launch_msgs"]
 	path = src/play_launch_msgs
 	url = https://github.com/NEWSLabNTU/play_launch_msgs.git
+[submodule "src/ros-launch-resolve"]
+	path = src/ros-launch-resolve
+	url = https://github.com/NEWSLabNTU/ros-launch-resolve.git

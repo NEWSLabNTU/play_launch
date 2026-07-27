@@ -1,38 +1,22 @@
 //! Command handlers
 
-#[cfg(feature = "runtime")]
 pub mod capabilities;
 pub(crate) mod common;
 pub mod context;
-pub mod contract;
-pub mod dump;
 pub mod launch;
-#[cfg(feature = "runtime")]
 pub mod manifest;
-pub mod plot;
-#[cfg(feature = "runtime")]
 pub mod replay;
-pub mod resolve;
-#[cfg(feature = "runtime")]
+pub mod resolve_compat;
 pub mod run;
-#[cfg(feature = "runtime")]
 pub(crate) mod signal_handler;
 
 // Re-export command handlers
-#[cfg(feature = "runtime")]
 pub use capabilities::{handle_setcap, handle_verify};
 pub use context::handle_context;
-pub use contract::handle_contract_eject;
-pub use dump::handle_dump;
-#[cfg(feature = "runtime")]
 pub use launch::handle_launch;
-#[cfg(feature = "runtime")]
 pub use manifest::handle_check_manifest;
-pub use plot::handle_plot;
-#[cfg(feature = "runtime")]
 pub use replay::handle_replay;
-pub use resolve::handle_resolve;
-#[cfg(feature = "runtime")]
+pub use resolve_compat::handle_resolve;
 pub use run::handle_run;
 
 use std::collections::HashMap;

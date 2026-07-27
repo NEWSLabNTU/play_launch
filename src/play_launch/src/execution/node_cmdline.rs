@@ -1,4 +1,4 @@
-use crate::ros::launch_dump::{NodeRecord, ParamSource};
+use ros_launch_resolve::ros::launch_dump::{NodeRecord, ParamSource};
 use eyre::{Context, bail};
 use itertools::{Itertools, chain};
 use ros_launch_manifest_model as model;
