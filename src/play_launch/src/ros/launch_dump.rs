@@ -119,6 +119,11 @@ pub struct NodeContainerRecord {
     #[serde(default)]
     pub params: Vec<(String, ParameterValue)>,
     pub params_files: Vec<String>,
+    /// phase-54 (issue 0007) — the ORDERED source list; `params`/`params_files`
+    /// are the legacy split views. Additive: absent on older records, where the
+    /// legacy files-then-inline path still applies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_sources: Vec<ParamSource>,
     #[serde(default)]
     pub remaps: Vec<(String, String)>,
     pub ros_args: Option<Vec<String>>,
@@ -136,6 +141,17 @@ pub struct NodeContainerRecord {
     pub scope: Option<usize>,
 }
 
+/// phase-54 (issue 0007) — one parameter source in ROS's ordered model.
+/// Mirrors the parser's `record::types::ParamSource`: `launch_ros` keeps ONE
+/// ordered list per node and emits `--params-file`/`-p` in that order, so kind
+/// carries no precedence — position does.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ParamSource {
+    Inline { name: String, value: String },
+    File { content: String },
+}
+
 /// The serialization format for a ROS node record.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NodeRecord {
@@ -147,6 +163,11 @@ pub struct NodeRecord {
     #[serde(default)]
     pub params: Vec<(String, ParameterValue)>,
     pub params_files: Vec<String>,
+    /// phase-54 (issue 0007) — the ORDERED source list; `params`/`params_files`
+    /// are the legacy split views. Additive: absent on older records, where the
+    /// legacy files-then-inline path still applies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_sources: Vec<ParamSource>,
     #[serde(default)]
     pub remaps: Vec<(String, String)>,
     pub ros_args: Option<Vec<String>>,
