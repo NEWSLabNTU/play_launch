@@ -3,13 +3,16 @@ pub mod causal_dag_global;
 pub mod causal_graph;
 pub mod chain_checks;
 #[allow(dead_code)] // Infrastructure spawned at startup; query path not yet wired
+#[cfg(feature = "runtime")]
 pub mod container_readiness;
+#[cfg(feature = "runtime")]
 pub mod graph_builder;
 pub mod launch_dump;
 pub mod manifest_graph;
 pub mod manifest_loader;
 pub mod model_builder;
 pub mod parameter_conversion;
+#[cfg(feature = "runtime")]
 pub mod parameter_proxy;
 pub mod parameter_types;
 pub mod sched_derive;
