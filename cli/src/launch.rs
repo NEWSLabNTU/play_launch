@@ -1,17 +1,11 @@
-//! Launch command - parse, resolve, and replay a launch file in one shot
+//! Locating a launch file from a package name or a path.
 //!
-//! Phase 47.B4 — the internal round-trip is fully in-memory: no
-//! `record.json` (or any other file) is written to disk anywhere on this
-//! path. The launch file is parsed straight into a [`LaunchDump`], a
-//! SystemModel is built from it in memory, and both are handed directly to
-//! the replay engine (`commands::replay::play`) — the same function
-//! `play_launch replay` uses, just called in-process instead of through a
-//! second CLI invocation.
+//! `handle_launch` — which parsed, resolved and then REPLAYED in one shot —
+//! stayed in play_launch with the replay engine it drives. What the resolver
+//! needs from this module is only the path lookup (RFC-0060).
 
-use crate::options::LaunchArgs;
 use eyre::Result;
-use std::{collections::BTreeMap, path::PathBuf};
-use tracing::info;
+use std::path::PathBuf;
 
 /// Resolve launch file path from package name or direct path
 pub(super) fn resolve_launch_file(
@@ -73,48 +67,4 @@ pub(super) fn resolve_launch_file(
         package_or_path,
         package_or_path
     ))
-}
-#[cfg(feature = "runtime")]
-
-/// Handle the 'launch' subcommand: parse → resolve → replay, all in memory.
-pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
-    play_launch_parser::block_command_substitution(args.block_commands);
-
-    let runtime = crate::common::build_tokio_runtime()?;
-    runtime.block_on(async move {
-        info!("Step 1/3: Parsing launch file...");
-        let (dump, launch_path) = crate::common::parse_to_launch_dump(
-            &args.package_or_path,
-            args.launch_file.as_deref(),
-            &args.launch_arguments,
-            args.parser,
-        )
-        .await?;
-        info!(
-            "Parsed: {} node(s), {} container(s), {} composable node(s)",
-            dump.node.len(),
-            dump.container.len(),
-            dump.load_node.len()
-        );
-
-        info!("Step 2/3: Resolving SystemModel...");
-        let arg_binding: BTreeMap<String, String> =
-            crate::common::parse_launch_arguments(&args.launch_arguments)
-                .into_iter()
-                .collect();
-        let model = super::resolve::build_checked_model(super::resolve::ModelBuildInputs {
-            dump: &dump,
-            launch_path: Some(&launch_path),
-            arg_binding,
-            contracts: args.common.contract_opts.contracts.as_deref(),
-            no_provider_contracts: args.common.contract_opts.no_provider_contracts,
-            sched: args.common.sched_opts.sched.as_deref(),
-            system: None,
-            target: args.common.sched_opts.target.as_str(),
-            explain: false,
-        })?;
-
-        info!("Step 3/3: Replaying launch execution...");
-        super::replay::play(dump, std::sync::Arc::new(model), &args.common).await
-    })
 }
