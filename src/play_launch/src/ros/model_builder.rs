@@ -273,6 +273,7 @@ fn synthesize_tiers(derived: &DerivedSchedPlan) -> BTreeMap<String, TierDef> {
             // on TierDef below), no sub-table split.
             budget_us: None,
             period_us: None,
+            time_slice_us: None,
         };
         let mut def = TierDef {
             class: t.class.clone(),
