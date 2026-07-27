@@ -113,8 +113,10 @@ nano-ros vendors the same `model` crate: bump its
 compile-time bake folds in ROS order. No nano-ros code change is needed —
 `resolved_params` is the seam, and it now prefers the ordered list itself.
 
-## Known-unrelated breakage seen while testing
+## Known-unrelated breakage seen while testing (fixed)
 
-`src/play_launch/src/member_actor/mod.rs` (test target) fails to compile:
-`MemberCoordinator` no longer exists (only `MemberCoordinatorBuilder`).
-Pre-existing on main, untouched by this phase.
+`src/play_launch/src/member_actor/mod.rs`'s module doctest failed to compile:
+it used `MemberCoordinator`, a type the builder/runner split replaced.
+Pre-existing on main, untouched by this phase; rewritten against the real API
+(`MemberCoordinatorBuilder::new().spawn(None)` → `(MemberHandle, MemberRunner)`,
+events read off the runner).

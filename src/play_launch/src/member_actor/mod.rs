@@ -10,21 +10,26 @@
 //! - **State Machine**: Explicit state enum (visible in code)
 //! - **Control Events**: Commands sent TO actors (Stop, Restart, etc.)
 //! - **State Events**: Status updates sent FROM actors (Started, Exited, etc.)
-//! - **Coordinator**: Lightweight coordinator for spawning/tracking actors
+//! - **Builder**: [`MemberCoordinatorBuilder`] collects member definitions, then
+//!   `spawn`s them, yielding a [`MemberHandle`] (control) + [`MemberRunner`]
+//!   (state-event stream)
 //!
 //! # Example
 //!
 //! ```no_run
-//! use play_launch::member_actor::{MemberCoordinator, events::StateEvent};
+//! use play_launch::member_actor::{MemberCoordinatorBuilder, events::StateEvent};
 //!
 //! # async fn example() -> eyre::Result<()> {
-//! let mut coordinator = MemberCoordinator::new();
+//! let builder = MemberCoordinatorBuilder::new();
 //!
-//! // Spawn actors (implementation-specific)
-//! // coordinator.spawn_regular_node(...).await?;
+//! // Collect members (implementation-specific)
+//! // builder.add_regular_node(...);
+//!
+//! // Spawn them; `handle` controls the members, `runner` reports their state.
+//! let (_handle, mut runner) = builder.spawn(None).await;
 //!
 //! // Process state events
-//! while let Some(event) = coordinator.next_state_event().await {
+//! while let Some(event) = runner.next_state_event().await {
 //!     match event {
 //!         StateEvent::Started { name, pid } => {
 //!             println!("Node {} started with PID {}", name, pid);
