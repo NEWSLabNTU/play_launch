@@ -1356,7 +1356,7 @@ pub(crate) fn explain_footer(
 /// scheduling-platform-file channels were never consulted, since the model
 /// already carries the applied plan) — names the mapper the model itself
 /// recorded (`execution.sched.mapper`) instead of a file path.
-pub(crate) fn explain_footer_from_model(model: &ros_launch_manifest_model::SystemModel) -> String {
+pub fn explain_footer_from_model(model: &ros_launch_manifest_model::SystemModel) -> String {
     use std::fmt::Write as _;
 
     // Phase 45.10 — the resolved sched plan (mapper/ranks/chains) is no longer
