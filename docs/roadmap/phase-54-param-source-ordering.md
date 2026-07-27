@@ -95,8 +95,16 @@ longer have precedence — only position does.
   param file on request; our model carries content verbatim. Recorded as a
   related gap in issue 0007, not fixed here.
 - Within-file section precedence (`/**` before more specific) is rcl's job on
-  the spawn path and already implemented in nano-ros's bake matcher; this
-  phase must not regress it, but does not change it.
+  the spawn path and was implemented in nano-ros's bake matcher; this phase
+  must not regress it, but does not change it.
+  **Follow-up (2026-07-27):** that turned out to be false for the path that
+  ships. The model's `resolved_params` merged a file's sections in TEXTUAL
+  order, so a file writing the node block above `/**` resolved to the
+  wildcard's value; only nano-ros's launch-path duplicate — dead since its R4
+  retirement — had the rule right. Fixed in the model (rlm `48e8d70`,
+  specificity-ordered merge) and the duplicate deleted, so there is one
+  implementation left. Lesson: "already implemented elsewhere" is worth
+  checking is implemented in the copy that runs.
 
 ## Rollout
 
