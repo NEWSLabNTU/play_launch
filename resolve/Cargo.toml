@@ -1,0 +1,29 @@
+# The resolve pipeline: LaunchDump -> manifests -> SystemModel -> schedule.
+#
+# Lifted from play_launch's `ros/` module with history preserved. Depends on
+# the spec layer and the launch parser; deliberately NOT on rclrs, generated
+# messages, or anything requiring colcon.
+[package]
+name = "ros-launch-resolve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Resolve a ROS 2 launch tree into a checked SystemModel"
+
+[dependencies]
+ros-launch-manifest-types = { workspace = true }
+ros-launch-manifest-model = { workspace = true }
+ros-launch-manifest-sched = { workspace = true }
+ros-launch-manifest-check = { workspace = true }
+play_launch_parser = { workspace = true }
+eyre = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml_ng = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

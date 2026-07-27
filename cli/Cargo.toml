@@ -1,0 +1,20 @@
+# The `ros-launch-resolve` binary — the verbs that operate on a launch tree
+# without needing a ROS graph: resolve, dump, contract, plot.
+[package]
+name = "ros-launch-resolve-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI for ros-launch-resolve"
+
+[[bin]]
+name = "ros-launch-resolve"
+path = "src/main.rs"
+
+[dependencies]
+ros-launch-resolve = { path = "../resolve" }
+ros-launch-manifest-model = { workspace = true }
+ros-launch-manifest-check = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+eyre = { workspace = true }
