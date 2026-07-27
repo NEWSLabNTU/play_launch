@@ -235,8 +235,17 @@ pub fn build_checked_model(
         let cfg = ros_launch_manifest_model::system_config::parse_system_config(&text)
             .map_err(|e| eyre::eyre!("parsing {}: {e}", sys_path.display()))?;
         let node_fqns: Vec<&str> = model.structure.nodes.keys().map(|s| s.as_str()).collect();
+        // nano-ros issue 0291 — tell placement WHICH launch file this is, so
+        // `[deploy.*]` blocks scoped with `launch = "…"` are filtered out when
+        // they name a different one. Without it every scoped block counted
+        // against every launch file and the multi-block rule fired on configs
+        // that are correct.
         let diags = cfg
-            .apply_to(&mut model.execution, &node_fqns)
+            .apply_to_launch(
+                &mut model.execution,
+                &node_fqns,
+                launch_path.and_then(|p| p.file_name()).and_then(|n| n.to_str()),
+            )
             .map_err(|e| eyre::eyre!(e))?;
         // `[lifecycle] autostart` lives in the structure layer (per-node), so
         // it is applied here rather than in the execution-only `apply_to`.
