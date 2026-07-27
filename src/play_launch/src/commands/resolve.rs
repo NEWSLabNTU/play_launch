@@ -218,12 +218,19 @@ pub fn build_checked_model(
             declared_tiers: tiers.clone(),
         });
 
+    // Issue 0293 — `meta.inputs` paths are recorded relative to the bringup
+    // package (the launch file's grandparent: `<bringup>/launch/x.launch.xml`)
+    // so a COMMITTED model is portable. The consumer resolves them against its
+    // own bringup dir; an absolute path from the resolving machine silently
+    // failed `.exists()` everywhere else.
+    let input_base = launch_path.and_then(|p| p.parent()).and_then(|p| p.parent());
     let mut model = model_builder::build_system_model(
         dump,
         &index,
         sched_inputs.as_ref(),
         arg_binding,
         &input_paths,
+        input_base,
     );
 
     // R1-P1 — integrator system config fills the execution layer
@@ -259,12 +266,11 @@ pub fn build_checked_model(
         {
             use sha2::Digest as _;
             let bytes = std::fs::read(sys_path)?;
-            let canon = std::fs::canonicalize(sys_path).unwrap_or_else(|_| sys_path.to_path_buf());
             model
                 .meta
                 .inputs
                 .push(ros_launch_manifest_model::InputHash {
-                    path: canon.display().to_string(),
+                    path: ros_launch_manifest_model::input_path_string(sys_path, input_base),
                     sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
                 });
             model.meta.inputs.sort_by(|a, b| a.path.cmp(&b.path));
