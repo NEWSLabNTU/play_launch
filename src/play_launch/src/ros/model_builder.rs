@@ -18,7 +18,7 @@ use ros_launch_manifest_types::{DropSpec, EndpointProps, QosDecl};
 use sha2::{Digest, Sha256};
 
 use crate::ros::{
-    launch_dump::{self, LaunchDump, ScopeEntry},
+    launch_dump::{LaunchDump, ScopeEntry},
     manifest_loader::ManifestIndex,
     sched_loader::DerivedSchedPlan,
 };
@@ -354,48 +354,26 @@ pub fn build_system_model(
     // R1-M4 producer side — lower the record's string params into typed
     // ParamValues (bool/int/float sniffed, else string). The embedded
     // consumer reads params from the model (it has no record.json).
-    fn lower_param_value(v: &str) -> model::ParamValue {
-        match v {
-            "true" => model::ParamValue::Bool(true),
-            "false" => model::ParamValue::Bool(false),
-            s => {
-                if let Ok(i) = s.parse::<i64>() {
-                    model::ParamValue::Int(i)
-                } else if let Ok(f) = s.parse::<f64>() {
-                    model::ParamValue::Float(f)
-                } else {
-                    model::ParamValue::Str(s.to_string())
-                }
-            }
-        }
-    }
-
     fn lower_params(
         params: &[(String, String)],
     ) -> std::collections::BTreeMap<String, model::ParamValue> {
         params
             .iter()
-            .map(|(k, v)| (k.clone(), lower_param_value(v)))
-            .collect()
-    }
-
-    // Phase-54 (issue 0007) — the ORDERED parameter-source list. `params` +
-    // `params_files` above are the legacy split views: they cannot say which
-    // of an inline `<param>` and a `<param from=>` came last, so a consumer
-    // reading them alone always lets inline win. This list carries the order
-    // ROS actually applies (globals at the head; one element per `<param>`),
-    // and `NodeInstance::resolved_params` prefers it when non-empty.
-    fn lower_param_sources(sources: &[launch_dump::ParamSource]) -> Vec<model::ParamSource> {
-        sources
-            .iter()
-            .map(|src| match src {
-                launch_dump::ParamSource::Inline { name, value } => model::ParamSource::Inline {
-                    name: name.clone(),
-                    value: lower_param_value(value),
-                },
-                launch_dump::ParamSource::File { content } => model::ParamSource::File {
-                    content: content.clone(),
-                },
+            .map(|(k, v)| {
+                let pv = match v.as_str() {
+                    "true" => model::ParamValue::Bool(true),
+                    "false" => model::ParamValue::Bool(false),
+                    s => {
+                        if let Ok(i) = s.parse::<i64>() {
+                            model::ParamValue::Int(i)
+                        } else if let Ok(f) = s.parse::<f64>() {
+                            model::ParamValue::Float(f)
+                        } else {
+                            model::ParamValue::Str(s.to_string())
+                        }
+                    }
+                };
+                (k.clone(), pv)
             })
             .collect()
     }
@@ -524,7 +502,9 @@ pub fn build_system_model(
                 args: n.args.clone().unwrap_or_default(),
                 // GAP-3: resolved external param YAML content, verbatim.
                 params_files: n.params_files.clone(),
-                param_sources: lower_param_sources(&n.param_sources),
+                // phase-54: play_launch fills the legacy split views (`params` +
+                // `params_files`); an EMPTY ordered list tells consumers to use them.
+                param_sources: Vec::new(),
                 // GAP-5: <executable> tags (no package) carry their raw
                 // command line here; real ROS nodes leave this empty.
                 raw_cmd: if n.package.is_none() {
@@ -574,7 +554,9 @@ pub fn build_system_model(
                 env: lower_env(c.env.as_deref()),
                 args: c.args.clone().unwrap_or_default(),
                 params_files: c.params_files.clone(),
-                param_sources: lower_param_sources(&c.param_sources),
+                // phase-54: play_launch fills the legacy split views (`params` +
+                // `params_files`); an EMPTY ordered list tells consumers to use them.
+                param_sources: Vec::new(),
                 // Containers always have a package/executable — never raw.
                 raw_cmd: Vec::new(),
                 extra_args: Default::default(),
@@ -618,10 +600,12 @@ pub fn build_system_model(
                 respawn_delay: None,
                 env: lower_env(l.env.as_deref()),
                 // No non-ROS args / params_files / raw_cmd for composables —
+                // phase-54: play_launch fills the legacy split views (`params` +
+                // `params_files`); an EMPTY ordered list tells consumers to use them.
+                param_sources: Vec::new(),
                 // they have no independent process.
                 args: Vec::new(),
                 params_files: Vec::new(),
-                param_sources: Vec::new(),
                 raw_cmd: Vec::new(),
                 // GAP-6: LoadNode extra arguments (⊃ use_intra_process_comms).
                 extra_args: l
@@ -1284,59 +1268,5 @@ mod tests {
         assert_eq!(child.parent.as_deref(), Some("root_pkg/root.launch.xml"));
         assert_eq!(child.package.as_deref(), Some("dep_pkg"));
         assert_eq!(child.file.as_deref(), Some("child.launch.xml"));
-    }
-
-    /// Phase-54 (issue 0007) — the ordered source list survives the lowering,
-    /// and the resolved value follows POSITION: an inline `<param a=1>` written
-    /// BEFORE a file that sets `a: 2` loses to the file, as in ROS 2.
-    #[test]
-    fn param_sources_lower_in_order_and_the_later_file_wins() {
-        let json = serde_json::json!({
-            "node": [
-                {
-                    "executable": "planner",
-                    "package": "ctrl",
-                    "name": "planner",
-                    "exec_name": "planner",
-                    "namespace": "/ctrl",
-                    "cmd": ["/bin/planner"],
-                    "params": [["a", "1"]],
-                    "params_files": ["/**:\n  ros__parameters:\n    a: 2\n"],
-                    "param_sources": [
-                        {"kind": "inline", "name": "a", "value": "1"},
-                        {"kind": "file", "content": "/**:\n  ros__parameters:\n    a: 2\n"}
-                    ],
-                    "scope": 1
-                }
-            ],
-            "container": [],
-            "load_node": [],
-            "lifecycle_node": [],
-            "file_data": {},
-            "scope": [{"kind": "file", "package": "ctrl", "file": "ctrl.launch.xml"}]
-        });
-        let dump: LaunchDump = serde_json::from_value(json).unwrap();
-        let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new());
-
-        let node = &model.structure.nodes["/ctrl/planner"];
-        assert_eq!(node.param_sources.len(), 2, "{:?}", node.param_sources);
-        assert!(matches!(
-            &node.param_sources[0],
-            model::ParamSource::Inline { name, value }
-                if name == "a" && *value == model::ParamValue::Int(1)
-        ));
-        assert!(matches!(
-            &node.param_sources[1],
-            model::ParamSource::File { .. }
-        ));
-
-        // The projection a bake-time consumer sees.
-        let resolved = node.resolved_params("/ctrl/planner");
-        assert_eq!(
-            resolved.get("a"),
-            Some(&model::ParamValue::Int(2)),
-            "later file must win: {resolved:?}"
-        );
     }
 }
