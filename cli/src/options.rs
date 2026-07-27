@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
-use crate::execution::sched_apply::SchedApplyMode;
+use ros_launch_resolve::sched::apply::SchedApplyMode;
 
 /// Parser backend selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -272,9 +272,9 @@ impl CheckArgs {
     /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
     /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
     /// `/etc/play_launch/contracts` — first existing wins.
-    pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
-        crate::ros::manifest_loader::ContractSources {
-            overlay: crate::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
+    pub fn contract_sources(&self) -> ros_launch_resolve::ros::manifest_loader::ContractSources {
+        ros_launch_resolve::ros::manifest_loader::ContractSources {
+            overlay: ros_launch_resolve::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
             provider: !self.no_provider_contracts,
         }
     }
@@ -780,9 +780,9 @@ impl CommonOptions {
     /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
     /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
     /// `/etc/play_launch/contracts` — first existing wins.
-    pub fn contract_sources(&self) -> crate::ros::manifest_loader::ContractSources {
-        crate::ros::manifest_loader::ContractSources {
-            overlay: crate::ros::manifest_loader::discover_overlay_root(
+    pub fn contract_sources(&self) -> ros_launch_resolve::ros::manifest_loader::ContractSources {
+        ros_launch_resolve::ros::manifest_loader::ContractSources {
+            overlay: ros_launch_resolve::ros::manifest_loader::discover_overlay_root(
                 self.contract_opts.contracts.as_deref(),
             ),
             provider: !self.contract_opts.no_provider_contracts,

@@ -1,35 +1,22 @@
-//! Logging utilities
+//! Verbosity flag shared by the pipeline.
 
-use crate::cli::options::Options;
 use std::sync::OnceLock;
 
-/// Global flag for verbose logging
+/// Global flag for verbose logging.
 static VERBOSE_LOGGING: OnceLock<bool> = OnceLock::new();
 
-/// Check if verbose logging is enabled
+/// Whether verbose logging is enabled.
 pub fn is_verbose() -> bool {
     VERBOSE_LOGGING.get().copied().unwrap_or(false)
 }
 
-/// Initialize verbose logging flag from command-line options
-pub fn init_verbose(opts: &Options) {
-    let verbose = get_verbose_flag(opts);
-    VERBOSE_LOGGING.set(verbose).ok();
-}
-
-/// Extract verbose flag from Options based on subcommand
-fn get_verbose_flag(opts: &Options) -> bool {
-    match &opts.command {
-        crate::cli::options::Command::Launch(args) => args.common.verbose,
-        crate::cli::options::Command::Run(args) => args.common.verbose,
-        crate::cli::options::Command::Dump(_) => false, // Dump doesn't use CommonOptions
-        crate::cli::options::Command::Replay(args) => args.common.verbose,
-        crate::cli::options::Command::Plot(_) => false, // Plot doesn't use CommonOptions
-        crate::cli::options::Command::Setcap => false,
-        crate::cli::options::Command::Verify => false,
-        crate::cli::options::Command::Context(_) => false,
-        crate::cli::options::Command::Check(_) => false,
-        crate::cli::options::Command::Resolve(_) => false,
-        crate::cli::options::Command::Contract(_) => false,
-    }
+/// Record the verbosity the caller resolved.
+///
+/// Takes a plain `bool`. This used to take the consumer's whole `Options` enum
+/// and pattern-match every subcommand just to read one flag — a library
+/// reaching into its own consumer's CLI types, which is exactly the inversion
+/// the three-layer split exists to remove (RFC-0060). Deciding which
+/// subcommand carries `--verbose` is the CLI's job.
+pub fn init_verbose(verbose: bool) {
+    let _ = VERBOSE_LOGGING.set(verbose);
 }

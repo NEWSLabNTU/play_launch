@@ -32,15 +32,15 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         launch_file = None;
     }
 
-    let runtime = super::common::build_tokio_runtime()?;
-    let (dump, launch_path) = runtime.block_on(super::common::parse_to_launch_dump(
+    let runtime = crate::common::build_tokio_runtime()?;
+    let (dump, launch_path) = runtime.block_on(crate::common::parse_to_launch_dump(
         &args.package_or_path,
         launch_file,
         &launch_arguments,
         args.parser,
     ))?;
 
-    let arg_binding: BTreeMap<String, String> = super::parse_launch_arguments(&launch_arguments)
+    let arg_binding: BTreeMap<String, String> = crate::common::parse_launch_arguments(&launch_arguments)
         .into_iter()
         .collect();
 
@@ -119,7 +119,7 @@ pub fn build_checked_model(
         explain,
     } = inputs;
 
-    let sources = crate::ros::manifest_loader::ContractSources {
+    let sources = ros_launch_resolve::ros::manifest_loader::ContractSources {
         overlay: manifest_loader::discover_overlay_root(contracts),
         provider: !no_provider_contracts,
     };
@@ -193,7 +193,7 @@ pub fn build_checked_model(
                 Some(&index),
                 &resolved.path,
                 target,
-                crate::execution::sched_apply::SchedApplyMode::Warn,
+                ros_launch_resolve::sched::apply::SchedApplyMode::Warn,
             )?;
             // Single authoritative surfacing point for `resolve` (45.1a) —
             // `derive_sched_plan` only collects now (no internal

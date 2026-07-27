@@ -80,10 +80,10 @@ pub(super) fn resolve_launch_file(
 pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
     play_launch_parser::block_command_substitution(args.block_commands);
 
-    let runtime = super::common::build_tokio_runtime()?;
+    let runtime = crate::common::build_tokio_runtime()?;
     runtime.block_on(async move {
         info!("Step 1/3: Parsing launch file...");
-        let (dump, launch_path) = super::common::parse_to_launch_dump(
+        let (dump, launch_path) = crate::common::parse_to_launch_dump(
             &args.package_or_path,
             args.launch_file.as_deref(),
             &args.launch_arguments,
@@ -99,7 +99,7 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
 
         info!("Step 2/3: Resolving SystemModel...");
         let arg_binding: BTreeMap<String, String> =
-            super::parse_launch_arguments(&args.launch_arguments)
+            crate::common::parse_launch_arguments(&args.launch_arguments)
                 .into_iter()
                 .collect();
         let model = super::resolve::build_checked_model(super::resolve::ModelBuildInputs {

@@ -18,7 +18,7 @@ use ros_launch_manifest_sched::{
 use tracing::{debug, info};
 
 use crate::{
-    execution::sched_apply::SchedApplyMode,
+    config::SchedApplyMode,
     ros::{
         launch_dump::LaunchDump,
         manifest_loader::{ManifestIndex, contract_stem},
@@ -489,7 +489,7 @@ fn tiers_push_override(
 /// same `ResolvedChain`/`ChainElement` shape:
 ///
 /// - [`derive_sched_plan`], walking a freshly-built `MapperInput::chains`;
-/// - [`crate::execution::sched_plan::SchedPlan::from_model`] (Phase
+/// - [`crate::sched::plan::SchedPlan::from_model`] (Phase
 ///   45.5), walking the model's already-resolved
 ///   `execution.sched.chains` — the SAME type, embedded verbatim
 ///   (`docs/design/system-model-sched-ssot.md` "Type sharing"), so no
@@ -1181,7 +1181,7 @@ fn explain_rows_from_derived(derived: &DerivedSchedPlan) -> Vec<ExplainRow> {
 /// Phase 45.6 — build `--explain`'s rows directly from a `SystemModel`'s
 /// ALREADY-RESOLVED `execution` layer: `tiers`+`bindings` for every
 /// RT-scheduled node's final class/priority/core (the exact representation
-/// [`crate::execution::sched_plan::SchedPlan::from_model`] applies at
+/// [`crate::sched::plan::SchedPlan::from_model`] applies at
 /// runtime), `structure.nodes` for the full schedulable-node identity set
 /// (RT nodes AND non-RT ones — Phase 45.4's `execution.bindings` only ever
 /// carries non-default tiers, so a plain binding lookup alone would silently

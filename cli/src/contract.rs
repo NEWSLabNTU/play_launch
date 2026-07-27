@@ -13,7 +13,7 @@ use crate::{
 
 pub fn handle_contract_eject(args: &ContractEjectArgs) -> Result<()> {
     let launch_path =
-        super::launch::resolve_launch_file(&args.package_or_path, args.launch_file.as_deref())?;
+        crate::launch::resolve_launch_file(&args.package_or_path, args.launch_file.as_deref())?;
 
     // No launch arguments needed — eject only cares about the launch tree's
     // ROOT scope (pkg/file/origin path), not the fully-resolved node graph.

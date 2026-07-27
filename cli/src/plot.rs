@@ -6,7 +6,7 @@ use tracing::info;
 
 /// Handle the 'plot' subcommand
 pub fn handle_plot(args: &PlotArgs) -> eyre::Result<()> {
-    use crate::python::plot_launcher::PlotLauncher;
+    use ros_launch_resolve::python::plot_launcher::PlotLauncher;
 
     info!("Generating resource usage plots...");
 
