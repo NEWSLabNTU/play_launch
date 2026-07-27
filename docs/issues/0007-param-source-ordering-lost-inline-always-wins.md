@@ -1,7 +1,7 @@
 ---
 id: 7
 title: "Parameter source ordering is lost — inline <param> always wins over a later <param from=>, diverging from ROS 2"
-status: open
+status: resolved
 type: bug
 severity: medium
 ---
@@ -174,6 +174,12 @@ spawn path and the model.
 file when asked. Our model carries file content verbatim, so an
 `allow_substs="true"` file needs its substitutions resolved at resolve time.
 Record here so it is not discovered later as a second divergence.
+
+## Resolution (2026-07-27)
+
+Fixed by phase 54 along option A: one ordered `param_sources` list, carried
+parser → record → model → spawn. `params` / `params_files` remain as legacy
+views; a consumer that sees a non-empty ordered list must use it alone.
 
 ## Implementation
 
