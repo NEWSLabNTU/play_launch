@@ -642,6 +642,7 @@ mod model_tests {
                 deadline_us: None,
                 budget_us: None,
                 period_us: None,
+                time_slice_us: None,
             });
         }
         m.execution.tiers.insert("ctrl".to_string(), tier);
