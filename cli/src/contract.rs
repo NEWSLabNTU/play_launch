@@ -6,10 +6,8 @@ use std::path::{Path, PathBuf};
 
 use eyre::{Result, eyre};
 
-use crate::{
-    cli::options::ContractEjectArgs,
-    ros::{launch_dump::LaunchDump, manifest_loader, sched_loader},
-};
+use crate::options::ContractEjectArgs;
+use ros_launch_resolve::ros::{launch_dump::LaunchDump, manifest_loader, sched_loader};
 
 pub fn handle_contract_eject(args: &ContractEjectArgs) -> Result<()> {
     let launch_path =

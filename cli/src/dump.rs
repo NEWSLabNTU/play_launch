@@ -6,7 +6,7 @@
 //! scope tree to build one from) is removed. `play_launch run` already
 //! covers the single-node dump+replay-in-one use case.
 
-use crate::cli::options::{DumpArgs, DumpSubcommand, ResolveArgs};
+use crate::options::{DumpArgs, DumpSubcommand, ResolveArgs};
 use eyre::Result;
 use std::path::PathBuf;
 use tracing::info;
@@ -24,7 +24,7 @@ pub fn handle_dump(args: &DumpArgs) -> Result<()> {
 /// stale-Python-install check, provenance hashing) so `dump` and `resolve`
 /// share one code path instead of duplicating it.
 fn dump_launch_model(
-    launch_args: &crate::cli::options::LaunchArgs,
+    launch_args: &crate::options::LaunchArgs,
     output: Option<PathBuf>,
 ) -> Result<()> {
     let output = output.unwrap_or_else(|| PathBuf::from("system_model.yaml"));

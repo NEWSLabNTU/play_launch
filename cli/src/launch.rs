@@ -8,7 +8,7 @@
 //! `play_launch replay` uses, just called in-process instead of through a
 //! second CLI invocation.
 
-use crate::cli::options::LaunchArgs;
+use crate::options::LaunchArgs;
 use eyre::Result;
 use std::{collections::BTreeMap, path::PathBuf};
 use tracing::info;

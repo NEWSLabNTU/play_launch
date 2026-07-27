@@ -1,6 +1,6 @@
 //! Plot command - generate resource usage visualizations
 
-use crate::cli::options::PlotArgs;
+use crate::options::PlotArgs;
 use eyre::Context;
 use tracing::info;
 

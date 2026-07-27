@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
-use ros_launch_resolve::sched::apply::SchedApplyMode;
+use ros_launch_resolve::config::SchedApplyMode;
 
 /// Parser backend selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -52,80 +52,20 @@ pub struct Options {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Launch a ROS 2 launch file (dump + replay)
+    /// Resolve a launch tree into a checked SystemModel (RFC-0050).
     #[command(after_help = "Examples:\n  \
-        play_launch launch demo_nodes_cpp topics/talker_listener.launch.py\n  \
-        play_launch launch /path/to/launch.py use_sim_time:=true")]
-    Launch(LaunchArgs),
-
-    /// Run a single ROS 2 node (dump + replay)
-    #[command(after_help = "Examples:\n  \
-        play_launch run demo_nodes_cpp talker\n  \
-        play_launch run demo_nodes_cpp talker --ros-args -p topic:=chatter")]
-    Run(RunArgs),
-
-    /// Dump launch execution without replaying — emits the SystemModel
-    /// (the only dump artifact; Phase 47.B2 retired `record.json`)
-    Dump(DumpArgs),
-
-    /// Replay from a SystemModel (the sole replay source; Phase 47.B3
-    /// retired the legacy `record.json`/`--input-file` compat path)
-    #[command(after_help = "Examples:\n  \
-        play_launch replay system_model.yaml\n  \
-        play_launch replay --model system_model.yaml --disable-all\n  \
-        play_launch replay --model system_model.yaml --enable monitoring --enable web-ui\n  \
-        play_launch replay --model system_model.yaml --web-addr 0.0.0.0:8080")]
-    Replay(ReplayArgs),
-
-    /// Plot resource usage from execution logs
-    #[command(after_help = "Examples:\n  \
-        play_launch plot\n  \
-        play_launch plot --log-dir play_log/2025-10-28_16-17-56\n  \
-        play_launch plot --metrics cpu memory")]
-    Plot(PlotArgs),
-
-    /// Grant CAP_SYS_PTRACE to the I/O helper (for per-process I/O
-    /// monitoring). Requires sudo. NOTE: the main binary is deliberately NOT
-    /// capped — a file capability would put it in secure-execution mode and
-    /// break ROS library loading. RT scheduling (`--sched`) needs root.
-    #[command(name = "setcap")]
-    Setcap,
-
-    /// Check capabilities: the I/O helper has CAP_SYS_PTRACE, and the main
-    /// binary has none (a capability on it breaks ROS library loading)
-    #[command(name = "verify")]
-    Verify,
-
-    /// Extract per-node or per-launch-file context from a SystemModel
-    /// (`system_model.yaml`) — the launch include tree, per-node origin +
-    /// launch fields, and per-include args (Phase 49: reads the model, not the
-    /// retired record.json)
-    #[command(after_help = "Examples:\n  \
-        play_launch context system_model.yaml --tree\n  \
-        play_launch context system_model.yaml --node /perception/centerpoint\n  \
-        play_launch context system_model.yaml --launch tier4_system_launch system.launch.xml")]
-    Context(ContextArgs),
-
-    /// Check manifest contracts against a launch file
-    #[command(after_help = "Examples:\n  \
-        play_launch check autoware_launch planning_simulator.launch.xml\n  \
-        play_launch check --contracts ~/contracts /path/to/launch.py arg:=value")]
-    Check(CheckArgs),
-
-    /// Resolve launch + contracts + scheduling into a SystemModel YAML
-    /// (RFC-0050 / docs/design/system-model.md): one fully-resolved,
-    /// checked artifact per concrete arg-set. Refuses to emit when the
-    /// contract checker reports errors; warnings are embedded in the model.
-    #[command(after_help = "Examples:\n  \
-        play_launch resolve demo_pkg pipeline.launch.xml --out system_model.yaml\n  \
-        play_launch resolve /path/to/launch.xml --sched system.posix.yaml mode:=velodyne")]
+        ros-launch-resolve resolve my_bringup system.launch.xml -o system_model.yaml\n  \
+        ros-launch-resolve resolve launch/system.launch.xml --system system.toml")]
     Resolve(ResolveArgs),
 
-    /// Manage contract/platform-file overlays (Phase 41.4, design §3.3)
-    #[command(after_help = "Examples:\n  \
-        play_launch contract eject rt_demo bringup.launch.xml\n  \
-        play_launch contract eject rt_demo bringup.launch.xml --into ~/.config/play_launch/contracts")]
+    /// Dump launch expansion without resolving contracts or scheduling.
+    Dump(DumpArgs),
+
+    /// Eject a contract sidecar for a package.
     Contract(ContractArgs),
+
+    /// Plot resource usage from execution logs.
+    Plot(PlotArgs),
 }
 
 /// Arguments for `play_launch contract`

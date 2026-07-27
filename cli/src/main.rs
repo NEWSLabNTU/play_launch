@@ -22,7 +22,10 @@ fn main() -> eyre::Result<()> {
     match &opts.command {
         Command::Resolve(args) => resolve::handle_resolve(args),
         Command::Dump(args) => dump::handle_dump(args),
-        Command::Contract(args) => contract::handle_contract_eject(args),
+        // `contract` is a subcommand group; today `eject` is its only verb.
+        Command::Contract(args) => match &args.subcommand {
+            options::ContractSubcommand::Eject(eject) => contract::handle_contract_eject(eject),
+        },
         Command::Plot(args) => plot::handle_plot(args),
     }
 }

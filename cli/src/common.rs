@@ -1,6 +1,6 @@
 //! Shared utilities for command handlers
 
-use crate::{cli::options::ParserBackend, process::kill_all_descendants};
+use crate::options::ParserBackend;
 use eyre::Context as _;
 use std::sync::Arc;
 use tracing::debug;
@@ -100,38 +100,6 @@ pub(crate) async fn parse_to_launch_dump(
     Ok((dump, launch_path))
 }
 
-/// Guard that ensures child processes are cleaned up on drop.
-///
-/// Used by replay and run commands to guarantee process cleanup even on panic.
-pub(crate) struct CleanupGuard {
-    enabled: Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl CleanupGuard {
-    pub(crate) fn new() -> Self {
-        Self {
-            enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        }
-    }
-
-    /// Disable the cleanup guard (call after graceful shutdown completes)
-    pub(crate) fn disable(&self) {
-        self.enabled
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-        debug!("CleanupGuard disabled - graceful shutdown completed");
-    }
-}
-
-impl Drop for CleanupGuard {
-    fn drop(&mut self) {
-        if self.enabled.load(std::sync::atomic::Ordering::Relaxed) {
-            debug!("CleanupGuard: Ensuring all child processes are terminated");
-            kill_all_descendants();
-        } else {
-            debug!("CleanupGuard: Skipped (disabled after graceful shutdown)");
-        }
-    }
-}
 
 #[cfg(feature = "runtime")]
 /// Forward state events from runner to SSE broadcaster, then wait for all actors to complete.
@@ -166,4 +134,22 @@ pub(crate) async fn forward_state_events_and_wait(
 
     // Join all actor tasks
     runner.wait_for_completion().await
+}
+
+/// Parse `KEY:=VALUE` launch arguments, warning on anything that isn't.
+///
+/// Lived in play_launch's `commands/mod.rs`, which had no counterpart here —
+/// this crate's module root is `main.rs`.
+pub(crate) fn parse_launch_arguments(args: &[String]) -> std::collections::HashMap<String, String> {
+    args.iter()
+        .filter_map(|arg| {
+            let parts: Vec<&str> = arg.splitn(2, ":=").collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                tracing::warn!("Ignoring invalid launch argument (expected KEY:=VALUE): {arg}");
+                None
+            }
+        })
+        .collect()
 }

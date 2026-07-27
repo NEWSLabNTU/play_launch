@@ -820,7 +820,12 @@ pub fn build_system_model(
             args,
             inputs,
             resolver: Some(model::ResolverInfo {
-                tool: "play_launch".to_string(),
+                // Identify the tool that actually produced this model. The
+                // string moved here with the code and still said
+                // "play_launch", which would have made every model resolved by
+                // this crate misreport its own provenance — the field exists
+                // precisely so a consumer can tell what built the artifact.
+                tool: env!("CARGO_PKG_NAME").to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             }),
             diagnostics,

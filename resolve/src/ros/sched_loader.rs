@@ -1452,7 +1452,7 @@ pub struct ResolvedPlatformFile {
 /// Layout: `<overlay_root>/<pkg>/launch/<stem>.system.<target>.yaml`. Falls
 /// back to the `_` package-dir convention when the root scope has no pkg
 /// (mirrors `manifest_loader::resolve_overlay_path`).
-pub(crate) fn resolve_platform_overlay_path(
+pub fn resolve_platform_overlay_path(
     root_scope: &crate::ros::launch_dump::ScopeEntry,
     overlay_root: &Path,
     target: &str,
@@ -1475,7 +1475,7 @@ pub(crate) fn resolve_platform_overlay_path(
 /// Returns `None` when the root scope has no recorded path (older
 /// `record.json`, or an origin the parser couldn't resolve to an absolute
 /// path) — provider lookup is simply unavailable.
-pub(crate) fn resolve_platform_provider_path(
+pub fn resolve_platform_provider_path(
     root_scope: &crate::ros::launch_dump::ScopeEntry,
     target: &str,
 ) -> Option<PathBuf> {
@@ -1489,7 +1489,7 @@ pub(crate) fn resolve_platform_provider_path(
 /// Find the ROOT launch scope (the top-level file scope with no parent) —
 /// platform-file resolution is per-launch, not per-include-scope, so it
 /// always looks here regardless of which scope any given node lives in.
-pub(crate) fn root_scope(dump: &LaunchDump) -> Option<&crate::ros::launch_dump::ScopeEntry> {
+pub fn root_scope(dump: &LaunchDump) -> Option<&crate::ros::launch_dump::ScopeEntry> {
     dump.scopes
         .iter()
         .find(|s| s.parent.is_none() && s.is_file_scope())

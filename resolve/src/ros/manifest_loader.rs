@@ -1127,7 +1127,7 @@ pub(crate) fn contract_stem(file: &str) -> &str {
 ///
 /// `pub(crate)`: also reused by `commands::contract::handle_contract_eject`
 /// (Phase 41.4) to compute the destination path for an ejected contract.
-pub(crate) fn resolve_overlay_path(scope: &ScopeEntry, overlay_root: &Path) -> Option<PathBuf> {
+pub fn resolve_overlay_path(scope: &ScopeEntry, overlay_root: &Path) -> Option<PathBuf> {
     let file = scope.file()?;
     let stem = contract_stem(file);
     let pkg_dir = scope.pkg().unwrap_or("_");
@@ -1150,7 +1150,7 @@ pub(crate) fn resolve_overlay_path(scope: &ScopeEntry, overlay_root: &Path) -> O
 ///
 /// `pub(crate)`: also reused by `commands::contract::handle_contract_eject`
 /// (Phase 41.4) to find the provider contract to eject.
-pub(crate) fn resolve_provider_path(scope: &ScopeEntry) -> Option<PathBuf> {
+pub fn resolve_provider_path(scope: &ScopeEntry) -> Option<PathBuf> {
     let origin = scope.origin.as_ref()?;
     let launch_path = origin.path.as_deref()?;
     let dir = Path::new(launch_path).parent()?;

@@ -14,10 +14,8 @@ use std::{
 use eyre::{Context, Result};
 use ros_launch_manifest_check::Severity;
 
-use crate::{
-    cli::options::ResolveArgs,
-    ros::{launch_dump::LaunchDump, manifest_loader, model_builder, sched_loader},
-};
+use crate::options::ResolveArgs;
+use ros_launch_resolve::ros::{launch_dump::LaunchDump, manifest_loader, model_builder, sched_loader};
 
 pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
     // Positional quirk: with a direct launch-file PATH, the second
@@ -193,7 +191,7 @@ pub fn build_checked_model(
                 Some(&index),
                 &resolved.path,
                 target,
-                ros_launch_resolve::sched::apply::SchedApplyMode::Warn,
+                ros_launch_resolve::config::SchedApplyMode::Warn,
             )?;
             // Single authoritative surfacing point for `resolve` (45.1a) —
             // `derive_sched_plan` only collects now (no internal
