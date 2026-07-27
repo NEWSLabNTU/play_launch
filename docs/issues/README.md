@@ -9,6 +9,15 @@ plans in `docs/roadmap/` phase docs.
 
 ## Open
 
+**#0007** — parameter source ORDERING is lost: the parser forks sibling
+`<param name=>` / `<param from=>` children into two vectors, so inline values
+always win even when the launch file wrote a file last. ROS 2 treats
+`parameters=[dict|file, …]` as ONE ordered list where the later entry wins.
+Silent wrong values on the spawn path; the nano-ros bake inherits the same
+divergence through the split model. Fix direction: one ordered
+`param_sources` vec at the fork in `actions/node.rs`, with `params`/
+`params_files` kept as derived views for migration. See `0007-*`.
+
 ## Resolved
 
 **#0006** — web UI organization. Fixed by phases 50+53 (nested ns tree,
