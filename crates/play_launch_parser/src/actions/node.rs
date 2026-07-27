@@ -7,6 +7,20 @@ use crate::{
     xml::{Entity, EntityExt, XmlEntity},
 };
 
+/// phase-54 (issue 0007) — one parameter source, in document order.
+///
+/// Mirrors ROS 2's model: `launch_ros`'s `parse_nested_parameters` appends one
+/// entry per `<param>` child (a `ParameterFile` for `from=`, a dict for
+/// `name=`) into a single ordered list, and `execute` emits them in that
+/// order. Kind carries no precedence — only position does.
+#[derive(Debug, Clone)]
+pub enum ParamSourceSpec {
+    /// `<param name= value=/>` — an inline key/value.
+    Inline(Parameter),
+    /// `<param from=/>` — a parameter file path (substitutions unresolved).
+    File(Vec<Substitution>),
+}
+
 /// Node action representing a ROS 2 node
 #[derive(Debug, Clone)]
 pub struct NodeAction {
@@ -16,6 +30,13 @@ pub struct NodeAction {
     pub namespace: Option<Vec<Substitution>>,
     pub parameters: Vec<Parameter>,
     pub param_files: Vec<Vec<Substitution>>,
+    /// phase-54 (issue 0007) — the ORDERED parameter-source list, one element
+    /// per `<param>` child in document order. ROS 2 has no "inline beats
+    /// file" rule: `launch_ros` materializes an inline dict into a temp params
+    /// file and emits `--params-file`/`-p` in list order, so POSITION is the
+    /// only precedence. `parameters` / `param_files` above are the legacy
+    /// split views, kept until every consumer reads this vec.
+    pub param_sources: Vec<ParamSourceSpec>,
     pub remappings: Vec<Remapping>,
     pub environment: Vec<(String, String)>,
     pub args: Option<Vec<Substitution>>,
@@ -65,6 +86,8 @@ impl NodeAction {
         // Parse children for params, remaps, env
         let mut parameters = Vec::new();
         let mut param_files = Vec::new();
+        // phase-54 — the ordered view; the two vecs above are legacy splits.
+        let mut param_sources: Vec<ParamSourceSpec> = Vec::new();
         let mut remappings = Vec::new();
         let mut environment = Vec::new();
 
@@ -74,10 +97,14 @@ impl NodeAction {
                     // Check if this is a parameter file reference
                     if let Some(from_attr) = child.optional_attr_str("from")? {
                         // This is a parameter file
-                        param_files.push(parse_substitutions(&from_attr)?);
+                        let subs = parse_substitutions(&from_attr)?;
+                        param_files.push(subs.clone());
+                        param_sources.push(ParamSourceSpec::File(subs));
                     } else {
                         // This is an inline parameter
-                        parameters.push(Parameter::from_entity(&child)?);
+                        let param = Parameter::from_entity(&child)?;
+                        parameters.push(param.clone());
+                        param_sources.push(ParamSourceSpec::Inline(param));
                     }
                 }
                 "remap" => remappings.push(Remapping::from_entity(&child)?),
@@ -109,6 +136,7 @@ impl NodeAction {
             namespace,
             parameters,
             param_files,
+            param_sources,
             remappings,
             environment,
             args,
@@ -200,6 +228,31 @@ impl NodeAction {
             Vec::new()
         };
 
+        // phase-54 (issue 0007) — resolve the ORDERED source list. One element
+        // per `<param>` in document order; kind carries no precedence.
+        let param_sources: Vec<crate::record::types::ParamSource> = self
+            .param_sources
+            .iter()
+            .map(|src| match src {
+                ParamSourceSpec::Inline(p) => {
+                    let value = resolve_substitutions(&p.value, context)
+                        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                    Ok(crate::record::types::ParamSource::Inline {
+                        name: p.name.clone(),
+                        value,
+                    })
+                }
+                ParamSourceSpec::File(subs) => {
+                    // The capture carries the resolved PATH; the record
+                    // generator swaps in the file's resolved contents (and
+                    // expands launch temp files into Inline entries).
+                    let path = resolve_substitutions(subs, context)
+                        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                    Ok(crate::record::types::ParamSource::File { content: path })
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         Ok(NodeCapture {
             package,
             executable,
@@ -208,6 +261,7 @@ impl NodeAction {
             machine,
             parameters,
             params_files,
+            param_sources,
             remappings,
             arguments,
             env_vars: self.environment.clone(),
@@ -429,5 +483,48 @@ mod tests {
             node.param_files[0][1],
             Substitution::Text("/params.yaml".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod param_source_order_tests {
+    use super::*;
+
+    /// phase-54 (issue 0007) — sibling `<param>` children keep DOCUMENT ORDER
+    /// in `param_sources`, so a file written after an inline value can win.
+    /// ROS 2 has no "inline beats file" rule: `launch_ros` materializes an
+    /// inline dict into a temp params file and emits `--params-file`/`-p` in
+    /// list order, making position the only precedence.
+    #[test]
+    fn param_sources_preserve_document_order() {
+        let xml = r#"<node pkg="p" exec="e">
+            <param name="a" value="1"/>
+            <param from="/cfg/a_is_2.yaml"/>
+            <param name="b" value="3"/>
+        </node>"#;
+        let doc = roxmltree::Document::parse(xml).expect("xml parses");
+        let entity = crate::xml::XmlEntity::new(doc.root_element());
+        let node = NodeAction::from_entity(&entity).expect("node parses");
+
+        assert_eq!(node.param_sources.len(), 3, "{:?}", node.param_sources);
+        assert!(
+            matches!(&node.param_sources[0], ParamSourceSpec::Inline(p) if p.name == "a"),
+            "{:?}",
+            node.param_sources[0]
+        );
+        assert!(
+            matches!(&node.param_sources[1], ParamSourceSpec::File(_)),
+            "the file must keep its position AFTER the inline `a`: {:?}",
+            node.param_sources[1]
+        );
+        assert!(
+            matches!(&node.param_sources[2], ParamSourceSpec::Inline(p) if p.name == "b"),
+            "{:?}",
+            node.param_sources[2]
+        );
+
+        // The legacy split views stay populated for back-compat.
+        assert_eq!(node.parameters.len(), 2);
+        assert_eq!(node.param_files.len(), 1);
     }
 }

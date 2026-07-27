@@ -19,6 +19,10 @@ pub struct NodeCapture {
     pub machine: Option<String>,
     pub parameters: Vec<(String, String)>,
     pub params_files: Vec<String>,
+    /// phase-54 (issue 0007) — the ORDERED parameter-source list carried from
+    /// the parser to the record. `parameters` / `params_files` are the legacy
+    /// split views.
+    pub param_sources: Vec<crate::record::types::ParamSource>,
     pub remappings: Vec<(String, String)>,
     pub arguments: Vec<String>,
     pub env_vars: Vec<(String, String)>,

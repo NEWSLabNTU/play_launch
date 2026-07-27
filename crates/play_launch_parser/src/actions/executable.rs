@@ -126,6 +126,7 @@ impl ExecutableAction {
             machine: None,   // raw executables aren't ROS-machine-routed
             parameters: Vec::new(),
             params_files: Vec::new(),
+            param_sources: Vec::new(),
             remappings: Vec::new(),
             arguments,
             env_vars: self.environment.clone(),

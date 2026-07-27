@@ -61,6 +61,7 @@ impl NodeCapture {
                 })
                 .collect(),
             params_files,
+            param_sources: Vec::new(),
             remaps: self.remappings.clone(),
             respawn: None,
             respawn_delay: None,
@@ -194,6 +195,7 @@ impl ContainerCapture {
             package,
             params: Vec::new(),
             params_files: Vec::new(),
+            param_sources: Vec::new(),
             remaps: Vec::new(),
             respawn: Some(false),
             respawn_delay: None,

@@ -192,6 +192,7 @@ impl LifecycleNode {
             machine: None, // Python lifecycle Node() machine kwarg unsupported (deferred)
             parameters: parsed_params,
             params_files,
+            param_sources: Vec::new(),
             remappings: parsed_remaps,
             arguments: parsed_args,
             env_vars: Vec::new(),

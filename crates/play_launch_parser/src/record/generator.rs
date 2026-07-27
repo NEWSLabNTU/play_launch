@@ -219,6 +219,48 @@ impl CommandGenerator {
             }
         }
 
+        // phase-54 (issue 0007) — build the ORDERED source list from the
+        // parser's document-order walk. One record entry per `<param>`, except
+        // a launch temp params file which expands into Inline entries exactly
+        // as the split path above does (Python dumper parity).
+        let mut node_param_sources: Vec<crate::record::types::ParamSource> = Vec::new();
+        for src in &node.param_sources {
+            match src {
+                crate::actions::node::ParamSourceSpec::Inline(p) => {
+                    let value = resolve_substitutions(&p.value, context)?;
+                    node_param_sources.push(crate::record::types::ParamSource::Inline {
+                        name: p.name.clone(),
+                        value,
+                    });
+                }
+                crate::actions::node::ParamSourceSpec::File(subs) => {
+                    let path = resolve_substitutions(subs, context)?;
+                    if path.contains("/tmp/launch_params_") {
+                        let extracted =
+                            crate::params::extract_params_from_yaml(Path::new(&path), context)
+                                .map_err(|e| {
+                                    GenerationError::IoError(format!(
+                                        "Failed to extract parameters from temp file '{path}': {e}"
+                                    ))
+                                })?;
+                        for (name, value) in extracted {
+                            node_param_sources
+                                .push(crate::record::types::ParamSource::Inline { name, value });
+                        }
+                    } else {
+                        let content = load_and_resolve_param_file(Path::new(&path), context)
+                            .map_err(|e| {
+                                GenerationError::IoError(format!(
+                                    "Failed to load and resolve parameter file '{path}': {e}"
+                                ))
+                            })?;
+                        node_param_sources
+                            .push(crate::record::types::ParamSource::File { content });
+                    }
+                }
+            }
+        }
+
         // Collect node-specific remappings
         let node_remaps: Result<Vec<_>, GenerationError> = node
             .remappings
@@ -269,6 +311,9 @@ impl CommandGenerator {
                     .collect::<Vec<_>>(),
             )
         };
+        // Globals precede the node's own entries (ROS: the `params_container`
+        // loop runs before `parameters`).
+        let global_params_for_sources = global_params.clone();
 
         // Resolve args attribute (command-line arguments before --ros-args)
         let args: Option<Vec<String>> = if let Some(ref args_subs) = node.args {
@@ -317,6 +362,23 @@ impl CommandGenerator {
             package: Some(package),
             params,
             params_files,
+            // phase-54 (issue 0007) — the ordered source list, globals first
+            // (ROS applies `params_container` before the node's own entries).
+            param_sources: {
+                let mut v: Vec<crate::record::types::ParamSource> = global_params_for_sources
+                    .as_ref()
+                    .map(|g| {
+                        g.iter()
+                            .map(|(n, val)| crate::record::types::ParamSource::Inline {
+                                name: n.clone(),
+                                value: val.clone(),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                v.extend(node_param_sources.iter().cloned());
+                v
+            },
             remaps,
             respawn: node
                 .respawn
@@ -473,6 +535,7 @@ impl CommandGenerator {
             package: None,   // Executables don't have packages
             params: Vec::new(),
             params_files: Vec::new(),
+            param_sources: Vec::new(),
             remaps: Vec::new(),
             respawn: None,
             respawn_delay: None,
@@ -499,6 +562,7 @@ mod tests {
             namespace: None,
             parameters: vec![],
             param_files: vec![],
+            param_sources: Vec::new(),
             remappings: vec![],
             environment: vec![],
             args: None,
@@ -532,6 +596,7 @@ mod tests {
                 value: vec![Substitution::Text("10.0".to_string())],
             }],
             param_files: vec![],
+            param_sources: Vec::new(),
             remappings: vec![],
             environment: vec![],
             args: None,
@@ -557,6 +622,7 @@ mod tests {
             namespace: None,
             parameters: vec![],
             param_files: vec![],
+            param_sources: Vec::new(),
             remappings: vec![Remapping {
                 from: vec![Substitution::Text("chatter".to_string())],
                 to: vec![Substitution::Text("/chat".to_string())],

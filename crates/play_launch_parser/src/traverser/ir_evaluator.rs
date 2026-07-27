@@ -320,6 +320,7 @@ fn ir_to_node_action(kind: &ActionKind) -> NodeAction {
                 })
                 .collect(),
             param_files: param_files.iter().map(|pf| pf.parts.clone()).collect(),
+            param_sources: Vec::new(),
             remappings: remaps_to_action(remaps),
             environment: env_decls_to_pairs(env),
             args: args.as_ref().map(|a| a.parts.clone()),

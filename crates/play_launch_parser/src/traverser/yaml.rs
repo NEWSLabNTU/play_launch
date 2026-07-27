@@ -347,6 +347,7 @@ impl LaunchTraverser {
             namespace,
             parameters,
             param_files,
+            param_sources: Vec::new(),
             remappings,
             environment: Vec::new(),
             args,

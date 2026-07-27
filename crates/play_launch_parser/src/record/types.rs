@@ -257,6 +257,26 @@ impl Default for RecordJson {
 }
 
 /// Node record structure
+/// phase-54 (issue 0007) — one parameter source in ROS's ordered model.
+///
+/// `launch_ros` keeps ONE list per node: `parse_nested_parameters` appends an
+/// entry per `<param>` child in document order, and `execute` emits
+/// `--params-file` / `-p` in that order (materializing an inline dict into a
+/// temp file first). Kind carries NO precedence — position does. Serialized
+/// as an externally-tagged enum so a record stays human-readable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ParamSource {
+    /// An inline `<param name= value=/>` (or a global param, which ROS applies
+    /// before the node's own — those occupy the head of the list).
+    Inline { name: String, value: String },
+    /// A `<param from=/>` parameter file — the RESOLVED YAML CONTENT, matching
+    /// `params_files` (the spawn path materializes it to a temp file and
+    /// passes `--params-file`). A launch-created temp params file is expanded
+    /// into `Inline` entries instead, mirroring what the Python dumper does.
+    File { content: String },
+}
+
 /// Fields ordered alphabetically to match Python output
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeRecord {
@@ -277,6 +297,13 @@ pub struct NodeRecord {
     pub package: Option<String>,
     pub params: Vec<(String, String)>,
     pub params_files: Vec<String>,
+    /// phase-54 (issue 0007) — the ORDERED parameter-source list; `params` /
+    /// `params_files` above are the legacy split views kept for back-compat.
+    /// Additive: omitted when empty so existing records round-trip
+    /// byte-identical. Global params occupy the head (ROS applies them before
+    /// the node's own).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_sources: Vec<ParamSource>,
     pub remaps: Vec<(String, String)>,
     pub respawn: Option<bool>,
     pub respawn_delay: Option<f64>,
@@ -301,6 +328,13 @@ pub struct ComposableNodeContainerRecord {
     pub package: String,
     pub params: Vec<(String, String)>,
     pub params_files: Vec<String>,
+    /// phase-54 (issue 0007) — the ORDERED parameter-source list; `params` /
+    /// `params_files` above are the legacy split views kept for back-compat.
+    /// Additive: omitted when empty so existing records round-trip
+    /// byte-identical. Global params occupy the head (ROS applies them before
+    /// the node's own).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_sources: Vec<ParamSource>,
     pub remaps: Vec<(String, String)>,
     pub respawn: Option<bool>,
     pub respawn_delay: Option<f64>,
@@ -391,6 +425,7 @@ mod tests {
             package: Some("demo_nodes_cpp".to_string()),
             params: vec![("rate".to_string(), "10.0".to_string())],
             params_files: vec![],
+            param_sources: Vec::new(),
             remaps: vec![("chatter".to_string(), "/chat".to_string())],
             respawn: Some(false),
             respawn_delay: None,
@@ -421,6 +456,7 @@ mod tests {
                 ("param2".to_string(), "value2".to_string()),
             ],
             params_files: vec![],
+            param_sources: Vec::new(),
             remaps: vec![],
             respawn: None,
             respawn_delay: None,

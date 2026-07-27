@@ -247,6 +247,7 @@ impl Node {
             machine: None, // Python Node() machine kwarg unsupported (deferred)
             parameters,
             params_files,
+            param_sources: Vec::new(),
             remappings,
             arguments: node.arguments.clone(),
             env_vars: node.env_vars.clone(),
