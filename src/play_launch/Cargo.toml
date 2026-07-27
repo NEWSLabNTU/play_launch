@@ -36,16 +36,23 @@ path = "src/bin/play_launch_rt_helper/main.rs"
 # library that builds under plain cargo with no ROS, no ament and no colcon.
 # That is what lets nano-ros link the resolver into its own small helper.
 default = ["runtime"]
-runtime = ["dep:rclrs", "dep:play_launch_msgs"]
+runtime = [
+    "dep:rclrs",
+    "dep:play_launch_msgs",
+    "dep:composition_interfaces",
+    "dep:diagnostic_msgs",
+    "dep:lifecycle_msgs",
+    "dep:rcl_interfaces",
+]
 
 [dependencies]
 chrono = "0.4"
 clap = { version = "4.5.16", features = ["derive"] }
-composition_interfaces = "*"
+composition_interfaces = { version = "*", optional = true }
 csv = "1.3"
 dashmap = "6.1"
-diagnostic_msgs = "*"
-lifecycle_msgs = "*"
+diagnostic_msgs = { version = "*", optional = true }
+lifecycle_msgs = { version = "*", optional = true }
 eyre = "0.6.12"
 play_launch_msgs = { version = "*", optional = true }
 play_launch_parser = { path = "../play_launch_parser/crates/play_launch_parser" }
@@ -62,7 +69,7 @@ libc = "0.2"
 nix = { version = "0.29", features = ["signal", "process"] }
 num_cpus = "1.16"
 nvml-wrapper = "0.11"
-rcl_interfaces = "*"
+rcl_interfaces = { version = "*", optional = true }
 thiserror = "1.0"
 rclrs = { version = "0.7", optional = true }
 rayon = "1.10.0"

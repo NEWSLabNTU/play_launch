@@ -20,6 +20,7 @@ pub mod commands;
 #[cfg(feature = "runtime")]
 pub mod diagnostics;
 pub mod execution;
+#[cfg(feature = "runtime")]
 pub mod interception;
 pub mod ipc;
 #[cfg(feature = "runtime")]
@@ -29,6 +30,7 @@ pub mod monitoring;
 pub mod process;
 pub mod python;
 pub mod ros;
+#[cfg(feature = "runtime")]
 pub mod runtime_enforcement;
 pub mod sched;
 pub mod util;

@@ -1,3 +1,4 @@
+#[cfg(feature = "runtime")]
 pub mod ament_index;
 pub mod causal_dag_global;
 pub mod causal_graph;
@@ -11,9 +12,11 @@ pub mod launch_dump;
 pub mod manifest_graph;
 pub mod manifest_loader;
 pub mod model_builder;
+#[cfg(feature = "runtime")]
 pub mod parameter_conversion;
 #[cfg(feature = "runtime")]
 pub mod parameter_proxy;
+#[cfg(feature = "runtime")]
 pub mod parameter_types;
 pub mod sched_derive;
 pub mod sched_loader;
