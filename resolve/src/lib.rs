@@ -24,6 +24,7 @@
 //! ```
 
 pub mod config;
+pub mod model;
 pub mod python;
 pub mod ros;
 pub mod util;
