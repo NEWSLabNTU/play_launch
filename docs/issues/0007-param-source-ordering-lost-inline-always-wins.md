@@ -58,6 +58,35 @@ Two vectors, no interleaving index. Everything downstream inherits the loss:
   runtime values under play_launch than under `ros2 launch`, which is exactly
   the class of drift the SystemModel exists to prevent.
 
+## Verified against ROS 2 (humble source, 2026-07-27)
+
+Read `launch_ros/actions/node.py` rather than arguing from memory. Three facts
+settle the design:
+
+1. **`parse_nested_parameters` (line 276)** walks the `<param>` children in
+   document order and appends into ONE `normalized_params` list — a
+   `ParameterFile` for `from=`, a dict for `name=`. One element per `<param>`,
+   order preserved, no grouping of consecutive inline params.
+2. **`execute` (line 443)** walks that single list in order and materializes a
+   DICT INTO A TEMP FILE:
+
+   ```python
+   if isinstance(params, dict):
+       param_argument = self._create_params_file_from_dict(params)
+       is_file = True
+   ...
+   cmd_extension = ['--params-file' if is_file else '-p', param_argument]
+   ```
+
+   So an inline dict is **not a precedence class** — it becomes a params file
+   and takes its position in the same `--params-file` sequence. "Inline wins"
+   has no basis in ROS; position is the only rule.
+3. **Global params come first** (`params_container` loop, line 429), then the
+   node's `parameters` entries; rcl applies `--params-file` / `-p`
+   left-to-right, later wins.
+
+The required model is therefore literally an ordered sequence of sources.
+
 ## Fix options
 
 ### A. Ordered source list in the record + model (correct, invasive)
@@ -109,17 +138,46 @@ Detect an inline `<param>` preceding a `<param from=>` that sets the same key
 and emit a checker warning. Cheap, honest, but leaves the wrong value in
 place.
 
-## Recommendation
+## A vs B, decided
 
-**A**, with the `params`/`params_files` accessors retained as derived views so
-neither consumer breaks mid-migration. The fix belongs at the fork in
-`node.rs` — everything downstream is just carrying the mistake forward. B and
-C both leave a shape that cannot represent what ROS 2 means; D documents the
-bug instead of fixing it.
+| | A — ordered `param_sources` | B — two vecs + order index |
+|---|---|---|
+| Matches ROS's model | isomorphic; order is intrinsic | only if the index is right — order lives outside the data it orders |
+| Illegal states | unrepresentable | index desync, stale/missing entries |
+| **Existing readers** | compat accessor returns the EFFECTIVE merge → naive consumers become correct for free | `params`/`params_files` keep today's meaning → every reader stays **wrong by default** |
+| Spawn path | walk list, one `--params-file`/`-p` per element — 1:1 with ROS's loop | reconstruct interleaving first; absent/stale index silently degrades to today's bug |
+| Model as reviewable artifact | sources appear in the order they apply | two lists + `[(kind, idx)…]`; precedence requires mentally zipping |
 
-Worth pairing with a regression fixture: a launch with
-`<param name="a" value="1"/>` followed by `<param from="a_is_2.yaml"/>`,
-asserting the resolved value is 2 on both the spawn path and the model.
+B's only advantage — not touching existing fields — IS its defect: the wrong
+shape survives, so the fix's reach depends on finding every consumer. A
+removes the shape. This repo has also been bitten repeatedly by exactly B's
+hazard (derived state mirrored beside its source and drifting).
+
+**Decision: A**, with three details that make it match ROS exactly:
+
+1. **Global params occupy the head of the list**, not a separate field —
+   mirroring `params_container` running before `parameters`.
+2. **One element per source.** Document in the type that a dict is a FILE in
+   ROS's execution model, so a bake-time consumer folds it with file semantics
+   (`ros__parameters` sections, wildcards), not as a bare key/value overlay.
+3. **Fold order:** within a file, rcl's section precedence (`/**` then more
+   specific); across sources, later wins. A fixes the second — the first must
+   not regress.
+
+Regression fixture: a launch with `<param name="a" value="1"/>` followed by
+`<param from="a_is_2.yaml"/>`, asserting the resolved value is 2 on both the
+spawn path and the model.
+
+## Related gap (not fixed by A)
+
+`ParameterFile(allow_substs=…)` — ROS re-resolves substitutions INSIDE a param
+file when asked. Our model carries file content verbatim, so an
+`allow_substs="true"` file needs its substitutions resolved at resolve time.
+Record here so it is not discovered later as a second divergence.
+
+## Implementation
+
+docs/roadmap/phase-54-param-source-ordering.md
 
 ## Cross-reference
 

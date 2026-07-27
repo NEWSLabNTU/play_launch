@@ -22,6 +22,15 @@ pub struct NodeCommandLine {
     /// Overrides YAML file written from inline params (global + node-specific).
     /// Rendered as the last `--params-file` so it overrides all earlier files.
     pub overrides_file: Option<PathBuf>,
+    /// phase-54 (issue 0007) — the ORDERED `--params-file` sequence built from
+    /// `NodeRecord::param_sources`. When non-empty this REPLACES
+    /// `params_files` + `overrides_file` at render time: ROS emits one
+    /// `--params-file` per source in list order (an inline dict is
+    /// materialized into a temp file and takes its position), so position is
+    /// the only precedence. Empty for records predating the field, where the
+    /// legacy set + overrides-last path still applies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ordered_params_files: Vec<PathBuf>,
     pub log_level: Option<String>,
     pub log_config_file: Option<PathBuf>,
     pub rosout_logs: Option<bool>,
@@ -261,6 +270,7 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         exec_name: Some(fqn_name.to_string()),
         params,
         params_files: inst.params_files.clone(),
+        param_sources: Vec::new(),
         remaps,
         ros_args: (!inst.ros_args.is_empty()).then(|| inst.ros_args.clone()),
         args: (!inst.args.is_empty()).then(|| inst.args.clone()),
@@ -339,6 +349,7 @@ impl NodeCommandLine {
             global_params,
             machine: _,
             scope: _,
+            param_sources,
         } = record;
 
         let Some(package) = package else {
@@ -416,6 +427,49 @@ impl NodeCommandLine {
             })
             .try_collect()?;
 
+        // phase-54 (issue 0007) — ORDERED emit. ROS materializes an inline dict
+        // into a temp params file and emits `--params-file` per source IN LIST
+        // ORDER, so a file written after an inline value wins. Build one chunk
+        // file per source, coalescing consecutive inline runs (a run has no
+        // internal ordering conflict). Empty `param_sources` (older records)
+        // falls through to the legacy set + overrides-last path below.
+        let ordered_params_files: Vec<PathBuf> = {
+            use crate::ros::launch_dump::ParamSource;
+            let mut out: Vec<PathBuf> = Vec::new();
+            let mut run: Vec<(String, String)> = Vec::new();
+            let mut idx = 0usize;
+            let mut flush_run =
+                |run: &mut Vec<(String, String)>, idx: &mut usize, out: &mut Vec<PathBuf>| -> eyre::Result<()> {
+                    if run.is_empty() {
+                        return Ok(());
+                    }
+                    let map: HashMap<String, String> = run.drain(..).collect();
+                    let path = params_files_dir.join(format!("ordered-{idx}-inline.yaml"));
+                    fs::write(&path, params_to_yaml(&map))
+                        .wrap_err_with(|| format!("unable to write {}", path.display()))?;
+                    *idx += 1;
+                    out.push(path);
+                    Ok(())
+                };
+            for src in param_sources {
+                match src {
+                    ParamSource::Inline { name, value } => {
+                        run.push((name.clone(), value.clone()));
+                    }
+                    ParamSource::File { content } => {
+                        flush_run(&mut run, &mut idx, &mut out)?;
+                        let path = params_files_dir.join(format!("ordered-{idx}-file.yaml"));
+                        fs::write(&path, content)
+                            .wrap_err_with(|| format!("unable to write {}", path.display()))?;
+                        idx += 1;
+                        out.push(path);
+                    }
+                }
+            }
+            flush_run(&mut run, &mut idx, &mut out)?;
+            out
+        };
+
         // Write all inline params to overrides.yaml instead of passing them as -p flags.
         // This avoids rcl's argument parser limitations (e.g., "::" in param names,
         // empty values) and matches the official launch's approach of using temp YAML files.
@@ -445,6 +499,7 @@ impl NodeCommandLine {
             remaps,
             params: HashMap::new(), // All params written to overrides.yaml
             params_files,
+            ordered_params_files: Vec::new(),
             overrides_file,
             log_level: None,
             log_config_file: None,
@@ -486,6 +541,7 @@ impl NodeCommandLine {
             remaps: HashMap::new(),
             params: HashMap::new(),
             params_files: HashSet::new(),
+            ordered_params_files: Vec::new(),
             overrides_file: None,
             log_level: None,
             log_config_file: None,
@@ -504,6 +560,7 @@ impl NodeCommandLine {
             remaps,
             params,
             params_files,
+            ordered_params_files,
             overrides_file,
             log_level,
             log_config_file,
@@ -584,27 +641,39 @@ impl NodeCommandLine {
                     .flat_map(move |(name, value)| {
                         [Cow::from(param_switch), format!("{name}:={value}").into()]
                     });
-                let params_file_args = params_files
-                    .iter()
+                // phase-54 — when the ordered list exists it REPLACES the legacy
+                // set + overrides-last emit (position is the only precedence).
+                let params_file_args = if !ordered_params_files.is_empty() {
+                    ordered_params_files.clone()
+                } else {
+                    params_files.iter().cloned().collect::<Vec<_>>()
+                };
+                // Own the strings: the source Vec is local to this branch.
+                let params_file_args: Vec<Cow<'_, str>> = params_file_args
+                    .into_iter()
                     .flat_map(|path| {
                         let path_str = path
                             .to_str()
-                            .expect("params file path contains invalid UTF-8");
-                        ["--params-file", path_str]
+                            .expect("params file path contains invalid UTF-8")
+                            .to_string();
+                        [Cow::from("--params-file"), Cow::from(path_str)]
                     })
-                    .map(Cow::from);
-                // overrides.yaml comes last so it overrides all earlier --params-file entries
-                let overrides_file_args = overrides_file
+                    .collect();
+                let params_file_args = params_file_args.into_iter();
+                // phase-54 — overrides.yaml only applies on the LEGACY path; with
+                // an ordered list the inline chunks already sit in position.
+                let overrides_file_args: Vec<Cow<'_, str>> = overrides_file
                     .as_ref()
+                    .filter(|_| ordered_params_files.is_empty())
                     .map(|path| {
                         let path_str = path
                             .to_str()
-                            .expect("overrides file path contains invalid UTF-8");
-                        ["--params-file", path_str]
+                            .expect("overrides file path contains invalid UTF-8")
+                            .to_string();
+                        vec![Cow::from("--params-file"), Cow::from(path_str)]
                     })
-                    .into_iter()
-                    .flatten()
-                    .map(Cow::from);
+                    .unwrap_or_default();
+                let overrides_file_args = overrides_file_args.into_iter();
 
                 chain!(
                     [Cow::from("--ros-args")],
@@ -701,6 +770,7 @@ mod tests {
             remaps: HashMap::from([("a".to_string(), "b".to_string())]),
             params: HashMap::new(),
             params_files: HashSet::new(),
+            ordered_params_files: Vec::new(),
             overrides_file: None,
             log_level: None,
             log_config_file: None,
@@ -715,6 +785,79 @@ mod tests {
         assert!(result.contains(&"a:=b".to_string()));
     }
 
+    /// phase-54 (issue 0007) — the ORDERED list drives the emit: a params file
+    /// written AFTER an inline value must appear after it on the command line,
+    /// so rcl (which applies `--params-file` left-to-right, later wins) lets
+    /// the file win. Under the legacy path the inline `overrides.yaml` was
+    /// always rendered last, inverting this.
+    #[test]
+    fn ordered_params_files_render_in_list_order_and_suppress_overrides() {
+        let cmdline = NodeCommandLine {
+            command: vec!["cmd".to_string()],
+            user_args: vec![],
+            remaps: HashMap::new(),
+            params: HashMap::new(),
+            // Legacy fields populated on purpose: the ordered list must win.
+            params_files: HashSet::from([PathBuf::from("/legacy/should-not-appear.yaml")]),
+            ordered_params_files: vec![
+                PathBuf::from("/p/ordered-0-inline.yaml"),
+                PathBuf::from("/p/ordered-1-file.yaml"),
+            ],
+            overrides_file: Some(PathBuf::from("/p/overrides.yaml")),
+            log_level: None,
+            log_config_file: None,
+            rosout_logs: None,
+            stdout_logs: None,
+            enclave: None,
+            env: HashMap::new(),
+        };
+        let out = cmdline.to_cmdline(false);
+        let pos = |needle: &str| out.iter().position(|a| a == needle);
+
+        let inline_at = pos("/p/ordered-0-inline.yaml").expect("inline chunk emitted");
+        let file_at = pos("/p/ordered-1-file.yaml").expect("file chunk emitted");
+        assert!(
+            inline_at < file_at,
+            "the file must follow the earlier inline value so it WINS: {out:?}"
+        );
+        assert!(
+            pos("/p/overrides.yaml").is_none(),
+            "overrides.yaml is legacy-path only; it would re-invert precedence: {out:?}"
+        );
+        assert!(
+            pos("/legacy/should-not-appear.yaml").is_none(),
+            "the ordered list replaces the legacy set: {out:?}"
+        );
+    }
+
+    /// The mirror case: with NO ordered list (a record predating the field)
+    /// the legacy set + overrides-last path still applies unchanged.
+    #[test]
+    fn legacy_path_still_renders_overrides_last() {
+        let cmdline = NodeCommandLine {
+            command: vec!["cmd".to_string()],
+            user_args: vec![],
+            remaps: HashMap::new(),
+            params: HashMap::new(),
+            params_files: HashSet::from([PathBuf::from("/p/a.yaml")]),
+            ordered_params_files: Vec::new(),
+            overrides_file: Some(PathBuf::from("/p/overrides.yaml")),
+            log_level: None,
+            log_config_file: None,
+            rosout_logs: None,
+            stdout_logs: None,
+            enclave: None,
+            env: HashMap::new(),
+        };
+        let out = cmdline.to_cmdline(false);
+        let a = out.iter().position(|x| x == "/p/a.yaml").expect("file");
+        let ov = out
+            .iter()
+            .position(|x| x == "/p/overrides.yaml")
+            .expect("overrides still emitted on the legacy path");
+        assert!(a < ov, "overrides must stay last on the legacy path: {out:?}");
+    }
+
     #[test]
     #[should_panic(expected = "command line must not be empty")]
     fn test_command_line_must_not_be_empty() {
@@ -724,6 +867,7 @@ mod tests {
             remaps: HashMap::new(),
             params: HashMap::new(),
             params_files: HashSet::new(),
+            ordered_params_files: Vec::new(),
             overrides_file: None,
             log_level: None,
             log_config_file: None,
@@ -874,6 +1018,7 @@ mod tests {
                 ),
             ]),
             params_files: HashSet::new(),
+            ordered_params_files: Vec::new(),
             overrides_file: None,
             log_level: None,
             log_config_file: None,
@@ -906,6 +1051,7 @@ mod tests {
                 ("empty_value".to_string(), "".to_string()),
             ]),
             params_files: HashSet::new(),
+            ordered_params_files: Vec::new(),
             overrides_file: None,
             log_level: None,
             log_config_file: None,
@@ -1012,6 +1158,7 @@ mod tests {
             remaps: HashMap::new(),
             params: HashMap::new(),
             params_files: HashSet::from([PathBuf::from("/tmp/0.yaml")]),
+            ordered_params_files: Vec::new(),
             overrides_file: Some(PathBuf::from("/tmp/overrides.yaml")),
             log_level: None,
             log_config_file: None,

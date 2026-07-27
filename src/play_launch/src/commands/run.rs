@@ -51,6 +51,7 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         exec_name: Some(args.executable.clone()),
         params: vec![],
         params_files: vec![],
+        param_sources: Vec::new(),
         global_params: None,
         remaps: vec![],
         env: None,
