@@ -829,7 +829,6 @@ pub fn build_system_model(
                 version: env!("CARGO_PKG_VERSION").to_string(),
             }),
             diagnostics,
-            record: None,
         },
         structure,
         contracts,

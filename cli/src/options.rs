@@ -234,6 +234,13 @@ pub struct ResolveArgs {
     /// remaining tokens to be treated as positional launch arguments.
     pub launch_arguments: Vec<String>,
 
+    /// nano-ros issue 0320 — the bringup package root that `meta.inputs[].path`
+    /// are recorded relative to. When omitted, falls back to the launch file's
+    /// grandparent (`<bringup>/launch/<f>.launch.xml`). Pass it to make model
+    /// portability structural rather than inferred from the launch-path layout.
+    #[arg(long, value_name = "PATH")]
+    pub bringup_root: Option<PathBuf>,
+
     /// Overlay root for user-supplied contracts (see `check --contracts`).
     #[arg(long, value_name = "PATH")]
     pub contracts: Option<PathBuf>,

@@ -22,6 +22,13 @@ use crate::ros::{launch_dump::LaunchDump, manifest_loader, model_builder, sched_
 pub struct ModelBuildInputs<'a> {
     pub dump: &'a LaunchDump,
     pub launch_path: Option<&'a Path>,
+    /// nano-ros issue 0320 — the bringup package root that `meta.inputs[].path`
+    /// are recorded relative to. When `Some`, it is the base directly; when
+    /// `None`, the base falls back to the launch file's grandparent
+    /// (`<bringup>/launch/x.launch.xml`). Passing it explicitly makes model
+    /// portability structural instead of inferred from the launch-path layout,
+    /// which broke for a relative or non-standard launch path.
+    pub bringup_root: Option<&'a Path>,
     pub arg_binding: BTreeMap<String, String>,
     pub contracts: Option<&'a Path>,
     pub no_provider_contracts: bool,
@@ -44,6 +51,7 @@ pub fn build_checked_model(
     let ModelBuildInputs {
         dump,
         launch_path,
+        bringup_root,
         arg_binding,
         contracts,
         no_provider_contracts,
@@ -153,11 +161,17 @@ pub fn build_checked_model(
         });
 
     // Issue 0293 — `meta.inputs` paths are recorded relative to the bringup
-    // package (the launch file's grandparent: `<bringup>/launch/x.launch.xml`)
-    // so a COMMITTED model is portable. The consumer resolves them against its
-    // own bringup dir; an absolute path from the resolving machine silently
-    // failed `.exists()` everywhere else.
-    let input_base = launch_path.and_then(|p| p.parent()).and_then(|p| p.parent());
+    // package so a COMMITTED model is portable. The consumer resolves them
+    // against its own bringup dir; an absolute path from the resolving machine
+    // silently failed `.exists()` everywhere else.
+    //
+    // nano-ros issue 0320 — prefer an explicit `bringup_root`; the launch
+    // file's grandparent (`<bringup>/launch/x.launch.xml`) is only a fallback.
+    // The grandparent inference returned absolute paths whenever the launch
+    // path was relative or not at `<bringup>/launch/<f>`; an explicit root makes
+    // relativity structural.
+    let input_base =
+        bringup_root.or_else(|| launch_path.and_then(|p| p.parent()).and_then(|p| p.parent()));
     let mut model = model_builder::build_system_model(
         dump,
         &index,
@@ -166,6 +180,24 @@ pub fn build_checked_model(
         &input_paths,
         input_base,
     );
+
+    // nano-ros issue 0320 — a residual absolute path in `meta.inputs` is a
+    // non-portable model that reproduces on exactly one checkout. It was
+    // previously silent; embed a checker-style warning so the leak is visible
+    // at resolve time instead of only when a consumer on another machine
+    // silently falls back. (An input genuinely outside the bringup root — a
+    // sibling-package include — is the one legitimate case, and it is named so
+    // the integrator can see which input is not self-contained.)
+    for input in &model.meta.inputs {
+        if std::path::Path::new(&input.path).is_absolute() {
+            model.meta.diagnostics.push(format!(
+                "provenance: input `{}` is recorded with an absolute path — the model is \
+                 not portable across checkouts (pass --bringup-root, or move the input \
+                 under the bringup package)",
+                input.path
+            ));
+        }
+    }
 
     // R1-P1 — integrator system config fills the execution layer
     // (deploy/transports/bridges/features). Fail-loud on unplaced nodes;

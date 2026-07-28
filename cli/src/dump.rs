@@ -34,6 +34,7 @@ fn dump_launch_model(
         package_or_path: launch_args.package_or_path.clone(),
         launch_file: launch_args.launch_file.clone(),
         launch_arguments: launch_args.launch_arguments.clone(),
+        bringup_root: None,
         contracts: launch_args.common.contract_opts.contracts.clone(),
         no_provider_contracts: launch_args.common.contract_opts.no_provider_contracts,
         sched: launch_args.common.sched_opts.sched.clone(),

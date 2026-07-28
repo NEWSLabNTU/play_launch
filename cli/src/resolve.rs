@@ -46,6 +46,7 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
     let model = build_checked_model(ModelBuildInputs {
         dump: &dump,
         launch_path: Some(&launch_path),
+        bringup_root: args.bringup_root.as_deref(),
         arg_binding,
         contracts: args.contracts.as_deref(),
         no_provider_contracts: args.no_provider_contracts,
