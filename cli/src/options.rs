@@ -205,9 +205,6 @@ pub struct CheckArgs {
     pub export_graph: Option<PathBuf>,
 }
 
-// `CheckArgs` isn't a `Command` variant (`check` stayed in `play_launch`,
-// RFC-0060) — this helper is leftover scaffolding, not called from here.
-#[allow(dead_code)]
 impl CheckArgs {
     /// Build the two-step `ContractSources` from this command's flags.
     ///
@@ -402,9 +399,6 @@ pub struct ReplayArgs {
     pub common: CommonOptions,
 }
 
-// `ReplayArgs` isn't a `Command` variant (`replay` stayed in `play_launch`,
-// RFC-0060) — this helper is leftover scaffolding, not called from here.
-#[allow(dead_code)]
 impl ReplayArgs {
     /// The SystemModel path, however it was given (positional or `--model`).
     /// `clap`'s `conflicts_with` already rejects both being set.
@@ -674,10 +668,6 @@ impl Default for SchedOptions {
     }
 }
 
-// Feature-toggle/web-addr/contract-sources helpers used by `run`/`replay`
-// (RFC-0060 territory) — not called by `resolve`/`dump`/`contract`/`plot`,
-// the verbs this crate actually wires up. Leftover scaffolding, not wired in.
-#[allow(dead_code)]
 impl CommonOptions {
     /// Check if resource monitoring is enabled
     pub fn is_monitoring_enabled(&self) -> bool {
