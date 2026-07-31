@@ -278,7 +278,6 @@ impl ContainerAction {
             exec_name: None,
             executable,
             global_params: None,
-            machine: None, // container machine= routing deferred
             name: Some(name),
             namespace: Some(namespace),
             package: Some(package),

@@ -244,7 +244,6 @@ impl Node {
             executable: node.executable.clone(),
             name: node.name.clone(),
             namespace: full_namespace.clone(),
-            machine: None, // Python Node() machine kwarg unsupported (deferred)
             parameters,
             params_files,
             param_sources: Vec::new(),

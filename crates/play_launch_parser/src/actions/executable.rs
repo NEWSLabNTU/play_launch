@@ -123,7 +123,6 @@ impl ExecutableAction {
             executable,
             name,
             namespace: None, // Executables don't use namespaces
-            machine: None,   // raw executables aren't ROS-machine-routed
             parameters: Vec::new(),
             params_files: Vec::new(),
             param_sources: Vec::new(),

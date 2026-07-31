@@ -1392,9 +1392,13 @@ fn test_command_substitution_in_let_and_node() {
 }
 
 #[test]
-fn test_node_machine_attr_recorded() {
-    // `<node machine="…">` (ROS 2 multi-host launch) surfaces on the node
-    // record; a node without it omits the field entirely (additive/skip-none).
+fn test_node_machine_attr_not_captured() {
+    // `machine=` is ROS 1 roslaunch syntax; ROS 2 has no such attribute and
+    // launch_xml rejects it. The capture was removed (nano-ros issue 0364) —
+    // no node record may carry a `machine` field, even when the XML says so.
+    // (This parser ignores unknown attributes rather than erroring; the
+    // strict-rejection parity with launch_xml's
+    // assert_entity_completely_parsed is a separate, broader feature.)
     let xml = r#"<launch>
         <node pkg="demo" exec="talker" name="t1" machine="robot1" />
         <node pkg="demo" exec="talker" name="t2" />
@@ -1410,19 +1414,10 @@ fn test_node_machine_attr_recorded() {
     let nodes = json["node"].as_array().unwrap();
     assert_eq!(nodes.len(), 2);
 
-    let with_machine = nodes
-        .iter()
-        .find(|n| n["name"].as_str() == Some("t1"))
-        .expect("t1");
-    assert_eq!(with_machine["machine"].as_str(), Some("robot1"));
-
-    let without = nodes
-        .iter()
-        .find(|n| n["name"].as_str() == Some("t2"))
-        .expect("t2");
-    assert!(
-        without.get("machine").is_none(),
-        "machine should be omitted when absent (skip_serializing_if), got {:?}",
-        without.get("machine")
-    );
+    for node in nodes {
+        assert!(
+            node.get("machine").is_none(),
+            "no node record may carry a `machine` field (ROS 1-ism, removed): {node:?}"
+        );
+    }
 }

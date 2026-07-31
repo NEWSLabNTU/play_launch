@@ -354,7 +354,6 @@ impl LaunchTraverser {
             output,
             respawn,
             respawn_delay,
-            machine: None, // YAML-launch node machine= deferred (XML is the primary path)
         };
 
         let record = CommandGenerator::generate_node_record(&node, &self.context)

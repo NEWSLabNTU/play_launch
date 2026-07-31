@@ -67,7 +67,6 @@ impl From<NodeAction> for ActionKind {
             args: node.args.map(Expr::new),
             respawn: node.respawn.map(Expr::new),
             respawn_delay: node.respawn_delay.map(Expr::new),
-            machine: node.machine.map(Expr::new),
         }
     }
 }

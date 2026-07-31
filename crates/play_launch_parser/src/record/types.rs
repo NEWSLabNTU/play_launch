@@ -286,12 +286,6 @@ pub struct NodeRecord {
     pub exec_name: Option<String>,
     pub executable: String,
     pub global_params: Option<Vec<(String, String)>>,
-    /// `<node machine="…">` — the target host the launch routes this node to
-    /// (ROS 2 multi-host launch). Additive: omitted when absent so existing
-    /// records round-trip byte-identical. Alphabetical slot (after
-    /// `global_params`, before `name`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub machine: Option<String>,
     pub name: Option<String>,
     pub namespace: Option<String>,
     pub package: Option<String>,
@@ -419,7 +413,6 @@ mod tests {
             exec_name: Some("talker-1".to_string()),
             executable: "talker".to_string(),
             global_params: None,
-            machine: None,
             name: Some("/talker".to_string()),
             namespace: Some("/".to_string()),
             package: Some("demo_nodes_cpp".to_string()),
@@ -447,7 +440,6 @@ mod tests {
             exec_name: None,
             executable: "node".to_string(),
             global_params: None,
-            machine: None,
             name: None,
             namespace: None,
             package: None,

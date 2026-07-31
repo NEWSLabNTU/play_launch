@@ -14,9 +14,6 @@ pub struct NodeCapture {
     pub executable: String,
     pub name: Option<String>,
     pub namespace: Option<String>,
-    /// `<node machine="…">` target host (ROS 2 multi-host launch). `None` when
-    /// the launch doesn't route the node to a specific machine.
-    pub machine: Option<String>,
     pub parameters: Vec<(String, String)>,
     pub params_files: Vec<String>,
     /// phase-54 (issue 0007) — the ORDERED parameter-source list carried from

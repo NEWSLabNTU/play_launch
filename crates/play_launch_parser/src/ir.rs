@@ -147,8 +147,6 @@ pub enum ActionKind {
         args: Option<Expr>,
         respawn: Option<Expr>,
         respawn_delay: Option<Expr>,
-        /// `<node machine="…">` — ROS 2 multi-host target host.
-        machine: Option<Expr>,
     },
 
     /// `<executable>` — spawns a non-ROS executable.
