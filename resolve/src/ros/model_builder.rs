@@ -452,16 +452,6 @@ pub fn build_system_model(
             .collect()
     }
 
-    // `<node machine="…">` → `execution.deploy[fqn].host` (nano-ros #236 /
-    // Phase 46.1). Collected alongside `structure.nodes` so the key is the
-    // SAME reconciled launch-dump FQN (`fqn(ns, name)`) other consumers
-    // (bindings, sched) already use — populated into `execution` below,
-    // once that layer exists. `target` stays `None` (UNPLACED — the model
-    // names no board; the consuming entry's board decides, nano-ros #236)
-    // so a later `--system` config pass can set a real placement without
-    // this step guessing.
-    let mut deploy_hosts: BTreeMap<String, String> = BTreeMap::new();
-
     for n in &dump.node {
         // GAP-1 (46.3a) — a regular <node> with no declared `name` must NOT
         // be dropped from the model. Mirror the `name.or(exec_name)`
@@ -480,9 +470,6 @@ pub fn build_system_model(
         let ns = n.namespace.as_deref().unwrap_or("/");
         let node_fqn = fqn(ns, name);
         let decl = find_node_decl(index, dump, n.scope, name);
-        if let Some(machine) = &n.machine {
-            deploy_hosts.insert(node_fqn.clone(), machine.clone());
-        }
         insert_node(
             &mut structure,
             node_fqn,
@@ -786,18 +773,6 @@ pub fn build_system_model(
         // from `execution.sched` are re-derived at the point of use from the
         // in-memory `DerivedSchedPlan`/`LaunchDump` (check, launch, replay).
     }
-    // deploy: `<node machine="…">` → per-node host (nano-ros #236 /
-    // Phase 46.1). Create the `Deploy` entry with `host` set and `target`
-    // `None` (UNPLACED — board is entry-determined; nano-ros #236) — an
-    // explicit `--system` config pass (`resolve.rs`,
-    // `SystemConfigToml::apply_to`) owns platform placement and sets a
-    // real `Some(target)` afterwards. Nodes without `machine` get
-    // no entry here, so `execution.deploy` stays empty for single-host
-    // launches exactly as before (backward-compatible).
-    for (node_fqn, host) in deploy_hosts {
-        execution.deploy.entry(node_fqn).or_default().host = Some(host);
-    }
-
     // --- embedded checker warnings -----------------------------------------
     for m in index.manifests.values() {
         for d in &m.diagnostics {
