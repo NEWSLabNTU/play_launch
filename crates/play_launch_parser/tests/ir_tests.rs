@@ -627,3 +627,28 @@ fn test_ir_yaml_arg_no_default() {
         other => panic!("Expected DeclareArgument, got {:?}", other),
     }
 }
+
+#[test]
+fn test_ir_rejects_machine_on_node() {
+    // The IR path (`build_ir_entity`) has its own traversal, separate from
+    // the default evaluating path (`traverse_entity`) — it must apply the
+    // same attribute validation, not silently accept ROS 1 syntax the
+    // default path now rejects. Mirrors
+    // `attr_strictness::parsing_rejects_machine_on_node`.
+    let mut file = NamedTempFile::with_suffix(".launch.xml").unwrap();
+    file.write_all(
+        br#"<launch>
+            <node pkg="demo_nodes_cpp" exec="talker" name="t" machine="robot1"/>
+        </launch>"#,
+    )
+    .unwrap();
+    file.flush().unwrap();
+
+    let err = analyze_launch_file(file.path())
+        .expect_err("machine= must fail IR construction the same as the default path");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Unexpected attribute(s) found in `node`") && msg.contains("'machine'"),
+        "{msg}"
+    );
+}

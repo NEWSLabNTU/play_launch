@@ -94,6 +94,17 @@ fn group_namespace_is_known_unsupported_not_supported() {
 }
 
 #[test]
+fn push_ros_namespace_ns_is_known_unsupported_not_supported() {
+    // Same precedent as `<group namespace=/ns=>` above: ROS 2 rejects `ns`
+    // on `<push-ros-namespace>` outright (measured, even alongside a valid
+    // `namespace=`), but this parser reads it as a backwards-compat alias.
+    // Warn, don't break launch files that already depend on the alias.
+    let spec = spec_for("push-ros-namespace").expect("push-ros-namespace has a spec");
+    assert!(spec.known_unsupported.contains(&"ns"), "{spec:?}");
+    assert!(!spec.supported.contains(&"ns"), "{spec:?}");
+}
+
+#[test]
 fn child_elements_do_not_accept_conditions() {
     // `<param>`, `<remap>`, `<env>` are not actions — ROS 2 rejects if/unless
     // on them (measured).
@@ -179,6 +190,25 @@ fn parsing_accepts_a_known_unsupported_attribute() {
 "#,
     )
     .expect("launch-prefix is valid ROS 2 — must parse with a warning");
+}
+
+#[test]
+fn parsing_accepts_push_ros_namespace_ns_as_a_known_unsupported_alias() {
+    // `ns=` on `<push-ros-namespace>` is not real ROS 2 (measured: ROS 2
+    // rejects it even alongside a valid `namespace=`), but this parser reads
+    // it as a backwards-compat alias for `namespace=` (see the
+    // `push-ros-namespace` arm in traverser/entity.rs). Same precedent as
+    // `<group namespace=/ns=>`: warn, don't break launch files that already
+    // depend on the alias. Pins the precedent so a future change can't
+    // silently flip this back to a hard error.
+    parse_source(
+        r#"<launch>
+  <push-ros-namespace ns="/n"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="t"/>
+</launch>
+"#,
+    )
+    .expect("push-ros-namespace ns= is a known-unsupported alias — must parse with a warning");
 }
 
 #[test]

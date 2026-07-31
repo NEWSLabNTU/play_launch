@@ -134,6 +134,18 @@ impl LaunchTraverser {
     /// - Processes ALL conditional branches (never skips)
     /// - Returns `Vec<Action>` rather than mutating `self.records`
     fn build_ir_entity(&mut self, entity: &XmlEntity, current_file: &Path) -> Result<Vec<Action>> {
+        // Reject attributes ROS 2 would reject; warn on ROS 2 attributes we
+        // do not implement. Same validation as `traverse_entity` (the
+        // default, evaluating path) — the IR path processes every branch
+        // unconditionally, so there is no condition check to race against,
+        // but attributes must still be checked on every entity this function
+        // recurses into (`launch` and `group` recurse here directly; other
+        // elements go through their own `*Action::from_entity`, whose child
+        // loops validate their own children — see `actions/*.rs`). `<launch>`
+        // and undispatched elements have no spec and are skipped (see
+        // `xml::attr_spec::spec_for`).
+        crate::xml::attr_spec::validate_attrs(entity)?;
+
         let mut actions = Vec::new();
 
         match entity.type_name() {

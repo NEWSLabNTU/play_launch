@@ -153,7 +153,13 @@ static SPECS: &[AttrSpec] = &[
     AttrSpec {
         element: "push-ros-namespace",
         supported: &["if", "unless", "namespace"],
-        known_unsupported: &[],
+        // ROS 2 rejects `ns` (measured: `Unexpected attribute(s) found in
+        // `push_ros_namespace`: {'ns'}`, even alongside a valid namespace=);
+        // this parser reads it as a backwards-compat alias for `namespace`
+        // (see the `push-ros-namespace` arm in traverser/entity.rs). Same
+        // precedent as `<group namespace=/ns=>` above: warn rather than
+        // break launch files that already depend on the alias.
+        known_unsupported: &["ns"],
         children: &[],
     },
     // Child elements: NOT actions, so no if/unless (measured — ROS 2

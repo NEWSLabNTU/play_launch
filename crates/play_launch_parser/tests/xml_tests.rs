@@ -341,10 +341,10 @@ fn test_node_command_generation() {
 fn test_push_pop_ros_namespace_actions() {
     // Test push-ros-namespace and pop-ros-namespace XML actions
     let xml = r#"<launch>
-        <push-ros-namespace namespace="robot1" />
+        <push-ros-namespace ns="robot1" />
         <node pkg="demo_nodes_cpp" exec="talker" name="talker1" />
 
-        <push-ros-namespace namespace="sensors" />
+        <push-ros-namespace ns="sensors" />
         <node pkg="demo_nodes_cpp" exec="listener" name="listener1" />
         <pop-ros-namespace />
 
@@ -403,7 +403,7 @@ fn test_push_ros_namespace_with_substitution() {
     // Test that push-ros-namespace supports substitutions
     let xml = r#"<launch>
         <arg name="robot_ns" default="my_robot" />
-        <push-ros-namespace namespace="$(var robot_ns)" />
+        <push-ros-namespace ns="$(var robot_ns)" />
         <node pkg="demo_nodes_cpp" exec="talker" name="talker" />
         <pop-ros-namespace />
     </launch>"#;
@@ -574,11 +574,11 @@ fn test_deeply_nested_namespaces() {
     // Test that deeply nested namespace stacking works correctly
     let xml = r#"<launch>
         <group><push-ros-namespace namespace="level1"/>
-            <push-ros-namespace namespace="level2" />
+            <push-ros-namespace ns="level2" />
             <group>
-                <push-ros-namespace namespace="level3" />
+                <push-ros-namespace ns="level3" />
                 <group>
-                    <push-ros-namespace namespace="level4" />
+                    <push-ros-namespace ns="level4" />
                     <node pkg="test_pkg" exec="test_node" name="deep_node" />
                     <pop-ros-namespace />
                 </group>
