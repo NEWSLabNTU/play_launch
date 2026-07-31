@@ -257,3 +257,45 @@ fn parsing_validates_even_when_a_condition_excludes_the_element() {
     .expect_err("a skipped element must still be validated");
     assert!(err.to_string().contains("'machine'"), "{err}");
 }
+
+fn parse_yaml_source(yaml: &str) -> play_launch_parser::error::Result<()> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tmp");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let path = dir.join(format!("attr_strict_{}.launch.yaml", std::process::id()));
+    let mut fh = std::fs::File::create(&path).expect("write fixture");
+    fh.write_all(yaml.as_bytes()).expect("write fixture");
+    drop(fh);
+    let result = play_launch_parser::parse_launch_file(&path, Default::default());
+    let _ = std::fs::remove_file(&path);
+    result.map(|_| ())
+}
+
+#[test]
+fn yaml_parsing_rejects_an_unknown_key() {
+    let err = parse_yaml_source(
+        "launch:\n  - node:\n      pkg: demo_nodes_cpp\n      exec: talker\n      zzz_bogus: x\n",
+    )
+    .expect_err("unknown YAML node keys must fail the parse");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Unexpected attribute(s) found in `node`") && msg.contains("'zzz_bogus'"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn yaml_parsing_rejects_machine() {
+    let err = parse_yaml_source(
+        "launch:\n  - node:\n      pkg: demo_nodes_cpp\n      exec: talker\n      machine: robot1\n",
+    )
+    .expect_err("machine= is ROS 1 syntax and must be rejected in YAML too");
+    assert!(err.to_string().contains("'machine'"), "{err}");
+}
+
+#[test]
+fn yaml_parsing_accepts_supported_keys() {
+    parse_yaml_source(
+        "launch:\n  - node:\n      pkg: demo_nodes_cpp\n      exec: talker\n      name: t\n      namespace: /n\n",
+    )
+    .expect("supported keys must parse");
+}

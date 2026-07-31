@@ -58,6 +58,16 @@ impl LaunchTraverser {
 
                 let action_map = value.as_mapping();
 
+                // Same allowlists the XML frontend uses. YAML nests child
+                // elements as keys of this mapping (`node: { pkg: …, param:
+                // [...] }`) where XML makes them separate elements, so this
+                // uses the `_yaml_keys` variant, which also accepts
+                // `spec.children`.
+                if let Some(map) = action_map {
+                    let keys: Vec<&str> = map.keys().filter_map(|k| k.as_str()).collect();
+                    crate::xml::attr_spec::validate_yaml_keys(action_type, &keys)?;
+                }
+
                 // Check if/unless conditions on the action
                 if let Some(map) = action_map
                     && !self.yaml_check_condition(map)?

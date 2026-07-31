@@ -157,8 +157,12 @@ static SPECS: &[AttrSpec] = &[
         // than break launch files that already depend on the behavior.
         known_unsupported: &["namespace", "ns"],
         // A group contains arbitrary actions; YAML nests them under a
-        // `children:` key rather than as sibling keys, so nothing to list.
-        children: &[],
+        // `children:` key (measured: real ROS 2's `launch_yaml` `Entity`
+        // reserves `children` as the generic key for nested sub-entities —
+        // `launch_yaml/entity.py`'s `Entity.children` property reads
+        // `self.__element['children']`) rather than as sibling keys, so
+        // `children` itself is the one legal key to list here.
+        children: &["children"],
     },
     AttrSpec {
         element: "include",
