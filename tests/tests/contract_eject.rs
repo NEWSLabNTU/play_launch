@@ -18,12 +18,37 @@ use play_launch_tests::fixtures;
 
 /// Find the play_launch binary, preferring the cargo debug build (mirrors
 /// `manifest_check.rs`).
+#[allow(dead_code)]
 fn play_launch_bin() -> PathBuf {
     let cargo_bin = fixtures::repo_root().join("target/debug/play_launch");
     if cargo_bin.is_file() {
         return cargo_bin;
     }
     fixtures::play_launch_bin()
+}
+
+/// Locate the `ros-launch-resolve` CLI, which owns `contract eject`.
+///
+/// The subcommand used to be `play_launch contract eject`; `adc33a7`
+/// ("depend on ros-launch-resolve; drop the resolve pipeline", RFC-0060 W3)
+/// moved it into the extracted CLI, and `play_launch` no longer has a
+/// `contract` subcommand at all (`unrecognized subcommand 'contract'`).
+/// The binary is not installed or on `PATH`, so this looks in the
+/// submodule's own target dir and the test skips if it has not been built.
+fn resolve_cli_bin() -> Option<PathBuf> {
+    let root = fixtures::repo_root().join("src/ros-launch-resolve/target");
+    for profile in ["debug", "release"] {
+        let candidate = root.join(profile).join("ros-launch-resolve");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    eprintln!(
+        "SKIP: ros-launch-resolve CLI not built ({}/{{debug,release}}/ros-launch-resolve \
+         missing) — run `cd src/ros-launch-resolve && cargo build` first",
+        root.display()
+    );
+    None
 }
 
 fn simple_launch_dir() -> PathBuf {
@@ -62,14 +87,17 @@ fn eject_errors_when_provider_ships_neither_file() {
     let launch_copy = launch_tmp.path().join("pure_nodes.launch.xml");
     std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
 
+    let Some(bin) = resolve_cli_bin() else {
+        return;
+    };
     let into = tempfile::TempDir::new().expect("failed to create into dir");
-    let output = Command::new(play_launch_bin())
+    let output = Command::new(bin)
         .args(["contract", "eject"])
         .arg(&launch_copy)
         .arg("--into")
         .arg(into.path())
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
 
     assert!(
         !output.status.success(),

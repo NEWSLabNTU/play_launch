@@ -114,14 +114,18 @@ impl HealthReport {
     /// Returns true if no errors were detected (ignoring known environment issues).
     ///
     /// `ignored_exits` is a list of node names to skip (e.g., nodes that require
-    /// hardware like TensorRT or a display server).
+    /// hardware like TensorRT or a display server). Entries are matched against
+    /// the BARE node name: reported names are member IDs of the form
+    /// `<kind>:/<name>` (phase-52, commit 416b533), e.g. `node:/rviz2`, so an
+    /// exact comparison against `rviz2` silently never matched and every entry
+    /// in the list was dead.
     /// `ignored_load_errors` is a list of substrings to match against LoadNode
     /// error messages (e.g., known upstream races like rcl context shutdown).
     pub fn is_healthy(&self, ignored_exits: &[&str], ignored_load_errors: &[&str]) -> bool {
         let unexpected_exits = self
             .node_exits
             .iter()
-            .filter(|e| !ignored_exits.contains(&e.name.as_str()))
+            .filter(|e| !ignored_exits.contains(&bare_member_name(&e.name)))
             .count();
         let unexpected_load_failures = self
             .load_node_failures
@@ -132,6 +136,38 @@ impl HealthReport {
             && unexpected_load_failures == 0
             && self.composable_crashes.is_empty()
             && self.processes_actual == self.processes_expected
+    }
+}
+
+/// Strip a member ID's `<kind>:/` prefix, yielding the bare node name.
+///
+/// play_launch reports members as `node:/rviz2`, `composable:/fast_talker`,
+/// `container:/lc_unload_container` (phase-52). Callers that hand-write node
+/// names want to match on `rviz2`.
+fn bare_member_name(id: &str) -> &str {
+    id.split_once(":/").map_or(id, |(_kind, name)| name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bare_member_name;
+
+    #[test]
+    fn strips_the_kind_prefix() {
+        assert_eq!(bare_member_name("node:/rviz2"), "rviz2");
+        assert_eq!(bare_member_name("composable:/fast_talker"), "fast_talker");
+    }
+
+    #[test]
+    fn leaves_an_unprefixed_name_alone() {
+        assert_eq!(bare_member_name("rviz2"), "rviz2");
+    }
+
+    #[test]
+    fn keeps_a_namespaced_name_after_the_prefix() {
+        // Only the `<kind>:/` prefix is stripped — a namespaced node keeps its
+        // path, so an ignore entry must spell it the same way.
+        assert_eq!(bare_member_name("node:/perception/detector"), "perception/detector");
     }
 }
 

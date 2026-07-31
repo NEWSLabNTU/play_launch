@@ -1,83 +1,104 @@
-# 0008 — Composable-node unload returns HTTP 500; 4 `parallel_loading` tests fail
+# 0008 — Integration tests used stale member names after the `<kind>:/` rename
 
-**Status:** Open
+**Status:** Resolved (2026-08-01)
 **Filed:** 2026-08-01
-**Severity:** Real defect, pre-existing, deterministic
-**Affects:** `POST /api/nodes/:name/unload`, container actor unload handling
-**Failing tests:** `tests/tests/parallel_loading.rs` —
-`test_unload_via_web_api`, `test_unload_and_reload`,
-`test_unload_during_construction`, `test_fast_not_blocked_by_slow`
+**Severity:** Test-only. No product defect.
+**Affects:** `tests/tests/parallel_loading.rs`, `tests/src/health.rs`,
+`tests/tests/contract_eject.rs`
+
+> **Correction.** This issue was originally filed as *"Composable-node unload
+> returns HTTP 500"*, describing a real defect in the unload path. **That
+> diagnosis was wrong.** The unload path works correctly; the tests were
+> calling it with names it never used. The original bisect was sound in what
+> it proved — the failures predated the `machine=` removal branch and were not
+> environmental — but it misattributed the cause. Corrected below.
 
 ## Summary
 
-Unloading a composable node through the web API returns HTTP 500 instead of
-200/202. Four `parallel_loading` integration tests fail on it. A companion
-symptom in the same suite is `Actor not found: slow_node`.
+Six integration tests failed for one shared reason: member IDs gained a
+`<kind>:/` prefix and the tests were never updated.
 
-This is **not** a flake and **not** environmental. It was bisected during
-the `machine=` removal work (2026-07-31) and reproduces deterministically.
+`416b533` ("feat(phase-52): timing knobs, startup-failure policy, typed load
+errors", 2026-07-25) changed member IDs to `<kind>:/<name>` — `node:/rviz2`,
+`composable:/fast_talker`, `container:/lc_unload_container`. It touched eight
+files under `src/play_launch/src/member_actor/` and **zero test files**.
 
 ## Evidence
 
-Three runs, same four tests, same failure signatures, near-identical
-timings each time (9.3s / 23.7s / 36.7s):
-
-| # | Conditions | Result |
-|---|---|---|
-| 1 | Loaded machine: load avg 34.40, 102 ROS processes | 3 passed / 4 failed |
-| 2 | Idle machine: load avg 13.6, 1 ROS process | 3 passed / 4 failed |
-| 3 | **Pre-branch binary** (`play_launch 0.8.2`, built 2026-07-28) | 3 passed / 4 failed |
-
-Run 2 rules out resource contention — a 500 returned 9.3 seconds in, on an
-otherwise idle machine, reproducing to the second, is not a timing race.
-
-Run 3 rules out the `machine=` removal branch as the cause. The installed
-wheel binary from three days earlier was swapped into
-`install/play_launch/lib/play_launch/` (the path `tests/src/fixtures.rs`
-resolves) and failed identically. The branch binary was restored afterwards
-and verified byte-identical.
-
-Corroborating: `git diff --name-only <branch-point>..HEAD` on that branch
-touched only `src/play_launch/src/commands/{resolve_compat.rs,run.rs}` and
-`src/play_launch/src/execution/node_cmdline.rs` — nothing in
-`member_actor`, `container_actor`, or the web unload handlers those tests
-exercise.
-
-## Reproduction
-
-```sh
-cd tests
-cargo nextest run -E 'binary(parallel_loading)' --no-fail-fast
-```
-
-Expected today: 7 tests run, 3 passed, 4 failed. Representative output:
+`GET /api/nodes` returns:
 
 ```
-Unloading fast_talker via POST /api/nodes/fast_talker/unload
-Unload response status: 500
-thread 'test_unload_via_web_api' panicked at tests/parallel_loading.rs:388:5:
-Expected 200/202 from unload, got 500
+['composable:/fast_talker', 'container:/lc_unload_container', 'composable:/slow_node']
 ```
 
-Both nextest retries fail, so it is not retry-flaky.
+Reproduced directly, outside the test harness:
 
-## Where to start
+```
+POST /api/nodes/fast_talker/unload                → HTTP 500
+  WARN [Web UI] Failed to unload 'fast_talker': Actor not found: fast_talker
 
-The 500 comes from the unload endpoint rather than from the container
-itself refusing, and `Actor not found: slow_node` suggests the actor
-registry lookup fails at unload time — plausibly a name-keying mismatch
-between how members are registered and how the unload handler looks them
-up. Note the 2026-03-12 change making nodes with `name=None` use
-`exec_name` as the FQN map key (`node_cmdline.rs`, `builder.rs`); the
-`parallel_loading` fixtures are a good place to check whether registration
-and lookup agree.
+POST /api/nodes/composable:%2Ffast_talker/unload  → HTTP 200
+  DEBUG Calling UnloadNode service (unique_id: 1)
+  DEBUG UnloadNode response: success=true, error_message=
+  DEBUG Successfully unloaded composable node 'composable:/fast_talker'
+```
 
-Not yet investigated beyond the bisect — the bisect established *what* is
-and is not responsible, not the root cause.
+The 500 is the handler's own error path
+(`web/handlers.rs::unload_node` → `INTERNAL_SERVER_ERROR`) reporting that no
+actor by that name exists. Given the real ID, unload succeeds.
 
-## Why this was not fixed in the branch that found it
+The `/` inside a member ID must be percent-encoded (`composable:%2F…`) so the
+router treats the ID as a single path segment.
 
-The `machine=` removal branch (spec:
-`docs/superpowers/specs/2026-07-31-machine-attr-removal-design.md`) did not
-cause this and does not touch the unload path. It is filed here so the
-bisect is not repeated from scratch.
+## The six failures
+
+| Test | Stale expectation |
+|---|---|
+| `parallel_loading::test_unload_via_web_api` | `POST /api/nodes/fast_talker/unload` |
+| `parallel_loading::test_unload_and_reload` | same, plus `/load` |
+| `parallel_loading::test_unload_during_construction` | `POST /api/nodes/slow_node/unload` |
+| `parallel_loading::test_fast_not_blocked_by_slow` | greps `ComponentEvent LOADED for 'fast_talker'` |
+| `autoware::test_autoware_smoke_test` | see below |
+| `contract_eject::eject_errors_when_provider_ships_neither_file` | unrelated; see below |
+
+The three unload/load tests additionally asserted on log lines reading
+`Successfully unloaded composable node 'fast_talker'`, where the actual log
+says `'composable:/fast_talker'`.
+
+**`autoware` is the same bug in a second place.** `rviz2` was already listed in
+`ignored_exits` (`tests/tests/autoware.rs:202`), but
+`HealthReport::is_healthy` did `ignored_exits.contains(&e.name.as_str())` — an
+exact match against `node:/rviz2`. Every entry in every ignore list had been
+dead since the rename. The `rviz2` exit itself is environmental (no `DISPLAY`);
+the mechanism meant to tolerate it was broken.
+
+**`contract_eject` is unrelated to the rename.** `play_launch contract eject`
+was moved into the extracted `ros-launch-resolve` CLI by `adc33a7`
+("depend on ros-launch-resolve; drop the resolve pipeline", RFC-0060 W3).
+`play_launch` has no `contract` subcommand at all now
+(`unrecognized subcommand 'contract'`, `tip: a similar subcommand exists:
+'context'`). The test still invoked the old path, and `CLAUDE.md` still
+documented it under `play_launch`.
+
+## Resolution
+
+- `parallel_loading.rs`: added `composable_api_path()` / `composable_id()`
+  helpers and routed every API call and log assertion through them.
+- `health.rs`: `is_healthy` now matches ignore entries against the bare name
+  via `bare_member_name()`, which strips the `<kind>:/` prefix. Unit-tested.
+- `contract_eject.rs`: points at the relocated `ros-launch-resolve` CLI,
+  skipping cleanly if that binary is not built.
+- `CLAUDE.md`: corrected to say `contract eject` lives in the
+  `ros-launch-resolve` CLI.
+
+`just test-all`: **108/108 integration tests pass**, from 99/105. Suite runtime
+dropped 200s → 81s, since the four `parallel_loading` tests no longer time out
+and retry.
+
+## Lesson
+
+A rename that changes an identifier's *format* does not break compilation when
+the identifier is a string, so the type system gives no warning. The two ignore
+mechanisms here (`ignored_exits`, and the retry) both silently stopped working
+and made the failures look flaky and environmental rather than stale. Worth a
+grep for hand-written member names when member ID formats change again.

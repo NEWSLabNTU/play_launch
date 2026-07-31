@@ -123,6 +123,21 @@ fn web_api_post(port: u16, path: &str) -> (u32, String) {
     (status, body)
 }
 
+/// Build the web-API path for a composable node action.
+///
+/// Member IDs are `<kind>:/<name>` (phase-52, commit 416b533) — `GET
+/// /api/nodes` returns e.g. `composable:/fast_talker`. A bare `fast_talker`
+/// yields `Actor not found` and HTTP 500. The `/` inside the ID must be
+/// percent-encoded so it stays one path segment.
+fn composable_api_path(name: &str, action: &str) -> String {
+    format!("/api/nodes/composable:%2F{name}/{action}")
+}
+
+/// The member ID as it appears in log lines, for assertion strings.
+fn composable_id(name: &str) -> String {
+    format!("composable:/{name}")
+}
+
 // ---- Resolve tests (Phase 47.B6: model, not record.json) ----
 
 #[test]
@@ -277,10 +292,14 @@ fn test_fast_not_blocked_by_slow() {
         std::thread::sleep(std::time::Duration::from_secs(1));
         let stdout = std::fs::read_to_string(&output_path).unwrap_or_default();
 
-        let talker_done = stdout.contains("ComponentEvent LOADED for 'fast_talker'")
-            || stdout.contains("LoadSucceeded { name: \"fast_talker\"");
-        let slow_done = stdout.contains("ComponentEvent LOADED for 'slow_node'")
-            || stdout.contains("LoadSucceeded { name: \"slow_node\"");
+        let talker_done = stdout.contains(&format!(
+            "ComponentEvent LOADED for '{}'",
+            composable_id("fast_talker")
+        ));
+        let slow_done = stdout.contains(&format!(
+            "ComponentEvent LOADED for '{}'",
+            composable_id("slow_node")
+        ));
 
         if talker_done && !talker_loaded {
             talker_loaded = true;
@@ -292,8 +311,10 @@ fn test_fast_not_blocked_by_slow() {
     }
 
     let stdout_final = std::fs::read_to_string(&output_path).unwrap_or_default();
-    let slow_loaded = stdout_final.contains("ComponentEvent LOADED for 'slow_node'")
-        || stdout_final.contains("LoadSucceeded { name: \"slow_node\"");
+    let slow_loaded = stdout_final.contains(&format!(
+        "ComponentEvent LOADED for '{}'",
+        composable_id("slow_node")
+    ));
 
     eprintln!("--- Final output (last 3000 chars) ---");
     let snippet_start = stdout_final.len().saturating_sub(3000);
@@ -382,8 +403,11 @@ fn test_unload_via_web_api() {
     std::thread::sleep(Duration::from_secs(2));
 
     // Unload fast_talker via web API
-    eprintln!("Unloading fast_talker via POST /api/nodes/fast_talker/unload");
-    let (status, _) = web_api_post(port, "/api/nodes/fast_talker/unload");
+    eprintln!(
+        "Unloading fast_talker via POST {}",
+        composable_api_path("fast_talker", "unload")
+    );
+    let (status, _) = web_api_post(port, &composable_api_path("fast_talker", "unload"));
     eprintln!("Unload response status: {status}");
     assert!(
         status == 200 || status == 202,
@@ -393,7 +417,7 @@ fn test_unload_via_web_api() {
     // Wait for unload confirmation (either ComponentEvent or actor log)
     let unloaded = wait_for_line(
         &output_path,
-        "Successfully unloaded composable node 'fast_talker'",
+        &format!("Successfully unloaded composable node '{}'", composable_id("fast_talker")),
         Duration::from_secs(15),
     );
 
@@ -429,8 +453,7 @@ fn test_unload_and_reload() {
     // Accept ComponentEvent (DDS), LoadSucceeded (actor log), and LoadNode SUCCESS
     // (service response) patterns because DDS events may be lost under SHM exhaustion.
     let reload_patterns: &[&str] = &[
-        "ComponentEvent LOADED for 'fast_talker'",
-        "LoadSucceeded { name: \"fast_talker\"",
+        &format!("ComponentEvent LOADED for '{}'", composable_id("fast_talker")),
         "LoadNode SUCCESS for fast_talker",
     ];
     let stdout_before = std::fs::read_to_string(&output_path).unwrap_or_default();
@@ -442,7 +465,7 @@ fn test_unload_and_reload() {
 
     // Unload fast_talker
     eprintln!("Unloading fast_talker...");
-    let (status, _) = web_api_post(port, "/api/nodes/fast_talker/unload");
+    let (status, _) = web_api_post(port, &composable_api_path("fast_talker", "unload"));
     assert!(
         status == 200 || status == 202,
         "Unload failed with status {status}"
@@ -451,7 +474,7 @@ fn test_unload_and_reload() {
     // Wait for unload confirmation
     let unloaded = wait_for_line(
         &output_path,
-        "Successfully unloaded composable node 'fast_talker'",
+        &format!("Successfully unloaded composable node '{}'", composable_id("fast_talker")),
         Duration::from_secs(15),
     );
     assert!(unloaded, "Expected unload confirmation for fast_talker");
@@ -461,7 +484,7 @@ fn test_unload_and_reload() {
 
     // Reload fast_talker
     eprintln!("Reloading fast_talker...");
-    let (status, _) = web_api_post(port, "/api/nodes/fast_talker/load");
+    let (status, _) = web_api_post(port, &composable_api_path("fast_talker", "load"));
     eprintln!("Reload response status: {status}");
     assert!(
         status == 200 || status == 202,
@@ -519,13 +542,13 @@ fn test_unload_during_construction() {
     // Now unload slow_node (it's fully constructed)
     std::thread::sleep(Duration::from_secs(1));
     eprintln!("Unloading slow_node after construction complete...");
-    let (status, _) = web_api_post(port, "/api/nodes/slow_node/unload");
+    let (status, _) = web_api_post(port, &composable_api_path("slow_node", "unload"));
     eprintln!("Unload status: {status}");
 
     // Wait for unload confirmation
     let unloaded = wait_for_line(
         &output_path,
-        "Successfully unloaded composable node 'slow_node'",
+        &format!("Successfully unloaded composable node '{}'", composable_id("slow_node")),
         Duration::from_secs(15),
     );
 
