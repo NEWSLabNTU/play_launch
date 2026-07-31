@@ -22,27 +22,13 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
          `ros-launch-resolve` binary (https://github.com/NEWSLabNTU/ros-launch-resolve)."
     );
 
-    // Positional quirk: with a direct launch-file PATH, the second
-    // positional (`launch_file`) can swallow the first `KEY:=VALUE` arg.
-    // Reclassify it so the binding isn't silently lost.
-    let mut launch_arguments = args.launch_arguments.clone();
-    let mut launch_file = args.launch_file.as_deref();
-    if let Some(lf) = launch_file
-        && lf.contains(":=")
-    {
-        launch_arguments.insert(0, lf.to_string());
-        launch_file = None;
-    }
+    let launch_path = std::path::PathBuf::from(&args.package_or_path);
+    let record = play_launch_parser::parse_launch_file(&launch_path, Default::default())
+        .map_err(|e| eyre::eyre!("parsing {}: {e}", launch_path.display()))?;
+    let dump = serde_json::from_str(&serde_json::to_string(&record)?)?;
 
-    let runtime = super::common::build_tokio_runtime()?;
-    let (dump, launch_path) = runtime.block_on(super::common::parse_to_launch_dump(
-        &args.package_or_path,
-        launch_file,
-        &launch_arguments,
-        args.parser,
-    ))?;
-
-    let arg_binding = launch_arguments
+    let arg_binding = args
+        .launch_arguments
         .iter()
         .filter_map(|a| a.split_once(":=").map(|(k, v)| (k.to_string(), v.to_string())))
         .collect();
