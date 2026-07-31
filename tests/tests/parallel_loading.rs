@@ -426,7 +426,10 @@ fn test_unload_via_web_api() {
     let snippet = stdout.len().saturating_sub(2000);
     eprintln!("{}", &stdout[snippet..]);
 
-    let has_event = stdout.contains("ComponentEvent UNLOADED for 'fast_talker'");
+    let has_event = stdout.contains(&format!(
+        "ComponentEvent UNLOADED for '{}'",
+        composable_id("fast_talker")
+    ));
     eprintln!("unloaded={unloaded}, has_component_event={has_event}");
 
     assert!(unloaded, "Expected unload confirmation for fast_talker");
@@ -454,7 +457,7 @@ fn test_unload_and_reload() {
     // (service response) patterns because DDS events may be lost under SHM exhaustion.
     let reload_patterns: &[&str] = &[
         &format!("ComponentEvent LOADED for '{}'", composable_id("fast_talker")),
-        "LoadNode SUCCESS for fast_talker",
+        &format!("LoadNode SUCCESS for {}", composable_id("fast_talker")),
     ];
     let stdout_before = std::fs::read_to_string(&output_path).unwrap_or_default();
     let loaded_before = stdout_before
