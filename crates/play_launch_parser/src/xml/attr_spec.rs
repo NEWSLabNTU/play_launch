@@ -101,12 +101,46 @@ static SPECS: &[AttrSpec] = &[
         children: &["env"],
     },
     AttrSpec {
+        element: "executable-arg",
+        // A bare positional argument under `<executable>` — Rust-only: real
+        // ROS 2 rejects `<arg>` as a child of `<executable>` entirely
+        // (measured: `Unexpected nested tag(s) found in 'executable':
+        // {'arg'}`, not an attribute-level rejection at all — outside what
+        // this per-attribute table can express, since `children` is only
+        // enforced for YAML). This spec exists solely so `actions/
+        // executable.rs`'s arg-children validation (which reads only
+        // `value`) doesn't fall through to the top-level `"arg"` spec above
+        // and wrongly accept `default`/`description`/`name` here too. Not a
+        // real XML element name.
+        supported: &["value"],
+        known_unsupported: &[],
+        children: &[],
+    },
+    AttrSpec {
         element: "arg",
-        // The `<include>` child form uses name/value; the top-level
-        // declaration form uses name/default/description. One element name,
-        // so the spec is the union — the actions themselves reject a
-        // nonsensical combination.
-        supported: &["if", "unless", "name", "default", "description", "value"],
+        // Top-level declaration form only: name/default/description(/if/
+        // unless). Measured against real ROS 2: it REJECTS `value` here
+        // (`Unexpected attribute(s) found in 'arg': {'value'}`) — `value`
+        // only exists on the disjoint `<include>` child form, which is a
+        // genuinely different ROS 2 entity validated separately (see the
+        // `include-arg` spec below and its use in `actions/include.rs`).
+        // A single unioned spec previously let this parser accept `value`
+        // here, which real ROS 2 rejects (differential test finding).
+        supported: &["if", "unless", "name", "default", "description"],
+        known_unsupported: &[],
+        children: &[],
+    },
+    AttrSpec {
+        element: "include-arg",
+        // The `<arg>` child of `<include>` — NOT the same ROS 2 entity as
+        // top-level `<arg>` above, despite sharing an XML tag name. Measured:
+        // accepts only name/value; REJECTS default/description (`Unexpected
+        // attribute(s) found in 'arg': {'description', 'zzz', 'default'}`)
+        // and REJECTS if/unless too (`Unexpected attribute(s) found in
+        // 'arg': {'if'}` / `{'unless'}`). Not a real XML element name —
+        // `actions/include.rs` routes its arg-children validation here
+        // explicitly instead of through the generic `"arg"` spec above.
+        supported: &["name", "value"],
         known_unsupported: &[],
         children: &[],
     },

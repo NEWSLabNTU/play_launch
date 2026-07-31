@@ -49,7 +49,19 @@ impl ExecutableAction {
 
         for child in entity.children() {
             // Child elements never reach `traverse_entity` — validate here.
-            crate::xml::attr_spec::validate_attrs(&child)?;
+            // `<arg>` under `<executable>` is a Rust-only extension (real
+            // ROS 2 rejects the element as a child of `<executable>`
+            // entirely) with its own narrow attribute set (`value` only —
+            // see the `executable-arg` spec in `xml/attr_spec.rs`), distinct
+            // from top-level `<arg>` declarations. Route it through that
+            // dedicated key instead of the generic `"arg"` spec
+            // `validate_attrs` would derive from `child.type_name()`.
+            if child.type_name() == "arg" {
+                let names: Vec<&str> = child.attributes().into_iter().map(|(k, _)| k).collect();
+                crate::xml::attr_spec::validate_named("executable-arg", &names)?;
+            } else {
+                crate::xml::attr_spec::validate_attrs(&child)?;
+            }
             match child.type_name() {
                 "env" => {
                     let name: String = child.required_attr_str("name")?.ok_or_else(|| {

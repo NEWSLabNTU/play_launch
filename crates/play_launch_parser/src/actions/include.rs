@@ -31,7 +31,17 @@ impl IncludeAction {
         let mut args = Vec::new();
         for child in entity.children() {
             // Child elements never reach `traverse_entity` — validate here.
-            crate::xml::attr_spec::validate_attrs(&child)?;
+            // `<arg>` under `<include>` is a distinct ROS 2 entity from a
+            // top-level `<arg>` declaration (different accepted attributes —
+            // see the `include-arg` spec in `xml/attr_spec.rs`), so route it
+            // through that dedicated key instead of the generic `"arg"` spec
+            // `validate_attrs` would derive from `child.type_name()`.
+            if child.type_name() == "arg" {
+                let names: Vec<&str> = child.attributes().into_iter().map(|(k, _)| k).collect();
+                crate::xml::attr_spec::validate_named("include-arg", &names)?;
+            } else {
+                crate::xml::attr_spec::validate_attrs(&child)?;
+            }
             if child.type_name() == "arg" {
                 let name: String =
                     child
