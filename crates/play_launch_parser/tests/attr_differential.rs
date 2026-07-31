@@ -207,20 +207,38 @@ struct ProbeResult {
     message: String,
 }
 
+/// Result of attempting to run the batched ROS 2 oracle. Deliberately NOT
+/// `Option<...>`: collapsing "confirmed no ROS 2" and "the probe script
+/// broke for some unrelated reason" into the same `None`/skip is exactly
+/// the vacuous-test failure mode this whole file exists to prevent (see
+/// `every_fixture_has_a_passing_baseline`'s doc comment) — it would just be
+/// reintroduced one layer down, at the subprocess boundary, by batching.
+/// `NoRos2` is the only variant a caller may treat as a skip; `Failed` must
+/// panic loud.
+enum Ros2Batch {
+    /// Sourcing `setup.bash` failed (sentinel exit code 42) — confirmed, no
+    /// ROS 2 environment here. The only variant that should skip.
+    NoRos2,
+    /// Something else went wrong: the subprocess failed to spawn, exited
+    /// non-zero for a reason other than "no ROS 2", or produced a
+    /// missing/unparsable results file. NOT "no ROS 2 available" — a caller
+    /// that treats this as a skip would make every downstream assertion
+    /// vacuously "pass" instead of failing loud on a broken harness.
+    Failed(String),
+    /// The batch ran to completion: per-tag verdicts.
+    Outcomes(BTreeMap<String, Ros2Outcome>),
+}
+
 /// Feed every fixture in `manifest` (tag -> fixture path) to real ROS 2's
 /// XML frontend inside ONE Python process (`attr_differential_probe.py`),
 /// instead of one `bash -c 'source setup.bash; python3 -c "..."'` subprocess
-/// per fixture. `None` means no ROS 2 environment is available (sentinel
-/// exit code 42 from failing to source `setup.bash`).
+/// per fixture.
 ///
 /// `run_id` must be distinct per caller: `#[test]` functions in one binary
 /// run concurrently (as threads under plain `cargo test`, or as concurrent
 /// processes under nextest), and every caller shares `tmp_dir()` — a fixed
 /// manifest/results filename would let two callers race on the same files.
-fn ros2_batch_outcomes(
-    run_id: &str,
-    manifest: &BTreeMap<String, PathBuf>,
-) -> Option<BTreeMap<String, Ros2Outcome>> {
+fn ros2_batch_outcomes(run_id: &str, manifest: &BTreeMap<String, PathBuf>) -> Ros2Batch {
     let dir = tmp_dir();
     let manifest_path = dir.join(format!("manifest_{run_id}.json"));
     let results_path = dir.join(format!("results_{run_id}.json"));
@@ -248,25 +266,43 @@ fn ros2_batch_outcomes(
         manifest_path.display(),
         results_path.display(),
     );
-    let out = Command::new("bash").arg("-c").arg(&script).output().ok()?;
+    let out = match Command::new("bash").arg("-c").arg(&script).output() {
+        Ok(out) => out,
+        Err(e) => return Ros2Batch::Failed(format!("failed to spawn probe subprocess: {e}")),
+    };
     if out.status.code() == Some(42) {
-        return None;
+        return Ros2Batch::NoRos2;
     }
     if !out.status.success() {
-        eprintln!(
-            "attr_differential: ROS 2 probe script exited with {:?}\nstdout: {}\nstderr: {}",
+        return Ros2Batch::Failed(format!(
+            "ROS 2 probe script exited with {:?} (this is NOT \"no ROS 2\" — that's sentinel \
+             exit code 42; investigate rather than treating this as a skip)\nstdout: {}\nstderr: {}",
             out.status.code(),
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr),
-        );
-        return None;
+        ));
     }
 
-    let results_raw = std::fs::read_to_string(&results_path).ok()?;
-    let results: BTreeMap<String, ProbeResult> =
-        serde_json::from_str(&results_raw).expect("parse probe results JSON");
+    let results_raw = match std::fs::read_to_string(&results_path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            return Ros2Batch::Failed(format!(
+                "probe script exited 0 but results file {} is unreadable: {e}",
+                results_path.display()
+            ));
+        }
+    };
+    let results: BTreeMap<String, ProbeResult> = match serde_json::from_str(&results_raw) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ros2Batch::Failed(format!(
+                "probe script exited 0 but results file {} is not valid JSON: {e}\nraw: {results_raw}",
+                results_path.display()
+            ));
+        }
+    };
 
-    Some(
+    Ros2Batch::Outcomes(
         results
             .into_iter()
             .map(|(tag, r)| {
@@ -281,18 +317,19 @@ fn ros2_batch_outcomes(
     )
 }
 
-/// Look up `tag` in a batch result map. Warns (rather than silently
-/// treating it as "no verdict") if the tag is missing — that should only
-/// happen if the probe script crashed on that specific fixture, which is
-/// worth knowing about even though the test still degrades gracefully.
-fn lookup<'a>(results: &'a BTreeMap<String, Ros2Outcome>, tag: &str) -> Option<&'a Ros2Outcome> {
-    let outcome = results.get(tag);
-    if outcome.is_none() {
-        eprintln!(
-            "attr_differential: no ROS 2 result for tag '{tag}' — probe script may have skipped it"
-        );
-    }
-    outcome
+/// Look up `tag` in a batch result map. Panics rather than degrading —
+/// once `ros2_batch_outcomes` has returned `Outcomes`, every tag in the
+/// manifest that produced it should have a corresponding entry (the probe
+/// script iterates the manifest exactly); a missing entry means the script
+/// silently dropped a fixture, which is a bug worth failing loud on, not a
+/// per-candidate skip that could mask a real disagreement.
+fn lookup<'a>(results: &'a BTreeMap<String, Ros2Outcome>, tag: &str) -> &'a Ros2Outcome {
+    results.get(tag).unwrap_or_else(|| {
+        panic!(
+            "no ROS 2 result for tag '{tag}' even though the probe batch reported success — \
+             the probe script silently dropped a fixture it should have covered"
+        )
+    })
 }
 
 /// Does this parser accept it? `known_unsupported` counts as accepted —
@@ -320,15 +357,21 @@ fn every_fixture_has_a_passing_baseline() {
         })
         .collect();
 
-    let Some(results) = ros2_batch_outcomes("baseline", &manifest) else {
-        eprintln!("skip: no ROS 2 environment");
-        return;
+    let results = match ros2_batch_outcomes("baseline", &manifest) {
+        Ros2Batch::NoRos2 => {
+            eprintln!("skip: no ROS 2 environment");
+            return;
+        }
+        Ros2Batch::Failed(detail) => panic!(
+            "ROS 2 probe batch failed for a reason unrelated to \"no ROS 2\" — failing loud \
+             instead of skipping, since a skip here would silently pass every baseline \
+             assertion this test exists to make:\n{detail}"
+        ),
+        Ros2Batch::Outcomes(map) => map,
     };
 
     for (element, _) in FIXTURES {
-        let Some(outcome) = lookup(&results, element) else {
-            panic!("no ROS 2 result for baseline fixture <{element}>");
-        };
+        let outcome = lookup(&results, element);
 
         if let Some((_, expected_reason)) = STRUCTURAL_BASELINE_EXCEPTIONS
             .iter()
@@ -388,9 +431,17 @@ fn rust_and_ros2_agree_on_every_candidate_attribute() {
         }
     }
 
-    let Some(results) = ros2_batch_outcomes("candidates", &manifest) else {
-        eprintln!("skip: no ROS 2 environment");
-        return;
+    let results = match ros2_batch_outcomes("candidates", &manifest) {
+        Ros2Batch::NoRos2 => {
+            eprintln!("skip: no ROS 2 environment");
+            return;
+        }
+        Ros2Batch::Failed(detail) => panic!(
+            "ROS 2 probe batch failed for a reason unrelated to \"no ROS 2\" — failing loud \
+             instead of skipping, since a skip here would silently pass every candidate \
+             comparison this test exists to make:\n{detail}"
+        ),
+        Ros2Batch::Outcomes(map) => map,
     };
 
     let mut disagreements: Vec<String> = Vec::new();
@@ -411,9 +462,7 @@ fn rust_and_ros2_agree_on_every_candidate_attribute() {
                 continue;
             }
             let tag = format!("{element}_{attr}");
-            let Some(outcome) = lookup(&results, &tag) else {
-                continue;
-            };
+            let outcome = lookup(&results, &tag);
             // Loose on purpose: an unrelated failure (bad value, missing
             // unrelated attribute) is not a verdict on the attribute under
             // test, so it counts as "not rejected".
