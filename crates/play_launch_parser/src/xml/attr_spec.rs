@@ -52,6 +52,31 @@ const NODE_KNOWN_UNSUPPORTED: &[&str] = &[
     "cwd",
     "emulate_tty",
     "shell",
+    // ROS 2 accepts and fully honors this (`ExecuteProcess.parse`, read via
+    // `Node.parse`'s `super().parse(entity, parser, ignore=['cmd'])` —
+    // `launch_ros/actions/node.py:309`; `on_exit="shutdown"` registers a
+    // `Shutdown()` handler). Measured: `<node pkg=… exec=… on_exit=
+    // "shutdown"/>` and the same on `<node_container>` both parse and
+    // construct cleanly against Humble. Not implemented here — warn, don't
+    // reject.
+    "on_exit",
+    // ROS 2's frontend consumes this without complaint — `node.py:316`
+    // (`entity.get_attr('node-name', optional=True)`) unconditionally reads
+    // it, so `assert_entity_completely_parsed()` never flags it as
+    // "Unexpected attribute". BUT measured against Humble: giving it a
+    // value always crashes construction with
+    // `TypeError: Action.__init__() got an unexpected keyword argument
+    // 'node_name'` — `Node.__init__` (node.py:119) has no `node_name`
+    // parameter, only `name`; `kwargs['node_name']` is forwarded all the
+    // way to `Action.__init__` and rejected there. This looks like dead/
+    // broken code upstream (a pre-rename leftover), not a working alias —
+    // so "ROS 2 accepts" here means only "the attribute name doesn't
+    // produce an Unexpected-attribute error", not "the launch file works".
+    // Warned, not rejected, to match that: rejecting it would still be
+    // wrong (it's not the `UnexpectedAttribute` class of failure ROS 2
+    // reports), and no launch file can be depending on `node-name`
+    // functioning since it never has in Humble.
+    "node-name",
 ];
 const NODE_CHILDREN: &[&str] = &["param", "remap", "env"];
 
@@ -97,8 +122,14 @@ static SPECS: &[AttrSpec] = &[
             "respawn_delay",
             "cmd",
         ],
-        known_unsupported: &["launch-prefix", "cwd", "emulate_tty", "shell"],
-        children: &["env"],
+        // `on_exit`: same story as `<node>`'s — read unconditionally in
+        // `ExecuteProcess.parse` (`execute_process.py:335`) and fully
+        // honored (unlike `node-name`, which `ExecuteProcess.parse` never
+        // reads at all — `<executable node-name=…>` is genuinely rejected
+        // by ROS 2 with "Unexpected attribute", measured, so it stays out
+        // of this table).
+        known_unsupported: &["launch-prefix", "cwd", "emulate_tty", "shell", "on_exit"],
+        children: &["env", "arg"],
     },
     AttrSpec {
         element: "executable-arg",
@@ -233,6 +264,13 @@ static SPECS: &[AttrSpec] = &[
     },
 ];
 
+/// Every spec, for tests that need to enumerate the full table (e.g. the
+/// differential test's `CANDIDATES`-completeness assertion) rather than
+/// look one up by name.
+pub fn all_specs() -> &'static [AttrSpec] {
+    SPECS
+}
+
 /// Map an element name (including hyphenated aliases the traverser accepts)
 /// to its canonical spec. `None` means "not validated" — `<launch>` is not
 /// strict in ROS 2, and any element this parser does not dispatch has no
@@ -300,6 +338,22 @@ fn display_name(element: &str) -> &str {
     }
 }
 
+/// `(element, attribute)` pairs from `known_unsupported` whose value this
+/// parser actually reads and acts on, despite ROS 2 rejecting the attribute
+/// outright (or, for `namespace` on `<group>`, despite the attribute being
+/// genuinely valid ROS 2 that this parser happens to also read under its
+/// `ns` alias name). Legacy backwards-compat aliases, not unimplemented
+/// features — see the doc comments on the `group` and `push-ros-namespace`
+/// specs above. The generic `known_unsupported` warning text ("the value is
+/// ignored") is false for these three: `actions/group.rs` reads `namespace`
+/// and `ns`, `traverser/entity.rs`'s `push-ros-namespace` arm and
+/// `traverser/yaml.rs:262` read `ns`. Listed here so `check()` can say so.
+const HONORED_ALIASES: &[(&str, &str)] = &[
+    ("group", "namespace"),
+    ("group", "ns"),
+    ("push-ros-namespace", "ns"),
+];
+
 fn check(element: &str, names: &[&str], allow_children: bool) -> Result<()> {
     let Some(spec) = spec_for(element) else {
         return Ok(());
@@ -314,12 +368,26 @@ fn check(element: &str, names: &[&str], allow_children: bool) -> Result<()> {
             continue;
         }
         if spec.known_unsupported.contains(name) {
-            log::warn!(
-                "<{} {name}=…> is valid ROS 2 but not supported by the \
-                 Rust parser; the value is ignored. Use --parser python if \
-                 you need it.",
-                display_name(element),
-            );
+            // Keyed on `spec.element` (the canonical name), not the raw
+            // `element` parameter — callers pass whatever spelling the
+            // launch file used (e.g. `push_ros_namespace` underscore form),
+            // and `HONORED_ALIASES` is written in canonical form.
+            if HONORED_ALIASES.contains(&(spec.element, *name)) {
+                log::warn!(
+                    "<{} {name}=…> is rejected by real ROS 2 but this \
+                     parser reads it as a backwards-compat alias; the \
+                     value IS honored. Use --parser python if you need \
+                     exact ROS 2 rejection behavior instead.",
+                    display_name(element),
+                );
+            } else {
+                log::warn!(
+                    "<{} {name}=…> is valid ROS 2 but not supported by the \
+                     Rust parser; the value is ignored. Use --parser python \
+                     if you need it.",
+                    display_name(element),
+                );
+            }
             continue;
         }
         unexpected.push(name);

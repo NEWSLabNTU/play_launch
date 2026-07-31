@@ -9,7 +9,7 @@
 //! (`attr_differential_probe.py`), not one `bash -c 'source setup.bash;
 //! python3 -c "..."'` subprocess per probe — see `ros2_batch_outcomes`.
 
-use play_launch_parser::xml::attr_spec::{spec_for, validate_named};
+use play_launch_parser::xml::attr_spec::{all_specs, spec_for, validate_named};
 use std::{collections::BTreeMap, io::Write, path::PathBuf, process::Command};
 
 /// Minimal well-formed body per element, `{ATTR}` marking the injection
@@ -116,6 +116,9 @@ const CANDIDATES: &[&str] = &[
     "type",
     "machine",
     "zzz_bogus",
+    "on_exit",
+    "node-name",
+    "allow_substs",
 ];
 
 /// Deliberate divergences: this parser warns where ROS 2 rejects, because
@@ -343,6 +346,41 @@ fn rust_accepts(element: &str, attr: Option<&str>) -> bool {
         attrs.push(a);
     }
     validate_named(element, &attrs).is_ok()
+}
+
+/// Hardening for the root cause behind the `on_exit`/`node-name` misses:
+/// `CANDIDATES` is a closed, hand-written list, so an attribute ROS 2
+/// accepts that nobody thought to name is never probed by
+/// `rust_and_ros2_agree_on_every_candidate_attribute`. This assertion
+/// closes one half of that gap — every attribute a spec already *claims*
+/// (via `supported` or `known_unsupported`) must be in `CANDIDATES`, so a
+/// table edit that isn't accompanied by a `CANDIDATES` entry fails a test
+/// instead of silently going unprobed (exactly what happened to
+/// `allow_substs` when it was added to `param`'s `known_unsupported` in
+/// 687992e without a matching `CANDIDATES` entry).
+///
+/// What this does NOT buy: it cannot discover an attribute that is absent
+/// from BOTH a spec and `CANDIDATES` — e.g. the original `on_exit`/
+/// `node-name` misses, before anyone added them anywhere. That gap needs a
+/// human (or a tool) reading ROS 2's `parse()` source, not this assertion.
+/// This only guarantees internal consistency between the tables and the
+/// probe list, not completeness against ROS 2 itself.
+#[test]
+fn every_specced_attribute_is_a_candidate() {
+    let mut missing: Vec<String> = Vec::new();
+    for spec in all_specs() {
+        for attr in spec.supported.iter().chain(spec.known_unsupported.iter()) {
+            if !CANDIDATES.contains(attr) {
+                missing.push(format!("<{} {}=…>", spec.element, attr));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "attribute(s) named in an AttrSpec but never probed by the \
+         differential test (add to CANDIDATES):\n  {}",
+        missing.join("\n  ")
+    );
 }
 
 #[test]

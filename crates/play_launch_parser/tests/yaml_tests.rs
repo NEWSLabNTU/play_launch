@@ -1091,6 +1091,47 @@ fn test_yaml_executable() {
 }
 
 #[test]
+fn test_yaml_executable_with_arg_children() {
+    // Rust-only extension (also live on the XML path via the `executable-arg`
+    // spec in `xml/attr_spec.rs`): `arg:` under `executable:` supplies
+    // positional arguments appended to `cmd`. `validate_yaml_keys` used to
+    // reject this — `executable`'s spec `children` list only had `env`, not
+    // `arg`, even though `process_yaml_executable` (traverser/yaml.rs) has
+    // always read `arg:` and turned it into `ExecutableAction::arguments`.
+    // No test covered this combination, which is how the mismatch between
+    // the reader and the allowlist survived.
+    let file = write_yaml(
+        r#"launch:
+- executable:
+    cmd: "ros2 bag record"
+    arg:
+    - value: "-a"
+    - value: "-o"
+    - value: "/tmp/bag"
+"#,
+    );
+
+    let result = parse_launch_file(file.path(), HashMap::new());
+    assert!(
+        result.is_ok(),
+        "executable with arg: children should parse: {:?}",
+        result.err()
+    );
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1, "Executable should produce a node record");
+
+    let cmd = nodes[0]["cmd"].as_array().unwrap();
+    let cmd_strs: Vec<&str> = cmd.iter().filter_map(|v| v.as_str()).collect();
+    assert_eq!(
+        cmd_strs,
+        vec!["ros2 bag record", "-a", "-o", "/tmp/bag"],
+        "arg: children should be appended to cmd in order"
+    );
+}
+
+#[test]
 fn test_yaml_executable_with_condition() {
     let file = write_yaml(
         r#"launch:
