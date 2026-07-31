@@ -130,6 +130,7 @@ Remove the `machine` capture end to end:
 - `src/record/generator.rs` — lines 332–334, 359, 532
 - `src/actions/container.rs` line 281 and `src/actions/executable.rs`
   line 126 — the `machine: None` initializers and their comments
+- `src/traverser/yaml.rs` line 357 — the YAML-path `machine: None`
 
 Add strict attribute validation (see below).
 
@@ -216,6 +217,21 @@ Each attribute present on an element takes one of three paths:
 `if` and `unless` belong in every element's `supported` list — they are
 handled by the condition layer, not by the action's `from_entity`.
 
+Two structural details the implementation must respect:
+
+- **The spec needs a `children` list alongside the attribute lists.** In
+  XML, `<param>` is a separate element with its own spec, so `<node>`'s
+  attribute list must not contain `param`. In YAML, `param` is a *key of
+  the node mapping*. One table serves both frontends only if legal child
+  names are tracked separately and consulted for YAML alone.
+- **The XML check needs two hook sites, not one.** The traverser's
+  `type_name()` dispatch covers actions, but child elements never reach it
+  — `<param>`, `<remap>`, and `<env>` are consumed by the action's own
+  `for child in entity.children()` loop. Each such loop needs its own
+  validation call. Validation also has to run *before* the `if`/`unless`
+  check: ROS 2 evaluates conditions at launch time, so it validates a
+  conditioned-out element, while this parser skips it at parse time.
+
 For `<node>`:
 
 - `supported`: `pkg`, `exec`, `name`, `namespace`, `args`, `output`,
@@ -236,8 +252,55 @@ methods produces a list contaminated with child-element and nested-call
 names (`param`, `remap`, `from`, `to`, `value`), so it is a starting point
 for review, not a source to copy.
 
-This parser has no YAML frontend — XML and Python only — so the surface is
-exactly those thirteen action modules.
+The parser has three frontends: XML, YAML, and Python. The Python path
+delegates to real `launch`/`launch_ros` and inherits ROS 2's strictness for
+free. The YAML path (`src/traverser/yaml.rs`, 783 lines) is a **separate**
+traversal over `serde_yaml_ng::Value` mappings that bypasses `Entity` and
+the action modules entirely, so it needs the same allowlists applied
+through its own mechanism — checking mapping keys rather than XML
+attributes. Both frontends are in scope.
+
+`traverser/yaml.rs:357` carries a fourteenth `machine: None` site
+("YAML-launch node machine= deferred") that the removal also deletes.
+
+### Ground truth for the allowlists
+
+The allowlists below were **measured**, not inferred, by probing Humble's
+frontend with one candidate attribute at a time per element
+(`tmp/probe_attrs.py`, `tmp/probe2.py`):
+
+| Element | ROS 2 accepts |
+|---|---|
+| `node`, `node_container` | `if unless pkg exec name namespace args ros_args exec_name output respawn respawn_delay launch-prefix cwd emulate_tty shell` |
+| `executable` | `if unless name output respawn respawn_delay launch-prefix cwd emulate_tty shell cmd` |
+| `arg` | `if unless name default description` |
+| `let`, `set_env`, `set_parameter` | `if unless name value` |
+| `group` | `if unless scoped forwarding` |
+| `include` | `if unless file` |
+| `push-ros-namespace` | `if unless namespace` |
+| `set_remap` | `if unless from to` |
+| `load_composable_node` | `if unless target` |
+| `composable_node` | `if unless pkg plugin name namespace` |
+| `param` (child) | `name value from type` |
+| `remap` (child) | `from to` |
+| `env` (child) | `name value` |
+| `arg` (include child) | `name value` |
+
+Two findings from the probe that change the work:
+
+1. **`<launch>` itself is not strict in ROS 2.** `<launch zzz="1">` parses
+   without complaint, so the root element is excluded from the check.
+2. **`<group namespace=>` and `<group ns=>` are rejected by ROS 2** but
+   read by the Rust parser (`actions/group.rs`). This is a second
+   permissive divergence of the same class as `machine=`, found by the
+   probe. Namespacing a group in ROS 2 requires a `<push-ros-namespace>`
+   child. Removing the attributes would break any launch file relying on
+   them, so they go in `known_unsupported` (warn), not `supported` — the
+   warning tells authors their file is not portable to `ros2 launch`.
+
+Child elements (`param`, `remap`, `env`, and `<include>`'s `<arg>`) reject
+`if`/`unless`: they are not actions. Their specs must not inherit the
+condition attributes.
 
 ## Testing
 
@@ -249,6 +312,13 @@ offending attribute rather than as silent divergence. The matrix covers,
 per element: every attribute in `supported`, every attribute in
 `known_unsupported` (both parsers must accept — the Rust side warns), and a
 synthetic unknown attribute (both must reject).
+
+The probe scripts showed how this test can lie: a fixture that fails for an
+unrelated reason (`load_composable_node` with a `<composable_node>` missing
+its `name`) makes every candidate look accepted. Each element's fixture
+must therefore assert a **passing baseline with no injected attribute**
+before any candidate is judged, and the test fails loudly if a baseline
+does not parse.
 
 **Multi-host fixture test** (`tests/tests/resolve_multihost.rs`, rewritten).
 For each of `--parser rust` and `--parser python`, resolve the fixture at
@@ -332,6 +402,11 @@ explicit approval.
 - Any nano-ros code change.
 - Strictness for the Python parser path, which inherits ROS 2's own
   strictness for free.
+- Making `<group namespace=>` an error, or implementing
+  `<push-ros-namespace>` semantics for it. It warns.
+- Elements ROS 2 has that this parser does not dispatch at all
+  (`unset_env`, `append_env`, `timer`, `log`, `shutdown`, `reset`,
+  `set_parameters_from_file`, `set_use_sim_time`).
 - Element-level strictness (unexpected *child elements*). `<node>` already
   rejects unknown children via `ParseError::UnexpectedElement`; other
   elements are not audited here.
