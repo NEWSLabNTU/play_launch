@@ -29,6 +29,16 @@ pub enum ParseError {
     #[error("Unexpected element '<{child}>' in '<{parent}>'")]
     UnexpectedElement { parent: String, child: String },
 
+    /// An attribute no ROS 2 action consumes. Mirrors `launch_xml`'s
+    /// `assert_entity_completely_parsed()`, whose message reads
+    /// `Unexpected attribute(s) found in `node`: {'machine'}`.
+    #[error("Unexpected attribute(s) found in `{element}`: {{{attributes}}}")]
+    UnexpectedAttribute {
+        element: String,
+        /// Comma-separated, sorted, each quoted: `'machine', 'bogus'`.
+        attributes: String,
+    },
+
     #[error("Invalid substitution syntax: {0}")]
     InvalidSubstitution(String),
 

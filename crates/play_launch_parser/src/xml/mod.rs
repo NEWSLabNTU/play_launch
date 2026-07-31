@@ -1,5 +1,6 @@
 //! XML parsing module
 
+pub mod attr_spec;
 pub mod entity;
 pub mod parser;
 
