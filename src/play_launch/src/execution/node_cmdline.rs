@@ -298,9 +298,6 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         respawn_delay: inst.respawn_delay,
         // Already merged into `params` at model-build time (GAP-4).
         global_params: None,
-        // Not a spawn input either way — `from_node_record` ignores it
-        // (`machine: _`), it only affects placement (Phase 46.1).
-        machine: None,
         // Model-path sched-tier lookups use the already-known model FQN
         // directly (`NodeContext::model_fqn`), not this numeric scope id —
         // there is no equivalent to recover from the model alone.
@@ -365,7 +362,6 @@ impl NodeCommandLine {
             respawn: _,
             respawn_delay: _,
             global_params,
-            machine: _,
             scope: _,
             param_sources,
         } = record;

@@ -51,7 +51,6 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         cmd,
         respawn: args.common.containers.disable_respawn.then_some(false),
         respawn_delay: Some(0.0),
-        machine: None,
         scope: None,
     };
 
