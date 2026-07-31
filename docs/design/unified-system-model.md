@@ -104,15 +104,18 @@ shared need**. Two options, user's call:
 - (b) Keep them play_launch-side (the model carries what's genuinely shared;
   these ride in a play_launch-owned section). Leaner shared model.
 
-**The one field nano-ros genuinely needs and can't get: `<node machine=>`
-(multihost).** It's standard ROS 2, mature in nano-ros since phase-263, and
-the shared model ALREADY has its home — `execution.deploy[fqn].host`. But
-play_launch **drops it**: the parser captures `machine` (ir.rs), yet the
-`LaunchDump` `NodeRecord` has no `machine` field, so it's lost before
-`model_builder` and `execution.deploy.host` stays empty (nano-ros issue #236 —
-blocks their multihost workspace migration). **Fixing this drop is the real
-cross-track win of Phase 46** and belongs here since Phase 46 reworks the
-launch→model field-population path anyway.
+**`<node machine=>` — REVERSED 2026-07-31.** This section previously said
+`machine=` was "standard ROS 2". It is not: it is ROS 1 roslaunch syntax.
+`launch_ros`'s `Node.parse()` has no `machine` attribute, `launch_xml`
+rejects it outright, and ROS 2's multi-machine launch proposal
+(`ros2/design` #255) was closed unmerged. Phase 46.1 wired
+`machine=` → `execution.deploy[fqn].host` on that false premise; both the
+attribute and the `Deploy.host` field were removed on 2026-07-31.
+
+Multi-host launches now use a standard `<arg>` + `if=` condition and
+partition at resolve time, so each resolved model holds one host's nodes and
+needs no host field. See `docs/guide/multi-host.md` and
+`docs/superpowers/specs/2026-07-31-machine-attr-removal-design.md`.
 
 **Decision (2026-07-20): option (a).** `remaps`, `ros_args`, `respawn`/
 `respawn_delay`, and launch-declared `env` are added to the shared

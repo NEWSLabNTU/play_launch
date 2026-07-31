@@ -26,11 +26,10 @@ perceives one kind of dump.
 - **46.0** ✅ Cross-track coordination: confirm the `NodeInstance` launch-field
   set + semantics with the nano-ros track (RFC-0050) before landing 46.1.
   Note like the sched-SSoT handshake.
-- **46.1** ✅ `<node machine=>` → `execution.deploy[fqn].host` (nano-ros #236,
-  the real cross-track win): the parser already captures `machine` (ir.rs)
-  but it's dropped — `LaunchDump::NodeRecord` has no `machine` field, so
-  `model_builder` never writes `deploy.host`. Add `machine` to the record
-  path + populate `deploy.host`. Unblocks nano-ros's multihost migration.
+- **46.1** ⛔ REVERTED 2026-07-31 — `<node machine=>` →
+  `execution.deploy[fqn].host` (nano-ros #236). `machine=` is ROS 1
+  roslaunch syntax, not ROS 2; both it and `Deploy.host` were removed. See
+  `docs/superpowers/specs/2026-07-31-machine-attr-removal-design.md`.
 - **46.1b** ✅ Shared launch fields (DECIDED 2026-07-20: option a): add
   `remaps`, `ros_args`, `respawn`/`respawn_delay`, launch-declared `env` to
   the shared `NodeInstance` per the all-launch-info principle (nano-ros

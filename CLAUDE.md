@@ -199,6 +199,32 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-07-31**: Removed `<node machine=>` — it is ROS 1 roslaunch syntax,
+  not ROS 2 (`launch_ros`'s `Node.parse()` has no such attribute;
+  `launch_xml` rejects it; `ros2/design` #255 closed unmerged). The Rust
+  parser accepted it while the Python parser rejected it, so the multihost
+  fixture could not be loaded by `ros2 launch`. `Deploy.host` is gone from
+  the model with it, and a launch-only resolve now produces no
+  `execution.deploy` entries. Multi-host launches use a standard `<arg>` +
+  `if=` condition and partition at resolve time
+  (`play_launch resolve <launch> host:=robot1`) — see
+  `docs/guide/multi-host.md`. The audit behind this fix found three more
+  places the Rust parser accepted XML that stock ROS 2 rejects: `<group
+  namespace=>`/`<group ns=>` (ROS 2 requires a `<push-ros-namespace>` child
+  instead), `<push-ros-namespace ns=>` (ROS 2 accepts only `namespace=`),
+  and a top-level `<arg value=>` (ROS 2 allows `value` only on an `<arg>`
+  nested inside `<include>`). The first two are long-standing back-compat
+  aliases this parser deliberately still reads, so — by human ruling, to
+  keep existing launch files working — they stay WARNINGS rather than
+  errors; the plain `machine=` case and any other genuinely unknown
+  attribute are hard errors. The parser now carries per-element attribute
+  allowlists (`src/ros-launch-resolve/parser/crates/play_launch_parser/src/
+  xml/attr_spec.rs`) that error on unknown attributes and warn on
+  known-unsupported ones — including six `<node>` attributes ROS 2 accepts
+  that this parser still doesn't implement (`exec_name`, `ros_args`,
+  `launch-prefix`, `cwd`, `emulate_tty`, `shell`) — on both the XML and YAML
+  frontends, guarded by a differential test against real ROS 2. Spec:
+  `docs/superpowers/specs/2026-07-31-machine-attr-removal-design.md`.
 - **2026-07-20**: Phase 47 (Wave B, 47.B2–B6) — hard removal of `record.json`
   as a user-facing artifact. `dump` no longer has `--format`/`DumpFormat` —
   it always emits the SystemModel; `dump run` (no SystemModel form) is
@@ -312,6 +338,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 - **Launch Scoping**: `docs/roadmap/phase-30-launch_scoping.md` — scope table, context extraction, cross-parser validation
 - **Launch Manifest**: `docs/roadmap/phase-31-launch_manifest.md` — manifest crate, parser/executor integration, audit
 - **Migration Guide**: `docs/guide/parser-migration.md` — Rust parser migration (v0.6.0+)
+- **Multi-host Guide**: `docs/guide/multi-host.md` — running one launch file's nodes across multiple hosts (ROS 2 has no `<node machine=>`)
 
 ## Parser Parity Status
 
