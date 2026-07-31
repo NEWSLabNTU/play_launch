@@ -70,7 +70,10 @@ mod tests {
         let doc = roxmltree::Document::parse(xml).unwrap();
         let entity = crate::xml::XmlEntity::new(doc.root_element());
         let group = GroupAction::from_entity(&entity).unwrap();
-        assert!(group.namespace.is_some(), "namespace attribute must be captured");
+        assert!(
+            group.namespace.is_some(),
+            "namespace attribute must be captured"
+        );
     }
 
     #[test]

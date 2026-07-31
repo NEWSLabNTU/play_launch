@@ -34,12 +34,18 @@ fn cycle_fixture(dir: &TempDir) -> std::path::PathBuf {
     write(
         dir,
         "a.launch.xml",
-        &format!("<launch>\n  <include file=\"{}\" />\n</launch>\n", b.display()),
+        &format!(
+            "<launch>\n  <include file=\"{}\" />\n</launch>\n",
+            b.display()
+        ),
     );
     write(
         dir,
         "b.launch.xml",
-        &format!("<launch>\n  <include file=\"{}\" />\n</launch>\n", a.display()),
+        &format!(
+            "<launch>\n  <include file=\"{}\" />\n</launch>\n",
+            a.display()
+        ),
     );
     a
 }
