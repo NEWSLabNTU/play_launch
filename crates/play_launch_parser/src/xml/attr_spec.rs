@@ -205,7 +205,18 @@ static SPECS: &[AttrSpec] = &[
     AttrSpec {
         element: "param",
         supported: &["name", "value", "from", "type"],
-        known_unsupported: &[],
+        // ROS 2 accepts `allow_substs` alongside `from=` (`launch_ros`
+        // `Node._parse_nested_parameter_tuples()` reads it via
+        // `param.get_attr('allow_substs', ...)` and threads it into
+        // `ParameterFile.allow_substs`, gating whether `$(...)` patterns
+        // inside the param file are substituted before load). Measured live
+        // in Autoware (`autoware_diffusion_planner`, `autoware_lidar_transfusion`,
+        // and others ship `<param from="..." allow_substs="true"/>`). This
+        // parser always resolves substitutions in loaded YAML param files
+        // (`params.rs::load_and_resolve_param_file()`) regardless of this
+        // flag, so the attribute is accepted but has no effect — warn, don't
+        // reject.
+        known_unsupported: &["allow_substs"],
         children: &["param"], // nested param groups
     },
     AttrSpec {
