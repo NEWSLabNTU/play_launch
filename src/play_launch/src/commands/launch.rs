@@ -104,6 +104,11 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
         let model = ros_launch_resolve::model::build_checked_model(ros_launch_resolve::model::ModelBuildInputs {
             dump: &dump,
             launch_path: Some(&launch_path),
+            // `launch` builds the model in memory and never writes it, so
+            // `meta.inputs` portability is moot here; the grandparent
+            // fallback preserves the behavior this path had before the
+            // field existed.
+            bringup_root: None,
             arg_binding,
             contracts: args.common.contract_opts.contracts.as_deref(),
             no_provider_contracts: args.common.contract_opts.no_provider_contracts,

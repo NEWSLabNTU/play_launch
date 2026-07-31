@@ -50,6 +50,11 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
     let model = build_checked_model(ModelBuildInputs {
         dump: &dump,
         launch_path: Some(&launch_path),
+        // No `--bringup-root` on this deprecated delegate, so `meta.inputs`
+        // relativity falls back to the launch file's grandparent — the
+        // behavior this path had before the field existed. Matches
+        // `ros-launch-resolve`'s own `dump` subcommand.
+        bringup_root: None,
         arg_binding,
         contracts: args.contracts.as_deref(),
         no_provider_contracts: args.no_provider_contracts,
