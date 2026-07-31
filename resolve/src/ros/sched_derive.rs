@@ -697,7 +697,7 @@ mod tests {
 
     fn fixture_dir() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../ros-launch-manifest/tests/fixtures")
+            .join("../third-party/ros-launch-manifest/tests/fixtures")
     }
 
     fn overlay_index(dump: &LaunchDump) -> ManifestIndex {

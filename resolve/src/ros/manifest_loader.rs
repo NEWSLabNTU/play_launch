@@ -1690,7 +1690,8 @@ mod tests {
     use super::super::launch_dump::{LaunchDump, ScopeOrigin};
 
     fn fixture_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ros-launch-manifest/tests/fixtures")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../third-party/ros-launch-manifest/tests/fixtures")
     }
 
     /// Materialize an overlay tree in a tempdir from the checker fixture

@@ -378,7 +378,8 @@ mod tests {
     use std::{collections::HashMap, path::PathBuf};
 
     fn fixture_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ros-launch-manifest/tests/fixtures")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../third-party/ros-launch-manifest/tests/fixtures")
     }
 
     /// Same materialization pattern as `manifest_loader::tests::overlay_index`
