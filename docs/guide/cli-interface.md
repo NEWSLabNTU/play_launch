@@ -59,8 +59,8 @@ play_launch run demo_nodes_cpp talker --ros-args -p topic:=chatter
 # command line — before `launch`, or after, or interleaved with the
 # KEY:=VALUE launch arguments (47.A1: they're declared `global`, so clap
 # recognizes them at any position in the nested subcommand).
-play_launch dump [dump_options...] launch <package_name> <launch_file> [key:=value...] [dump_options...]
-play_launch dump [dump_options...] launch <launch_file_path> [key:=value...] [dump_options...]
+ros-launch-resolve dump [dump_options...] launch <package_name> <launch_file> [key:=value...] [dump_options...]
+ros-launch-resolve dump [dump_options...] launch <launch_file_path> [key:=value...] [dump_options...]
 ```
 
 **Dump-Specific Options:**
@@ -76,17 +76,17 @@ single-node dump+replay-in-one case instead.
 **Examples:**
 ```bash
 # Dump to a custom SystemModel file — flags before the KEY:=VALUE launch arguments
-play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
+ros-launch-resolve dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
 
 # Equivalently, flags after the launch arguments — both orders work
-play_launch dump launch autoware_launch planning_simulator.launch.xml \
+ros-launch-resolve dump launch autoware_launch planning_simulator.launch.xml \
     vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit \
     map_path:=$HOME/autoware_map/sample-map-planning \
     --output autoware.yaml
 
 # Dump with debug output
-play_launch dump --debug launch demo_nodes_cpp topics/talker_listener.launch.py
+ros-launch-resolve dump --debug launch demo_nodes_cpp topics/talker_listener.launch.py
 ```
 
 ### Replay Only
@@ -201,7 +201,7 @@ the `KEY:=VALUE` launch arguments — clap parses flags in any position
 
 ```bash
 # Step 1: Dump the SystemModel
-play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
+ros-launch-resolve dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
 
 # Step 2: Replay from the model (monitoring is on by default; container

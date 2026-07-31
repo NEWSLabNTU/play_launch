@@ -71,7 +71,7 @@ Record first, replay multiple times:
 
 ```bash
 # Record
-play_launch dump launch <package> <launch_file> [arguments...]
+ros-launch-resolve dump launch <package> <launch_file> [arguments...]
 
 # Replay
 play_launch replay
@@ -155,16 +155,16 @@ Generate interactive plots from monitoring data:
 
 ```bash
 # Plot latest execution
-play_launch plot
+ros-launch-resolve plot
 
 # Plot specific log directory
-play_launch plot --log-dir play_log/2025-10-28_16-17-56
+ros-launch-resolve plot --log-dir play_log/2025-10-28_16-17-56
 
 # Plot specific metrics
-play_launch plot --metrics cpu memory
+ros-launch-resolve plot --metrics cpu memory
 
 # List available metrics
-play_launch plot --list-metrics
+ros-launch-resolve plot --list-metrics
 ```
 
 Output saved to `play_log/<timestamp>/plot/`:
@@ -210,7 +210,7 @@ play_launch launch <package> <launch_file> [args...]
 play_launch run <package> <executable> [args...]
 
 # Dump and replay (dump emits the SystemModel by default — one artifact)
-play_launch dump launch <package> <launch_file> [args...]
+ros-launch-resolve dump launch <package> <launch_file> [args...]
 play_launch replay [--model system_model.yaml]
 
 # Parser selection (Rust is default)
@@ -243,10 +243,10 @@ play_launch launch <pkg> <file> --verbose              # Enable INFO level
 RUST_LOG=play_launch=debug play_launch launch <pkg> <file>  # DEBUG level
 
 # Visualization
-play_launch plot
-play_launch plot --log-dir <dir>
-play_launch plot --metrics cpu memory io gpu
-play_launch plot --list-metrics
+ros-launch-resolve plot
+ros-launch-resolve plot --log-dir <dir>
+ros-launch-resolve plot --metrics cpu memory io gpu
+ros-launch-resolve plot --list-metrics
 ```
 
 ## Development

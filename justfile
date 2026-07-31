@@ -380,8 +380,24 @@ test-all:
     echo "=== Parser unit tests ==="
     (cd src/ros-launch-resolve/parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
     echo ""
+    echo "=== Fixture workspaces (guarded tests skip silently without these) ==="
+    # A test that skips still reports as PASSED, so an unbuilt fixture hides
+    # its whole suite behind a green summary. 27 of 108 integration tests
+    # were skipping this way, concealing 4 real failures. Build them here so
+    # `test-all` means what it says. Each is ~6s.
+    (cd tests/fixtures/rt_workspace && just build)
+    (cd tests/fixtures/io_stress && just build)
+    # The relocated CLI (`dump`, `contract eject`, `plot` moved out of
+    # play_launch in adc33a7) — several tests drive it directly.
+    (cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve)
+    echo ""
     echo "=== Integration tests (all) ==="
     (cd tests && cargo nextest run --no-fail-fast --failure-output final)
+    echo ""
+    echo "=== Silently-skipped tests ==="
+    # Surface what still skipped, so a guard that starts always-skipping is
+    # visible rather than reported as a pass.
+    (cd tests && cargo nextest run --no-capture 2>&1 | grep -iE "^\s*(SKIP|Skipping|skip):" | sort | uniq -c) || echo "  none"
 
 # Run parser unit tests only
 test-unit:

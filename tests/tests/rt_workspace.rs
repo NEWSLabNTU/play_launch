@@ -25,6 +25,35 @@ fn fixture_dir() -> PathBuf {
 /// `require_autoware()` (`tests/tests/autoware.rs`) in spirit but — since
 /// this fixture is a colcon build product that may legitimately be absent on
 /// a fresh checkout (like `io_stress`) — skips rather than panics.
+/// A `Command` for the `ros-launch-resolve` CLI with the same cleared-and-
+/// repopulated environment `fixtures::play_launch_cmd` applies.
+///
+/// `dump` lived on `play_launch` until `adc33a7` ("depend on
+/// ros-launch-resolve; drop the resolve pipeline", RFC-0060 W3) moved it —
+/// along with `resolve`'s siblings — into the extracted CLI. `play_launch`
+/// now answers `unrecognized subcommand 'dump'`. The binary is neither
+/// installed nor on `PATH`, so this looks in the submodule's own target dir
+/// and returns `None` (test skips) when it has not been built.
+fn resolve_cli_cmd(env: &std::collections::HashMap<String, String>) -> Option<std::process::Command> {
+    let root = fixtures::repo_root().join("src/ros-launch-resolve/target");
+    let bin = ["debug", "release"]
+        .iter()
+        .map(|p| root.join(p).join("ros-launch-resolve"))
+        .find(|c| c.is_file());
+    let Some(bin) = bin else {
+        eprintln!(
+            "SKIP: ros-launch-resolve CLI not built ({}/{{debug,release}}/ros-launch-resolve \
+             missing) — run `cd src/ros-launch-resolve && cargo build` first",
+            root.display()
+        );
+        return None;
+    };
+    let mut cmd = std::process::Command::new(bin);
+    cmd.env_clear();
+    cmd.envs(env);
+    Some(cmd)
+}
+
 fn require_rt_workspace() -> bool {
     let installed_pkg = fixture_dir().join("install/rt_demo");
     if !installed_pkg.is_dir() {
@@ -1327,7 +1356,10 @@ fn dump_default_emits_model_and_replays_cleanly() {
     let dump_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let model_path = dump_tmp.path().join("m.yaml");
 
-    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
+    let Some(mut dump_cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let mut proc = ManagedProcess::spawn(dump_cmd.args([
         "dump",
         "-o",
         model_path.to_str().unwrap(),
@@ -1338,7 +1370,7 @@ fn dump_default_emits_model_and_replays_cleanly() {
     .expect("spawn dump");
     assert!(
         proc.wait_with_timeout(Duration::from_secs(60)).success(),
-        "play_launch dump (default format) failed"
+        "ros-launch-resolve dump (default format) failed"
     );
 
     // No record.json companion anywhere near the model.

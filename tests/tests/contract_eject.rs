@@ -1,10 +1,13 @@
-//! Integration tests for `play_launch contract eject` (Phase 41.4).
+//! Integration tests for `contract eject` (Phase 41.4).
+//!
+//! The subcommand lived on `play_launch` until `adc33a7` (RFC-0060 W3)
+//! moved it into the extracted `ros-launch-resolve` CLI; these tests drive
+//! that binary and skip cleanly when it has not been built.
 //!
 //! Two flavors:
 //! - the "neither file exists" / "no overlay root" error paths need no ROS
 //!   runtime at all — a direct launch-file path with no sidecar files is
-//!   enough (same `Command::new(play_launch_bin())` pattern as
-//!   `manifest_check.rs`);
+//!   enough;
 //! - the "actually copies the provider contract" happy path needs a real
 //!   package with a provider sidecar shipped next to its launch file, so it
 //!   uses the `rt_workspace` fixture (`rt_demo`'s installed
@@ -25,6 +28,16 @@ fn play_launch_bin() -> PathBuf {
         return cargo_bin;
     }
     fixtures::play_launch_bin()
+}
+
+/// `fixtures::play_launch_cmd`'s equivalent for the relocated CLI: same
+/// cleared-and-repopulated environment, different binary.
+fn resolve_cli_cmd(env: &std::collections::HashMap<String, String>) -> Option<Command> {
+    let bin = resolve_cli_bin()?;
+    let mut cmd = Command::new(bin);
+    cmd.env_clear();
+    cmd.envs(env);
+    Some(cmd)
 }
 
 /// Locate the `ros-launch-resolve` CLI, which owns `contract eject`.
@@ -126,10 +139,13 @@ fn eject_errors_when_no_overlay_root_and_no_into() {
     env.remove("PLAY_LAUNCH_CONTRACTS");
     env.remove("XDG_CONFIG_HOME");
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args(["contract", "eject", "rt_demo", "bringup.launch.xml"])
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
 
     assert!(
         !output.status.success(),
@@ -149,12 +165,15 @@ fn eject_provider_contract_then_check_uses_overlay_channel() {
     let env = fixtures::rt_workspace_env();
     let into = tempfile::TempDir::new().expect("failed to create into dir");
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args(["contract", "eject", "rt_demo", "bringup.launch.xml"])
         .arg("--into")
         .arg(into.path())
         .output()
-        .expect("failed to run play_launch contract eject");
+        .expect("failed to run ros-launch-resolve contract eject");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "eject failed: {stderr}");
     assert!(stderr.contains("Ejected contract:"), "got: {stderr}");
@@ -202,12 +221,15 @@ fn eject_refuses_overwrite_without_force_then_force_succeeds() {
     let env = fixtures::rt_workspace_env();
     let into = tempfile::TempDir::new().expect("failed to create into dir");
 
-    let first = fixtures::play_launch_cmd(&env)
+    let Some(mut first_cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let first = first_cmd
         .args(["contract", "eject", "rt_demo", "bringup.launch.xml"])
         .arg("--into")
         .arg(into.path())
         .output()
-        .expect("failed to run play_launch contract eject");
+        .expect("failed to run ros-launch-resolve contract eject");
     assert!(
         first.status.success(),
         "first eject failed: {}",
@@ -215,12 +237,15 @@ fn eject_refuses_overwrite_without_force_then_force_succeeds() {
     );
 
     // Second eject without --force must refuse.
-    let second = fixtures::play_launch_cmd(&env)
+    let Some(mut second_cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let second = second_cmd
         .args(["contract", "eject", "rt_demo", "bringup.launch.xml"])
         .arg("--into")
         .arg(into.path())
         .output()
-        .expect("failed to run play_launch contract eject");
+        .expect("failed to run ros-launch-resolve contract eject");
     assert!(
         !second.status.success(),
         "expected refusal to overwrite without --force"
@@ -232,13 +257,16 @@ fn eject_refuses_overwrite_without_force_then_force_succeeds() {
     );
 
     // With --force it must succeed.
-    let third = fixtures::play_launch_cmd(&env)
+    let Some(mut third_cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let third = third_cmd
         .args(["contract", "eject", "rt_demo", "bringup.launch.xml"])
         .arg("--into")
         .arg(into.path())
         .arg("--force")
         .output()
-        .expect("failed to run play_launch contract eject");
+        .expect("failed to run ros-launch-resolve contract eject");
     assert!(
         third.status.success(),
         "--force should overwrite: {}",

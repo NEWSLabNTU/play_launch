@@ -124,7 +124,7 @@ play_launch launch autoware_launch planning_simulator.launch.xml --parser python
 ⚙️ **How to use**:
 ```bash
 play_launch launch <package> <file> --parser python
-play_launch dump launch <package> <file> --parser python
+ros-launch-resolve dump launch <package> <file> --parser python
 ```
 
 ---

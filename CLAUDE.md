@@ -65,7 +65,7 @@ just build-wheel                    # Bundle + wheel only (no colcon rebuild)
 just build-interception             # Build interception .so (standalone, not in colcon)
 just run launch <pkg> <launch_file> # Run with colcon build
 play_launch launch <pkg> <launch>   # Run if installed via pip
-play_launch plot                    # Analysis
+ros-launch-resolve plot             # Analysis (moved out of play_launch by adc33a7)
 ```
 
 ## Architecture
@@ -195,7 +195,7 @@ Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests 
 
 **DDS isolation**: `play_launch_cmd()` in `tests/src/fixtures.rs` assigns a unique `ROS_DOMAIN_ID` per invocation (PID + counter) so concurrent nextest processes don't cross-talk over DDS.
 
-Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading,rt_workspace}/` — 4 of them (`autoware`, `simple_test`, `container_events`, `rt_workspace`) have a `just compare-dumps` recipe (model-based parser parity, self-contained — resolves both parsers itself; Phase 47.B5 removed the `dump-rust`/`dump-python`/`dump-both`/`compare-dumps-record` record.json-based recipes). `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; build with its own `just build`, tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`, skip when unbuilt).
+Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading,rt_workspace}/` — 4 of them (`autoware`, `simple_test`, `container_events`, `rt_workspace`) have a `just compare-dumps` recipe (model-based parser parity, self-contained — resolves both parsers itself; Phase 47.B5 removed the `dump-rust`/`dump-python`/`dump-both`/`compare-dumps-record` record.json-based recipes). `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
 
