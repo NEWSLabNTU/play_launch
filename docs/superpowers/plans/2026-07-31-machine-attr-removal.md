@@ -1162,7 +1162,17 @@ cd /home/aeon/repos/play_launch/src/ros-launch-resolve/parser
 grep -rn "\bmachine\b" --include="*.rs" crates/ src/ | grep -viE "state.?machine|same machine|real machine"
 ```
 
-Expected: no output.
+Expected: **no surviving plumbing** — no struct field, initializer,
+assignment, or destructuring pattern. Hits WILL remain and must not be
+removed: the three rejection tests, the doc comments in `error.rs` and
+`attr_spec.rs` explaining why `machine=` is refused, and
+`attr_differential.rs`'s candidate-attribute list all legitimately contain
+the word. Deleting those to make the grep silent would remove the very
+coverage that keeps `machine=` rejected.
+
+(An earlier revision of this step said "Expected: no output", which
+contradicts the "Do not remove the rejection" instruction above it. Caught
+by Task 4's implementer, confirmed by its reviewer.)
 
 - [ ] **Step 6: Run everything, including the IR feature**
 
