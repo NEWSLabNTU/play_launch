@@ -17,7 +17,7 @@ fn play_launch_bin() -> PathBuf {
 }
 
 fn manifest_fixture_dir() -> PathBuf {
-    fixtures::repo_root().join("src/ros-launch-manifest/tests/fixtures")
+    fixtures::repo_root().join("src/ros-launch-resolve/third-party/ros-launch-manifest/tests/fixtures")
 }
 
 fn simple_launch_dir() -> PathBuf {

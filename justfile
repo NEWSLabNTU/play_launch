@@ -292,7 +292,7 @@ verify-sched-rt:
 clean:
     rm -rf build install log dist target
     rm -rf tests/target
-    rm -rf src/play_launch_parser/target src/play_launch_parser/build src/play_launch_parser/install src/play_launch_parser/log
+    rm -rf src/ros-launch-resolve/parser/target src/ros-launch-resolve/parser/build src/ros-launch-resolve/parser/install src/ros-launch-resolve/parser/log
     rm -rf .cargo/config.toml
     rm -rf play_log tmp *.egg-info
     scripts/bundle_wheel.sh --clean
@@ -364,7 +364,7 @@ test:
     colcon build --packages-select play_launch_msgs play_launch_container --symlink-install --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
     echo ""
     echo "=== Parser unit tests ==="
-    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
+    (cd src/ros-launch-resolve/parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
     echo ""
     echo "=== Integration tests (fast) ==="
     (cd tests && cargo nextest run -E 'not binary(autoware) & not binary(io_stress) & not binary(rt_workspace) & not test(/launch/)' --no-fail-fast --failure-output final)
@@ -378,7 +378,7 @@ test-all:
     colcon build --packages-select play_launch_msgs play_launch_container --symlink-install --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
     echo ""
     echo "=== Parser unit tests ==="
-    (cd src/play_launch_parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
+    (cd src/ros-launch-resolve/parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
     echo ""
     echo "=== Integration tests (all) ==="
     (cd tests && cargo nextest run --no-fail-fast --failure-output final)
@@ -387,7 +387,7 @@ test-all:
 test-unit:
     #!/usr/bin/env bash
     set -e
-    cd src/play_launch_parser
+    cd src/ros-launch-resolve/parser
     cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final
 
 # Run all integration tests (simple + Autoware)
@@ -491,7 +491,7 @@ check:
 
     echo ""
     echo "=== play_launch_parser (clippy + rustfmt) ==="
-    (cd src/play_launch_parser && just check)
+    (cd src/ros-launch-resolve/parser && just check)
 
     echo ""
     echo "=== Python (ruff) ==="
@@ -542,7 +542,7 @@ cpp_packages := "src/play_launch_container"
 format:
     #!/usr/bin/env bash
     (cd src/play_launch && cargo +nightly fmt)
-    (cd src/play_launch_parser && cargo +nightly fmt)
+    (cd src/ros-launch-resolve/parser && cargo +nightly fmt)
     ruff format python/
     ament_clang_format --reformat {{cpp_packages}}
 
