@@ -216,8 +216,10 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
   nested inside `<include>`). The first two are long-standing back-compat
   aliases this parser deliberately still reads, so — by human ruling, to
   keep existing launch files working — they stay WARNINGS rather than
-  errors; the plain `machine=` case and any other genuinely unknown
-  attribute are hard errors. The parser now carries per-element attribute
+  errors; the plain `machine=` case and the top-level `<arg value=>` case
+  (a known attribute used in a context ROS 2 doesn't allow) are both hard
+  errors, same as any genuinely unknown attribute. The parser now carries
+  per-element attribute
   allowlists (`src/ros-launch-resolve/parser/crates/play_launch_parser/src/
   xml/attr_spec.rs`) that error on unknown attributes and warn on
   known-unsupported ones — including six `<node>` attributes ROS 2 accepts

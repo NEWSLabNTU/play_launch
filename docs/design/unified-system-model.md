@@ -130,9 +130,10 @@ The shared `model` crate is vendored by nano-ros; every `NodeInstance` /
 `Deploy` addition here is a schema change they inherit. Same handshake as the
 sched-SSoT reconciliation:
 1. **Note them first** (nano-ros issue #236 + RFC-0050): our unified-model
-   design, the `machine=`→`deploy.host` fix landing now, and the additive
-   launch fields coming. Confirm they've seen the design and flag any field
-   they read that the model still omits.
+   design, the `machine=`→`deploy.host` fix landing now (REVERTED
+   2026-07-31 — see above), and the additive launch fields coming. Confirm
+   they've seen the design and flag any field they read that the model
+   still omits.
 2. Land additive schema changes (backward-compat; old models parse).
 3. nano-ros consumes the new fields on their track (they ignore the
    Linux-serving ones by design).
@@ -142,7 +143,7 @@ sched-SSoT reconciliation:
 1. ✅ **Coordinate** (46.0): note nano-ros, confirm the field set.
 2. ✅ **Fix #236 first** (46.1, independent quick win): `<node machine=>` →
    `execution.deploy.host`; unblocks nano-ros's paused multihost migration.
-   Ships ahead of everything else.
+   Ships ahead of everything else. (REVERTED 2026-07-31 — see above.)
 3. ✅ **Shared launch fields** (46.1b/46.2): `NodeInstance` gains
    `remaps`/`ros_args`/`respawn`/`env` (cross-track, additive); parser +
    `model_builder` populate them.
