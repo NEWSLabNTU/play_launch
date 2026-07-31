@@ -26,13 +26,15 @@ piece of configuration maps onto the processes and threads the kernel
 actually schedules.
 
 **One artifact (Phase 46, hard-removed the alternative in Phase 47):**
-`play_launch resolve`/`dump` merge the launch file, contract, and platform
-file into one `system_model.yaml` — structure, contracts, AND the resolved
-scheduling plan (`execution.sched`) all live in it. `replay --model
-system_model.yaml` spawns and applies scheduling straight from that file;
-nothing is re-derived at runtime. `record.json` is no longer produced by
-anything (Phase 47.B2) and plays no role in the scheduling apply-layer this
-guide describes.
+`ros-launch-resolve resolve`/`dump` merge the launch file, contract, and
+platform file into one `system_model.yaml` — structure, contracts, and the
+**applied schedule** (`execution.tiers` + `execution.bindings`; the model is
+input-plus-applied-outcome — it does not embed the mapper's full resolved
+plan, a direction that landed and was deliberately reverted, see §1.3).
+`replay --model system_model.yaml` spawns and applies scheduling straight
+from those tiers/bindings; nothing is re-derived at runtime. `record.json`
+is no longer produced by anything (Phase 47.B2) and plays no role in the
+scheduling apply-layer this guide describes.
 
 ## Quick start
 
@@ -113,7 +115,7 @@ within the platform facts you give it:
 
 ```yaml
 target: posix
-mapper: rate_monotonic     # or: deadline_monotonic, manual
+mapper: rate_monotonic     # or: deadline_monotonic, chain_aware, manual
 resources:
   rt_priority_band: { min: 10, max: 40 }   # the mapper's working range
   isolated_cpus: [0]
@@ -147,8 +149,9 @@ chain and fact-less for `chain_aware`) falls into the **default tier** —
 
 Add a per-node `criticality: high | medium | low` hint to the **contract**
 (not the platform file) if you want to record which nodes matter most — it's
-a mapper hint with no numbers attached (future mappers may weight by it; the
-current built-ins don't).
+a mapper hint with no numbers attached. `chain_aware` uses it (chains are
+ordered by criticality, and non-chain nodes bucket by it before their
+rate/deadline budget); `rate_monotonic`/`deadline_monotonic` ignore it.
 
 ### 1.2 The platform file — facts + overrides
 
@@ -214,15 +217,24 @@ from" in one command. Without a resolved platform file, `--explain` prints a
 no-op note and exits 0 (it's a decoration on an already-optional feature,
 not something that should fail `check`).
 
-`--explain` is not `check`-only. `play_launch resolve` embeds the resolved
-scheduling structure into the SystemModel (`execution.sched`), so
-`resolve --explain` and `replay --model <model.yaml> --explain` render the
-same table **from the model** — no re-derivation — byte-identical to
-`check --explain` on the same inputs. The scheduling structure travels with
-the artifact: an off-host consumer (nano-ros) reads the shared chains +
-per-path requirement facts from `execution.sched` and runs its own RTOS
-mapper over them (the PiCAS ranks are the Linux realization, ignored
-off-host). See `docs/design/system-model-sched-ssot.md`.
+`--explain` is not `check`-only, but the two other surfaces differ:
+
+- `ros-launch-resolve resolve --explain` renders from the **fresh derive**
+  that invocation just performed — byte-identical to `check --sched
+  --explain` on the same inputs.
+- `replay --model <model.yaml> --explain` is **degraded by design**: the
+  model carries only the applied tiers/bindings, not the mapper's
+  diagnostics, so every row reads `derived((applied): tier '<name>' → prio
+  <p>)` (or `default (no timing facts)`) with a generic footer. Run
+  `check --sched --explain` when you need full mapper provenance.
+
+This is a consequence of the model being **input + applied outcome, not the
+resolved plan**: the `execution.sched` embedding landed and was reverted
+(2026-07-20 decision; `docs/design/system-model-sched-ssot.md` describes the
+reverted direction and is superseded). An off-host consumer (nano-ros) reads
+the model's *input* layers (`structure`, `contracts`) and runs its own RTOS
+realizer over the shared ranking core — the PiCAS priority numbers are the
+Linux realization, ignored off-host.
 
 ### 1.4 Shipping channels — auto-apply, no flags needed
 
@@ -238,10 +250,12 @@ channels, first-hit-wins, **no merging across channels**:
 3. **Provider sidecar**: installed next to the launch file
    (`share/<pkg>/launch/...`, read-only) — the package's shipped default.
 
-**Auto-apply at launch**: when `--sched` is absent, `play_launch
-launch`/`replay` resolve the platform file through these channels and
-**apply it** — the provider sidecar is the vendor's trusted default, so RT
-works out of the box on an installed system with zero flags. The overlay
+**Auto-apply at launch**: when `--sched` is absent, `play_launch launch`
+(and `run`) resolve the platform file through these channels and **apply
+it** — the provider sidecar is the vendor's trusted default, so RT works
+out of the box on an installed system with zero flags. (`replay
+<model.yaml>` does *not* consult the channels — it applies the tiers
+already baked into the model at resolve time.) The overlay
 exists to fill gaps (no vendor config, or none for your target) or tweak
 numbers that don't fit. `--sched-apply off` disables all applying;
 `--sched <path>` bypasses discovery entirely; `check` always validates,
@@ -259,10 +273,13 @@ resolved provider contract *and* platform file into the overlay tree, ready
 to edit:
 
 ```bash
-play_launch contract eject rt_demo bringup.launch.xml --into /tmp/my-overlay
+ros-launch-resolve contract eject rt_demo bringup.launch.xml --into /tmp/my-overlay
 # Ejected contract: .../rt_demo/launch/bringup.contract.yaml -> /tmp/my-overlay/rt_demo/launch/bringup.contract.yaml
 # Ejected platform file: .../rt_demo/launch/bringup.system.posix.yaml -> /tmp/my-overlay/rt_demo/launch/bringup.system.posix.yaml
 ```
+
+(`contract eject` lives on the `ros-launch-resolve` binary — the resolver
+toolchain play_launch ships with — not on `play_launch` itself.)
 
 Without `--into`, it writes to the discovered overlay root (same discovery
 as above) and errors if none exists. `--force` overwrites an existing
@@ -277,7 +294,7 @@ copy over the vendor's.
 play_launch launch <pkg> <file>                                 # auto-apply via channels
 play_launch launch <pkg> <file> --sched <path> [--sched-apply off|warn|strict]
 play_launch check <pkg> <file> [--sched <path>] [--target <t>] [--explain]
-play_launch contract eject <pkg> <file> [--target <t>] [--into <dir>] [--force]
+ros-launch-resolve contract eject <pkg> <file> [--target <t>] [--into <dir>] [--force]
 ```
 
 | `--sched-apply` | behavior |
@@ -624,7 +641,7 @@ here changes existing behavior.
 | warning citing both a contract and a platform file | a pinned priority order contradicts the contract's declared rate/deadline order | re-check the override, or accept the warning if intentional |
 | `--explain` prints a no-op note | no platform file resolved (no `--sched`, nothing on the overlay/provider channels) | pass `--sched <path>`, or ship one via the overlay/provider channels |
 | `tier 'X': RT priority N out of range 1..=99` at startup (legacy `.toml`) | bad placement value | fix the spec — this is deliberate fail-fast |
-| assign rule error: selector matches nothing (legacy `.toml`) | typo in node name / scope path | check FQNs by resolving the model (`play_launch resolve <pkg> <file> -o model.yaml`) and reading its `structure.nodes` keys — they're the canonical FQNs |
+| assign rule error: selector matches nothing (legacy `.toml`) | typo in node name / scope path | check FQNs by resolving the model (`ros-launch-resolve resolve <pkg> <file> -o model.yaml`) and reading its `structure.nodes` keys — they're the canonical FQNs |
 | composable skipped: `pid no longer matches its start_time` | the composable died right after loading; its PID may have been recycled | benign — nothing to schedule |
 | `chrt -p <pid>` shows `SCHED_OTHER` but the node "should" be RT | `chrt -p` reads only the main thread — or the node is in the default tier (no fact, no override) | check all TIDs; check contract facts / overrides coverage |
 | EPERM with caps correct, inside a container/slice | cgroup `rt_runtime = 0` gate (`CONFIG_RT_GROUP_SCHED`) | provision RT bandwidth for the cgroup |
