@@ -17,11 +17,11 @@
   <!-- Nested namespaces with multiple levels -->
   <group>
     <push-ros-namespace namespace="$(var robot_name)"/>
-    <push-ros-namespace ns="sensors" />
+    <push-ros-namespace namespace="sensors" />
 
     <!-- Camera nodes -->
     <group>
-      <push-ros-namespace ns="camera" />
+      <push-ros-namespace namespace="camera" />
       <node pkg="camera_driver" exec="camera_node" name="front_camera">
         <param name="frame_id" value="camera_link" />
         <param name="fps" value="30" />
@@ -32,7 +32,7 @@
 
     <!-- Lidar nodes -->
     <group>
-      <push-ros-namespace ns="lidar" />
+      <push-ros-namespace namespace="lidar" />
       <node pkg="lidar_driver" exec="lidar_node" name="front_lidar" if="$(var use_sim_time)">
         <param name="frame_id" value="lidar_link" />
         <param name="scan_rate" value="10" />
@@ -45,7 +45,7 @@
 
     <!-- Navigation stack -->
     <group>
-      <push-ros-namespace ns="navigation" />
+      <push-ros-namespace namespace="navigation" />
 
       <!-- Map server -->
       <node pkg="nav2_map_server" exec="map_server" name="map_server" unless="$(var use_sim_time)">

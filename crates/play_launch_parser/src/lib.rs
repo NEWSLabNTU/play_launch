@@ -422,7 +422,7 @@ test_node:
     fn test_namespace_scoping_simple() {
         let xml = r#"<launch>
             <group>
-                <push-ros-namespace ns="robot1" />
+                <push-ros-namespace namespace="robot1" />
                 <node pkg="demo_nodes_cpp" exec="talker" />
             </group>
         </launch>"#;
@@ -439,9 +439,9 @@ test_node:
     fn test_namespace_scoping_nested() {
         let xml = r#"<launch>
             <group>
-                <push-ros-namespace ns="robot1" />
+                <push-ros-namespace namespace="robot1" />
                 <group>
-                    <push-ros-namespace ns="sensors" />
+                    <push-ros-namespace namespace="sensors" />
                     <node pkg="demo_nodes_cpp" exec="talker" />
                 </group>
             </group>

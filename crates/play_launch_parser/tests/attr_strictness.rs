@@ -127,3 +127,103 @@ fn the_launch_root_is_not_strict() {
         "<launch> must have no spec so validation skips it"
     );
 }
+
+use std::io::Write;
+
+fn parse_source(xml: &str) -> play_launch_parser::error::Result<()> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tmp");
+    std::fs::create_dir_all(&dir).expect("create tmp dir");
+    let path = dir.join(format!("attr_strict_{}.launch.xml", std::process::id()));
+    let mut fh = std::fs::File::create(&path).expect("write fixture");
+    fh.write_all(xml.as_bytes()).expect("write fixture");
+    drop(fh);
+    let result = play_launch_parser::parse_launch_file(&path, Default::default());
+    let _ = std::fs::remove_file(&path);
+    result.map(|_| ())
+}
+
+#[test]
+fn parsing_rejects_machine_on_node() {
+    let err = parse_source(
+        r#"<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="t" machine="robot1"/>
+</launch>
+"#,
+    )
+    .expect_err("machine= must fail the parse");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Unexpected attribute(s) found in `node`") && msg.contains("'machine'"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn parsing_rejects_an_unknown_attribute() {
+    let err = parse_source(
+        r#"<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="t" zzz_bogus="x"/>
+</launch>
+"#,
+    )
+    .expect_err("unknown attributes must fail the parse");
+    assert!(err.to_string().contains("'zzz_bogus'"), "{err}");
+}
+
+#[test]
+fn parsing_accepts_a_known_unsupported_attribute() {
+    parse_source(
+        r#"<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="t" launch-prefix="nice -n 5"/>
+</launch>
+"#,
+    )
+    .expect("launch-prefix is valid ROS 2 — must parse with a warning");
+}
+
+#[test]
+fn parsing_accepts_an_unknown_attribute_on_the_launch_root() {
+    parse_source(
+        r#"<launch zzz="1">
+  <node pkg="demo_nodes_cpp" exec="talker" name="t"/>
+</launch>
+"#,
+    )
+    .expect("<launch> is not strict in ROS 2");
+}
+
+#[test]
+fn parsing_rejects_an_unknown_attribute_on_a_child_element() {
+    // `<param>`, `<remap>`, `<env>` never reach the traverser dispatch —
+    // the action's own children loop consumes them, so they need their own
+    // validation hook.
+    let err = parse_source(
+        r#"<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="t">
+    <remap from="a" to="b" zzz_bogus="x"/>
+  </node>
+</launch>
+"#,
+    )
+    .expect_err("unknown attributes on <remap> must fail the parse");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Unexpected attribute(s) found in `remap`") && msg.contains("'zzz_bogus'"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn parsing_validates_even_when_a_condition_excludes_the_element() {
+    // ROS 2 parses (and validates) regardless of if/unless — conditions are
+    // evaluated at launch time. This parser evaluates them at parse time, so
+    // validation must run before the condition check.
+    let err = parse_source(
+        r#"<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="t" machine="robot1" unless="true"/>
+</launch>
+"#,
+    )
+    .expect_err("a skipped element must still be validated");
+    assert!(err.to_string().contains("'machine'"), "{err}");
+}

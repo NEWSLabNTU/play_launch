@@ -107,6 +107,8 @@ impl ContainerAction {
         // Parse composable_node children
         let mut composable_nodes = Vec::new();
         for child in entity.children() {
+            // Child elements never reach `traverse_entity` — validate here.
+            crate::xml::attr_spec::validate_attrs(&child)?;
             match child.type_name() {
                 "composable_node" | "composable-node" => {
                     composable_nodes.push(ComposableNodeAction::from_entity(&child, context)?);
@@ -336,6 +338,8 @@ impl ComposableNodeAction {
         let extra_args = HashMap::new();
 
         for child in entity.children() {
+            // Child elements never reach `traverse_entity` — validate here.
+            crate::xml::attr_spec::validate_attrs(&child)?;
             match child.type_name() {
                 "param" => {
                     // Check if this is a parameter file reference

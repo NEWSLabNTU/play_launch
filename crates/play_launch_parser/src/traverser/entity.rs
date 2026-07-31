@@ -15,6 +15,13 @@ use std::collections::HashMap;
 
 impl LaunchTraverser {
     pub(crate) fn traverse_entity(&mut self, entity: &XmlEntity) -> Result<()> {
+        // Reject attributes ROS 2 would reject; warn on ROS 2 attributes we
+        // do not implement. Runs BEFORE the condition check because ROS 2
+        // validates regardless of if/unless — it evaluates conditions at
+        // launch time, after parsing. `<launch>` and undispatched elements
+        // have no spec and are skipped (see `xml::attr_spec::spec_for`).
+        crate::xml::attr_spec::validate_attrs(entity)?;
+
         // Check if entity should be processed based on if/unless conditions
         if !should_process_entity(entity, &self.context)? {
             log::debug!("Skipping {} due to condition", entity.type_name());

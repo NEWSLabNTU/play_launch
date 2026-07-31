@@ -48,6 +48,8 @@ impl ExecutableAction {
         let mut arguments = Vec::new();
 
         for child in entity.children() {
+            // Child elements never reach `traverse_entity` — validate here.
+            crate::xml::attr_spec::validate_attrs(&child)?;
             match child.type_name() {
                 "env" => {
                     let name: String = child.required_attr_str("name")?.ok_or_else(|| {

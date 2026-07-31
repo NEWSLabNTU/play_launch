@@ -30,6 +30,8 @@ impl IncludeAction {
         // Use Vec to preserve order (later args can reference earlier ones)
         let mut args = Vec::new();
         for child in entity.children() {
+            // Child elements never reach `traverse_entity` — validate here.
+            crate::xml::attr_spec::validate_attrs(&child)?;
             if child.type_name() == "arg" {
                 let name: String =
                     child

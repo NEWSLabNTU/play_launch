@@ -341,10 +341,10 @@ fn test_node_command_generation() {
 fn test_push_pop_ros_namespace_actions() {
     // Test push-ros-namespace and pop-ros-namespace XML actions
     let xml = r#"<launch>
-        <push-ros-namespace ns="robot1" />
+        <push-ros-namespace namespace="robot1" />
         <node pkg="demo_nodes_cpp" exec="talker" name="talker1" />
 
-        <push-ros-namespace ns="sensors" />
+        <push-ros-namespace namespace="sensors" />
         <node pkg="demo_nodes_cpp" exec="listener" name="listener1" />
         <pop-ros-namespace />
 
@@ -403,7 +403,7 @@ fn test_push_ros_namespace_with_substitution() {
     // Test that push-ros-namespace supports substitutions
     let xml = r#"<launch>
         <arg name="robot_ns" default="my_robot" />
-        <push-ros-namespace ns="$(var robot_ns)" />
+        <push-ros-namespace namespace="$(var robot_ns)" />
         <node pkg="demo_nodes_cpp" exec="talker" name="talker" />
         <pop-ros-namespace />
     </launch>"#;
@@ -574,11 +574,11 @@ fn test_deeply_nested_namespaces() {
     // Test that deeply nested namespace stacking works correctly
     let xml = r#"<launch>
         <group><push-ros-namespace namespace="level1"/>
-            <push-ros-namespace ns="level2" />
+            <push-ros-namespace namespace="level2" />
             <group>
-                <push-ros-namespace ns="level3" />
+                <push-ros-namespace namespace="level3" />
                 <group>
-                    <push-ros-namespace ns="level4" />
+                    <push-ros-namespace namespace="level4" />
                     <node pkg="test_pkg" exec="test_node" name="deep_node" />
                     <pop-ros-namespace />
                 </group>
@@ -1392,13 +1392,17 @@ fn test_command_substitution_in_let_and_node() {
 }
 
 #[test]
-fn test_node_machine_attr_not_captured() {
-    // `machine=` is ROS 1 roslaunch syntax; ROS 2 has no such attribute and
-    // launch_xml rejects it. The capture was removed (nano-ros issue 0364) —
-    // no node record may carry a `machine` field, even when the XML says so.
-    // (This parser ignores unknown attributes rather than erroring; the
-    // strict-rejection parity with launch_xml's
-    // assert_entity_completely_parsed is a separate, broader feature.)
+fn test_node_machine_attr_rejected() {
+    // Supersedes upstream's `test_node_machine_attr_not_captured` (nano-ros
+    // issue 0364), which asserted `machine=` still PARSES and merely isn't
+    // captured, and noted that strict-rejection parity with launch_xml's
+    // `assert_entity_completely_parsed` was "a separate, broader feature".
+    // That feature is now here (`xml::attr_spec`), so the attribute is
+    // rejected outright and the weaker assertion no longer holds.
+    //
+    // Measured: real ROS 2 Humble rejects it via `launch.frontend.Parser`
+    // with `Unexpected attribute(s) found in `node`: {'machine'}`. A node
+    // without `machine=` is unaffected.
     let xml = r#"<launch>
         <node pkg="demo" exec="talker" name="t1" machine="robot1" />
         <node pkg="demo" exec="talker" name="t2" />
@@ -1408,16 +1412,11 @@ fn test_node_machine_attr_not_captured() {
     file.write_all(xml.as_bytes()).unwrap();
     file.flush().unwrap();
 
-    let result = parse_launch_file(file.path(), HashMap::new());
-    assert!(result.is_ok(), "should parse: {result:?}");
-    let json = serde_json::to_value(result.unwrap()).unwrap();
-    let nodes = json["node"].as_array().unwrap();
-    assert_eq!(nodes.len(), 2);
-
-    for node in nodes {
-        assert!(
-            node.get("machine").is_none(),
-            "no node record may carry a `machine` field (ROS 1-ism, removed): {node:?}"
-        );
-    }
+    let err = parse_launch_file(file.path(), HashMap::new())
+        .expect_err("machine= is ROS 1 syntax and must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Unexpected attribute(s) found in `node`") && msg.contains("'machine'"),
+        "{msg}"
+    );
 }
