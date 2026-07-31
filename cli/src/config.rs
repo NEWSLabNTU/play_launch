@@ -1,3 +1,23 @@
+// UNRESOLVED DISPOSITION — what: this whole runtime-config subsystem
+// (`RuntimeConfig`, `MonitoringSettings`, `DiagnosticsSettings`,
+// `InterceptionSettings`, `ComposableNodeLoadingSettings`,
+// `ContainerReadinessSettings`, `ResolvedRuntimeConfig`,
+// `load_runtime_config`) — a full mirror of play_launch's own monitoring/
+// diagnostics/interception/container-readiness/composable-loading
+// settings. Why no caller: `resolve`/`dump`/`contract`/`plot` (the only
+// verbs this crate wires up, see `main.rs`) never touch any of those
+// runtime concerns — they stayed in `play_launch` per RFC-0060 when this
+// crate was split out as the launch-tree-only layer. It compiles cleanly
+// on its own (verified: removing this `allow` produces only `dead_code`
+// warnings, no unresolved-reference errors), so it is not unreachable
+// scaffolding the way `forward_state_events_and_wait` was — it is live,
+// working code with nothing calling it yet.
+// Separate decision, not made here: whether to wire it into a future
+// command, move it back to `play_launch`, or delete it outright. This
+// `#[allow(dead_code)]` only keeps the gate green while that decision is
+// pending — it is not an endorsement of keeping the module indefinitely.
+#![allow(dead_code)]
+
 use eyre::{Result, WrapErr};
 use glob::Pattern;
 use serde::Deserialize;

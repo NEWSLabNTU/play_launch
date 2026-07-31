@@ -205,6 +205,19 @@ pub struct CheckArgs {
     pub export_graph: Option<PathBuf>,
 }
 
+// UNRESOLVED DISPOSITION — what: `CheckArgs::contract_sources`, the
+// two-step `ContractSources` discovery helper. Why no caller: `CheckArgs`
+// is not a `Command` variant in this crate (see `main.rs` — only
+// `Resolve`/`Dump`/`Contract`/`Plot` are wired up); `check` stayed in
+// `play_launch` per RFC-0060. It compiles cleanly on its own (verified:
+// removing this `allow` produces only a `dead_code` warning, no
+// unresolved-reference error), so it is live, working code with nothing
+// calling it yet, not unreachable scaffolding.
+// Separate decision, not made here: whether a `check` verb eventually
+// lands in this crate, this helper moves to `play_launch`, or it gets
+// deleted. This `#[allow(dead_code)]` only keeps the gate green while
+// that decision is pending.
+#[allow(dead_code)]
 impl CheckArgs {
     /// Build the two-step `ContractSources` from this command's flags.
     ///
@@ -399,6 +412,18 @@ pub struct ReplayArgs {
     pub common: CommonOptions,
 }
 
+// UNRESOLVED DISPOSITION — what: `ReplayArgs::model_path`, resolving the
+// SystemModel path from either the positional or `--model` form. Why no
+// caller: `ReplayArgs` is not a `Command` variant in this crate (see
+// `main.rs`); `replay` stayed in `play_launch` per RFC-0060. It compiles
+// cleanly on its own (verified: removing this `allow` produces only a
+// `dead_code` warning, no unresolved-reference error), so it is live,
+// working code with nothing calling it yet, not unreachable scaffolding.
+// Separate decision, not made here: whether a `replay` verb eventually
+// lands in this crate, this helper moves to `play_launch`, or it gets
+// deleted. This `#[allow(dead_code)]` only keeps the gate green while
+// that decision is pending.
+#[allow(dead_code)]
 impl ReplayArgs {
     /// The SystemModel path, however it was given (positional or `--model`).
     /// `clap`'s `conflicts_with` already rejects both being set.
@@ -668,6 +693,21 @@ impl Default for SchedOptions {
     }
 }
 
+// UNRESOLVED DISPOSITION — what: `CommonOptions`'s feature-toggle
+// (`is_monitoring_enabled`/`is_diagnostics_enabled`/`is_web_ui_enabled`),
+// `parse_web_addr`, and `contract_sources` helpers. Why no caller:
+// `resolve`/`dump`/`contract`/`plot` (the only verbs this crate wires up,
+// see `main.rs`) never check monitoring/diagnostics/web-ui feature flags
+// or parse a web address — those are only meaningful for `run`/`replay`/
+// `check`, which stayed in `play_launch` per RFC-0060. They compile
+// cleanly on their own (verified: removing this `allow` produces only
+// `dead_code` warnings, no unresolved-reference errors), so this is live,
+// working code with nothing calling it yet, not unreachable scaffolding.
+// Separate decision, not made here: whether `run`/`replay`/`check`
+// eventually land in this crate, these helpers move to `play_launch`, or
+// they get deleted. This `#[allow(dead_code)]` only keeps the gate green
+// while that decision is pending.
+#[allow(dead_code)]
 impl CommonOptions {
     /// Check if resource monitoring is enabled
     pub fn is_monitoring_enabled(&self) -> bool {
