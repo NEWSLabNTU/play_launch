@@ -85,7 +85,7 @@ perceives one kind of dump.
 This is the order all sub-phases actually landed in:
 
 46.0 (coordinate) → **46.1 (machine=/#236 — ships first, quick unblock for
-nano-ros)** → 46.1b/46.2 (shared launch fields) → 46.3 (spawn-from-model —
+nano-ros; ⛔ REVERTED 2026-07-31, see 46.1's entry above)** → 46.1b/46.2 (shared launch fields) → 46.3 (spawn-from-model —
 largest/riskiest, regression-gated: Autoware + rt_workspace spawns must match
 record.json-era) → **retirement 46.4/46.5 (non-additive, gated on 46.3's
 regression suite)** → 46.6 docs. Through 46.3 both paths coexist (additive

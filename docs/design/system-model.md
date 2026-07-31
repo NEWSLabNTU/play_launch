@@ -92,7 +92,7 @@ contracts:                      # layer 2 — from the manifests, post-merge
 
 execution:                      # layer 3 — from the integrator's system config
   deploy:
-    /perception/detector: { target: linux, host: main }
+    /perception/detector: { target: linux }
     /sensing/imu_node:    { target: "mcu:stm32f4" }
   tiers: ...                    # per-tier spin period + platform priorities
   bindings: ...                 # node/callback-group -> tier
