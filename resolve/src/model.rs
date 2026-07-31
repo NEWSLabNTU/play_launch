@@ -14,7 +14,6 @@ use std::{
 
 use crate::ros::{launch_dump::LaunchDump, manifest_loader, model_builder, sched_loader};
 
-
 /// Shared inputs for building a checked SystemModel from an in-memory
 /// [`LaunchDump`] — used by both `resolve` (file-based, above) and
 /// `launch`'s in-memory internal round-trip (`commands::launch`, Phase
@@ -217,7 +216,9 @@ pub fn build_checked_model(
             .apply_to_launch(
                 &mut model.execution,
                 &node_fqns,
-                launch_path.and_then(|p| p.file_name()).and_then(|n| n.to_str()),
+                launch_path
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str()),
             )
             .map_err(|e| eyre::eyre!(e))?;
         // `[lifecycle] autostart` lives in the structure layer (per-node), so

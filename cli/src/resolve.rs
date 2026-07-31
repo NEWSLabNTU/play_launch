@@ -6,17 +6,12 @@
 //! Refuses to emit when the checker reports Error severity — a SystemModel
 //! in hand is always a checked one. Warnings embed in `meta.diagnostics`.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
-};
+use std::collections::BTreeMap;
 
 use eyre::{Context, Result};
-use ros_launch_manifest_check::Severity;
 
 use crate::options::ResolveArgs;
 use ros_launch_resolve::model::{ModelBuildInputs, build_checked_model};
-use ros_launch_resolve::ros::{launch_dump::LaunchDump, manifest_loader, model_builder, sched_loader};
 
 pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
     // Positional quirk: with a direct launch-file PATH, the second
@@ -39,9 +34,10 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
         args.parser,
     ))?;
 
-    let arg_binding: BTreeMap<String, String> = crate::common::parse_launch_arguments(&launch_arguments)
-        .into_iter()
-        .collect();
+    let arg_binding: BTreeMap<String, String> =
+        crate::common::parse_launch_arguments(&launch_arguments)
+            .into_iter()
+            .collect();
 
     let model = build_checked_model(ModelBuildInputs {
         dump: &dump,

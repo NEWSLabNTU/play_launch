@@ -229,7 +229,6 @@ fn path_contract(
     }
 }
 
-
 /// sha256 the given files (skipping unreadable ones with a diagnostic).
 fn hash_inputs(
     paths: &BTreeSet<PathBuf>,
@@ -815,7 +814,6 @@ pub fn build_system_model(
 mod tests {
     use super::*;
 
-
     /// Phase 46.2 — a node, a container, and a composable node each carrying
     /// remaps/env, plus respawn/ros_args on the process-having records
     /// (node, container). `resolve`'s golden/integration coverage
@@ -872,7 +870,8 @@ mod tests {
     fn node_carries_remaps_ros_args_respawn_env() {
         let dump = dump_with_launch_fields();
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         let node = &model.structure.nodes["/perception/detector"];
         assert_eq!(
@@ -904,7 +903,8 @@ mod tests {
     fn container_carries_remaps_ros_args_respawn_env() {
         let dump = dump_with_launch_fields();
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         let container = &model.structure.nodes["/perception/pipeline_container"];
         assert_eq!(
@@ -937,7 +937,8 @@ mod tests {
     fn composable_node_carries_remaps_only() {
         let dump = dump_with_launch_fields();
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         let composable = &model.structure.nodes["/perception/tracker"];
         assert_eq!(
@@ -1011,7 +1012,8 @@ mod tests {
     fn name_none_node_falls_back_to_exec_name_key() {
         let dump = dump_with_gap_fields();
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         assert!(
             model
@@ -1030,7 +1032,8 @@ mod tests {
     fn params_files_content_lands_verbatim() {
         let dump = dump_with_gap_fields();
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         let node = &model.structure.nodes["/perception/detector_node"];
         assert_eq!(
@@ -1048,7 +1051,8 @@ mod tests {
     fn global_params_merge_with_node_specific_precedence() {
         let dump = dump_with_gap_fields();
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         let node = &model.structure.nodes["/perception/detector_node"];
         assert_eq!(
@@ -1069,7 +1073,8 @@ mod tests {
     fn non_ros_args_are_carried() {
         let dump = dump_with_gap_fields();
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         let node = &model.structure.nodes["/perception/detector_node"];
         assert_eq!(
@@ -1090,7 +1095,8 @@ mod tests {
     fn raw_executable_carries_raw_cmd() {
         let dump = dump_with_gap_fields();
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         let node = &model.structure.nodes["/unknown"];
         assert!(node.pkg.is_none());
@@ -1109,7 +1115,8 @@ mod tests {
     fn composable_extra_args_are_carried() {
         let dump = dump_with_gap_fields();
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         let composable = &model.structure.nodes["/perception/tracker"];
         assert_eq!(
@@ -1125,7 +1132,8 @@ mod tests {
     fn node_name_carries_declared_name_none_when_unnamed() {
         let dump = dump_with_gap_fields();
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         // name=None regular node → node_name None.
         assert_eq!(
@@ -1187,7 +1195,8 @@ mod tests {
         });
         let dump: LaunchDump = serde_json::from_value(json).expect("valid LaunchDump");
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         // The regular node is NOT a container despite the dangling
         // composable target colliding on its bare name.
@@ -1233,7 +1242,8 @@ mod tests {
         });
         let dump: LaunchDump = serde_json::from_value(json).expect("valid LaunchDump");
         let index = ManifestIndex::default();
-        let model = build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
         // Node in the group folds to the group's FILE scope, not "/robot".
         assert_eq!(

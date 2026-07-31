@@ -2,7 +2,6 @@
 
 use crate::options::ParserBackend;
 use eyre::Context as _;
-use std::sync::Arc;
 use tracing::debug;
 
 /// Maximum number of Tokio worker threads (async workload is mostly idle)
@@ -46,7 +45,10 @@ pub(crate) async fn parse_to_launch_dump(
     launch_file: Option<&str>,
     launch_arguments: &[String],
     parser: ParserBackend,
-) -> eyre::Result<(ros_launch_resolve::ros::launch_dump::LaunchDump, std::path::PathBuf)> {
+) -> eyre::Result<(
+    ros_launch_resolve::ros::launch_dump::LaunchDump,
+    std::path::PathBuf,
+)> {
     let launch_path = crate::launch::resolve_launch_file(package_or_path, launch_file)?;
 
     let dump = match parser {
@@ -83,8 +85,8 @@ pub(crate) async fn parse_to_launch_dump(
                     &scratch_path,
                 )
                 .await?;
-            let dump =
-                ros_launch_resolve::ros::launch_dump::load_launch_dump(&scratch_path).wrap_err_with(|| {
+            let dump = ros_launch_resolve::ros::launch_dump::load_launch_dump(&scratch_path)
+                .wrap_err_with(|| {
                     format!("loading Python-parsed record {}", scratch_path.display())
                 })?;
             let _ = std::fs::remove_file(&scratch_path);
@@ -98,42 +100,6 @@ pub(crate) async fn parse_to_launch_dump(
     };
 
     Ok((dump, launch_path))
-}
-
-
-#[cfg(feature = "runtime")]
-/// Forward state events from runner to SSE broadcaster, then wait for all actors to complete.
-///
-/// Combines event forwarding with completion waiting in a single task.
-/// Takes ownership of the runner (no Arc/Mutex needed).
-///
-/// Phase 24: Also updates the node FQN map when LoadSucceeded events arrive,
-/// so the parameter proxy can construct service names for composable nodes.
-pub(crate) async fn forward_state_events_and_wait(
-    mut runner: crate::member_actor::MemberRunner,
-    broadcaster: Arc<crate::web::StateEventBroadcaster>,
-    node_fqn_map: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
-) -> eyre::Result<()> {
-    debug!("Starting state event forwarding and completion waiting");
-
-    // Forward events until done
-    while let Some(event) = runner.next_state_event().await {
-        // Phase 24: Update FQN map for composable nodes when they load
-        if let crate::member_actor::events::StateEvent::LoadSucceeded {
-            ref name,
-            ref full_node_name,
-            ..
-        } = event
-        {
-            let mut fqn_map = node_fqn_map.write().await;
-            fqn_map.insert(name.clone(), full_node_name.clone());
-            debug!("Updated FQN map: {} -> {}", name, full_node_name);
-        }
-        broadcaster.broadcast(event);
-    }
-
-    // Join all actor tasks
-    runner.wait_for_completion().await
 }
 
 /// Parse `KEY:=VALUE` launch arguments, warning on anything that isn't.

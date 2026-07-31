@@ -1,3 +1,12 @@
+// This runtime-config subsystem (monitoring/diagnostics/interception/
+// composable-node-loading settings) isn't wired into any `ros-launch-resolve`
+// command — those runtime concerns stayed in `play_launch` (RFC-0060) when
+// this crate's verbs were split out to the launch-tree-only surface
+// (`resolve`/`dump`/`contract`/`plot`). Kept for now as reference; silencing
+// dead-code rather than deleting since re-wiring (or a final decision to
+// drop it) is a separate concern from whatever change is landing here.
+#![allow(dead_code)]
+
 use eyre::{Result, WrapErr};
 use glob::Pattern;
 use serde::Deserialize;
