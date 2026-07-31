@@ -57,8 +57,7 @@ impl ExecutableAction {
             // dedicated key instead of the generic `"arg"` spec
             // `validate_attrs` would derive from `child.type_name()`.
             if child.type_name() == "arg" {
-                let names: Vec<&str> = child.attributes().into_iter().map(|(k, _)| k).collect();
-                crate::xml::attr_spec::validate_named("executable-arg", &names)?;
+                crate::xml::attr_spec::validate_arg_child(&child, "executable-arg")?;
             } else {
                 crate::xml::attr_spec::validate_attrs(&child)?;
             }

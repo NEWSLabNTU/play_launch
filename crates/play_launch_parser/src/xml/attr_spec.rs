@@ -251,11 +251,38 @@ pub fn validate_named(element: &str, attrs: &[&str]) -> Result<()> {
     check(element, attrs, false)
 }
 
+/// Validate an `<arg>` child entity against a context-specific spec key
+/// (`"include-arg"`, `"executable-arg"`, …) instead of the generic spec
+/// `validate_attrs` would derive from `child.type_name()` (which is always
+/// the literal tag name `"arg"` and would resolve to the disjoint top-level
+/// declaration spec). One `<arg>`-accepting call site == one call here;
+/// centralizing the attribute-extraction + lookup means a future call site
+/// can't accidentally fall back to `validate_attrs` and silently inherit the
+/// wrong (top-level `"arg"`) attribute set.
+///
+/// Errors still name the real tag (`arg`), not the internal spec key — see
+/// `display_name`.
+pub fn validate_arg_child<E: Entity + ?Sized>(child: &E, spec_name: &str) -> Result<()> {
+    let names: Vec<&str> = child.attributes().into_iter().map(|(k, _)| k).collect();
+    check(spec_name, &names, false)
+}
+
 /// Validate YAML mapping keys. YAML nests child elements as keys of the same
 /// mapping (`node: { pkg: …, param: [...] }`) where XML makes them separate
 /// elements, so legal child names are accepted here and only here.
 pub fn validate_yaml_keys(element: &str, keys: &[&str]) -> Result<()> {
     check(element, keys, true)
+}
+
+/// Map an internal, non-XML spec key back to the real tag name for error
+/// messages. `include-arg`/`executable-arg` are lookup keys only — no launch
+/// file ever spells them, so a user-facing "Unexpected attribute(s) found in
+/// `include-arg`" would be confusing. Everything else displays as itself.
+fn display_name(element: &str) -> &str {
+    match element {
+        "include-arg" | "executable-arg" => "arg",
+        other => other,
+    }
 }
 
 fn check(element: &str, names: &[&str], allow_children: bool) -> Result<()> {
@@ -273,9 +300,10 @@ fn check(element: &str, names: &[&str], allow_children: bool) -> Result<()> {
         }
         if spec.known_unsupported.contains(name) {
             log::warn!(
-                "<{element} {name}=…> is valid ROS 2 but not supported by the \
+                "<{} {name}=…> is valid ROS 2 but not supported by the \
                  Rust parser; the value is ignored. Use --parser python if \
-                 you need it."
+                 you need it.",
+                display_name(element),
             );
             continue;
         }
@@ -293,7 +321,7 @@ fn check(element: &str, names: &[&str], allow_children: bool) -> Result<()> {
         .collect::<Vec<_>>()
         .join(", ");
     Err(ParseError::UnexpectedAttribute {
-        element: element.to_string(),
+        element: display_name(element).to_string(),
         attributes: rendered,
     })
 }
