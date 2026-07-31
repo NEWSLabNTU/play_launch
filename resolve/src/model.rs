@@ -169,8 +169,11 @@ pub fn build_checked_model(
     // The grandparent inference returned absolute paths whenever the launch
     // path was relative or not at `<bringup>/launch/<f>`; an explicit root makes
     // relativity structural.
-    let input_base =
-        bringup_root.or_else(|| launch_path.and_then(|p| p.parent()).and_then(|p| p.parent()));
+    let input_base = bringup_root.or_else(|| {
+        launch_path
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+    });
     let mut model = model_builder::build_system_model(
         dump,
         &index,
