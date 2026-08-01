@@ -1,7 +1,7 @@
 ---
 id: 10
 title: "YAML attribute validation stops at the top-level action, so nested param/remap/env/composable_node keys are unchecked"
-status: open
+status: resolved
 type: bug
 severity: low
 ---
@@ -70,3 +70,27 @@ so both frontends can share one table.
 
 Decide the malformed-body case separately: either reject a non-mapping action
 value outright, or document the no-op as intended.
+
+## Resolution (2026-08-01)
+
+`validate_yaml_child_seq()` added and called at all seven nesting sites:
+`node`'s `param`/`remap`/`env`, `include`'s `arg` (spec `include-arg`),
+`executable`'s `env`/`arg` (spec `executable-arg`), the shared
+`composable_node` sequence, and `composable_node`'s own `param`/`remap`.
+
+Note the spec name is not always the YAML key — ROS 2 treats `<arg>` under
+`<include>` and under `<executable>` as disjoint entities, and the existing
+specs already modelled that, so the helper takes the spec name separately.
+
+The malformed-body case was decided rather than documented: a non-mapping
+action body now errors, naming the kind found (`expected a mapping of
+attributes, found a string`). It applies only to action types that HAVE a
+spec, so an undispatched type still warns rather than failing.
+
+Six tests added, verified to fail without the fix — exactly the five
+rejection tests fail; the "accepts valid nested children" test passes either
+way. Parser commit `d4035c8`.
+
+**Not closed by this:** the differential oracle covers XML only, so these
+YAML tables have no ROS-2-measured safety net. That is the same structural
+gap as the `executable-arg` exclusion and belongs with #0012.

@@ -22,12 +22,6 @@ a hard `UnexpectedAttribute`. Worse, `attr_differential.rs` hard-codes
 so the test built to catch table drift silently passes on exactly the machines
 where drift is guaranteed. See `0012-*`.
 
-**#0010** — YAML attribute validation runs only on the top-level action
-mapping, so nested `param:`/`remap:`/`env:`/`composable_node:` keys are
-unchecked (the `composable_node` spec has no YAML enforcement path at all).
-XML validates two levels. Also: a non-mapping action body (`- node: null`) is
-a silent no-op. See `0010-*`.
-
 **#0013** — four orphaned `ros-launch-resolve` CLI helpers carry
 `#[allow(dead_code)]` + an "UNRESOLVED DISPOSITION" comment pending a
 wire-up/relocate/delete decision. Verified orphaned-but-live (they compile;
@@ -43,6 +37,12 @@ divergence through the split model. Fix direction: one ordered
 `params_files` kept as derived views for migration. See `0007-*`.
 
 ## Resolved
+
+**#0010** — YAML validated only the top-level action mapping, so nested
+`param`/`remap`/`env`/`composable_node` keys went unchecked and
+`composable_node` had no YAML enforcement path at all. Fixed with
+`validate_yaml_child_seq()` at all seven nesting sites; a non-mapping action
+body now errors instead of silently no-op'ing. See `0010-*`.
 
 **#0011** — `declare_argument`, `unset_env`, `pop-ros-namespace` fell through
 `spec_for`'s None-means-skip and accepted any attribute. Fixed with measured
