@@ -308,3 +308,70 @@ fn yaml_parsing_accepts_supported_keys() {
     )
     .expect("supported keys must parse");
 }
+
+// ── Issue 0011: elements the traverser dispatches that previously had no
+// spec, and so accepted any attribute silently. ─────────────────────────────
+
+#[test]
+fn unset_env_rejects_an_unknown_attribute() {
+    // Measured: ROS 2 accepts `name` + conditions here and rejects the rest
+    // (`Unexpected attribute(s) found in `unset_env`: {'zzz_bogus'}`).
+    let err = parse_source(r#"<launch><unset_env name="A" zzz_bogus="x"/></launch>"#)
+        .expect_err("unknown attributes on <unset_env> must be rejected");
+    assert!(err.to_string().contains("'zzz_bogus'"), "{err}");
+}
+
+#[test]
+fn unset_env_accepts_its_supported_attributes() {
+    parse_source(r#"<launch><unset_env name="A" if="true"/></launch>"#)
+        .expect("name= and if= are valid on <unset_env>");
+}
+
+#[test]
+fn pop_ros_namespace_rejects_an_unknown_attribute() {
+    // A PARSER EXTENSION — ROS 2 rejects the element itself
+    // (`Unrecognized entity of the type: pop-ros-namespace`), so the oracle
+    // cannot probe its attributes and only this test covers the spec.
+    let err = parse_source(
+        r#"<launch><push-ros-namespace namespace="/n"/><pop-ros-namespace zzz_bogus="x"/></launch>"#,
+    )
+    .expect_err("unknown attributes on <pop-ros-namespace> must be rejected");
+    assert!(err.to_string().contains("'zzz_bogus'"), "{err}");
+}
+
+#[test]
+fn pop_ros_namespace_accepts_conditions() {
+    parse_source(r#"<launch><push-ros-namespace namespace="/n"/><pop-ros-namespace/></launch>"#)
+        .expect("<pop-ros-namespace> takes no attributes of its own");
+}
+
+#[test]
+fn declare_argument_rejects_an_unknown_attribute() {
+    // Also a parser extension (`Unrecognized entity of the type:
+    // declare_argument` upstream); same reasoning as above.
+    let err = parse_source(r#"<launch><declare_argument name="a" zzz_bogus="x"/></launch>"#)
+        .expect_err("unknown attributes on <declare_argument> must be rejected");
+    assert!(err.to_string().contains("'zzz_bogus'"), "{err}");
+}
+
+#[test]
+fn declare_argument_accepts_its_supported_attributes() {
+    parse_source(
+        r#"<launch><declare_argument name="a" default="d" description="doc" choices="x,y"/></launch>"#,
+    )
+    .expect("name/default/description/choices are all read by DeclareArgumentAction");
+}
+
+#[test]
+fn hyphenated_aliases_of_the_new_specs_resolve() {
+    assert_eq!(
+        spec_for("unset-env").map(|s| s.element),
+        Some("unset_env"),
+        "`unset-env` is dispatched alongside `unset_env` and must share its spec"
+    );
+    assert_eq!(
+        spec_for("pop_ros_namespace").map(|s| s.element),
+        Some("pop-ros-namespace"),
+        "`pop_ros_namespace` is dispatched alongside `pop-ros-namespace`"
+    );
+}

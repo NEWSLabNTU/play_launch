@@ -207,6 +207,39 @@ static SPECS: &[AttrSpec] = &[
         known_unsupported: &[],
         children: &[],
     },
+    // Measured: ROS 2 accepts `name` (required) plus the conditions, and
+    // rejects anything else — `<unset_env name="A" zzz="x"/>` gives
+    // `Unexpected attribute(s) found in `unset_env`: {'zzz'}`.
+    AttrSpec {
+        element: "unset_env",
+        supported: &["if", "unless", "name"],
+        known_unsupported: &[],
+        children: &[],
+    },
+    // PARSER EXTENSION, not ROS 2. `<pop-ros-namespace/>` is rejected by
+    // Humble's frontend outright — `Unrecognized entity of the type:
+    // pop-ros-namespace` — so a launch file using it will not run under
+    // stock `ros2 launch`. This parser dispatches it (popping the namespace
+    // pushed by `<push-ros-namespace>`) and reads no attributes of its own.
+    // The spec exists so unknown attributes on it are still rejected;
+    // element-level conformance is a separate question (issue 0011).
+    AttrSpec {
+        element: "pop-ros-namespace",
+        supported: &["if", "unless"],
+        known_unsupported: &[],
+        children: &[],
+    },
+    // PARSER EXTENSION, not ROS 2 — Humble gives `Unrecognized entity of the
+    // type: declare_argument`. It mirrors `<arg>`'s declaration form and
+    // additionally reads `choices`, which ROS 2 spells as a `<choice>` CHILD
+    // of `<arg>` rather than an attribute. Same caveat as
+    // `pop-ros-namespace`: a file using it is not portable to `ros2 launch`.
+    AttrSpec {
+        element: "declare_argument",
+        supported: &["if", "unless", "name", "default", "description", "choices"],
+        known_unsupported: &[],
+        children: &[],
+    },
     AttrSpec {
         element: "set_parameter",
         supported: &["if", "unless", "name", "value"],
@@ -278,8 +311,10 @@ pub fn all_specs() -> &'static [AttrSpec] {
 pub fn spec_for(element: &str) -> Option<&'static AttrSpec> {
     let canonical = match element {
         "set-env" => "set_env",
+        "unset-env" => "unset_env",
         "set-remap" => "set_remap",
         "push_ros_namespace" => "push-ros-namespace",
+        "pop_ros_namespace" => "pop-ros-namespace",
         "node-container" => "node_container",
         "composable-node" => "composable_node",
         "load-composable-node" => "load_composable_node",

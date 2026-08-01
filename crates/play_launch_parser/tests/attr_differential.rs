@@ -81,6 +81,17 @@ const FIXTURES: &[(&str, &str)] = &[
         "executable-arg",
         r#"<executable cmd="echo hi"><arg value="v"{ATTR}/></executable>"#,
     ),
+    ("unset_env", r#"<unset_env name="A"{ATTR}/>"#),
+    // Two PARSER EXTENSIONS ROS 2 does not know as elements at all
+    // (`Unrecognized entity of the type: …`), so — like `executable-arg` —
+    // the oracle never reaches attribute validation for them. Their
+    // baselines are pinned to that exact structural message below rather
+    // than skipped, and they sit out the candidate-agreement matrix.
+    ("pop-ros-namespace", r#"<pop-ros-namespace{ATTR}/>"#),
+    (
+        "declare_argument",
+        r#"<declare_argument name="a" default="d"{ATTR}/>"#,
+    ),
 ];
 
 /// Every attribute worth probing, across all elements.
@@ -108,6 +119,7 @@ const CANDIDATES: &[&str] = &[
     "forwarding",
     "default",
     "description",
+    "choices",
     "value",
     "file",
     "target",
@@ -146,10 +158,20 @@ const ALLOWED_DIVERGENCES: &[(&str, &str)] = &[
 /// just "any failure" — so silent drift (ROS 2 starts accepting the
 /// element, or starts rejecting it for an unrelated reason) still fails
 /// loudly instead of the exclusion quietly absorbing it.
-const STRUCTURAL_BASELINE_EXCEPTIONS: &[(&str, &str)] = &[(
-    "executable-arg",
-    "Unexpected nested tag(s) found in `executable`: {'arg'}",
-)];
+const STRUCTURAL_BASELINE_EXCEPTIONS: &[(&str, &str)] = &[
+    (
+        "executable-arg",
+        "Unexpected nested tag(s) found in `executable`: {'arg'}",
+    ),
+    (
+        "pop-ros-namespace",
+        "Unrecognized entity of the type: pop-ros-namespace",
+    ),
+    (
+        "declare_argument",
+        "Unrecognized entity of the type: declare_argument",
+    ),
+];
 
 fn tmp_dir() -> PathBuf {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tmp/attr_diff");
