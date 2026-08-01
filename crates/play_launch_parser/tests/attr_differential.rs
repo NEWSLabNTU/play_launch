@@ -120,6 +120,12 @@ const CANDIDATES: &[&str] = &[
     "default",
     "description",
     "choices",
+    // Jazzy-only ExecuteProcess attributes (issue 0012's union policy). On
+    // Humble the oracle REJECTS these while our tables warn — the deliberate
+    // over-permissive direction, so they are in ALLOWED_DIVERGENCES too.
+    "respawn_max_retries",
+    "sigkill_timeout",
+    "sigterm_timeout",
     "value",
     "file",
     "target",
@@ -133,14 +139,40 @@ const CANDIDATES: &[&str] = &[
     "allow_substs",
 ];
 
-/// Deliberate divergences: this parser warns where ROS 2 rejects, because
-/// rejecting would break launch files that already rely on the behavior.
-/// Ruled on in Task 2 (`<group namespace=/ns=>`) and extended during Task 2's
-/// fix round (`<push-ros-namespace ns=>`, matching the `<group>` precedent).
-const ALLOWED_DIVERGENCES: &[(&str, &str)] = &[
+/// Pairs where this parser may be MORE permissive than the oracle — it warns
+/// where ROS 2 rejects — but never LESS.
+///
+/// The direction matters, which is why this is checked at comparison time
+/// rather than by skipping the probe. Being over-permissive is safe: the
+/// launch file still fails under stock `ros2 launch`, and the user sees a
+/// warning here. Being under-permissive is the bug this whole module exists
+/// to prevent, so `ROS 2 accepts / Rust rejects` is ALWAYS reported, even for
+/// a pair listed below.
+///
+/// Two sources:
+///   - legacy aliases this parser deliberately still reads (`<group ns=>`,
+///     ruled on in Task 2; `<push-ros-namespace ns=>` in its fix round);
+///   - the union-across-distros policy (issue 0012) — an attribute a NEWER
+///     distro added, probed on an OLDER one. On Jazzy these produce no
+///     divergence at all and the entries simply go unused.
+const PERMISSIVE_DIVERGENCES: &[(&str, &str)] = &[
     ("group", "namespace"),
     ("group", "ns"),
     ("push-ros-namespace", "ns"),
+    // Jazzy-only ExecuteProcess attributes, reached by node/node_container
+    // via `super().parse(...)`.
+    ("node", "respawn_max_retries"),
+    ("node", "sigkill_timeout"),
+    ("node", "sigterm_timeout"),
+    ("node_container", "respawn_max_retries"),
+    ("node_container", "sigkill_timeout"),
+    ("node_container", "sigterm_timeout"),
+    ("executable", "respawn_max_retries"),
+    ("executable", "sigkill_timeout"),
+    ("executable", "sigterm_timeout"),
+    // Humble-only; Jazzy dropped this deprecated alias.
+    ("node", "node-name"),
+    ("node_container", "node-name"),
 ];
 
 /// Elements whose baseline (zero injected attributes) is REJECTED by real
@@ -284,8 +316,25 @@ fn ros2_batch_outcomes(run_id: &str, manifest: &BTreeMap<String, PathBuf>) -> Ro
 
     let probe_script =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/attr_differential_probe.py");
+    // Source whatever ROS 2 is actually present, not a hard-coded distro.
+    //
+    // Hard-coding Humble meant that on any other distro the source failed,
+    // the run took the exit-42 "no ROS 2" path, and the whole test SKIPPED —
+    // silently disabling the drift detector on exactly the machines where
+    // drift is guaranteed (issue 0012). Prefer an already-sourced
+    // environment, then $ROS_DISTRO, then any distro under /opt/ros.
+    // `$ROS_DISTRO` is echoed back so the caller can report which oracle the
+    // tables were checked against.
     let script = format!(
-        "source /opt/ros/humble/setup.bash >/dev/null 2>&1 || exit 42; \
+        "if [ -z \"${{ROS_DISTRO:-}}\" ]; then \
+             for d in \"${{ROS_DISTRO:-}}\" /opt/ros/*/; do \
+                 [ -f \"$d/setup.bash\" ] && . \"$d/setup.bash\" >/dev/null 2>&1 && break; \
+             done; \
+         fi; \
+         [ -n \"${{ROS_DISTRO:-}}\" ] || exit 42; \
+         command -v python3 >/dev/null 2>&1 || exit 42; \
+         python3 -c 'import launch.frontend' >/dev/null 2>&1 || exit 42; \
+         echo \"ROS_DISTRO=$ROS_DISTRO\" >&2; \
          python3 {} {} {}",
         probe_script.display(),
         manifest_path.display(),
@@ -326,6 +375,17 @@ fn ros2_batch_outcomes(run_id: &str, manifest: &BTreeMap<String, PathBuf>) -> Ro
             ));
         }
     };
+
+    // Report which oracle the tables were actually checked against. The
+    // allowlists are the UNION across supported distros (issue 0012), so a
+    // sanctioned divergence on one distro is simply absent on another —
+    // knowing which one ran is what makes a passing result interpretable.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let distro = stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("ROS_DISTRO="))
+        .unwrap_or("<unknown>");
+    eprintln!("ROS 2 oracle: {distro}");
 
     Ros2Batch::Outcomes(
         results
@@ -483,9 +543,9 @@ fn rust_and_ros2_agree_on_every_candidate_attribute() {
             continue;
         }
         for attr in CANDIDATES {
-            if ALLOWED_DIVERGENCES.contains(&(*element, *attr)) {
-                continue;
-            }
+            // Every pair is probed, including the permissive ones — the
+            // direction of a divergence is what decides whether it is
+            // sanctioned, and that needs the oracle's verdict.
             let tag = format!("{element}_{attr}");
             manifest.insert(tag.clone(), write_fixture(body, Some(attr), &tag));
         }
@@ -518,9 +578,6 @@ fn rust_and_ros2_agree_on_every_candidate_attribute() {
             continue;
         }
         for attr in CANDIDATES {
-            if ALLOWED_DIVERGENCES.contains(&(*element, *attr)) {
-                continue;
-            }
             let tag = format!("{element}_{attr}");
             let outcome = lookup(&results, &tag);
             // Loose on purpose: an unrelated failure (bad value, missing
@@ -529,10 +586,22 @@ fn rust_and_ros2_agree_on_every_candidate_attribute() {
             let ros2 = !outcome.is_reject();
             let rust = rust_accepts(element, Some(attr));
             if ros2 != rust {
+                // Over-permissive (ROS 2 rejects, we warn) is sanctioned for
+                // listed pairs. Under-permissive is never sanctioned — that
+                // is a valid launch file we would refuse.
+                let over_permissive = !ros2 && rust;
+                if over_permissive && PERMISSIVE_DIVERGENCES.contains(&(*element, *attr)) {
+                    continue;
+                }
                 disagreements.push(format!(
-                    "<{element} {attr}=>: ROS 2 {}, Rust {}",
+                    "<{element} {attr}=>: ROS 2 {}, Rust {}{}",
                     if ros2 { "accepts" } else { "rejects" },
                     if rust { "accepts" } else { "rejects" },
+                    if !over_permissive {
+                        "  <-- we reject what ROS 2 accepts; this is never sanctioned"
+                    } else {
+                        ""
+                    },
                 ));
             }
         }

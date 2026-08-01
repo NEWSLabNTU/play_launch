@@ -8,6 +8,28 @@
 //!
 //! The tables below were measured against Humble by injecting one candidate
 //! attribute at a time per element, not inferred from reading ROS 2 source.
+//!
+//! # Distro policy: the tables are the UNION across supported distros
+//!
+//! The justfile targets Humble (22.04) and Jazzy (24.04), and their frontend
+//! attribute surfaces differ. Encoding one distro's surface exactly would
+//! make valid launch files on the other a hard `UnexpectedAttribute` — the
+//! precise failure this module exists to prevent, inverted (issue 0012).
+//!
+//! So an attribute accepted by ANY supported distro is listed here. On a
+//! distro that lacks it we are then more permissive than that distro: the
+//! attribute warns instead of erroring, and stock `ros2 launch` will reject
+//! it there. That direction fails safe — a warning on a file the local ROS
+//! would refuse, rather than a hard error on a file it would accept. It is
+//! the same call already made for the legacy aliases (`<group ns=>`).
+//!
+//! Diffed from source (`external/diff_attrs.sh`), Humble vs Jazzy:
+//!   - `execute_process` (so `<node>`, `<node_container>`, `<executable>`):
+//!     Jazzy adds `respawn_max_retries`, `sigkill_timeout`, `sigterm_timeout`
+//!   - `<include>`: Jazzy adds a `let` CHILD (`data_type=List[Entity]`)
+//!   - `<node>`: Humble has `node-name`, dropped in Jazzy
+//!   - `lifecycle_node`: Jazzy adds `autostart`, but this parser does not
+//!     dispatch that element at all, so there is no spec to update
 
 use crate::{
     error::{ParseError, Result},
@@ -52,6 +74,13 @@ const NODE_KNOWN_UNSUPPORTED: &[&str] = &[
     "cwd",
     "emulate_tty",
     "shell",
+    // JAZZY-ONLY (union policy, see the module doc). Added to
+    // `ExecuteProcess.parse` after Humble, and reached from `<node>` via
+    // `super().parse(...)`. Humble rejects all three; we warn on both
+    // distros rather than hard-erroring on Jazzy, where they are valid.
+    "respawn_max_retries",
+    "sigkill_timeout",
+    "sigterm_timeout",
     // ROS 2 accepts and fully honors this (`ExecuteProcess.parse`, read via
     // `Node.parse`'s `super().parse(entity, parser, ignore=['cmd'])` —
     // `launch_ros/actions/node.py:309`; `on_exit="shutdown"` registers a
@@ -128,7 +157,17 @@ static SPECS: &[AttrSpec] = &[
         // reads at all — `<executable node-name=…>` is genuinely rejected
         // by ROS 2 with "Unexpected attribute", measured, so it stays out
         // of this table).
-        known_unsupported: &["launch-prefix", "cwd", "emulate_tty", "shell", "on_exit"],
+        known_unsupported: &[
+            "launch-prefix",
+            "cwd",
+            "emulate_tty",
+            "shell",
+            "on_exit",
+            // Jazzy-only, same union rationale as `<node>`.
+            "respawn_max_retries",
+            "sigkill_timeout",
+            "sigterm_timeout",
+        ],
         children: &["env", "arg"],
     },
     AttrSpec {
@@ -199,7 +238,10 @@ static SPECS: &[AttrSpec] = &[
         element: "include",
         supported: &["if", "unless", "file"],
         known_unsupported: &[],
-        children: &["arg"],
+        // `let` is Jazzy-only and is a CHILD (`data_type=List[Entity]` in
+        // `include_launch_description.py`), carrying launch arguments the
+        // same way `arg` does — not an attribute.
+        children: &["arg", "let"],
     },
     AttrSpec {
         element: "set_env",
