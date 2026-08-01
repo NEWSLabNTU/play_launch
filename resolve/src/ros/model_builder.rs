@@ -18,7 +18,7 @@ use ros_launch_manifest_types::{DropSpec, EndpointProps, QosDecl};
 use sha2::{Digest, Sha256};
 
 use crate::ros::{
-    launch_dump::{LaunchDump, ScopeEntry},
+    launch_dump::{LaunchDump, ParamSource as DumpParamSource, ScopeEntry},
     manifest_loader::ManifestIndex,
     sched_loader::DerivedSchedPlan,
 };
@@ -360,27 +360,75 @@ pub fn build_system_model(
     // R1-M4 producer side — lower the record's string params into typed
     // ParamValues (bool/int/float sniffed, else string). The embedded
     // consumer reads params from the model (it has no record.json).
+    /// Infer a scalar's ROS type from its resolved string form, the same way
+    /// `lower_params` does. Shared so the ordered list and the legacy map
+    /// cannot disagree about a value's type.
+    fn lower_scalar(v: &str) -> model::ParamValue {
+        match v {
+            "true" => model::ParamValue::Bool(true),
+            "false" => model::ParamValue::Bool(false),
+            s => {
+                if let Ok(i) = s.parse::<i64>() {
+                    model::ParamValue::Int(i)
+                } else if let Ok(f) = s.parse::<f64>() {
+                    model::ParamValue::Float(f)
+                } else {
+                    model::ParamValue::Str(s.to_string())
+                }
+            }
+        }
+    }
+
+    /// phase-54 / issue 0007 — carry the ORDERED parameter-source list into the
+    /// model.
+    ///
+    /// The legacy `params` + `params_files` split cannot express ROS's
+    /// ordering: it forces files-then-inline, so an inline `<param>` written
+    /// BEFORE a `<param from=>` still wins. Both frontends already build this
+    /// list in document order; this is what carries it the rest of the way, so
+    /// `node_cmdline`'s ordered emit actually receives it.
+    ///
+    /// Globals occupy the HEAD, mirroring ROS applying a `SetParameter` scope
+    /// before the node's own sources — and mirroring `lower_params_merged`,
+    /// which chains them first. Because a non-empty list is AUTHORITATIVE for
+    /// consumers, omitting them here would silently drop scope-wide params.
+    ///
+    /// Returns empty when the node has no ordered sources, which keeps the
+    /// documented "empty means use the legacy views" contract for records that
+    /// predate the ordered list.
+    fn lower_param_sources(
+        global: Option<&[(String, String)]>,
+        sources: &[DumpParamSource],
+    ) -> Vec<model::ParamSource> {
+        if sources.is_empty() {
+            return Vec::new();
+        }
+        let mut out: Vec<model::ParamSource> = global
+            .unwrap_or(&[])
+            .iter()
+            .map(|(name, value)| model::ParamSource::Inline {
+                name: name.clone(),
+                value: lower_scalar(value),
+            })
+            .collect();
+        out.extend(sources.iter().map(|src| match src {
+            DumpParamSource::Inline { name, value } => model::ParamSource::Inline {
+                name: name.clone(),
+                value: lower_scalar(value),
+            },
+            DumpParamSource::File { content } => model::ParamSource::File {
+                content: content.clone(),
+            },
+        }));
+        out
+    }
+
     fn lower_params(
         params: &[(String, String)],
     ) -> std::collections::BTreeMap<String, model::ParamValue> {
         params
             .iter()
-            .map(|(k, v)| {
-                let pv = match v.as_str() {
-                    "true" => model::ParamValue::Bool(true),
-                    "false" => model::ParamValue::Bool(false),
-                    s => {
-                        if let Ok(i) = s.parse::<i64>() {
-                            model::ParamValue::Int(i)
-                        } else if let Ok(f) = s.parse::<f64>() {
-                            model::ParamValue::Float(f)
-                        } else {
-                            model::ParamValue::Str(s.to_string())
-                        }
-                    }
-                };
-                (k.clone(), pv)
-            })
+            .map(|(k, v)| (k.clone(), lower_scalar(v)))
             .collect()
     }
 
@@ -495,9 +543,13 @@ pub fn build_system_model(
                 args: n.args.clone().unwrap_or_default(),
                 // GAP-3: resolved external param YAML content, verbatim.
                 params_files: n.params_files.clone(),
-                // phase-54: play_launch fills the legacy split views (`params` +
-                // `params_files`); an EMPTY ordered list tells consumers to use them.
-                param_sources: Vec::new(),
+                // phase-54 / issue 0007 — carry the ORDERED list. It was
+                // previously hard-coded empty here, which meant the parser
+                // built the ordering and `node_cmdline`'s ordered emit was
+                // never fed: an inline `<param>` written BEFORE a `<param
+                // from=>` still won, because the legacy split forces
+                // files-then-inline.
+                param_sources: lower_param_sources(n.global_params.as_deref(), &n.param_sources),
                 // GAP-5: <executable> tags (no package) carry their raw
                 // command line here; real ROS nodes leave this empty.
                 raw_cmd: if n.package.is_none() {
@@ -547,9 +599,8 @@ pub fn build_system_model(
                 env: lower_env(c.env.as_deref()),
                 args: c.args.clone().unwrap_or_default(),
                 params_files: c.params_files.clone(),
-                // phase-54: play_launch fills the legacy split views (`params` +
-                // `params_files`); an EMPTY ordered list tells consumers to use them.
-                param_sources: Vec::new(),
+                // phase-54 / issue 0007 — see the regular-node site above.
+                param_sources: lower_param_sources(c.global_params.as_deref(), &c.param_sources),
                 // Containers always have a package/executable — never raw.
                 raw_cmd: Vec::new(),
                 extra_args: Default::default(),
@@ -593,8 +644,20 @@ pub fn build_system_model(
                 respawn_delay: None,
                 env: lower_env(l.env.as_deref()),
                 // No non-ROS args / params_files / raw_cmd for composables —
-                // phase-54: play_launch fills the legacy split views (`params` +
-                // `params_files`); an EMPTY ordered list tells consumers to use them.
+                // phase-54 / issue 0007 — NOT carried for composable nodes.
+                //
+                // `ComposableNodeRecord` has no `param_sources`: the parser
+                // never builds one for this path (`actions/container.rs`
+                // constructs them with `Vec::new()`), so there is nothing to
+                // lower. Regular `<node>` and `<node_container>` above DO
+                // carry it.
+                //
+                // Consequence: a composable node whose `<param from=>` follows
+                // an inline `<param>` still gets the legacy files-then-inline
+                // order, i.e. the 0007 bug. Fixing it needs the ordered list
+                // built in `ComposableNodeAction` and carried through
+                // `ComposableNodeRecord` first — parser-side work, tracked
+                // separately rather than faked with an empty list here.
                 param_sources: Vec::new(),
                 // they have no independent process.
                 args: Vec::new(),
