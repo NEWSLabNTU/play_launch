@@ -15,13 +15,6 @@ own. Name the repo in the issue body.
 
 ## Open
 
-**#0012** — attribute allowlists are pinned to Humble's exact surface, so a
-valid launch file on Jazzy/Rolling (`sigkill_timeout`, `sigterm_timeout`) hits
-a hard `UnexpectedAttribute`. Worse, `attr_differential.rs` hard-codes
-`/opt/ros/humble` and treats a missing one as its "no ROS 2" skip sentinel —
-so the test built to catch table drift silently passes on exactly the machines
-where drift is guaranteed. See `0012-*`.
-
 **#0013** — four orphaned `ros-launch-resolve` CLI helpers carry
 `#[allow(dead_code)]` + an "UNRESOLVED DISPOSITION" comment pending a
 wire-up/relocate/delete decision. Verified orphaned-but-live (they compile;
@@ -37,6 +30,14 @@ divergence through the split model. Fix direction: one ordered
 `params_files` kept as derived views for migration. See `0007-*`.
 
 ## Resolved
+
+**#0012** — the allowlists encoded Humble's surface exactly (so valid Jazzy
+files hard-errored) and the differential oracle hard-coded `/opt/ros/humble`,
+treating its absence as a skip — disabling drift detection on the machines
+where drift was guaranteed. Fixed by making the tables the UNION across
+supported distros, sourcing whatever ROS 2 is present, and making sanctioned
+divergences DIRECTIONAL (more permissive than the oracle is allowed; less
+permissive never is). See `0012-*`.
 
 **#0010** — YAML validated only the top-level action mapping, so nested
 `param`/`remap`/`env`/`composable_node` keys went unchecked and

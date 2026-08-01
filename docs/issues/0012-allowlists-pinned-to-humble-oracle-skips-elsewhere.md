@@ -1,7 +1,7 @@
 ---
 id: 12
 title: "Attribute allowlists are pinned to Humble's surface, and the differential oracle silently skips on any other distro"
-status: open
+status: resolved
 type: bug
 severity: medium
 ---
@@ -67,3 +67,54 @@ the project's own test suite will be green on their machine while it happens.
 `docs/guide/` does not currently state which ROS distros the parser's strict
 attribute checking is validated against. Whatever policy is chosen should be
 written down there, since the failure is user-visible.
+
+## Resolution (2026-08-01)
+
+**Policy: the tables are the UNION across supported distros.** The justfile
+already targets both (`ros_distro := if 24.04 { "jazzy" } else { "humble" }`),
+so both were in scope. On a distro lacking an attribute we are now more
+permissive than it — the attribute warns instead of erroring, and stock `ros2
+launch` still refuses the file there. That direction fails safe; the reverse
+breaks working launch files. It is the same call already made for the legacy
+aliases (`<group ns=>`).
+
+The differences were **diffed from source**, not guessed —
+`external/diff_attrs.sh` against Humble's site-packages and a `jazzy` clone:
+
+| Element | Difference |
+|---|---|
+| `execute_process` (so `<node>`, `<node_container>`, `<executable>`, via `super().parse`) | Jazzy adds `respawn_max_retries`, `sigkill_timeout`, `sigterm_timeout` |
+| `<include>` | Jazzy adds a `let` **child** (`data_type=List[Entity]`, not an attribute) |
+| `<node>` | Humble has `node-name`; Jazzy dropped the deprecated alias |
+| `lifecycle_node` | Jazzy adds `autostart` — but this parser never dispatches that element, so no spec to update |
+
+**The oracle is no longer pinned.** It prefers an already-sourced
+environment, then `$ROS_DISTRO`, then any distro under `/opt/ros`, and
+additionally verifies `import launch.frontend` before claiming an oracle
+exists. It reports which distro ran (`ROS 2 oracle: humble`) — with union
+tables, a passing result is only interpretable if you know what it was
+checked against. Verified it still finds ROS 2 with the environment
+stripped.
+
+**Divergences are now directional.** `ALLOWED_DIVERGENCES` became
+`PERMISSIVE_DIVERGENCES`, checked at comparison time rather than by skipping
+the probe entirely. Being MORE permissive than the oracle is sanctioned for
+listed pairs; being LESS permissive never is — that is a valid launch file we
+would refuse. Verified by deleting `on_exit` from the node spec: the test
+reports `<node on_exit=>: ROS 2 accepts, Rust rejects  <-- we reject what ROS
+2 accepts; this is never sanctioned` rather than passing.
+
+The union entries are listed as permissive divergences because on Humble the
+oracle rejects them. On Jazzy they produce no divergence and the entries
+simply go unused — which is the point: one table, correct on both.
+
+Parser commit `ac8eaff`. 462/462, 505/505 with `--features ir`, oracle 3/3.
+
+**Not closed by this:**
+- The differential oracle still covers XML only, so the YAML tables have no
+  ROS-2-measured safety net (noted when #0010 was fixed).
+- Element-level conformance: `pop-ros-namespace` and `declare_argument` are
+  parser extensions ROS 2 rejects outright (found while fixing #0011). This
+  issue was about attributes. Whether the parser should reject non-ROS-2
+  ELEMENTS is a separate policy question, and the union framing above is the
+  natural place to decide it.

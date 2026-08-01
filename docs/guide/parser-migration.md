@@ -142,6 +142,43 @@ Both parsers support:
 - ✅ Nested includes
 - ✅ Parameter files
 
+### Strict attribute checking, and which ROS distros it targets
+
+The Rust parser rejects launch-file attributes that ROS 2 itself would
+reject, the way `launch_xml`'s `assert_entity_completely_parsed()` does. An
+unrecognised attribute is an error, not a silent no-op:
+
+```
+Unexpected attribute(s) found in `node`: {'machine'}
+```
+
+**The allowlists are the union across Humble and Jazzy.** Their frontend
+attribute surfaces differ — Jazzy added `sigkill_timeout`, `sigterm_timeout`,
+and `respawn_max_retries`; Humble has the deprecated `node-name` that Jazzy
+dropped. Encoding one distro exactly would turn a valid launch file on the
+other into a hard error, so an attribute accepted by *either* is accepted
+here.
+
+The practical consequence: on a given distro this parser can be slightly more
+permissive than the ROS 2 you are running. An attribute the local ROS 2 does
+not know produces a **warning** here, and stock `ros2 launch` will still
+reject the file. It never goes the other way — a valid attribute is never
+refused.
+
+A few attributes ROS 2 accepts are recognised but not implemented, and warn
+rather than erroring: `exec_name`, `ros_args`, `launch-prefix`, `cwd`,
+`emulate_tty`, `shell`, `on_exit`. Use `--parser python` if you need them
+honoured.
+
+Two long-standing extensions are also accepted with a warning because
+existing launch files rely on them, though stock `ros2 launch` rejects both:
+`<group namespace=>` / `<group ns=>` (ROS 2 wants a `<push-ros-namespace>`
+child) and `<push-ros-namespace ns=>` (ROS 2 spells it `namespace`).
+
+These tables are re-measured against the ROS 2 on your machine by the
+parser's differential test on every run, so drift shows up as a test failure
+naming the attribute rather than as a surprise in the field.
+
 ### Tested Configurations
 
 The Rust parser has been validated with:
