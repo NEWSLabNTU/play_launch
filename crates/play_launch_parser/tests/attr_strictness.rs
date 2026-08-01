@@ -375,3 +375,71 @@ fn hyphenated_aliases_of_the_new_specs_resolve() {
         "`pop_ros_namespace` is dispatched alongside `pop-ros-namespace`"
     );
 }
+
+// ── Issue 0010: YAML validated only the top-level action mapping, so nested
+// child sequences were unchecked and a non-mapping action body was a silent
+// no-op. ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn yaml_rejects_an_unknown_key_on_a_nested_param() {
+    let err = parse_yaml_source(
+        "launch:\n  - node:\n      pkg: demo_nodes_cpp\n      exec: talker\n\
+         \n      param:\n        - name: p\n          value: 1\n          zzz_bogus: x\n",
+    )
+    .expect_err("unknown keys on a nested param must be rejected");
+    assert!(err.to_string().contains("'zzz_bogus'"), "{err}");
+}
+
+#[test]
+fn yaml_rejects_an_unknown_key_on_a_nested_remap() {
+    let err = parse_yaml_source(
+        "launch:\n  - node:\n      pkg: demo_nodes_cpp\n      exec: talker\n\
+         \n      remap:\n        - from: a\n          to: b\n          zzz_bogus: x\n",
+    )
+    .expect_err("unknown keys on a nested remap must be rejected");
+    assert!(err.to_string().contains("'zzz_bogus'"), "{err}");
+}
+
+#[test]
+fn yaml_rejects_an_unknown_key_on_a_nested_composable_node() {
+    // `composable_node`'s spec had NO enforcement path at all on the YAML
+    // frontend before this — it is reachable only as a nested sequence.
+    let err = parse_yaml_source(
+        "launch:\n  - load_composable_node:\n      target: /c\n\
+         \n      composable_node:\n        - pkg: p\n          plugin: P\n\
+         \n          name: n\n          zzz_bogus: x\n",
+    )
+    .expect_err("unknown keys on a nested composable_node must be rejected");
+    assert!(err.to_string().contains("'zzz_bogus'"), "{err}");
+}
+
+#[test]
+fn yaml_accepts_valid_nested_children() {
+    parse_yaml_source(
+        "launch:\n  - node:\n      pkg: demo_nodes_cpp\n      exec: talker\n\
+         \n      param:\n        - name: p\n          value: 1\n\
+         \n      remap:\n        - from: a\n          to: b\n",
+    )
+    .expect("valid nested param/remap keys must still parse");
+}
+
+#[test]
+fn yaml_rejects_a_non_mapping_action_body() {
+    // `- node:` with a null body previously reached no handler and was a
+    // silent no-op: neither a validation error nor a parse error.
+    let err = parse_yaml_source("launch:\n  - node:\n")
+        .expect_err("a null action body must be refused, not silently ignored");
+    let msg = err.to_string();
+    assert!(msg.contains("node"), "{msg}");
+    assert!(
+        msg.contains("mapping"),
+        "should say what was expected: {msg}"
+    );
+}
+
+#[test]
+fn yaml_rejects_a_scalar_action_body() {
+    let err = parse_yaml_source("launch:\n  - node: \"bogus\"\n")
+        .expect_err("a scalar action body must be refused");
+    assert!(err.to_string().contains("a string"), "{err}");
+}

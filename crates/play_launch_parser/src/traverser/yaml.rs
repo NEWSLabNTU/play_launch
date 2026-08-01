@@ -63,9 +63,30 @@ impl LaunchTraverser {
                 // [...] }`) where XML makes them separate elements, so this
                 // uses the `_yaml_keys` variant, which also accepts
                 // `spec.children`.
-                if let Some(map) = action_map {
-                    let keys: Vec<&str> = map.keys().filter_map(|k| k.as_str()).collect();
-                    crate::xml::attr_spec::validate_yaml_keys(action_type, &keys)?;
+                //
+                // This covers the ACTION mapping only. Each nested child
+                // sequence is validated where it is read, via
+                // `validate_yaml_child_seq` — see issue 0010, which is what
+                // that split is for.
+                match action_map {
+                    Some(map) => {
+                        let keys: Vec<&str> = map.keys().filter_map(|k| k.as_str()).collect();
+                        crate::xml::attr_spec::validate_yaml_keys(action_type, &keys)?;
+                    }
+                    // A non-mapping action body (`- node: null`, `- node:
+                    // "text"`) reaches no handler — every arm below is
+                    // `if let Some(map)`. Refuse it here rather than
+                    // silently doing nothing (issue 0010).
+                    None if crate::xml::attr_spec::spec_for(action_type).is_some() => {
+                        return Err(ParseError::UnexpectedElement {
+                            parent: "launch".to_string(),
+                            child: format!(
+                                "{action_type} (expected a mapping of attributes, found {})",
+                                yaml_kind_name(value)
+                            ),
+                        });
+                    }
+                    None => {}
                 }
 
                 // Check if/unless conditions on the action
@@ -219,6 +240,8 @@ impl LaunchTraverser {
 
     /// Process a YAML include action
     fn process_yaml_include(&mut self, map: &Mapping) -> Result<()> {
+        validate_yaml_child_seq(map, "arg", "include-arg")?;
+
         let file_str = yaml_str(map, "file").ok_or_else(|| ParseError::MissingAttribute {
             element: "include".to_string(),
             attribute: "file".to_string(),
@@ -282,6 +305,10 @@ impl LaunchTraverser {
 
     /// Process a YAML node action
     fn process_yaml_node(&mut self, map: &Mapping) -> Result<()> {
+        validate_yaml_child_seq(map, "param", "param")?;
+        validate_yaml_child_seq(map, "remap", "remap")?;
+        validate_yaml_child_seq(map, "env", "env")?;
+
         let pkg_str = yaml_str(map, "pkg").ok_or_else(|| ParseError::MissingAttribute {
             element: "node".to_string(),
             attribute: "pkg".to_string(),
@@ -491,6 +518,9 @@ impl LaunchTraverser {
 
     /// Process a YAML executable action
     fn process_yaml_executable(&mut self, map: &Mapping) -> Result<()> {
+        validate_yaml_child_seq(map, "env", "env")?;
+        validate_yaml_child_seq(map, "arg", "executable-arg")?;
+
         let cmd_str = yaml_str(map, "cmd").ok_or_else(|| ParseError::MissingAttribute {
             element: "executable".to_string(),
             attribute: "cmd".to_string(),
@@ -614,12 +644,57 @@ impl LaunchTraverser {
     }
 }
 
+/// Validate every mapping in a nested child sequence against `element`'s spec.
+///
+/// YAML nests children as a sequence of mappings under a key
+/// (`node: { param: [{name: p, value: 1}] }`) where XML makes them separate
+/// elements. The XML frontend validates those in each action's
+/// `for child in entity.children()` loop; this is the YAML counterpart.
+/// Without it, validation stopped at the action mapping and nested keys were
+/// unchecked — issue 0010.
+///
+/// `element` is the SPEC name, which is not always the YAML key: an `arg`
+/// under `include` is spec `include-arg`, and under `executable` it is
+/// `executable-arg`, because ROS 2 treats those as disjoint entities.
+///
+/// Non-mapping items are left alone; the readers below already skip them,
+/// and rejecting them is the separate malformed-body question.
+fn validate_yaml_child_seq(map: &Mapping, key: &str, element: &str) -> Result<()> {
+    let Some(seq) = map
+        .get(Value::String(key.to_string()))
+        .and_then(|v| v.as_sequence())
+    else {
+        return Ok(());
+    };
+    for item in seq {
+        if let Some(item_map) = item.as_mapping() {
+            let keys: Vec<&str> = item_map.keys().filter_map(|k| k.as_str()).collect();
+            crate::xml::attr_spec::validate_yaml_keys(element, &keys)?;
+        }
+    }
+    Ok(())
+}
+
+/// Human-readable YAML kind, for the malformed-action-body error.
+fn yaml_kind_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Sequence(_) => "a sequence",
+        Value::Mapping(_) => "a mapping",
+        Value::Tagged(_) => "a tagged value",
+    }
+}
+
 /// Parse composable_node children from a YAML mapping
 fn parse_yaml_composable_nodes(
     map: &Mapping,
     key: &str,
     context: &LaunchContext,
 ) -> Result<Vec<ComposableNodeAction>> {
+    validate_yaml_child_seq(map, key, "composable_node")?;
     let mut nodes = Vec::new();
     if let Some(node_list) = map
         .get(Value::String(key.to_string()))
@@ -639,6 +714,9 @@ fn parse_yaml_composable_node(
     map: &Mapping,
     context: &LaunchContext,
 ) -> Result<ComposableNodeAction> {
+    validate_yaml_child_seq(map, "param", "param")?;
+    validate_yaml_child_seq(map, "remap", "remap")?;
+
     let pkg_str = yaml_str(map, "pkg").ok_or_else(|| ParseError::MissingAttribute {
         element: "composable_node".to_string(),
         attribute: "pkg".to_string(),
