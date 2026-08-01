@@ -141,16 +141,33 @@ fn the_launch_root_is_not_strict() {
 
 use std::io::Write;
 
-fn parse_source(xml: &str) -> play_launch_parser::error::Result<()> {
+/// Parse `source` from a scratch file carrying `suffix`.
+///
+/// The suffix is load-bearing: `parse_launch_file` dispatches XML vs YAML on
+/// the file extension.
+///
+/// The name must be unique per call. `cargo test` runs every test in a binary
+/// in ONE process across several threads, so a `std::process::id()`-derived
+/// name is identical for all of them and tests clobber each other's fixture
+/// between write and parse — intermittent failures that look like flakiness
+/// (issue 0009). `NamedTempFile` allocates a unique path and removes it on
+/// drop; `tempfile_in` keeps it under the repo's own `tmp/` rather than
+/// `/tmp`, per the project convention.
+fn parse_scratch(source: &str, suffix: &str) -> play_launch_parser::error::Result<()> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tmp");
     std::fs::create_dir_all(&dir).expect("create tmp dir");
-    let path = dir.join(format!("attr_strict_{}.launch.xml", std::process::id()));
-    let mut fh = std::fs::File::create(&path).expect("write fixture");
-    fh.write_all(xml.as_bytes()).expect("write fixture");
-    drop(fh);
-    let result = play_launch_parser::parse_launch_file(&path, Default::default());
-    let _ = std::fs::remove_file(&path);
-    result.map(|_| ())
+    let mut fh = tempfile::Builder::new()
+        .prefix("attr_strict_")
+        .suffix(suffix)
+        .tempfile_in(&dir)
+        .expect("create fixture");
+    fh.write_all(source.as_bytes()).expect("write fixture");
+    fh.flush().expect("flush fixture");
+    play_launch_parser::parse_launch_file(fh.path(), Default::default()).map(|_| ())
+}
+
+fn parse_source(xml: &str) -> play_launch_parser::error::Result<()> {
+    parse_scratch(xml, ".launch.xml")
 }
 
 #[test]
@@ -259,15 +276,7 @@ fn parsing_validates_even_when_a_condition_excludes_the_element() {
 }
 
 fn parse_yaml_source(yaml: &str) -> play_launch_parser::error::Result<()> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tmp");
-    std::fs::create_dir_all(&dir).expect("create tmp dir");
-    let path = dir.join(format!("attr_strict_{}.launch.yaml", std::process::id()));
-    let mut fh = std::fs::File::create(&path).expect("write fixture");
-    fh.write_all(yaml.as_bytes()).expect("write fixture");
-    drop(fh);
-    let result = play_launch_parser::parse_launch_file(&path, Default::default());
-    let _ = std::fs::remove_file(&path);
-    result.map(|_| ())
+    parse_scratch(yaml, ".launch.yaml")
 }
 
 #[test]
