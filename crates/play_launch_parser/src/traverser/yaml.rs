@@ -4,6 +4,7 @@ use crate::{
         ComposableNodeAction, ContainerAction, ExecutableAction, IncludeAction,
         LoadComposableNodeAction, NodeAction, Parameter, Remapping,
         container::{DEFAULT_CONTAINER_EXECUTABLE, DEFAULT_CONTAINER_PACKAGE},
+        node::ParamSourceSpec,
     },
     condition::is_truthy,
     error::{ParseError, Result},
@@ -325,9 +326,17 @@ impl LaunchTraverser {
             .map(parse_substitutions)
             .transpose()?;
 
-        // Parse params
+        // Parse params.
+        //
+        // phase-54 / issue 0007 — build the ORDERED source list alongside the
+        // legacy split. The split cannot express ROS's ordering (it forces
+        // files-then-inline), so an inline `param` written BEFORE a `from:`
+        // entry would otherwise still win. The XML frontend has built this
+        // list since phase-54; this is the YAML counterpart, which was left
+        // constructing an empty one.
         let mut parameters = Vec::new();
         let mut param_files = Vec::new();
+        let mut param_sources: Vec<ParamSourceSpec> = Vec::new();
         if let Some(param_list) = map
             .get(Value::String("param".to_string()))
             .and_then(|v| v.as_sequence())
@@ -335,15 +344,19 @@ impl LaunchTraverser {
             for param_item in param_list {
                 if let Some(param_map) = param_item.as_mapping() {
                     if let Some(from_str) = yaml_str(param_map, "from") {
-                        param_files.push(parse_substitutions(from_str)?);
+                        let subs = parse_substitutions(from_str)?;
+                        param_files.push(subs.clone());
+                        param_sources.push(ParamSourceSpec::File(subs));
                     } else if let (Some(pname), Some(pvalue)) = (
                         yaml_str(param_map, "name"),
                         yaml_value_string(param_map, "value"),
                     ) {
-                        parameters.push(Parameter {
+                        let param = Parameter {
                             name: pname.to_string(),
                             value: parse_substitutions(&pvalue)?,
-                        });
+                        };
+                        parameters.push(param.clone());
+                        param_sources.push(ParamSourceSpec::Inline(param));
                     }
                 }
             }
@@ -384,7 +397,7 @@ impl LaunchTraverser {
             namespace,
             parameters,
             param_files,
-            param_sources: Vec::new(),
+            param_sources,
             remappings,
             environment: Vec::new(),
             args,
