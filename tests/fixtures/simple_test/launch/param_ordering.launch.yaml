@@ -1,0 +1,11 @@
+# Issue 0007 regression fixture, YAML frontend. Same semantics as
+# param_ordering.launch.xml: inline first, file second, so the file wins.
+launch:
+  - node:
+      pkg: demo_nodes_cpp
+      exec: talker
+      name: ordering_probe
+      param:
+        - name: a
+          value: 1
+        - from: $(dirname)/param_ordering_a_is_2.yaml

@@ -512,7 +512,12 @@ impl NodeCommandLine {
             remaps,
             params: HashMap::new(), // All params written to overrides.yaml
             params_files,
-            ordered_params_files: Vec::new(),
+            // phase-54 / issue 0007 — carry the list computed above. This was
+            // `Vec::new()`, which discarded it: the ordered chunk files were
+            // written to disk but never referenced, so `to_cmdline` always took
+            // the legacy files-then-overrides branch and an inline `<param>`
+            // preceding a `<param from=>` still won.
+            ordered_params_files,
             overrides_file,
             log_level: None,
             log_config_file: None,

@@ -1,0 +1,14 @@
+<!--
+  Issue 0007 regression fixture.
+
+  ROS 2 treats a node's parameter sources as ONE ORDERED list: the inline
+  value is applied first, then the file, so the FILE wins and `a` resolves
+  to 2. The legacy `params` + `params_files` split cannot express this — it
+  forces files-then-inline, which would resolve `a` to 1.
+-->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="ordering_probe">
+    <param name="a" value="1"/>
+    <param from="$(dirname)/param_ordering_a_is_2.yaml"/>
+  </node>
+</launch>

@@ -175,11 +175,66 @@ file when asked. Our model carries file content verbatim, so an
 `allow_substs="true"` file needs its substitutions resolved at resolve time.
 Record here so it is not discovered later as a second divergence.
 
-## Resolution (2026-07-27)
+## Resolution (2026-07-27, INCOMPLETE — see 2026-08-02 below)
 
 Fixed by phase 54 along option A: one ordered `param_sources` list, carried
 parser → record → model → spawn. `params` / `params_files` remain as legacy
 views; a consumer that sees a non-empty ordered list must use it alone.
+
+## Reopened and completed (2026-08-02)
+
+The phase-54 claim above was not true end to end. The parser built the list;
+it was then discarded **twice** on the way out, so the shipped behaviour was
+still the original bug. Verified by launching the issue's own fixture and
+reading the spawned command line:
+
+```
+--params-file .../0.yaml          -> a: 2   (the FILE, emitted FIRST)
+--params-file .../overrides.yaml  -> a: 1   (the INLINE, emitted LAST)
+```
+
+rcl applies `--params-file` in order and later wins, so the node received
+`a = 1` — the inline value — although the launch file wrote the inline param
+FIRST and the file SECOND. Exactly the divergence this issue describes.
+
+Three drops, each silent:
+
+1. **`model_builder` hard-coded `param_sources: Vec::new()`** at all three
+   `NodeInstance` sites. The comment claimed an empty list tells consumers to
+   use the legacy views — but the model's own field doc says a non-empty list
+   is authoritative, so the ordering was produced and thrown away.
+2. **`NodeCommandLine::from_node_record` computed the ordered chunk files,
+   WROTE them to disk, then hard-coded `Vec::new()` into its own return
+   struct.** The files existed in `play_log` and were never referenced.
+   (`rustc` had been emitting `unused variable: ordered_params_files` for
+   this; the warning was correct.)
+3. **The YAML frontend never built the list at all** — it constructed an
+   empty one, so YAML launch files were unaffected by phase-54 entirely.
+
+All three fixed. The same fixture now spawns:
+
+```
+--params-file .../ordered-0-inline.yaml   -> a: 1
+--params-file .../ordered-1-file.yaml     -> a: 2
+```
+
+document order, so `a` resolves to **2** as ROS 2 requires — on both
+frontends.
+
+Regression coverage: `tests/tests/param_ordering.rs` asserts the model's
+`param_sources` is present, two entries, inline-then-file, with the winning
+value in the file — for XML and YAML. Fixtures under
+`tests/fixtures/simple_test/launch/param_ordering.*`.
+
+Commits: parser `f1cad5b`, ros-launch-resolve `089abce`, play_launch (below).
+
+**Still not fixed — composable nodes.** `ComposableNodeRecord` carries no
+`param_sources`; the parser never builds one for that path
+(`actions/container.rs` constructs them with `Vec::new()`). A composable node
+whose `<param from=>` follows an inline `<param>` still gets the legacy
+files-then-inline order. The `model_builder` site now says so explicitly
+rather than implying coverage. Fixing it needs the ordered list built in
+`ComposableNodeAction` and carried through `ComposableNodeRecord` first.
 
 ## Implementation
 

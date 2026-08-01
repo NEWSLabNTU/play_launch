@@ -20,16 +20,16 @@ own. Name the repo in the issue body.
 wire-up/relocate/delete decision. Verified orphaned-but-live (they compile;
 they just have no caller) rather than genuinely dead. See `0013-*`.
 
-**#0007** — parameter source ORDERING is lost: the parser forks sibling
-`<param name=>` / `<param from=>` children into two vectors, so inline values
-always win even when the launch file wrote a file last. ROS 2 treats
-`parameters=[dict|file, …]` as ONE ordered list where the later entry wins.
-Silent wrong values on the spawn path; the nano-ros bake inherits the same
-divergence through the split model. Fix direction: one ordered
-`param_sources` vec at the fork in `actions/node.rs`, with `params`/
-`params_files` kept as derived views for migration. See `0007-*`.
-
 ## Resolved
+
+**#0007** — parameter source ORDERING was lost, so an inline `<param>` beat a
+later `<param from=>`. Marked resolved by phase-54 in 2026-07, but the
+ordering was discarded THREE times after the parser built it (model_builder,
+`from_node_record`'s own return struct, and the YAML frontend never built it)
+— the shipped behaviour was still the bug. Verified by reading the spawned
+command line, fixed end to end 2026-08-02, regression-tested on both
+frontends. Composable nodes remain unfixed and are called out at the site.
+See `0007-*`.
 
 **#0012** — the allowlists encoded Humble's surface exactly (so valid Jazzy
 files hard-errored) and the differential oracle hard-coded `/opt/ros/humble`,
