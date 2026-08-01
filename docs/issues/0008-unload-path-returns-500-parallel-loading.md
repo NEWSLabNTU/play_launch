@@ -1,8 +1,13 @@
+---
+id: 8
+title: "Integration tests used stale member names after the <kind>:/ rename (originally misfiled as an unload-path 500)"
+status: resolved
+type: bug
+severity: medium
+---
+
 # 0008 — Integration tests used stale member names after the `<kind>:/` rename
 
-**Status:** Resolved (2026-08-01)
-**Filed:** 2026-08-01
-**Severity:** Test-only. No product defect.
 **Affects:** `tests/tests/parallel_loading.rs`, `tests/src/health.rs`,
 `tests/tests/contract_eject.rs`
 
@@ -18,10 +23,17 @@
 Six integration tests failed for one shared reason: member IDs gained a
 `<kind>:/` prefix and the tests were never updated.
 
-`416b533` ("feat(phase-52): timing knobs, startup-failure policy, typed load
-errors", 2026-07-25) changed member IDs to `<kind>:/<name>` — `node:/rviz2`,
-`composable:/fast_talker`, `container:/lc_unload_container`. It touched eight
-files under `src/play_launch/src/member_actor/` and **zero test files**.
+`5b20c1e` ("feat(phase-50): canonical member identity", 2026-07-25 16:13)
+introduced member IDs of the form `<kind>:/<name>` — `node:/rviz2`,
+`composable:/fast_talker`, `container:/lc_unload_container`. It touched 25
+files including `web/handlers.rs` (the unload endpoint these tests call) and
+`web_types.rs`, and **no integration test files**.
+
+(An earlier revision of this issue credited `416b533`, phase-52, 18:33 the
+same day. That commit reworked the same actor files later but did not
+introduce the ID format — `git show 416b533 -- …/component_events.rs` shows
+no naming change. Issue #0001 records phase-50 as the origin of canonical
+member ids `kind:/ns/name[#N]`, and that is correct.)
 
 ## Evidence
 
