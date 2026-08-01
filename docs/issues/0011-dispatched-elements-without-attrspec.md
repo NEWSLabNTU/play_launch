@@ -1,7 +1,7 @@
 ---
 id: 11
 title: "Three dispatched launch elements have no AttrSpec, so their attributes are silently unvalidated"
-status: open
+status: resolved
 type: bug
 severity: low
 ---
@@ -56,3 +56,28 @@ otherwise the new tables have the same blind spot the `include-arg` /
 Consider also making the fail-open explicit: a spec table entry meaning "no
 attributes beyond conditions" reads differently from an absent entry, and
 today they are indistinguishable.
+
+## Resolution (2026-08-01)
+
+All three now have specs, measured against Humble rather than inferred:
+
+- `unset_env` takes `name` (required) plus conditions.
+- `pop-ros-namespace` and `declare_argument` turned out **not to be ROS 2
+  elements at all** — Humble answers `Unrecognized entity of the type: …`.
+  They are parser extensions, so a launch file using them will not run under
+  stock `ros2 launch`. Both carry that caveat in a comment now.
+  `declare_argument`'s `choices` is an attribute here where ROS 2 spells it as
+  a `<choice>` CHILD of `<arg>`.
+
+Because the oracle rejects those two structurally, they joined
+`executable-arg` in `STRUCTURAL_BASELINE_EXCEPTIONS` (baseline pinned to the
+exact upstream message, not skipped) and sit out the candidate-agreement
+matrix; `unset_env` is fully probeable and is in it. Hyphen/underscore
+aliases were added to `spec_for`.
+
+Seven tests added, verified to fail without the specs. Parser commit
+`1e861d9`.
+
+**Left open deliberately:** the element-level divergence. This issue was
+about attributes; that two of these elements are not ROS 2 at all is the same
+class as `<group ns=>` and belongs with the conformance question in #0012.

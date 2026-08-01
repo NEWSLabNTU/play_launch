@@ -2,10 +2,16 @@
 
 Bugs and frictions to fix — one file per issue, `NNNN-slug.md` with YAML
 frontmatter (`id`, `title`, `status: open|resolved|wontfix`, `type`,
-`severity`, `github`). Numbering tracks the GitHub issue ids
-(github.com/NEWSLabNTU/play_launch/issues). Resolved issues move to
-`archived/`. Design direction lives in `docs/design/`; implementation
-plans in `docs/roadmap/` phase docs.
+`severity`). These files ARE the issue tracker; numbering is local and
+sequential, allocated by taking the next free `NNNN`. GitHub issues are not
+used. (`0001`–`0006` carry a trailing `(GH #N)` from when numbering mirrored
+github.com/NEWSLabNTU/play_launch/issues — historical, not a live link.)
+Resolved issues move to `archived/`. Design direction lives in
+`docs/design/`; implementation plans in `docs/roadmap/` phase docs.
+
+An issue may cover any repo in the submodule family (`play_launch_parser`,
+`ros-launch-resolve`, `ros-launch-manifest`) — those have no tracker of their
+own. Name the repo in the issue body.
 
 ## Open
 
@@ -16,22 +22,11 @@ a hard `UnexpectedAttribute`. Worse, `attr_differential.rs` hard-codes
 so the test built to catch table drift silently passes on exactly the machines
 where drift is guaranteed. See `0012-*`.
 
-**#0011** — `declare_argument`, `unset_env`/`unset-env`, and
-`pop-ros-namespace` are dispatched by the traverser but have no `AttrSpec`, so
-unknown attributes on them are accepted silently. The design's scope said
-"every element the parser handles"; failing open produced no signal that it
-was not met. See `0011-*`.
-
 **#0010** — YAML attribute validation runs only on the top-level action
 mapping, so nested `param:`/`remap:`/`env:`/`composable_node:` keys are
 unchecked (the `composable_node` spec has no YAML enforcement path at all).
 XML validates two levels. Also: a non-mapping action body (`- node: null`) is
 a silent no-op. See `0010-*`.
-
-**#0009** — `attr_strictness.rs` names scratch fixtures by
-`std::process::id()`, which is constant across tests sharing a process, so
-bare `cargo test` collides and looks flaky. `cargo nextest` (what the gates
-use) is unaffected. Four separate agents hit it independently. See `0009-*`.
 
 **#0013** — four orphaned `ros-launch-resolve` CLI helpers carry
 `#[allow(dead_code)]` + an "UNRESOLVED DISPOSITION" comment pending a
@@ -48,6 +43,15 @@ divergence through the split model. Fix direction: one ordered
 `params_files` kept as derived views for migration. See `0007-*`.
 
 ## Resolved
+
+**#0011** — `declare_argument`, `unset_env`, `pop-ros-namespace` fell through
+`spec_for`'s None-means-skip and accepted any attribute. Fixed with measured
+specs; the measurement also revealed two of them are not ROS 2 elements at
+all. See `0011-*`.
+
+**#0009** — PID-named scratch fixtures collided under `cargo test`. Fixed with
+`tempfile`; proven by a before/after where the failure COUNT varied between
+runs. See `0009-*`.
 
 **#0008** — six integration tests used stale member names after phase-50's
 canonical `<kind>:/<name>` ids, and 27 more silently skipped on unbuilt

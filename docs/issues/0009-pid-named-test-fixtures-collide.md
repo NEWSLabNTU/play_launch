@@ -1,7 +1,7 @@
 ---
 id: 9
 title: "Test fixture files are named by process id, so concurrently-run tests in one process clobber each other"
-status: open
+status: resolved
 type: bug
 severity: low
 ---
@@ -60,3 +60,15 @@ PID assumption. Roughly a three-line change per helper.
 An alternative that preserves readable filenames is a process-wide
 `AtomicUsize` counter appended to the PID, but `tempfile` is simpler and
 already a dependency.
+
+## Resolution (2026-08-01)
+
+Both helpers now share one `parse_scratch()` built on `tempfile::Builder`,
+which allocates a unique path per call and removes it on drop. `tempfile_in`
+keeps the file under the repo's own `tmp/` per project convention, and the
+suffix is preserved because `parse_launch_file` dispatches XML vs YAML on the
+extension.
+
+Verified by before/after: `cargo test --test attr_strictness` gave 9 failed,
+then 10 failed on a re-run (the varying count IS the race); after the change,
+20 passed repeatably. Parser commit `37bef77`.
