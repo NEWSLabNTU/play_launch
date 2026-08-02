@@ -34,16 +34,22 @@ pub enum Feature {
     WebUi,
 }
 
-/// Record and replay ROS 2 launches with inspection capabilities
+/// Resolve ROS 2 launch trees into a checked SystemModel.
+///
+/// The name, the about line and the examples below were inherited verbatim
+/// from `play_launch` when RFC-0060 W3 extracted this binary, so `--help`
+/// introduced itself as `play_launch`, described itself as a replay tool, and
+/// advertised `launch`, `run` and `replay` — three verbs this binary has never
+/// had and which issue 0013 later deleted the leftover argument structs for.
 #[derive(Parser)]
-#[command(name = "play_launch")]
+#[command(name = "ros-launch-resolve")]
 #[command(version)]
-#[command(about = "Record and replay ROS 2 launches with inspection capabilities")]
+#[command(about = "Resolve ROS 2 launch trees into a checked SystemModel")]
 #[command(after_help = "Examples:\n  \
-    play_launch launch demo_nodes_cpp topics/talker_listener.launch.py\n  \
-    play_launch run demo_nodes_cpp talker\n  \
-    play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml\n  \
-    play_launch replay --model autoware.yaml")]
+    ros-launch-resolve resolve autoware_launch planning_simulator.launch.xml -o autoware.yaml\n  \
+    ros-launch-resolve dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml\n  \
+    ros-launch-resolve contract eject my_bringup system.launch.xml\n  \
+    ros-launch-resolve plot play_log/latest")]
 #[command(arg_required_else_help = true)]
 pub struct Options {
     #[command(subcommand)]
@@ -68,7 +74,7 @@ pub enum Command {
     Plot(PlotArgs),
 }
 
-/// Arguments for `play_launch contract`
+/// Arguments for `ros-launch-resolve contract`
 #[derive(Args)]
 pub struct ContractArgs {
     #[command(subcommand)]
@@ -83,7 +89,7 @@ pub enum ContractSubcommand {
     Eject(ContractEjectArgs),
 }
 
-/// Arguments for `play_launch contract eject`
+/// Arguments for `ros-launch-resolve contract eject`
 #[derive(Args)]
 pub struct ContractEjectArgs {
     /// Package name or path to launch file
@@ -110,7 +116,7 @@ pub struct ContractEjectArgs {
     pub force: bool,
 }
 
-/// Arguments for `play_launch resolve`
+/// Arguments for `ros-launch-resolve resolve`
 #[derive(Args)]
 pub struct ResolveArgs {
     /// Package name or path to launch file
@@ -522,3 +528,98 @@ pub struct PlotArgs {
 // moved to play_launch with those verbs — this crate no longer defines them.
 // Tests for the four launch-tree verbs belong here and are phase-312 W1.6
 // follow-up.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::{CommandFactory, Parser};
+
+    fn parse(args: &[&str]) -> Result<Options, clap::Error> {
+        let mut argv = vec!["ros-launch-resolve"];
+        argv.extend_from_slice(args);
+        Options::try_parse_from(argv)
+    }
+
+    // `--output` and `--debug` are `global = true` on `DumpArgs`, so clap
+    // accepts them on either side of the `launch` subcommand and its
+    // positional launch arguments. These two cases came over from
+    // play_launch's `cli::options` when RFC-0060 W3 moved `dump` here but
+    // left the tests behind; they kept referring to a `Command::Dump` variant
+    // that no longer existed there, so play_launch failed to compile under
+    // `cargo check --all-targets` from adc33a7 until 2026-08-02.
+
+    #[test]
+    fn dump_launch_flag_after_two_launch_arguments() {
+        // The Autoware shape: multiple KEY:=VALUE args, then a flag, all
+        // after `dump launch`.
+        let opts = parse(&[
+            "dump",
+            "launch",
+            "pkg",
+            "file.launch.xml",
+            "vehicle_model:=sample_vehicle",
+            "sensor_model:=sample_sensor_kit",
+            "--output",
+            "/tmp/aw.yaml",
+        ])
+        .expect("--output after KEY:=VALUE launch args must parse (dump's global flags)");
+        let Command::Dump(dump_args) = opts.command else {
+            panic!("expected Dump");
+        };
+        assert_eq!(dump_args.output, Some(PathBuf::from("/tmp/aw.yaml")));
+        // Phase 47.B2 retired `dump run`: `DumpSubcommand` has exactly one
+        // variant, so this destructure is irrefutable — no `else` arm.
+        let DumpSubcommand::Launch(args) = dump_args.subcommand;
+        assert_eq!(
+            args.launch_arguments,
+            vec![
+                "vehicle_model:=sample_vehicle".to_string(),
+                "sensor_model:=sample_sensor_kit".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn dump_launch_flag_before_subcommand_still_works() {
+        let opts = parse(&[
+            "dump",
+            "--output",
+            "/tmp/aw.yaml",
+            "launch",
+            "pkg",
+            "file.launch.xml",
+            "vehicle_model:=sample_vehicle",
+        ])
+        .expect("--output before `launch` must still parse");
+        let Command::Dump(dump_args) = opts.command else {
+            panic!("expected Dump");
+        };
+        assert_eq!(dump_args.output, Some(PathBuf::from("/tmp/aw.yaml")));
+    }
+
+    // The verbs this binary actually has. A `--help` that advertises verbs it
+    // does not implement is what this test exists to stop recurring: the
+    // extracted CLI shipped examples for `launch`, `run` and `replay`.
+    #[test]
+    fn help_examples_name_only_verbs_this_binary_has() {
+        let help = Options::command().render_long_help().to_string();
+        // Only the *invocation* forms are banned. Plain "play_launch" still
+        // legitimately appears in flag help -- `play_launch_container`, the
+        // `$XDG_CONFIG_HOME/play_launch/contracts` overlay path, and the note
+        // that RT scheduling is applied by play_launch rather than here.
+        for absent in [
+            "play_launch launch ",
+            "play_launch run ",
+            "play_launch dump ",
+            "play_launch replay ",
+        ] {
+            assert!(
+                !help.contains(absent),
+                "--help invokes `{absent}` -- wrong binary name, and a verb this one lacks:\n{help}"
+            );
+        }
+        for present in ["resolve", "dump", "contract", "plot"] {
+            assert!(help.contains(present), "--help omits the `{present}` verb");
+        }
+    }
+}
