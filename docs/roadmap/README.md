@@ -175,3 +175,11 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
 - **Phase 51** — ✅ state ownership refactor: reducer + container split (issues 0002/0003 resolved)
 - **Phase 52** — ✅ timing config + failure surfacing (issues 0004/0005 resolved)
 - **Phase 53** — ✅ web UI organization remainder (issue 0006 resolved)
+- **Phase 54** — ✅ ordered parameter sources (issue 0007; the ordering was
+  built then discarded three times before 2026-08-02 completed it end to end)
+- **Phase 55** — 📋 launch toolchain consolidation: fold layer 2 into this
+  repo, keep its workspace separate. **Blocked on nano-ros amending RFC-0060**
+  (Stable, specifies three repositories).
+  [phase-55-launch-toolchain-consolidation.md](./phase-55-launch-toolchain-consolidation.md).
+  Design: [docs/design/launch-toolchain-topology.md](../design/launch-toolchain-topology.md).
+  Counterpart: nano-ros phase-332.
