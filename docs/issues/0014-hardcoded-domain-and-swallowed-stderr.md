@@ -1,7 +1,7 @@
 ---
 id: 14
 title: "test_isolated_external_subscriber hard-codes ROS_DOMAIN_ID=199 and hides the real error behind 2>/dev/null"
-status: open
+status: resolved
 type: test-infrastructure
 severity: medium
 ---
@@ -89,3 +89,23 @@ that fails with no explanation.
   asserting "DDS cross-process communication is broken".
 
 Neither change touches product code.
+
+## Resolution (2026-08-03) — fixed
+
+- `fixtures::next_domain_id()` is now `pub`; the test calls the same allocator
+  every other test uses and hands the result to `ros2`. No constant.
+- Both `ros2` invocations gained `--no-daemon`, so the CLI cannot consult or
+  spawn a daemon at all. With a per-invocation domain a stale daemon is
+  already unlikely; `--no-daemon` removes the vector rather than relying on
+  the domain being fresh.
+- stderr is captured and reported in a single `diagnosis` block (domain, exit
+  status, both streams of both commands) instead of being sent to
+  `/dev/null`. The success path stays quiet; the failure path is diagnosable.
+- The assertion reports what was observed and tells the reader how to read it
+  — an empty `topic list` or non-zero exit means the CLI failed and the result
+  says nothing about DDS. It no longer asserts "DDS cross-process
+  communication is broken", which was wrong every time this fired.
+
+**Verified with a before/after, not by re-running until green.** Daemons
+planted on domains 199, 44 and 88 — the exact state that failed the old test
+three times in a row — then the fixed test run three times: 3/3 PASS.

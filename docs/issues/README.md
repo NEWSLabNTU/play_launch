@@ -15,13 +15,16 @@ own. Name the repo in the issue body.
 
 ## Open
 
-**#0014** — `test_isolated_external_subscriber` hard-codes
-`ROS_DOMAIN_ID=199` (every other test gets a unique domain per invocation),
-so a stale `ros2-daemon` on that domain fails it — and both diagnostic
-`ros2` calls pipe stderr to `/dev/null`, so the assertion confidently blames
-DDS cross-process isolation for something that is not it. See `0014-*`.
-
 ## Resolved
+
+**#0014** — `test_isolated_external_subscriber` hard-coded `ROS_DOMAIN_ID=199`
+while every other test gets a unique domain per invocation, so a stale
+`ros2-daemon` failed it — and both diagnostic `ros2` calls piped stderr to
+`/dev/null`, so the assertion confidently blamed DDS cross-process isolation
+for something that was not it. Fixed with the shared domain allocator,
+`--no-daemon`, captured stderr, and an assertion that reports observations
+instead of naming a cause. Proven by planting daemons on the failing domains:
+3/3 PASS where the old test was 3/3 FAIL. See `0014-*`.
 
 **#0013** — orphaned `ros-launch-resolve` CLI helpers. Deleted: the crate is
 `[[bin]]`-only with no `[lib]` and nothing can link it, and the verbs they

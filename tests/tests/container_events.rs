@@ -442,8 +442,14 @@ fn test_isolated_external_subscriber() {
     let env = fixtures::install_env();
     let launch = isolated_launch_file();
 
-    // Use a known domain ID so the external subscriber joins the same DDS domain
-    let domain_id = "199";
+    // The external subscriber has to join the SAME domain as the container, so
+    // this test cannot let `play_launch_cmd` pick one silently — but it does
+    // not need a *constant* either. Issue 0014: this was pinned to "199", so a
+    // `ros2-daemon` left on domain 199 by any earlier run made the test fail
+    // and blame DDS cross-process isolation. Same allocator as every other
+    // test, just captured so it can be handed to `ros2` below.
+    let domain_id = fixtures::next_domain_id().to_string();
+    let domain_id = domain_id.as_str();
 
     let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let work_dir = work_tmp.path();
@@ -484,52 +490,65 @@ fn test_isolated_external_subscriber() {
     // and FastDDS profile (UDP-only, no SHM)
     let fastdds_profile = fixtures::repo_root().join("tests/fixtures/fastdds_no_shm.xml");
 
-    let mut echo_cmd = std::process::Command::new("bash");
-    echo_cmd.env_clear();
-    echo_cmd.envs(&env);
-    echo_cmd.env("ROS_DOMAIN_ID", domain_id);
-    if fastdds_profile.is_file() {
-        echo_cmd.env("FASTRTPS_DEFAULT_PROFILES_FILE", &fastdds_profile);
-    }
-    echo_cmd.arg("-c");
-    echo_cmd.arg("timeout 15 ros2 topic echo /chatter std_msgs/msg/String --once 2>/dev/null");
+    // `--no-daemon` keeps the ros2 CLI from consulting (or spawning) a
+    // long-lived daemon for this domain. With a per-invocation domain the
+    // daemon is unlikely to exist, but a daemon is exactly what turned issue
+    // 0014 into a phantom DDS failure, so this removes the vector rather than
+    // relying on the domain being fresh.
+    //
+    // stderr is CAPTURED, not discarded. It used to be `2>/dev/null` on both
+    // calls, which kept the success path quiet at the cost of making the
+    // failure path undiagnosable: the block below printed three empty
+    // sections while the assertion named a cause nothing had checked.
+    let run_ros2 = |args: &str| -> std::process::Output {
+        let mut c = std::process::Command::new("bash");
+        c.env_clear();
+        c.envs(&env);
+        c.env("ROS_DOMAIN_ID", domain_id);
+        if fastdds_profile.is_file() {
+            c.env("FASTRTPS_DEFAULT_PROFILES_FILE", &fastdds_profile);
+        }
+        c.arg("-c").arg(args);
+        c.output().expect("failed to run ros2")
+    };
 
-    let echo_output = echo_cmd.output().expect("failed to run ros2 topic echo");
+    let echo_output =
+        run_ros2("timeout 15 ros2 topic echo /chatter std_msgs/msg/String --once --no-daemon");
     let echo_stdout = String::from_utf8_lossy(&echo_output.stdout);
     let echo_stderr = String::from_utf8_lossy(&echo_output.stderr);
 
+    let mut diagnosis = String::new();
     if !echo_stdout.contains("Hello World") {
-        eprintln!("--- ros2 topic echo stdout ---\n{echo_stdout}");
-        eprintln!("--- ros2 topic echo stderr ---\n{echo_stderr}");
-        eprintln!(
-            "--- ros2 topic echo exit code: {:?} ---",
-            echo_output.status
+        let list_output = run_ros2("ros2 topic list --no-daemon");
+        diagnosis = format!(
+            "  domain: {domain_id}\n\
+               ros2 topic echo exit: {:?}\n\
+               ros2 topic echo stdout: {:?}\n\
+               ros2 topic echo stderr: {:?}\n\
+               ros2 topic list stdout: {:?}\n\
+               ros2 topic list stderr: {:?}",
+            echo_output.status,
+            echo_stdout.trim(),
+            echo_stderr.trim(),
+            String::from_utf8_lossy(&list_output.stdout).trim(),
+            String::from_utf8_lossy(&list_output.stderr).trim(),
         );
-
-        // Also try `ros2 topic list` to check visibility
-        let mut list_cmd = std::process::Command::new("bash");
-        list_cmd.env_clear();
-        list_cmd.envs(&env);
-        list_cmd.env("ROS_DOMAIN_ID", domain_id);
-        if fastdds_profile.is_file() {
-            list_cmd.env("FASTRTPS_DEFAULT_PROFILES_FILE", &fastdds_profile);
-        }
-        list_cmd.arg("-c");
-        list_cmd.arg("ros2 topic list 2>/dev/null");
-        if let Ok(list_output) = list_cmd.output() {
-            eprintln!(
-                "--- ros2 topic list ---\n{}",
-                String::from_utf8_lossy(&list_output.stdout)
-            );
-        }
+        eprintln!("--- external subscriber diagnostics ---\n{diagnosis}");
     }
 
+    // States what was observed and lets the reader conclude. The old message
+    // asserted "DDS cross-process communication is broken", which was wrong
+    // every time issue 0014 fired -- the ros2 CLI was failing before any DDS
+    // traffic was attempted, and a confident wrong cause costs more than no
+    // cause at all.
     assert!(
         echo_stdout.contains("Hello World"),
-        "External subscriber did not receive data from isolated container.\n\
-         Expected 'Hello World' in ros2 topic echo output.\n\
-         This indicates DDS cross-process communication is broken for \
-         fork+exec isolated children."
+        "External subscriber saw no 'Hello World' on /chatter from the isolated \
+         container.\n{diagnosis}\n\
+         If `ros2 topic list` is also empty or `ros2` exited non-zero, the CLI \
+         itself failed and this says nothing about DDS. If the topic is listed \
+         but no data arrives, cross-process delivery for fork+exec isolated \
+         children is the likely cause."
     );
 }
 

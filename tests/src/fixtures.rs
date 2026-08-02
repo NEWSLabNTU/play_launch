@@ -11,7 +11,11 @@ static CALL_COUNTER: AtomicU32 = AtomicU32::new(0);
 /// Combines PID (unique per process) with a per-process call counter,
 /// then maps into the valid DDS domain range 1..=232 (FastDDS port
 /// formula overflows u16 above 232).
-fn next_domain_id() -> u32 {
+/// Public so a test that has to hand the SAME domain to an external process
+/// (`ros2 topic echo`) can use the same allocator instead of pinning a
+/// constant — see issue 0014, where a hard-coded 199 made the test fail
+/// against a stale `ros2-daemon` left on that domain by an earlier run.
+pub fn next_domain_id() -> u32 {
     let pid = std::process::id();
     let seq = CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
     // Mix pid and seq to spread across domain space; avoid domain 0 (system default)
