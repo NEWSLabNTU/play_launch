@@ -15,12 +15,13 @@ own. Name the repo in the issue body.
 
 ## Open
 
-**#0013** — four orphaned `ros-launch-resolve` CLI helpers carry
-`#[allow(dead_code)]` + an "UNRESOLVED DISPOSITION" comment pending a
-wire-up/relocate/delete decision. Verified orphaned-but-live (they compile;
-they just have no caller) rather than genuinely dead. See `0013-*`.
-
 ## Resolved
+
+**#0013** — orphaned `ros-launch-resolve` CLI helpers. Deleted: the crate is
+`[[bin]]`-only with no `[lib]` and nothing can link it, and the verbs they
+served stay in play_launch, which has live copies. Measurement found FOUR
+dead `Args` structs, not the two annotated. 1934 → 1033 lines, no
+`allow(dead_code)` left anywhere. See `0013-*`.
 
 **#0007** — parameter source ORDERING was lost, so an inline `<param>` beat a
 later `<param from=>`. Marked resolved by phase-54 in 2026-07, but the
