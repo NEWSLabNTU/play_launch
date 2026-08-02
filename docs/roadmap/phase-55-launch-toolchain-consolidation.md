@@ -222,12 +222,24 @@ does not know about — not a submodule, not vendored, just a stale copy left
 from before RFC-0060 moved it. It confuses exactly this analysis. Their
 cleanup, not ours.
 
-## W3 — Documentation
+## W3 — Documentation — DONE
 
-- [ ] `CLAUDE.md`: the repo layout section, and the "Standalone crates" note
-- [ ] `docs/guide/parser-migration.md` if any path changes
-- [ ] Record in the design doc which alternative was chosen and why, if W0
-      lands on something other than the proposal
+- [x] `CLAUDE.md`: new Repository Layout section (W1), rewritten for the tag
+      dependency (W2). The point it makes is not where directories live but
+      that `exclude` is now load-bearing alone.
+- [x] `src/ros-launch-resolve/README.md`: layout and status rewritten — it
+      still described itself as a freshly extracted standalone repository.
+- [x] `docs/issues/README.md`: the "submodule family" framing was stale.
+- [x] `docs/guide/parser-migration.md`: checked, no path change needed — its
+      one reference is to the `ros-launch-resolve` binary, not a path.
+- [x] Design doc moved to Accepted and implemented, with the conflict section
+      rewritten to record that nano-ros accepted and on what grounds.
+
+## Phase complete
+
+W0, W1, W2, W3 all done; no open items. What this phase deliberately did NOT
+touch is the verb reshape (`check` folded into an argument, `replay` renamed
+and made model-based) — user-facing and breaking, so it gets its own phase.
 
 ## Risks
 

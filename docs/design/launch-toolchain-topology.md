@@ -1,7 +1,8 @@
 # Launch toolchain topology: three boundaries, not three repositories
 
-**Status:** Proposed (2026-08-02)
-**Relates to:** nano-ros RFC-0060 (Stable) — this proposes an amendment
+**Status:** Accepted and implemented (proposed 2026-08-02, shipped 2026-08-03)
+**Relates to:** nano-ros RFC-0060 (Stable), amended by `9baebb2eb` to match
+**Implemented by:** play_launch phase-55 W1/W2
 **Supersedes:** nothing
 
 ## Summary
@@ -178,19 +179,29 @@ look like.
 - `ros-launch-manifest` stays independent because it is the genuine shared
   contract — the only thing both projects *link*.
 
-## The open conflict
+## The conflict, and how it was resolved
 
-**RFC-0060 is Stable and specifies three repositories.** This proposes two
-plus the schema crate. That is a real contradiction, not a detail, and it is
-nano-ros's RFC to amend — layer 3 does not get to unilaterally redraw a
-boundary layer 2's consumers depend on.
+RFC-0060 was Stable and specified three repositories; this proposed two plus
+the schema crate. A real contradiction, not a detail, and nano-ros's RFC to
+amend — layer 3 does not get to unilaterally redraw a boundary its consumers
+depend on. So it was put to them as a blocking gate, with rejection recorded
+in advance as a legitimate outcome rather than an obstacle to argue past.
 
-The amendment being proposed is narrow: keep the layering, keep the linking
-rule, keep the process boundary; replace "three repositories" with "three
-workspaces, two repositories, one of them shared". If nano-ros prefers the
-repository boundary for reasons outside play_launch's view — independent
-release cadence, access control, CI cost — that is a sufficient answer and
-this proposal should be dropped rather than argued.
+They accepted (`9baebb2eb`, phase-332 W0): three layers kept, the linking rule
+kept, the process boundary kept, "three repositories" replaced. Status stays
+Stable. The four reasons that would have justified rejection — independent
+release cadence, access control, CI cost, and not wanting nano-ros's build to
+pin a repository that also carries a C++ container and a web UI — were
+considered and cleared.
+
+The last of those was weakened by measurement after the fact: a plain `git
+clone` of play_launch with **no submodules initialised at all** builds layer 2
+in 10.9s, because the C++ packages and vendored ROS crates are submodules
+nobody needs to fetch to use the resolver.
+
+**Shipped:** W1 folded layer 2 in as plain directories via `git subtree`, both
+histories intact. W2 replaced the last submodule with a git dependency on
+`ros-launch-manifest` pinned to `v0.1.0`. Three levels of nesting → zero.
 
 ## Alternatives considered
 
