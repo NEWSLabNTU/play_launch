@@ -1,6 +1,6 @@
 //! `ros-launch-resolve` — resolve a ROS 2 launch tree into a SystemModel.
 //!
-//! The launch-tree verbs that need no ROS graph: `resolve`, `dump`,
+//! The launch-tree verbs that need no ROS graph: `resolve`, `dump`, `check`,
 //! `contract`, `plot`. Running, replaying and supervising nodes stayed in
 //! `play_launch`, which is the layer that legitimately needs rclrs and a
 //! colcon-built message set (RFC-0060).

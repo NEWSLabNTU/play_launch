@@ -714,13 +714,14 @@ mod tests {
             "play_launch run ",
             "play_launch dump ",
             "play_launch replay ",
+            "play_launch check ",
         ] {
             assert!(
                 !help.contains(absent),
                 "--help invokes `{absent}` -- wrong binary name, and a verb this one lacks:\n{help}"
             );
         }
-        for present in ["resolve", "dump", "contract", "plot"] {
+        for present in ["resolve", "dump", "check", "contract", "plot"] {
             assert!(help.contains(present), "--help omits the `{present}` verb");
         }
     }
