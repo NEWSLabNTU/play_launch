@@ -71,6 +71,11 @@ The `exclude` is what keeps the `rclrs`/`rosidl` patches out of layer 2's
 graph. A directory inside the repository can be excluded exactly as a
 submodule can.
 
+(That comment is quoted as it stood when this was proposed. Post-merge it
+reads differently — the directory is no longer a submodule, and the comment
+now says this line is the *only* thing preventing the graphs from merging,
+naming the gate that fails if it is dropped.)
+
 ## What it costs
 
 Three-level submodule nesting: `play_launch` → `ros-launch-resolve` →
