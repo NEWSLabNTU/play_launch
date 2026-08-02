@@ -17,7 +17,9 @@ fn play_launch_bin() -> PathBuf {
 }
 
 fn manifest_fixture_dir() -> PathBuf {
-    fixtures::repo_root().join("src/ros-launch-resolve/third-party/ros-launch-manifest/tests/fixtures")
+    // Owned by the manifest repository, a git dependency since phase-55 W2 —
+    // its checkout path is unpredictable, so it hands the path out itself.
+    ros_launch_manifest_check::fixture_dir()
 }
 
 fn simple_launch_dir() -> PathBuf {

@@ -176,14 +176,17 @@ add `src/ros-launch-resolve` to `members`. `just check-layer2-isolation`
 boundary breaks: no ROS crates in the graph, no ROS shared libraries linked,
 and both launch frontends resolve with no ROS installed.
 
-One submodule remains under it: `third-party/ros-launch-manifest`, the schema
-crates nano-ros also links. It is registered in the ROOT `.gitmodules` —
-there is no nested `.gitmodules`, because git only reads the root one and a
-nested copy would look authoritative without being so. Phase 55 W2 converts
-it to a git tag; that must land in play_launch, ros-launch-resolve's consumers
-and nano-ros together, since a half-converted state gives cargo two
-same-named packages from different sources and `SystemModel` becomes two
-incompatible types.
+**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.0`), not a
+submodule — phase-55 W2. Layer 2 now has no submodules at all. Both
+`src/play_launch/Cargo.toml` and `src/ros-launch-resolve/Cargo.toml` name the
+same tag, which is what makes cargo resolve ONE instance; naming different
+revisions would give two same-named packages from different sources, and
+`SystemModel` would become two incompatible types. Bump both together.
+
+Its `tests/fixtures` are reached through
+`ros_launch_manifest_check::fixture_dir()` (the crate's `testdata` feature),
+never a relative path — a git dependency is checked out under
+`~/.cargo/git/checkouts/` where no consumer can name it.
 
 Building layer 2 in-tree inherits this repo's colcon-generated
 `.cargo/config.toml` (cargo's config walk ignores workspace boundaries), which

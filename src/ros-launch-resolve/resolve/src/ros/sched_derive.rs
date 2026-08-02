@@ -696,8 +696,9 @@ mod tests {
     // submodule). ──
 
     fn fixture_dir() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../third-party/ros-launch-manifest/tests/fixtures")
+        // See chain_checks::tests::fixture_dir — the manifest repository owns
+        // these fixtures and is a git dependency since phase-55 W2.
+        ros_launch_manifest_check::fixture_dir()
     }
 
     fn overlay_index(dump: &LaunchDump) -> ManifestIndex {

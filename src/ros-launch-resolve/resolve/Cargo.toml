@@ -36,3 +36,9 @@ pyo3 = { version = "0.24", features = ["auto-initialize", "py-clone"] }
 
 [dev-dependencies]
 tempfile = "3"
+# `testdata` exposes `ros_launch_manifest_check::fixture_dir()`. The tests
+# below build real ManifestIndexes from 24 fixture packages that live in the
+# manifest repository; since phase-55 W2 made that a git dependency, only the
+# owning crate can name their path. Dev-only, so the feature never reaches a
+# non-test build.
+ros-launch-manifest-check = { workspace = true, features = ["testdata"] }

@@ -1,7 +1,7 @@
 # Phase 55 — Launch toolchain consolidation
 
 **Design:** `docs/design/launch-toolchain-topology.md`
-**W0 landed** 2026-08-02 (nano-ros `9baebb2eb`, RFC-0060 amended to two repositories). **W1 landed** 2026-08-02.
+**W0/W1/W2 landed** 2026-08-02/03. RFC-0060 amended by nano-ros `9baebb2eb`.
 **Related:** issue 0013 (resolved — deleted the dead CLI surface this phase inherits)
 
 ## Problem
@@ -30,7 +30,7 @@ own phase.
 
 ## Status (2026-08-02)
 
-**W0 and W1 done. W2 is next and is a three-repository lockstep change.**
+**W0, W1 and W2 all done. Submodule nesting under layer 2 is gone entirely.**
 
 W0: nano-ros accepted the consolidation and amended RFC-0060 to two
 repositories, keeping the three layers, the linking rule and the process
@@ -40,8 +40,13 @@ bigger pinned tree) were considered and cleared; RFC status stays Stable.
 W1: `src/ros-launch-resolve` and its nested `parser` are plain directories in
 this repository, folded in with `git subtree` so both histories survive —
 ros-launch-resolve's own commits are now reachable from `git log` here. One
-submodule level remains (`third-party/ros-launch-manifest`), registered in the
-root `.gitmodules`; the previous three levels are down to one.
+submodule level remained at that point (`third-party/ros-launch-manifest`);
+W2 removed it too.
+
+W2: `ros-launch-manifest` is a git dependency pinned to **v0.1.0**, named
+identically by `src/play_launch/Cargo.toml` and
+`src/ros-launch-resolve/Cargo.toml` so cargo resolves one instance. Layer 2
+has no submodules left. Three levels of nesting → zero.
 
 Landed ahead of the merge, because it is worth having whether or not the
 merge happens:
@@ -143,31 +148,73 @@ fail. Its diagnostics pipe both `ros2` calls through `2>/dev/null`, so the
 real error was invisible and the assertion message blamed DDS cross-process
 communication. Worth fixing on its own; filed separately from this phase.
 
-## W2 — `ros-launch-manifest` by tag
+## W2 — `ros-launch-manifest` by tag — DONE
 
-- [ ] Tag `ros-launch-manifest`; `play_launch` depends on it by git tag rather
-      than through the nested submodule path
-- [ ] Drop the nested submodule
-- [ ] Coordinate the tag with nano-ros — they consume the same crates and must
-      move together or pin the older tag deliberately
+- [x] Tagged `ros-launch-manifest` **v0.1.0**; `play_launch` and the layer-2
+      workspace both depend on it by that tag
+- [x] Submodule dropped — **layer 2 now has no submodules at all**, and the
+      three remaining in this repository are play_launch's own (vendored
+      ros2_rust, rosidl_runtime_rs, rcl_interception_sys) plus the two C++
+      packages
+- [x] Coordination with nano-ros turned out to be unnecessary *if ordered this
+      way round* — see below
 
-**This cannot be done one repository at a time.** Measured 2026-08-02: three
-repositories reach the manifest crates by path through the nested submodule —
-`play_launch/src/play_launch/Cargo.toml`
-(`../ros-launch-resolve/third-party/ros-launch-manifest/...`),
-`ros-launch-resolve` itself (workspace deps), and nano-ros in four manifests
-(`nros-cli-core`, `nros-orchestration-ir`, `nros-macros`, `nros-tests`, via
-`.../third-party/ros-launch-resolve/third-party/ros-launch-manifest/...`).
+### The lockstep turned out to be avoidable
 
-Convert one and not the others and cargo resolves two distinct packages with
-the same name from different sources. They do not unify, so every type that
-crosses the boundary — `SystemModel` above all — becomes two incompatible
-types and the consumer stops compiling. The three moves have to land
-together.
+The earlier reading was that three repositories had to convert together:
+play_launch, the layer-2 workspace, and nano-ros in four manifests. Convert
+one and cargo resolves two same-named packages from different sources; they do
+not unify, so `SystemModel` becomes two incompatible types.
 
-That coupling is independent of W0: it is true whether or not the merge
-happens, and it is the strongest argument that the *repository* count is not
-what makes these layers separable.
+That is still true of the *simultaneous* state — but W1 removed the
+constraint. play_launch and layer 2 are one repository now, so their two
+conversions are a single atomic commit. And nano-ros still pins the OLD
+standalone `ros-launch-resolve` repository, so it consumes none of this yet:
+it is insulated until it does its own W1. Doing W2 **before** nano-ros
+repoints means they land on a tree that is already tag-based and convert once
+instead of twice.
+
+Verified, not assumed: `cargo tree -i ros-launch-manifest-model` shows a
+single node with both `play_launch` and `ros-launch-resolve` as dependents,
+and `Cargo.lock` has one `source = "git+...?tag=v0.1.0"` entry.
+
+### The blocker W2's plan did not anticipate
+
+Four consumers read the manifest repository's `tests/fixtures` **at runtime**,
+by relative path: three unit-test modules in `resolve/src/ros/` and
+`tests/tests/manifest_check.rs`. 24 of the 29 fixture packages are used. A git
+dependency is checked out under `~/.cargo/git/checkouts/<repo>-<hash>/<rev>/`,
+so no relative path from a consumer can reach them.
+
+Copying the fixtures into the consumer was the obvious fix and the wrong one:
+24 packages duplicated, going stale silently the first time a rule or schema
+changed upstream — the same seam-drift class this phase exists to remove.
+
+Instead the owning repository hands the path out:
+`ros_launch_manifest_check::fixture_dir()`, behind a default-off `testdata`
+feature (`ros-launch-manifest` `172aa53`). `CARGO_MANIFEST_DIR` resolves
+correctly for a path dependency, a git dependency and a local `cargo test`
+alike. Consumers enable the feature in dev-dependencies, so with resolver 2 it
+never reaches a non-test build.
+
+Proven non-vacuous by a negative control: moving `tests/fixtures` aside in the
+cargo checkout fails 6 tests; restoring it passes them. The tests genuinely
+read from the git checkout rather than finding a leftover directory.
+
+**A note on how the fourth consumer was nearly missed.** The first exhaustive
+grep for the fixture path ended in `head -20`, which truncated the output at
+exactly the point the `tests/` hit would have appeared — so a search meant to
+be exhaustive silently was not, and the omission surfaced only when
+`just test-all` failed. Worth naming, because it is the same shape as the
+silent-skip defects catalogued in issues 0008 and 0012: a check that looks
+complete and is not.
+
+### Residual: git dependencies need network
+
+A submodule is on disk after clone; a git dependency needs network on first
+build (thereafter `~/.cargo/git` caches it). `cargo vendor` covers offline
+distribution if nano-ros needs it for embedded targets. Flagged rather than
+solved — it has not bitten anything here, and CI has network.
 
 Unrelated but worth passing on: nano-ros has an untracked
 `packages/cli/third-party/ros-launch-manifest/` directory on disk that git

@@ -9,9 +9,11 @@ github.com/NEWSLabNTU/play_launch/issues — historical, not a live link.)
 Resolved issues move to `archived/`. Design direction lives in
 `docs/design/`; implementation plans in `docs/roadmap/` phase docs.
 
-An issue may cover any repo in the submodule family (`play_launch_parser`,
-`ros-launch-resolve`, `ros-launch-manifest`) — those have no tracker of their
-own. Name the repo in the issue body.
+An issue may also cover `ros-launch-manifest`, the one remaining external
+repository (a git dependency pinned by tag since phase-55 W2) — it has no
+tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
+`play_launch_parser` are no longer separate repositories; they live in
+`src/ros-launch-resolve/` here.
 
 ## Open
 

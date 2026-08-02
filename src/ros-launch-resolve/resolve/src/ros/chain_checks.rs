@@ -378,8 +378,10 @@ mod tests {
     use std::{collections::HashMap, path::PathBuf};
 
     fn fixture_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../third-party/ros-launch-manifest/tests/fixtures")
+        // Owned by the manifest repository, which is a git dependency since
+        // phase-55 W2 — its checkout path is unpredictable, so it hands the
+        // path out itself rather than us guessing a relative one.
+        ros_launch_manifest_check::fixture_dir()
     }
 
     /// Same materialization pattern as `manifest_loader::tests::overlay_index`

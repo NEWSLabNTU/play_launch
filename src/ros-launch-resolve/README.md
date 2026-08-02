@@ -29,11 +29,22 @@ plain `cargo`, with no ROS, no ament and no colcon.**
 resolve/   the pipeline: launch dump -> manifests -> model -> schedule
 cli/       the `ros-launch-resolve` binary (resolve / dump / contract / plot)
 parser/    play_launch_parser — launch XML and .launch.py (pyo3)
-third-party/ros-launch-manifest   the spec
+scripts/   check-layer2-isolation.sh — the no-ROS gate
+tests/     isolation fixtures for that gate
 ```
+
+`ros-launch-manifest` (the spec) is a **git dependency pinned by tag**, not a
+vendored directory — phase-55 W2. It is the one thing both this repository's
+parent and nano-ros link, so both pin the same tag rather than each carrying a
+submodule pointer to it.
 
 ## Status
 
-Extracted from `play_launch` with history preserved (`git log --follow` works
-across the move). Wiring the crate boundaries is in progress — see nano-ros
-phase-312.
+Lives inside the `play_launch` repository as a **separate cargo workspace**
+(play_launch phase-55 W1, nano-ros RFC-0060 as amended). It was a standalone
+repository until 2026-08-02; that history came across intact.
+
+The separation that matters is the workspace `exclude` in play_launch's root
+manifest, which keeps `rclrs`/`rosidl` out of this graph, plus the fact that
+the resolver ships as a *binary*, which keeps `libpython` out of a consumer's
+link. `scripts/check-layer2-isolation.sh` enforces both.

@@ -13,6 +13,3 @@
 [submodule "src/play_launch_msgs"]
 	path = src/play_launch_msgs
 	url = https://github.com/NEWSLabNTU/play_launch_msgs.git
-[submodule "src/ros-launch-resolve/third-party/ros-launch-manifest"]
-	path = src/ros-launch-resolve/third-party/ros-launch-manifest
-	url = https://github.com/NEWSLabNTU/ros-launch-manifest.git
