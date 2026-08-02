@@ -120,6 +120,28 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
             },
         )?;
 
+        if args.check {
+            // `build_checked_model` above already ran contracts and scheduling
+            // and returns Err when the checker reports errors, so reaching
+            // here means the model is clean. Report and stop before spawning.
+            //
+            // `SystemModel::meta` has no `warnings` field; the closest analog
+            // is `meta.diagnostics: Vec<String>` — lenient, non-fatal notes
+            // (e.g. non-portable absolute input paths) embedded alongside the
+            // checker's own warnings (see `model.rs`'s "lenient diagnostics
+            // embed like checker warnings").
+            let diagnostics = model.meta.diagnostics.len();
+            info!(
+                "check passed: {} node(s), {} diagnostic(s)",
+                model.structure.nodes.len(),
+                diagnostics
+            );
+            for d in &model.meta.diagnostics {
+                info!("  diagnostic: {d}");
+            }
+            return Ok(());
+        }
+
         info!("Step 3/3: Replaying launch execution...");
         super::replay::play(dump, std::sync::Arc::new(model), &args.common).await
     })

@@ -311,6 +311,16 @@ pub struct LaunchArgs {
     #[arg(long)]
     pub block_commands: bool,
 
+    /// Validate contracts and scheduling, print the diagnostics, and exit
+    /// without spawning anything. Exit status is 0 when clean, 1 when the
+    /// checker reports errors.
+    ///
+    /// This is a pass/fail gate. For `--format json`, rule filters,
+    /// `--explain` or graph export, use `ros-launch-resolve check`, which
+    /// carries the full diagnostic surface and needs no ROS install.
+    #[arg(long)]
+    pub check: bool,
+
     #[command(flatten)]
     pub common: CommonOptions,
 }
@@ -878,5 +888,31 @@ mod flag_ordering_tests {
             panic!("expected Launch");
         };
         assert_eq!(args.launch_arguments, vec!["--looks-like-flag".to_string()]);
+    }
+
+    #[test]
+    fn launch_accepts_check_after_launch_arguments() {
+        let opts = parse(&[
+            "launch",
+            "pkg",
+            "file.launch.xml",
+            "mode:=velodyne",
+            "--check",
+        ])
+        .expect("--check must parse after KEY:=VALUE launch arguments");
+        let Command::Launch(args) = opts.command else {
+            panic!("expected Launch");
+        };
+        assert!(args.check, "--check must set the flag");
+        assert_eq!(args.launch_arguments, vec!["mode:=velodyne".to_string()]);
+    }
+
+    #[test]
+    fn launch_check_defaults_off() {
+        let opts = parse(&["launch", "pkg", "file.launch.xml"]).expect("must parse");
+        let Command::Launch(args) = opts.command else {
+            panic!("expected Launch");
+        };
+        assert!(!args.check, "--check must default to false");
     }
 }
