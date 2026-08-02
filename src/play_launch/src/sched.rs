@@ -245,7 +245,9 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
 /// `/proc` walk), so an invalid priority never touches the filesystem or
 /// the kernel.
 pub fn apply_tier(pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
-    if matches!(tier.policy, SchedPolicy::Fifo | SchedPolicy::Rr) && !(1..=99).contains(&tier.priority) {
+    if matches!(tier.policy, SchedPolicy::Fifo | SchedPolicy::Rr)
+        && !(1..=99).contains(&tier.priority)
+    {
         return Err(SchedApplyError::InvalidPriority {
             pid,
             priority: tier.priority,

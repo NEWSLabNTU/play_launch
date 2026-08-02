@@ -1,9 +1,9 @@
 use super::node_cmdline::NodeCommandLine;
-use crate::{cli::options::ContainerMode};
-use ros_launch_resolve::ros::launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord};
+use crate::cli::options::ContainerMode;
 use eyre::bail;
 use rayon::prelude::*;
 use ros_launch_manifest_model as model;
+use ros_launch_resolve::ros::launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord};
 use serde::Serialize;
 use std::{
     collections::HashMap,

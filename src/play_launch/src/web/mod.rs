@@ -3,13 +3,13 @@
 //! Provides a web interface for monitoring and controlling ROS nodes.
 
 use crate::{diagnostics::DiagnosticRegistry, member_actor::MemberHandle};
-use ros_launch_resolve::ros::launch_dump::ScopeEntry;
 use axum::{
     Router,
     http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use ros_launch_resolve::ros::launch_dump::ScopeEntry;
 use rust_embed::Embed;
 use std::{
     collections::HashSet,

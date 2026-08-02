@@ -31,7 +31,10 @@ use std::{
 use serde::Serialize;
 use tracing::{debug, warn};
 
-use crate::{cli::options::EnforceMode, interception::{EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk}};
+use crate::{
+    cli::options::EnforceMode,
+    interception::{EventKind, InterceptionEvent, TopicNameAssembly, decode_topic_name_chunk},
+};
 pub mod view;
 pub use view::ContractView;
 
@@ -1191,8 +1194,8 @@ mod tests {
 
     #[test]
     fn qos_match_runtime_fires_on_incompatible_pair() {
-        use crate::{interception::{EventKind, InterceptionEvent}};
-use ros_launch_resolve::ros::manifest_loader::ResolvedTopic;
+        use crate::interception::{EventKind, InterceptionEvent};
+        use ros_launch_resolve::ros::manifest_loader::ResolvedTopic;
 
         // Build a minimal ManifestIndex containing one topic.
         let mut index = ManifestIndex::default();
@@ -1306,9 +1309,9 @@ use ros_launch_resolve::ros::manifest_loader::ResolvedTopic;
 
     #[test]
     fn lifecycle_gating_default_unknown_blocks_check() {
-        use crate::{interception::{EventKind, InterceptionEvent}};
-use ros_launch_resolve::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
+        use crate::interception::{EventKind, InterceptionEvent};
         use ros_launch_manifest_types::{Manifest, NodeDecl};
+        use ros_launch_resolve::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
 
         // Build a manifest where `talker` is lifecycle=true and publishes
         // to /chatter at declared min_rate_hz=30.
@@ -1409,8 +1412,8 @@ use ros_launch_resolve::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
 
     #[test]
     fn consistency_runtime_fires_on_type_mismatch() {
-        use crate::{interception::{EventKind, InterceptionEvent}};
-use ros_launch_resolve::ros::manifest_loader::ResolvedTopic;
+        use crate::interception::{EventKind, InterceptionEvent};
+        use ros_launch_resolve::ros::manifest_loader::ResolvedTopic;
 
         let mut index = ManifestIndex::default();
         let fqn = "/chatter".to_string();
@@ -1465,9 +1468,9 @@ use ros_launch_resolve::ros::manifest_loader::ResolvedTopic;
 
     #[test]
     fn max_age_runtime_fires_when_stamp_too_old() {
-        use crate::{interception::{EventKind, InterceptionEvent}};
-use ros_launch_resolve::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
+        use crate::interception::{EventKind, InterceptionEvent};
         use ros_launch_manifest_types::{Manifest, NodeDecl};
+        use ros_launch_resolve::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
 
         // Build manifest: subscriber declares max_age_ms=10.
         let mut nodes = std::collections::BTreeMap::new();

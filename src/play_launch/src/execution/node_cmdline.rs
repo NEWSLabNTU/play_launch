@@ -1,7 +1,7 @@
-use ros_launch_resolve::ros::launch_dump::{NodeRecord, ParamSource};
 use eyre::{Context, bail};
 use itertools::{Itertools, chain};
 use ros_launch_manifest_model as model;
+use ros_launch_resolve::ros::launch_dump::{NodeRecord, ParamSource};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, Cow},
@@ -451,19 +451,21 @@ impl NodeCommandLine {
             let mut out: Vec<PathBuf> = Vec::new();
             let mut run: Vec<(String, String)> = Vec::new();
             let mut idx = 0usize;
-            let flush_run =
-                |run: &mut Vec<(String, String)>, idx: &mut usize, out: &mut Vec<PathBuf>| -> eyre::Result<()> {
-                    if run.is_empty() {
-                        return Ok(());
-                    }
-                    let map: HashMap<String, String> = run.drain(..).collect();
-                    let path = params_files_dir.join(format!("ordered-{idx}-inline.yaml"));
-                    fs::write(&path, params_to_yaml(&map))
-                        .wrap_err_with(|| format!("unable to write {}", path.display()))?;
-                    *idx += 1;
-                    out.push(path);
-                    Ok(())
-                };
+            let flush_run = |run: &mut Vec<(String, String)>,
+                             idx: &mut usize,
+                             out: &mut Vec<PathBuf>|
+             -> eyre::Result<()> {
+                if run.is_empty() {
+                    return Ok(());
+                }
+                let map: HashMap<String, String> = run.drain(..).collect();
+                let path = params_files_dir.join(format!("ordered-{idx}-inline.yaml"));
+                fs::write(&path, params_to_yaml(&map))
+                    .wrap_err_with(|| format!("unable to write {}", path.display()))?;
+                *idx += 1;
+                out.push(path);
+                Ok(())
+            };
             for src in param_sources {
                 match src {
                     ParamSource::Inline { name, value } => {
@@ -873,7 +875,10 @@ mod tests {
             .iter()
             .position(|x| x == "/p/overrides.yaml")
             .expect("overrides still emitted on the legacy path");
-        assert!(a < ov, "overrides must stay last on the legacy path: {out:?}");
+        assert!(
+            a < ov,
+            "overrides must stay last on the legacy path: {out:?}"
+        );
     }
 
     #[test]

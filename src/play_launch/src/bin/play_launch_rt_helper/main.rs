@@ -16,8 +16,10 @@
 //! `execution`/`ros` module trees.
 
 use eyre::{Context, Result};
-use play_launch::ipc::{SchedRequest, SchedResponse, decode_message, encode_message};
-use play_launch::sched::apply_tier;
+use play_launch::{
+    ipc::{SchedRequest, SchedResponse, decode_message, encode_message},
+    sched::apply_tier,
+};
 use std::os::unix::io::{FromRawFd, RawFd};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info};

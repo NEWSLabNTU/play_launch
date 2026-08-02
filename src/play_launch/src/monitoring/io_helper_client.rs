@@ -326,7 +326,10 @@ fn check_helper_capabilities(path: &Path) -> Result<()> {
             if !stdout.contains("cap_sys_ptrace") {
                 warn!("Helper binary does not have CAP_SYS_PTRACE capability set.");
                 warn!("I/O monitoring for privileged processes will not work.");
-                warn!("Run: play_launch setcap (grants cap_sys_ptrace+ep to {:?})", path);
+                warn!(
+                    "Run: play_launch setcap (grants cap_sys_ptrace+ep to {:?})",
+                    path
+                );
             } else {
                 debug!("Helper has CAP_SYS_PTRACE: {}", stdout.trim());
             }

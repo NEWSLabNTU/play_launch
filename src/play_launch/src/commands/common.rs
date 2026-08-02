@@ -46,7 +46,10 @@ pub(crate) async fn parse_to_launch_dump(
     launch_file: Option<&str>,
     launch_arguments: &[String],
     parser: ParserBackend,
-) -> eyre::Result<(ros_launch_resolve::ros::launch_dump::LaunchDump, std::path::PathBuf)> {
+) -> eyre::Result<(
+    ros_launch_resolve::ros::launch_dump::LaunchDump,
+    std::path::PathBuf,
+)> {
     let launch_path = super::launch::resolve_launch_file(package_or_path, launch_file)?;
 
     let dump = match parser {
@@ -83,8 +86,8 @@ pub(crate) async fn parse_to_launch_dump(
                     &scratch_path,
                 )
                 .await?;
-            let dump =
-                ros_launch_resolve::ros::launch_dump::load_launch_dump(&scratch_path).wrap_err_with(|| {
+            let dump = ros_launch_resolve::ros::launch_dump::load_launch_dump(&scratch_path)
+                .wrap_err_with(|| {
                     format!("loading Python-parsed record {}", scratch_path.display())
                 })?;
             let _ = std::fs::remove_file(&scratch_path);

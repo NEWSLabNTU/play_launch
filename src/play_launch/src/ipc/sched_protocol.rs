@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SchedRequest {
     /// Apply the tier to EVERY thread of `pid` (see `sched::apply_tier`).
-    ApplySched { pid: u32, tier: AppliedTier },
+    ApplySched {
+        pid: u32,
+        tier: AppliedTier,
+    },
     Ping,
     Shutdown,
 }
@@ -30,8 +33,10 @@ pub enum SchedResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::{decode_message, encode_message};
-    use crate::sched::SchedPolicy;
+    use crate::{
+        ipc::{decode_message, encode_message},
+        sched::SchedPolicy,
+    };
 
     fn roundtrip_request(req: &SchedRequest) {
         let encoded = encode_message(req).unwrap();

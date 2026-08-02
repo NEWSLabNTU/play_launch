@@ -4,14 +4,22 @@ use super::{
     common::{CleanupGuard, build_tokio_runtime, forward_state_events_and_wait},
     signal_handler::{self, CompletionContext},
 };
-use ros_launch_resolve::ros::launch_dump::LaunchDump;
-use crate::{cli, cli::config::load_runtime_config, execution::context::{
+use crate::{
+    cli,
+    cli::config::load_runtime_config,
+    execution::context::{
         ComposableNodeContextSet, prepare_composable_node_contexts_from_model,
         prepare_container_contexts_from_model, prepare_node_contexts_from_model,
-    }, monitoring::resource_monitor::MonitorConfig, ros::{container_readiness::SERVICE_DISCOVERY_HANDLE, }, util::{log_dir::create_log_dir, logging::is_verbose}, web};
+    },
+    monitoring::resource_monitor::MonitorConfig,
+    ros::container_readiness::SERVICE_DISCOVERY_HANDLE,
+    util::{log_dir::create_log_dir, logging::is_verbose},
+    web,
+};
 use eyre::Context;
 use futures::stream::FuturesUnordered;
 use rclrs::IntoPrimitiveOptions;
+use ros_launch_resolve::ros::launch_dump::LaunchDump;
 use std::{
     collections::HashMap,
     fs,
@@ -53,7 +61,8 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     // faithful; for full mapper provenance run `check --sched --explain`, which
     // re-derives. Works off-host (no ManifestIndex needed).
     if args.explain {
-        let footer = ros_launch_resolve::ros::sched_loader::explain_footer_from_model(&system_model);
+        let footer =
+            ros_launch_resolve::ros::sched_loader::explain_footer_from_model(&system_model);
         eprint!(
             "{}",
             ros_launch_resolve::ros::sched_loader::render_explain_from_model(

@@ -109,7 +109,6 @@ pub enum Command {
         play_launch resolve demo_pkg pipeline.launch.xml --out system_model.yaml\n  \
         play_launch resolve /path/to/launch.xml --sched system.posix.yaml mode:=velodyne")]
     Resolve(ResolveArgs),
-
 }
 
 /// Arguments for `play_launch contract`
@@ -258,7 +257,9 @@ impl CheckArgs {
     /// `/etc/play_launch/contracts` — first existing wins.
     pub fn contract_sources(&self) -> ros_launch_resolve::ros::manifest_loader::ContractSources {
         ros_launch_resolve::ros::manifest_loader::ContractSources {
-            overlay: ros_launch_resolve::ros::manifest_loader::discover_overlay_root(self.contracts.as_deref()),
+            overlay: ros_launch_resolve::ros::manifest_loader::discover_overlay_root(
+                self.contracts.as_deref(),
+            ),
             provider: !self.no_provider_contracts,
         }
     }

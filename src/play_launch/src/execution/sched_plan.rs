@@ -21,12 +21,15 @@ use std::{
 use eyre::Result;
 use ros_launch_manifest_sched::DEFAULT_TIER;
 
+use crate::{
+    cli::options::ContainerMode,
+    execution::sched_apply::{AppliedTier, SchedApplyMode, SchedPolicy},
+};
 use ros_launch_resolve::ros::{
     launch_dump::LaunchDump,
     manifest_loader::ManifestIndex,
     sched_loader::{derive_sched_plan, fqn_for},
 };
-use crate::{cli::options::ContainerMode, execution::sched_apply::{AppliedTier, SchedApplyMode, SchedPolicy}, };
 
 /// Per-FQN scheduling plan, resolved once at startup and consulted by actors
 /// as processes come up.

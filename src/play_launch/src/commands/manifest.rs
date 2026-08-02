@@ -1,12 +1,12 @@
 //! `play_launch check` — parse a launch file and check manifest contracts.
 
-use crate::{cli::options::CheckArgs};
-use ros_launch_resolve::ros::manifest_loader;
+use crate::cli::options::CheckArgs;
 use eyre::Result;
 use ros_launch_manifest_check::{
     Diagnostic, Severity, emit::diagnostic::emit_diagnostics, run_checks_with_spans,
 };
 use ros_launch_manifest_types::parse_manifest_str_with_spans;
+use ros_launch_resolve::ros::manifest_loader;
 use std::collections::HashSet;
 
 pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {

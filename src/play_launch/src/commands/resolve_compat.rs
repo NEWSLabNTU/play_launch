@@ -44,7 +44,10 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
 
     let arg_binding = launch_arguments
         .iter()
-        .filter_map(|a| a.split_once(":=").map(|(k, v)| (k.to_string(), v.to_string())))
+        .filter_map(|a| {
+            a.split_once(":=")
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
         .collect();
 
     let model = build_checked_model(ModelBuildInputs {
@@ -70,7 +73,11 @@ pub fn handle_resolve(args: &ResolveArgs) -> Result<()> {
     } else {
         std::fs::write(&args.out, &yaml)
             .map_err(|e| eyre::eyre!("writing SystemModel to {}: {e}", args.out))?;
-        eprintln!("SystemModel: {} ({} nodes)", args.out, model.structure.nodes.len());
+        eprintln!(
+            "SystemModel: {} ({} nodes)",
+            args.out,
+            model.structure.nodes.len()
+        );
     }
     Ok(())
 }

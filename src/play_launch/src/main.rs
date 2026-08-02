@@ -2,8 +2,8 @@
 //! that nano-ros can link the resolve pipeline instead of shelling out to a
 //! `play_launch` binary resolved through PATH (nano-ros #285).
 
-use play_launch::{cli::options::Options, util::logging::init_verbose};
 use clap::Parser;
+use play_launch::{cli::options::Options, util::logging::init_verbose};
 use tracing::{debug, warn};
 
 fn main() -> eyre::Result<()> {

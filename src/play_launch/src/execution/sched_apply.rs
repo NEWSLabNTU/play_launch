@@ -2,7 +2,6 @@
 //! in the lib so `play_launch_rt_helper` can use it too — see phase 38.10).
 #![allow(dead_code)]
 
-
 /// Re-exported so every existing `use crate::execution::sched_apply::{…}`
 /// call site keeps compiling unchanged after the syscall core moved to the
 /// lib. `execution` is a private module of the *binary* crate, so a `pub use`

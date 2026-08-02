@@ -723,7 +723,12 @@ mod tests {
 
     /// Build a synthetic event the same way FrontierPlugin's shared-memory
     /// transport does for an advancing stamp: `FrontierPublish`, not `Publish`.
-    fn frontier_publish_event(topic_hash: u64, sec: i32, nanosec: u32, mono: u64) -> InterceptionEvent {
+    fn frontier_publish_event(
+        topic_hash: u64,
+        sec: i32,
+        nanosec: u32,
+        mono: u64,
+    ) -> InterceptionEvent {
         InterceptionEvent {
             kind: EventKind::FrontierPublish,
             _pad: [0; 3],
@@ -737,7 +742,12 @@ mod tests {
 
     /// Build a synthetic event the same way StatsPlugin does for every
     /// message (stamped or not): plain `Publish`.
-    fn stats_publish_event(topic_hash: u64, sec: i32, nanosec: u32, mono: u64) -> InterceptionEvent {
+    fn stats_publish_event(
+        topic_hash: u64,
+        sec: i32,
+        nanosec: u32,
+        mono: u64,
+    ) -> InterceptionEvent {
         InterceptionEvent {
             kind: EventKind::Publish,
             _pad: [0; 3],
@@ -789,10 +799,16 @@ mod tests {
         process_event(&stats_ev, &config, &mut frontiers, &mut stats);
 
         let ts = stats.get(&topic_hash).expect("stats entry present");
-        assert_eq!(ts.pub_count, 1, "one message must count as exactly one publish");
+        assert_eq!(
+            ts.pub_count, 1,
+            "one message must count as exactly one publish"
+        );
 
         let frontier = frontiers.get(&topic_hash).expect("frontier entry present");
-        assert_eq!(frontier.event_count, 1, "frontier advance must be counted exactly once");
+        assert_eq!(
+            frontier.event_count, 1,
+            "frontier advance must be counted exactly once"
+        );
         assert_eq!(frontier.stamp_sec, 10);
         assert_eq!(frontier.stamp_nanosec, 500);
     }
@@ -815,7 +831,10 @@ mod tests {
         process_event(&stats_ev, &config, &mut frontiers, &mut stats);
 
         let ts = stats.get(&topic_hash).expect("stats entry present");
-        assert_eq!(ts.take_count, 1, "one message must count as exactly one take");
+        assert_eq!(
+            ts.take_count, 1,
+            "one message must count as exactly one take"
+        );
     }
 
     /// Multiple stamped messages in sequence should each count once,

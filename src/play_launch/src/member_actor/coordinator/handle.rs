@@ -1,10 +1,13 @@
 //! External handle for controlling and querying members
 
 use super::{MemberMetadata, NOISY_STDERR_THRESHOLD};
-use crate::{member_actor::{
+use crate::{
+    member_actor::{
         events::ControlEvent,
         model::{HealthSummary, MemberState, MemberSummary, MemberType},
-    }, ros::parameter_types::{ParamEntry, ParamValue, SetParamResult}};
+    },
+    ros::parameter_types::{ParamEntry, ParamValue, SetParamResult},
+};
 use eyre::{Context, Result};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{RwLock, mpsc, watch};

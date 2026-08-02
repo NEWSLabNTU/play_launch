@@ -10,12 +10,15 @@ use super::{
     supervisor::{ComposableNodeMetadata, ComposableSupervisor},
     timing::{LOADING_CHECK_INTERVAL, LoadTimings},
 };
-use crate::{execution::context::NodeContext, member_actor::{
+use crate::{
+    execution::context::NodeContext,
+    member_actor::{
         actor_traits::MemberActor,
         container_control::ContainerControlEvent,
         events::{ControlEvent, StateEvent, emit},
         model::{ActorConfig, BlockReason, ComposableState, ContainerState, NodeState},
-    }};
+    },
+};
 use eyre::Result;
 use std::{
     collections::HashMap,

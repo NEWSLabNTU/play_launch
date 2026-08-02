@@ -101,22 +101,24 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
             super::parse_launch_arguments(&args.launch_arguments)
                 .into_iter()
                 .collect();
-        let model = ros_launch_resolve::model::build_checked_model(ros_launch_resolve::model::ModelBuildInputs {
-            dump: &dump,
-            launch_path: Some(&launch_path),
-            // `launch` builds the model in memory and never writes it, so
-            // `meta.inputs` portability is moot here; the grandparent
-            // fallback preserves the behavior this path had before the
-            // field existed.
-            bringup_root: None,
-            arg_binding,
-            contracts: args.common.contract_opts.contracts.as_deref(),
-            no_provider_contracts: args.common.contract_opts.no_provider_contracts,
-            sched: args.common.sched_opts.sched.as_deref(),
-            system: None,
-            target: args.common.sched_opts.target.as_str(),
-            explain: false,
-        })?;
+        let model = ros_launch_resolve::model::build_checked_model(
+            ros_launch_resolve::model::ModelBuildInputs {
+                dump: &dump,
+                launch_path: Some(&launch_path),
+                // `launch` builds the model in memory and never writes it, so
+                // `meta.inputs` portability is moot here; the grandparent
+                // fallback preserves the behavior this path had before the
+                // field existed.
+                bringup_root: None,
+                arg_binding,
+                contracts: args.common.contract_opts.contracts.as_deref(),
+                no_provider_contracts: args.common.contract_opts.no_provider_contracts,
+                sched: args.common.sched_opts.sched.as_deref(),
+                system: None,
+                target: args.common.sched_opts.target.as_str(),
+                explain: false,
+            },
+        )?;
 
         info!("Step 3/3: Replaying launch execution...");
         super::replay::play(dump, std::sync::Arc::new(model), &args.common).await

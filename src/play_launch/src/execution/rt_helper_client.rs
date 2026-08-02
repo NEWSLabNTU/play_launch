@@ -19,8 +19,10 @@
 //! that on a type that isn't itself `Debug`).
 
 use eyre::{Context, Result};
-use play_launch::ipc::{SchedRequest, SchedResponse, decode_message, encode_message};
-use play_launch::sched::{AppliedTier, SchedApplyError};
+use play_launch::{
+    ipc::{SchedRequest, SchedResponse, decode_message, encode_message},
+    sched::{AppliedTier, SchedApplyError},
+};
 use std::{os::unix::io::FromRawFd, path::PathBuf, process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -46,7 +48,7 @@ const MAX_IPC_RESPONSE_SIZE: usize = 1_048_576;
 /// most callers want [`SchedHelper`] instead, unless they specifically need
 /// single-owner access (e.g. the owner task itself).
 pub struct RtHelperClient {
-    request_writer: tokio::fs::File, // Parent writes requests here
+    request_writer: tokio::fs::File,  // Parent writes requests here
     response_reader: tokio::fs::File, // Parent reads responses here
     child: Option<Child>,
 }

@@ -125,9 +125,7 @@ pub fn handle_setcap() -> eyre::Result<()> {
         && let Ok(output) = process::Command::new("getcap").arg(&bin).output()
         && String::from_utf8_lossy(&output.stdout).contains("cap_")
     {
-        println!(
-            "! main binary has file capabilities — removing (they break ROS library loading)"
-        );
+        println!("! main binary has file capabilities — removing (they break ROS library loading)");
         let status = process::Command::new("sudo")
             .args(["setcap", "-r"])
             .arg(&bin)
@@ -234,9 +232,7 @@ pub fn handle_verify() -> eyre::Result<()> {
                 "✗ play_launch binary has file capabilities set: {}",
                 stdout.trim()
             );
-            println!(
-                "  This BREAKS ROS library loading (AT_SECURE drops LD_LIBRARY_PATH)."
-            );
+            println!("  This BREAKS ROS library loading (AT_SECURE drops LD_LIBRARY_PATH).");
             println!("  Remove them:  sudo setcap -r {}", bin.display());
             all_ok = false;
         }
@@ -280,7 +276,10 @@ fn verify_cap(helper_path: eyre::Result<PathBuf>, cap: &str, label: &str) -> boo
         println!("✓ {label} ({cap}): {}", stdout.trim());
         true
     } else if !stdout.trim().is_empty() {
-        println!("⚠ helper for {label} has unexpected capabilities: {}", stdout.trim());
+        println!(
+            "⚠ helper for {label} has unexpected capabilities: {}",
+            stdout.trim()
+        );
         println!("  Expected: {expected_eq}");
         println!("  Run: play_launch setcap");
         false

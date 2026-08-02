@@ -1,7 +1,10 @@
 //! HTTP handlers for the web API (event-driven architecture).
 
 use super::WebState;
-use crate::{diagnostics::{DiagnosticCounts, DiagnosticStatus}, member_actor::model::HealthSummary};
+use crate::{
+    diagnostics::{DiagnosticCounts, DiagnosticStatus},
+    member_actor::model::HealthSummary,
+};
 use axum::{
     Json,
     extract::{Path, State},
