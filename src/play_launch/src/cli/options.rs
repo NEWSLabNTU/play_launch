@@ -338,6 +338,16 @@ pub struct RunArgs {
     #[arg(trailing_var_arg = true)]
     pub args: Vec<String>,
 
+    /// Resolve and validate the scheduling platform file for `--target`,
+    /// then exit without spawning.
+    ///
+    /// Contracts are NOT checked and cannot be: they are keyed by launch
+    /// file (`<pkg>/launch/<stem>.contract.yaml`), and `run` has no launch
+    /// file, so no sidecar can apply. The output says so explicitly rather
+    /// than reporting a pass over an empty check.
+    #[arg(long)]
+    pub check: bool,
+
     #[command(flatten)]
     pub common: CommonOptions,
 }
@@ -914,5 +924,15 @@ mod flag_ordering_tests {
             panic!("expected Launch");
         };
         assert!(!args.check, "--check must default to false");
+    }
+
+    #[test]
+    fn run_accepts_check() {
+        let opts =
+            parse(&["run", "demo_nodes_cpp", "talker", "--check"]).expect("run --check must parse");
+        let Command::Run(args) = opts.command else {
+            panic!("expected Run");
+        };
+        assert!(args.check);
     }
 }

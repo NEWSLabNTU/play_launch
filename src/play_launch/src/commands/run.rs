@@ -74,12 +74,13 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
     };
 
     let runtime = build_tokio_runtime()?;
-    runtime.block_on(run_direct(&launch_dump, &args.common))
+    runtime.block_on(run_direct(&launch_dump, &args.common, args.check))
 }
 
 async fn run_direct(
     launch_dump: &LaunchDump,
     common: &cli::options::CommonOptions,
+    check: bool,
 ) -> eyre::Result<()> {
     debug!("Starting direct node execution");
 
@@ -214,6 +215,35 @@ async fn run_direct(
         sched_sources.provider,
         &common.sched_opts.target,
     );
+
+    if check {
+        // Structural, not a shortcut: contracts are keyed by launch file and
+        // `run` has none, so no sidecar can be located. Saying that out loud
+        // is the whole point -- a silent skip here would exit 0 having
+        // checked nothing checkable.
+        println!(
+            "no contracts checked: `run` has no launch file, so no contract \
+             sidecar can apply."
+        );
+        match &resolved_sched {
+            Some(resolved) => {
+                println!(
+                    "Platform file: {} (target: {}) — OK",
+                    resolved.path.display(),
+                    common.sched_opts.target
+                );
+                return Ok(());
+            }
+            None => {
+                println!(
+                    "Platform file: none resolved (target: {}) — nothing to validate",
+                    common.sched_opts.target
+                );
+                return Ok(());
+            }
+        }
+    }
+
     let (sched_plan, sched_helper, sched_helper_join) = if let Some(resolved) = &resolved_sched {
         let path = &resolved.path;
         // `play_launch run` has no contract-loading infrastructure (single
