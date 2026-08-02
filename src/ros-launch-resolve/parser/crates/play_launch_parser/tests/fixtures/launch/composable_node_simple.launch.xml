@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Simple composable node that can be loaded into a container -->
+<launch>
+  <arg name="target_container" description="target container name"/>
+  <arg name="node_name" description="node name"/>
+  <arg name="node_namespace" default="" description="node namespace"/>
+
+  <load_composable_node target="$(var target_container)">
+    <composable_node pkg="demo_nodes_cpp"
+                     plugin="demo_nodes_cpp::Listener"
+                     name="$(var node_name)"
+                     namespace="$(var node_namespace)">
+    </composable_node>
+  </load_composable_node>
+</launch>

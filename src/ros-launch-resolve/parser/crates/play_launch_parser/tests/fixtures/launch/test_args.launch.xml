@@ -1,0 +1,10 @@
+<launch>
+  <arg name="node_name" default="my_talker" />
+  <arg name="use_sim_time" default="false" />
+
+  <node pkg="demo_nodes_cpp" exec="talker" name="$(var node_name)" output="screen">
+    <param name="use_sim_time" value="$(var use_sim_time)" />
+    <remap from="chatter" to="/my_topic" />
+    <env name="MY_ENV_VAR" value="test_value" />
+  </node>
+</launch>

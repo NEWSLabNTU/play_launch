@@ -1,0 +1,8 @@
+# Test output artifacts
+rust_output.json
+python_output.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

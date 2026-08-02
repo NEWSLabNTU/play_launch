@@ -1,0 +1,30 @@
+launch:
+- arg:
+    name: use_sim
+    default: "true"
+- arg:
+    name: enable_debug
+    default: "false"
+- group:
+    if: "$(var use_sim)"
+    children:
+    - node:
+        pkg: demo_nodes_cpp
+        exec: talker
+        name: sim_talker
+- group:
+    unless: "$(var use_sim)"
+    children:
+    - node:
+        pkg: demo_nodes_cpp
+        exec: talker
+        name: real_talker
+- node:
+    if: "$(var enable_debug)"
+    pkg: demo_nodes_cpp
+    exec: listener
+    name: debug_listener
+- node:
+    pkg: demo_nodes_cpp
+    exec: listener
+    name: main_listener

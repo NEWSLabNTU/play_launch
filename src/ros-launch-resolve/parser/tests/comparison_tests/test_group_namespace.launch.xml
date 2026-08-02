@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<launch>
+    <group>
+        <push-ros-namespace namespace="planning"/>
+        <group>
+            <push-ros-namespace namespace="scenario_planning"/>
+            <node_container pkg="rclcpp_components" exec="component_container" name="test_container" namespace="">
+                <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="talker" />
+            </node_container>
+        </group>
+    </group>
+</launch>

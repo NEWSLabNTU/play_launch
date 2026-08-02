@@ -1,0 +1,19 @@
+[workspace]
+
+[package]
+name = "play_launch_parser_python"
+version = "0.1.0"
+edition = "2024"
+description = "Python bindings for the ROS 2 launch file parser"
+license = "Apache-2.0"
+
+[lib]
+name = "play_launch_parser"
+crate-type = ["cdylib"]
+
+[dependencies]
+play_launch_parser = { path = "../play_launch_parser" }
+pyo3 = { version = "0.24", features = ["extension-module"] }
+pythonize = "0.24"
+serde_json = "1"
+clap = { version = "4.0", features = ["derive"] }

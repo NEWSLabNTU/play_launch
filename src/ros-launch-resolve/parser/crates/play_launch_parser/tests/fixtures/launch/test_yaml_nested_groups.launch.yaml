@@ -1,0 +1,22 @@
+launch:
+- group:
+    ns: level1
+    children:
+    - group:
+        ns: level2
+        children:
+        - node:
+            pkg: demo_nodes_cpp
+            exec: talker
+            name: deep_node
+            param:
+            - name: config_path
+              value: "$(dirname)/config.yaml"
+    - node:
+        pkg: demo_nodes_cpp
+        exec: listener
+        name: mid_node
+- node:
+    pkg: demo_nodes_cpp
+    exec: talker
+    name: root_node

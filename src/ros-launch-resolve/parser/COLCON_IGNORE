@@ -1,0 +1,2 @@
+# Ignore this package in colcon builds
+# The parser is built as a Cargo workspace dependency of play_launch

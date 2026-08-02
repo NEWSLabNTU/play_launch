@@ -1,0 +1,16 @@
+<launch>
+  <arg name="use_sim" default="true" />
+  <arg name="use_rviz" default="false" />
+
+  <!-- This node should be included (use_sim=true) -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="sim_talker" if="$(var use_sim)" />
+
+  <!-- This node should be skipped (use_rviz=false) -->
+  <node pkg="demo_nodes_cpp" exec="listener" name="rviz_listener" if="$(var use_rviz)" />
+
+  <!-- This node should be included (use_rviz=false, so unless is satisfied) -->
+  <node pkg="demo_nodes_cpp" exec="listener" name="normal_listener" unless="$(var use_rviz)" />
+
+  <!-- This node should be skipped (use_sim=true, so unless fails) -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="real_talker" unless="$(var use_sim)" />
+</launch>

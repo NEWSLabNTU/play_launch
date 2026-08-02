@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Template for Autoware workspace activation script
+#
+# Copy this file to activate_autoware.sh and update the path:
+#   cp activate_autoware.sh.template activate_autoware.sh
+#
+# Then edit activate_autoware.sh to point to your Autoware workspace:
+#   source /path/to/your/autoware/workspace/install/setup.bash
+#
+# Example:
+#   source ~/autoware/2025.02-ws/install/setup.bash
+
+source /path/to/your/autoware/workspace/install/setup.bash

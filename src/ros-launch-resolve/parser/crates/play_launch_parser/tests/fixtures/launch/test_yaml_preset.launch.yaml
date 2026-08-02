@@ -1,0 +1,7 @@
+launch:
+- arg:
+    name: velocity_smoother_type
+    default: JointTrajectory
+- arg:
+    name: preset_param
+    default: preset_default

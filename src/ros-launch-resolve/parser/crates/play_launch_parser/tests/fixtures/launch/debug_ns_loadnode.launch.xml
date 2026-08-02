@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Minimal test: load_composable_node with target from argument -->
+<launch>
+  <arg name="target_container" description="target container name"/>
+
+  <load_composable_node target="$(var target_container)">
+    <composable_node pkg="demo_nodes_cpp"
+                     plugin="demo_nodes_cpp::Listener"
+                     name="debug_node"
+                     namespace="">
+    </composable_node>
+  </load_composable_node>
+</launch>

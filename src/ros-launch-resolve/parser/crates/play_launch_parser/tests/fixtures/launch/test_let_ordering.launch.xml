@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Set initial value -->
+  <arg name="test_var" default="initial_value"/>
+
+  <!-- Use it in node 1 - should get "initial_value" -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="node1">
+    <param name="before_let" value="$(var test_var)"/>
+  </node>
+
+  <!-- Change the value with let -->
+  <let name="test_var" value="changed_value"/>
+
+  <!-- Use it in node 2 - should get "changed_value" -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="node2">
+    <param name="after_let" value="$(var test_var)"/>
+  </node>
+
+  <!-- Change it again -->
+  <let name="test_var" value="final_value"/>
+
+  <!-- Use it in node 3 - should get "final_value" -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="node3">
+    <param name="after_second_let" value="$(var test_var)"/>
+  </node>
+</launch>

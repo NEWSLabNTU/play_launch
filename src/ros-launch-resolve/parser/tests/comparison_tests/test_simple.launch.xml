@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="test_arg" default="value1"/>
+
+    <node pkg="demo_nodes_cpp" exec="talker" name="talker_node" namespace="/test">
+        <param name="use_sim_time" value="false"/>
+    </node>
+
+    <group>
+        <push-ros-namespace namespace="planning"/>
+        <!-- Container with empty namespace - should inherit /planning from group -->
+        <node_container pkg="rclcpp_components" exec="component_container" name="planning_container" namespace="">
+            <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="talker"/>
+            <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Listener" name="listener"/>
+        </node_container>
+    </group>
+</launch>

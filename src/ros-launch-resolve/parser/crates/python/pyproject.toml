@@ -1,0 +1,33 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "play-launch-parser"
+version = "0.1.0"
+description = "High-performance ROS 2 launch file parser"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["ros2", "launch", "parser", "robotics"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.scripts]
+play-launch-parser = "play_launch_parser._cli:main"
+
+[project.urls]
+Repository = "https://github.com/NEWSLabNTU/play_launch_parser"
+
+[tool.maturin]
+manifest-path = "Cargo.toml"
+python-source = "."

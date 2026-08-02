@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- Test: scoped="false" lets namespace leak to subsequent siblings. -->
+<launch>
+  <group scoped="false">
+    <push-ros-namespace namespace="leaked_ns"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="inside"/>
+  </group>
+  <!-- This node should inherit leaked_ns because scoped=false -->
+  <node pkg="demo_nodes_cpp" exec="listener" name="outside"/>
+</launch>

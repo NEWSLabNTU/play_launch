@@ -1,0 +1,12 @@
+<launch>
+  <!-- Parent declares its own arg -->
+  <arg name="parent_arg" default="parent_value"/>
+
+  <!-- Include child, passing only one arg explicitly.
+       Use $(dirname) to resolve relative to this file. -->
+  <include file="$(dirname)/../includes/child_with_arg_defaults.launch.xml">
+    <arg name="passed_arg" value="from_parent"/>
+  </include>
+
+  <node pkg="demo_nodes_cpp" exec="listener" name="parent_listener"/>
+</launch>

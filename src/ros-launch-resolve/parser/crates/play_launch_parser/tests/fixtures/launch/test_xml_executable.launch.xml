@@ -1,0 +1,3 @@
+<launch>
+    <executable cmd="ros2 bag record -a" name="rosbag_recorder" output="screen" />
+</launch>

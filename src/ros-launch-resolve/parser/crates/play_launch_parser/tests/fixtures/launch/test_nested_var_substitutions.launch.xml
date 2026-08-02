@@ -1,0 +1,14 @@
+<launch>
+  <!-- Test nested variable substitutions -->
+  <!-- Variable containing another variable reference -->
+  <arg name="pkg_name" default="demo_nodes_cpp" />
+  <let name="pkg_path" value="$(find-pkg-share $(var pkg_name))" />
+
+  <!-- Variable containing find-pkg-share (for when packages exist) -->
+  <let name="talker_exec" value="$(find-pkg-share demo_nodes_cpp)/lib/demo_nodes_cpp/talker" />
+
+  <!-- Use the variables in a node -->
+  <node pkg="$(var pkg_name)" exec="talker" name="test_node">
+    <param name="exec_path" value="$(var talker_exec)" />
+  </node>
+</launch>

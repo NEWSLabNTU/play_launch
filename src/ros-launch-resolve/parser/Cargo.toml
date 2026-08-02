@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/play_launch_parser",
+]
+exclude = [
+    "crates/python",
+]
+
+# Development profile with release optimizations but debug info enabled
+# Use for faster iteration during development: cargo build --profile dev-release
+[profile.dev-release]
+inherits = "release"
+debug = true
+lto = false
+incremental = true

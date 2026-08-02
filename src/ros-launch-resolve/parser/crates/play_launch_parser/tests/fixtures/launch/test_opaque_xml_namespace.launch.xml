@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Test: OpaqueFunction XML includes with namespace preservation
+
+  This test replicates the Autoware component_state_monitor pattern:
+  1. XML file pushes a namespace (/system)
+  2. Python file is included
+  3. Python's OpaqueFunction returns XML includes
+  4. Those XML includes should be processed with the /system namespace
+-->
+<launch>
+  <arg name="fixture_dir" default="$(dirname)"/>
+
+  <!-- Push namespace at XML level -->
+  <push-ros-namespace namespace="/system"/>
+
+  <!-- Include Python file that uses OpaqueFunction to return XML includes -->
+  <include file="$(dirname)/python/opaque_with_xml_includes.launch.py">
+    <arg name="fixture_dir" value="$(var fixture_dir)"/>
+  </include>
+
+  <pop-ros-namespace/>
+</launch>

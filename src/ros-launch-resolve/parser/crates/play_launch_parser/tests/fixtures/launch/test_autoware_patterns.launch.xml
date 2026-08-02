@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Test: Multiple Autoware patterns combined
+
+  This test combines several edge cases discovered from Autoware 1.5.0:
+  1. Nested namespace scopes (XML push-ros-namespace)
+  2. Python files using OpaqueFunction
+  3. XML includes from OpaqueFunction with namespace preservation
+  4. List concatenation in namespaces
+  5. Container target resolution with $(var)
+-->
+<launch>
+  <arg name="mode" default="simulation"/>
+  <arg name="fixture_dir" default="$(dirname)"/>
+
+  <!-- Test 1: Nested namespaces with Python includes -->
+  <group>
+    <push-ros-namespace namespace="/vehicle"/>
+
+    <group>
+      <push-ros-namespace namespace="sensors"/>
+
+      <!-- Python file should see /vehicle/sensors namespace -->
+      <include file="$(dirname)/python/namespace_aware.launch.py">
+        <arg name="expected_ns" value="/vehicle/sensors"/>
+      </include>
+
+      <pop-ros-namespace/>
+    </group>
+
+    <pop-ros-namespace/>
+  </group>
+
+  <!-- Test 2: List concatenation in namespace -->
+  <include file="$(dirname)/python/list_namespace_concatenation.launch.py">
+    <arg name="container_name" value="test_container"/>
+  </include>
+
+  <!-- Test 3: OpaqueFunction with XML includes and namespace -->
+  <group>
+    <push-ros-namespace namespace="/system"/>
+
+    <include file="$(dirname)/python/opaque_with_xml_includes.launch.py">
+      <arg name="fixture_dir" value="$(var fixture_dir)"/>
+    </include>
+
+    <pop-ros-namespace/>
+  </group>
+
+  <!-- Test 4: Utilities functions -->
+  <include file="$(dirname)/python/test_utilities.launch.py"/>
+</launch>

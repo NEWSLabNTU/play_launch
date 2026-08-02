@@ -1,0 +1,25 @@
+<launch>
+  <!-- CLI args and default values -->
+  <arg name="use_sim" default="true" />
+  <arg name="namespace" default="/robots" />
+
+  <!-- Local variable using let -->
+  <let name="config_dir" value="$(find-pkg-share demo_nodes_cpp)/config" />
+
+  <!-- Group with namespace -->
+  <group>
+    <push-ros-namespace namespace="$(var namespace)"/>
+    <!-- Node with if condition -->
+    <node pkg="demo_nodes_cpp" exec="talker" name="talker" if="$(var use_sim)">
+      <param name="config" value="$(var config_dir)/params.yaml" />
+    </node>
+
+    <!-- Node with unless condition -->
+    <node pkg="demo_nodes_cpp" exec="listener" name="listener" unless="$(var use_sim)" />
+  </group>
+
+  <!-- Include with args -->
+  <include file="../includes/included.launch.xml" if="$(var use_sim)">
+    <arg name="node_name" value="included_node" />
+  </include>
+</launch>

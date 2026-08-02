@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Test: XML push-ros-namespace is visible to included Python files -->
+<launch>
+  <arg name="system_ns" default="system"/>
+
+  <!-- Push namespace in XML -->
+  <push-ros-namespace namespace="$(var system_ns)"/>
+
+  <!-- Include Python file that should see the namespace -->
+  <include file="$(dirname)/python/namespace_aware.launch.py">
+    <arg name="expected_ns" value="/$(var system_ns)"/>
+  </include>
+
+  <pop-ros-namespace/>
+</launch>

@@ -1,0 +1,38 @@
+# python generated files
+__pycache__/
+*.py[oc]
+*.so
+build/
+dist/
+wheels/
+*.egg-info
+
+# venv
+.venv
+
+# editor
+*~
+.*~
+\#*#
+*.swp
+*.swo
+
+# Added by cargo
+**/target
+
+# Created by colcon build
+/build/
+/install/
+/log/
+
+# Node.js dependencies for Web UI linting
+node_modules/
+package-lock.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+/tmp/
+record.json

@@ -1,0 +1,4 @@
+<launch>
+    <include file="$(dirname)/test_yaml_preset.launch.yaml" />
+    <node pkg="demo_nodes_cpp" exec="talker" name="$(var velocity_smoother_type)" />
+</launch>

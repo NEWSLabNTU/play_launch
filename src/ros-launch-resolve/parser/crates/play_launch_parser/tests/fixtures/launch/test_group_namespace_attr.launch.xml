@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- Test: group with namespace attribute wrapping an include.
+     Tests the <group namespace="..."> form (B2 edge case).
+     The node namespace should be /sensing even if scope ns metadata differs. -->
+<launch>
+  <group namespace="sensing">
+    <include file="../includes/included.launch.xml"/>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="listener" name="outer_node"/>
+</launch>

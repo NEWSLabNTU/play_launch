@@ -1,0 +1,11 @@
+launch:
+- arg:
+    name: bag_name
+    default: test_bag
+- set_env:
+    name: ROSBAG_DIR
+    value: /tmp/bags
+- executable:
+    cmd: "ros2 bag record -a -o $(var bag_name)"
+    name: rosbag_recorder
+    output: screen

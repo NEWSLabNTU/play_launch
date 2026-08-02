@@ -1,0 +1,4 @@
+<launch>
+  <!-- Include using package share path -->
+  <include file="$(find-pkg-share demo_nodes_cpp)/launch/topics/talker_listener.launch.xml" />
+</launch>

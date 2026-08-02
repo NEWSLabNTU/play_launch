@@ -1,0 +1,7 @@
+# Ignore test outputs
+output/
+*.json
+*.log
+
+# Ignore Autoware symlink (user-specific)
+/scripts/activate_autoware.sh

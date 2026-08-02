@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Declare a launch argument for container name -->
+  <arg name="container_name" default="my_container"/>
+
+  <!-- Create a container first -->
+  <node_container name="$(var container_name)" namespace="/test">
+    <composable_node pkg="initial_pkg" plugin="initial_plugin" name="initial_node"/>
+  </node_container>
+
+  <!-- Dynamically load additional composable nodes into the container -->
+  <load_composable_node target="/test/$(var container_name)">
+    <composable_node pkg="dynamic_pkg1" plugin="DynamicPlugin1" name="dynamic_node_1">
+      <param name="param1" value="value1"/>
+      <remap from="input" to="/test/input"/>
+    </composable_node>
+    <composable_node pkg="dynamic_pkg2" plugin="DynamicPlugin2" name="dynamic_node_2" namespace="/custom_ns">
+      <param name="param2" value="value2"/>
+    </composable_node>
+  </load_composable_node>
+
+  <!-- Test with relative target -->
+  <group>
+    <push-ros-namespace namespace="planning"/>
+    <node_container name="planning_container" namespace="">
+      <composable_node pkg="planner_pkg" plugin="PlannerPlugin" name="planner"/>
+    </node_container>
+
+    <load_composable_node target="planning_container">
+      <composable_node pkg="validator_pkg" plugin="ValidatorPlugin" name="validator"/>
+    </load_composable_node>
+  </group>
+</launch>

@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Test basic substitution types -->
+  <arg name="test_string" default="hello"/>
+  <arg name="test_int" default="42"/>
+  <arg name="test_float" default="3.14"/>
+  <arg name="test_bool" default="true"/>
+
+  <!-- Test substitution concatenation -->
+  <arg name="pkg_name" default="test_pkg"/>
+  <arg name="concatenated" default="$(var pkg_name)_suffix"/>
+
+  <!-- Test find-pkg-share with nested substitution -->
+  <arg name="pkg_desc" default="$(var pkg_name)_description"/>
+  <arg name="pkg_path" default="$(find-pkg-share $(var pkg_desc))/config/test.yaml"/>
+
+  <!-- Test list concatenation (should result in single string) -->
+  <arg name="path_part1" default="/first/path"/>
+  <arg name="path_part2" default="/second/path"/>
+
+  <!-- Simple nodes to verify resolution -->
+  <node pkg="$(var test_string)" exec="test_exec" name="test_node">
+    <param name="int_param" value="$(var test_int)"/>
+    <param name="float_param" value="$(var test_float)"/>
+    <param name="bool_param" value="$(var test_bool)"/>
+    <param name="concat_param" value="$(var concatenated)"/>
+  </node>
+</launch>

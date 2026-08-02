@@ -1,0 +1,5 @@
+<launch>
+  <arg name="node_name" default="default_node" />
+
+  <node pkg="demo_nodes_cpp" exec="talker" name="$(var node_name)" />
+</launch>

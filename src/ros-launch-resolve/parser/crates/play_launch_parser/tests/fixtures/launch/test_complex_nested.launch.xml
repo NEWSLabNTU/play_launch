@@ -1,0 +1,85 @@
+<launch>
+  <!-- Complex nested launch file simulating real-world ROS 2 scenarios -->
+
+  <!-- Arguments with defaults -->
+  <arg name="robot_name" default="robot1" />
+  <arg name="use_sim_time" default="true" />
+  <arg name="use_rviz" default="false" />
+  <arg name="log_level" default="info" />
+
+  <!-- Global environment variables -->
+  <set_env name="ROS_DOMAIN_ID" value="42" />
+  <set_env name="RCUTILS_LOGGING_USE_STDOUT" value="1" />
+
+  <!-- Global parameters -->
+  <set_parameter name="use_sim_time" value="$(var use_sim_time)" />
+
+  <!-- Nested namespaces with multiple levels -->
+  <group>
+    <push-ros-namespace namespace="$(var robot_name)"/>
+    <push-ros-namespace ns="sensors" />
+
+    <!-- Camera nodes -->
+    <group>
+      <push-ros-namespace ns="camera" />
+      <node pkg="camera_driver" exec="camera_node" name="front_camera">
+        <param name="frame_id" value="camera_link" />
+        <param name="fps" value="30" />
+        <remap from="image_raw" to="front/image_raw" />
+      </node>
+      <pop-ros-namespace />
+    </group>
+
+    <!-- Lidar nodes -->
+    <group>
+      <push-ros-namespace ns="lidar" />
+      <node pkg="lidar_driver" exec="lidar_node" name="front_lidar" if="$(var use_sim_time)">
+        <param name="frame_id" value="lidar_link" />
+        <param name="scan_rate" value="10" />
+        <env name="LIDAR_CONFIG" value="/opt/config/lidar.yaml" />
+      </node>
+      <pop-ros-namespace />
+    </group>
+
+    <pop-ros-namespace />
+
+    <!-- Navigation stack -->
+    <group>
+      <push-ros-namespace ns="navigation" />
+
+      <!-- Map server -->
+      <node pkg="nav2_map_server" exec="map_server" name="map_server" unless="$(var use_sim_time)">
+        <param name="yaml_filename" value="/opt/maps/office.yaml" />
+      </node>
+
+      <!-- AMCL -->
+      <node pkg="nav2_amcl" exec="amcl" name="amcl">
+        <param name="min_particles" value="500" />
+        <param name="max_particles" value="2000" />
+        <remap from="scan" to="/$(var robot_name)/sensors/lidar/scan" />
+      </node>
+
+      <pop-ros-namespace />
+    </group>
+  </group>
+
+  <!-- Visualization (outside robot namespace) -->
+  <group if="$(var use_rviz)">
+    <node pkg="rviz2" exec="rviz2" name="rviz2">
+      <param name="display_config" value="/opt/rviz/config.rviz" />
+    </node>
+  </group>
+
+  <!-- Executables with arguments -->
+  <executable cmd="ros2" if="$(var use_sim_time)">
+    <arg value="bag" />
+    <arg value="play" />
+    <arg value="/opt/bags/test.bag" />
+  </executable>
+
+  <!-- Conditional includes -->
+  <include file="../includes/robot_description.launch.xml" if="$(var use_sim_time)">
+    <arg name="robot_name" value="$(var robot_name)" />
+    <arg name="use_sim_time" value="$(var use_sim_time)" />
+  </include>
+</launch>

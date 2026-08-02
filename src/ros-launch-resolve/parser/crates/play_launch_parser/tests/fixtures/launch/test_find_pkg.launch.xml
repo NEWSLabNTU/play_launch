@@ -1,0 +1,5 @@
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker">
+    <param name="config_file" value="$(find-pkg-share demo_nodes_cpp)/config/params.yaml" />
+  </node>
+</launch>

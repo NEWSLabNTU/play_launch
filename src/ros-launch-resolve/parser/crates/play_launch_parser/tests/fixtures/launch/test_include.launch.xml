@@ -1,0 +1,12 @@
+<launch>
+  <!-- Include without args - should use default -->
+  <include file="../includes/included.launch.xml" />
+
+  <!-- Include with args - should override default -->
+  <include file="../includes/included.launch.xml">
+    <arg name="node_name" value="custom_talker" />
+  </include>
+
+  <!-- Local node -->
+  <node pkg="demo_nodes_cpp" exec="listener" name="local_listener" />
+</launch>

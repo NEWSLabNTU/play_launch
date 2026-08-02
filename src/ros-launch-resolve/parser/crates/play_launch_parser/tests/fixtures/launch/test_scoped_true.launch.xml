@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- Test: scoped="true" (default) reverts namespace after group. -->
+<launch>
+  <group scoped="true">
+    <push-ros-namespace namespace="scoped_ns"/>
+    <node pkg="demo_nodes_cpp" exec="talker" name="inside"/>
+  </group>
+  <!-- This node should NOT have scoped_ns -->
+  <node pkg="demo_nodes_cpp" exec="listener" name="outside"/>
+</launch>
