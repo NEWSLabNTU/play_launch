@@ -5,8 +5,13 @@ members = [
 ]
 exclude = [
     "tests",
-    # RFC-0060 layer 2 — its own workspace, vendored as a submodule. Listing it
-    # as a member here would merge the two graphs and defeat the split.
+    # RFC-0060 layer 2 — its own workspace, in-tree since phase-55 W1. Listing
+    # it as a member here would merge the two graphs and defeat the split, and
+    # this line is now the ONLY thing preventing that: the submodule boundary
+    # that used to make the separation visible is gone, so nothing but this
+    # `exclude` keeps the `[patch.crates-io]` below out of the resolver's
+    # dependency graph. `just check-layer2-isolation` is the test that fails if
+    # it is ever removed.
     "src/ros-launch-resolve",
     "src/vendor/rcl_interception_sys",
     "src/spsc_shm",

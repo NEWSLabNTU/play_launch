@@ -1,6 +1,0 @@
-[submodule "third-party/ros-launch-manifest"]
-	path = third-party/ros-launch-manifest
-	url = https://github.com/NEWSLabNTU/ros-launch-manifest.git
-[submodule "parser"]
-	path = parser
-	url = https://github.com/jerry73204/play_launch_parser.git
