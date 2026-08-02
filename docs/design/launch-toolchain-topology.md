@@ -109,6 +109,64 @@ self-contained launch file. Anything using `$(find-pkg-share …)` still needs
 `AMENT_PREFIX_PATH` at runtime. "No ROS needed" holds for building and
 running the resolver, not for every launch file it may be handed.
 
+## Enforcing it
+
+The measurements above were a snapshot. As of 2026-08-02 they are a gate:
+`ros-launch-resolve/scripts/check-layer2-isolation.sh`, wired into
+`just check` and into a CI job that runs on a bare runner with no ROS
+installed at all rather than in the builder container.
+
+The invariant was already written down — the layer-2 workspace manifest says
+this workspace must build "with no ROS install, no ament environment and no
+colcon" — but nothing checked it, and the failure mode is silent: every
+developer shell and every CI job in this repo has ROS sourced, so a resolver
+that started needing `rclrs` would keep passing the whole suite while becoming
+unbuildable for nano-ros. The gate asserts its preconditions and *fails* when
+they are not met rather than skipping, because issue 0012 was precisely a
+check that reported success on the machines where the drift it looked for was
+guaranteed.
+
+Two things surfaced while building it.
+
+**The `exclude` is necessary but not sufficient.** Cargo walks parent
+directories for `.cargo/config.toml`, and that walk does not stop at a
+workspace boundary or at the `exclude` list. Checked out inside `play_launch`,
+layer 2 inherits its colcon-generated `[patch.crates-io]` and
+`-L native=.../install/...` rustflags. This is inert today — the patches land
+in `Cargo.lock` as `[[patch.unused]]`, which is itself evidence the graph does
+not want them — and it is unchanged by the merge, since the directory sits in
+the same place either way. But it means an in-tree run is not clean-clone
+equivalent, so the gate reports the inheritance and offers `--standalone`,
+which copies the workspace outside every contributing parent and builds there:
+12.1s cold, matching the 11.6s measured independently. CI needs no such trick,
+because `.cargo/config.toml` is gitignored and never checked out.
+
+**A zero here is a measurement, not a broken grep.** The same detector run
+against `play_launch` — layer 3 — flags `ament_rs`, `rclrs`, `rosidl_cargo`
+and `rosidl_runtime_rs`.
+
+## What the seam costs, observed
+
+While wiring the gate, `just check` turned out to have been failing since
+`adc33a7`, the commit that extracted the CLI. It had left `DumpArgs`,
+`DumpSubcommand` and two tests referring to a `Command::Dump` variant it had
+just deleted, so `cargo check --all-targets` did not compile. Cleaning that up
+found `PlotArgs` and three `Contract*` structs in the same state, and the
+mirror-image defect on the other side: the extracted binary's `--help`
+introduced itself as `play_launch` and advertised `launch`, `run` and
+`replay` — verbs it has never had.
+
+None of it warned, for one reason: **`pub` items in a `pub` module are never
+reported as `dead_code`**. The residue of a verb moved across a repository
+boundary is invisible to the compiler on both sides.
+
+This is evidence for the argument above rather than a digression. The claim is
+not that repository splits cause bugs; it is that *this* seam has no
+mechanical check across it, so drift accumulates until something unrelated
+trips over it. The layering has such a check — that is what the isolation gate
+is. The repository boundary has none, and it is not obvious what one would
+look like.
+
 ## Consequences
 
 - `play_launch` and nano-ros each depend on `ros-launch-manifest` by git tag,

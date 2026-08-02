@@ -28,6 +28,36 @@ what any consumer links, and the verb reshape (`check` → argument, `replay` �
 model-based + rename). That last one is user-facing and breaking; it gets its
 own phase.
 
+## Status (2026-08-02)
+
+**Waiting on W0.** Everything that does not depend on the RFC decision is
+done; nothing that does has been started.
+
+Landed ahead of the merge, because it is worth having whether or not the
+merge happens:
+
+- **W1's acceptance criterion is now an executable gate**, not a one-off
+  measurement — `ros-launch-resolve/scripts/check-layer2-isolation.sh`,
+  `just check-layer2-isolation` (folded into `just check`), and a CI job on a
+  bare runner with no ROS at all. Details and the two findings it turned up
+  are in the design doc's "Enforcing it" section.
+- **`just check` passes end to end again.** It had been failing since
+  `adc33a7`: that commit moved `dump` to ros-launch-resolve and dropped
+  `Command::Dump`, but left `DumpArgs`, `DumpSubcommand` and two tests
+  destructuring the removed variant, so `cargo check --all-targets` did not
+  compile. Removing the residue turned up `PlotArgs` and the three
+  `Contract*` structs in the same state, and the mirror-image defect in the
+  extracted binary, whose `--help` still introduced itself as `play_launch`
+  and advertised `launch`, `run` and `replay`. Both halves of the split had
+  drifted, in opposite directions, and neither warned: **`pub` items in a
+  `pub` module are never reported as `dead_code`**, so an extracted verb's
+  leftovers are invisible to the compiler. Both sides now have a test that
+  fails if `--help` names a verb the binary lacks.
+
+The relevance to this phase is not incidental. Every one of those defects is
+a seam artifact — things left behind on one side of a split that no build on
+either side could see. That is the cost being weighed in W0.
+
 ## W0 — Ratify the boundary change (BLOCKING)
 
 RFC-0060 is Stable and specifies three repositories. This phase proposes two.
@@ -81,6 +111,30 @@ merge broke the workspace boundary, not that the property was never there.
 - [ ] Drop the nested submodule
 - [ ] Coordinate the tag with nano-ros — they consume the same crates and must
       move together or pin the older tag deliberately
+
+**This cannot be done one repository at a time.** Measured 2026-08-02: three
+repositories reach the manifest crates by path through the nested submodule —
+`play_launch/src/play_launch/Cargo.toml`
+(`../ros-launch-resolve/third-party/ros-launch-manifest/...`),
+`ros-launch-resolve` itself (workspace deps), and nano-ros in four manifests
+(`nros-cli-core`, `nros-orchestration-ir`, `nros-macros`, `nros-tests`, via
+`.../third-party/ros-launch-resolve/third-party/ros-launch-manifest/...`).
+
+Convert one and not the others and cargo resolves two distinct packages with
+the same name from different sources. They do not unify, so every type that
+crosses the boundary — `SystemModel` above all — becomes two incompatible
+types and the consumer stops compiling. The three moves have to land
+together.
+
+That coupling is independent of W0: it is true whether or not the merge
+happens, and it is the strongest argument that the *repository* count is not
+what makes these layers separable.
+
+Unrelated but worth passing on: nano-ros has an untracked
+`packages/cli/third-party/ros-launch-manifest/` directory on disk that git
+does not know about — not a submodule, not vendored, just a stale copy left
+from before RFC-0060 moved it. It confuses exactly this analysis. Their
+cleanup, not ours.
 
 ## W3 — Documentation
 
