@@ -6,7 +6,6 @@
 //! colcon-built message set (RFC-0060).
 
 mod common;
-mod config;
 mod contract;
 mod dump;
 mod launch;
