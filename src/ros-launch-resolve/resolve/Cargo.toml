@@ -1,0 +1,38 @@
+# The resolve pipeline: LaunchDump -> manifests -> SystemModel -> schedule.
+#
+# Lifted from play_launch's `ros/` module with history preserved. Depends on
+# the spec layer and the launch parser; deliberately NOT on rclrs, generated
+# messages, or anything requiring colcon.
+[package]
+name = "ros-launch-resolve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Resolve a ROS 2 launch tree into a checked SystemModel"
+
+[dependencies]
+ros-launch-manifest-types = { workspace = true }
+ros-launch-manifest-model = { workspace = true }
+ros-launch-manifest-sched = { workspace = true }
+ros-launch-manifest-check = { workspace = true }
+play_launch_parser = { workspace = true }
+eyre = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml_ng = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "macros", "sync", "time"] }
+chrono = "0.4"
+# ValueEnum only — the pipeline branches on these modes, so they live with the
+# pipeline rather than in a consumer's option types.
+clap = { version = "4", features = ["derive"] }
+sha2 = { workspace = true }
+# `.launch.py` executes against the USER's interpreter — the one external
+# requirement of this layer, and the reason it is a separate process from the
+# portable consumers that link it.
+pyo3 = { version = "0.24", features = ["auto-initialize", "py-clone"] }
+
+[dev-dependencies]
+tempfile = "3"

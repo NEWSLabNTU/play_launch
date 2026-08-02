@@ -1,0 +1,35 @@
+# ros-launch-resolve — the resolver layer (RFC-0060 layer 2).
+#
+# A ROS launch tree in, a checked `SystemModel` out. Sits between
+# `ros-launch-manifest` (the spec, theory and algorithms — no ROS, no Python)
+# and `play_launch` (the Linux runtime).
+#
+# THE INVARIANT: this workspace must resolve and build under PLAIN CARGO, with
+# no ROS install, no ament environment and no colcon. CPython is the one
+# external requirement, and only because `.launch.py` must be executed against
+# the user's interpreter. If a dependency ever needs colcon-generated crates,
+# it belongs in play_launch, not here — that coupling is exactly what this
+# layer exists to remove for downstream consumers (nano-ros issue 0285).
+[workspace]
+resolver = "2"
+members = ["resolve", "cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/NEWSLabNTU/ros-launch-resolve"
+
+[workspace.dependencies]
+ros-launch-manifest-types = { path = "third-party/ros-launch-manifest/types" }
+ros-launch-manifest-model = { path = "third-party/ros-launch-manifest/model" }
+ros-launch-manifest-sched = { path = "third-party/ros-launch-manifest/sched" }
+ros-launch-manifest-check = { path = "third-party/ros-launch-manifest/check" }
+play_launch_parser = { path = "parser/crates/play_launch_parser" }
+eyre = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+toml = "0.8"
+tracing = "0.1"
+sha2 = "0.10"
