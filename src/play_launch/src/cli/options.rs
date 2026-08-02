@@ -73,7 +73,6 @@ pub enum Command {
         play_launch replay --model system_model.yaml --web-addr 0.0.0.0:8080")]
     Replay(ReplayArgs),
 
-
     /// Grant CAP_SYS_PTRACE to the I/O helper (for per-process I/O
     /// monitoring). Requires sudo. NOTE: the main binary is deliberately NOT
     /// capped — a file capability would put it in secure-execution mode and
@@ -370,32 +369,6 @@ pub struct RunArgs {
 
     #[command(flatten)]
     pub common: CommonOptions,
-}
-
-/// Arguments for dump command
-#[derive(Args)]
-pub struct DumpArgs {
-    #[command(subcommand)]
-    pub subcommand: DumpSubcommand,
-
-    /// Output file for the dump. Defaults to `system_model.yaml`. May be
-    /// given before or after the `launch` subcommand and its launch
-    /// arguments.
-    #[arg(long, short = 'o', global = true)]
-    pub output: Option<PathBuf>,
-
-    /// Enable debug output during dump. May be given before or after the
-    /// subcommand.
-    #[arg(long, global = true)]
-    pub debug: bool,
-}
-
-#[derive(Subcommand)]
-pub enum DumpSubcommand {
-    /// Dump a launch file execution — emits the SystemModel
-    /// (`system_model.yaml`), the one dump artifact (Phase 47.B2:
-    /// `record.json`/`--format` retired; `dump` always emits the model).
-    Launch(LaunchArgs),
 }
 
 /// Arguments for replay command
@@ -895,55 +868,6 @@ mod flag_ordering_tests {
         };
         assert_eq!(args.launch_arguments, vec!["mode:=velodyne".to_string()]);
         assert_eq!(args.sched, Some(PathBuf::from("system.posix.yaml")));
-    }
-
-    #[test]
-    fn dump_launch_flag_after_two_launch_arguments() {
-        // The exact Autoware shape this wave must verify end-to-end:
-        // multiple KEY:=VALUE args, then a flag, all after `dump launch`.
-        let opts = parse(&[
-            "dump",
-            "launch",
-            "pkg",
-            "file.launch.xml",
-            "vehicle_model:=sample_vehicle",
-            "sensor_model:=sample_sensor_kit",
-            "--output",
-            "/tmp/aw.yaml",
-        ])
-        .expect("--output after KEY:=VALUE launch args must parse (dump's global flags)");
-        let Command::Dump(dump_args) = opts.command else {
-            panic!("expected Dump");
-        };
-        assert_eq!(dump_args.output, Some(PathBuf::from("/tmp/aw.yaml")));
-        // Phase 47.B2 retired `dump run`: `DumpSubcommand` now has exactly
-        // one variant, so this destructure is irrefutable — no `else` arm.
-        let DumpSubcommand::Launch(args) = dump_args.subcommand;
-        assert_eq!(
-            args.launch_arguments,
-            vec![
-                "vehicle_model:=sample_vehicle".to_string(),
-                "sensor_model:=sample_sensor_kit".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn dump_launch_flag_before_subcommand_still_works() {
-        let opts = parse(&[
-            "dump",
-            "--output",
-            "/tmp/aw.yaml",
-            "launch",
-            "pkg",
-            "file.launch.xml",
-            "vehicle_model:=sample_vehicle",
-        ])
-        .expect("--output before `launch` must still parse");
-        let Command::Dump(dump_args) = opts.command else {
-            panic!("expected Dump");
-        };
-        assert_eq!(dump_args.output, Some(PathBuf::from("/tmp/aw.yaml")));
     }
 
     #[test]

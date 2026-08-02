@@ -98,9 +98,11 @@ mod tests {
 
     #[test]
     fn from_settings_roundtrip() {
-        let mut s = ComposableNodeLoadingSettings::default();
-        s.load_total_budget_secs = 1200;
-        s.load_node_attempts = 0; // clamped to 1
+        let s = ComposableNodeLoadingSettings {
+            load_total_budget_secs: 1200,
+            load_node_attempts: 0, // clamped to 1
+            ..Default::default()
+        };
         let t = LoadTimings::from_settings(&s);
         assert_eq!(t.total_budget, Duration::from_secs(1200));
         assert_eq!(t.max_attempts, 1);

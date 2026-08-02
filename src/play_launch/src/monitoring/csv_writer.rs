@@ -13,6 +13,7 @@ use tracing::debug;
 use super::resource_monitor::{ResourceMetrics, SystemStats};
 
 /// Manages CSV writers for per-process metrics and system-wide stats.
+#[derive(Default)]
 pub struct CsvState {
     pub csv_writers: HashMap<u32, Writer<File>>, // PID -> CSV writer
     pub system_csv_writer: Option<Writer<File>>, // System-wide stats CSV writer
@@ -20,10 +21,7 @@ pub struct CsvState {
 
 impl CsvState {
     pub fn new() -> Self {
-        Self {
-            csv_writers: HashMap::new(),
-            system_csv_writer: None,
-        }
+        Self::default()
     }
 
     pub fn write_csv(&mut self, output_dir: &Path, metrics: &ResourceMetrics) -> Result<()> {

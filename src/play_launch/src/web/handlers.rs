@@ -98,11 +98,10 @@ pub async fn list_nodes(
             // Populate container_name for composable nodes
             if summary.node_type == super::web_types::NodeType::ComposableNode
                 && let Some(ref target) = summary.target_container
+                && let Some((id, name)) = resolve_container(&container_lookup, target)
             {
-                if let Some((id, name)) = resolve_container(&container_lookup, target) {
-                    summary.container_id = Some(id.clone());
-                    summary.container_name = Some(name.clone());
-                }
+                summary.container_id = Some(id.clone());
+                summary.container_name = Some(name.clone());
             }
             summary
         })

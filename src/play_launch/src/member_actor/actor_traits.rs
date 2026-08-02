@@ -3,6 +3,7 @@
 //! This module defines the core trait that all member actors implement.
 
 use eyre::Result;
+use std::future::Future;
 
 /// Core trait for all member actors
 ///
@@ -16,5 +17,11 @@ pub trait MemberActor: Send + 'static {
     /// - The actor reaches a terminal state (Stopped/Failed)
     /// - A shutdown signal is received
     /// - An unrecoverable error occurs
-    async fn run(self) -> Result<()>;
+    ///
+    /// Spelled `-> impl Future + Send` rather than `async fn` because every
+    /// caller hands the future to `tokio::spawn`, which requires `Send`. An
+    /// `async fn` in a trait leaves that bound unstated, so an implementation
+    /// that captured a non-`Send` value across an await would fail at the
+    /// spawn site instead of here.
+    fn run(self) -> impl Future<Output = Result<()>> + Send;
 }
