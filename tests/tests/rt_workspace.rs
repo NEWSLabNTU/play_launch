@@ -1060,7 +1060,7 @@ fn resolve_without_platform_file_omits_execution_sched() {
 
 /// Phase 46.4/47.B3: the Phase 43.1 model↔record binding gate is removed,
 /// and the legacy `--input-file record.json` compat path is hard-cut —
-/// `replay --model` spawns straight from the model's `structure.nodes`, with
+/// `up --model` spawns straight from the model's `structure.nodes`, with
 /// no record companion required OR possible. Resolves `bringup.launch.xml`
 /// into a model in one scratch dir, then replays it from a *different*,
 /// empty working directory (no `record.json` anywhere near it) and asserts
@@ -1099,7 +1099,7 @@ fn replay_model_spawns_without_record_companion() {
     let mut cmd = fixtures::play_launch_cmd(&env);
     cmd.current_dir(work_tmp.path());
     cmd.args([
-        "replay",
+        "up",
         "--model",
         model_path.to_str().unwrap(),
         "--disable-web-ui",
@@ -1113,7 +1113,7 @@ fn replay_model_spawns_without_record_companion() {
     // alone drives the spawn.
     assert!(!work_tmp.path().join("record.json").exists());
 
-    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch up");
 
     let play_log = work_tmp.path().join("play_log/latest");
     fixtures::wait_for_processes(&play_log, 3, Duration::from_secs(30));
@@ -1122,7 +1122,7 @@ fn replay_model_spawns_without_record_companion() {
     assert_eq!(
         actual, 3,
         "process count mismatch: actual={actual}, expected=3 (2 nodes + 1 \
-         container) — replay --model must spawn cleanly with no record \
+         container) — up --model must spawn cleanly with no record \
          companion present"
     );
 
@@ -1195,14 +1195,14 @@ fn resolve_parser_python_produces_model_that_replays_cleanly() {
     let mut cmd = fixtures::play_launch_cmd(&env);
     cmd.current_dir(work_tmp.path());
     cmd.args([
-        "replay",
+        "up",
         "--model",
         model_path.to_str().unwrap(),
         "--disable-web-ui",
         "--disable-monitoring",
         "--disable-diagnostics",
     ]);
-    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch up");
 
     let play_log = work_tmp.path().join("play_log/latest");
     fixtures::wait_for_processes(&play_log, 3, Duration::from_secs(30));
@@ -1343,7 +1343,7 @@ fn check_export_graph_dot_extension_dispatch() {
 /// `dump <launch> -o <path>` with no `--format` (the new default) must
 /// produce the SystemModel — the exact same artifact `resolve` produces —
 /// not a record.json, and must NOT leave a `<path>.record.json` companion
-/// on disk. Then `replay --model <path>` must spawn cleanly from it (same
+/// on disk. Then `up --model <path>` must spawn cleanly from it (same
 /// 3-process outcome `replay_model_spawns_without_record_companion`
 /// proves for `resolve`), confirming `dump` and `resolve` fully converged.
 #[test]
@@ -1409,14 +1409,14 @@ fn dump_default_emits_model_and_replays_cleanly() {
     let mut cmd = fixtures::play_launch_cmd(&env);
     cmd.current_dir(work_tmp.path());
     cmd.args([
-        "replay",
+        "up",
         "--model",
         model_path.to_str().unwrap(),
         "--disable-web-ui",
         "--disable-monitoring",
         "--disable-diagnostics",
     ]);
-    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch replay");
+    let _proc = ManagedProcess::spawn(&mut cmd).expect("failed to spawn play_launch up");
 
     let play_log = work_tmp.path().join("play_log/latest");
     fixtures::wait_for_processes(&play_log, 3, Duration::from_secs(30));
@@ -1424,7 +1424,7 @@ fn dump_default_emits_model_and_replays_cleanly() {
     assert_eq!(
         actual, 3,
         "process count mismatch: actual={actual}, expected=3 (2 nodes + 1 container) — \
-         replay --model must spawn cleanly from a `dump`-produced model"
+         up --model must spawn cleanly from a `dump`-produced model"
     );
 
     // _proc dropped here — ManagedProcess::drop kills the process group.
@@ -1494,22 +1494,28 @@ fn run_capture(
     (status, combined)
 }
 
-/// `replay --input-file <path>` and a `record.json`-shaped positional are a
+/// `up --input-file <path>` and a `record.json`-shaped positional are a
 /// HARD CUT (Phase 47.B3): the record.json replay surface is removed
 /// entirely. Both must fail with a CLEAN error (a deliberate non-zero exit
 /// code, NOT a signal-kill or a Rust panic/exit-101) carrying the helpful
-/// migration message pointing at `resolve`/`replay --model` — not clap's
+/// migration message pointing at `resolve`/`up --model` — not clap's
 /// bare "unexpected argument" and not an opaque YAML-parse failure.
+///
+/// Uses `up`, not `replay`: `replay` is now a hidden 0.9.0 migration
+/// variant (`commands::migrated`) that unconditionally redirects to `up`
+/// without looking at its arguments, so it can no longer exercise this
+/// validation — that lives in `handle_up` now. `replay`'s own redirect
+/// behavior is covered by `tests/tests/migrated_verbs.rs`.
 #[test]
-fn replay_input_file_flag_is_removed_and_errors_clearly() {
+fn up_input_file_flag_is_removed_and_errors_clearly() {
     if !require_rt_workspace() {
         return;
     }
     let env = fixtures::rt_workspace_env();
 
     for args in [
-        &["replay", "--input-file", "record.json"][..],
-        &["replay", "old_dump.record.json"][..],
+        &["up", "--input-file", "record.json"][..],
+        &["up", "old_dump.record.json"][..],
     ] {
         let (status, output) = run_capture(&env, args);
 
@@ -1518,44 +1524,46 @@ fn replay_input_file_flag_is_removed_and_errors_clearly() {
         let code = status.code();
         assert!(
             code.is_some(),
-            "replay {args:?} must exit with a code (clean error), not be killed by a signal:\n{output}"
+            "up {args:?} must exit with a code (clean error), not be killed by a signal:\n{output}"
         );
         assert!(
             !status.success() && code != Some(101),
-            "replay {args:?} must fail cleanly (deliberate non-zero exit, not a panic/exit-101): code={code:?}\n{output}"
+            "up {args:?} must fail cleanly (deliberate non-zero exit, not a panic/exit-101): code={code:?}\n{output}"
         );
         // Helpful migration message, not a bare clap/YAML error.
         let lower = output.to_lowercase();
         assert!(
-            lower.contains("record.json replay was removed") && lower.contains("replay --model"),
-            "replay {args:?} must print the Phase 47 record.json migration message pointing at `replay --model`:\n{output}"
+            lower.contains("record.json replay was removed") && lower.contains("up --model"),
+            "up {args:?} must print the Phase 47 record.json migration message pointing at `up --model`:\n{output}"
         );
     }
 }
 
-/// `replay` with no model at all (neither positional nor `--model`) must
+/// `up` with no model at all (neither positional nor `--model`) must
 /// fail with a CLEAN error (deliberate non-zero exit, not a crash) carrying
 /// the "requires a SystemModel" message — not panic, not silently no-op.
+///
+/// Uses `up`, not `replay` — see `up_input_file_flag_is_removed_and_errors_clearly`.
 #[test]
-fn replay_without_model_errors_clearly() {
+fn up_without_model_errors_clearly() {
     if !require_rt_workspace() {
         return;
     }
     let env = fixtures::rt_workspace_env();
 
-    let (status, output) = run_capture(&env, &["replay", "--disable-web-ui"]);
+    let (status, output) = run_capture(&env, &["up", "--disable-web-ui"]);
 
     let code = status.code();
     assert!(
         code.is_some(),
-        "replay with no model must exit with a code (clean error), not be killed by a signal:\n{output}"
+        "up with no model must exit with a code (clean error), not be killed by a signal:\n{output}"
     );
     assert!(
         !status.success() && code != Some(101),
-        "replay with no model must fail cleanly (deliberate non-zero exit, not a panic): code={code:?}\n{output}"
+        "up with no model must fail cleanly (deliberate non-zero exit, not a panic): code={code:?}\n{output}"
     );
     assert!(
         output.to_lowercase().contains("requires a systemmodel"),
-        "replay with no model must print the 'requires a SystemModel' guidance:\n{output}"
+        "up with no model must print the 'requires a SystemModel' guidance:\n{output}"
     );
 }

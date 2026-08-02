@@ -263,7 +263,7 @@ pub fn chain_colocation_warnings_for_plan(
 /// container and its chain-member composable nodes.
 ///
 /// **Placement decision**: computed here, at launch/replay time
-/// (`commands::replay`, after `container_contexts`/`SchedPlan` are both
+/// (`commands::up`, after `container_contexts`/`SchedPlan` are both
 /// built), rather than at `check` time
 /// (`ros_launch_resolve::ros::sched_loader::derive_sched_plan`/`check_sched`). `--container-mode`
 /// is a *runtime replay flag* with no equivalent at `check` time (`check`

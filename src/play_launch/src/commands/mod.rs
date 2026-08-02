@@ -5,19 +5,20 @@ pub(crate) mod common;
 pub mod context;
 pub mod launch;
 pub mod manifest;
-pub mod replay;
+pub mod migrated;
 pub mod resolve_compat;
 pub mod run;
 pub(crate) mod signal_handler;
+pub mod up;
 
 // Re-export command handlers
 pub use capabilities::{handle_setcap, handle_verify};
 pub use context::handle_context;
 pub use launch::handle_launch;
 pub use manifest::handle_check_manifest;
-pub use replay::handle_replay;
 pub use resolve_compat::handle_resolve;
 pub use run::handle_run;
+pub use up::handle_up;
 
 use std::collections::HashMap;
 use tracing::warn;

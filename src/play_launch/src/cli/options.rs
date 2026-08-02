@@ -45,7 +45,7 @@ pub enum Feature {
     play_launch launch demo_nodes_cpp topics/talker_listener.launch.py\n  \
     play_launch run demo_nodes_cpp talker\n  \
     play_launch resolve autoware_launch planning_simulator.launch.xml --out autoware.yaml\n  \
-    play_launch replay --model autoware.yaml")]
+    play_launch up --model autoware.yaml")]
 #[command(arg_required_else_help = true)]
 pub struct Options {
     #[command(subcommand)]
@@ -66,14 +66,21 @@ pub enum Command {
         play_launch run demo_nodes_cpp talker --ros-args -p topic:=chatter")]
     Run(RunArgs),
 
-    /// Replay from a SystemModel (the sole replay source; Phase 47.B3
-    /// retired the legacy `record.json`/`--input-file` compat path)
+    /// Bring a system up from a resolved SystemModel and supervise it.
+    ///
+    /// Renamed from `replay` in 0.9.0: it replays nothing. It loads a
+    /// declarative artifact and spawns from it — the old name was a fossil
+    /// of `record.json`, which Phase 47 removed.
     #[command(after_help = "Examples:\n  \
-        play_launch replay system_model.yaml\n  \
-        play_launch replay --model system_model.yaml --disable-all\n  \
-        play_launch replay --model system_model.yaml --enable monitoring --enable web-ui\n  \
-        play_launch replay --model system_model.yaml --web-addr 0.0.0.0:8080")]
-    Replay(ReplayArgs),
+        play_launch up system_model.yaml\n  \
+        play_launch up --model system_model.yaml --disable-all\n  \
+        play_launch up system_model.yaml --web-addr 0.0.0.0:8080")]
+    Up(UpArgs),
+
+    /// Renamed to `up` in 0.9.0. Hidden; accepts the old arguments so the
+    /// error can name the replacement. DELETE AT 1.0.0.
+    #[command(hide = true)]
+    Replay(UpArgs),
 
     /// Grant CAP_SYS_PTRACE to the I/O helper (for per-process I/O
     /// monitoring). Requires sudo. NOTE: the main binary is deliberately NOT
@@ -352,11 +359,11 @@ pub struct RunArgs {
     pub common: CommonOptions,
 }
 
-/// Arguments for replay command
+/// Arguments for the `up` command (renamed from `replay` in 0.9.0)
 #[derive(Args, Default)]
-pub struct ReplayArgs {
+pub struct UpArgs {
     /// SystemModel emitted by `play_launch resolve`/`dump` — the sole
-    /// replay source (Phase 47.B3: the deprecated `--input-file
+    /// spawn source (Phase 47.B3: the deprecated `--input-file
     /// record.json` compat path is retired). May be given positionally or
     /// via `--model`; giving both is an error.
     #[arg(value_name = "MODEL", conflicts_with = "model")]
@@ -378,8 +385,8 @@ pub struct ReplayArgs {
     pub explain: bool,
 
     /// (removed) The Phase 46 `--input-file record.json` replay flag.
-    /// Retained HIDDEN only so `replay --input-file ...` produces a helpful
-    /// migration error (see `handle_replay`) instead of clap's bare
+    /// Retained HIDDEN only so `up --input-file ...` produces a helpful
+    /// migration error (see `handle_up`) instead of clap's bare
     /// "unexpected argument" — Phase 47.B3 removed record.json replay
     /// entirely. Never used as a value.
     #[arg(long, hide = true, value_name = "PATH")]
@@ -389,7 +396,7 @@ pub struct ReplayArgs {
     pub common: CommonOptions,
 }
 
-impl ReplayArgs {
+impl UpArgs {
     /// The SystemModel path, however it was given (positional or `--model`).
     /// `clap`'s `conflicts_with` already rejects both being set.
     pub fn model_path(&self) -> Option<&PathBuf> {
@@ -762,6 +769,13 @@ mod flag_ordering_tests {
     /// warned: `pub` items in a `pub` module are never `dead_code`, so the
     /// residue of an extracted verb is invisible to the compiler. This test
     /// is the check that isn't.
+    ///
+    /// `replay` (0.9.0, renamed to `up`) is a different shape of "gone": it
+    /// stays in the `Command` enum as a hidden variant on purpose (see
+    /// `commands::migrated`), so it DOES still show up in
+    /// `get_subcommands()` -- only the subcommand-list half of this
+    /// assertion would be wrong for it. It still must never appear in
+    /// rendered `--help`, so that half of the check still applies.
     #[test]
     fn help_advertises_only_verbs_this_binary_has() {
         use clap::CommandFactory;
@@ -772,6 +786,8 @@ mod flag_ordering_tests {
             .collect();
         let help = cmd.clone().render_long_help().to_string();
 
+        // Fully gone: no variant at all, so absent from both the subcommand
+        // list and the rendered help.
         for gone in ["dump", "plot", "contract"] {
             assert!(
                 !verbs.iter().any(|v| v == gone),
@@ -782,9 +798,45 @@ mod flag_ordering_tests {
                 "--help invokes `play_launch {gone}`, a verb this binary does not have:\n{help}"
             );
         }
+        // Hidden migration verbs: still a variant (so it DOES appear in
+        // get_subcommands()), by design, so only the help-visibility half
+        // applies here. A single element today; later verb migrations add
+        // more (see `commands::migrated`), hence the loop shape.
+        #[allow(clippy::single_element_loop)]
+        for hidden in ["replay"] {
+            assert!(
+                verbs.iter().any(|v| v == hidden),
+                "`{hidden}` must still be a parseable variant (see commands::migrated) \
+                 so its error can name the replacement"
+            );
+            assert!(
+                !help.contains(&format!("  {hidden}")),
+                "`{hidden}` must not be listed in --help:\n{help}"
+            );
+        }
         for verb in &verbs {
             assert!(!verb.is_empty());
         }
+    }
+
+    /// `replay` must still parse -- so `commands::migrated::replay_renamed`
+    /// can build a helpful error naming `up` -- while staying invisible to
+    /// `--help`. Companion to `help_advertises_only_verbs_this_binary_has`,
+    /// which covers the "still not advertised" half generically; this test
+    /// pins the "still parses" half explicitly for the one verb where that
+    /// matters (issue 0285).
+    #[test]
+    fn hidden_migration_verbs_parse_but_are_not_advertised() {
+        use clap::CommandFactory;
+        let help = Options::command().render_long_help().to_string();
+        assert!(
+            !help.contains("  replay"),
+            "`replay` must not be listed in --help"
+        );
+        assert!(
+            parse(&["replay", "m.yaml"]).is_ok(),
+            "`replay` must still parse so its error can name the replacement"
+        );
     }
 
     #[test]
@@ -934,5 +986,31 @@ mod flag_ordering_tests {
             panic!("expected Run");
         };
         assert!(args.check);
+    }
+
+    #[test]
+    fn up_takes_a_model_positionally_and_via_flag() {
+        let a = parse(&["up", "system_model.yaml"]).expect("positional model must parse");
+        let Command::Up(args) = a.command else {
+            panic!("expected Up")
+        };
+        assert_eq!(args.model_path, Some(PathBuf::from("system_model.yaml")));
+
+        let b = parse(&["up", "--model", "system_model.yaml"]).expect("--model must parse");
+        let Command::Up(args) = b.command else {
+            panic!("expected Up")
+        };
+        assert_eq!(args.model, Some(PathBuf::from("system_model.yaml")));
+    }
+
+    #[test]
+    fn replay_still_parses_so_it_can_be_redirected() {
+        // Hidden, not deleted: it must accept the old arguments so the error
+        // can echo the user's own invocation back in the new form. clap's
+        // bare "unrecognized subcommand" is what took down every nano-ros
+        // platform's fixture build (issue 0285).
+        let opts = parse(&["replay", "system_model.yaml"])
+            .expect("`replay` must still PARSE so it can be redirected");
+        assert!(matches!(opts.command, Command::Replay(_)));
     }
 }

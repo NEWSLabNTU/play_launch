@@ -43,8 +43,11 @@ fn main() -> eyre::Result<()> {
         play_launch::cli::options::Command::Run(args) => {
             play_launch::commands::handle_run(args)?;
         }
+        play_launch::cli::options::Command::Up(args) => {
+            play_launch::commands::handle_up(args)?;
+        }
         play_launch::cli::options::Command::Replay(args) => {
-            play_launch::commands::handle_replay(args)?;
+            play_launch::commands::migrated::replay_renamed(args)?;
         }
         play_launch::cli::options::Command::Setcap => {
             play_launch::commands::handle_setcap()?;

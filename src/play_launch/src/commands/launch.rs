@@ -4,8 +4,8 @@
 //! `record.json` (or any other file) is written to disk anywhere on this
 //! path. The launch file is parsed straight into a [`LaunchDump`], a
 //! SystemModel is built from it in memory, and both are handed directly to
-//! the replay engine (`commands::replay::play`) — the same function
-//! `play_launch replay` uses, just called in-process instead of through a
+//! the replay engine (`commands::up::play`) — the same function
+//! `play_launch up` uses, just called in-process instead of through a
 //! second CLI invocation.
 
 use crate::cli::options::LaunchArgs;
@@ -143,6 +143,6 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
         }
 
         info!("Step 3/3: Replaying launch execution...");
-        super::replay::play(dump, std::sync::Arc::new(model), &args.common).await
+        super::up::play(dump, std::sync::Arc::new(model), &args.common).await
     })
 }

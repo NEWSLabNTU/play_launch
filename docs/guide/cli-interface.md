@@ -89,32 +89,33 @@ ros-launch-resolve dump launch autoware_launch planning_simulator.launch.xml \
 ros-launch-resolve dump --debug launch demo_nodes_cpp topics/talker_listener.launch.py
 ```
 
-### Replay Only
+### Up Only
 
 ```bash
-# Replay from a SystemModel — the sole replay source (Phase 47.B3 hard-cut
-# the legacy record.json/--input-file path). Positional or --model, not both.
-play_launch replay <system_model.yaml> [options...]
-play_launch replay --model <system_model.yaml> [options...]
+# Bring a system up from a SystemModel — the sole spawn source (Phase 47.B3
+# hard-cut the legacy record.json/--input-file path). Positional or --model,
+# not both. Renamed from `replay` in 0.9.0 (it replayed nothing).
+play_launch up <system_model.yaml> [options...]
+play_launch up --model <system_model.yaml> [options...]
 ```
 
 **Examples:**
 ```bash
-# Replay with monitoring config (monitoring is enabled by default; see --disable-monitoring)
-play_launch replay --model autoware.yaml --config myconfig.yaml --monitor-interval-ms 500
+# Up with monitoring config (monitoring is enabled by default; see --disable-monitoring)
+play_launch up --model autoware.yaml --config myconfig.yaml --monitor-interval-ms 500
 
-# Replay with a custom model + log dir
-play_launch replay --model autoware.yaml --log-dir logs/autoware_run1
+# Up with a custom model + log dir
+play_launch up --model autoware.yaml --log-dir logs/autoware_run1
 ```
 
 ## Common Options
 
-These options apply to `launch`, `run`, and `replay` subcommands:
+These options apply to `launch`, `run`, and `up` subcommands:
 
 ### Output Configuration
 - `--log-dir <path>`: Log directory for execution outputs (default: `play_log`)
 - `<system_model.yaml>` (positional) or `--model <path>`: SystemModel to
-  replay from — required (`replay` errors clearly if neither is given);
+  spawn from — required (`up` errors clearly if neither is given);
   spawns from `structure.nodes`, no companion record file. Giving both is
   an error.
 
@@ -170,7 +171,7 @@ record.json anywhere):
      construction; warnings embed in the model
 
 3. **Replay phase**: executes the launch **from the SystemModel**, calling
-   the same replay engine `play_launch replay` uses, directly (no second
+   the same replay engine `play_launch up` uses, directly (no second
    CLI invocation)
    - Spawns nodes and containers from `structure.nodes`; loads composable
      nodes via RCL services
@@ -188,7 +189,7 @@ contracts to check.
 |---|---|
 | `check` | diagnostic front-end — full source excerpts, `--explain`, rule filters |
 | `resolve` / `dump` | the build step — both emit the same checked `system_model.yaml` (the one user-facing artifact) |
-| `replay <model>` / `replay --model <model>` | the runtime — spawns and applies contracts/scheduling from the model; it's the ONLY replay source (Phase 47.B3 removed the record.json fallback) |
+| `up <model>` / `up --model <model>` | the runtime (renamed from `replay` in 0.9.0) — spawns and applies contracts/scheduling from the model; it's the ONLY spawn source (Phase 47.B3 removed the record.json fallback) |
 
 ### Manual Workflow
 
@@ -204,9 +205,10 @@ the `KEY:=VALUE` launch arguments — clap parses flags in any position
 ros-launch-resolve dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
 
-# Step 2: Replay from the model (monitoring is on by default; container
-# readiness settings like wait_for_service_ready live in --config, not CLI flags)
-play_launch replay \
+# Step 2: Bring the system up from the model (monitoring is on by default;
+# container readiness settings like wait_for_service_ready live in --config,
+# not CLI flags)
+play_launch up \
     --model autoware.yaml \
     --log-dir logs/run1
 ```
@@ -218,7 +220,7 @@ Equivalently, `resolve` builds the same model straight from the launch file
 play_launch resolve -o autoware.yaml --sched system.posix.yaml \
     autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
-play_launch replay --model autoware.yaml
+play_launch up --model autoware.yaml
 ```
 
 ## Environment Requirements
@@ -242,7 +244,7 @@ which play_launch  # Should show path in install/
 ## Exit Codes
 
 - `0`: Success
-- `1`: General error (dump failed, replay failed, etc.)
+- `1`: General error (dump failed, up failed, etc.)
 - `2`: Invalid arguments
 - `130`: Interrupted by user (Ctrl-C)
 

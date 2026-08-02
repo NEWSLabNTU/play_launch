@@ -1,4 +1,9 @@
-//! Replay command - replay recorded launch execution
+//! Up command - bring a system up from a resolved SystemModel and supervise it
+//!
+//! Renamed from `replay` in 0.9.0 (`commands::migrated`): it replays
+//! nothing, it loads a declarative SystemModel and spawns from it. The old
+//! name was a fossil of `record.json`, which Phase 47 removed as a
+//! user-facing artifact.
 
 use super::{
     common::{CleanupGuard, build_tokio_runtime, forward_state_events_and_wait},
@@ -31,7 +36,7 @@ use tracing::{debug, error, info, warn};
 /// ROS executor spin timeout — how long to wait for work before checking shutdown signal
 const EXECUTOR_SPIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
 
-pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
+pub fn handle_up(args: &cli::options::UpArgs) -> eyre::Result<()> {
     // Phase 47.B3 — the deprecated `--input-file record.json` compat path is
     // retired: the SystemModel is the sole replay source now (hard cut, not
     // a fallback). `clap`'s `conflicts_with` already rejects the positional
@@ -43,8 +48,8 @@ pub fn handle_replay(args: &cli::options::ReplayArgs) -> eyre::Result<()> {
     }
     let model_path = args.model_path().ok_or_else(|| {
         eyre::eyre!(
-            "replay requires a SystemModel: `play_launch replay <system_model.yaml>` or \
-             `play_launch replay --model <path>` (produce one with `play_launch resolve` or \
+            "up requires a SystemModel: `play_launch up <system_model.yaml>` or \
+             `play_launch up --model <path>` (produce one with `play_launch resolve` or \
              `play_launch dump`)"
         )
     })?;
@@ -1344,7 +1349,7 @@ fn record_json_replay_removed_msg(path: Option<&std::path::Path>) -> String {
          A pre-Phase-47 record.json cannot be replayed directly anymore — regenerate \
          the model from the launch file: `play_launch resolve <pkg> <launch_file> -o \
          model.yaml` (or `play_launch dump <pkg> <launch_file> -o model.yaml`), then \
-         `play_launch replay --model model.yaml`."
+         `play_launch up --model model.yaml`."
     )
 }
 

@@ -64,7 +64,7 @@ fn find_rt_helper_path() -> eyre::Result<PathBuf> {
 /// Does the resolved RT helper binary carry `CAP_SYS_NICE`?
 ///
 /// Used by the pre-spawn scheduling preflight (`commands::run`,
-/// `commands::replay`) to decide whether a non-root run can still apply RT
+/// `commands::up`) to decide whether a non-root run can still apply RT
 /// scheduling via the helper. `getcap` prints `cap_sys_nice=ep` while
 /// `setcap` is invoked with `cap_sys_nice+ep` — both forms are accepted.
 /// Returns `false` on any resolution/lookup failure (helper missing, `getcap`

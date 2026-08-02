@@ -22,7 +22,8 @@ fn get_verbose_flag(opts: &Options) -> bool {
     match &opts.command {
         crate::cli::options::Command::Launch(args) => args.common.verbose,
         crate::cli::options::Command::Run(args) => args.common.verbose, // Dump doesn't use CommonOptions
-        crate::cli::options::Command::Replay(args) => args.common.verbose, // Plot doesn't use CommonOptions
+        crate::cli::options::Command::Up(args) => args.common.verbose,
+        crate::cli::options::Command::Replay(args) => args.common.verbose, // hidden; DELETE AT 1.0.0
         crate::cli::options::Command::Setcap => false,
         crate::cli::options::Command::Verify => false,
         crate::cli::options::Command::Context(_) => false,
