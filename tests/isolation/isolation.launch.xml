@@ -1,0 +1,14 @@
+<!-- RFC-0060 layer-2 isolation fixture.
+     Self-contained ON PURPOSE: no $(find-pkg-share ...), no <include> of a
+     package-relative file. Resolving this must need CPython and nothing else,
+     so the gate measures the toolchain boundary rather than a launch file's
+     appetite for an ament index.
+     $(eval ...) is here deliberately — it routes unconditionally to CPython,
+     so a passing run proves libpython is FUNCTIONAL, not merely linked. -->
+<launch>
+  <arg name="ns" default="isolation"/>
+  <arg name="count" default="2"/>
+  <node pkg="demo_nodes_cpp" exec="talker" name="isolation_talker" namespace="$(var ns)">
+    <param name="answer" value="$(eval '21 * 2')"/>
+  </node>
+</launch>
