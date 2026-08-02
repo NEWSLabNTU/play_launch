@@ -67,6 +67,14 @@ pub enum Command {
     /// Dump launch expansion without resolving contracts or scheduling.
     Dump(DumpArgs),
 
+    /// Check manifest contracts against a launch file. No ROS install
+    /// required — the checker is a layer-2 crate.
+    #[command(after_help = "Examples:\n  \
+        ros-launch-resolve check my_bringup system.launch.xml\n  \
+        ros-launch-resolve check my_bringup system.launch.xml --format json\n  \
+        ros-launch-resolve check --contracts ~/contracts launch/system.launch.xml mode:=lidar")]
+    Check(CheckArgs),
+
     /// Eject a contract sidecar for a package.
     Contract(ContractArgs),
 
@@ -524,10 +532,104 @@ pub struct PlotArgs {
     pub list_metrics: bool,
 }
 
-// NOTE: the argument-parsing tests for `launch`, `run`, `replay` and `check`
-// moved to play_launch with those verbs — this crate no longer defines them.
-// Tests for the four launch-tree verbs belong here and are phase-312 W1.6
-// follow-up.
+/// Arguments for `ros-launch-resolve check`.
+///
+/// Deleted as dead by issue 0013 when the verb still lived in play_launch;
+/// restored verbatim from `a996e97^` now that the verb lives here. The 2026
+/// CLI verb reshape moved the diagnostics to layer 2 because the checker
+/// (`ros-launch-manifest-check`) is a layer-2 crate and needs no ROS install.
+#[derive(Args)]
+pub struct CheckArgs {
+    /// Package name or path to launch file
+    pub package_or_path: String,
+
+    /// Launch file name (if package_or_path is a package name)
+    pub launch_file: Option<String>,
+
+    /// Launch arguments in KEY:=VALUE format. Flags may be placed before or
+    /// after these (clap parses flags in any position); use `--` to force
+    /// remaining tokens to be treated as positional launch arguments.
+    pub launch_arguments: Vec<String>,
+
+    /// Overlay root for user-supplied contracts, mirroring the launch tree:
+    /// <dir>/<pkg>/launch/<stem>.contract.yaml. Checked before provider
+    /// sidecars.
+    #[arg(long, value_name = "PATH")]
+    pub contracts: Option<PathBuf>,
+
+    /// Disable the provider-sidecar channel for BOTH contracts
+    /// (<stem>.contract.yaml) and scheduling platform files
+    /// (<stem>.system.<target>.yaml) shipped next to the launch file.
+    /// On by default.
+    #[arg(long)]
+    pub no_provider_contracts: bool,
+
+    /// Path to a scheduling platform file — v2 `.yaml` schema (mapper +
+    /// resources + overrides) or legacy `.toml` (dispatched by extension).
+    /// When given, `check` also derives + validates a plan for `--target`.
+    #[arg(long)]
+    pub sched: Option<std::path::PathBuf>,
+
+    /// Which scheduling target the platform file must declare (`target:` in
+    /// the v2 schema; legacy `.toml` always implies `posix`). `posix` is
+    /// Linux RT (the only target `play_launch` itself applies); RTOS targets
+    /// (`zephyr`, `freertos`, ...) are for nano-ros's own consumption of the
+    /// same file format.
+    #[arg(long, default_value = "posix")]
+    pub target: String,
+
+    /// Output format: terminal (default, with source excerpts) or json
+    #[arg(long, default_value = "terminal")]
+    pub format: String,
+
+    /// Show only diagnostics from these rules. Repeat to allow multiple.
+    /// Example: --rule satisfiability --rule consistency
+    #[arg(long, value_name = "RULE_ID")]
+    pub rule: Vec<String>,
+
+    /// Print the merged scheduling plan with provenance per node (design
+    /// §7): which platform-file override, mapper-derived fact, or default
+    /// placement produced each node's final class/priority/core, plus the
+    /// platform-file and per-scope contract paths that fed the pipeline.
+    /// Only meaningful together with a resolved scheduling platform file
+    /// (`--sched`, or one resolved via the overlay/provider channels) — a
+    /// no-op note is printed otherwise (not an error).
+    #[arg(long)]
+    pub explain: bool,
+
+    /// Export the DECLARED causal graph (nodes, topics, pub/sub edges,
+    /// node/scope paths, cycle catalogue) to `<path>` instead of — in
+    /// addition to — the normal validation output. Format is picked by
+    /// extension: `.json` (default, for tooling) or `.dot` (Graphviz, for
+    /// human inspection via `dot -Tsvg`). Extension-less paths are written
+    /// as JSON. This is an export, not a validation step — existing rules
+    /// and exit codes are unaffected (Phase 42.1).
+    #[arg(long, value_name = "PATH")]
+    pub export_graph: Option<PathBuf>,
+}
+
+impl CheckArgs {
+    /// Build the two-step `ContractSources` from this command's flags.
+    ///
+    /// The overlay root is discovered (Phase 41.3 §3.2) when `--contracts`
+    /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
+    /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
+    /// `/etc/play_launch/contracts` — first existing wins.
+    pub fn contract_sources(&self) -> ros_launch_resolve::ros::manifest_loader::ContractSources {
+        ros_launch_resolve::ros::manifest_loader::ContractSources {
+            overlay: ros_launch_resolve::ros::manifest_loader::discover_overlay_root(
+                self.contracts.as_deref(),
+            ),
+            provider: !self.no_provider_contracts,
+        }
+    }
+}
+
+// NOTE: the argument-parsing tests for `launch`, `run` and `replay` moved to
+// play_launch with those verbs — this crate no longer defines them. `check`
+// moved back here (2026 CLI verb reshape, task 1) along with its test.
+// Tests for the three remaining launch-tree verbs belong here and are
+// phase-312 W1.6 follow-up.
 
 #[cfg(test)]
 mod tests {
@@ -621,5 +723,35 @@ mod tests {
         for present in ["resolve", "dump", "contract", "plot"] {
             assert!(help.contains(present), "--help omits the `{present}` verb");
         }
+    }
+
+    #[test]
+    fn check_accepts_the_full_diagnostic_surface() {
+        let opts = parse(&[
+            "check",
+            "my_bringup",
+            "system.launch.xml",
+            "mode:=lidar",
+            "--format",
+            "json",
+            "--rule",
+            "satisfiability",
+            "--rule",
+            "consistency",
+            "--explain",
+        ])
+        .expect("check must accept its diagnostic options after launch arguments");
+        let Command::Check(args) = opts.command else {
+            panic!("expected Check");
+        };
+        assert_eq!(args.package_or_path, "my_bringup");
+        assert_eq!(args.launch_file.as_deref(), Some("system.launch.xml"));
+        assert_eq!(args.launch_arguments, vec!["mode:=lidar".to_string()]);
+        assert_eq!(args.format, "json");
+        assert_eq!(
+            args.rule,
+            vec!["satisfiability".to_string(), "consistency".to_string()]
+        );
+        assert!(args.explain);
     }
 }

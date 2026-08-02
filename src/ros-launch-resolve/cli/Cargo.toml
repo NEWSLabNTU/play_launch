@@ -16,6 +16,7 @@ path = "src/main.rs"
 ros-launch-resolve = { path = "../resolve" }
 ros-launch-manifest-model = { workspace = true }
 ros-launch-manifest-check = { workspace = true }
+ros-launch-manifest-types = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 eyre = { workspace = true }
 ros-launch-manifest-sched = { workspace = true }

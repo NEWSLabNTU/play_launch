@@ -5,6 +5,7 @@
 //! `play_launch`, which is the layer that legitimately needs rclrs and a
 //! colcon-built message set (RFC-0060).
 
+mod check;
 mod common;
 mod contract;
 mod dump;
@@ -21,6 +22,7 @@ fn main() -> eyre::Result<()> {
     match &opts.command {
         Command::Resolve(args) => resolve::handle_resolve(args),
         Command::Dump(args) => dump::handle_dump(args),
+        Command::Check(args) => check::handle_check(args),
         // `contract` is a subcommand group; today `eject` is its only verb.
         Command::Contract(args) => match &args.subcommand {
             options::ContractSubcommand::Eject(eject) => contract::handle_contract_eject(eject),

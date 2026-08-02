@@ -8,7 +8,7 @@ use eyre::Result;
 use std::path::PathBuf;
 
 /// Resolve launch file path from package name or direct path
-pub(super) fn resolve_launch_file(
+pub(crate) fn resolve_launch_file(
     package_or_path: &str,
     launch_file: Option<&str>,
 ) -> Result<PathBuf> {

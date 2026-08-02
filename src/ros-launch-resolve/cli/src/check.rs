@@ -1,6 +1,7 @@
-//! `play_launch check` — parse a launch file and check manifest contracts.
+//! `ros-launch-resolve check` — parse a launch file and check manifest
+//! contracts. No ROS install required — the checker is a layer-2 crate.
 
-use crate::cli::options::CheckArgs;
+use crate::options::CheckArgs;
 use eyre::Result;
 use ros_launch_manifest_check::{
     Diagnostic, Severity, emit::diagnostic::emit_diagnostics, run_checks_with_spans,
@@ -9,15 +10,15 @@ use ros_launch_manifest_types::parse_manifest_str_with_spans;
 use ros_launch_resolve::ros::manifest_loader;
 use std::collections::HashSet;
 
-pub fn handle_check_manifest(args: &CheckArgs) -> Result<()> {
+pub fn handle_check(args: &CheckArgs) -> Result<()> {
     // Resolve launch file path (same logic as `play_launch launch`)
     let launch_path =
-        super::launch::resolve_launch_file(&args.package_or_path, args.launch_file.as_deref())?;
+        crate::launch::resolve_launch_file(&args.package_or_path, args.launch_file.as_deref())?;
 
     eprintln!("Parsing launch file: {}", launch_path.display());
 
     // Parse launch arguments (KEY:=VALUE)
-    let cli_args = super::parse_launch_arguments(&args.launch_arguments);
+    let cli_args = crate::common::parse_launch_arguments(&args.launch_arguments);
 
     // Parse launch file → record with scope table
     let record = play_launch_parser::parse_launch_file(&launch_path, cli_args)

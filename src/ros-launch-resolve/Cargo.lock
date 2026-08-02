@@ -1118,6 +1118,7 @@ dependencies = [
  "ros-launch-manifest-check",
  "ros-launch-manifest-model",
  "ros-launch-manifest-sched",
+ "ros-launch-manifest-types",
  "ros-launch-resolve",
  "serde",
  "serde_json",
