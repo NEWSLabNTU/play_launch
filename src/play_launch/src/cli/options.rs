@@ -39,10 +39,12 @@ pub enum Feature {
 #[command(name = "play_launch")]
 #[command(version)]
 #[command(about = "Record and replay ROS 2 launches with inspection capabilities")]
+// `dump` used to head the third example. RFC-0060 W3 moved that verb to
+// ros-launch-resolve; `resolve` is the play_launch-side equivalent.
 #[command(after_help = "Examples:\n  \
     play_launch launch demo_nodes_cpp topics/talker_listener.launch.py\n  \
     play_launch run demo_nodes_cpp talker\n  \
-    play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml\n  \
+    play_launch resolve autoware_launch planning_simulator.launch.xml --out autoware.yaml\n  \
     play_launch replay --model autoware.yaml")]
 #[command(arg_required_else_help = true)]
 pub struct Options {
@@ -109,48 +111,6 @@ pub enum Command {
         play_launch resolve demo_pkg pipeline.launch.xml --out system_model.yaml\n  \
         play_launch resolve /path/to/launch.xml --sched system.posix.yaml mode:=velodyne")]
     Resolve(ResolveArgs),
-}
-
-/// Arguments for `play_launch contract`
-#[derive(Args)]
-pub struct ContractArgs {
-    #[command(subcommand)]
-    pub subcommand: ContractSubcommand,
-}
-
-#[derive(Subcommand)]
-pub enum ContractSubcommand {
-    /// Copy the resolved provider contract (and target's platform file, if
-    /// any) into the overlay tree, ready to edit — editing never touches
-    /// `/opt` (design §3.3).
-    Eject(ContractEjectArgs),
-}
-
-/// Arguments for `play_launch contract eject`
-#[derive(Args)]
-pub struct ContractEjectArgs {
-    /// Package name or path to launch file
-    pub package_or_path: String,
-
-    /// Launch file name (if package_or_path is a package name)
-    pub launch_file: Option<String>,
-
-    /// Which scheduling target's platform file to eject (`<stem>.system.<target>.yaml`).
-    #[arg(long, default_value = "posix")]
-    pub target: String,
-
-    /// Overlay root to eject into. Defaults to the discovered overlay root
-    /// (same discovery as `check --contracts`: `$PLAY_LAUNCH_CONTRACTS`,
-    /// then `$XDG_CONFIG_HOME/play_launch/contracts`, then
-    /// `/etc/play_launch/contracts`) — errors if none of those exist yet
-    /// and `--into` wasn't given.
-    #[arg(long, value_name = "PATH")]
-    pub into: Option<PathBuf>,
-
-    /// Overwrite existing overlay files. Without this flag, `eject` refuses
-    /// to touch a destination that already exists.
-    #[arg(long)]
-    pub force: bool,
 }
 
 /// Arguments for the context extraction command
@@ -749,30 +709,6 @@ impl CommonOptions {
     }
 }
 
-/// Arguments for plot command
-#[derive(Args)]
-pub struct PlotArgs {
-    /// Specific log directory to plot (e.g., play_log/2025-10-28_16-17-56)
-    #[arg(long, value_name = "PATH")]
-    pub log_dir: Option<PathBuf>,
-
-    /// Base log directory to search for latest execution
-    #[arg(long, value_name = "PATH", default_value = "./play_log")]
-    pub base_log_dir: PathBuf,
-
-    /// Output directory for generated plots
-    #[arg(long, short = 'o', value_name = "PATH")]
-    pub output_dir: Option<PathBuf>,
-
-    /// Metrics to plot (can be specified multiple times)
-    #[arg(long, short = 'm', value_name = "METRIC")]
-    pub metrics: Vec<String>,
-
-    /// List available metrics and exit
-    #[arg(long)]
-    pub list_metrics: bool,
-}
-
 #[cfg(test)]
 mod flag_ordering_tests {
     //! 47.A1/47.A3: `launch_arguments` (`KEY:=VALUE`) used to be declared
@@ -794,6 +730,41 @@ mod flag_ordering_tests {
         let mut full = vec!["play_launch"];
         full.extend_from_slice(args);
         Options::try_parse_from(full)
+    }
+
+    /// `--help` must not advertise a verb this binary does not implement.
+    ///
+    /// RFC-0060 W3 moved `dump`, `plot` and `contract` to
+    /// ros-launch-resolve. The `Command` enum lost them, but the top-level
+    /// examples kept invoking `play_launch dump ...`, and `PlotArgs`,
+    /// `ContractArgs`, `ContractSubcommand` and `ContractEjectArgs` stayed
+    /// behind as definitions with no variant to attach to. None of that
+    /// warned: `pub` items in a `pub` module are never `dead_code`, so the
+    /// residue of an extracted verb is invisible to the compiler. This test
+    /// is the check that isn't.
+    #[test]
+    fn help_advertises_only_verbs_this_binary_has() {
+        use clap::CommandFactory;
+        let cmd = Options::command();
+        let verbs: Vec<String> = cmd
+            .get_subcommands()
+            .map(|c| c.get_name().to_string())
+            .collect();
+        let help = cmd.clone().render_long_help().to_string();
+
+        for gone in ["dump", "plot", "contract"] {
+            assert!(
+                !verbs.iter().any(|v| v == gone),
+                "`{gone}` is back as a verb -- update this test if that is intended"
+            );
+            assert!(
+                !help.contains(&format!("play_launch {gone} ")),
+                "--help invokes `play_launch {gone}`, a verb this binary does not have:\n{help}"
+            );
+        }
+        for verb in &verbs {
+            assert!(!verb.is_empty());
+        }
     }
 
     #[test]
