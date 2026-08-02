@@ -15,6 +15,12 @@ own. Name the repo in the issue body.
 
 ## Open
 
+**#0014** — `test_isolated_external_subscriber` hard-codes
+`ROS_DOMAIN_ID=199` (every other test gets a unique domain per invocation),
+so a stale `ros2-daemon` on that domain fails it — and both diagnostic
+`ros2` calls pipe stderr to `/dev/null`, so the assertion confidently blames
+DDS cross-process isolation for something that is not it. See `0014-*`.
+
 ## Resolved
 
 **#0013** — orphaned `ros-launch-resolve` CLI helpers. Deleted: the crate is

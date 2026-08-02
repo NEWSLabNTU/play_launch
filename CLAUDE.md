@@ -159,6 +159,38 @@ Composable nodes don't have separate directories — metadata in parent containe
 - **External source exploration**: download source repos to `external/` (gitignored) for deep exploration. Use `gh api` only for quick peeks or GitHub-specific features (issues, PRs, actions).
 - **Standalone crates** (outside the workspace, with their own `[workspace]` in Cargo.toml) must have a `/target/` `.gitignore` — e.g. `play_launch_interception`, `rcl_interception_sys`, `spsc_shm`
 
+### Repository Layout (phase-55 W1)
+
+`src/ros-launch-resolve/` (RFC-0060 layer 2: the resolver + `parser/`) lives
+**in this repository as plain directories** — it used to be a submodule, and
+the parser a submodule of that. Both were folded in by `git subtree` with
+history; nano-ros pins this repo and builds
+`cargo build -p ros-launch-resolve-cli` from the nested workspace.
+
+It is still a **separate Cargo workspace**, listed in the root manifest's
+`exclude`. That line is now the only thing keeping `[patch.crates-io]`
+(`rclrs`, `rosidl_runtime_rs`) out of the resolver's dependency graph — the
+submodule boundary that used to make the separation visible is gone. Never
+add `src/ros-launch-resolve` to `members`. `just check-layer2-isolation`
+(part of `just check`, plus a CI job on a runner with no ROS) fails if the
+boundary breaks: no ROS crates in the graph, no ROS shared libraries linked,
+and both launch frontends resolve with no ROS installed.
+
+One submodule remains under it: `third-party/ros-launch-manifest`, the schema
+crates nano-ros also links. It is registered in the ROOT `.gitmodules` —
+there is no nested `.gitmodules`, because git only reads the root one and a
+nested copy would look authoritative without being so. Phase 55 W2 converts
+it to a git tag; that must land in play_launch, ros-launch-resolve's consumers
+and nano-ros together, since a half-converted state gives cargo two
+same-named packages from different sources and `SystemModel` becomes two
+incompatible types.
+
+Building layer 2 in-tree inherits this repo's colcon-generated
+`.cargo/config.toml` (cargo's config walk ignores workspace boundaries), which
+shows up as harmless `[[patch.unused]]` churn in
+`src/ros-launch-resolve/Cargo.lock`. Discard it; run the gate with
+`--standalone` for a clean-clone-equivalent check.
+
 ### Process Management
 - **NEVER** `kill -9` individual processes — kill the process group (PGID):
   ```bash
