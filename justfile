@@ -521,6 +521,18 @@ check:
     echo "=== C++ (clang-format check) ==="
     ament_clang_format {{cpp_packages}}
 
+    echo ""
+    just check-layer2-isolation
+
+# RFC-0060 layer-2 isolation gate: prove ros-launch-resolve still builds and
+# resolves with NO ROS installation. The script strips the environment itself,
+# so this is safe to run from a sourced shell -- that is the point, since every
+# shell that would notice a regression has ROS sourced and would not notice.
+# Phase 55 W1's acceptance criterion; useful on its own whether or not the
+# merge happens.
+check-layer2-isolation:
+    ./src/ros-launch-resolve/scripts/check-layer2-isolation.sh
+
 # Generate TypeScript bindings from Rust types (ts-rs)
 generate-bindings:
     #!/usr/bin/env bash
