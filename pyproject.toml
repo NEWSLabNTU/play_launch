@@ -47,6 +47,10 @@ dev = [
 [project.scripts]
 play_launch = "play_launch.cli:main"
 play_launch_io_helper = "play_launch.io_helper_cli:main"
+# Layer 2 (`resolve`, `dump`, `check`, `contract`, `plot`). Ships in the same
+# wheel so `pip install play_launch` gives users every verb the 0.9.0 CLI
+# reshape moved off `play_launch`.
+ros-launch-resolve = "play_launch.resolve_cli:main"
 
 [project.urls]
 Repository = "https://github.com/NEWSLabNTU/play_launch"

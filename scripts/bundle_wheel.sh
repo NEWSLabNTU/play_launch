@@ -79,6 +79,36 @@ for entry in "${ARTIFACTS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Copy the layer-2 CLI (built standalone by `just build`; its own cargo
+# workspace, outside colcon, so it is NOT under $INSTALL_DIR).
+#
+# 0.9.0 moved `resolve`, `check`, `dump`, `contract eject` and `plot` off
+# `play_launch` onto this binary. The removed-verb errors, the migration
+# guide and the README all tell users to run `ros-launch-resolve` — if the
+# wheel does not carry it, `pip install play_launch` leaves them with
+# instructions pointing at a binary they do not have.
+# ---------------------------------------------------------------------------
+RESOLVE_BIN=""
+for candidate in \
+  "$REPO_ROOT/src/ros-launch-resolve/target/release/ros-launch-resolve" \
+  "$REPO_ROOT/src/ros-launch-resolve/target/debug/ros-launch-resolve"; do
+  if [[ -f "$candidate" ]]; then
+    RESOLVE_BIN="$candidate"
+    break
+  fi
+done
+if [[ -z "$RESOLVE_BIN" ]]; then
+  echo "Error: ros-launch-resolve not found under src/ros-launch-resolve/target/{release,debug}." >&2
+  echo "       Run '(cd src/ros-launch-resolve && cargo build --release --bin ros-launch-resolve)' first." >&2
+  exit 1
+fi
+mkdir -p "$DEST_ROOT/bin"
+cp "$RESOLVE_BIN" "$DEST_ROOT/bin/"
+chmod +x "$DEST_ROOT/bin/ros-launch-resolve"
+echo "  ${RESOLVE_BIN#"$REPO_ROOT"/} -> bin/ros-launch-resolve"
+copied=$((copied + 1))
+
+# ---------------------------------------------------------------------------
 # Copy interception .so (built standalone via `just build-interception`)
 # ---------------------------------------------------------------------------
 INTERCEPTION_SO="$REPO_ROOT/src/play_launch_interception/target/release/libplay_launch_interception.so"
