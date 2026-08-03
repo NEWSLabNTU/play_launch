@@ -20,7 +20,7 @@ pub fn init_verbose(opts: &Options) {
 /// Extract verbose flag from Options based on subcommand
 fn get_verbose_flag(opts: &Options) -> bool {
     match &opts.command {
-        crate::cli::options::Command::Launch(args) => args.common.verbose,
+        crate::cli::options::Command::Launch(args) => args.launch.common.verbose,
         crate::cli::options::Command::Run(args) => args.common.verbose,
         crate::cli::options::Command::Up(args) => args.common.verbose,
         crate::cli::options::Command::Replay(args) => args.common.verbose, // hidden; DELETE AT 1.0.0

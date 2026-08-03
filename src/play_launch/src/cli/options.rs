@@ -74,13 +74,13 @@ pub struct Options {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Launch a ROS 2 launch file (dump + replay)
+    /// Resolve a ROS 2 launch file and bring the system up, in one step
     #[command(after_help = "Examples:\n  \
         play_launch launch demo_nodes_cpp topics/talker_listener.launch.py\n  \
         play_launch launch /path/to/launch.py use_sim_time:=true")]
-    Launch(LaunchArgs),
+    Launch(LaunchCommandArgs),
 
-    /// Run a single ROS 2 node (dump + replay)
+    /// Resolve and run a single ROS 2 node, in one step
     #[command(after_help = "Examples:\n  \
         play_launch run demo_nodes_cpp talker\n  \
         play_launch run demo_nodes_cpp talker --ros-args -p topic:=chatter")]
@@ -418,6 +418,29 @@ pub struct LaunchArgs {
     #[arg(long)]
     pub block_commands: bool,
 
+    #[command(flatten)]
+    pub common: CommonOptions,
+}
+
+/// Arguments for the `launch` command: [`LaunchArgs`] plus `--check`.
+///
+/// `--check` lives HERE and not on `LaunchArgs` because `LaunchArgs` is
+/// shared with `dump launch`, which spawns nothing and therefore has nothing
+/// for a "validate and exit without spawning" gate to prevent. While the flag
+/// sat on the shared struct, `dump launch --help` advertised it with those
+/// exact semantics and `commands::dump` never read it: the flag parsed, was
+/// discarded, and `dump` wrote its model and exited 0. It was also the only
+/// flag `play_launch` accepted that `ros-launch-resolve` did not, for two
+/// CLIs that are meant to expose the same surface over one implementation.
+///
+/// (`dump` validates unconditionally regardless — it delegates to `resolve`,
+/// which refuses to emit a model when the checker reports errors. There was
+/// never a gate to honour, only an advertisement to withdraw.)
+#[derive(Args)]
+pub struct LaunchCommandArgs {
+    #[command(flatten)]
+    pub launch: LaunchArgs,
+
     /// Validate contracts and scheduling, print the diagnostics, and exit
     /// without spawning anything. Exit status is 0 when clean, 1 when the
     /// checker reports errors.
@@ -427,9 +450,6 @@ pub struct LaunchArgs {
     /// the full diagnostic surface.
     #[arg(long)]
     pub check: bool,
-
-    #[command(flatten)]
-    pub common: CommonOptions,
 }
 
 /// Arguments for dump command
@@ -443,11 +463,6 @@ pub struct DumpArgs {
     /// arguments.
     #[arg(long, short = 'o', global = true)]
     pub output: Option<PathBuf>,
-
-    /// Enable debug output during dump. May be given before or after the
-    /// subcommand.
-    #[arg(long, global = true)]
-    pub debug: bool,
 }
 
 #[derive(Subcommand)]
@@ -714,7 +729,7 @@ pub struct ContractOptions {
 pub struct SchedOptions {
     /// Phase 38: path to a scheduling platform file — v2 `.yaml` schema
     /// (mapper + resources + overrides) or legacy `.toml` (dispatched by
-    /// extension; Phase 41.2). When set, replay derives + validates a plan
+    /// extension; Phase 41.2). When set, the run derives + validates a plan
     /// for `--target` and (per `--sched-apply`) applies SCHED_FIFO/RR +
     /// priority + CPU affinity to each spawned node/container process. Same
     /// file `play_launch check --sched` validates.
@@ -1076,7 +1091,7 @@ mod flag_ordering_tests {
         assert_eq!(d.output, None);
     }
 
-    /// `dump`'s `--output`/`--debug` are `global = true`, so clap accepts
+    /// `dump`'s `--output` is `global = true`, so clap accepts
     /// them on either side of the `launch` subcommand and its positional
     /// launch arguments. The Autoware shape (several `KEY:=VALUE` args, then
     /// a flag) is the case that regressed before.
@@ -1141,8 +1156,8 @@ mod flag_ordering_tests {
         let Command::Launch(args) = opts.command else {
             panic!("expected Launch");
         };
-        assert_eq!(args.launch_arguments, vec!["mode:=velodyne".to_string()]);
-        assert_eq!(args.parser, ParserBackend::Python);
+        assert_eq!(args.launch.launch_arguments, vec!["mode:=velodyne".to_string()]);
+        assert_eq!(args.launch.parser, ParserBackend::Python);
     }
 
     #[test]
@@ -1159,8 +1174,8 @@ mod flag_ordering_tests {
         let Command::Launch(args) = opts.command else {
             panic!("expected Launch");
         };
-        assert_eq!(args.launch_arguments, vec!["mode:=velodyne".to_string()]);
-        assert_eq!(args.parser, ParserBackend::Python);
+        assert_eq!(args.launch.launch_arguments, vec!["mode:=velodyne".to_string()]);
+        assert_eq!(args.launch.parser, ParserBackend::Python);
     }
 
     #[test]
@@ -1237,7 +1252,7 @@ mod flag_ordering_tests {
         let Command::Launch(args) = opts.command else {
             panic!("expected Launch");
         };
-        assert_eq!(args.launch_arguments, vec!["--looks-like-flag".to_string()]);
+        assert_eq!(args.launch.launch_arguments, vec!["--looks-like-flag".to_string()]);
     }
 
     #[test]
@@ -1254,7 +1269,7 @@ mod flag_ordering_tests {
             panic!("expected Launch");
         };
         assert!(args.check, "--check must set the flag");
-        assert_eq!(args.launch_arguments, vec!["mode:=velodyne".to_string()]);
+        assert_eq!(args.launch.launch_arguments, vec!["mode:=velodyne".to_string()]);
     }
 
     #[test]
