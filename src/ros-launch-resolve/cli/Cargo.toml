@@ -26,7 +26,10 @@ serde_json = { workspace = true }
 serde_yaml_ng = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = "0.3"
+# `env-filter` is NOT a default feature. Without it `RUST_LOG` is silently
+# ignored, which is what shipped in 0.9.0's first cut: the init read the
+# variable, branched on it, and then built two identical subscribers.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 num_cpus = "1"
 sha2 = { workspace = true }

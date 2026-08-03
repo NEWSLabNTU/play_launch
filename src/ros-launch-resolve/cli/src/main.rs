@@ -26,16 +26,20 @@ fn main() -> eyre::Result<()> {
     // (`src/play_launch/src/main.rs`): `RUST_LOG` takes precedence; default
     // to INFO otherwise. Written to stderr, same as this CLI's `eprintln!`
     // diagnostics, so callers see one interleaved stream.
-    if std::env::var("RUST_LOG").is_ok() {
-        tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .with_writer(std::io::stderr)
-            .init();
-    }
+    //
+    // The filter must be an explicit `EnvFilter` (and `tracing-subscriber`
+    // must carry the non-default `env-filter` feature): the builder form of
+    // `fmt()` applies NO env filter of its own, unlike the free-function
+    // `fmt::init()` play_launch uses. The first cut of this init branched on
+    // `RUST_LOG` and then built the same subscriber either way, so
+    // `RUST_LOG=debug` and `RUST_LOG=error` produced byte-identical output.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
 
     let opts = Options::parse();
     match &opts.command {

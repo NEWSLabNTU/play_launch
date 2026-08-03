@@ -34,19 +34,33 @@ pub enum Feature {
     WebUi,
 }
 
-/// Resolve ROS 2 launch trees into a checked SystemModel.
-///
-/// The name, the about line and the examples below were inherited verbatim
-/// from `play_launch` when RFC-0060 W3 extracted this binary, so `--help`
-/// introduced itself as `play_launch`, described itself as a replay tool, and
-/// advertised `launch`, `run` and `replay` — three verbs this binary has never
-/// had and which issue 0013 later deleted the leftover argument structs for.
+// HISTORY (deliberately a `//` comment, not a doc comment: clap turns the
+// struct's doc comment into `--help`'s `long_about`, and a code-review
+// narrative is not what a user opens `--help` to read). The name, the about
+// line and the examples below were inherited verbatim from `play_launch` when
+// RFC-0060 W3 extracted this binary, so `--help` introduced itself as
+// `play_launch`, described itself as a replay tool, and advertised `launch`,
+// `run` and `replay` — three verbs this binary has never had and which issue
+// 0013 later deleted the leftover argument structs for.
 #[derive(Parser)]
 #[command(name = "ros-launch-resolve")]
 #[command(version)]
 #[command(about = "Resolve ROS 2 launch trees into a checked SystemModel")]
+#[command(
+    long_about = "Resolve ROS 2 launch trees into a checked SystemModel.\n\n\
+    Expands a launch file, applies manifest contracts and the scheduling \
+    platform file, and emits `system_model.yaml` — the one artifact \
+    `play_launch up` spawns from.\n\n\
+    Needs NO ROS installation: the launch frontends and the checker are \
+    pure-Rust plus embedded CPython, so this runs in a build container, in \
+    CI, or on a developer machine that has never sourced a ROS setup file. \
+    Running, replaying and supervising nodes stay in `play_launch`, which \
+    does need ROS."
+)]
 #[command(after_help = "Examples:\n  \
     ros-launch-resolve resolve autoware_launch planning_simulator.launch.xml -o autoware.yaml\n  \
+    ros-launch-resolve check my_bringup system.launch.xml\n  \
+    ros-launch-resolve check my_bringup system.launch.xml --format json --explain\n  \
     ros-launch-resolve dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml\n  \
     ros-launch-resolve contract eject my_bringup system.launch.xml\n  \
     ros-launch-resolve plot play_log/latest")]

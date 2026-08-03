@@ -1,4 +1,4 @@
-//! `play_launch contract eject` — copy a package's provider contract (and
+//! `ros-launch-resolve contract eject` — copy a package's provider contract (and
 //! matching scheduling platform file, if any) into the overlay tree so a
 //! user can edit them without ever touching `/opt` (design §3.3).
 
