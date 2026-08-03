@@ -1156,7 +1156,10 @@ mod flag_ordering_tests {
         let Command::Launch(args) = opts.command else {
             panic!("expected Launch");
         };
-        assert_eq!(args.launch.launch_arguments, vec!["mode:=velodyne".to_string()]);
+        assert_eq!(
+            args.launch.launch_arguments,
+            vec!["mode:=velodyne".to_string()]
+        );
         assert_eq!(args.launch.parser, ParserBackend::Python);
     }
 
@@ -1174,7 +1177,10 @@ mod flag_ordering_tests {
         let Command::Launch(args) = opts.command else {
             panic!("expected Launch");
         };
-        assert_eq!(args.launch.launch_arguments, vec!["mode:=velodyne".to_string()]);
+        assert_eq!(
+            args.launch.launch_arguments,
+            vec!["mode:=velodyne".to_string()]
+        );
         assert_eq!(args.launch.parser, ParserBackend::Python);
     }
 
@@ -1252,7 +1258,10 @@ mod flag_ordering_tests {
         let Command::Launch(args) = opts.command else {
             panic!("expected Launch");
         };
-        assert_eq!(args.launch.launch_arguments, vec!["--looks-like-flag".to_string()]);
+        assert_eq!(
+            args.launch.launch_arguments,
+            vec!["--looks-like-flag".to_string()]
+        );
     }
 
     #[test]
@@ -1269,7 +1278,10 @@ mod flag_ordering_tests {
             panic!("expected Launch");
         };
         assert!(args.check, "--check must set the flag");
-        assert_eq!(args.launch.launch_arguments, vec!["mode:=velodyne".to_string()]);
+        assert_eq!(
+            args.launch.launch_arguments,
+            vec!["mode:=velodyne".to_string()]
+        );
     }
 
     #[test]

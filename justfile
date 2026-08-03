@@ -548,6 +548,10 @@ check:
     )
 
     echo ""
+    echo "=== play_launch (rustfmt) ==="
+    (cd src/play_launch && cargo +nightly fmt --check)
+
+    echo ""
     echo "=== play_launch_parser (clippy + rustfmt) ==="
     (cd src/ros-launch-resolve/parser && just check)
 
