@@ -1,10 +1,10 @@
-# Declared Causal Graph Export (`play_launch check --export-graph`)
+# Declared Causal Graph Export (`ros-launch-resolve check --export-graph`)
 
 **Status:** Implemented (Phase 42.1)
 **Consumers:** [autoware-system-model-study.md](autoware-system-model-study.md)
 Q1 (cycles), W2 (measured-model join), W4 (report).
 
-`play_launch check --export-graph <path>` walks the already-loaded
+`ros-launch-resolve check --export-graph <path>` walks the already-loaded
 `ManifestIndex` (the same data the `check` rules consult) and serializes the
 **declared** causal graph: ROS nodes, topics, pub/sub wiring, node-level and
 scope-level `paths:`, and a cycle catalogue computed *before* `state:` cuts
@@ -20,7 +20,7 @@ substrate — no changes to the `ros-launch-manifest` check crate.
 ## CLI
 
 ```
-play_launch check <pkg> <launch> --export-graph <path> [--contracts <dir>] [...]
+ros-launch-resolve check <pkg> <launch> --export-graph <path> [--contracts <dir>] [...]
 ```
 
 Format is picked by extension: `.dot` (case-insensitive) writes a Graphviz

@@ -89,7 +89,7 @@ pub fn build_checked_model(
         }
         eyre::bail!(
             "refusing to emit a SystemModel: {total_errors} contract error(s) \
-             (see `play_launch check` for source excerpts)"
+             (see `ros-launch-resolve check` for source excerpts)"
         );
     }
 

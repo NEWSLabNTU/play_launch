@@ -59,7 +59,7 @@ fn main() -> eyre::Result<()> {
             play_launch::commands::handle_context(args)?;
         }
         play_launch::cli::options::Command::Check(args) => {
-            play_launch::commands::handle_check_manifest(args)?;
+            play_launch::commands::migrated::check_removed(args)?;
         }
         play_launch::cli::options::Command::Resolve(args) => {
             play_launch::commands::handle_resolve(args)?;

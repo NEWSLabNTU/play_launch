@@ -410,7 +410,7 @@ pub struct SchedOptions {
     /// extension; Phase 41.2). When set, replay derives + validates a plan
     /// for `--target` and (per `--sched-apply`) applies SCHED_FIFO/RR +
     /// priority + CPU affinity to each spawned node/container process. Same
-    /// file `play_launch check --sched` validates.
+    /// file `ros-launch-resolve check --sched` validates.
     #[arg(long, value_name = "PATH")]
     pub sched: Option<PathBuf>,
 

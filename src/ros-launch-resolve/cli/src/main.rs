@@ -18,6 +18,25 @@ use clap::Parser;
 use options::{Command, Options};
 
 fn main() -> eyre::Result<()> {
+    // Initialize a tracing subscriber so `info!`/`warn!` calls in the shared
+    // `ros-launch-resolve` crate (e.g. `manifest_loader::load_manifests`'s
+    // "Loaded N manifest(s) [...]" summary) are actually emitted -- without
+    // this, `tracing`'s macros are no-ops (no subscriber registered) and
+    // those lines silently vanish. Mirrors `play_launch`'s own init
+    // (`src/play_launch/src/main.rs`): `RUST_LOG` takes precedence; default
+    // to INFO otherwise. Written to stderr, same as this CLI's `eprintln!`
+    // diagnostics, so callers see one interleaved stream.
+    if std::env::var("RUST_LOG").is_ok() {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(std::io::stderr)
+            .init();
+    }
+
     let opts = Options::parse();
     match &opts.command {
         Command::Resolve(args) => resolve::handle_resolve(args),

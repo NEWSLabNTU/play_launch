@@ -149,7 +149,7 @@ fn dump_parity_bringup() {
 
 // ---- `check` (contracts + --sched) ----
 
-/// `play_launch check --sched system.toml rt_demo bringup.launch.xml`
+/// `ros-launch-resolve check --sched system.toml rt_demo bringup.launch.xml`
 /// (provider-sidecar-only channel) must exit 0 and report the provider
 /// sidecar was loaded (`[0 overlay, 1 provider]`).
 #[test]
@@ -165,7 +165,10 @@ fn check_provider_sidecar_passes() {
         sched.display()
     );
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args([
             "check",
             "rt_demo",
@@ -174,7 +177,7 @@ fn check_provider_sidecar_passes() {
             sched.to_str().unwrap(),
         ])
         .output()
-        .expect("failed to run play_launch check");
+        .expect("failed to run ros-launch-resolve check");
 
     let combined = format!(
         "{}{}",
@@ -191,7 +194,7 @@ fn check_provider_sidecar_passes() {
     );
 }
 
-/// `play_launch check --contracts contracts --sched system.toml rt_demo
+/// `ros-launch-resolve check --contracts contracts --sched system.toml rt_demo
 /// bringup.launch.xml` must exit 0 and report the overlay overrode the
 /// provider sidecar (`[1 overlay, 0 provider]`) — the actual proof the
 /// overlay resolution engaged (the `max_age_ms` diff itself isn't visible in
@@ -211,7 +214,10 @@ fn check_overlay_overrides_provider_sidecar() {
         contracts.display()
     );
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args([
             "check",
             "rt_demo",
@@ -222,7 +228,7 @@ fn check_overlay_overrides_provider_sidecar() {
             sched.to_str().unwrap(),
         ])
         .output()
-        .expect("failed to run play_launch check");
+        .expect("failed to run ros-launch-resolve check");
 
     let combined = format!(
         "{}{}",
@@ -241,7 +247,7 @@ fn check_overlay_overrides_provider_sidecar() {
 
 // ---- v2: platform-file channel resolution + --explain + per-target coexistence ----
 
-/// `play_launch check rt_demo bringup.launch.xml` with **no `--sched` at
+/// `ros-launch-resolve check rt_demo bringup.launch.xml` with **no `--sched` at
 /// all** must resolve `launch/bringup.system.posix.yaml` through the
 /// provider-sidecar channel (Phase 41.3) and print its provenance line, and
 /// derive with the v2 `chain_aware` mapper (Phase 44.5: switched from
@@ -256,10 +262,13 @@ fn check_channel_resolution_picks_provider_platform_file_with_no_sched_flag() {
     }
     let env = fixtures::rt_workspace_env();
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args(["check", "rt_demo", "bringup.launch.xml"])
         .output()
-        .expect("failed to run play_launch check");
+        .expect("failed to run ros-launch-resolve check");
 
     let combined = format!(
         "{}{}",
@@ -304,12 +313,15 @@ fn check_channel_resolution_overlay_platform_file_beats_provider() {
         contracts.display()
     );
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args(["check", "--contracts"])
         .arg(&contracts)
         .args(["rt_demo", "bringup.launch.xml"])
         .output()
-        .expect("failed to run play_launch check");
+        .expect("failed to run ros-launch-resolve check");
 
     let combined = format!(
         "{}{}",
@@ -371,7 +383,10 @@ fn check_explain_shows_derived_override_and_default_provenance() {
         sched.display()
     );
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args([
             "check",
             "--sched",
@@ -381,7 +396,7 @@ fn check_explain_shows_derived_override_and_default_provenance() {
             "bringup.launch.xml",
         ])
         .output()
-        .expect("failed to run play_launch check --explain");
+        .expect("failed to run ros-launch-resolve check --explain");
 
     let combined = format!(
         "{}{}",
@@ -522,12 +537,15 @@ topics:
     )
     .expect("failed to write tightened-budget overlay contract");
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args(["check", "--contracts"])
         .arg(overlay_root.path())
         .args(["rt_demo", "bringup.launch.xml"])
         .output()
-        .expect("failed to run play_launch check");
+        .expect("failed to run ros-launch-resolve check");
 
     let combined = format!(
         "{}{}",
@@ -569,7 +587,10 @@ fn check_target_zephyr_platform_file_parses_but_derive_is_posix_only() {
     }
     let env = fixtures::rt_workspace_env();
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args([
             "check",
             "--target",
@@ -578,7 +599,7 @@ fn check_target_zephyr_platform_file_parses_but_derive_is_posix_only() {
             "bringup.launch.xml",
         ])
         .output()
-        .expect("failed to run play_launch check --target zephyr");
+        .expect("failed to run ros-launch-resolve check --target zephyr");
 
     let combined = format!(
         "{}{}",
@@ -982,7 +1003,10 @@ fn resolve_omits_sched_but_check_explain_shows_chain_aware() {
     // `override`, e.g. control_node's pinned priority) provenance — the
     // chain-aware plan is fully available on demand even though it is no
     // longer embedded in the model.
-    let explain_output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let explain_output = cmd
         .args([
             "check",
             "rt_demo",
@@ -992,7 +1016,7 @@ fn resolve_omits_sched_but_check_explain_shows_chain_aware() {
             "--explain",
         ])
         .output()
-        .expect("failed to run check --sched --explain");
+        .expect("failed to run ros-launch-resolve check --sched --explain");
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&explain_output.stdout),
@@ -1219,7 +1243,7 @@ fn resolve_parser_python_produces_model_that_replays_cleanly() {
 
 // ---- `check --export-graph` (Phase 42.1) ----
 
-/// `play_launch check --export-graph <path>.json rt_demo bringup.launch.xml`
+/// `ros-launch-resolve check --export-graph <path>.json rt_demo bringup.launch.xml`
 /// (provider-sidecar contract, no `--sched`) must exit 0 and write a JSON
 /// export with the 3 nodes / 3 topics / 3 node-level paths declared in
 /// `bringup.contract.yaml` (Phase 44.5: sensor_node's `tick` + filter_component's
@@ -1234,7 +1258,10 @@ fn check_export_graph_json_matches_contract() {
     let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let export_path = tmp.path().join("graph.json");
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args([
             "check",
             "rt_demo",
@@ -1243,7 +1270,7 @@ fn check_export_graph_json_matches_contract() {
             export_path.to_str().unwrap(),
         ])
         .output()
-        .expect("failed to run play_launch check --export-graph");
+        .expect("failed to run ros-launch-resolve check --export-graph");
 
     let combined = format!(
         "{}{}",
@@ -1314,7 +1341,10 @@ fn check_export_graph_dot_extension_dispatch() {
     let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let export_path = tmp.path().join("graph.dot");
 
-    let output = fixtures::play_launch_cmd(&env)
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
         .args([
             "check",
             "rt_demo",
@@ -1323,7 +1353,7 @@ fn check_export_graph_dot_extension_dispatch() {
             export_path.to_str().unwrap(),
         ])
         .output()
-        .expect("failed to run play_launch check --export-graph (.dot)");
+        .expect("failed to run ros-launch-resolve check --export-graph (.dot)");
 
     assert!(
         output.status.success(),

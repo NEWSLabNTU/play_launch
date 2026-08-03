@@ -200,12 +200,15 @@ fn eject_provider_contract_then_check_uses_overlay_channel() {
 
     // Re-check with --contracts pointing at the overlay: the ejected
     // contract must now win over the provider sidecar.
-    let check_output = fixtures::play_launch_cmd(&env)
+    let Some(mut check_cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let check_output = check_cmd
         .args(["check", "--contracts"])
         .arg(into.path())
         .args(["rt_demo", "bringup.launch.xml"])
         .output()
-        .expect("failed to run play_launch check");
+        .expect("failed to run ros-launch-resolve check");
     let check_stderr = String::from_utf8_lossy(&check_output.stderr);
     assert!(
         check_stderr.contains("1 overlay"),

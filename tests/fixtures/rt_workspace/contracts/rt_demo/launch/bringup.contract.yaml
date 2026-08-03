@@ -1,6 +1,6 @@
 # User overlay for bringup.launch.xml (Phase 40 layout: <dir>/<pkg>/launch/
-# <stem>.contract.yaml). Passed via `play_launch check --contracts contracts`
-# or `play_launch launch ... --contracts contracts`.
+# <stem>.contract.yaml). Passed via `ros-launch-resolve check --contracts
+# contracts` or `play_launch launch ... --contracts contracts`.
 #
 # Overlay always wins over the provider sidecar (launch/bringup.contract.yaml)
 # for the same scope. This copy is otherwise identical (Phase 44.5:

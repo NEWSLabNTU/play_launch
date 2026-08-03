@@ -1075,7 +1075,7 @@ fn build_provenance(
 
 /// Load a scheduling platform file (v2 `.yaml` or legacy `.toml`), derive +
 /// override + validate a plan for `target`, and print the resolved table —
-/// `play_launch check --sched`'s implementation. Reports (never hard-fails
+/// `ros-launch-resolve check --sched`'s implementation. Reports (never hard-fails
 /// on) band violations/contradictions: `check` is a static report, not an
 /// apply — `derive_sched_plan` is called with `SchedApplyMode::Warn` so
 /// out-of-band priorities are clamped for display rather than aborting the
@@ -1117,7 +1117,7 @@ pub fn check_sched(
     Ok(derived)
 }
 
-/// `play_launch check --sched ... --explain` (design §7): print the merged
+/// `ros-launch-resolve check --sched ... --explain` (design §7): print the merged
 /// logical view — one row per schedulable node with its final
 /// class/priority/core and *why* (provenance), followed by footer lines
 /// naming the platform file and every per-scope contract that fed the

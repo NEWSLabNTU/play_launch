@@ -2,7 +2,7 @@
 //! scheduling spec (`ros-launch-manifest-sched`).
 //!
 //! The scheduling spec has two stages:
-//! - **validate-now** (`play_launch check --sched <file>`): parses and
+//! - **validate-now** (`ros-launch-resolve check --sched <file>`): parses and
 //!   resolves the tier table for the `posix` platform, checking that the
 //!   schema is internally consistent. No syscalls, no process interaction.
 //! - **apply** (this module, phase 2): given an already-spawned PID and a

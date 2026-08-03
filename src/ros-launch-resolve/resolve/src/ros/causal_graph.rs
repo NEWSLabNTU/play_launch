@@ -1,4 +1,4 @@
-//! Declared causal graph export (`play_launch check --export-graph`).
+//! Declared causal graph export (`ros-launch-resolve check --export-graph`).
 //!
 //! Phase 42.1 (`docs/design/autoware-system-model-study.md`, Q1). This is an
 //! **export**, not a validation step: it walks the already-loaded

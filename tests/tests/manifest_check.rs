@@ -1,19 +1,38 @@
-//! Integration tests for `play_launch check` CLI.
+//! Integration tests for `ros-launch-resolve check` CLI.
 //!
 //! These tests use the simple_test workspace launch files paired with
 //! manifest fixtures. No ROS runtime needed — only parsing.
+//!
+//! `check` used to live on `play_launch`; the CLI verb reshape (2026-08-03)
+//! removed it there in favor of `launch --check` (pass/fail gate) and this
+//! crate's own `check` (the full diagnostic surface: `--format`, `--rule`,
+//! `--explain`, `--export-graph`). Every test here exercises the diagnostic
+//! surface, so all of them drive the `ros-launch-resolve` binary directly —
+//! `play_launch check ...` now just errors naming both replacements (see
+//! `tests/tests/migrated_verbs.rs`).
 
 use play_launch_tests::fixtures;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Find the play_launch binary, preferring the cargo debug build.
-fn play_launch_bin() -> PathBuf {
-    let cargo_bin = fixtures::repo_root().join("target/debug/play_launch");
-    if cargo_bin.is_file() {
-        return cargo_bin;
+/// Locate the `ros-launch-resolve` CLI, which owns `check` (mirrors
+/// `contract_eject.rs`'s `resolve_cli_bin`). The binary is not installed or
+/// on `PATH`, so this looks in the submodule's own target dir and the test
+/// skips cleanly (returns `None`) when it has not been built.
+fn ros_launch_resolve_bin() -> Option<PathBuf> {
+    let root = fixtures::repo_root().join("src/ros-launch-resolve/target");
+    for profile in ["debug", "release"] {
+        let candidate = root.join(profile).join("ros-launch-resolve");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
     }
-    fixtures::play_launch_bin()
+    eprintln!(
+        "SKIP: ros-launch-resolve CLI not built ({}/{{debug,release}}/ros-launch-resolve \
+         missing) — run `cd src/ros-launch-resolve && cargo build` first",
+        root.display()
+    );
+    None
 }
 
 fn manifest_fixture_dir() -> PathBuf {
@@ -26,13 +45,17 @@ fn simple_launch_dir() -> PathBuf {
     fixtures::repo_root().join("tests/fixtures/simple_test/launch")
 }
 
-/// Run `play_launch check` with given args.
-fn run_check(args: &[&str]) -> std::process::Output {
-    Command::new(play_launch_bin())
-        .args(["check"])
-        .args(args)
-        .output()
-        .expect("failed to run play_launch")
+/// Run `ros-launch-resolve check` with given args, or `None` if the binary
+/// hasn't been built (caller should skip, like every other test here).
+fn run_check(args: &[&str]) -> Option<std::process::Output> {
+    let bin = ros_launch_resolve_bin()?;
+    Some(
+        Command::new(bin)
+            .args(["check"])
+            .args(args)
+            .output()
+            .expect("failed to run ros-launch-resolve"),
+    )
 }
 
 // ── Launch file + overlay contracts mode ──
@@ -58,11 +81,13 @@ fn check_launch_with_overlay_contracts() {
     )
     .expect("failed to copy manifest fixture into overlay tree");
 
-    let output = run_check(&[
+    let Some(output) = run_check(&[
         "--contracts",
         overlay_root.path().to_str().unwrap(),
         launch.to_str().unwrap(),
-    ]);
+    ]) else {
+        return;
+    };
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Should parse successfully and discover the overlay contract.
     assert!(
@@ -76,10 +101,13 @@ fn check_launch_with_overlay_contracts() {
 
 #[test]
 fn check_no_args_shows_help() {
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args(["check"])
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     assert!(
         !output.status.success(),
         "expected nonzero exit with no args"
@@ -96,10 +124,13 @@ fn check_with_no_flags_is_valid_provider_channel_default() {
     if !launch.exists() {
         return;
     }
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args(["check", launch.to_str().unwrap()])
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
@@ -130,10 +161,13 @@ fn check_provider_channel_sidecar_next_to_launch_file() {
     let sidecar = tmp.path().join("pure_nodes.contract.yaml");
     std::fs::copy(&manifest_src, &sidecar).expect("failed to copy manifest fixture as sidecar");
 
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args(["check", launch_copy.to_str().unwrap()])
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("Parsed:"),
@@ -151,7 +185,9 @@ fn check_provider_channel_sidecar_next_to_launch_file() {
 
 #[test]
 fn check_nonexistent_launch_file_exits_nonzero() {
-    let output = run_check(&["/nonexistent/launch.xml"]);
+    let Some(output) = run_check(&["/nonexistent/launch.xml"]) else {
+        return;
+    };
     assert!(
         !output.status.success(),
         "expected nonzero exit for missing launch file"
@@ -175,13 +211,15 @@ fn check_format_json() {
     )
     .expect("failed to copy manifest fixture into overlay tree");
 
-    let output = run_check(&[
+    let Some(output) = run_check(&[
         "--contracts",
         overlay_root.path().to_str().unwrap(),
         "--format",
         "json",
         launch.to_str().unwrap(),
-    ]);
+    ]) else {
+        return;
+    };
     // Should complete without crash
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -218,12 +256,15 @@ fn check_overlay_channel_contract_dir() {
     )
     .expect("failed to copy manifest fixture into overlay tree");
 
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args(["check", "--contracts"])
         .arg(overlay_root.path())
         .arg(&launch_copy)
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("manifest(s) checked"),
@@ -294,12 +335,15 @@ topics:
     )
     .expect("failed to write overlay contract");
 
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args(["check", "--contracts"])
         .arg(overlay_root.path())
         .arg(&launch_copy)
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
@@ -363,12 +407,15 @@ fn check_sched_overlay_platform_file_beats_provider_sidecar() {
     )
     .expect("failed to write overlay platform file");
 
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args(["check", "--contracts"])
         .arg(overlay_root.path())
         .arg(&launch_copy)
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
@@ -413,11 +460,14 @@ fn check_sched_provider_sidecar_only_platform_file() {
     .expect("failed to write provider sidecar platform file");
 
     // No --contracts at all: provider channel is the only one available.
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args(["check"])
         .arg(&launch_copy)
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
@@ -457,11 +507,14 @@ fn check_sched_wrong_target_platform_file_is_ignored() {
     // stays disabled, and this is NOT an error (distinct from an explicit
     // `--sched` pointing at a file whose `target:` mismatches, which does
     // error — see `sched_loader::derive_target_mismatch_errors`).
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args(["check", "--target", "zephyr"])
         .arg(&launch_copy)
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
@@ -491,11 +544,14 @@ fn check_sched_no_platform_file_leaves_scheduling_disabled() {
     std::fs::copy(&launch, &launch_copy).expect("failed to copy launch file");
     // No platform file anywhere (no overlay, no provider sidecar).
 
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args(["check"])
         .arg(&launch_copy)
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
@@ -588,14 +644,17 @@ nodes = [\"listener\"]
     )
     .expect("failed to write legacy system.toml");
 
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args(["check", "--contracts"])
         .arg(overlay_root.path())
         .arg("--sched")
         .arg(&system_toml)
         .arg(&launch_copy)
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
@@ -685,7 +744,10 @@ resources:
     )
     .expect("failed to write platform file");
 
-    let output = Command::new(play_launch_bin())
+    let Some(bin) = ros_launch_resolve_bin() else {
+        return;
+    };
+    let output = Command::new(bin)
         .args([
             "check",
             "--sched",
@@ -694,7 +756,7 @@ resources:
             launch_copy.to_str().unwrap(),
         ])
         .output()
-        .expect("failed to run play_launch");
+        .expect("failed to run ros-launch-resolve");
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),

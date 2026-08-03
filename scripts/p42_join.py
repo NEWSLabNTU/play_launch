@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Phase 42 study tooling: join the DECLARED causal graph (from
-`play_launch check --export-graph`) against the MEASURED interception
+`ros-launch-resolve check --export-graph`) against the MEASURED interception
 summaries (`stats_summary.json` / `frontier_summary.json` from
 `play_log/<ts>/interception/`).
 

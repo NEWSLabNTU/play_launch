@@ -22,7 +22,7 @@ reader can re-derive it.
 
 Three lenses over one system, per the design draft:
 
-1. **Declared** — `play_launch check --contracts <autoware-contract>
+1. **Declared** — `ros-launch-resolve check --contracts <autoware-contract>
    --export-graph declared.json` (new in 42.1) walks the already-loaded
    `ManifestIndex` and reuses Phase 35's `manifest_graph::build_global_graph()`
    (which carries an `is_state` flag per edge) to export nodes, topics,

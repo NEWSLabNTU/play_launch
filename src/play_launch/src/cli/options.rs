@@ -104,10 +104,10 @@ pub enum Command {
         play_launch context system_model.yaml --launch tier4_system_launch system.launch.xml")]
     Context(ContextArgs),
 
-    /// Check manifest contracts against a launch file
-    #[command(after_help = "Examples:\n  \
-        play_launch check autoware_launch planning_simulator.launch.xml\n  \
-        play_launch check --contracts ~/contracts /path/to/launch.py arg:=value")]
+    /// Removed in 0.9.0 — split into `launch --check` (gate) and
+    /// `ros-launch-resolve check` (diagnostics). Hidden; accepts the old
+    /// arguments so the error can name both replacements. DELETE AT 1.0.0.
+    #[command(hide = true)]
     Check(CheckArgs),
 
     /// Resolve launch + contracts + scheduling into a SystemModel YAML
@@ -144,7 +144,18 @@ pub struct ContextArgs {
     pub tree: bool,
 }
 
-/// Arguments for `play_launch check`
+/// Arguments for the removed `play_launch check` verb.
+///
+/// `check` itself is gone (0.9.0 — split into `launch --check` and
+/// `ros-launch-resolve check`), but this struct STAYS: it is what lets the
+/// hidden `Command::Check` variant parse the caller's old invocation at all,
+/// so `commands::migrated::check_removed` can echo the package, launch file
+/// and arguments back in both replacement forms. Without it, the hidden
+/// variant could only accept zero arguments and the error message would lose
+/// the caller's own invocation. Issue 0013 deleted a struct shaped exactly
+/// like this as dead code — it was not dead here for the same reason this
+/// one is not: do not delete it or add `#[allow(dead_code)]`; it is reachable
+/// via the hidden variant and clap's derive parsing.
 #[derive(Args)]
 pub struct CheckArgs {
     /// Package name or path to launch file
@@ -567,7 +578,7 @@ pub struct SchedOptions {
     /// extension; Phase 41.2). When set, replay derives + validates a plan
     /// for `--target` and (per `--sched-apply`) applies SCHED_FIFO/RR +
     /// priority + CPU affinity to each spawned node/container process. Same
-    /// file `play_launch check --sched` validates.
+    /// file `ros-launch-resolve check --sched` validates.
     #[arg(long, value_name = "PATH")]
     pub sched: Option<PathBuf>,
 
@@ -802,8 +813,7 @@ mod flag_ordering_tests {
         // get_subcommands()), by design, so only the help-visibility half
         // applies here. A single element today; later verb migrations add
         // more (see `commands::migrated`), hence the loop shape.
-        #[allow(clippy::single_element_loop)]
-        for hidden in ["replay"] {
+        for hidden in ["replay", "check"] {
             assert!(
                 verbs.iter().any(|v| v == hidden),
                 "`{hidden}` must still be a parseable variant (see commands::migrated) \
@@ -836,6 +846,14 @@ mod flag_ordering_tests {
         assert!(
             parse(&["replay", "m.yaml"]).is_ok(),
             "`replay` must still parse so its error can name the replacement"
+        );
+        assert!(
+            !help.contains("  check"),
+            "`check` must not be listed in --help"
+        );
+        assert!(
+            parse(&["check", "pkg", "file.launch.xml"]).is_ok(),
+            "`check` must still parse so its error can name both replacements"
         );
     }
 

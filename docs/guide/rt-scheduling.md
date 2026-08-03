@@ -187,7 +187,7 @@ overrides:                        # explicit pins — always beat derived values
 ### 1.3 `--explain` — the merged view
 
 ```bash
-play_launch check --sched launch/bringup.system.posix.yaml --explain \
+ros-launch-resolve check --sched launch/bringup.system.posix.yaml --explain \
     rt_demo bringup.launch.xml
 ```
 
@@ -226,7 +226,8 @@ not something that should fail `check`).
   model carries only the applied tiers/bindings, not the mapper's
   diagnostics, so every row reads `derived((applied): tier '<name>' → prio
   <p>)` (or `default (no timing facts)`) with a generic footer. Run
-  `check --sched --explain` when you need full mapper provenance.
+  `ros-launch-resolve check --sched --explain` when you need full mapper
+  provenance.
 
 This is a consequence of the model being **input + applied outcome, not the
 resolved plan**: the `execution.sched` embedding landed and was reverted
@@ -284,7 +285,7 @@ toolchain play_launch ships with — not on `play_launch` itself.)
 Without `--into`, it writes to the discovered overlay root (same discovery
 as above) and errors if none exists. `--force` overwrites an existing
 ejected copy; without it, `eject` refuses to touch a destination that
-already exists. Once ejected, `play_launch check --contracts <root>` (or
+already exists. Once ejected, `ros-launch-resolve check --contracts <root>` (or
 just running normally, if `<root>` is on the discovery chain) picks up your
 copy over the vendor's.
 
@@ -293,7 +294,8 @@ copy over the vendor's.
 ```bash
 play_launch launch <pkg> <file>                                 # auto-apply via channels
 play_launch launch <pkg> <file> --sched <path> [--sched-apply off|warn|strict]
-play_launch check <pkg> <file> [--sched <path>] [--target <t>] [--explain]
+play_launch launch <pkg> <file> --check                                        # pass/fail gate
+ros-launch-resolve check <pkg> <file> [--sched <path>] [--target <t>] [--explain]
 ros-launch-resolve contract eject <pkg> <file> [--target <t>] [--into <dir>] [--force]
 ```
 
@@ -379,7 +381,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    else — no chain-specific flag:
 
    ```bash
-   play_launch check --sched launch/bringup.system.posix.yaml rt_demo bringup.launch.xml
+   ros-launch-resolve check --sched launch/bringup.system.posix.yaml rt_demo bringup.launch.xml
    ```
 
    Three rules cover a chain end to end (full severities in the [manifest
@@ -400,7 +402,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    just a bare priority number:
 
    ```bash
-   play_launch check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
+   ros-launch-resolve check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
    ```
 
    ```
@@ -615,7 +617,7 @@ nodes = ["control_node"]
 ```
 
 ```bash
-play_launch check --sched system.toml rt_demo bringup.launch.xml
+play_launch launch rt_demo bringup.launch.xml --sched system.toml --check
 play_launch launch rt_demo bringup.launch.xml --sched system.toml --sched-apply warn
 ```
 
