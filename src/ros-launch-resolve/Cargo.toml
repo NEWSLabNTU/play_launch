@@ -15,7 +15,13 @@ resolver = "2"
 members = ["resolve", "cli"]
 
 [workspace.package]
-version = "0.1.0"
+# Tracks play_launch's release version. These crates lived in their own
+# repository until phase-55 W1 folded them in, and the two now build, ship and
+# release together — an independent 0.1.0 only meant `ros-launch-resolve
+# --version` disagreed with the wheel that carries it, and stamped 0.1.0 into
+# every SystemModel. `ros-launch-manifest` is the genuinely independent
+# dependency and keeps its own line (pinned by tag).
+version = "0.9.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/NEWSLabNTU/ros-launch-resolve"

@@ -46,11 +46,11 @@ pub enum Feature {
     WebUi,
 }
 
-/// Record and replay ROS 2 launches with inspection capabilities
+/// Resolve, run, and analyze ROS 2 launch executions with resource monitoring
 #[derive(Parser)]
 #[command(name = "play_launch")]
 #[command(version)]
-#[command(about = "Record and replay ROS 2 launches with inspection capabilities")]
+#[command(about = "Resolve, run, and analyze ROS 2 launch executions with resource monitoring")]
 // HISTORY (a `//` comment, not a doc comment: clap renders doc comments into
 // `--help`). RFC-0060 W3 moved `resolve`/`dump`/`check`/`plot`/`contract` out
 // to `ros-launch-resolve` and pointed users at that binary. That was wrong on

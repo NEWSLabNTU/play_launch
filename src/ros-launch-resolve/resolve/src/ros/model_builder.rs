@@ -863,7 +863,7 @@ pub fn build_system_model(
                 // the artifact. That is the BINARY the user ran, announced by
                 // its `main` (see `crate::producer`), not this library
                 // crate's own `CARGO_PKG_*`: reading the latter stamped
-                // `ros-launch-resolve` / `0.1.0` into models written by
+                // the library's own name and version into models written by
                 // `play_launch 0.9.0`, naming a developer binary the user was
                 // never shipped.
                 let (tool, version) = crate::producer::get();

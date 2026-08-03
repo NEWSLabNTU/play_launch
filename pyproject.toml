@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "play_launch"
 version = "0.9.0"
-description = "ROS2 Launch Inspection Tool - Record and replay launch executions for performance analysis"
+description = "ROS 2 launch inspection tool - resolve, run, and analyze launch executions with resource monitoring"
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.10"

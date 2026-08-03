@@ -3,7 +3,7 @@
 <package format="3">
   <name>play_launch</name>
   <version>0.9.0</version>
-  <description>ROS 2 launch execution replayer - Replays recorded launch from dump_launch</description>
+  <description>ROS 2 launch inspection tool - resolve, run, and analyze launch executions with resource monitoring</description>
   <maintainer email="jerry73204@gmail.com">Jerry Lin</maintainer>
   <license>MIT</license>
 

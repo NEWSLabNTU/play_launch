@@ -7,7 +7,7 @@
 //! anybody runs. Two binaries link it: `play_launch` (the product a user
 //! installs from PyPI) and `ros-launch-resolve` (the developer/nano-ros
 //! integration binary that never ships in the wheel). Reading this crate's
-//! own `CARGO_PKG_*` stamped `ros-launch-resolve` / `0.1.0` into every model
+//! own `CARGO_PKG_*` stamped the LIBRARY's name and version into every model
 //! — including the ones `play_launch resolve` writes and users commit to git
 //! — naming a binary they were never given, at a version unrelated to the
 //! `0.9.0` they installed. `meta.resolver` exists so a consumer can tell what
