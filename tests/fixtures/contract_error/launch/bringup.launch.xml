@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- A launch file whose provider contract (bringup.contract.yaml, next to
+       this file) is DELIBERATELY WRONG. It exists so `play_launch check` can
+       be tested against a run that must FAIL.
+
+       Nothing in this repo drove the checker's exit-1 path before: every
+       contract fixture was clean, so a `check` handler that dropped the
+       library's returned exit code (`verbs::check::run(..)?; Ok(())`) would
+       still print every diagnostic, exit 0, and pass the whole suite.
+       Issues 0008, 0012 and 0014 are three separate instances of exactly
+       that shape of bug in this repo. See tests/tests/migrated_verbs.rs.
+
+       No package needs to be built to use this: `check` and `resolve` work
+       off the launch file's path and never look up `pkg=` executables. -->
+
+  <node pkg="contract_error_demo" exec="sensor_node" name="sensor_node" namespace="/perception"/>
+  <node pkg="contract_error_demo" exec="control_node" name="control_node" namespace="/control"/>
+</launch>

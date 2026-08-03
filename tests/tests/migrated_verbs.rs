@@ -1,10 +1,33 @@
-//! Removed verbs must name their replacement.
+//! The verb surface `pip install play_launch` gives a user.
 //!
-//! Asserting only that the command "fails" is what nano-ros issue 0285 did:
-//! it failed, with `unrecognized subcommand 'resolve'`, from inside a cmake
-//! configure. These tests assert the error is USEFUL.
+//! Two things are pinned here.
+//!
+//! 1. A RENAMED verb must name its replacement. Asserting only that the
+//!    command "fails" is what nano-ros issue 0285 did: it failed, with
+//!    `unrecognized subcommand 'resolve'`, from inside a cmake configure.
+//!    These tests assert the error is USEFUL.
+//!
+//! 2. The five launch-tree verbs are back and actually WORK. `check` and
+//!    `resolve` used to be tested here as removed verbs that printed
+//!    migration advice; that advice pointed at `ros-launch-resolve`, a
+//!    developer binary the wheel does not ship, and with `resolve`/`dump`
+//!    both gone no play_launch verb could write the `system_model.yaml`
+//!    that `up` requires. Those two tests are deleted, replaced by the
+//!    round trip below.
 
-use play_launch_tests::fixtures;
+use play_launch_tests::{fixtures, process::ManagedProcess};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
+
+/// Repo-root-relative path, for fixtures and outputs.
+fn repo(rel: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("tests/ has a parent")
+        .join(rel)
+}
 
 #[test]
 fn replay_names_up_as_its_replacement() {
@@ -15,32 +38,13 @@ fn replay_names_up_as_its_replacement() {
 
     assert!(!out.status.success(), "`replay` must exit non-zero");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("renamed to `up`"), "must name the rename: {err}");
+    assert!(
+        err.contains("renamed to `up`"),
+        "must name the rename: {err}"
+    );
     assert!(
         err.contains("play_launch up system_model.yaml"),
         "must echo the user's own argument in the new form: {err}"
-    );
-}
-
-#[test]
-fn check_names_both_replacements() {
-    let env = fixtures::install_env();
-    let mut cmd = fixtures::play_launch_cmd(&env);
-    cmd.args(["check", "demo_pkg", "a.launch.xml", "--format", "json"]);
-    let out = cmd.output().expect("failed to run play_launch");
-
-    assert!(!out.status.success(), "`check` must exit non-zero");
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("launch demo_pkg a.launch.xml --check"),
-        "must name the gate replacement, echoing the user's args: {err}"
-    );
-    // The whole point of keeping the old argument struct around is that the
-    // replacement we print is pasteable. Naming the binary is not enough --
-    // the user's own diagnostic flags have to survive the translation.
-    assert!(
-        err.contains("ros-launch-resolve check demo_pkg a.launch.xml --format json"),
-        "must echo the user's diagnostic flags against the new binary: {err}"
     );
     // An eyre `Location:` footer reads as an internal crash in the exact
     // scenario this handler exists for (surfacing from a cmake configure).
@@ -50,36 +54,246 @@ fn check_names_both_replacements() {
     );
 }
 
+/// `resolve` must WRITE a model. This is the verb whose removal left `up`
+/// with nothing to spawn from — a pip-only user had the consumer and no
+/// producer.
 #[test]
-fn check_echo_omits_flags_the_user_did_not_pass() {
+fn resolve_writes_a_system_model() {
     let env = fixtures::install_env();
-    let mut cmd = fixtures::play_launch_cmd(&env);
-    cmd.args(["check", "demo_pkg", "a.launch.xml"]);
-    let out = cmd.output().expect("failed to run play_launch");
+    let out_path = repo("tmp/migrated_verbs_resolve.yaml");
+    let _ = std::fs::remove_file(&out_path);
+    std::fs::create_dir_all(out_path.parent().unwrap()).expect("mkdir tmp/");
 
-    assert!(!out.status.success(), "`check` must exit non-zero");
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.args([
+        "resolve",
+        repo("tests/fixtures/simple_test/launch/pure_nodes.launch.xml")
+            .to_str()
+            .unwrap(),
+        "-o",
+        out_path.to_str().unwrap(),
+    ]);
+    let out = cmd.output().expect("failed to run play_launch");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("ros-launch-resolve check demo_pkg a.launch.xml\n"),
-        "bare invocation must echo bare, with no invented defaults: {err}"
+        out.status.success(),
+        "`resolve` must succeed on a clean launch file: {err}"
+    );
+    let model = std::fs::read_to_string(&out_path).unwrap_or_else(|e| {
+        panic!(
+            "`resolve` wrote no model at {}: {e}\n{err}",
+            out_path.display()
+        )
+    });
+    assert!(
+        model.contains("structure:"),
+        "the emitted file must be a SystemModel:\n{model}"
+    );
+
+    // ...and `up` must ACCEPT what `resolve` just wrote — the half of the
+    // round trip that did not exist before this change (with `resolve` and
+    // `dump` both gone from play_launch, a pip-only user had `up` and no
+    // producer for its input).
+    //
+    // `up` supervises until signalled, so it is spawned under
+    // `ManagedProcess` (setsid + PR_SET_PDEATHSIG + PGID kill on Drop) and
+    // read back from its log, not run to completion. `--disable-all` keeps
+    // it to the spawn path: no monitoring, diagnostics or web UI.
+    let up_log = repo("tmp/migrated_verbs_up.log");
+    let log_file = std::fs::File::create(&up_log).expect("create up log");
+    let mut up = fixtures::play_launch_cmd(&env);
+    up.args(["up", out_path.to_str().unwrap(), "--disable-all"])
+        .stdout(std::process::Stdio::from(
+            log_file.try_clone().expect("dup log fd"),
+        ))
+        .stderr(std::process::Stdio::from(log_file));
+    let _guard = ManagedProcess::spawn(&mut up).expect("failed to spawn play_launch up");
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut log = String::new();
+    while Instant::now() < deadline {
+        log = std::fs::read_to_string(&up_log).unwrap_or_default();
+        if log.contains("Spawn source: SystemModel") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(
+        log.contains("Spawn source: SystemModel"),
+        "`up` must load and spawn from the model `resolve` just wrote:\n{log}"
     );
     assert!(
-        !err.contains("--format"),
-        "must not pad the echo with defaults the user never typed: {err}"
+        !log.contains("Failed to load SystemModel") && !log.contains("unexpected argument"),
+        "`up` must not reject the model as the wrong artifact:\n{log}"
     );
 }
 
+/// `check` must run the checker and PASS on a clean launch file.
 #[test]
-fn resolve_names_the_layer_two_binary() {
+fn check_runs_the_checker() {
     let env = fixtures::install_env();
     let mut cmd = fixtures::play_launch_cmd(&env);
-    cmd.args(["resolve", "demo_pkg", "a.launch.xml", "-o", "m.yaml"]);
+    cmd.args([
+        "check",
+        repo("tests/fixtures/simple_test/launch/pure_nodes.launch.xml")
+            .to_str()
+            .unwrap(),
+    ]);
     let out = cmd.output().expect("failed to run play_launch");
-
-    assert!(!out.status.success(), "`resolve` must exit non-zero");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("ros-launch-resolve resolve demo_pkg a.launch.xml"),
-        "must echo the user's own invocation against the new binary: {err}"
+        out.status.success(),
+        "`check` must exit 0 on a launch file with no contract errors: {err}"
     );
+    assert!(
+        !err.contains("was removed in 0.9.0"),
+        "`check` is a live verb again, not a migration stub: {err}"
+    );
+}
+
+/// THE trap this task exists to avoid: `verbs::check::run` returns
+/// `Result<i32>` and deliberately does NOT call `std::process::exit`, so a
+/// handler written as `verbs::check::run(inputs)?; Ok(())` compiles, prints
+/// every diagnostic, and exits 0 — a contract checker that cannot fail.
+/// Issues 0008, 0012 and 0014 are three earlier instances of that shape in
+/// this repo.
+///
+/// The fixture's contract is deliberately inconsistent (publishers promise
+/// 100 Hz on a 500 Hz channel → `rate-hierarchy` Errors), so this run MUST
+/// exit non-zero.
+#[test]
+fn check_exits_nonzero_on_a_contract_error() {
+    let env = fixtures::install_env();
+    let launch = repo("tests/fixtures/contract_error/launch/bringup.launch.xml");
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.args(["check", launch.to_str().unwrap()]);
+    let out = cmd.output().expect("failed to run play_launch");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // The diagnostics must actually be produced -- otherwise a fixture that
+    // silently stopped tripping the rule would make this test pass for the
+    // wrong reason (no errors found, exit 0... which would then fail the
+    // status assertion, but with a misleading message).
+    assert!(
+        stdout.contains("rate-hierarchy") || stderr.contains("rate-hierarchy"),
+        "the fixture must still trip the rate-hierarchy rule:\n{stdout}\n{stderr}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "`check` must EXIT 1 when an Error-severity diagnostic survives \
+         filtering -- a checker that prints errors and exits 0 is a checker \
+         CI cannot use:\n{stdout}\n{stderr}"
+    );
+}
+
+/// `--rule` narrows the exit code exactly as it narrows the printed output:
+/// filtering to a rule that only yields warnings turns the same failing run
+/// into a passing one. This is the library's documented contract (Task 8
+/// report §3) and is the half most easily lost by a wrapper that computes
+/// its own status.
+#[test]
+fn check_rule_filter_narrows_the_exit_code() {
+    let env = fixtures::install_env();
+    let launch = repo("tests/fixtures/contract_error/launch/bringup.launch.xml");
+
+    let mut matching = fixtures::play_launch_cmd(&env);
+    matching.args([
+        "check",
+        launch.to_str().unwrap(),
+        "--rule",
+        "rate-hierarchy",
+    ]);
+    assert_eq!(
+        matching.output().expect("run").status.code(),
+        Some(1),
+        "filtering TO the failing rule must stay exit 1"
+    );
+
+    let mut excluding = fixtures::play_launch_cmd(&env);
+    excluding.args([
+        "check",
+        launch.to_str().unwrap(),
+        "--rule",
+        "dangling-entity",
+    ]);
+    assert_eq!(
+        excluding.output().expect("run").status.code(),
+        Some(0),
+        "filtering to a warning-only rule must exit 0"
+    );
+}
+
+/// For these five verbs stdout is a DATA channel, not a log channel:
+/// `resolve -o -` writes the SystemModel and `check --format json` writes a
+/// report, both to be piped into another program. play_launch's tracing
+/// subscriber writes to stdout for every other verb, so when these arrived
+/// from `ros-launch-resolve` (whose subscriber writes to stderr) every
+/// library log line landed in the middle of the artifact — ANSI escapes and
+/// WARN lines inside the YAML/JSON. `main::logs_to_stderr` is the fix; this
+/// is what stops it silently regressing.
+#[test]
+fn machine_readable_stdout_is_not_polluted_by_logs() {
+    let env = fixtures::install_env();
+    // A fixture that DOES produce log lines (it loads two provider
+    // contracts) — against a silent one this test would pass vacuously.
+    let launch = repo("tests/fixtures/contract_merge/launch/bringup.launch.xml");
+
+    let mut resolve = fixtures::play_launch_cmd(&env);
+    resolve.args(["resolve", launch.to_str().unwrap(), "-o", "-"]);
+    let out = resolve.output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Loaded 2 manifest(s)"),
+        "the fixture must still emit log lines, or this test proves nothing: {stderr}"
+    );
+    assert!(
+        !stdout.contains('\u{1b}') && !stdout.contains("manifest(s)"),
+        "`resolve -o -` must write ONLY the model to stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.trim_start().starts_with("meta:"),
+        "stdout must begin with the model's first key:\n{stdout}"
+    );
+
+    let err_launch = repo("tests/fixtures/contract_error/launch/bringup.launch.xml");
+    let mut check = fixtures::play_launch_cmd(&env);
+    check.args(["check", err_launch.to_str().unwrap(), "--format", "json"]);
+    let out = check.output().expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.trim_start().starts_with('[') || stdout.trim_start().starts_with('{'),
+        "`check --format json` must write parseable JSON to stdout:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains('\u{1b}'),
+        "no ANSI-coloured log line may reach the JSON report:\n{stdout}"
+    );
+}
+
+/// The wheel ships `play_launch` and nothing else, so `--help` must never
+/// send a user to a binary they do not have.
+#[test]
+fn help_never_names_the_developer_binary() {
+    let env = fixtures::install_env();
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.arg("--help");
+    let out = cmd.output().expect("failed to run play_launch");
+    let help = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !help.contains("ros-launch-resolve"),
+        "--help must not name the developer-only binary:\n{help}"
+    );
+    for verb in ["resolve", "dump", "check", "plot", "contract"] {
+        assert!(
+            help.contains(verb),
+            "--help must advertise `{verb}`:\n{help}"
+        );
+    }
 }

@@ -12,6 +12,18 @@ pub enum ParserBackend {
     Python,
 }
 
+/// The resolve library's parser selector carries no clap derive on purpose —
+/// it must not know a CLI exists. Each CLI keeps its own clap enum and maps
+/// into it; `ros-launch-resolve`'s own `options.rs` has the mirror impl.
+impl From<ParserBackend> for ros_launch_resolve::verbs::ParserBackend {
+    fn from(backend: ParserBackend) -> Self {
+        match backend {
+            ParserBackend::Rust => Self::Rust,
+            ParserBackend::Python => Self::Python,
+        }
+    }
+}
+
 /// Container mode selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ContainerMode {
@@ -39,14 +51,20 @@ pub enum Feature {
 #[command(name = "play_launch")]
 #[command(version)]
 #[command(about = "Record and replay ROS 2 launches with inspection capabilities")]
-// `dump` used to head the third example. RFC-0060 W3 moved that verb to
-// ros-launch-resolve, and `resolve` (the play_launch-side equivalent) was
-// removed in 0.9.0 for the same reason (Task 6) -- resolution now lives
-// solely in `ros-launch-resolve resolve`.
+// HISTORY (a `//` comment, not a doc comment: clap renders doc comments into
+// `--help`). RFC-0060 W3 moved `resolve`/`dump`/`check`/`plot`/`contract` out
+// to `ros-launch-resolve` and pointed users at that binary. That was wrong on
+// both counts: `ros-launch-resolve` is a developer/integration binary users
+// never install, and with `resolve` and `dump` both gone NO play_launch verb
+// could write the `system_model.yaml` that `up` requires. The five verbs are
+// back here as thin wrappers over `ros_launch_resolve::verbs::*` — ONE
+// implementation, two callers. No example here may name the other binary.
 #[command(after_help = "Examples:\n  \
     play_launch launch demo_nodes_cpp topics/talker_listener.launch.py\n  \
     play_launch run demo_nodes_cpp talker\n  \
+    play_launch resolve autoware_launch planning_simulator.launch.xml -o autoware.yaml\n  \
     play_launch up --model autoware.yaml\n  \
+    play_launch check autoware_launch planning_simulator.launch.xml\n  \
     play_launch context autoware.yaml --tree")]
 #[command(arg_required_else_help = true)]
 pub struct Options {
@@ -106,17 +124,87 @@ pub enum Command {
         play_launch context system_model.yaml --launch tier4_system_launch system.launch.xml")]
     Context(ContextArgs),
 
-    /// Removed in 0.9.0 — split into `launch --check` (gate) and
-    /// `ros-launch-resolve check` (diagnostics). Hidden; accepts the old
-    /// arguments so the error can name both replacements. DELETE AT 1.0.0.
-    #[command(hide = true)]
+    /// Resolve launch + contracts + scheduling into a SystemModel YAML
+    /// (RFC-0050 / docs/design/system-model.md): one fully-resolved,
+    /// checked artifact per concrete arg-set. Refuses to emit when the
+    /// contract checker reports errors; warnings are embedded in the model.
+    /// This is what produces the `system_model.yaml` that `up` spawns from.
+    #[command(after_help = "Examples:\n  \
+        play_launch resolve demo_pkg pipeline.launch.xml -o system_model.yaml\n  \
+        play_launch resolve /path/to/launch.xml --sched system.posix.yaml mode:=velodyne\n  \
+        play_launch resolve demo_pkg pipeline.launch.xml -o - | less")]
+    Resolve(ResolveArgs),
+
+    /// Dump launch execution without spawning — emits the SystemModel
+    /// (the only dump artifact; Phase 47.B2 retired `record.json`)
+    #[command(after_help = "Examples:\n  \
+        play_launch dump launch demo_nodes_cpp topics/talker_listener.launch.py\n  \
+        play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml")]
+    Dump(DumpArgs),
+
+    /// Check manifest contracts against a launch file. Exits non-zero when
+    /// the checker reports an Error-severity diagnostic, so it is usable as
+    /// a CI gate.
+    #[command(after_help = "Examples:\n  \
+        play_launch check autoware_launch planning_simulator.launch.xml\n  \
+        play_launch check autoware_launch planning_simulator.launch.xml --format json --explain\n  \
+        play_launch check --contracts ~/contracts /path/to/launch.py arg:=value")]
     Check(CheckArgs),
 
-    /// Removed in 0.9.0 — it delegated to layer 2 since RFC-0060. Hidden;
-    /// accepts the old arguments so the error can name the replacement.
-    /// DELETE AT 1.0.0.
-    #[command(hide = true)]
-    Resolve(ResolveArgs),
+    /// Plot resource usage from execution logs
+    #[command(after_help = "Examples:\n  \
+        play_launch plot\n  \
+        play_launch plot --log-dir play_log/2025-10-28_16-17-56\n  \
+        play_launch plot --metrics cpu --metrics memory")]
+    Plot(PlotArgs),
+
+    /// Manage contract/platform-file overlays (Phase 41.4, design §3.3)
+    #[command(after_help = "Examples:\n  \
+        play_launch contract eject rt_demo bringup.launch.xml\n  \
+        play_launch contract eject rt_demo bringup.launch.xml --into ~/.config/play_launch/contracts")]
+    Contract(ContractArgs),
+}
+
+/// Arguments for `play_launch contract`
+#[derive(Args)]
+pub struct ContractArgs {
+    #[command(subcommand)]
+    pub subcommand: ContractSubcommand,
+}
+
+#[derive(Subcommand)]
+pub enum ContractSubcommand {
+    /// Copy the resolved provider contract (and target's platform file, if
+    /// any) into the overlay tree, ready to edit — editing never touches
+    /// `/opt` (design §3.3).
+    Eject(ContractEjectArgs),
+}
+
+/// Arguments for `play_launch contract eject`
+#[derive(Args)]
+pub struct ContractEjectArgs {
+    /// Package name or path to launch file
+    pub package_or_path: String,
+
+    /// Launch file name (if package_or_path is a package name)
+    pub launch_file: Option<String>,
+
+    /// Which scheduling target's platform file to eject (`<stem>.system.<target>.yaml`).
+    #[arg(long, default_value = "posix")]
+    pub target: String,
+
+    /// Overlay root to eject into. Defaults to the discovered overlay root
+    /// (same discovery as `check --contracts`: `$PLAY_LAUNCH_CONTRACTS`,
+    /// then `$XDG_CONFIG_HOME/play_launch/contracts`, then
+    /// `/etc/play_launch/contracts`) — errors if none of those exist yet
+    /// and `--into` wasn't given.
+    #[arg(long, value_name = "PATH")]
+    pub into: Option<PathBuf>,
+
+    /// Overwrite existing overlay files. Without this flag, `eject` refuses
+    /// to touch a destination that already exists.
+    #[arg(long)]
+    pub force: bool,
 }
 
 /// Arguments for the context extraction command
@@ -143,18 +231,17 @@ pub struct ContextArgs {
     pub tree: bool,
 }
 
-/// Arguments for the removed `play_launch check` verb.
+/// Arguments for `play_launch check` — a LIVE verb again.
 ///
-/// `check` itself is gone (0.9.0 — split into `launch --check` and
-/// `ros-launch-resolve check`), but this struct STAYS: it is what lets the
-/// hidden `Command::Check` variant parse the caller's old invocation at all,
-/// so `commands::migrated::check_removed` can echo the package, launch file
-/// and arguments back in both replacement forms. Without it, the hidden
-/// variant could only accept zero arguments and the error message would lose
-/// the caller's own invocation. Issue 0013 deleted a struct shaped exactly
-/// like this as dead code — it was not dead here for the same reason this
-/// one is not: do not delete it or add `#[allow(dead_code)]`; it is reachable
-/// via the hidden variant and clap's derive parsing.
+/// History, because this struct has been deleted once and demoted once:
+/// issue 0013 deleted it as "dead code" while the verb still existed; the
+/// 0.9.0 reshape then removed the verb and kept the struct only so a hidden
+/// migration variant could echo the caller's invocation back. Both are over.
+/// `Command::Check` is a real, advertised verb whose handler
+/// (`commands::check`) maps these fields onto
+/// `ros_launch_resolve::verbs::CheckInputs`. The `--target`/`--format`
+/// defaults below are load-bearing: the library deliberately does NOT
+/// re-apply them (Task 8), so dropping one hands the checker an empty string.
 #[derive(Args)]
 pub struct CheckArgs {
     /// Package name or path to launch file
@@ -225,36 +312,20 @@ pub struct CheckArgs {
     pub export_graph: Option<PathBuf>,
 }
 
-impl CheckArgs {
-    /// Build the two-step `ContractSources` from this command's flags.
-    ///
-    /// The overlay root is discovered (Phase 41.3 §3.2) when `--contracts`
-    /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
-    /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
-    /// `/etc/play_launch/contracts` — first existing wins.
-    pub fn contract_sources(&self) -> ros_launch_resolve::ros::manifest_loader::ContractSources {
-        ros_launch_resolve::ros::manifest_loader::ContractSources {
-            overlay: ros_launch_resolve::ros::manifest_loader::discover_overlay_root(
-                self.contracts.as_deref(),
-            ),
-            provider: !self.no_provider_contracts,
-        }
-    }
-}
+// `CheckArgs::contract_sources` is gone: resolving the overlay/provider
+// two-step is checker policy, not argv parsing, so Task 8 moved it onto
+// `verbs::CheckInputs` where both CLIs get the identical behaviour.
+// `CommonOptions::contract_sources` (below) is a different thing and stays —
+// `run`/`launch` still need it for the spawn path.
 
-/// Arguments for the removed `play_launch resolve` verb.
+/// Arguments for `play_launch resolve` — a LIVE verb again.
 ///
-/// `resolve` itself is gone (0.9.0 -- it delegated to layer 2 since
-/// RFC-0060 W3), but this struct STAYS: it is what lets the hidden
-/// `Command::Resolve` variant parse the caller's old invocation at all, so
-/// `commands::migrated::resolve_removed` can echo the package, launch file
-/// and arguments back against `ros-launch-resolve resolve`. Without it, the
-/// hidden variant could only accept zero arguments and the error message
-/// would lose the caller's own invocation. Issue 0013 deleted a struct
-/// shaped exactly like this as dead code -- it was not dead here for the
-/// same reason this one is not: do not delete it or add
-/// `#[allow(dead_code)]`; it is reachable via the hidden variant and clap's
-/// derive parsing.
+/// Removed in 0.9.0 on the theory that resolution belonged solely to layer 2;
+/// that left `up` with no way to obtain the `system_model.yaml` it requires,
+/// which is the dead end this amendment exists to close. The handler
+/// (`commands::resolve`) maps these fields onto
+/// `ros_launch_resolve::verbs::ResolveInputs`; the `--target` and `-o`
+/// defaults below are load-bearing (the library does not re-apply them).
 #[derive(Args)]
 pub struct ResolveArgs {
     /// Package name or path to launch file
@@ -267,6 +338,13 @@ pub struct ResolveArgs {
     /// after these (clap parses flags in any position); use `--` to force
     /// remaining tokens to be treated as positional launch arguments.
     pub launch_arguments: Vec<String>,
+
+    /// nano-ros issue 0320 — the bringup package root that `meta.inputs[].path`
+    /// are recorded relative to. When omitted, falls back to the launch file's
+    /// grandparent (`<bringup>/launch/<f>.launch.xml`). Pass it to make model
+    /// portability structural rather than inferred from the launch-path layout.
+    #[arg(long, value_name = "PATH")]
+    pub bringup_root: Option<PathBuf>,
 
     /// Overlay root for user-supplied contracts (see `check --contracts`).
     #[arg(long, value_name = "PATH")]
@@ -345,13 +423,63 @@ pub struct LaunchArgs {
     /// checker reports errors.
     ///
     /// This is a pass/fail gate. For `--format json`, rule filters,
-    /// `--explain` or graph export, use `ros-launch-resolve check`, which
-    /// carries the full diagnostic surface and needs no ROS install.
+    /// `--explain` or graph export, use `play_launch check`, which carries
+    /// the full diagnostic surface.
     #[arg(long)]
     pub check: bool,
 
     #[command(flatten)]
     pub common: CommonOptions,
+}
+
+/// Arguments for dump command
+#[derive(Args)]
+pub struct DumpArgs {
+    #[command(subcommand)]
+    pub subcommand: DumpSubcommand,
+
+    /// Output file for the dump. Defaults to `system_model.yaml`. May be
+    /// given before or after the `launch` subcommand and its launch
+    /// arguments.
+    #[arg(long, short = 'o', global = true)]
+    pub output: Option<PathBuf>,
+
+    /// Enable debug output during dump. May be given before or after the
+    /// subcommand.
+    #[arg(long, global = true)]
+    pub debug: bool,
+}
+
+#[derive(Subcommand)]
+pub enum DumpSubcommand {
+    /// Dump a launch file execution — emits the SystemModel
+    /// (`system_model.yaml`), the one dump artifact (Phase 47.B2:
+    /// `record.json`/`--format` retired; `dump` always emits the model).
+    Launch(LaunchArgs),
+}
+
+/// Arguments for plot command
+#[derive(Args)]
+pub struct PlotArgs {
+    /// Specific log directory to plot (e.g., play_log/2025-10-28_16-17-56)
+    #[arg(long, value_name = "PATH")]
+    pub log_dir: Option<PathBuf>,
+
+    /// Base log directory to search for latest execution
+    #[arg(long, value_name = "PATH", default_value = "./play_log")]
+    pub base_log_dir: PathBuf,
+
+    /// Output directory for generated plots
+    #[arg(long, short = 'o', value_name = "PATH")]
+    pub output_dir: Option<PathBuf>,
+
+    /// Metrics to plot (can be specified multiple times)
+    #[arg(long, short = 'm', value_name = "METRIC")]
+    pub metrics: Vec<String>,
+
+    /// List available metrics and exit
+    #[arg(long)]
+    pub list_metrics: bool,
 }
 
 /// Arguments for running a single node
@@ -384,14 +512,14 @@ pub struct RunArgs {
 /// Arguments for the `up` command (renamed from `replay` in 0.9.0)
 #[derive(Args, Default)]
 pub struct UpArgs {
-    /// SystemModel emitted by `ros-launch-resolve resolve`/`dump` — the sole
+    /// SystemModel emitted by `play_launch resolve`/`dump` — the sole
     /// spawn source (Phase 47.B3: the deprecated `--input-file
     /// record.json` compat path is retired). May be given positionally or
     /// via `--model`; giving both is an error.
     #[arg(value_name = "MODEL", conflicts_with = "model")]
     pub model_path: Option<PathBuf>,
 
-    /// SystemModel emitted by `ros-launch-resolve resolve`/`dump`. Equivalent to
+    /// SystemModel emitted by `play_launch resolve`/`dump`. Equivalent to
     /// passing the path positionally. Spawns directly from the model's
     /// `structure.nodes` — no companion file required (Phase 46.4: the
     /// model↔record binding gate was removed once the model became a
@@ -589,7 +717,7 @@ pub struct SchedOptions {
     /// extension; Phase 41.2). When set, replay derives + validates a plan
     /// for `--target` and (per `--sched-apply`) applies SCHED_FIFO/RR +
     /// priority + CPU affinity to each spawned node/container process. Same
-    /// file `ros-launch-resolve check --sched` validates.
+    /// file `play_launch check --sched` validates.
     #[arg(long, value_name = "PATH")]
     pub sched: Option<PathBuf>,
 
@@ -781,23 +909,27 @@ mod flag_ordering_tests {
         Options::try_parse_from(full)
     }
 
-    /// `--help` must not advertise a verb this binary does not implement.
+    /// `--help` must advertise every verb this binary has, and no verb it
+    /// lacks.
     ///
-    /// RFC-0060 W3 moved `dump`, `plot` and `contract` to
-    /// ros-launch-resolve. The `Command` enum lost them, but the top-level
-    /// examples kept invoking `play_launch dump ...`, and `PlotArgs`,
-    /// `ContractArgs`, `ContractSubcommand` and `ContractEjectArgs` stayed
-    /// behind as definitions with no variant to attach to. None of that
-    /// warned: `pub` items in a `pub` module are never `dead_code`, so the
-    /// residue of an extracted verb is invisible to the compiler. This test
-    /// is the check that isn't.
+    /// This test used to run the other way round: RFC-0060 W3 moved `dump`,
+    /// `plot` and `contract` out to `ros-launch-resolve` and it BANNED all
+    /// five launch-tree verbs from appearing here. That was the wrong
+    /// invariant — `play_launch` is the only binary a user installs, and
+    /// with `resolve`/`dump` gone nothing could produce the
+    /// `system_model.yaml` that `up` requires. All five are back as thin
+    /// wrappers over `ros_launch_resolve::verbs::*`, so the assertion is
+    /// inverted: each MUST be a variant and MUST be listed.
     ///
-    /// `replay` (0.9.0, renamed to `up`) is a different shape of "gone": it
-    /// stays in the `Command` enum as a hidden variant on purpose (see
-    /// `commands::migrated`), so it DOES still show up in
-    /// `get_subcommands()` -- only the subcommand-list half of this
-    /// assertion would be wrong for it. It still must never appear in
-    /// rendered `--help`, so that half of the check still applies.
+    /// The original point of the test survives the inversion. `pub` items in
+    /// a `pub` module are never `dead_code`, so an arg struct with no
+    /// `Command` variant to attach to — the residue RFC-0060 W3 left behind —
+    /// is invisible to the compiler. Asserting the verb list is the check
+    /// that isn't.
+    ///
+    /// `replay` (0.9.0, renamed to `up`) is the one verb that is a variant
+    /// WITHOUT being advertised: hidden on purpose (see
+    /// `commands::migrated`) so its error can name `up`.
     #[test]
     fn help_advertises_only_verbs_this_binary_has() {
         use clap::CommandFactory;
@@ -808,33 +940,44 @@ mod flag_ordering_tests {
             .collect();
         let help = cmd.clone().render_long_help().to_string();
 
-        // Fully gone: no variant at all, so absent from both the subcommand
-        // list and the rendered help.
-        for gone in ["dump", "plot", "contract"] {
+        // The five launch-tree verbs: real, advertised, and reachable.
+        for present in ["resolve", "dump", "check", "plot", "contract"] {
             assert!(
-                !verbs.iter().any(|v| v == gone),
-                "`{gone}` is back as a verb -- update this test if that is intended"
+                verbs.iter().any(|v| v == present),
+                "`{present}` must be a verb of this binary -- it is what a \
+                 pip-only user has (see commands::{present})"
             );
             assert!(
-                !help.contains(&format!("play_launch {gone} ")),
-                "--help invokes `play_launch {gone}`, a verb this binary does not have:\n{help}"
-            );
-        }
-        // Hidden migration verbs: still a variant (so it DOES appear in
-        // get_subcommands()), by design, so only the help-visibility half
-        // applies here. A single element today; later verb migrations add
-        // more (see `commands::migrated`), hence the loop shape.
-        for hidden in ["replay", "check", "resolve"] {
-            assert!(
-                verbs.iter().any(|v| v == hidden),
-                "`{hidden}` must still be a parseable variant (see commands::migrated) \
-                 so its error can name the replacement"
-            );
-            assert!(
-                !help.contains(&format!("  {hidden}")),
-                "`{hidden}` must not be listed in --help:\n{help}"
+                help.contains(&format!("  {present}")),
+                "`{present}` must be listed in --help:\n{help}"
             );
         }
+        // The rest of the surface, so a future extraction cannot quietly
+        // remove one.
+        for present in ["launch", "run", "up", "context", "setcap", "verify"] {
+            assert!(
+                verbs.iter().any(|v| v == present),
+                "`{present}` must be a verb of this binary"
+            );
+        }
+        // `replay` is the one verb that is a variant WITHOUT being
+        // advertised: hidden on purpose (see `commands::migrated`) so its
+        // error can name `up`, so only the help-visibility half applies.
+        assert!(
+            verbs.iter().any(|v| v == "replay"),
+            "`replay` must still be a parseable variant (see commands::migrated) \
+             so its error can name the replacement"
+        );
+        assert!(
+            !help.contains("  replay"),
+            "`replay` must not be listed in --help:\n{help}"
+        );
+        // No example may point the user at the developer-only binary. It is
+        // not in the wheel; naming it here is advice a pip user cannot take.
+        assert!(
+            !help.contains("ros-launch-resolve"),
+            "--help must never name the developer-only binary:\n{help}"
+        );
         for verb in &verbs {
             assert!(!verb.is_empty());
         }
@@ -846,6 +989,11 @@ mod flag_ordering_tests {
     /// which covers the "still not advertised" half generically; this test
     /// pins the "still parses" half explicitly for the one verb where that
     /// matters (issue 0285).
+    ///
+    /// `check` and `resolve` were covered here while they were hidden
+    /// migration variants. They are live verbs again, so their coverage
+    /// moved to the "must be advertised" loop above and to
+    /// `tests/tests/migrated_verbs.rs`, which runs them for real.
     #[test]
     fn hidden_migration_verbs_parse_but_are_not_advertised() {
         use clap::CommandFactory;
@@ -858,22 +1006,108 @@ mod flag_ordering_tests {
             parse(&["replay", "m.yaml"]).is_ok(),
             "`replay` must still parse so its error can name the replacement"
         );
-        assert!(
-            !help.contains("  check"),
-            "`check` must not be listed in --help"
+    }
+
+    /// The clap-side defaults the resolve library deliberately does NOT
+    /// re-apply (Task 8: "defaults live where they lived before"). Omitting
+    /// one hands the verb an empty `--target`/`--format` or the wrong output
+    /// path, and nothing in the type system notices.
+    #[test]
+    fn library_facing_defaults_are_declared_on_this_binary() {
+        let Command::Resolve(r) = parse(&["resolve", "pkg", "f.launch.xml"])
+            .expect("must parse")
+            .command
+        else {
+            panic!("expected Resolve");
+        };
+        assert_eq!(r.target, "posix");
+        assert_eq!(r.out, "system_model.yaml");
+
+        let Command::Check(c) = parse(&["check", "pkg", "f.launch.xml"])
+            .expect("must parse")
+            .command
+        else {
+            panic!("expected Check");
+        };
+        assert_eq!(c.target, "posix");
+        assert_eq!(c.format, "terminal");
+
+        let Command::Plot(p) = parse(&["plot"]).expect("must parse").command else {
+            panic!("expected Plot");
+        };
+        assert_eq!(p.base_log_dir, PathBuf::from("./play_log"));
+
+        let Command::Contract(ct) = parse(&["contract", "eject", "pkg", "f.launch.xml"])
+            .expect("must parse")
+            .command
+        else {
+            panic!("expected Contract");
+        };
+        let ContractSubcommand::Eject(e) = ct.subcommand;
+        assert_eq!(e.target, "posix");
+
+        // `dump --output` has NO clap default on purpose: the library
+        // applies `system_model.yaml` for `None`. Substituting a default
+        // here would be harmless today and wrong the moment the library's
+        // fallback changes.
+        let Command::Dump(d) = parse(&["dump", "launch", "pkg", "f.launch.xml"])
+            .expect("must parse")
+            .command
+        else {
+            panic!("expected Dump");
+        };
+        assert_eq!(d.output, None);
+    }
+
+    /// `dump`'s `--output`/`--debug` are `global = true`, so clap accepts
+    /// them on either side of the `launch` subcommand and its positional
+    /// launch arguments. The Autoware shape (several `KEY:=VALUE` args, then
+    /// a flag) is the case that regressed before.
+    #[test]
+    fn dump_launch_flag_after_two_launch_arguments() {
+        let opts = parse(&[
+            "dump",
+            "launch",
+            "pkg",
+            "file.launch.xml",
+            "vehicle_model:=sample_vehicle",
+            "sensor_model:=sample_sensor_kit",
+            "--output",
+            "aw.yaml",
+        ])
+        .expect("--output after KEY:=VALUE launch args must parse (dump's global flags)");
+        let Command::Dump(dump_args) = opts.command else {
+            panic!("expected Dump");
+        };
+        assert_eq!(dump_args.output, Some(PathBuf::from("aw.yaml")));
+        // Phase 47.B2 retired `dump run`: `DumpSubcommand` has exactly one
+        // variant, so this destructure is irrefutable — no `else` arm.
+        let DumpSubcommand::Launch(args) = dump_args.subcommand;
+        assert_eq!(
+            args.launch_arguments,
+            vec![
+                "vehicle_model:=sample_vehicle".to_string(),
+                "sensor_model:=sample_sensor_kit".to_string(),
+            ]
         );
-        assert!(
-            parse(&["check", "pkg", "file.launch.xml"]).is_ok(),
-            "`check` must still parse so its error can name both replacements"
-        );
-        assert!(
-            !help.contains("  resolve"),
-            "`resolve` must not be listed in --help"
-        );
-        assert!(
-            parse(&["resolve", "pkg", "file.launch.xml"]).is_ok(),
-            "`resolve` must still parse so its error can name the replacement"
-        );
+    }
+
+    #[test]
+    fn dump_launch_flag_before_subcommand_still_works() {
+        let opts = parse(&[
+            "dump",
+            "--output",
+            "aw.yaml",
+            "launch",
+            "pkg",
+            "file.launch.xml",
+            "vehicle_model:=sample_vehicle",
+        ])
+        .expect("--output before `launch` must still parse");
+        let Command::Dump(dump_args) = opts.command else {
+            panic!("expected Dump");
+        };
+        assert_eq!(dump_args.output, Some(PathBuf::from("aw.yaml")));
     }
 
     #[test]

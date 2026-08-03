@@ -1,0 +1,47 @@
+# Provider sidecar for bringup.launch.xml — DELIBERATELY INCONSISTENT.
+#
+# The `rate-hierarchy` rule requires every publisher's `min_rate_hz` to be at
+# least the topic's channel `rate_hz`. Here both publishers promise 100 Hz on
+# a channel declared at 500 Hz, so the checker reports Error-severity
+# diagnostics (per-scope AND cross-scope) and `check` must exit 1.
+#
+# Keep it wrong. If you "fix" this file the test that pins `check`'s exit
+# code (tests/tests/migrated_verbs.rs) goes vacuously green and stops
+# guarding anything.
+version: 1
+
+nodes:
+  sensor_node:
+    pub:
+      points_raw:
+        min_rate_hz: 100
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 100 } }
+        output: [points_raw]
+
+  control_node:
+    sub:
+      points_raw:
+        min_rate_hz: 100
+    pub:
+      cmd:
+        min_rate_hz: 100
+    paths:
+      control:
+        trigger: { input: [points_raw] }
+        output: [cmd]
+        max_latency_ms: 10
+
+topics:
+  # absolute — the two nodes sit in different namespaces (/perception, /control)
+  /perception/points_raw:
+    type: std_msgs/msg/String
+    pub: [sensor_node/points_raw]
+    sub: [control_node/points_raw]
+    rate_hz: 500
+
+  /control/cmd:
+    type: std_msgs/msg/String
+    pub: [control_node/cmd]
+    rate_hz: 500
