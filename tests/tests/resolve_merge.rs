@@ -1,33 +1,19 @@
 //! SystemModel merge + full-dump tests (Phase 43 / RFC-0050).
 //!
-//! `play_launch resolve` on the `contract_merge` fixture must merge the
+//! `ros-launch-resolve resolve` on the `contract_merge` fixture must merge the
 //! launch tree (root + namespaced include) with BOTH scopes' contract
 //! sidecars into one model that carries the complete declared information:
 //! merged topic wiring, every contract field class, externals, provenance,
 //! and the arg binding.
 
 use play_launch_tests::fixtures;
-use std::{path::PathBuf, process::Command, time::Duration};
-
-fn play_launch_bin() -> PathBuf {
-    let release = fixtures::repo_root().join("target/release/play_launch");
-    if release.is_file() {
-        return release;
-    }
-    let debug = fixtures::repo_root().join("target/debug/play_launch");
-    if debug.is_file() {
-        return debug;
-    }
-    fixtures::play_launch_bin()
-}
+use std::time::Duration;
 
 fn resolve_fixture(out: &std::path::Path) -> serde_json::Value {
     let env = fixtures::install_env();
     let launch =
         fixtures::repo_root().join("tests/fixtures/contract_merge/launch/bringup.launch.xml");
-    let mut cmd = Command::new(play_launch_bin());
-    cmd.env_clear();
-    cmd.envs(&env);
+    let mut cmd = fixtures::ros_launch_resolve_cmd(&env);
     cmd.args([
         "resolve",
         launch.to_str().unwrap(),
@@ -35,7 +21,7 @@ fn resolve_fixture(out: &std::path::Path) -> serde_json::Value {
         "-o",
         out.to_str().unwrap(),
     ]);
-    let output = cmd.output().expect("run play_launch resolve");
+    let output = cmd.output().expect("run ros-launch-resolve resolve");
     assert!(
         output.status.success(),
         "resolve failed:\n{}",

@@ -366,6 +366,13 @@ test:
     echo "=== Parser unit tests ==="
     (cd src/ros-launch-resolve/parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
     echo ""
+    # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
+    # reshape) — many fast-suite tests drive it directly via
+    # `fixtures::ros_launch_resolve_cmd`, which panics (not skips) if it
+    # isn't built, so it has to be here rather than only in `test-all`.
+    echo "=== ros-launch-resolve CLI (layer 2) ==="
+    (cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve)
+    echo ""
     echo "=== Integration tests (fast) ==="
     (cd tests && cargo nextest run -E 'not binary(autoware) & not binary(io_stress) & not binary(rt_workspace) & not test(/launch/)' --no-fail-fast --failure-output final)
 
@@ -447,6 +454,12 @@ compare-parsers:
     # fixture justfiles' compare-dumps recipes already apply).
     export PATH="$(pwd)/install/play_launch/lib/play_launch:$PATH"
     export PYTHONPATH="$(pwd)/python:$PYTHONPATH"
+    # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
+    # reshape) — it's not part of the colcon install/ tree, so locate it in
+    # its own standalone cargo workspace's target/ (release preferred).
+    RESOLVE_BIN="$(pwd)/src/ros-launch-resolve/target/release/ros-launch-resolve"
+    [ -f "$RESOLVE_BIN" ] || RESOLVE_BIN="$(pwd)/src/ros-launch-resolve/target/debug/ros-launch-resolve"
+    [ -f "$RESOLVE_BIN" ] || { echo "ros-launch-resolve not built — run: cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve" >&2; exit 1; }
     TMPDIR=$(mktemp -d)
     trap "rm -rf $TMPDIR" EXIT
     FAILED=0
@@ -458,8 +471,8 @@ compare-parsers:
         desc="${case##*:}"
         echo "----------------------------------------"
         echo "Test: $desc ($file)"
-        play_launch resolve --parser rust -o "$TMPDIR/rust.yaml" "$file"
-        play_launch resolve --parser python -o "$TMPDIR/python.yaml" "$file"
+        "$RESOLVE_BIN" resolve --parser rust -o "$TMPDIR/rust.yaml" "$file"
+        "$RESOLVE_BIN" resolve --parser python -o "$TMPDIR/python.yaml" "$file"
         if python3 scripts/compare_models.py "$TMPDIR/rust.yaml" "$TMPDIR/python.yaml"; then
             echo "PASS: $desc"
         else

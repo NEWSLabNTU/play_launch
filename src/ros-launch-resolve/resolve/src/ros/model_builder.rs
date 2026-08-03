@@ -2,7 +2,7 @@
 //! pipeline outputs: `LaunchDump` (structure), `ManifestIndex` (contracts),
 //! and the derived scheduling plan (execution).
 //!
-//! This is the mapping half of `play_launch resolve` (RFC-0050 /
+//! This is the mapping half of `ros-launch-resolve resolve` (RFC-0050 /
 //! docs/design/system-model.md). The model is early-bound: everything here
 //! is post arg-binding, post condition-filtering, post cross-scope merge —
 //! no variables or conditions survive into the artifact.

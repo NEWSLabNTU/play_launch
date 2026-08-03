@@ -5,7 +5,6 @@ pub(crate) mod common;
 pub mod context;
 pub mod launch;
 pub mod migrated;
-pub mod resolve_compat;
 pub mod run;
 pub(crate) mod signal_handler;
 pub mod up;
@@ -14,7 +13,6 @@ pub mod up;
 pub use capabilities::{handle_setcap, handle_verify};
 pub use context::handle_context;
 pub use launch::handle_launch;
-pub use resolve_compat::handle_resolve;
 pub use run::handle_run;
 pub use up::handle_up;
 

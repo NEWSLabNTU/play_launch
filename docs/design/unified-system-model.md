@@ -78,7 +78,10 @@ its own platform specifics" step nano-ros already performs.
 
 - One artifact: `system_model.yaml` (the model). `record.json` retired to a
   deprecated compat/dev artifact (`dump --format record`).
-- `play_launch resolve` emits the model (unchanged command; now complete).
+- `resolve` emits the model (unchanged command; now complete) — moved off
+  `play_launch` onto the `ros-launch-resolve` binary in the CLI verb reshape
+  (2026-08-03, Task 6); `play_launch resolve` now errors, naming the
+  replacement.
 - `play_launch dump` emits the model by default (was: `record.json`; now
   the same one artifact — the user perceives one kind of dump; `--format
   record` is the deprecated escape hatch for parser-parity tooling).

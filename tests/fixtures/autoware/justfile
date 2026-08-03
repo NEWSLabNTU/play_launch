@@ -120,14 +120,20 @@ compare-dumps: check-autoware
     # instead — this just avoids tripping it on a perfectly good repo).
     export PATH="$REPO_ROOT/install/play_launch/lib/play_launch:$PATH"
     export PYTHONPATH="$REPO_ROOT/python:$PYTHONPATH"
+    # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
+    # reshape) — it's not part of the colcon install/ tree, so locate it in
+    # its own standalone cargo workspace's target/ (release preferred).
+    RESOLVE_BIN="$REPO_ROOT/src/ros-launch-resolve/target/release/ros-launch-resolve"
+    [ -f "$RESOLVE_BIN" ] || RESOLVE_BIN="$REPO_ROOT/src/ros-launch-resolve/target/debug/ros-launch-resolve"
+    [ -f "$RESOLVE_BIN" ] || { echo "ros-launch-resolve not built — run: cd $REPO_ROOT/src/ros-launch-resolve && cargo build --bin ros-launch-resolve" >&2; exit 1; }
 
     echo "Resolving with Rust parser..."
-    play_launch resolve --parser rust -o model_rust.yaml \
+    "$RESOLVE_BIN" resolve --parser rust -o model_rust.yaml \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
 
     echo "Resolving with Python parser..."
-    play_launch resolve --parser python -o model_python.yaml \
+    "$RESOLVE_BIN" resolve --parser python -o model_python.yaml \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
 
@@ -157,9 +163,16 @@ count-processes PARSER="rust": check-autoware
     # Clean previous play_log
     rm -rf play_log/latest 2>/dev/null || true
 
+    # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
+    # reshape) — it's not part of the colcon install/ tree, so locate it in
+    # its own standalone cargo workspace's target/ (release preferred).
+    RESOLVE_BIN="../../../src/ros-launch-resolve/target/release/ros-launch-resolve"
+    [ -f "$RESOLVE_BIN" ] || RESOLVE_BIN="../../../src/ros-launch-resolve/target/debug/ros-launch-resolve"
+    [ -f "$RESOLVE_BIN" ] || { echo "ros-launch-resolve not built — run: cd ../../../src/ros-launch-resolve && cargo build --bin ros-launch-resolve" >&2; exit 1; }
+
     # Resolve to get expected counts (Phase 47.B5: model, not record.json)
     echo "Resolving with $PARSER parser to get expected counts..."
-    play_launch resolve --parser "$PARSER" -o model_count.yaml \
+    "$RESOLVE_BIN" resolve --parser "$PARSER" -o model_count.yaml \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
 

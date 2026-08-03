@@ -1,7 +1,7 @@
 //! Launch spawn fields → `NodeInstance` golden test (Phase 46.1b / 46.2).
 //!
 //! `<remap>`, `<env>`, and `respawn`/`respawn_delay` must survive
-//! `play_launch resolve`: `play_launch_parser` already captures them into
+//! `ros-launch-resolve resolve`: `play_launch_parser` already captures them into
 //! `LaunchDump::{NodeRecord,ComposableNodeRecord}`, and
 //! `model_builder::build_system_model` now maps them into
 //! `NodeInstance::{remaps,env,respawn,respawn_delay}`. Composable nodes
@@ -14,29 +14,14 @@
 //! own direct unit-test coverage in `play_launch`.
 
 use play_launch_tests::fixtures;
-use std::{path::PathBuf, process::Command};
-
-fn play_launch_bin() -> PathBuf {
-    let release = fixtures::repo_root().join("target/release/play_launch");
-    if release.is_file() {
-        return release;
-    }
-    let debug = fixtures::repo_root().join("target/debug/play_launch");
-    if debug.is_file() {
-        return debug;
-    }
-    fixtures::play_launch_bin()
-}
 
 fn resolve_fixture(out: &std::path::Path) -> serde_json::Value {
     let env = fixtures::install_env();
     let launch =
         fixtures::repo_root().join("tests/fixtures/launch_fields/launch/launch_fields.launch.xml");
-    let mut cmd = Command::new(play_launch_bin());
-    cmd.env_clear();
-    cmd.envs(&env);
+    let mut cmd = fixtures::ros_launch_resolve_cmd(&env);
     cmd.args(["resolve", launch.to_str().unwrap(), "-o", out.to_str().unwrap()]);
-    let output = cmd.output().expect("run play_launch resolve");
+    let output = cmd.output().expect("run ros-launch-resolve resolve");
     assert!(
         output.status.success(),
         "resolve failed:\n{}",

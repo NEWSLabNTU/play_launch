@@ -166,7 +166,7 @@ record.json anywhere):
 
 2. **Resolve phase**: builds the SystemModel from that in-memory dump +
    contract manifests + scheduling platform file (the same pipeline as
-   `play_launch resolve`, called in-process)
+   `ros-launch-resolve resolve`, called in-process)
    - Contract **errors refuse the launch** — the model is checked by
      construction; warnings embed in the model
 
@@ -213,11 +213,12 @@ play_launch up \
     --log-dir logs/run1
 ```
 
-Equivalently, `resolve` builds the same model straight from the launch file
-(skipping a separate dump step) and can add a scheduling platform file:
+Equivalently, `ros-launch-resolve resolve` builds the same model straight
+from the launch file (skipping a separate dump step) and can add a
+scheduling platform file:
 
 ```bash
-play_launch resolve -o autoware.yaml --sched system.posix.yaml \
+ros-launch-resolve resolve -o autoware.yaml --sched system.posix.yaml \
     autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
 play_launch up --model autoware.yaml

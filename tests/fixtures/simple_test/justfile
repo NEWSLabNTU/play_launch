@@ -62,12 +62,18 @@ compare-dumps:
     # guard fails loud on that instead).
     export PATH="$REPO_ROOT/install/play_launch/lib/play_launch:$PATH"
     export PYTHONPATH="$REPO_ROOT/python:$PYTHONPATH"
+    # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
+    # reshape) — it's not part of the colcon install/ tree, so locate it in
+    # its own standalone cargo workspace's target/ (release preferred).
+    RESOLVE_BIN="$REPO_ROOT/src/ros-launch-resolve/target/release/ros-launch-resolve"
+    [ -f "$RESOLVE_BIN" ] || RESOLVE_BIN="$REPO_ROOT/src/ros-launch-resolve/target/debug/ros-launch-resolve"
+    [ -f "$RESOLVE_BIN" ] || { echo "ros-launch-resolve not built — run: cd $REPO_ROOT/src/ros-launch-resolve && cargo build --bin ros-launch-resolve" >&2; exit 1; }
 
     echo "Resolving with Rust parser..."
-    play_launch resolve --parser rust -o model_rust.yaml launch/composition.launch.xml
+    "$RESOLVE_BIN" resolve --parser rust -o model_rust.yaml launch/composition.launch.xml
 
     echo "Resolving with Python parser..."
-    play_launch resolve --parser python -o model_python.yaml launch/composition.launch.xml
+    "$RESOLVE_BIN" resolve --parser python -o model_python.yaml launch/composition.launch.xml
 
     echo ""
     echo "Comparing Rust and Python SystemModels..."

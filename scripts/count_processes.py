@@ -2,7 +2,7 @@
 """
 Count expected vs actual processes for a play_launch session.
 
-Reads expected process count from a `play_launch resolve`/`dump` SystemModel
+Reads expected process count from a `ros-launch-resolve resolve`/`dump` SystemModel
 YAML (plain nodes + containers in `structure.nodes` — composable nodes are
 virtual members of a container process, not counted separately), and actual
 running process count from play_log pid files.

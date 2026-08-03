@@ -1,4 +1,4 @@
-//! `play_launch resolve` — emit a SystemModel (RFC-0050 /
+//! `ros-launch-resolve resolve` — emit a SystemModel (RFC-0050 /
 //! docs/design/system-model.md): parse the launch tree, bind args, filter
 //! conditions, merge scopes, run the contract checker, derive the
 //! scheduling plan, and serialize the fully-resolved artifact.

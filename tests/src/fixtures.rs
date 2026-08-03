@@ -273,6 +273,29 @@ pub fn test_workspace_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// Prepend the current worktree's `python/` source ahead of whatever
+/// `PYTHONPATH` the sourced env carried (or a stale pip install on user
+/// site-packages, which is always importable regardless of PYTHONPATH).
+/// The colcon install/ tree doesn't ship the embedded PyO3 dump_launch
+/// python package — only a `pip install` does — so without this,
+/// `--parser python` invocations silently pick up whatever `play_launch`
+/// happens to be pip-installed on the host, which can predate Phase 40.1's
+/// `ScopeOrigin.path` and trip the stale-install check `resolve`/`dump
+/// --parser python` fail loud on. This mirrors exactly what the 46.4
+/// report's manual acceptance run did by hand (`export
+/// PYTHONPATH=<repo>/python:$PYTHONPATH`). Shared by `play_launch_cmd` and
+/// `resolve_cli_cmd` — both parser backends live behind `--parser python`
+/// on their respective binaries.
+pub fn python_path_with_source(env: &HashMap<String, String>) -> String {
+    let source_python = repo_root().join("python");
+    match env.get("PYTHONPATH") {
+        Some(existing) if !existing.is_empty() => {
+            format!("{}:{existing}", source_python.display())
+        }
+        _ => source_python.display().to_string(),
+    }
+}
+
 /// Build a `Command` for `play_launch` with the given environment.
 ///
 /// Each call gets a unique `ROS_DOMAIN_ID` (10, 11, 12, …) so concurrent
@@ -281,26 +304,7 @@ pub fn play_launch_cmd(env: &HashMap<String, String>) -> Command {
     let mut cmd = Command::new(play_launch_bin());
     cmd.env_clear();
     cmd.envs(env);
-    // Phase 46.5 — prepend the current worktree's `python/` source ahead of
-    // whatever `PYTHONPATH` the sourced env carried (or a stale pip install
-    // on user site-packages, which is always importable regardless of
-    // PYTHONPATH). The colcon install/ tree doesn't ship the embedded
-    // PyO3 dump_launch python package — only a `pip install` does — so
-    // without this, `--parser python` tests silently pick up whatever
-    // `play_launch` happens to be pip-installed on the host, which can
-    // predate Phase 40.1's `ScopeOrigin.path` and trip the stale-install
-    // check `resolve`/`dump --parser python` now fail loud on (see
-    // `commands/resolve.rs`). This mirrors exactly what the 46.4 report's
-    // manual acceptance run did by hand
-    // (`export PYTHONPATH=<repo>/python:$PYTHONPATH`).
-    let source_python = repo_root().join("python");
-    let pythonpath = match env.get("PYTHONPATH") {
-        Some(existing) if !existing.is_empty() => {
-            format!("{}:{existing}", source_python.display())
-        }
-        _ => source_python.display().to_string(),
-    };
-    cmd.env("PYTHONPATH", pythonpath);
+    cmd.env("PYTHONPATH", python_path_with_source(env));
     // Unique DDS domain per invocation — prevents cross-talk between
     // concurrent tests that spawn containers on the same machine.
     cmd.env("ROS_DOMAIN_ID", next_domain_id().to_string());
@@ -312,6 +316,55 @@ pub fn play_launch_cmd(env: &HashMap<String, String>) -> Command {
     if fastdds_profile.is_file() {
         cmd.env("FASTRTPS_DEFAULT_PROFILES_FILE", &fastdds_profile);
     }
+    cmd
+}
+
+/// Path to the `ros-launch-resolve` binary (layer 2's CLI — `resolve` was
+/// removed from `play_launch` in the CLI verb reshape, Task 6: it now lives
+/// solely here). Not part of the colcon `install/` tree or `$PATH` — RFC-0060
+/// W3 extracted this crate to build under plain cargo with no ROS at all
+/// (`src/ros-launch-resolve/Cargo.toml`'s own header), so it lives in its
+/// own workspace's `target/`, built by `cargo build --bin ros-launch-resolve`
+/// there (see `just test-all`, `just check-layer2-isolation`). Prefers
+/// `release`, falls back to `debug`.
+///
+/// Panics if not found: unlike the RT-workspace/manifest-check test files'
+/// own `Option`-returning lookups (which treat an unbuilt binary as a
+/// legitimate "optional fixture not built yet" skip), every caller of this
+/// function drives tests that ran unconditionally before Task 6 — silently
+/// skipping them would be exactly the vacuous-pass trap Task 5 found eleven
+/// instances of for `check`.
+pub fn ros_launch_resolve_bin() -> PathBuf {
+    let root = repo_root().join("src/ros-launch-resolve/target");
+    ["release", "debug"]
+        .iter()
+        .map(|p| root.join(p).join("ros-launch-resolve"))
+        .find(|c| c.is_file())
+        .unwrap_or_else(|| {
+            panic!(
+                "ros-launch-resolve binary not found ({}/{{release,debug}}/ros-launch-resolve). \
+                 Run `cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve` first.",
+                root.display()
+            )
+        })
+}
+
+/// Build a `Command` for the `ros-launch-resolve` binary with the given
+/// environment — the layer-2 sibling of `play_launch_cmd`. Carries the same
+/// `PYTHONPATH` prepend (`resolve --parser python` needs it exactly as much
+/// as `play_launch`'s own `--parser python` paths did before Task 6).
+///
+/// Named distinctly from the `resolve_cli_cmd`/`ros_launch_resolve_bin`
+/// helpers a few integration test files define locally for themselves
+/// (`rt_workspace.rs`, `contract_eject.rs`, `manifest_check.rs`) — those
+/// return `Option<Command>` and print a SKIP line, appropriate for fixtures
+/// that may legitimately be unbuilt. This one panics (see
+/// `ros_launch_resolve_bin`'s doc comment for why).
+pub fn ros_launch_resolve_cmd(env: &HashMap<String, String>) -> Command {
+    let mut cmd = Command::new(ros_launch_resolve_bin());
+    cmd.env_clear();
+    cmd.envs(env);
+    cmd.env("PYTHONPATH", python_path_with_source(env));
     cmd
 }
 
@@ -416,7 +469,7 @@ pub fn count_expected_processes_from_model(model: &serde_json::Value) -> usize {
     plain + containers
 }
 
-/// `play_launch resolve` a launch file with the given environment and
+/// `ros-launch-resolve resolve` a launch file with the given environment and
 /// parser, returning the parsed SystemModel YAML (as `serde_json::Value` —
 /// `serde_yaml_ng` deserializes into any `Deserialize` target, and
 /// `serde_json::Value` is the convenient one for ad hoc field access in
@@ -458,13 +511,13 @@ pub fn resolve_model_with_args(
     let output_str = output_path.to_str().unwrap();
     args.push(output_str);
 
-    let mut proc = crate::process::ManagedProcess::spawn(play_launch_cmd(env).args(&args))
-        .expect("failed to spawn play_launch resolve");
+    let mut proc = crate::process::ManagedProcess::spawn(ros_launch_resolve_cmd(env).args(&args))
+        .expect("failed to spawn ros-launch-resolve resolve");
 
     let status = proc.wait_with_timeout(std::time::Duration::from_secs(60));
     assert!(
         status.success(),
-        "play_launch resolve (parser={parser}) failed for {package_or_path}"
+        "ros-launch-resolve resolve (parser={parser}) failed for {package_or_path}"
     );
 
     let data = std::fs::read_to_string(&output_path).expect("failed to read system_model.yaml");

@@ -12,8 +12,8 @@ band, isolated CPUs) and explicit per-node pins. You stop hand-writing every
 priority number — you write the mapper and the exceptions.
 
 ```
-you write                          play_launch resolves          the kernel sees
-─────────                          ────────────────────          ───────────────
+you write                          ros-launch-resolve resolves    the kernel sees
+─────────                          ────────────────────────────  ───────────────
 launch file + contract   ──┐
   (rates, deadlines)        ├──►  mapper derives  ──┐
 platform file: resources ──┘                        ├──► SchedPlan ──► per-THREAD

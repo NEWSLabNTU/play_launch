@@ -40,12 +40,14 @@ pub enum Feature {
 #[command(version)]
 #[command(about = "Record and replay ROS 2 launches with inspection capabilities")]
 // `dump` used to head the third example. RFC-0060 W3 moved that verb to
-// ros-launch-resolve; `resolve` is the play_launch-side equivalent.
+// ros-launch-resolve, and `resolve` (the play_launch-side equivalent) was
+// removed in 0.9.0 for the same reason (Task 6) -- resolution now lives
+// solely in `ros-launch-resolve resolve`.
 #[command(after_help = "Examples:\n  \
     play_launch launch demo_nodes_cpp topics/talker_listener.launch.py\n  \
     play_launch run demo_nodes_cpp talker\n  \
-    play_launch resolve autoware_launch planning_simulator.launch.xml --out autoware.yaml\n  \
-    play_launch up --model autoware.yaml")]
+    play_launch up --model autoware.yaml\n  \
+    play_launch context autoware.yaml --tree")]
 #[command(arg_required_else_help = true)]
 pub struct Options {
     #[command(subcommand)]
@@ -110,13 +112,10 @@ pub enum Command {
     #[command(hide = true)]
     Check(CheckArgs),
 
-    /// Resolve launch + contracts + scheduling into a SystemModel YAML
-    /// (RFC-0050 / docs/design/system-model.md): one fully-resolved,
-    /// checked artifact per concrete arg-set. Refuses to emit when the
-    /// contract checker reports errors; warnings are embedded in the model.
-    #[command(after_help = "Examples:\n  \
-        play_launch resolve demo_pkg pipeline.launch.xml --out system_model.yaml\n  \
-        play_launch resolve /path/to/launch.xml --sched system.posix.yaml mode:=velodyne")]
+    /// Removed in 0.9.0 — it delegated to layer 2 since RFC-0060. Hidden;
+    /// accepts the old arguments so the error can name the replacement.
+    /// DELETE AT 1.0.0.
+    #[command(hide = true)]
     Resolve(ResolveArgs),
 }
 
@@ -243,7 +242,19 @@ impl CheckArgs {
     }
 }
 
-/// Arguments for `play_launch resolve`
+/// Arguments for the removed `play_launch resolve` verb.
+///
+/// `resolve` itself is gone (0.9.0 -- it delegated to layer 2 since
+/// RFC-0060 W3), but this struct STAYS: it is what lets the hidden
+/// `Command::Resolve` variant parse the caller's old invocation at all, so
+/// `commands::migrated::resolve_removed` can echo the package, launch file
+/// and arguments back against `ros-launch-resolve resolve`. Without it, the
+/// hidden variant could only accept zero arguments and the error message
+/// would lose the caller's own invocation. Issue 0013 deleted a struct
+/// shaped exactly like this as dead code -- it was not dead here for the
+/// same reason this one is not: do not delete it or add
+/// `#[allow(dead_code)]`; it is reachable via the hidden variant and clap's
+/// derive parsing.
 #[derive(Args)]
 pub struct ResolveArgs {
     /// Package name or path to launch file
@@ -373,14 +384,14 @@ pub struct RunArgs {
 /// Arguments for the `up` command (renamed from `replay` in 0.9.0)
 #[derive(Args, Default)]
 pub struct UpArgs {
-    /// SystemModel emitted by `play_launch resolve`/`dump` — the sole
+    /// SystemModel emitted by `ros-launch-resolve resolve`/`dump` — the sole
     /// spawn source (Phase 47.B3: the deprecated `--input-file
     /// record.json` compat path is retired). May be given positionally or
     /// via `--model`; giving both is an error.
     #[arg(value_name = "MODEL", conflicts_with = "model")]
     pub model_path: Option<PathBuf>,
 
-    /// SystemModel emitted by `play_launch resolve`/`dump`. Equivalent to
+    /// SystemModel emitted by `ros-launch-resolve resolve`/`dump`. Equivalent to
     /// passing the path positionally. Spawns directly from the model's
     /// `structure.nodes` — no companion file required (Phase 46.4: the
     /// model↔record binding gate was removed once the model became a
@@ -813,7 +824,7 @@ mod flag_ordering_tests {
         // get_subcommands()), by design, so only the help-visibility half
         // applies here. A single element today; later verb migrations add
         // more (see `commands::migrated`), hence the loop shape.
-        for hidden in ["replay", "check"] {
+        for hidden in ["replay", "check", "resolve"] {
             assert!(
                 verbs.iter().any(|v| v == hidden),
                 "`{hidden}` must still be a parseable variant (see commands::migrated) \
@@ -854,6 +865,14 @@ mod flag_ordering_tests {
         assert!(
             parse(&["check", "pkg", "file.launch.xml"]).is_ok(),
             "`check` must still parse so its error can name both replacements"
+        );
+        assert!(
+            !help.contains("  resolve"),
+            "`resolve` must not be listed in --help"
+        );
+        assert!(
+            parse(&["resolve", "pkg", "file.launch.xml"]).is_ok(),
+            "`resolve` must still parse so its error can name the replacement"
         );
     }
 

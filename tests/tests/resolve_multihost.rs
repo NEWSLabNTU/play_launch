@@ -8,28 +8,14 @@
 //! one host's nodes, so no `host` field is needed anywhere in the model.
 
 use play_launch_tests::fixtures;
-use std::{collections::BTreeSet, path::PathBuf, process::Command};
-
-fn play_launch_bin() -> PathBuf {
-    let release = fixtures::repo_root().join("target/release/play_launch");
-    if release.is_file() {
-        return release;
-    }
-    let debug = fixtures::repo_root().join("target/debug/play_launch");
-    if debug.is_file() {
-        return debug;
-    }
-    fixtures::play_launch_bin()
-}
+use std::collections::BTreeSet;
 
 /// Resolve the fixture for one `host:=` value with one parser.
 fn resolve(parser: &str, host: &str, out: &std::path::Path) -> serde_json::Value {
     let env = fixtures::install_env();
     let launch =
         fixtures::repo_root().join("tests/fixtures/multihost/launch/multihost.launch.xml");
-    let mut cmd = Command::new(play_launch_bin());
-    cmd.env_clear();
-    cmd.envs(&env);
+    let mut cmd = fixtures::ros_launch_resolve_cmd(&env);
     cmd.args([
         "resolve",
         "--parser",
@@ -39,7 +25,7 @@ fn resolve(parser: &str, host: &str, out: &std::path::Path) -> serde_json::Value
         "-o",
         out.to_str().unwrap(),
     ]);
-    let output = cmd.output().expect("run play_launch resolve");
+    let output = cmd.output().expect("run ros-launch-resolve resolve");
     assert!(
         output.status.success(),
         "resolve --parser {parser} host:={host} failed:\n{}",
@@ -130,16 +116,14 @@ fn the_ros1_machine_attribute_is_rejected() {
     .expect("write fixture");
 
     let env = fixtures::install_env();
-    let mut cmd = Command::new(play_launch_bin());
-    cmd.env_clear();
-    cmd.envs(&env);
+    let mut cmd = fixtures::ros_launch_resolve_cmd(&env);
     cmd.args([
         "resolve",
         launch.to_str().unwrap(),
         "-o",
         tmp.path().join("out.yaml").to_str().unwrap(),
     ]);
-    let output = cmd.output().expect("run play_launch resolve");
+    let output = cmd.output().expect("run ros-launch-resolve resolve");
     assert!(
         !output.status.success(),
         "machine= is ROS 1 syntax and must fail the resolve"

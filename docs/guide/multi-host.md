@@ -42,11 +42,13 @@ play_launch launch my_bringup multihost.launch.xml host:=robot1
 play_launch launch my_bringup multihost.launch.xml host:=robot2
 ```
 
-Or resolve a model per host ahead of time:
+Or resolve a model per host ahead of time (`resolve` lives on the
+`ros-launch-resolve` binary, not `play_launch` — see
+`docs/guide/cli-interface.md`):
 
 ```sh
-play_launch resolve multihost.launch.xml host:=robot1 -o robot1.yaml
-play_launch resolve multihost.launch.xml host:=robot2 -o robot2.yaml
+ros-launch-resolve resolve multihost.launch.xml host:=robot1 -o robot1.yaml
+ros-launch-resolve resolve multihost.launch.xml host:=robot2 -o robot2.yaml
 ```
 
 Each model holds exactly that host's nodes plus the unconditioned ones. The

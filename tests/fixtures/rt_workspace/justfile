@@ -41,12 +41,18 @@ compare-dumps:
     # PYTHONPATH so `--parser python` never silently runs a stale pip
     # install (the stale-scope-path guard fails loud on that instead).
     export PYTHONPATH="$(cd ../../.. && pwd)/python:$PYTHONPATH"
+    # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
+    # reshape) — it's not part of the colcon install/ tree, so locate it in
+    # its own standalone cargo workspace's target/ (release preferred).
+    RESOLVE_BIN="../../../src/ros-launch-resolve/target/release/ros-launch-resolve"
+    [ -f "$RESOLVE_BIN" ] || RESOLVE_BIN="../../../src/ros-launch-resolve/target/debug/ros-launch-resolve"
+    [ -f "$RESOLVE_BIN" ] || { echo "ros-launch-resolve not built — run: cd ../../../src/ros-launch-resolve && cargo build --bin ros-launch-resolve" >&2; exit 1; }
 
     echo "Resolving with Rust parser..."
-    {{play_launch}} resolve --parser rust -o model_rust.yaml rt_demo bringup.launch.xml
+    "$RESOLVE_BIN" resolve --parser rust -o model_rust.yaml rt_demo bringup.launch.xml
 
     echo "Resolving with Python parser..."
-    {{play_launch}} resolve --parser python -o model_python.yaml rt_demo bringup.launch.xml
+    "$RESOLVE_BIN" resolve --parser python -o model_python.yaml rt_demo bringup.launch.xml
 
     echo "Comparing Rust and Python SystemModels..."
     python3 ../../../scripts/compare_models.py model_rust.yaml model_python.yaml

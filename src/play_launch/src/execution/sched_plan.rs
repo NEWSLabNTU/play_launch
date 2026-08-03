@@ -191,7 +191,7 @@ impl SchedPlan {
                 eyre::bail!(
                     "SystemModel: tier '{tier_name}' has no `{target}` placement sub-table — \
                      the model was resolved for a different target; re-run \
-                     `play_launch resolve --target {target}`"
+                     `ros-launch-resolve resolve --target {target}`"
                 );
             };
             if tier.class.as_deref() == Some("time_triggered") {

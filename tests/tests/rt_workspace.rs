@@ -51,6 +51,9 @@ fn resolve_cli_cmd(env: &std::collections::HashMap<String, String>) -> Option<st
     let mut cmd = std::process::Command::new(bin);
     cmd.env_clear();
     cmd.envs(env);
+    // `resolve --parser python` needs the repo's own `python/` ahead of any
+    // stale pip-installed package (see `fixtures::python_path_with_source`).
+    cmd.env("PYTHONPATH", fixtures::python_path_with_source(env));
     Some(cmd)
 }
 
@@ -105,7 +108,7 @@ fn host_has_sched_privilege() -> bool {
 /// own `just compare-dumps`).
 ///
 /// Phase 47.B1 — the parser-parity gate moved off `record.json` onto the
-/// unified SystemModel (`play_launch resolve`), the prerequisite for
+/// unified SystemModel (`ros-launch-resolve resolve`), the prerequisite for
 /// hard-removing `record.json` in 47.B2+. This fixture also exercises the
 /// contracts/scheduling layers (`bringup.contract.yaml` +
 /// `bringup.system.posix.yaml`, auto-discovered by channel resolution),
@@ -858,7 +861,7 @@ fn per_tid_sched_fifo_launch_privileged_only() {
 
 // ---- `resolve` (SystemModel emission, RFC-0050) ----
 
-/// `play_launch resolve rt_demo bringup.launch.xml --sched system.toml`
+/// `ros-launch-resolve resolve rt_demo bringup.launch.xml --sched system.toml`
 /// must emit a SystemModel whose three layers join on launch-side node
 /// FQNs: the contract endpoint keys and the sched bindings must reference
 /// nodes that exist in `structure.nodes`.
@@ -872,18 +875,26 @@ fn resolve_emits_joined_system_model() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let out = tmp.path().join("system_model.yaml");
 
-    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
-        "resolve",
-        "rt_demo",
-        "bringup.launch.xml",
-        "--sched",
-        sched.to_str().unwrap(),
-        "-o",
-        out.to_str().unwrap(),
-    ]))
-    .expect("failed to spawn play_launch resolve");
-    let status = proc.wait_with_timeout(Duration::from_secs(60));
-    assert!(status.success(), "play_launch resolve failed");
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
+        .args([
+            "resolve",
+            "rt_demo",
+            "bringup.launch.xml",
+            "--sched",
+            sched.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run ros-launch-resolve resolve");
+    assert!(
+        output.status.success(),
+        "ros-launch-resolve resolve failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let yaml = std::fs::read_to_string(&out).expect("read system_model.yaml");
     let model: serde_json::Value = serde_yaml_value(&yaml);
@@ -958,18 +969,26 @@ fn resolve_omits_sched_but_check_explain_shows_chain_aware() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let out = tmp.path().join("system_model.yaml");
 
-    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
-        "resolve",
-        "rt_demo",
-        "bringup.launch.xml",
-        "--sched",
-        sched.to_str().unwrap(),
-        "-o",
-        out.to_str().unwrap(),
-    ]))
-    .expect("failed to spawn play_launch resolve");
-    let status = proc.wait_with_timeout(Duration::from_secs(60));
-    assert!(status.success(), "play_launch resolve failed");
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
+        .args([
+            "resolve",
+            "rt_demo",
+            "bringup.launch.xml",
+            "--sched",
+            sched.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run ros-launch-resolve resolve");
+    assert!(
+        output.status.success(),
+        "ros-launch-resolve resolve failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let yaml = std::fs::read_to_string(&out).expect("read system_model.yaml");
     let model: serde_json::Value = serde_yaml_value(&yaml);
@@ -1057,18 +1076,24 @@ fn resolve_without_platform_file_omits_execution_sched() {
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let out = tmp.path().join("system_model.yaml");
 
-    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
-        "resolve",
-        "--no-provider-contracts",
-        "rt_demo",
-        "bringup.launch.xml",
-        "-o",
-        out.to_str().unwrap(),
-    ]))
-    .expect("failed to spawn play_launch resolve");
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
+        .args([
+            "resolve",
+            "--no-provider-contracts",
+            "rt_demo",
+            "bringup.launch.xml",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run ros-launch-resolve resolve");
     assert!(
-        proc.wait_with_timeout(Duration::from_secs(60)).success(),
-        "play_launch resolve (--no-provider-contracts) failed"
+        output.status.success(),
+        "ros-launch-resolve resolve (--no-provider-contracts) failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 
     let yaml = std::fs::read_to_string(&out).expect("read system_model.yaml");
@@ -1101,17 +1126,23 @@ fn replay_model_spawns_without_record_companion() {
     let resolve_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let model_path = resolve_tmp.path().join("system_model.yaml");
 
-    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
-        "resolve",
-        "rt_demo",
-        "bringup.launch.xml",
-        "-o",
-        model_path.to_str().unwrap(),
-    ]))
-    .expect("spawn resolve");
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
+        .args([
+            "resolve",
+            "rt_demo",
+            "bringup.launch.xml",
+            "-o",
+            model_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run ros-launch-resolve resolve");
     assert!(
-        proc.wait_with_timeout(Duration::from_secs(60)).success(),
-        "play_launch resolve failed"
+        output.status.success(),
+        "ros-launch-resolve resolve failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 
     let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
@@ -1188,19 +1219,25 @@ fn resolve_parser_python_produces_model_that_replays_cleanly() {
     let resolve_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let model_path = resolve_tmp.path().join("system_model.yaml");
 
-    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
-        "resolve",
-        "--parser",
-        "python",
-        "rt_demo",
-        "bringup.launch.xml",
-        "-o",
-        model_path.to_str().unwrap(),
-    ]))
-    .expect("spawn resolve --parser python");
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
+        .args([
+            "resolve",
+            "--parser",
+            "python",
+            "rt_demo",
+            "bringup.launch.xml",
+            "-o",
+            model_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run ros-launch-resolve resolve --parser python");
     assert!(
-        proc.wait_with_timeout(Duration::from_secs(120)).success(),
-        "play_launch resolve --parser python failed"
+        output.status.success(),
+        "ros-launch-resolve resolve --parser python failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 
     let model: serde_json::Value =
@@ -1474,17 +1511,23 @@ fn resolve_no_longer_writes_record_companion() {
     let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
     let model_path = tmp.path().join("system_model.yaml");
 
-    let mut proc = ManagedProcess::spawn(fixtures::play_launch_cmd(&env).args([
-        "resolve",
-        "rt_demo",
-        "bringup.launch.xml",
-        "-o",
-        model_path.to_str().unwrap(),
-    ]))
-    .expect("spawn resolve");
+    let Some(mut cmd) = resolve_cli_cmd(&env) else {
+        return;
+    };
+    let output = cmd
+        .args([
+            "resolve",
+            "rt_demo",
+            "bringup.launch.xml",
+            "-o",
+            model_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run ros-launch-resolve resolve");
     assert!(
-        proc.wait_with_timeout(Duration::from_secs(60)).success(),
-        "play_launch resolve failed"
+        output.status.success(),
+        "ros-launch-resolve resolve failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 
     let companion = model_path.with_extension("record.json");

@@ -40,3 +40,18 @@ fn check_names_both_replacements() {
         "must name where the diagnostics went: {err}"
     );
 }
+
+#[test]
+fn resolve_names_the_layer_two_binary() {
+    let env = fixtures::install_env();
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.args(["resolve", "demo_pkg", "a.launch.xml", "-o", "m.yaml"]);
+    let out = cmd.output().expect("failed to run play_launch");
+
+    assert!(!out.status.success(), "`resolve` must exit non-zero");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("ros-launch-resolve resolve demo_pkg a.launch.xml"),
+        "must echo the user's own invocation against the new binary: {err}"
+    );
+}

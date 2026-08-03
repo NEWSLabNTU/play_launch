@@ -7,7 +7,7 @@ onto the model; the gate before record.json's hard removal in 47.B2+).
 This is the model-shaped sibling of `compare_records.py`: same "functional
 equivalence" contract (params/remaps ordering, whitespace/quoting artifacts,
 duplicate collapsing all normalized away), applied to `structure.nodes`
-(the unified node/container/composable map `play_launch resolve` /
+(the unified node/container/composable map `ros-launch-resolve resolve` /
 `dump --format model` produce) instead of record.json's three separate
 node/container/load_node arrays.
 
@@ -602,7 +602,7 @@ def main():
     if len(sys.argv) < 3:
         print("Usage: compare_models.py <rust_model.yaml> <python_model.yaml>")
         print()
-        print("Compares two SystemModel YAML artifacts (`play_launch resolve` /")
+        print("Compares two SystemModel YAML artifacts (`ros-launch-resolve resolve` /")
         print("`dump --format model` output) for cross-parser functional")
         print("equivalence. See the module docstring for exactly what's compared.")
         sys.exit(1)
