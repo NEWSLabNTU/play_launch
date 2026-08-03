@@ -7,6 +7,26 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# `dump` moved off play_launch onto ros-launch-resolve (RFC-0060 W3). This
+# script kept calling `play_launch dump`, whose output was redirected to
+# /dev/null inside the timing loop — so every iteration timed clap printing
+# "unrecognized subcommand" and the benchmark reported spectacular numbers
+# for a parser it never ran. Mirrors the `resolve_bin` lookup in justfile.
+RESOLVE_BIN=""
+for candidate in \
+    "$PROJECT_ROOT/src/ros-launch-resolve/target/release/ros-launch-resolve" \
+    "$PROJECT_ROOT/src/ros-launch-resolve/target/debug/ros-launch-resolve"; do
+    if [ -x "$candidate" ]; then
+        RESOLVE_BIN="$candidate"
+        break
+    fi
+done
+if [ -z "$RESOLVE_BIN" ]; then
+    echo "Error: ros-launch-resolve not built. Run 'just build' (or" >&2
+    echo "       'cd src/ros-launch-resolve && cargo build --release')." >&2
+    exit 1
+fi
+
 # Configuration
 ITERATIONS=${ITERATIONS:-5}
 WARMUP_ITERATIONS=1
@@ -46,17 +66,26 @@ benchmark_parser() {
 
     local times=()
 
+    local out
+    out="$(mktemp -d)/system_model.yaml"
+    local log
+    log="$(mktemp)"
+
     for i in $(seq 1 "$iterations"); do
         # Clean up
-        rm -f record.json
+        rm -f "$out"
 
         # Time the command
         start_time=$(date +%s.%N)
 
-        if [ "$parser_flag" = "rust" ]; then
-            play_launch dump launch "$file_path" --parser rust > /dev/null 2>&1
-        else
-            play_launch dump launch "$file_path" --parser python > /dev/null 2>&1
+        # NOT redirected to /dev/null: a failing dump used to be timed as if
+        # it were a fast parse. Capture instead, and abort loudly on failure.
+        if ! "$RESOLVE_BIN" dump -o "$out" launch "$file_path" \
+            --parser "$parser_flag" > "$log" 2>&1; then
+            echo "" >&2
+            echo "Error: dump failed for '$file_path' (--parser $parser_flag):" >&2
+            sed 's/^/    /' "$log" >&2
+            exit 1
         fi
 
         end_time=$(date +%s.%N)
@@ -179,5 +208,5 @@ echo "  - All benchmarks completed successfully"
 echo "  - See detailed results in $RESULTS_FILE"
 echo ""
 
-# Cleanup
-rm -f record.json
+# Nothing to clean up: each benchmark writes its model into its own mktemp
+# directory (record.json is retired, Phase 47.B2).

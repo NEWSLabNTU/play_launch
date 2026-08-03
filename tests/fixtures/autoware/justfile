@@ -109,7 +109,7 @@ run-demo: check-autoware
 
 # Generate resource usage plots from latest play_log
 plot:
-    @play_launch plot
+    @{{resolve_bin}} plot
 
 # Compare Rust and Python parser outputs — SystemModel shape (Phase 47:
 # the parser-parity gate runs on the model; record.json is retired).

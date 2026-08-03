@@ -183,7 +183,7 @@ documented behavior, not a bug; see `docs/guide/rt-scheduling.md`.
 ## Eject a provider config to edit locally
 
 ```bash
-play_launch contract eject rt_demo bringup.launch.xml --into /tmp/my-overlay
+ros-launch-resolve contract eject rt_demo bringup.launch.xml --into /tmp/my-overlay
 ```
 
 Copies the resolved provider contract *and* platform file into an overlay
@@ -193,7 +193,5 @@ tree, ready to edit without touching `/opt`. See
 ## Compare parsers
 
 ```bash
-just dump-rust
-just dump-python
 just compare-dumps
 ```

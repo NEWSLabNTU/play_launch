@@ -506,12 +506,15 @@ compare-scopes PKG LAUNCH *ARGS:
     source install/setup.bash
     TMPDIR=$(mktemp -d)
     trap "rm -rf $TMPDIR" EXIT
+    # `dump` left play_launch for ros-launch-resolve (RFC-0060 W3), and it
+    # emits the SystemModel now that record.json is retired (Phase 47.B2) —
+    # hence `.yaml`, which compare_scopes.py adapts.
     echo "=== Dumping with Rust parser ==="
-    play_launch dump -o "$TMPDIR/rust.json" launch {{PKG}} {{LAUNCH}} {{ARGS}}
+    {{resolve_bin}} dump -o "$TMPDIR/rust.yaml" launch {{PKG}} {{LAUNCH}} {{ARGS}}
     echo "=== Dumping with Python parser ==="
-    play_launch dump -o "$TMPDIR/python.json" launch --parser python {{PKG}} {{LAUNCH}} {{ARGS}}
+    {{resolve_bin}} dump -o "$TMPDIR/python.yaml" launch --parser python {{PKG}} {{LAUNCH}} {{ARGS}}
     echo "=== Comparing scopes ==="
-    python3 scripts/compare_scopes.py "$TMPDIR/rust.json" "$TMPDIR/python.json"
+    python3 scripts/compare_scopes.py "$TMPDIR/rust.yaml" "$TMPDIR/python.yaml"
 
 # Benchmark Rust vs Python parser performance
 benchmark-parsers ITERATIONS="5":

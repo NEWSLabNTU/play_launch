@@ -2,22 +2,106 @@
 """Compare scope tables and per-node context between Rust and Python parser outputs.
 
 Usage:
-    # Compare two records (cross-parser)
-    python3 scripts/compare_scopes.py rust_record.json python_record.json
+    # Compare two SystemModels (cross-parser)
+    python3 scripts/compare_scopes.py rust_model.yaml python_model.yaml
 
-    # Validate a single record (self-consistency)
-    python3 scripts/compare_scopes.py --validate record.json
+    # Validate a single model (self-consistency)
+    python3 scripts/compare_scopes.py --validate system_model.yaml
 
 Or via just recipe:
     just compare-scopes <launch_pkg> <launch_file> [args...]
+
+INPUT FORMAT. Phase 47.B2 retired `record.json` as a user-facing artifact,
+which left this script with no producer: `just compare-scopes` still called
+`play_launch dump`, a verb that had moved to `ros-launch-resolve`, and even
+once redirected there `dump` emits the SystemModel, not a record. So a
+`.yaml`/`.yml` input is now adapted into the record shape the checks below
+were written against (`_model_to_record`), while a `.json` input is still
+read as a raw record for old/hand-produced files.
+
+What the model cannot supply: `ScopeOrigin.path` (the Phase 40.1 absolute
+launch-file path) and each scope's accumulated namespace `ns`. The path
+comparison and the namespace-consistency check degrade to explicit
+"unavailable" notes rather than silently passing — a check that cannot run
+must say so, not report OK.
 """
 
 import json
 import sys
 from collections import Counter
 
+MODEL_SUFFIXES = (".yaml", ".yml")
+
+
+def _fqn_namespace(fqn: str) -> str:
+    """Namespace part of a `/ns/name` FQN key ("/" for a top-level node)."""
+    head = fqn.rsplit("/", 1)[0]
+    return head or "/"
+
+
+def _model_to_record(model: dict) -> dict:
+    """Adapt a SystemModel (`system_model.yaml`) to the record.json shape.
+
+    `structure.scopes` is a MAP keyed by `<pkg>/<file>` (with a `#<id>`
+    suffix when a file is included more than once) whose `parent` is another
+    such key; the checks below want a LIST indexed by a numeric scope id.
+    Keys are sorted so both parsers get the same index assignment, making
+    the index-wise comparisons meaningful.
+
+    `structure.nodes` is one FQN-keyed map covering plain nodes, containers
+    and composables; it is split back into the record's three arrays by
+    `is_container` / `plugin`.
+    """
+    structure = model.get("structure") or {}
+    scope_map = structure.get("scopes") or {}
+    keys = sorted(scope_map)
+    index = {key: i for i, key in enumerate(keys)}
+
+    scopes = []
+    for i, key in enumerate(keys):
+        s = scope_map[key] or {}
+        parent_key = s.get("parent")
+        scopes.append({
+            "id": i,
+            "parent": index.get(parent_key) if parent_key is not None else None,
+            # `ns` and `origin.path` have no counterpart in the model.
+            "ns": None,
+            "origin": {
+                "pkg": s.get("package"),
+                "file": s.get("file"),
+                "path": None,
+            },
+        })
+
+    record = {"scopes": scopes, "node": [], "container": [], "load_node": []}
+    for fqn, n in (structure.get("nodes") or {}).items():
+        n = n or {}
+        entity = {
+            "name": fqn,
+            "node_name": n.get("node_name"),
+            "namespace": _fqn_namespace(fqn),
+            "executable": n.get("exec"),
+            "package": n.get("pkg"),
+            "scope": index.get(n.get("scope")),
+        }
+        if n.get("plugin"):
+            entity["plugin"] = n.get("plugin")
+            entity["target_container_name"] = n.get("container")
+            record["load_node"].append(entity)
+        elif n.get("is_container"):
+            record["container"].append(entity)
+        else:
+            record["node"].append(entity)
+    return record
+
 
 def load_record(path: str) -> dict:
+    """Load a SystemModel (`.yaml`/`.yml`) or a legacy record (`.json`)."""
+    if path.endswith(MODEL_SUFFIXES):
+        import yaml
+
+        with open(path) as f:
+            return _model_to_record(yaml.safe_load(f))
     with open(path) as f:
         return json.load(f)
 
@@ -159,6 +243,16 @@ def validate_record(record: dict) -> int:
 
     # 3. Namespace consistency — scope ns should be prefix of node namespace
     print("\n--- Namespace consistency ---")
+    if all(s.get("ns") is None for s in scopes):
+        # Say it out loud. A check whose input is absent must not report OK.
+        print("  SKIP: per-scope `ns` unavailable (SystemModel input carries "
+              "no accumulated namespace)")
+        print()
+        if errors == 0:
+            print("VALIDATE PASS: record is self-consistent")
+            return 0
+        print(f"VALIDATE FAIL: {errors} error(s)")
+        return 1
     ns_mismatches = 0
     for kind in ["node", "container"]:
         for e in record.get(kind, []):
@@ -328,7 +422,10 @@ def compare_scopes(rust_path: str, python_path: str) -> int:
     # comparison is meaningful and — unlike identity — lets us report a
     # path-only mismatch distinctly from a structural (pkg/file/parent)
     # mismatch.
-    if len(rust_scopes) == len(python_scopes):
+    if all(scope_path(s) is None for s in rust_scopes + python_scopes):
+        print("Scope paths (origin.path): SKIP — unavailable (SystemModel "
+              "input carries no ScopeOrigin.path)")
+    elif len(rust_scopes) == len(python_scopes):
         path_mismatches = []
         for i, (rs, ps) in enumerate(zip(rust_scopes, python_scopes)):
             rp, pp = scope_path(rs), scope_path(ps)

@@ -58,7 +58,7 @@ run-all:
 
 # Generate plots from latest run
 plot:
-    @play_launch plot
+    @{{resolve_bin}} plot
 
 # Compare Rust and Python parser outputs — SystemModel shape (Phase 47:
 # the parser-parity gate runs on the model; record.json is retired).
