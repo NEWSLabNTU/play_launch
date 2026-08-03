@@ -45,20 +45,14 @@ pub struct ResolveInputs {
 pub fn run(inputs: ResolveInputs) -> Result<()> {
     // Positional quirk: with a direct launch-file PATH, the second
     // positional (`launch_file`) can swallow the first `KEY:=VALUE` arg.
-    // Reclassify it so the binding isn't silently lost.
-    let mut launch_arguments = inputs.launch_arguments.clone();
-    let mut launch_file = inputs.launch_file.as_deref();
-    if let Some(lf) = launch_file
-        && lf.contains(":=")
-    {
-        launch_arguments.insert(0, lf.to_string());
-        launch_file = None;
-    }
+    // See [`super::reclassify_launch_file_arg`].
+    let (launch_file, launch_arguments) =
+        super::reclassify_launch_file_arg(inputs.launch_file.as_deref(), &inputs.launch_arguments);
 
     let runtime = super::build_tokio_runtime()?;
     let (dump, launch_path) = runtime.block_on(super::parse_to_launch_dump(
         &inputs.package_or_path,
-        launch_file,
+        launch_file.as_deref(),
         &launch_arguments,
         inputs.parser,
     ))?;

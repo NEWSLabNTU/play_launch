@@ -98,6 +98,52 @@ fn a_launch_only_resolve_produces_no_deploy_entries() {
     );
 }
 
+/// `check` must bind `KEY:=VALUE` given a DIRECT launch-file path.
+///
+/// Regression guard: `check` lacked the positional reclassification that
+/// `resolve` has, so clap bound the first `host:=robot1` to the optional
+/// `<launch_file>` positional and it never reached the parser. `check` then
+/// validated contracts against all 3 nodes while `resolve` — same command
+/// line — produced 2. A CI gate reported green on a node set nobody asked
+/// for. The node count `check` prints is the observable signal, and it must
+/// agree with `resolve`'s on BOTH CLIs.
+#[test]
+fn check_honours_launch_args_given_a_direct_path() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+    let launch =
+        fixtures::repo_root().join("tests/fixtures/multihost/launch/multihost.launch.xml");
+
+    // `resolve` is the reference: host:=robot1 selects talker1 + hub.
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let reference = node_fqns(&resolve("rust", "robot1", &tmp.path().join("ref.yaml"))).len();
+    assert_eq!(reference, 2, "fixture changed: expected 2 nodes for robot1");
+
+    for (label, mut cmd) in [
+        ("play_launch", fixtures::play_launch_cmd(&env)),
+        (
+            "ros-launch-resolve",
+            fixtures::ros_launch_resolve_cmd(&env),
+        ),
+    ] {
+        cmd.args(["check", launch.to_str().unwrap(), "host:=robot1"]);
+        let output = cmd.output().expect("run check");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "{label} check failed:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!("{reference} nodes")),
+            "{label} check must parse the same {reference} nodes `resolve` does \
+             (host:=robot1 was dropped if this says 3):\n{stderr}"
+        );
+    }
+}
+
 #[test]
 fn the_ros1_machine_attribute_is_rejected() {
     if fixtures::install_env().is_empty() {

@@ -77,14 +77,21 @@ impl CheckInputs {
 /// Run the contract checker. Returns the INTENDED process exit code — see the
 /// module-level exit contract. Never calls [`std::process::exit`].
 pub fn run(inputs: CheckInputs) -> Result<i32> {
+    // Positional quirk: with a direct launch-file PATH, the second
+    // positional (`launch_file`) can swallow the first `KEY:=VALUE` arg.
+    // Without this, `check` parsed a DIFFERENT node set than `resolve` did
+    // for the same command line and reported the result as authoritative.
+    // See [`super::reclassify_launch_file_arg`].
+    let (launch_file, launch_arguments) =
+        super::reclassify_launch_file_arg(inputs.launch_file.as_deref(), &inputs.launch_arguments);
+
     // Resolve launch file path (same logic as `play_launch launch`)
-    let launch_path =
-        super::resolve_launch_file(&inputs.package_or_path, inputs.launch_file.as_deref())?;
+    let launch_path = super::resolve_launch_file(&inputs.package_or_path, launch_file.as_deref())?;
 
     eprintln!("Parsing launch file: {}", launch_path.display());
 
     // Parse launch arguments (KEY:=VALUE)
-    let cli_args = super::parse_launch_arguments(&inputs.launch_arguments);
+    let cli_args = super::parse_launch_arguments(&launch_arguments);
 
     // Parse launch file → record with scope table
     let record = play_launch_parser::parse_launch_file(&launch_path, cli_args)

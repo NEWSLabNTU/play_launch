@@ -75,6 +75,42 @@ pub fn build_tokio_runtime() -> eyre::Result<tokio::runtime::Runtime> {
     Ok(runtime)
 }
 
+/// Undo clap's positional mis-binding when the launch target is a direct PATH.
+///
+/// Every launch-tree verb declares two positionals — `<package_or_path>` then
+/// an optional `<launch_file>` — followed by variadic `KEY:=VALUE` launch
+/// arguments. When the user gives a package name that shape is right
+/// (`check my_pkg my.launch.xml mode:=x`). When they give a direct path there
+/// is no second positional to fill, so clap binds the FIRST `KEY:=VALUE` to
+/// `launch_file` and the binding is silently lost:
+///
+/// ```text
+/// check multihost.launch.xml host:=robot1
+///       └─ package_or_path    └─ launch_file (!), never a launch argument
+/// ```
+///
+/// A `KEY:=VALUE` is never a launch file name, so reclassifying it is
+/// unambiguous. This lives here, called by every verb that takes launch
+/// arguments, because it previously existed only in `resolve` — `check` was
+/// missing it and validated contracts against a node set the user never asked
+/// for while reporting success.
+///
+/// Returns the corrected `(launch_file, launch_arguments)` pair.
+pub fn reclassify_launch_file_arg(
+    launch_file: Option<&str>,
+    launch_arguments: &[String],
+) -> (Option<String>, Vec<String>) {
+    match launch_file {
+        Some(lf) if lf.contains(":=") => {
+            let mut args = Vec::with_capacity(launch_arguments.len() + 1);
+            args.push(lf.to_string());
+            args.extend_from_slice(launch_arguments);
+            (None, args)
+        }
+        other => (other.map(str::to_string), launch_arguments.to_vec()),
+    }
+}
+
 /// Resolve a launch file path from a package name or a direct path.
 pub fn resolve_launch_file(
     package_or_path: &str,
@@ -97,9 +133,14 @@ pub fn resolve_launch_file(
 
     // Otherwise, treat as ROS package name
     let Some(file) = launch_file else {
+        // Verb-neutral on purpose: this helper is shared by `resolve`,
+        // `dump`, `check` and `contract eject`, across two CLIs. Naming one
+        // verb here told a user running `check` to look at `launch` — a verb
+        // `ros-launch-resolve` does not even have.
         return Err(eyre::eyre!(
-            "Launch file name required when using package name.\n\
-             Usage: play_launch launch <package> <file.launch.py|xml>"
+            "Launch file name required when the first argument is a package name.\n\
+             Give <package> <file.launch.py|xml>, or pass the path to the launch \
+             file directly."
         ));
     };
 
@@ -165,11 +206,14 @@ pub async fn parse_to_launch_dump(
             let cli_args = parse_launch_arguments(launch_arguments);
             let record =
                 play_launch_parser::parse_launch_file(&launch_path, cli_args).map_err(|e| {
+                    // Verb- and binary-neutral: two CLIs share this, and
+                    // every verb that reaches it accepts `--parser`.
+                    let _ = launch_file;
                     eyre::eyre!(
-                        "Rust parser error: {e}\n\nHint: If you encounter parsing issues, try \
-                         the Python parser:\n  play_launch <cmd> {package_or_path} {} --parser \
-                         python",
-                        launch_file.unwrap_or("")
+                        "Rust parser error while parsing {package_or_path}: {e}\n\n\
+                         Hint: if this is a parser limitation rather than a bad launch \
+                         file, re-run the same command with `--parser python` (slower, \
+                         maximum compatibility)."
                     )
                 })?;
             let json = serde_json::to_string_pretty(&record)?;
@@ -209,6 +253,39 @@ pub async fn parse_to_launch_dump(
     };
 
     Ok((dump, launch_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reclassify_launch_file_arg;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The direct-path shape: clap put a `KEY:=VALUE` in `launch_file`.
+    #[test]
+    fn a_key_value_in_the_launch_file_slot_becomes_a_launch_argument() {
+        let (file, args) = reclassify_launch_file_arg(Some("host:=robot1"), &v(&["mode:=fast"]));
+        assert_eq!(file, None);
+        // Order matters: it was the FIRST argument the user typed.
+        assert_eq!(args, v(&["host:=robot1", "mode:=fast"]));
+    }
+
+    /// The package-name shape must be left exactly as clap parsed it.
+    #[test]
+    fn a_real_launch_file_name_is_left_alone() {
+        let (file, args) = reclassify_launch_file_arg(Some("my.launch.xml"), &v(&["host:=robot1"]));
+        assert_eq!(file.as_deref(), Some("my.launch.xml"));
+        assert_eq!(args, v(&["host:=robot1"]));
+    }
+
+    #[test]
+    fn no_launch_file_is_a_no_op() {
+        let (file, args) = reclassify_launch_file_arg(None, &v(&["host:=robot1"]));
+        assert_eq!(file, None);
+        assert_eq!(args, v(&["host:=robot1"]));
+    }
 }
 
 /// Parse `KEY:=VALUE` launch arguments, warning on anything that isn't.
