@@ -3029,3 +3029,43 @@ def generate_launch_description():
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0]["name"].as_str().unwrap(), "bool_default_node");
 }
+
+/// `import launch` followed by `launch.actions.X` must work, not just
+/// `from launch.actions import X`.
+///
+/// pyo3's `add_submodule` binds a child under its `__name__`. These modules
+/// are created with dotted names (`PyModule::new(py, "launch.actions")`) so
+/// that `sys.modules` and `from launch.actions import X` work — which made the
+/// attribute literally `getattr(launch, "launch.actions")`, leaving
+/// `launch.actions` unreachable. Stock `demo_nodes_cpp
+/// add_two_ints.launch.py` failed with "module 'launch' has no attribute
+/// 'actions'" while the `from ... import` spelling of the same thing parsed
+/// fine, which is why this went unnoticed: every fixture used that spelling.
+#[test]
+fn test_dotted_submodule_attribute_access() {
+    let _guard = python_test_guard();
+    let fixture = get_fixture_path("test_dotted_submodule_access.launch.py");
+    assert!(fixture.exists(), "Fixture file should exist: {fixture:?}");
+
+    let result = parse_launch_file(&fixture, HashMap::new());
+    assert!(
+        result.is_ok(),
+        "`launch.actions` / `launch.event_handlers` / `launch.events` must be \
+         reachable by attribute access: {:?}",
+        result.err()
+    );
+
+    let json = serde_json::to_value(result.unwrap()).unwrap();
+    let nodes = json["node"].as_array().unwrap();
+    assert_eq!(
+        nodes.len(),
+        2,
+        "both Nodes must survive; the event handler contributes none"
+    );
+    let execs: Vec<&str> = nodes
+        .iter()
+        .filter_map(|n| n["exec_name"].as_str())
+        .collect();
+    assert!(execs.contains(&"add_two_ints_server"), "{execs:?}");
+    assert!(execs.contains(&"add_two_ints_client"), "{execs:?}");
+}

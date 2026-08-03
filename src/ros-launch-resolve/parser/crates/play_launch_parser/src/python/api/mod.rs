@@ -14,6 +14,30 @@ pub mod utils;
 
 use pyo3::{PyTypeInfo, prelude::*};
 
+/// Bind `child` on `parent` under BOTH its dotted `__name__` and its bare
+/// final segment.
+///
+/// pyo3's `add_submodule` binds the child under whatever `__name__` it was
+/// created with. These modules are created as `PyModule::new(py,
+/// "launch.actions")` so that `sys.modules` and `from launch.actions import X`
+/// work — but that made the attribute literally `getattr(launch,
+/// "launch.actions")`, leaving `launch.actions` unreachable. Stock launch
+/// files written as `import launch` + `launch.actions.RegisterEventHandler(...)`
+/// therefore failed with "module 'launch' has no attribute 'actions'", while
+/// the `from ... import` spelling of the same thing worked. `demo_nodes_cpp
+/// add_two_ints.launch.py` is the canonical example.
+fn add_submodule_both_names(
+    parent: &Bound<'_, PyModule>,
+    child: &Bound<'_, PyModule>,
+) -> PyResult<()> {
+    parent.add_submodule(child)?;
+    let full = child.name()?.extract::<String>()?;
+    if let Some((_, bare)) = full.rsplit_once('.') {
+        parent.add(bare, child)?;
+    }
+    Ok(())
+}
+
 /// Register all mock Python modules in sys.modules
 ///
 /// This creates mock versions of:
@@ -122,7 +146,7 @@ class ProcessExited:
     )?;
     let process_exited_class = locals.get_item("ProcessExited")?.unwrap();
     launch_events_process.add("ProcessExited", &process_exited_class)?;
-    launch_events.add_submodule(&launch_events_process)?;
+    add_submodule_both_names(&launch_events, &launch_events_process)?;
 
     // Create launch.launch_context submodule with LaunchContext stub
     let launch_context_mod = PyModule::new(py, "launch.launch_context")?;
@@ -201,7 +225,7 @@ class LaunchContext:
     launch_frontend_type_utils.add("check_is_list_entity", py.None())?;
     launch_frontend_type_utils.add("get_data_type", py.None())?;
     launch_frontend_type_utils.add("is_iterable", py.None())?;
-    launch_frontend.add_submodule(&launch_frontend_type_utils)?;
+    add_submodule_both_names(&launch_frontend, &launch_frontend_type_utils)?;
 
     // Create launch.utilities submodule (empty placeholder for imports)
     let launch_utilities = PyModule::new(py, "launch.utilities")?;
@@ -237,17 +261,17 @@ class LaunchContext:
     launch_utilities_type_utils.add("normalize_typed_substitution", py.None())?;
     launch_utilities_type_utils.add("is_normalized_substitution", py.None())?;
     launch_utilities_type_utils.add("perform_typed_substitution", py.None())?;
-    launch_utilities.add_submodule(&launch_utilities_type_utils)?;
+    add_submodule_both_names(&launch_utilities, &launch_utilities_type_utils)?;
 
     // Add submodules to parent module as attributes
-    launch_mod.add_submodule(&launch_actions)?;
-    launch_mod.add_submodule(&launch_events)?;
-    launch_mod.add_submodule(&launch_subs)?;
-    launch_mod.add_submodule(&launch_conditions)?;
-    launch_mod.add_submodule(&launch_event_handlers)?;
-    launch_mod.add_submodule(&launch_sources)?;
-    launch_mod.add_submodule(&launch_frontend)?;
-    launch_mod.add_submodule(&launch_utilities)?;
+    add_submodule_both_names(&launch_mod, &launch_actions)?;
+    add_submodule_both_names(&launch_mod, &launch_events)?;
+    add_submodule_both_names(&launch_mod, &launch_subs)?;
+    add_submodule_both_names(&launch_mod, &launch_conditions)?;
+    add_submodule_both_names(&launch_mod, &launch_event_handlers)?;
+    add_submodule_both_names(&launch_mod, &launch_sources)?;
+    add_submodule_both_names(&launch_mod, &launch_frontend)?;
+    add_submodule_both_names(&launch_mod, &launch_utilities)?;
 
     // Create launch_ros module
     let launch_ros_mod = PyModule::new(py, "launch_ros")?;
@@ -296,11 +320,11 @@ class LaunchContext:
     )?)?;
 
     // Add submodules to parent module as attributes
-    launch_ros_mod.add_submodule(&launch_ros_actions)?;
-    launch_ros_mod.add_submodule(&launch_ros_desc)?;
-    launch_ros_mod.add_submodule(&launch_ros_subs)?;
-    launch_ros_mod.add_submodule(&launch_ros_param_desc)?;
-    launch_ros_mod.add_submodule(&launch_ros_utilities)?;
+    add_submodule_both_names(&launch_ros_mod, &launch_ros_actions)?;
+    add_submodule_both_names(&launch_ros_mod, &launch_ros_desc)?;
+    add_submodule_both_names(&launch_ros_mod, &launch_ros_subs)?;
+    add_submodule_both_names(&launch_ros_mod, &launch_ros_param_desc)?;
+    add_submodule_both_names(&launch_ros_mod, &launch_ros_utilities)?;
 
     // Also set as direct attributes for Python's attribute access
     launch_ros_mod.add("actions", &launch_ros_actions)?;
@@ -371,7 +395,7 @@ class LaunchContext:
 
     // Create and register launch.some_substitutions_type submodule
     let launch_some_subs_type = some_substitutions_type::register_module(py)?;
-    launch_mod.add_submodule(&launch_some_subs_type)?;
+    add_submodule_both_names(&launch_mod, &launch_some_subs_type)?;
     modules.set_item("launch.some_substitutions_type", &launch_some_subs_type)?;
 
     // Create launch_xml module
@@ -380,7 +404,7 @@ class LaunchContext:
     // Create launch_xml.launch_description_sources submodule
     let launch_xml_sources = PyModule::new(py, "launch_xml.launch_description_sources")?;
     launch_xml_sources.add_class::<launch_description_sources::XMLLaunchDescriptionSource>()?;
-    launch_xml_mod.add_submodule(&launch_xml_sources)?;
+    add_submodule_both_names(&launch_xml_mod, &launch_xml_sources)?;
 
     // Register launch_xml in sys.modules
     modules.set_item("launch_xml", &launch_xml_mod)?;
