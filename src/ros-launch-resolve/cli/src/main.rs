@@ -5,11 +5,13 @@
 //! `play_launch`, which is the layer that legitimately needs rclrs and a
 //! colcon-built message set (RFC-0060).
 
+//! Every module here is argument mapping. The verbs themselves live in
+//! `ros_launch_resolve::verbs`, shared with `play_launch` so the two CLIs
+//! cannot drift apart.
+
 mod check;
-mod common;
 mod contract;
 mod dump;
-mod launch;
 mod options;
 mod plot;
 mod resolve;

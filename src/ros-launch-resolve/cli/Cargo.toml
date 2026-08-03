@@ -12,25 +12,17 @@ description = "CLI for ros-launch-resolve"
 name = "ros-launch-resolve"
 path = "src/main.rs"
 
+# Four dependencies, and that is the point: the verb bodies live in
+# `ros_launch_resolve::verbs`, so this crate parses argv, maps `*Args` to
+# `*Inputs`, and prints nothing itself. The manifest crates, the parser,
+# serde, tokio and num_cpus all left with the handlers they belonged to; a
+# new entry here should make you ask whether the logic wanting it belongs in
+# the library instead, where `play_launch` can reach it too.
 [dependencies]
 ros-launch-resolve = { path = "../resolve" }
-ros-launch-manifest-model = { workspace = true }
-ros-launch-manifest-check = { workspace = true }
-ros-launch-manifest-types = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 eyre = { workspace = true }
-ros-launch-manifest-sched = { workspace = true }
-play_launch_parser = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-serde_yaml_ng = { workspace = true }
-toml = { workspace = true }
-tracing = { workspace = true }
 # `env-filter` is NOT a default feature. Without it `RUST_LOG` is silently
 # ignored, which is what shipped in 0.9.0's first cut: the init read the
 # variable, branched on it, and then built two identical subscribers.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-num_cpus = "1"
-sha2 = { workspace = true }
-glob = "0.3"

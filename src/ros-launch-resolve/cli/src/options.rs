@@ -12,6 +12,17 @@ pub enum ParserBackend {
     Python,
 }
 
+/// The library's parser selector carries no clap derive on purpose — it must
+/// not know a CLI exists. Each CLI keeps its own clap enum and maps into it.
+impl From<ParserBackend> for ros_launch_resolve::verbs::ParserBackend {
+    fn from(backend: ParserBackend) -> Self {
+        match backend {
+            ParserBackend::Rust => Self::Rust,
+            ParserBackend::Python => Self::Python,
+        }
+    }
+}
+
 /// Container mode selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ContainerMode {
@@ -622,22 +633,9 @@ pub struct CheckArgs {
     pub export_graph: Option<PathBuf>,
 }
 
-impl CheckArgs {
-    /// Build the two-step `ContractSources` from this command's flags.
-    ///
-    /// The overlay root is discovered (Phase 41.3 §3.2) when `--contracts`
-    /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
-    /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
-    /// `/etc/play_launch/contracts` — first existing wins.
-    pub fn contract_sources(&self) -> ros_launch_resolve::ros::manifest_loader::ContractSources {
-        ros_launch_resolve::ros::manifest_loader::ContractSources {
-            overlay: ros_launch_resolve::ros::manifest_loader::discover_overlay_root(
-                self.contracts.as_deref(),
-            ),
-            provider: !self.no_provider_contracts,
-        }
-    }
-}
+// `CheckArgs::contract_sources` moved to `verbs::check::CheckInputs` with the
+// verb body: the overlay/provider two-step is checker policy, not CLI parsing,
+// and both CLIs must resolve contract channels identically.
 
 // NOTE: the argument-parsing tests for `launch`, `run` and `replay` moved to
 // play_launch with those verbs — this crate no longer defines them. `check`
