@@ -10,12 +10,17 @@ through `p46-w6-report.md` for implementation evidence.
 **Phase 47 update:** the deprecated `record.json` compat/dev surface this
 doc describes below (`dump --format record`, `replay --input-file`) was
 HARD-REMOVED in Phase 47.B2/B3 (not just deprecated) — `dump` has no
-`--format` flag anymore, and `replay` requires a SystemModel (positional or
-`--model`; `--input-file` is gone, not a warn-and-continue path). The
-sections below describing the deprecated path are kept as historical
-record of the Phase 46 decision; see
+`--format` flag anymore, and `replay` (renamed `up` in Phase 56, see below)
+required a SystemModel (positional or `--model`; `--input-file` is gone, not
+a warn-and-continue path). The sections below describing the deprecated path
+are kept as historical record of the Phase 46 decision; see
 `docs/roadmap/phase-47-cli_and_record_hard_removal.md` §B and
 `.superpowers/sdd/p47-wB-report.md` for the removal.
+**Phase 56 update:** `replay` was renamed `up` in the 0.9.0 CLI verb
+reshape — every `replay` reference below (including the `--model`/positional
+form just described) names the pre-0.9.0 verb; read it as `up`. See
+`docs/guide/cli-migration-0.9.md` and
+`docs/roadmap/phase-56-cli-verb-reshape.md`.
 **Revises:** Phase 43's two-artifact decision (`phase-43-runtime_consumes_system_model.md`
 §"Decision: two-artifact runtime") — that decision is superseded.
 **Cross-track:** the `model`-crate field additions are shared with the nano-ros
@@ -85,10 +90,12 @@ its own platform specifics" step nano-ros already performs.
 - `play_launch dump` emits the model by default (was: `record.json`; now
   the same one artifact — the user perceives one kind of dump; `--format
   record` is the deprecated escape hatch for parser-parity tooling).
-- `play_launch replay --model system_model.yaml` reads the model and spawns
-  (deriving cmd/exec-path); `--input-file <record.json>` without `--model`
-  still works as a deprecated, warning compat path (one release's grace).
-- `launch` = resolve-then-replay over the one model (Phase 43.5 flow, minus the
+- `play_launch up --model system_model.yaml` (renamed from `replay` in the
+  0.9.0 CLI verb reshape, Phase 56) reads the model and spawns (deriving
+  cmd/exec-path). **Historical:** `--input-file <record.json>` without
+  `--model` was a deprecated, warning compat path with one release's grace —
+  Phase 47.B2/B3 hard-removed it; `--input-file` is not accepted at all now.
+- `launch` = resolve-then-up over the one model (Phase 43.5 flow, minus the
   record companion).
 
 ## Cross-track (nano-ros) — corrected 2026-07-20 after studying their bake

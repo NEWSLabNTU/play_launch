@@ -2,6 +2,12 @@
 
 Status: Draft (2026-07). Producer-side design; the consumer-side sibling is
 nano-ros RFC-0050 (`docs/design/0050-system-model.md` in the nano-ros repo).
+**Naming update:** this draft proposes `play_launch resolve` throughout —
+`resolve` shipped under that name, then moved to the extracted
+`ros-launch-resolve` binary (RFC-0060), and `play_launch resolve` itself was
+removed (errors naming the replacement) in the 0.9.0 CLI verb reshape
+(Phase 56, `docs/guide/cli-migration-0.9.md`). Read `play_launch resolve`
+below as `ros-launch-resolve resolve`.
 
 ## Summary
 

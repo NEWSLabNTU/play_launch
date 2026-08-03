@@ -183,3 +183,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   [phase-55-launch-toolchain-consolidation.md](./phase-55-launch-toolchain-consolidation.md).
   Design: [docs/design/launch-toolchain-topology.md](../design/launch-toolchain-topology.md).
   Counterpart: nano-ros phase-332.
+- **Phase 56** — ✅ CLI verb reshape for 0.9.0: `check` → `--check` + a layer-2
+  verb, `replay` → `up`, `resolve` removed. Removed verbs error naming their
+  replacement; hidden variants delete at 1.0.0.
+  [phase-56-cli-verb-reshape.md](./phase-56-cli-verb-reshape.md).

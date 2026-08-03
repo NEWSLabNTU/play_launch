@@ -461,10 +461,18 @@ known rather than discarding it.
 
 | Command | What it does | How this differs |
 |---------|-------------|-----------------|
-| `play_launch dump` | Parse → record.json (all nodes) | `context` extracts ONE node's full context |
-| `play_launch launch` | Parse → record.json → replay ALL nodes | `run-isolated` replays a SUBSET |
-| `play_launch replay` | Replay from existing record.json | `run-isolated` generates a standalone launch, no play_launch needed |
+| `play_launch dump` | Parse → `system_model.yaml` (all nodes) | `context` extracts ONE node's full context |
+| `play_launch launch` | Parse → build SystemModel → spawn ALL nodes | `run-isolated` spawns a SUBSET |
+| `play_launch up` | Spawn from an existing `system_model.yaml` | `run-isolated` generates a standalone launch, no play_launch needed |
 | `ros2 launch` | Run a launch file | `run-isolated` provides the parent context that `ros2 launch` can't |
+
+**Historical:** this table originally read `record.json` for the dump/launch
+output and `play_launch replay` for the third row — `record.json` was
+retired as a user-facing artifact in Phase 47 (the model, `system_model.yaml`,
+is the one artifact now) and `replay` was renamed `up` in the 0.9.0 CLI verb
+reshape (Phase 56). `run-isolated` itself remains an unimplemented proposal;
+this table has not been re-verified against the current `context`/`dump`
+commands beyond the naming fix above.
 
 The key difference: `run-isolated` produces a **self-contained** launch
 that can be run with plain `ros2 launch` — no play_launch needed at

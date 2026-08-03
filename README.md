@@ -74,7 +74,7 @@ Record first, replay multiple times:
 ros-launch-resolve dump launch <package> <launch_file> [arguments...]
 
 # Replay
-play_launch replay
+play_launch up
 ```
 
 ## Features
@@ -146,7 +146,7 @@ processes:
 Apply configuration:
 
 ```bash
-play_launch replay --config config.yaml
+play_launch up --config config.yaml
 ```
 
 ## Visualization
@@ -209,9 +209,9 @@ play_log/<timestamp>/
 play_launch launch <package> <launch_file> [args...]
 play_launch run <package> <executable> [args...]
 
-# Dump and replay (dump emits the SystemModel by default — one artifact)
+# Dump and up (dump emits the SystemModel by default — one artifact)
 ros-launch-resolve dump launch <package> <launch_file> [args...]
-play_launch replay [--model system_model.yaml]
+play_launch up [--model system_model.yaml]
 
 # Parser selection (Rust is default)
 play_launch launch <pkg> <file> --parser rust     # Default, fast

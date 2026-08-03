@@ -46,6 +46,6 @@ fn dump_launch_model(
     };
     super::resolve::handle_resolve(&resolve_args)?;
 
-    info!("To replay: play_launch replay {}", output.display());
+    info!("To run: play_launch up {}", output.display());
     Ok(())
 }
