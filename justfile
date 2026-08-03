@@ -568,6 +568,10 @@ check:
     ament_clang_format {{cpp_packages}}
 
     echo ""
+    echo "=== Web UI (html/css/js lint + TypeScript) ==="
+    just check-web-ui
+
+    echo ""
     just check-layer2-isolation
 
 # RFC-0060 layer-2 isolation gate: prove ros-launch-resolve still builds and

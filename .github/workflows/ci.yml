@@ -60,5 +60,16 @@ jobs:
         source install/setup.bash
         just test
 
+    - name: Ensure Node.js
+      # `just check` now runs the web UI lint + typecheck. The builder image
+      # gained nodejs in the same commit, but CI pulls a PUBLISHED tag — this
+      # bootstraps until an image built from that Dockerfile is pushed, and is
+      # a no-op afterwards.
+      run: |
+        if ! command -v node >/dev/null 2>&1; then
+          apt-get update && apt-get install -y --no-install-recommends nodejs npm
+        fi
+        node --version && npm --version
+
     - name: Run checks
       run: just check
