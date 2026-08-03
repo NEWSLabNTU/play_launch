@@ -3,6 +3,19 @@
 # Variables
 ros_distro := env_var_or_default('ROS_DISTRO', 'humble')
 
+# ros-launch-resolve binary (layer 2 CLI) — `resolve` moved off play_launch
+# onto this standalone binary (RFC-0060 W3, CLI verb reshape Task 6). Not
+# part of the colcon install/ tree — it builds under plain cargo, no ROS —
+# so it lives in its own workspace's target/. Release preferred, falls back
+# to debug (mirrors tests/src/fixtures.rs::ros_launch_resolve_bin()).
+resolve_bin := `
+    for p in ../../../src/ros-launch-resolve/target/release/ros-launch-resolve \
+             ../../../src/ros-launch-resolve/target/debug/ros-launch-resolve; do
+        [ -f "$p" ] && { echo "$p"; exit 0; }
+    done
+    echo "../../../src/ros-launch-resolve/target/debug/ros-launch-resolve"
+`
+
 # Show help
 default:
     @just --list
@@ -21,17 +34,11 @@ compare-dumps:
     # guard fails loud on that instead).
     export PATH="$REPO_ROOT/install/play_launch/lib/play_launch:$PATH"
     export PYTHONPATH="$REPO_ROOT/python:$PYTHONPATH"
-    # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
-    # reshape) — it's not part of the colcon install/ tree, so locate it in
-    # its own standalone cargo workspace's target/ (release preferred).
-    RESOLVE_BIN="$REPO_ROOT/src/ros-launch-resolve/target/release/ros-launch-resolve"
-    [ -f "$RESOLVE_BIN" ] || RESOLVE_BIN="$REPO_ROOT/src/ros-launch-resolve/target/debug/ros-launch-resolve"
-    [ -f "$RESOLVE_BIN" ] || { echo "ros-launch-resolve not built — run: cd $REPO_ROOT/src/ros-launch-resolve && cargo build --bin ros-launch-resolve" >&2; exit 1; }
 
     echo "=== Rust parser ==="
-    "$RESOLVE_BIN" resolve --parser rust -o model_rust.yaml launch/container_events.launch.xml
+    {{resolve_bin}} resolve --parser rust -o model_rust.yaml launch/container_events.launch.xml
     echo "=== Python parser ==="
-    "$RESOLVE_BIN" resolve --parser python -o model_python.yaml launch/container_events.launch.xml
+    {{resolve_bin}} resolve --parser python -o model_python.yaml launch/container_events.launch.xml
     echo "=== Diff ==="
     python3 "$REPO_ROOT/scripts/compare_models.py" model_rust.yaml model_python.yaml
 

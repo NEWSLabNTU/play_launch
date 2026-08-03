@@ -12,6 +12,26 @@ ros_distro := env_var_or_default('ROS_DISTRO', 'humble')
 # tests/src/fixtures.rs::play_launch_bin() resolves to.
 play_launch := "../../../install/play_launch/lib/play_launch/play_launch"
 
+# ros-launch-resolve binary (layer 2 CLI): `resolve`, `check`, `dump`,
+# `contract eject`, `plot` all moved off play_launch onto this standalone
+# binary (RFC-0060 W3; the CLI verb reshape's Tasks 5/6 finished pulling
+# `check`/`resolve` out of play_launch entirely). It is not part of the
+# colcon install/ tree — it builds under plain cargo, no ROS at all — so it
+# lives in its own workspace's target/, not alongside {{play_launch}}.
+# Release preferred, falls back to debug (mirrors
+# tests/src/fixtures.rs::ros_launch_resolve_bin()). Like {{play_launch}}
+# above, this assumes the binary is already built — `cargo build --bin
+# ros-launch-resolve` in src/ros-launch-resolve, or `just build`/`test`/
+# `test-all` from the repo root — a recipe that uses it will fail with its
+# own "not found" error otherwise, same as {{play_launch}} would.
+resolve_bin := `
+    for p in ../../../src/ros-launch-resolve/target/release/ros-launch-resolve \
+             ../../../src/ros-launch-resolve/target/debug/ros-launch-resolve; do
+        [ -f "$p" ] && { echo "$p"; exit 0; }
+    done
+    echo "../../../src/ros-launch-resolve/target/debug/ros-launch-resolve"
+`
+
 # Show help
 default:
     @just --list
@@ -41,18 +61,12 @@ compare-dumps:
     # PYTHONPATH so `--parser python` never silently runs a stale pip
     # install (the stale-scope-path guard fails loud on that instead).
     export PYTHONPATH="$(cd ../../.. && pwd)/python:$PYTHONPATH"
-    # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
-    # reshape) — it's not part of the colcon install/ tree, so locate it in
-    # its own standalone cargo workspace's target/ (release preferred).
-    RESOLVE_BIN="../../../src/ros-launch-resolve/target/release/ros-launch-resolve"
-    [ -f "$RESOLVE_BIN" ] || RESOLVE_BIN="../../../src/ros-launch-resolve/target/debug/ros-launch-resolve"
-    [ -f "$RESOLVE_BIN" ] || { echo "ros-launch-resolve not built — run: cd ../../../src/ros-launch-resolve && cargo build --bin ros-launch-resolve" >&2; exit 1; }
 
     echo "Resolving with Rust parser..."
-    "$RESOLVE_BIN" resolve --parser rust -o model_rust.yaml rt_demo bringup.launch.xml
+    {{resolve_bin}} resolve --parser rust -o model_rust.yaml rt_demo bringup.launch.xml
 
     echo "Resolving with Python parser..."
-    "$RESOLVE_BIN" resolve --parser python -o model_python.yaml rt_demo bringup.launch.xml
+    {{resolve_bin}} resolve --parser python -o model_python.yaml rt_demo bringup.launch.xml
 
     echo "Comparing Rust and Python SystemModels..."
     python3 ../../../scripts/compare_models.py model_rust.yaml model_python.yaml
@@ -61,6 +75,15 @@ compare-dumps:
 # Validate contracts + scheduling: v2 channel resolution/--explain/overlay,
 # the vocabulary-v2 `points_to_cmd` chain, and the legacy system.toml bridge
 # (kept as the living bridge test).
+#
+# `check` is a pure diagnostics/provenance harness here — nothing in this
+# recipe launches anything — so it belongs entirely on `ros-launch-resolve
+# check` (the Task 5 split's diagnostics half), not `play_launch launch
+# --check` (the pass/fail gate half). It used to read {{play_launch}} check
+# — a latent bug the CLI verb reshape (Task 5) introduced and Task 6's
+# review caught: play_launch's `check` has been a hidden bail-path variant
+# since Task 5, so every invocation below was silently asserting against an
+# error message instead of running the real checker.
 check:
     #!/usr/bin/env bash
     set -e
@@ -69,23 +92,23 @@ check:
     . install/setup.bash
 
     echo "== v2: channel resolution (no --sched) picks the provider platform file =="
-    {{play_launch}} check rt_demo bringup.launch.xml
+    {{resolve_bin}} check rt_demo bringup.launch.xml
 
     echo "== v2: --explain shows derived + override + default provenance =="
-    {{play_launch}} check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
+    {{resolve_bin}} check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
 
     echo "== v2: user overlay tweaks the provider's band/pin (overlay always wins) =="
-    {{play_launch}} check --contracts contracts rt_demo bringup.launch.xml
+    {{resolve_bin}} check --contracts contracts rt_demo bringup.launch.xml
 
     echo "== v2: chain-aware --explain shows points_to_cmd chain provenance (Phase 44.5) =="
-    {{play_launch}} check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml 2>&1 \
+    {{resolve_bin}} check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml 2>&1 \
         | grep -F "derived(chain_aware: points_to_cmd" \
         || { echo "ERROR: expected chain_aware provenance for points_to_cmd in --explain output"; exit 1; }
 
     echo "== legacy bridge: system.toml (manual mapper) + sched =="
-    {{play_launch}} check --sched system.toml rt_demo bringup.launch.xml
+    {{resolve_bin}} check --sched system.toml rt_demo bringup.launch.xml
     echo "== legacy bridge: system.toml overridden by user overlay CONTRACT (not platform file — system.toml is passed explicitly) =="
-    {{play_launch}} check --contracts contracts --sched system.toml rt_demo bringup.launch.xml
+    {{resolve_bin}} check --contracts contracts --sched system.toml rt_demo bringup.launch.xml
 
 # Schema-coexistence demo: a Zephyr platform file resolves and parses via the
 # same --target channel mechanism, but play_launch's built-in mappers only
@@ -97,7 +120,7 @@ check-zephyr-stub:
     . /opt/ros/{{ros_distro}}/setup.bash
     . ../../../install/setup.bash
     . install/setup.bash
-    {{play_launch}} check --target zephyr rt_demo bringup.launch.xml && \
+    {{resolve_bin}} check --target zephyr rt_demo bringup.launch.xml && \
         { echo "UNEXPECTED: check --target zephyr succeeded"; exit 1; } || \
         echo "expected failure: deadline_monotonic requires posix facts (file parsed fine; derive is posix-only today)"
 

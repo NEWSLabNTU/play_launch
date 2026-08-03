@@ -2,6 +2,19 @@
 ros_distro := if `lsb_release -rs 2>/dev/null || echo "22.04"` == "24.04" { "jazzy" } else { "humble" }
 colcon_flags := "--symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release"
 
+# ros-launch-resolve binary (layer 2 CLI) — `resolve` moved off play_launch
+# onto this standalone binary (RFC-0060 W3, CLI verb reshape Task 6). Not
+# part of the colcon install/ tree — it builds under plain cargo, no ROS —
+# so it lives in its own workspace's target/. Release preferred, falls back
+# to debug (mirrors tests/src/fixtures.rs::ros_launch_resolve_bin()).
+resolve_bin := `
+    for p in src/ros-launch-resolve/target/release/ros-launch-resolve \
+             src/ros-launch-resolve/target/debug/ros-launch-resolve; do
+        [ -f "$p" ] && { echo "$p"; exit 0; }
+    done
+    echo "src/ros-launch-resolve/target/debug/ros-launch-resolve"
+`
+
 # Show available recipes
 default:
     @just --list
@@ -40,6 +53,14 @@ build:
     source /opt/ros/{{ros_distro}}/setup.bash
     colcon build {{colcon_flags}} --base-paths src
     just build-interception
+    # `resolve`, `check`, `dump`, `contract eject`, `plot` all live on
+    # ros-launch-resolve now, not play_launch (RFC-0060 W3, CLI verb reshape
+    # Tasks 5/6) — it's a standalone cargo workspace outside colcon, so
+    # `colcon build` above never touches it. Without this, a user who only
+    # runs `just build` gets a play_launch binary with NEITHER verb: both
+    # left play_launch and colcon never builds their replacement. Release,
+    # to match colcon_flags' `--cargo-args --release` for play_launch itself.
+    (cd src/ros-launch-resolve && cargo build --release --bin ros-launch-resolve)
     scripts/bundle_wheel.sh
     uv build --wheel
     echo ""
@@ -454,12 +475,6 @@ compare-parsers:
     # fixture justfiles' compare-dumps recipes already apply).
     export PATH="$(pwd)/install/play_launch/lib/play_launch:$PATH"
     export PYTHONPATH="$(pwd)/python:$PYTHONPATH"
-    # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
-    # reshape) — it's not part of the colcon install/ tree, so locate it in
-    # its own standalone cargo workspace's target/ (release preferred).
-    RESOLVE_BIN="$(pwd)/src/ros-launch-resolve/target/release/ros-launch-resolve"
-    [ -f "$RESOLVE_BIN" ] || RESOLVE_BIN="$(pwd)/src/ros-launch-resolve/target/debug/ros-launch-resolve"
-    [ -f "$RESOLVE_BIN" ] || { echo "ros-launch-resolve not built — run: cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve" >&2; exit 1; }
     TMPDIR=$(mktemp -d)
     trap "rm -rf $TMPDIR" EXIT
     FAILED=0
@@ -471,8 +486,8 @@ compare-parsers:
         desc="${case##*:}"
         echo "----------------------------------------"
         echo "Test: $desc ($file)"
-        "$RESOLVE_BIN" resolve --parser rust -o "$TMPDIR/rust.yaml" "$file"
-        "$RESOLVE_BIN" resolve --parser python -o "$TMPDIR/python.yaml" "$file"
+        {{resolve_bin}} resolve --parser rust -o "$TMPDIR/rust.yaml" "$file"
+        {{resolve_bin}} resolve --parser python -o "$TMPDIR/python.yaml" "$file"
         if python3 scripts/compare_models.py "$TMPDIR/rust.yaml" "$TMPDIR/python.yaml"; then
             echo "PASS: $desc"
         else
