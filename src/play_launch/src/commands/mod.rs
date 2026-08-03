@@ -26,23 +26,7 @@ pub use resolve::handle_resolve;
 pub use run::handle_run;
 pub use up::handle_up;
 
-use std::collections::HashMap;
-use tracing::warn;
-
-/// Parse KEY:=VALUE launch arguments into a HashMap.
-pub(crate) fn parse_launch_arguments(args: &[String]) -> HashMap<String, String> {
-    args.iter()
-        .filter_map(|arg| {
-            let parts: Vec<&str> = arg.splitn(2, ":=").collect();
-            if parts.len() == 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
-            } else {
-                warn!(
-                    "Ignoring invalid launch argument (expected KEY:=VALUE): {}",
-                    arg
-                );
-                None
-            }
-        })
-        .collect()
-}
+// `parse_launch_arguments` was a byte-identical copy of the library's. One
+// implementation, in the library, re-exported here so call sites read
+// unchanged (CLAUDE.md: shared logic goes in the library, never in a CLI).
+pub(crate) use ros_launch_resolve::verbs::parse_launch_arguments;
