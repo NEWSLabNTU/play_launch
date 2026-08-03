@@ -144,40 +144,116 @@ pub fn resolve_launch_file(
         ));
     };
 
-    // Try to find package using ament_index (via environment variable)
-    if let Ok(ament_prefix_path) = std::env::var("AMENT_PREFIX_PATH") {
-        for prefix in ament_prefix_path.split(':') {
-            let pkg_share = PathBuf::from(prefix).join("share").join(package_or_path);
+    // Package name. Resolve its share directory the way ament does — first
+    // matching prefix on AMENT_PREFIX_PATH wins — then search inside it.
+    let Some(pkg_share) = std::env::var("AMENT_PREFIX_PATH").ok().and_then(|paths| {
+        paths
+            .split(':')
+            .map(|prefix| PathBuf::from(prefix).join("share").join(package_or_path))
+            .find(|share| share.is_dir())
+    }) else {
+        return Err(eyre::eyre!(
+            "Package '{package_or_path}' not found.\n\
+             \n\
+             Make sure:\n\
+             1. The ROS 2 workspace is sourced (source install/setup.bash)\n\
+             2. The package is built (colcon build --packages-select {package_or_path})"
+        ));
+    };
 
-            if pkg_share.exists() {
-                // Try launch/ subdirectory first
-                let launch_path = pkg_share.join("launch").join(file);
-                if launch_path.exists() {
-                    return Ok(launch_path);
-                }
+    // An explicit relative path (`topics/talker_listener.launch.py`) is taken
+    // as given. `ros2 launch` does not accept this form — it compares only the
+    // basename — but it is unambiguous by construction and this tool has
+    // accepted it for long enough that removing it would break callers.
+    if file.contains('/') {
+        // Both roots, as before this became recursive: `topics/x.launch.py`
+        // means `launch/topics/x.launch.py` for a conventional package, and
+        // `share/<pkg>/topics/x.launch.py` for one that installs elsewhere.
+        // Dropping the `launch/` root broke `demo_nodes_cpp
+        // topics/talker_listener.launch.py`, which is the documented form.
+        for root in [pkg_share.join("launch"), pkg_share.clone()] {
+            let direct = root.join(file);
+            if direct.is_file() {
+                return Ok(direct);
+            }
+        }
+        return Err(eyre::eyre!(
+            "Launch file '{file}' not found under {} (tried both there and \
+             under its `launch/` subdirectory).",
+            pkg_share.display()
+        ));
+    }
 
-                // Try root of package share directory
-                let root_path = pkg_share.join(file);
-                if root_path.exists() {
-                    return Ok(root_path);
-                }
+    // Bare filename: walk the whole share directory, matching on basename.
+    // This mirrors `ros2 launch` (ros2launch/api/api.py
+    // `get_share_file_path_from_package`), which is why a file under
+    // `launch/topics/` is reachable by name alone — `demo_nodes_cpp
+    // talker_listener.launch.py` is the canonical example, and searching only
+    // `launch/` and the share root used to miss it.
+    let mut matches = find_by_basename(&pkg_share, file);
+
+    // Deterministic across filesystems: readdir order is not guaranteed, and
+    // an unstable answer here would be worse than a wrong one.
+    matches.sort();
+
+    match matches.len() {
+        1 => Ok(matches.into_iter().next().expect("len checked")),
+        0 => Err(eyre::eyre!(
+            "Launch file '{file}' was not found in the share directory of \
+             package '{package_or_path}', which is at {}.\n\
+             \n\
+             Make sure the package is built and the launch file is installed \
+             (an `install(DIRECTORY launch ...)` or `data_files` entry).",
+            pkg_share.display()
+        )),
+        // `ros2 launch` errors here too rather than picking one. Silently
+        // preferring `launch/` would make the choice invisible in the very
+        // case where the user most needs to know a choice was made.
+        _ => Err(eyre::eyre!(
+            "Launch file '{file}' was found more than once in package \
+             '{package_or_path}':\n{}\n\
+             \n\
+             Disambiguate by passing the path relative to the package share \
+             directory, e.g. `{package_or_path} {}`.",
+            matches
+                .iter()
+                .map(|p| format!("  {}", p.display()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            matches[0]
+                .strip_prefix(&pkg_share)
+                .unwrap_or(&matches[0])
+                .display()
+        )),
+    }
+}
+
+/// Every file under `dir` whose file name equals `name`, recursively.
+///
+/// Directory symlinks are not followed, matching Python's `os.walk` default
+/// (`followlinks=False`) that `ros2 launch` relies on. Symlinked *files* are
+/// still matched, which is what a `colcon --symlink-install` share tree is
+/// made of.
+fn find_by_basename(dir: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue; // unreadable subtree: skip, do not fail the lookup
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if entry.file_name() == name {
+                out.push(path);
             }
         }
     }
-
-    Err(eyre::eyre!(
-        "Package '{}' not found or launch file '{}' doesn't exist.\n\
-         Searched in: $AMENT_PREFIX_PATH/share/{}/launch/\n\
-         \n\
-         Make sure:\n\
-         1. ROS 2 workspace is sourced (source install/setup.bash)\n\
-         2. Package is built (colcon build --packages-select {})\n\
-         3. Launch file exists in package/launch/ directory",
-        package_or_path,
-        file,
-        package_or_path,
-        package_or_path
-    ))
+    out
 }
 
 /// Parse a launch file into an in-memory [`crate::ros::launch_dump::LaunchDump`]
@@ -258,6 +334,130 @@ pub async fn parse_to_launch_dump(
 #[cfg(test)]
 mod tests {
     use super::reclassify_launch_file_arg;
+
+    use super::resolve_launch_file;
+
+    // ── resolve_launch_file: recursive lookup, matching `ros2 launch` ──
+
+    /// Serialises AMENT_PREFIX_PATH across these tests and restores it after.
+    /// The variable is process-global and cargo runs tests in threads.
+    struct AmentGuard {
+        prev: Option<String>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    static AMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    impl AmentGuard {
+        fn set(prefix: &std::path::Path) -> Self {
+            let lock = AMENT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::env::var("AMENT_PREFIX_PATH").ok();
+            unsafe { std::env::set_var("AMENT_PREFIX_PATH", prefix) };
+            Self { prev, _lock: lock }
+        }
+    }
+
+    impl Drop for AmentGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => unsafe { std::env::set_var("AMENT_PREFIX_PATH", v) },
+                None => unsafe { std::env::remove_var("AMENT_PREFIX_PATH") },
+            }
+        }
+    }
+
+    fn share_with(files: &[&str]) -> tempfile::TempDir {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let share = tmp.path().join("share").join("demo_pkg");
+        std::fs::create_dir_all(&share).unwrap();
+        for rel in files {
+            let full = share.join(rel);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(&full, b"<launch/>").unwrap();
+        }
+        tmp
+    }
+
+    #[test]
+    fn finds_a_launch_file_nested_below_the_launch_dir() {
+        // The regression this fix exists for: `ros2 launch demo_nodes_cpp
+        // talker_listener.launch.py` works because ros2 walks the whole share
+        // tree; searching only `launch/` and the share root missed it.
+        let tmp = share_with(&["launch/topics/talker.launch.py"]);
+        let _g = AmentGuard::set(tmp.path());
+        let got = resolve_launch_file("demo_pkg", Some("talker.launch.py")).unwrap();
+        assert_eq!(
+            got,
+            tmp.path().join("share/demo_pkg/launch/topics/talker.launch.py")
+        );
+    }
+
+    #[test]
+    fn still_finds_the_flat_launch_dir_case() {
+        let tmp = share_with(&["launch/a.launch.xml"]);
+        let _g = AmentGuard::set(tmp.path());
+        let got = resolve_launch_file("demo_pkg", Some("a.launch.xml")).unwrap();
+        assert_eq!(got, tmp.path().join("share/demo_pkg/launch/a.launch.xml"));
+    }
+
+    #[test]
+    fn an_explicit_relative_path_is_taken_as_given() {
+        // Not a `ros2 launch` form, but one this tool has long accepted, and
+        // the documented escape from the ambiguity error below.
+        let tmp = share_with(&["launch/topics/dup.launch.py", "other/dup.launch.py"]);
+        let _g = AmentGuard::set(tmp.path());
+        let got = resolve_launch_file("demo_pkg", Some("launch/topics/dup.launch.py")).unwrap();
+        assert_eq!(
+            got,
+            tmp.path().join("share/demo_pkg/launch/topics/dup.launch.py")
+        );
+    }
+
+    #[test]
+    fn an_explicit_relative_path_resolves_under_the_launch_dir_too() {
+        // `demo_nodes_cpp topics/talker_listener.launch.py` — the documented
+        // form, where the path is relative to `launch/`, not to the share
+        // root. Making the lookup recursive briefly dropped this root.
+        let tmp = share_with(&["launch/topics/talker.launch.py"]);
+        let _g = AmentGuard::set(tmp.path());
+        let got = resolve_launch_file("demo_pkg", Some("topics/talker.launch.py")).unwrap();
+        assert_eq!(
+            got,
+            tmp.path().join("share/demo_pkg/launch/topics/talker.launch.py")
+        );
+    }
+
+    #[test]
+    fn duplicate_basenames_error_rather_than_silently_picking_one() {
+        // `ros2 launch` raises MultipleLaunchFilesError here. Preferring
+        // `launch/` would hide the choice in exactly the case where the user
+        // most needs to know one was made.
+        let tmp = share_with(&["launch/dup.launch.py", "nested/deeper/dup.launch.py"]);
+        let _g = AmentGuard::set(tmp.path());
+        let err = resolve_launch_file("demo_pkg", Some("dup.launch.py")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("more than once"), "{msg}");
+        // An ambiguity error that does not say what was ambiguous is useless.
+        assert!(msg.contains("launch/dup.launch.py"), "{msg}");
+        assert!(msg.contains("nested/deeper/dup.launch.py"), "{msg}");
+    }
+
+    #[test]
+    fn a_missing_file_names_the_share_directory_that_was_searched() {
+        let tmp = share_with(&[]);
+        let _g = AmentGuard::set(tmp.path());
+        let err = resolve_launch_file("demo_pkg", Some("nope.launch.py")).unwrap_err();
+        let share = tmp.path().join("share/demo_pkg");
+        assert!(err.to_string().contains(&share.display().to_string()));
+    }
+
+    #[test]
+    fn a_missing_package_is_distinguished_from_a_missing_file() {
+        let tmp = share_with(&[]);
+        let _g = AmentGuard::set(tmp.path());
+        let err = resolve_launch_file("no_such_pkg", Some("x.launch.py")).unwrap_err();
+        assert!(err.to_string().contains("Package 'no_such_pkg' not found"));
+    }
 
     fn v(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
