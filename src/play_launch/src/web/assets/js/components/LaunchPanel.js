@@ -6,7 +6,7 @@ import { h } from '../vendor/preact.module.js';
 import { useState, useEffect, useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import {
-    launchTree, launchTreeSelection, nodes, getStatusString, getNodeByKey } from '../store.js';
+    launchTree, launchTreeSelection, nodes, getStatusString, getNodeByKey, memberFqn } from '../store.js';
 import { InfoTab } from './InfoTab.js';
 import { LogTab } from './LogTab.js';
 import { ParametersTab } from './ParametersTab.js';
@@ -307,7 +307,7 @@ export function LaunchPanel() {
             }
             return 'group';
         })()
-        : sel.name;
+        : memberFqn(sel.name);
 
     const statusStr = sel.type === 'node'
         ? getStatusString(getNodeByKey(sel.name)?.status)

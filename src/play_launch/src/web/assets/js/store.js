@@ -146,6 +146,20 @@ export function getStatusString(status) {
  * duplicates resolve to the first match there — same as pre-phase-50.
  * @param {string} key
  */
+/** Strip the `kind:` prefix off a canonical member id for display.
+ *
+ * Ids are `kind:/ns/name[#N]` (phase-50). Users think in FQNs, so the UI
+ * shows `/alpha/worker`, not `node:/alpha/worker` — the prefix exists to keep
+ * a node, a container and a composable with the same FQN distinct as KEYS,
+ * which is not something to put in front of a reader.
+ * @param {string} id
+ */
+export function memberFqn(id) {
+    if (typeof id !== 'string') return id;
+    const colon = id.indexOf(':/');
+    return colon === -1 ? id : id.slice(colon + 1);
+}
+
 export function getNodeByKey(key) {
     const map = nodes.value;
     if (map.has(key)) return map.get(key);

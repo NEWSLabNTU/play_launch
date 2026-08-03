@@ -888,30 +888,20 @@ pub(crate) async fn play(
         //
         // node_scope_map keys must match the actor-system member names:
         //   nodes: name.or(exec_name); containers: name; composables: node_name.
-        let (scopes, node_scope_map) = if launch_dump.scopes.is_empty() {
+        let (scopes, fqn_scope_map) = if launch_dump.scopes.is_empty() {
             launch_tree_from_model(&system_model)
         } else {
-            let mut node_scope_map = std::collections::HashMap::new();
-            for n in &launch_dump.node {
-                if let Some(scope) = n.scope {
-                    let member_name = n.name.as_ref().or(n.exec_name.as_ref());
-                    if let Some(name) = member_name {
-                        node_scope_map.insert(name.clone(), scope);
-                    }
-                }
-            }
-            for c in &launch_dump.container {
-                if let Some(scope) = c.scope {
-                    node_scope_map.insert(c.name.clone(), scope);
-                }
-            }
-            for ln in &launch_dump.load_node {
-                if let Some(scope) = ln.scope {
-                    node_scope_map.insert(ln.node_name.clone(), scope);
-                }
-            }
-            (launch_dump.scopes.clone(), node_scope_map)
+            launch_tree_from_dump(&launch_dump)
         };
+        // Re-key onto the coordinator's canonical member ids. Keying on bare
+        // names lost nodes outright: `/alpha/worker` and `/beta/worker`
+        // collapsed to one `worker` entry, so the Launch page could only ever
+        // show one of them — issue 0001, surviving on this path alone. The ids
+        // are ASKED FOR rather than recomputed, because the `#N` ordinal an
+        // `IdAllocator` appends to true duplicates is allocation-order
+        // dependent: a second allocator here could disagree with the one the
+        // coordinator used, and the mismatch would be silent.
+        let node_scope_map = node_scopes_by_member_id(&member_handle, &fqn_scope_map).await;
 
         let web_state = std::sync::Arc::new(web::WebState::new(
             member_handle.clone(),
@@ -1265,6 +1255,57 @@ pub(crate) async fn play(
 /// scopes into their file); namespace is a per-node property, so
 /// `ScopeEntry.ns` is left empty. Scope ids are assigned by the model's stable
 /// `structure.scopes` key order.
+/// Map each member's canonical id to its launch scope, joining on FQN.
+///
+/// The scope tables are keyed by fully-qualified node name; the web UI, the
+/// member registry and every `/api/nodes/:id` path are keyed by canonical
+/// member id (`kind:/ns/name[#N]`). This is the one join between them.
+async fn node_scopes_by_member_id(
+    member_handle: &crate::member_actor::MemberHandle,
+    fqn_scope_map: &std::collections::HashMap<String, usize>,
+) -> std::collections::HashMap<String, usize> {
+    use crate::member_actor::member_id::fqn_join;
+
+    member_handle
+        .list_members()
+        .await
+        .into_iter()
+        .filter_map(|m| {
+            let name = m.node_name.as_deref().unwrap_or(m.name.as_str());
+            let fqn = fqn_join(m.namespace.as_deref().unwrap_or("/"), name);
+            fqn_scope_map.get(&fqn).map(|&scope| (m.id, scope))
+        })
+        .collect()
+}
+
+/// Scope table + FQN→scope map from the in-memory parse of this run.
+fn launch_tree_from_dump(
+    dump: &ros_launch_resolve::ros::launch_dump::LaunchDump,
+) -> (
+    Vec<ros_launch_resolve::ros::launch_dump::ScopeEntry>,
+    std::collections::HashMap<String, usize>,
+) {
+    use crate::member_actor::member_id::fqn_join;
+
+    let mut map = std::collections::HashMap::new();
+    for n in &dump.node {
+        if let (Some(scope), Some(name)) = (n.scope, n.name.as_ref().or(n.exec_name.as_ref())) {
+            map.insert(fqn_join(n.namespace.as_deref().unwrap_or("/"), name), scope);
+        }
+    }
+    for c in &dump.container {
+        if let Some(scope) = c.scope {
+            map.insert(fqn_join(&c.namespace, &c.name), scope);
+        }
+    }
+    for ln in &dump.load_node {
+        if let Some(scope) = ln.scope {
+            map.insert(fqn_join(&ln.namespace, &ln.node_name), scope);
+        }
+    }
+    (dump.scopes.clone(), map)
+}
+
 fn launch_tree_from_model(
     model: &ros_launch_manifest_model::SystemModel,
 ) -> (
@@ -1302,14 +1343,14 @@ fn launch_tree_from_model(
         })
         .collect();
 
+    // Keyed by FQN. This used to take `fqn.rsplit('/')` — the bare last
+    // segment — which silently merged same-named nodes in different
+    // namespaces into one entry.
     let node_scope_map = model
         .structure
         .nodes
         .iter()
-        .filter_map(|(fqn, inst)| {
-            let member = fqn.rsplit('/').next().unwrap_or(fqn).to_string();
-            ids.get(inst.scope.as_str()).map(|&id| (member, id))
-        })
+        .filter_map(|(fqn, inst)| ids.get(inst.scope.as_str()).map(|&id| (fqn.clone(), id)))
         .collect();
 
     (scopes, node_scope_map)
@@ -1406,7 +1447,45 @@ mod tests {
         assert!(root.parent.is_none(), "root has no parent");
         assert_eq!(child.pkg(), Some("dep_pkg"));
 
-        // The node's member name maps to its (child) scope id.
-        assert_eq!(node_scope_map.get("talker"), Some(&child.id));
+        // Keyed by FQN, not by the bare last segment.
+        assert_eq!(node_scope_map.get("/robot/talker"), Some(&child.id));
+    }
+
+    /// Same-named nodes in different namespaces must stay distinct.
+    ///
+    /// This map used to key on `fqn.rsplit('/')` — the bare last segment — so
+    /// `/alpha/worker` and `/beta/worker` collapsed to one `worker` entry and
+    /// the Launch page could only ever show one of them. That is issue 0001,
+    /// which canonical ids fixed everywhere except here.
+    #[test]
+    fn launch_tree_from_model_keeps_same_named_nodes_in_different_namespaces() {
+        let mut model = SystemModel::default();
+        model.structure.scopes.insert(
+            "root_pkg/root.launch.xml".to_string(),
+            ScopeInfo {
+                file: Some("root.launch.xml".to_string()),
+                package: Some("root_pkg".to_string()),
+                ..Default::default()
+            },
+        );
+        for fqn in ["/alpha/worker", "/beta/worker"] {
+            model.structure.nodes.insert(
+                fqn.to_string(),
+                NodeInstance {
+                    scope: "root_pkg/root.launch.xml".to_string(),
+                    ..Default::default()
+                },
+            );
+        }
+
+        let (_scopes, node_scope_map) = launch_tree_from_model(&model);
+
+        assert_eq!(
+            node_scope_map.len(),
+            2,
+            "both namespaced nodes must survive: {node_scope_map:?}"
+        );
+        assert!(node_scope_map.contains_key("/alpha/worker"));
+        assert!(node_scope_map.contains_key("/beta/worker"));
     }
 }

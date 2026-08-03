@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback } from '../vendor/hooks.module.js';
 import htm from '../vendor/htm.module.js';
 import {
     launchTree, launchTreeExpanded, launchTreeSelection,
-    nodes, getStatusString, getNodeByKey } from '../store.js';
+    nodes, getStatusString, getNodeByKey, memberFqn } from '../store.js';
 
 const html = htm.bind(h);
 
@@ -303,7 +303,8 @@ function NodeRow({ name, depth }) {
     const storeNode = getNodeByKey(name);
     const status = storeNode ? getStatusString(storeNode.status) : 'stopped';
     const nodeType = storeNode?.node_type || 'node';
-    const shortName = name.split('/').filter(Boolean).pop() || name;
+    const fqn = memberFqn(name);
+    const shortName = fqn.split('/').filter(Boolean).pop() || fqn;
 
     const handleClick = useCallback((e) => {
         e.stopPropagation();
@@ -329,7 +330,7 @@ function NodeRow({ name, depth }) {
             ${containerRef && html`
                 <span class="lt-container-ref">${'\u2192'} ${containerRef}</span>
             `}
-            <span class="lt-node-fqn">${name}</span>
+            <span class="lt-node-fqn">${fqn}</span>
             <${ActivityIcon} nodeName=${name} />
         </div>
     `;

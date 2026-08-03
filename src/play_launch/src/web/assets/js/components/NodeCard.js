@@ -162,7 +162,7 @@ async function postAction(url) {
 }
 
 /** Process node action button (Start or Stop, mutually exclusive). */
-function ProcessButton({ name, statusStr, pendingAction, setPendingAction }) {
+function ProcessButton({ id, statusStr, pendingAction, setPendingAction }) {
     if (pendingAction === 'starting' || statusStr === 'pending') {
         return html`<button class="btn-pending" disabled>Starting...</button>`;
     }
@@ -172,18 +172,18 @@ function ProcessButton({ name, statusStr, pendingAction, setPendingAction }) {
     if (statusStr === 'running') {
         return html`<button class="btn-stop" onClick=${() => {
             setPendingAction('stopping');
-            postAction('/api/nodes/' + encodeURIComponent(name) + '/stop');
+            postAction('/api/nodes/' + encodeURIComponent(id) + '/stop');
         }}>Stop</button>`;
     }
     // stopped, failed, or unknown → Start
     return html`<button class="btn-start" onClick=${() => {
         setPendingAction('starting');
-        postAction('/api/nodes/' + encodeURIComponent(name) + '/start');
+        postAction('/api/nodes/' + encodeURIComponent(id) + '/start');
     }}>Start</button>`;
 }
 
 /** Composable node action button (Load or Unload, mutually exclusive). */
-function ComposableButton({ name, statusStr, pendingAction, setPendingAction }) {
+function ComposableButton({ id, statusStr, pendingAction, setPendingAction }) {
     if (pendingAction === 'loading' || statusStr === 'loading') {
         return html`<button class="btn-pending" disabled>Loading...</button>`;
     }
@@ -193,7 +193,7 @@ function ComposableButton({ name, statusStr, pendingAction, setPendingAction }) 
     if (statusStr === 'loaded') {
         return html`<button class="btn-unload" onClick=${() => {
             setPendingAction('unloading');
-            postAction('/api/nodes/' + encodeURIComponent(name) + '/unload');
+            postAction('/api/nodes/' + encodeURIComponent(id) + '/unload');
         }}>Unload</button>`;
     }
     if (statusStr === 'blocked') {
@@ -202,14 +202,15 @@ function ComposableButton({ name, statusStr, pendingAction, setPendingAction }) 
     // unloaded, failed, pending, or unknown → Load
     return html`<button class="btn-load" onClick=${() => {
         setPendingAction('loading');
-        postAction('/api/nodes/' + encodeURIComponent(name) + '/load');
+        postAction('/api/nodes/' + encodeURIComponent(id) + '/load');
     }}>Load</button>`;
 }
 
 /** NodeCard component. */
 export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
     // Phase-50: id is THE key (API routes, selection, topic counts);
-    // name is display-only.
+    // name is display-only. Every /api/nodes/:key path takes the id —
+    // `get_member_state` is an exact lookup and a bare name 404s.
     const id = node.id || node.name;
     const name = node.name;
     const statusStr = getStatusString(node.status);
@@ -276,11 +277,11 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
                     </label>
                 `}
                 ${isProcess && html`
-                    <${ProcessButton} name=${id} statusStr=${statusStr}
+                    <${ProcessButton} id=${id} statusStr=${statusStr}
                         pendingAction=${pendingAction} setPendingAction=${setPendingAction} />
                 `}
                 ${isComposable && html`
-                    <${ComposableButton} name=${id} statusStr=${statusStr}
+                    <${ComposableButton} id=${id} statusStr=${statusStr}
                         pendingAction=${pendingAction} setPendingAction=${setPendingAction} />
                 `}
                 ${isContainer && statusStr === 'running' && html`
