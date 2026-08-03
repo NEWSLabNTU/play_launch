@@ -88,8 +88,10 @@ pub fn build_checked_model(
             }
         }
         eyre::bail!(
+            // Names the VERB, not a binary: this library backs both CLIs,
+            // and only one of them (`play_launch`) is a binary users have.
             "refusing to emit a SystemModel: {total_errors} contract error(s) \
-             (see `ros-launch-resolve check` for source excerpts)"
+             (run `check` on the same launch file for source excerpts)"
         );
     }
 

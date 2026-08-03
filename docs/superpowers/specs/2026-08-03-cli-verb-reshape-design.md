@@ -57,6 +57,28 @@ on upgrade, with a message naming the replacement.
 
 ### D2 — `check` splits: gate here, diagnostics in layer 2
 
+> **REVERSED (2026-08-03 amendment, task 10).** The `--check` gate stands; the
+> *removal* of `play_launch check` does not. `play_launch check` is a live verb
+> again, with all four diagnostic options, implemented as a thin wrapper over
+> `ros_launch_resolve::verbs::check` — one implementation, two CLI callers.
+>
+> Why: the split's premise was that a user could reach the diagnostics on
+> `ros-launch-resolve`. They cannot. `ros-launch-resolve` is a
+> developer/integration binary that exists so nano-ros and similar consumers
+> can resolve launch trees without linking a ROS runtime; it is not in the
+> wheel, and `pip install play_launch` is the whole product as far as a user
+> is concerned. Pointing README, the migration guide and three error messages
+> at it left every pip user with advice they could not take. The 0.9.0
+> workaround — shipping the developer binary as a second console script — was
+> reverted with the docs, because making bad advice true is not the fix.
+>
+> "Two ways to do one thing" was the stated objection to keeping `check`
+> alongside `--check`, and it is real but small: `--check` gates the command
+> you were already going to run, `check` is the richer standalone tool. That
+> is a smaller cost than a verb a user cannot reach.
+>
+> The original reasoning is preserved below.
+
 `play_launch launch --check` is a plain pass/fail gate — one new flag, no
 options. The four diagnostic-only options (`--format`, `--rule`, `--explain`,
 `--export-graph`) go to a **new `ros-launch-resolve check`**, where the checker
@@ -103,6 +125,24 @@ in the tree: `fc99205` added exactly this for `replay --input-file` when Phase
 permanent, which is the failure mode of every "temporary" compatibility shim.
 
 ### D5 — `resolve` removed, `context` stays
+
+> **REVERSED (2026-08-03 amendment, task 10).** `play_launch resolve` is back,
+> together with `dump`, `plot` and `contract`. The `context` half of this
+> decision stands unchanged.
+>
+> Why: with both `resolve` and `dump` removed, **no `play_launch` verb could
+> write a `system_model.yaml` — and `up` requires one.** The two-step workflow
+> the README documents was unreachable from an installed wheel. "It already
+> delegates and already warns" was true and beside the point: the delegate was
+> the only user-reachable producer of the artifact the product's own spawn verb
+> demands.
+>
+> The correct layering is not "which binary owns the verb" but "where does the
+> logic live". All five verbs moved into `ros_launch_resolve::verbs::*` (task
+> 8) and both CLIs are thin argument-mapping wrappers over them (task 9). No
+> duplication, and `ros-launch-resolve` keeps its no-ROS guarantee.
+>
+> The original reasoning is preserved below.
 
 `resolve` goes; it already delegates and already warns.
 

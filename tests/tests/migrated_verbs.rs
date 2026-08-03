@@ -273,27 +273,111 @@ fn machine_readable_stdout_is_not_polluted_by_logs() {
     );
 }
 
-/// The wheel ships `play_launch` and nothing else, so `--help` must never
-/// send a user to a binary they do not have.
+/// Names of the subcommands clap lists under `Commands:` in a help page.
+///
+/// Entries are rendered at exactly two spaces of indent; wrapped description
+/// lines are indented further, so the two-space test alone separates them.
+fn subcommands_listed_in(help: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut in_commands = false;
+    for line in help.lines() {
+        if line.starts_with("Commands:") {
+            in_commands = true;
+            continue;
+        }
+        if in_commands {
+            // A blank line or a new unindented section header ends the list.
+            if line.trim().is_empty() || !line.starts_with(' ') {
+                if !line.trim().is_empty() {
+                    break;
+                }
+                continue;
+            }
+            let rest = match line.strip_prefix("  ") {
+                Some(r) => r,
+                None => continue,
+            };
+            if rest.starts_with(' ') {
+                continue; // wrapped description line
+            }
+            let name = rest.split_whitespace().next().unwrap_or_default();
+            if !name.is_empty() && name != "help" {
+                names.push(name.to_string());
+            }
+        }
+    }
+    names
+}
+
+/// The wheel ships `play_launch` and nothing else, so help must never send a
+/// user to a binary they do not have.
+///
+/// This walks EVERY subcommand's long help, not just the top level. The
+/// original version inspected `play_launch --help` alone, which a leak in any
+/// subcommand's `after_help` — exactly where the removed-verb examples that
+/// caused this rule lived — would have walked straight past. Nested
+/// subcommands (`contract eject`, `dump launch`) are reached by recursing on
+/// each page's own `Commands:` list; `replay` is seeded explicitly because it
+/// is `hide = true` and so appears in no listing.
 #[test]
 fn help_never_names_the_developer_binary() {
     let env = fixtures::install_env();
-    let mut cmd = fixtures::play_launch_cmd(&env);
-    cmd.arg("--help");
-    let out = cmd.output().expect("failed to run play_launch");
-    let help = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        !help.contains("ros-launch-resolve"),
-        "--help must not name the developer-only binary:\n{help}"
-    );
-    for verb in ["resolve", "dump", "check", "plot", "contract"] {
+
+    let render = |path: &[String]| -> String {
+        let mut cmd = fixtures::play_launch_cmd(&env);
+        cmd.args(path.iter().map(String::as_str));
+        cmd.arg("--help");
+        let out = cmd.output().expect("failed to run play_launch");
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+
+    let root = render(&[]);
+    for verb in [
+        "launch", "run", "up", "resolve", "dump", "check", "plot", "contract", "context", "setcap",
+        "verify",
+    ] {
         assert!(
-            help.contains(verb),
-            "--help must advertise `{verb}`:\n{help}"
+            root.contains(&format!("  {verb}")),
+            "--help must advertise `{verb}`:\n{root}"
         );
     }
+
+    // Breadth-first over the whole command tree. `replay` is hidden but still
+    // reachable, so its page is checked too.
+    let mut queue: Vec<Vec<String>> = vec![vec![], vec!["replay".to_string()]];
+    let mut checked = 0usize;
+    while let Some(path) = queue.pop() {
+        let help = if path.is_empty() {
+            root.clone()
+        } else {
+            render(&path)
+        };
+        let label = if path.is_empty() {
+            "play_launch --help".to_string()
+        } else {
+            format!("play_launch {} --help", path.join(" "))
+        };
+        assert!(
+            !help.contains("ros-launch-resolve"),
+            "`{label}` must not name the developer-only binary:\n{help}"
+        );
+        checked += 1;
+        for sub in subcommands_listed_in(&help) {
+            let mut next = path.clone();
+            next.push(sub);
+            queue.push(next);
+        }
+    }
+
+    // A parser regression that returned no subcommands would make the walk
+    // vacuous: 11 verbs + the root + hidden `replay` + nested `contract eject`
+    // and `dump launch` is 15 pages, so anything near 1 means the walk broke.
+    assert!(
+        checked >= 15,
+        "the help walk must reach every subcommand; it visited only {checked} pages"
+    );
 }

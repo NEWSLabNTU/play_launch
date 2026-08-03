@@ -2,9 +2,11 @@
 ros_distro := if `lsb_release -rs 2>/dev/null || echo "22.04"` == "24.04" { "jazzy" } else { "humble" }
 colcon_flags := "--symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release"
 
-# ros-launch-resolve binary (layer 2 CLI) — `resolve` moved off play_launch
-# onto this standalone binary (RFC-0060 W3, CLI verb reshape Task 6). Not
-# part of the colcon install/ tree — it builds under plain cargo, no ROS —
+# ros-launch-resolve binary (layer 2 CLI) — the developer/integration binary
+# that resolves launch trees with no ROS runtime. Same verbs as play_launch's
+# resolve/dump/check/plot/contract, same `ros_launch_resolve::verbs::*`
+# implementation; used by the tooling below so parity checks don't need ROS.
+# Not part of the colcon install/ tree — it builds under plain cargo, no ROS —
 # so it lives in its own workspace's target/. Release preferred, falls back
 # to debug (mirrors tests/src/fixtures.rs::ros_launch_resolve_bin()).
 resolve_bin := `
@@ -53,14 +55,15 @@ build:
     source /opt/ros/{{ros_distro}}/setup.bash
     colcon build {{colcon_flags}} --base-paths src
     just build-interception
-    # `resolve`, `check`, `dump`, `contract eject`, `plot` all live on
-    # ros-launch-resolve now, not play_launch (RFC-0060 W3, CLI verb reshape
-    # Tasks 5/6) — it's a standalone cargo workspace outside colcon, so
-    # `colcon build` above never touches it. Without this, a user who only
-    # runs `just build` gets a play_launch binary with NEITHER verb: both
-    # left play_launch and colcon never builds their replacement. Release,
-    # to match colcon_flags' `--cargo-args --release` for play_launch itself.
+    # The layer-2 developer binary. `play_launch` carries every verb a user
+    # needs, so this is NOT bundled into the wheel — but the integration
+    # tests, `just compare-dumps` and the layer-2 isolation gate all run it,
+    # and it's a standalone cargo workspace outside colcon, so `colcon build`
+    # above never touches it. Release, to match colcon_flags'
+    # `--cargo-args --release` for play_launch itself.
     (cd src/ros-launch-resolve && cargo build --release --bin ros-launch-resolve)
+    # See build-wheel: setuptools' build/lib staging is never pruned.
+    rm -rf build/lib build/bdist.*
     scripts/bundle_wheel.sh
     uv build --wheel
     echo ""
@@ -93,6 +96,12 @@ build-interception:
 build-wheel:
     #!/usr/bin/env bash
     set -e
+    # setuptools stages into build/lib and NEVER prunes it, so a file deleted
+    # from python/play_launch/ keeps shipping in the wheel until this is
+    # cleared. That is how a removed module and an unbundled binary both
+    # survived into a rebuilt 0.9.0 wheel. (build/<pkg>/ is colcon's; only the
+    # setuptools staging dirs are removed here.)
+    rm -rf build/lib build/bdist.*
     scripts/bundle_wheel.sh
     uv build --wheel
 

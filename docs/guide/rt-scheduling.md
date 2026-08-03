@@ -12,8 +12,8 @@ band, isolated CPUs) and explicit per-node pins. You stop hand-writing every
 priority number — you write the mapper and the exceptions.
 
 ```
-you write                          ros-launch-resolve resolves    the kernel sees
-─────────                          ────────────────────────────  ───────────────
+you write                          play_launch resolves          the kernel sees
+─────────                          ────────────────────          ───────────────
 launch file + contract   ──┐
   (rates, deadlines)        ├──►  mapper derives  ──┐
 platform file: resources ──┘                        ├──► SchedPlan ──► per-THREAD
@@ -26,7 +26,7 @@ piece of configuration maps onto the processes and threads the kernel
 actually schedules.
 
 **One artifact (Phase 46, hard-removed the alternative in Phase 47):**
-`ros-launch-resolve resolve`/`dump` merge the launch file, contract, and
+`play_launch resolve`/`dump` merge the launch file, contract, and
 platform file into one `system_model.yaml` — structure, contracts, and the
 **applied schedule** (`execution.tiers` + `execution.bindings`; the model is
 input-plus-applied-outcome — it does not embed the mapper's full resolved
@@ -187,7 +187,7 @@ overrides:                        # explicit pins — always beat derived values
 ### 1.3 `--explain` — the merged view
 
 ```bash
-ros-launch-resolve check --sched launch/bringup.system.posix.yaml --explain \
+play_launch check --sched launch/bringup.system.posix.yaml --explain \
     rt_demo bringup.launch.xml
 ```
 
@@ -219,14 +219,14 @@ not something that should fail `check`).
 
 `--explain` is not `check`-only, but the two other surfaces differ:
 
-- `ros-launch-resolve resolve --explain` renders from the **fresh derive**
+- `play_launch resolve --explain` renders from the **fresh derive**
   that invocation just performed — byte-identical to `check --sched
   --explain` on the same inputs.
-- `replay --model <model.yaml> --explain` is **degraded by design**: the
+- `up --model <model.yaml> --explain` is **degraded by design**: the
   model carries only the applied tiers/bindings, not the mapper's
   diagnostics, so every row reads `derived((applied): tier '<name>' → prio
   <p>)` (or `default (no timing facts)`) with a generic footer. Run
-  `ros-launch-resolve check --sched --explain` when you need full mapper
+  `play_launch check --sched --explain` when you need full mapper
   provenance.
 
 This is a consequence of the model being **input + applied outcome, not the
@@ -274,18 +274,15 @@ resolved provider contract *and* platform file into the overlay tree, ready
 to edit:
 
 ```bash
-ros-launch-resolve contract eject rt_demo bringup.launch.xml --into /tmp/my-overlay
+play_launch contract eject rt_demo bringup.launch.xml --into /tmp/my-overlay
 # Ejected contract: .../rt_demo/launch/bringup.contract.yaml -> /tmp/my-overlay/rt_demo/launch/bringup.contract.yaml
 # Ejected platform file: .../rt_demo/launch/bringup.system.posix.yaml -> /tmp/my-overlay/rt_demo/launch/bringup.system.posix.yaml
 ```
 
-(`contract eject` lives on the `ros-launch-resolve` binary — the resolver
-toolchain play_launch ships with — not on `play_launch` itself.)
-
 Without `--into`, it writes to the discovered overlay root (same discovery
 as above) and errors if none exists. `--force` overwrites an existing
 ejected copy; without it, `eject` refuses to touch a destination that
-already exists. Once ejected, `ros-launch-resolve check --contracts <root>` (or
+already exists. Once ejected, `play_launch check --contracts <root>` (or
 just running normally, if `<root>` is on the discovery chain) picks up your
 copy over the vendor's.
 
@@ -295,8 +292,8 @@ copy over the vendor's.
 play_launch launch <pkg> <file>                                 # auto-apply via channels
 play_launch launch <pkg> <file> --sched <path> [--sched-apply off|warn|strict]
 play_launch launch <pkg> <file> --check                                        # pass/fail gate
-ros-launch-resolve check <pkg> <file> [--sched <path>] [--target <t>] [--explain]
-ros-launch-resolve contract eject <pkg> <file> [--target <t>] [--into <dir>] [--force]
+play_launch check <pkg> <file> [--sched <path>] [--target <t>] [--explain]
+play_launch contract eject <pkg> <file> [--target <t>] [--into <dir>] [--force]
 ```
 
 | `--sched-apply` | behavior |
@@ -381,7 +378,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    else — no chain-specific flag:
 
    ```bash
-   ros-launch-resolve check --sched launch/bringup.system.posix.yaml rt_demo bringup.launch.xml
+   play_launch check --sched launch/bringup.system.posix.yaml rt_demo bringup.launch.xml
    ```
 
    Three rules cover a chain end to end (full severities in the [manifest
@@ -402,7 +399,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    just a bare priority number:
 
    ```bash
-   ros-launch-resolve check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
+   play_launch check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
    ```
 
    ```
@@ -643,7 +640,7 @@ here changes existing behavior.
 | warning citing both a contract and a platform file | a pinned priority order contradicts the contract's declared rate/deadline order | re-check the override, or accept the warning if intentional |
 | `--explain` prints a no-op note | no platform file resolved (no `--sched`, nothing on the overlay/provider channels) | pass `--sched <path>`, or ship one via the overlay/provider channels |
 | `tier 'X': RT priority N out of range 1..=99` at startup (legacy `.toml`) | bad placement value | fix the spec — this is deliberate fail-fast |
-| assign rule error: selector matches nothing (legacy `.toml`) | typo in node name / scope path | check FQNs by resolving the model (`ros-launch-resolve resolve <pkg> <file> -o model.yaml`) and reading its `structure.nodes` keys — they're the canonical FQNs |
+| assign rule error: selector matches nothing (legacy `.toml`) | typo in node name / scope path | check FQNs by resolving the model (`play_launch resolve <pkg> <file> -o model.yaml`) and reading its `structure.nodes` keys — they're the canonical FQNs |
 | composable skipped: `pid no longer matches its start_time` | the composable died right after loading; its PID may have been recycled | benign — nothing to schedule |
 | `chrt -p <pid>` shows `SCHED_OTHER` but the node "should" be RT | `chrt -p` reads only the main thread — or the node is in the default tier (no fact, no override) | check all TIDs; check contract facts / overrides coverage |
 | EPERM with caps correct, inside a container/slice | cgroup `rt_runtime = 0` gate (`CONFIG_RT_GROUP_SCHED`) | provision RT bandwidth for the cgroup |

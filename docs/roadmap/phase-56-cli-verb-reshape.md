@@ -6,23 +6,46 @@
 
 ## Summary
 
-`play_launch` had eight verbs; three did no process spawning at all, and one
-of those (`resolve`) had been a deprecated delegate to `ros-launch-resolve`
-since RFC-0060. Phase 56 cuts the surface down to the verbs that actually
-spawn processes, moving everything else to the ROS-free `ros-launch-resolve`
-binary, and does it as a hard cut rather than a deprecation window — made
-safe by making every removed verb error with its replacement spelled out
-instead of vanishing.
+Phase 56 shipped in two parts, and the second reverses half of the first.
+
+**As designed**, the phase cut `play_launch` down to the verbs that spawn
+processes and moved `resolve`, `dump`, `check`, `contract` and `plot` onto the
+ROS-free `ros-launch-resolve` binary, as a hard cut made safe by D4 (removed
+verbs error with their replacement spelled out).
+
+**As shipped (2026-08-03 amendment)**, D2 and D5 are REVERSED. All five verbs
+are back on `play_launch`. The split was wrong on a fact the design never
+checked: **`ros-launch-resolve` is a developer/integration binary a user never
+installs.** It exists so nano-ros and similar consumers can resolve launch
+trees without linking a ROS runtime; `pip install play_launch` is the whole
+product as far as a user is concerned. Two consequences the amendment fixed:
+
+1. With `resolve` AND `dump` both gone, **no `play_launch` verb could write a
+   `system_model.yaml` — and `up` requires one.** The two-step workflow the
+   README documents was unreachable from an installed wheel.
+2. README, the migration guide and three error messages told users to run a
+   binary they did not have. The interim fix — shipping the developer binary
+   as a second console script (`932c63b`) — was itself reverted, because
+   making bad advice true is not the fix.
+
+The layering survives, relocated: all five verbs live in
+`ros_launch_resolve::verbs::*` (one implementation), and both CLIs are thin
+argument-mapping wrappers over them. `ros-launch-resolve` keeps its no-ROS
+guarantee and its `check-layer2-isolation.sh` gate.
 
 ```
-play_launch (needs ROS runtime)        ros-launch-resolve (no ROS)
-  launch  [+ --check]                    resolve
-  run     [+ --check]                    dump
-  up          (was: replay)              check      ← new
-  context                                contract
-  setcap  verify                         plot
-        6 verbs (was 8)                        5 verbs (was 4)
+play_launch (needs ROS runtime; THE product, ships in the wheel)
+  launch [+ --check]   run [+ --check]   up (was: replay)
+  resolve   dump   check   plot   contract   context   setcap   verify
+        11 verbs (was 8)
+
+ros-launch-resolve (no ROS; developer/integration binary, NOT in the wheel)
+  resolve   dump   check   contract   plot
+        the same ros_launch_resolve::verbs::* implementations
 ```
+
+D1, D3, D4 and D6 stand as designed. `replay` is the one verb that stayed
+removed.
 
 ## The six decisions
 
@@ -30,12 +53,12 @@ play_launch (needs ROS runtime)        ros-launch-resolve (no ROS)
 took with `record.json`. Safe only because of D4: nano-ros issue 0285 showed
 that the failure mode to avoid is the *error*, not the removal — a vanished
 subcommand surfacing `unrecognized subcommand 'resolve'` from inside a cmake
-configure took down every platform's fixture build. **Accepted casualty:**
+configure took down every platform's fixture build. **Accepted casualty (now moot):**
 simple-autoware-safety-island embeds `play_launch resolve` in
-`sentinel_bringup/launch/pilot.launch.xml`; it breaks on upgrade, with a
-message naming the replacement.
+`sentinel_bringup/launch/pilot.launch.xml`. The D5 reversal reinstates that
+verb, so nothing breaks there after all.
 
-**D2 — `check` splits: a gate here, diagnostics in layer 2.**
+**D2 — `check` splits: a gate here, diagnostics in layer 2.** **REVERSED** — see the Summary. The `--check` gate stands; the removal of `play_launch check` does not. `play_launch check` is a live verb again with all four diagnostic options, sharing one implementation with `ros-launch-resolve check`. Original reasoning:
 `play_launch launch --check` is a plain pass/fail flag — `launch` already
 calls `build_checked_model` on every run, so `check` was that same pipeline
 minus the spawn, wearing a separate verb. The four diagnostic-only options
@@ -61,8 +84,7 @@ D1 safe. Implementation: `src/play_launch/src/commands/migrated.rs`.
 **These hidden verbs are deleted at 1.0.0** — written down so they do not
 become permanent.
 
-**D5 — `resolve` removed, `context` stays.** `resolve` already delegated and
-already warned; it goes. `context` stays in `play_launch` despite needing no
+**D5 — `resolve` removed, `context` stays.** **REVERSED in its first half** — `resolve` (and `dump`, `plot`, `contract`) are back on `play_launch`; see the Summary. The `context` half stands unchanged. Original reasoning: `resolve` already delegated and already warned; it goes. `context` stays in `play_launch` despite needing no
 ROS — a deliberate exception, since it's used while debugging a launch you
 just ran, where ROS is already sourced, and moving it would cost more in
 ergonomics than the layering purity is worth.
@@ -80,19 +102,19 @@ having checked nothing checkable, the vacuous-pass pattern issues 0008,
 
 `just test-all`, `just test-unit`, `just check`, and both binaries' `--help`
 output were used as the final gate — see
-`.superpowers/sdd/2026-08-03-cli-verb-reshape/task-7-report.md` for the
-recorded output. Every removed verb has a test asserting its error names the
+`.superpowers/sdd/2026-08-03-cli-verb-reshape/task-7-report.md` (original) and
+`.superpowers/sdd/2026-08-03-cli-verb-reshape-amendment/task-10-report.md`
+(amendment) for the recorded output. The amendment adds the layer-2 isolation
+gate, a `--help` guard that walks *every* subcommand's long help asserting the
+developer binary is never named, and a check that the built wheel contains no
+`ros-launch-resolve`. Every removed verb has a test asserting its error names the
 replacement (not merely that the command fails, which was the shape of the
 nano-ros 0285 failure). `run --check`'s no-contracts line is a tested
 requirement (D6).
 
 ## Known follow-ups (not this phase's responsibility)
 
-- **simple-autoware-safety-island** breaks on upgrade (D1's accepted
-  casualty) — its own repo's fix.
-- **nano-ros** never invokes these verbs programmatically (it builds its own
-  `nros-launch-resolve` binary), but two of its user-facing diagnostics
-  (`packages/cli/nros-cli-core/src/orchestration/planner.rs:74,486`) tell
-  users to run `play_launch resolve`, which no longer exists. Flagged in the
-  design doc so it isn't discovered by a user following stale advice — fix
-  belongs to nano-ros's repository.
+- **nano-ros**'s user-facing diagnostics
+  (`packages/cli/nros-cli-core/src/orchestration/planner.rs:74,486`) tell users
+  to run `play_launch resolve`. The amendment's reinstatement of that verb
+  makes this advice correct again — no fix needed.

@@ -19,9 +19,9 @@ Install from PyPI:
 pip install play_launch
 ```
 
-This installs two commands: `play_launch` (launch, run, up — needs a ROS
-install) and `ros-launch-resolve` (resolve, dump, check, contract, plot —
-needs no ROS install at all).
+This installs the `play_launch` command, which carries the whole surface:
+`launch`, `run`, `up`, `resolve`, `dump`, `check`, `plot`, `contract`,
+`context`, `setcap`, `verify`.
 
 Optional: grant the helper binaries the capabilities they need for per-process I/O
 monitoring and non-root RT scheduling (requires sudo):
@@ -75,7 +75,7 @@ Record first, replay multiple times:
 
 ```bash
 # Resolve once — writes system_model.yaml
-ros-launch-resolve dump launch <package> <launch_file> [arguments...]
+play_launch dump launch <package> <launch_file> [arguments...]
 
 # Replay it, as often as you like
 play_launch up system_model.yaml
@@ -163,16 +163,16 @@ Generate interactive plots from monitoring data:
 
 ```bash
 # Plot latest execution
-ros-launch-resolve plot
+play_launch plot
 
 # Plot specific log directory
-ros-launch-resolve plot --log-dir play_log/2025-10-28_16-17-56
+play_launch plot --log-dir play_log/2025-10-28_16-17-56
 
 # Plot specific metrics
-ros-launch-resolve plot --metrics cpu memory
+play_launch plot --metrics cpu memory
 
 # List available metrics
-ros-launch-resolve plot --list-metrics
+play_launch plot --list-metrics
 ```
 
 Output saved to `play_log/<timestamp>/plot/`:
@@ -218,7 +218,7 @@ play_launch launch <package> <launch_file> [args...]
 play_launch run <package> <executable> [args...]
 
 # Dump and up (dump emits the SystemModel by default — one artifact)
-ros-launch-resolve dump launch <package> <launch_file> [args...]
+play_launch dump launch <package> <launch_file> [args...]
 play_launch up system_model.yaml            # or: play_launch up --model system_model.yaml
 
 # Parser selection (Rust is default)
@@ -251,10 +251,10 @@ play_launch launch <pkg> <file> --verbose              # Enable INFO level
 RUST_LOG=play_launch=debug play_launch launch <pkg> <file>  # DEBUG level
 
 # Visualization
-ros-launch-resolve plot
-ros-launch-resolve plot --log-dir <dir>
-ros-launch-resolve plot --metrics cpu memory io gpu
-ros-launch-resolve plot --list-metrics
+play_launch plot
+play_launch plot --log-dir <dir>
+play_launch plot --metrics cpu memory io gpu
+play_launch plot --list-metrics
 ```
 
 ## Development

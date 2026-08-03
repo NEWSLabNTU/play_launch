@@ -53,7 +53,7 @@ The parser includes an optional IR layer (`--features ir` on the parser crate) t
 
 ### Scheduling Spec
 
-- **Scheduling spec** (`src/ros-launch-manifest/sched/`): portable scheduling schema shared with nano-ros. **Phase 41 v2 model (current default)**: a `<stem>.system.<target>.yaml` platform file names a `SchedMapper` (`rate_monotonic`, `deadline_monotonic`, or `manual`) that **derives** per-node priorities from launch+contract facts (rates/deadlines/`criticality`); `resources` supplies platform facts (e.g. `rt_priority_band`), `overrides` pins specific nodes (always beats derived). Platform files ship through the same provider-sidecar + user-overlay **channels** as contracts (Phase 40): `--sched <path>` explicit > overlay (`--contracts`/`$PLAY_LAUNCH_CONTRACTS`/XDG/`/etc`) > provider sidecar next to the launch file — auto-applied at `launch`/`run`/`up` when `--sched` is absent. `ros-launch-resolve check --sched --explain` prints the merged plan with per-node provenance (override/derived/default); `ros-launch-resolve contract eject <pkg> <file>` copies the resolved provider contract+platform file into the overlay tree for editing (moved out of `play_launch` into the extracted CLI by `adc33a7`, RFC-0060 W3 — `play_launch` has no `contract` subcommand). **Legacy bridge**: `system.toml` (hand-written `[tiers.X.<target>]` + `[[assign]]`) still parses via `.toml`-extension dispatch to the `manual` mapper — deprecated but supported until nano-ros migrates (Phase 41.6, not yet scheduled); `--sched-apply off|warn|strict` unchanged (Phase 38: per-TID SCHED_FIFO/RR + affinity via the CAP_SYS_NICE `play_launch_rt_helper`, non-root). User guide: `docs/guide/rt-scheduling.md`; schema (v1+v2): `src/ros-launch-manifest/docs/scheduling.md`; design of record: `docs/superpowers/specs/2026-07-16-rt-config-v2-design.md`.
+- **Scheduling spec** (`src/ros-launch-manifest/sched/`): portable scheduling schema shared with nano-ros. **Phase 41 v2 model (current default)**: a `<stem>.system.<target>.yaml` platform file names a `SchedMapper` (`rate_monotonic`, `deadline_monotonic`, or `manual`) that **derives** per-node priorities from launch+contract facts (rates/deadlines/`criticality`); `resources` supplies platform facts (e.g. `rt_priority_band`), `overrides` pins specific nodes (always beats derived). Platform files ship through the same provider-sidecar + user-overlay **channels** as contracts (Phase 40): `--sched <path>` explicit > overlay (`--contracts`/`$PLAY_LAUNCH_CONTRACTS`/XDG/`/etc`) > provider sidecar next to the launch file — auto-applied at `launch`/`run`/`up` when `--sched` is absent. `play_launch check --sched --explain` prints the merged plan with per-node provenance (override/derived/default); `play_launch contract eject <pkg> <file>` copies the resolved provider contract+platform file into the overlay tree for editing (both verbs also exist on the developer-only `ros-launch-resolve` binary — same `ros_launch_resolve::verbs::*` implementation, two thin CLI wrappers). **Legacy bridge**: `system.toml` (hand-written `[tiers.X.<target>]` + `[[assign]]`) still parses via `.toml`-extension dispatch to the `manual` mapper — deprecated but supported until nano-ros migrates (Phase 41.6, not yet scheduled); `--sched-apply off|warn|strict` unchanged (Phase 38: per-TID SCHED_FIFO/RR + affinity via the CAP_SYS_NICE `play_launch_rt_helper`, non-root). User guide: `docs/guide/rt-scheduling.md`; schema (v1+v2): `src/ros-launch-manifest/docs/scheduling.md`; design of record: `docs/superpowers/specs/2026-07-16-rt-config-v2-design.md`.
 
 ## Installation & Usage
 
@@ -66,19 +66,28 @@ just build-interception             # Build interception .so (standalone, not in
 just run launch <pkg> <launch_file> # Run with colcon build
 play_launch launch <pkg> <launch>   # Run if installed via pip
 play_launch up <model.yaml>         # Spawn from a resolved SystemModel (was `replay` before 0.9.0)
-ros-launch-resolve plot             # Analysis (moved out of play_launch by adc33a7)
+play_launch plot                    # Analysis
 ```
 
-**Verb layering (0.9.0):** `play_launch` keeps only verbs that spawn
-processes — `launch`, `run`, `up` — plus `context`, `setcap`, `verify`.
-Everything that only reads or checks files lives in `ros-launch-resolve`
-(`resolve`, `dump`, `check`, `contract`, `plot`) and runs with no ROS
-install. `context` is a deliberate exception: it needs no ROS but is used
-while debugging a launch you just ran, where ROS is already sourced.
+**Verb surface (0.9.0):** `play_launch` has eleven verbs — `launch`, `run`,
+`up`, `resolve`, `dump`, `check`, `plot`, `contract`, `context`, `setcap`,
+`verify`. RFC-0060 W3 briefly moved `resolve`/`dump`/`check`/`plot`/
+`contract` off it onto `ros-launch-resolve`; that was reverted (Phase 56
+amendment, D2/D5) because it left NO `play_launch` verb able to write the
+`system_model.yaml` that `up` requires, and pointed users at a binary they
+do not have.
 
-Removed verbs (`replay`, `check`, `resolve`) are hidden clap variants that
-error naming their replacement — see `src/play_launch/src/commands/migrated.rs`.
-**Delete that module at 1.0.0.**
+**`ros-launch-resolve` is a developer/integration binary.** It exists so
+nano-ros and other consumers can resolve launch trees without linking a ROS
+runtime. It is NOT shipped in the wheel and must NEVER appear in `README.md`,
+`docs/guide/`, or any error message a user can trigger — `pip install
+play_launch` is the whole product as far as a user is concerned. Both CLIs are
+thin wrappers over `ros_launch_resolve::verbs::*`; put shared logic there,
+never in a CLI.
+
+`replay` is the one removed verb: a hidden clap variant that errors naming
+`up` — see `src/play_launch/src/commands/migrated.rs`. **Delete that module
+at 1.0.0.**
 
 ## Architecture
 
@@ -254,7 +263,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
   the model with it, and a launch-only resolve now produces no
   `execution.deploy` entries. Multi-host launches use a standard `<arg>` +
   `if=` condition and partition at resolve time
-  (`ros-launch-resolve resolve <launch> host:=robot1`) — see
+  (`play_launch resolve <launch> host:=robot1`) — see
   `docs/guide/multi-host.md`. The audit behind this fix found three more
   places the Rust parser accepted XML that stock ROS 2 rejects: `<group
   namespace=>`/`<group ns=>` (ROS 2 requires a `<push-ros-namespace>` child

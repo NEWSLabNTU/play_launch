@@ -79,45 +79,31 @@ for entry in "${ARTIFACTS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# Copy the layer-2 CLI (built standalone by `just build`; its own cargo
-# workspace, outside colcon, so it is NOT under $INSTALL_DIR).
+# Copy interception .so (built standalone via `just build-interception`; its
+# own cargo workspace, outside colcon, so it is NOT under $INSTALL_DIR).
 #
-# 0.9.0 moved `resolve`, `check`, `dump`, `contract eject` and `plot` off
-# `play_launch` onto this binary. The removed-verb errors, the migration
-# guide and the README all tell users to run `ros-launch-resolve` — if the
-# wheel does not carry it, `pip install play_launch` leaves them with
-# instructions pointing at a binary they do not have.
-# ---------------------------------------------------------------------------
+# NOTE: `ros-launch-resolve` is deliberately NOT bundled here. It is a
+# developer/integration binary for consumers that resolve launch trees
+# without a ROS runtime; `pip install play_launch` is the whole product as
+# far as a user is concerned, and `play_launch` carries every verb a user
+# needs (resolve, dump, check, plot, contract included). 0.9.0 briefly
+# shipped it as a console script to make the then-current docs true; those
+# docs were the bug, and both were reverted.
 #
-# RELEASE ONLY. This script's output goes to PyPI, so a debug binary must
+# RELEASE ONLY. This script's output goes to PyPI, so a debug artifact must
 # never be substituted for a missing release one — a silent fallback would
-# ship an unoptimized `ros-launch-resolve` to every pip user with nothing in
-# the log to say so. The `resolve_bin` lookups in the justfiles DO fall back
-# to debug, correctly: those run a developer's local build, not a release
-# artifact.
-RESOLVE_BIN="$REPO_ROOT/src/ros-launch-resolve/target/release/ros-launch-resolve"
-if [[ ! -f "$RESOLVE_BIN" ]]; then
-  echo "Error: release build of ros-launch-resolve not found:" >&2
-  echo "         $RESOLVE_BIN" >&2
-  if [[ -f "$REPO_ROOT/src/ros-launch-resolve/target/debug/ros-launch-resolve" ]]; then
-    echo "       A debug build exists, but the wheel must not ship one." >&2
-  fi
-  echo "       Run '(cd src/ros-launch-resolve && cargo build --release --bin ros-launch-resolve)' first," >&2
-  echo "       or just 'just build', which does it for you." >&2
-  exit 1
-fi
-mkdir -p "$DEST_ROOT/bin"
-cp "$RESOLVE_BIN" "$DEST_ROOT/bin/"
-chmod +x "$DEST_ROOT/bin/ros-launch-resolve"
-echo "  ${RESOLVE_BIN#"$REPO_ROOT"/} -> bin/ros-launch-resolve"
-copied=$((copied + 1))
-
-# ---------------------------------------------------------------------------
-# Copy interception .so (built standalone via `just build-interception`)
+# ship an unoptimized build to every pip user with nothing in the log to say
+# so. Developer-local lookups elsewhere (the justfiles' `resolve_bin`) DO
+# fall back to debug, correctly: those run a local build, not an artifact.
 # ---------------------------------------------------------------------------
 INTERCEPTION_SO="$REPO_ROOT/src/play_launch_interception/target/release/libplay_launch_interception.so"
 if [[ ! -f "$INTERCEPTION_SO" ]]; then
-  echo "Error: $INTERCEPTION_SO not found. Run 'just build-interception' first." >&2
+  echo "Error: release build of libplay_launch_interception.so not found:" >&2
+  echo "         $INTERCEPTION_SO" >&2
+  if [[ -f "$REPO_ROOT/src/play_launch_interception/target/debug/libplay_launch_interception.so" ]]; then
+    echo "       A debug build exists, but the wheel must not ship one." >&2
+  fi
+  echo "       Run 'just build-interception' first, or 'just build', which does it for you." >&2
   exit 1
 fi
 mkdir -p "$DEST_ROOT/lib"

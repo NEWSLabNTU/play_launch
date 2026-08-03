@@ -59,8 +59,8 @@ play_launch run demo_nodes_cpp talker --ros-args -p topic:=chatter
 # command line — before `launch`, or after, or interleaved with the
 # KEY:=VALUE launch arguments (47.A1: they're declared `global`, so clap
 # recognizes them at any position in the nested subcommand).
-ros-launch-resolve dump [dump_options...] launch <package_name> <launch_file> [key:=value...] [dump_options...]
-ros-launch-resolve dump [dump_options...] launch <launch_file_path> [key:=value...] [dump_options...]
+play_launch dump [dump_options...] launch <package_name> <launch_file> [key:=value...] [dump_options...]
+play_launch dump [dump_options...] launch <launch_file_path> [key:=value...] [dump_options...]
 ```
 
 **Dump-Specific Options:**
@@ -76,17 +76,17 @@ single-node dump+replay-in-one case instead.
 **Examples:**
 ```bash
 # Dump to a custom SystemModel file — flags before the KEY:=VALUE launch arguments
-ros-launch-resolve dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
+play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
 
 # Equivalently, flags after the launch arguments — both orders work
-ros-launch-resolve dump launch autoware_launch planning_simulator.launch.xml \
+play_launch dump launch autoware_launch planning_simulator.launch.xml \
     vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit \
     map_path:=$HOME/autoware_map/sample-map-planning \
     --output autoware.yaml
 
 # Dump with debug output
-ros-launch-resolve dump --debug launch demo_nodes_cpp topics/talker_listener.launch.py
+play_launch dump --debug launch demo_nodes_cpp topics/talker_listener.launch.py
 ```
 
 ### Up Only
@@ -166,7 +166,7 @@ record.json anywhere):
 
 2. **Resolve phase**: builds the SystemModel from that in-memory dump +
    contract manifests + scheduling platform file (the same pipeline as
-   `ros-launch-resolve resolve`, called in-process)
+   `play_launch resolve`, called in-process)
    - Contract **errors refuse the launch** — the model is checked by
      construction; warnings embed in the model
 
@@ -202,7 +202,7 @@ the `KEY:=VALUE` launch arguments — clap parses flags in any position
 
 ```bash
 # Step 1: Dump the SystemModel
-ros-launch-resolve dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
+play_launch dump --output autoware.yaml launch autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
 
 # Step 2: Bring the system up from the model (monitoring is on by default;
@@ -213,12 +213,12 @@ play_launch up \
     --log-dir logs/run1
 ```
 
-Equivalently, `ros-launch-resolve resolve` builds the same model straight
+Equivalently, `play_launch resolve` builds the same model straight
 from the launch file (skipping a separate dump step) and can add a
 scheduling platform file:
 
 ```bash
-ros-launch-resolve resolve -o autoware.yaml --sched system.posix.yaml \
+play_launch resolve -o autoware.yaml --sched system.posix.yaml \
     autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning
 play_launch up --model autoware.yaml

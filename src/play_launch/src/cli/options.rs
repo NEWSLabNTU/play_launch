@@ -974,9 +974,26 @@ mod flag_ordering_tests {
         );
         // No example may point the user at the developer-only binary. It is
         // not in the wheel; naming it here is advice a pip user cannot take.
+        //
+        // Checked over the WHOLE tree, hidden subcommands included: the
+        // examples that broke this rule lived in per-verb `after_help`, which
+        // a top-level-only assertion never renders.
+        fn assert_no_developer_binary(cmd: &clap::Command, path: &str, visited: &mut usize) {
+            let help = cmd.clone().render_long_help().to_string();
+            assert!(
+                !help.contains("ros-launch-resolve"),
+                "`{path} --help` must never name the developer-only binary:\n{help}"
+            );
+            *visited += 1;
+            for sub in cmd.get_subcommands() {
+                assert_no_developer_binary(sub, &format!("{path} {}", sub.get_name()), visited);
+            }
+        }
+        let mut visited = 0usize;
+        assert_no_developer_binary(&cmd, "play_launch", &mut visited);
         assert!(
-            !help.contains("ros-launch-resolve"),
-            "--help must never name the developer-only binary:\n{help}"
+            visited >= 15,
+            "the help walk must reach every subcommand; it visited only {visited}"
         );
         for verb in &verbs {
             assert!(!verb.is_empty());
