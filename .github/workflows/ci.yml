@@ -74,5 +74,15 @@ jobs:
     - name: Report Node version
       run: node --version && npm --version
 
+    - name: Cache web UI dependencies
+      uses: actions/cache@v4
+      with:
+        path: node_modules
+        # No restore-keys on purpose: a node_modules tree restored for a
+        # DIFFERENT lockfile is worse than no cache at all, because the stale
+        # transitive deps it contains are exactly what a lint run would then
+        # be testing. Miss cleanly and let `npm ci` rebuild it.
+        key: node-modules-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
+
     - name: Run checks
       run: just check

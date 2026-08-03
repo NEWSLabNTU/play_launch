@@ -45,9 +45,12 @@ tmp/
 # External repositories for study/reference
 external/
 
-# Node.js dependencies for Web UI linting
+# Node.js dependencies for Web UI linting.
+# `package-lock.json` IS tracked: these checks were dev-only when this block
+# was written, but `just check` runs them in CI now, so an unpinned transitive
+# dependency can break the build with no change to this repo. The lockfile is
+# also what makes `npm ci` and a stable CI cache key possible.
 node_modules/
-package-lock.json
 
 # Temporary lint extraction files
 .tmp-extracted.js

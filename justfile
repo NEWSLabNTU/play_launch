@@ -598,10 +598,13 @@ check-web-ui:
     #!/usr/bin/env bash
     set -e
 
-    # Check if node_modules exists
+    # `npm ci` (not `install`): it installs exactly what package-lock.json
+    # pins, so a lint failure is always our code and never a dependency that
+    # drifted underneath us. Skipped entirely when node_modules is present —
+    # which is what CI's cache restores.
     if [ ! -d "node_modules" ]; then
         echo "Installing Node.js dependencies..."
-        npm install
+        npm ci
     fi
 
     echo "=== Web UI lint ==="
