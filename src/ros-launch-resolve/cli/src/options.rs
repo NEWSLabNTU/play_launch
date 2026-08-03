@@ -89,7 +89,11 @@ pub enum Command {
         ros-launch-resolve resolve launch/system.launch.xml --system system.toml")]
     Resolve(ResolveArgs),
 
-    /// Dump launch expansion without resolving contracts or scheduling.
+    /// Dump launch expansion as a SystemModel. Identical to `resolve`,
+    /// which it delegates to (contracts and scheduling included, Phase
+    /// 46.5); it differs only in defaulting its output to
+    /// `system_model.yaml` and taking the launch file under a `launch`
+    /// subcommand.
     Dump(DumpArgs),
 
     /// Check manifest contracts against a launch file. No ROS install
@@ -432,7 +436,7 @@ pub struct ContractOptions {
 pub struct SchedOptions {
     /// Phase 38: path to a scheduling platform file — v2 `.yaml` schema
     /// (mapper + resources + overrides) or legacy `.toml` (dispatched by
-    /// extension; Phase 41.2). When set, replay derives + validates a plan
+    /// extension; Phase 41.2). When set, the run derives + validates a plan
     /// for `--target` and (per `--sched-apply`) applies SCHED_FIFO/RR +
     /// priority + CPU affinity to each spawned node/container process. Same
     /// file `ros-launch-resolve check --sched` validates.

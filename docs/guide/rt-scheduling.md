@@ -31,7 +31,7 @@ platform file into one `system_model.yaml` — structure, contracts, and the
 **applied schedule** (`execution.tiers` + `execution.bindings`; the model is
 input-plus-applied-outcome — it does not embed the mapper's full resolved
 plan, a direction that landed and was deliberately reverted, see §1.3).
-`replay --model system_model.yaml` spawns and applies scheduling straight
+`play_launch up --model system_model.yaml` spawns and applies scheduling straight
 from those tiers/bindings; nothing is re-derived at runtime. `record.json`
 is no longer produced by anything (Phase 47.B2) and plays no role in the
 scheduling apply-layer this guide describes.
@@ -254,7 +254,7 @@ channels, first-hit-wins, **no merging across channels**:
 **Auto-apply at launch**: when `--sched` is absent, `play_launch launch`
 (and `run`) resolve the platform file through these channels and **apply
 it** — the provider sidecar is the vendor's trusted default, so RT works
-out of the box on an installed system with zero flags. (`replay
+out of the box on an installed system with zero flags. (`up
 <model.yaml>` does *not* consult the channels — it applies the tiers
 already baked into the model at resolve time.) The overlay
 exists to fill gaps (no vendor config, or none for your target) or tweak
@@ -473,7 +473,7 @@ At startup, before any process spawns:
 1. The launch file is parsed into the shared launch representation (nodes,
    containers, composables, and the namespace **scope table**) that feeds
    the SystemModel (`system_model.yaml` — the one artifact `resolve`/`dump`
-   emit and `replay <model.yaml>`/`replay --model` reads; Phase 47 removed
+   emit and `up <model.yaml>`/`up --model` reads; Phase 47 removed
    `record.json` as a dump/replay artifact entirely).
 2. Every entity is flattened to a fully-qualified name — its own namespace,
    falling back to the launch scope's namespace: `/perception/lidar/voxel_grid`.

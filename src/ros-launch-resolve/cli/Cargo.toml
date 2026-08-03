@@ -1,5 +1,8 @@
 # The `ros-launch-resolve` binary — the verbs that operate on a launch tree
-# without needing a ROS graph: resolve, dump, contract, plot.
+# without needing a ROS graph: resolve, dump, check, contract, plot.
+# Developer/integration surface only: it is NOT shipped in the play_launch
+# wheel, and `play_launch` offers the same five verbs over the same
+# implementation (`ros_launch_resolve::verbs`).
 [package]
 name = "ros-launch-resolve-cli"
 version.workspace = true

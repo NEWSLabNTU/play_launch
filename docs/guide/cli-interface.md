@@ -114,6 +114,9 @@ These options apply to `launch`, `run`, and `up` subcommands:
 
 ### Output Configuration
 - `--log-dir <path>`: Log directory for execution outputs (default: `play_log`)
+
+**`up` only** — `launch` and `run` build their model from a launch file and
+take no model argument:
 - `<system_model.yaml>` (positional) or `--model <path>`: SystemModel to
   spawn from — required (`up` errors clearly if neither is given);
   spawns from `structure.nodes`, no companion record file. Giving both is
@@ -195,10 +198,11 @@ contracts to check.
 
 For more control, you can separate the dump and replay steps:
 
-`dump`'s own flags (`--output`) and `resolve`'s own flags (`-o`, `--sched`,
-`--contracts`, ...) may be given before or after the `launch` subcommand and
-the `KEY:=VALUE` launch arguments — clap parses flags in any position
-(47.A1). Putting them first, as below, is just a style choice:
+`dump`'s own flags (`--output`) may be given before or after its `launch`
+subcommand; `resolve` takes the launch file directly and has no subcommand,
+so its flags (`-o`, `--sched`, `--contracts`, ...) go before or after the
+`KEY:=VALUE` launch arguments. Either way clap parses flags in any position
+(47.A1), so putting them first, as below, is just a style choice:
 
 ```bash
 # Step 1: Dump the SystemModel

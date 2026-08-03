@@ -1,6 +1,6 @@
 # play_launch
 
-Record, replay, and analyze ROS 2 launch executions with resource monitoring and interactive management.
+Resolve, run, and analyze ROS 2 launch executions with resource monitoring and interactive management.
 
 [![Watch the demo](assets/demo.png)](assets/demo.mp4)
 
@@ -71,13 +71,13 @@ play_launch run <package> <executable> [arguments...]
 
 ### Two-Step Workflow
 
-Record first, replay multiple times:
+Resolve once, bring the system up as often as you like:
 
 ```bash
 # Resolve once — writes system_model.yaml
 play_launch dump launch <package> <launch_file> [arguments...]
 
-# Replay it, as often as you like
+# Bring it up, as often as you like
 play_launch up system_model.yaml
 ```
 
@@ -169,7 +169,7 @@ play_launch plot
 play_launch plot --log-dir play_log/2025-10-28_16-17-56
 
 # Plot specific metrics
-play_launch plot --metrics cpu memory
+play_launch plot --metrics cpu --metrics memory
 
 # List available metrics
 play_launch plot --list-metrics
@@ -253,7 +253,7 @@ RUST_LOG=play_launch=debug play_launch launch <pkg> <file>  # DEBUG level
 # Visualization
 play_launch plot
 play_launch plot --log-dir <dir>
-play_launch plot --metrics cpu memory io gpu
+play_launch plot --metrics cpu --metrics memory --metrics io --metrics gpu
 play_launch plot --list-metrics
 ```
 

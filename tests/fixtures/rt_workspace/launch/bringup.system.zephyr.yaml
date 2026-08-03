@@ -8,7 +8,7 @@
 #
 # `resources`/`overrides` for non-posix targets are untyped passthrough
 # (raw YAML) validated by the consumer (nano-ros), not by play_launch's
-# sched crate — see design doc §2.2. `ros-launch-resolve check --target zephyr`
+# sched crate — see design doc §2.2. `play_launch check --target zephyr`
 # only validates that this file parses and declares `target: zephyr`; it
 # does not (and cannot) derive or apply a plan for it.
 target: zephyr

@@ -515,9 +515,11 @@ compare-scopes PKG LAUNCH *ARGS:
     source install/setup.bash
     TMPDIR=$(mktemp -d)
     trap "rm -rf $TMPDIR" EXIT
-    # `dump` left play_launch for ros-launch-resolve (RFC-0060 W3), and it
-    # emits the SystemModel now that record.json is retired (Phase 47.B2) —
-    # hence `.yaml`, which compare_scopes.py adapts.
+    # Driven through the layer-2 binary because this is a parser-parity
+    # harness that must not need a ROS runtime; `play_launch dump` is the
+    # same verb over the same implementation. It emits the SystemModel now
+    # that record.json is retired (Phase 47.B2) — hence `.yaml`, which
+    # compare_scopes.py adapts.
     echo "=== Dumping with Rust parser ==="
     {{resolve_bin}} dump -o "$TMPDIR/rust.yaml" launch {{PKG}} {{LAUNCH}} {{ARGS}}
     echo "=== Dumping with Python parser ==="

@@ -4,7 +4,7 @@
   (that is ROS 1 roslaunch); hosts are selected with an ordinary launch
   argument and `if=` conditions, so the partition happens at resolve time:
 
-      ros-launch-resolve resolve multihost.launch.xml host:=robot1 -o robot1.yaml
+      play_launch resolve multihost.launch.xml host:=robot1 -o robot1.yaml
 
   `host` is not special to play_launch: it is a launch argument like any
   other, and the name is this file's choice. A node with no `if=` runs on

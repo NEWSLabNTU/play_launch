@@ -82,7 +82,7 @@ passes `chain-budget` cleanly, and 10ms sampling_cost is well under the
 # 2. Check: `chain-link` (every segment/via resolves), `chain-budget`, and
 #    `chain-sampling-feasibility` all run as part of the normal manifest
 #    check — no chain-specific flag needed.
-ros-launch-resolve check --sched launch/bringup.system.posix.yaml rt_demo bringup.launch.xml
+play_launch check --sched launch/bringup.system.posix.yaml rt_demo bringup.launch.xml
 
 # 3. Explain: --explain shows the per-node chain provenance the mapper
 #    derived (`derived(chain_aware: points_to_cmd segment drain 2/2) ->
@@ -90,7 +90,7 @@ ros-launch-resolve check --sched launch/bringup.system.posix.yaml rt_demo bringu
 #    boundary RM period=10ms) -> prio 38` for sensor_node; control_node
 #    shows `override(control_node)` instead — the platform file's explicit
 #    pin always beats the chain-derived rank).
-ros-launch-resolve check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
+play_launch check --sched launch/bringup.system.posix.yaml --explain rt_demo bringup.launch.xml
 ```
 
 **Note on identity resolution**: chain members are attributed to their real
@@ -183,7 +183,7 @@ documented behavior, not a bug; see `docs/guide/rt-scheduling.md`.
 ## Eject a provider config to edit locally
 
 ```bash
-ros-launch-resolve contract eject rt_demo bringup.launch.xml --into /tmp/my-overlay
+play_launch contract eject rt_demo bringup.launch.xml --into /tmp/my-overlay
 ```
 
 Copies the resolved provider contract *and* platform file into an overlay
