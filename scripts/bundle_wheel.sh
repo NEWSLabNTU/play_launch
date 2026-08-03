@@ -88,18 +88,22 @@ done
 # wheel does not carry it, `pip install play_launch` leaves them with
 # instructions pointing at a binary they do not have.
 # ---------------------------------------------------------------------------
-RESOLVE_BIN=""
-for candidate in \
-  "$REPO_ROOT/src/ros-launch-resolve/target/release/ros-launch-resolve" \
-  "$REPO_ROOT/src/ros-launch-resolve/target/debug/ros-launch-resolve"; do
-  if [[ -f "$candidate" ]]; then
-    RESOLVE_BIN="$candidate"
-    break
+#
+# RELEASE ONLY. This script's output goes to PyPI, so a debug binary must
+# never be substituted for a missing release one — a silent fallback would
+# ship an unoptimized `ros-launch-resolve` to every pip user with nothing in
+# the log to say so. The `resolve_bin` lookups in the justfiles DO fall back
+# to debug, correctly: those run a developer's local build, not a release
+# artifact.
+RESOLVE_BIN="$REPO_ROOT/src/ros-launch-resolve/target/release/ros-launch-resolve"
+if [[ ! -f "$RESOLVE_BIN" ]]; then
+  echo "Error: release build of ros-launch-resolve not found:" >&2
+  echo "         $RESOLVE_BIN" >&2
+  if [[ -f "$REPO_ROOT/src/ros-launch-resolve/target/debug/ros-launch-resolve" ]]; then
+    echo "       A debug build exists, but the wheel must not ship one." >&2
   fi
-done
-if [[ -z "$RESOLVE_BIN" ]]; then
-  echo "Error: ros-launch-resolve not found under src/ros-launch-resolve/target/{release,debug}." >&2
-  echo "       Run '(cd src/ros-launch-resolve && cargo build --release --bin ros-launch-resolve)' first." >&2
+  echo "       Run '(cd src/ros-launch-resolve && cargo build --release --bin ros-launch-resolve)' first," >&2
+  echo "       or just 'just build', which does it for you." >&2
   exit 1
 fi
 mkdir -p "$DEST_ROOT/bin"

@@ -2,7 +2,7 @@
 <!--
   Phase 46.1b/46.2 fixture: a node carrying remaps/env/respawn/respawn_delay
   and a composable node carrying remaps, to exercise `NodeInstance`'s new
-  launch spawn fields end to end through `play_launch resolve`.
+  launch spawn fields end to end through `ros-launch-resolve resolve`.
 
   Container-level remaps/env are NOT exercised here: the Rust XML parser's
   `<node_container>` handler currently skips `<remap>`/`<env>`/`<param>`
