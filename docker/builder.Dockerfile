@@ -21,8 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # ---------------------------------------------------------------------------
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      software-properties-common curl git build-essential pkg-config ca-certificates \
-      nodejs npm && \
+      software-properties-common curl git build-essential pkg-config ca-certificates && \
     curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
       -o /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
@@ -56,6 +55,14 @@ RUN apt-get update && \
       libclang-dev \
       libz3-dev && \
     rm -rf /var/lib/apt/lists/*
+
+# Node.js for the web UI lint + typecheck run by `just check`.
+# NodeSource, not apt: jammy ships Node 12, on which the tooling fails inside
+# its own minified dependencies.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/* && \
+    node --version && npm --version
 
 # ---------------------------------------------------------------------------
 # Rust (stable)

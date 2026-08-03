@@ -60,16 +60,19 @@ jobs:
         source install/setup.bash
         just test
 
-    - name: Ensure Node.js
-      # `just check` now runs the web UI lint + typecheck. The builder image
-      # gained nodejs in the same commit, but CI pulls a PUBLISHED tag — this
-      # bootstraps until an image built from that Dockerfile is pushed, and is
-      # a no-op afterwards.
-      run: |
-        if ! command -v node >/dev/null 2>&1; then
-          apt-get update && apt-get install -y --no-install-recommends nodejs npm
-        fi
-        node --version && npm --version
+    - name: Set up Node.js
+      # `just check` runs the web UI lint + typecheck. Pinned via setup-node
+      # rather than apt: Ubuntu 22.04 ships Node 12, on which the modern
+      # tooling dies with `SyntaxError: Unexpected token '('` inside its own
+      # minified dependencies. The builder image installs Node from NodeSource
+      # for the same reason; this step makes CI independent of which image tag
+      # happens to be published.
+      uses: actions/setup-node@v5
+      with:
+        node-version: '22'
+
+    - name: Report Node version
+      run: node --version && npm --version
 
     - name: Run checks
       run: just check
