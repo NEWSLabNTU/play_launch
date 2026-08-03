@@ -1,0 +1,7 @@
+# A platform file that EXISTS but does not parse: `resources` must be a
+# mapping, and `mapper` names a mapper that does not exist. `run --check`
+# must report this and exit non-zero rather than printing "OK" for a file it
+# only located.
+target: posix
+mapper: no_such_mapper
+resources: [this, is, not, a, mapping]

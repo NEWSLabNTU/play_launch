@@ -1,0 +1,11 @@
+# Minimal, VALID Phase 41 v2 scheduling platform file.
+#
+# Exists only so `run --check` has an "OK" branch that is actually reachable
+# in a test. No `overrides:` — `run` synthesises a single-node launch dump
+# from `<pkg> <exe>`, so an override naming any other node would be a
+# fixture bug rather than a check under test.
+target: posix
+mapper: rate_monotonic
+
+resources:
+  rt_priority_band: { min: 10, max: 40 }

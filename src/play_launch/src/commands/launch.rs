@@ -130,14 +130,19 @@ pub fn handle_launch(args: &LaunchArgs) -> Result<()> {
             // (e.g. non-portable absolute input paths) embedded alongside the
             // checker's own warnings (see `model.rs`'s "lenient diagnostics
             // embed like checker warnings").
+            //
+            // `println!`, not `info!`: a verdict the user explicitly asked
+            // for with `--check` is output, not logging. Under
+            // `RUST_LOG=error` an `info!` verdict vanished entirely, leaving
+            // `--check` silent. `run --check` prints the same way.
             let diagnostics = model.meta.diagnostics.len();
-            info!(
+            println!(
                 "check passed: {} node(s), {} diagnostic(s)",
                 model.structure.nodes.len(),
                 diagnostics
             );
             for d in &model.meta.diagnostics {
-                info!("  diagnostic: {d}");
+                println!("  diagnostic: {d}");
             }
             return Ok(());
         }

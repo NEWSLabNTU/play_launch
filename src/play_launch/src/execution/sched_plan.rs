@@ -163,6 +163,12 @@ impl SchedPlan {
         self.by_fqn.get(fqn)
     }
 
+    /// How many node FQNs got a non-default scheduling assignment. Reported
+    /// by `run --check` so the "OK" line names what was actually resolved.
+    pub fn assignment_count(&self) -> usize {
+        self.by_fqn.len()
+    }
+
     /// Phase 43.3 — build the per-FQN plan from a checked SystemModel's
     /// execution layer instead of re-deriving from the platform file:
     /// `bindings` (FQN → tier name) + `tiers[name].<target>` placement.

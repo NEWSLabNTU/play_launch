@@ -227,10 +227,28 @@ async fn run_direct(
         );
         match &resolved_sched {
             Some(resolved) => {
+                // `resolve_platform_file` only LOCATES a path — on the
+                // explicit `--sched <path>` branch it does not even stat it.
+                // Printing "OK" off that alone is the vacuous pass this
+                // check exists to prevent (design D6), so actually build the
+                // plan, exactly as the non-check path below does. A parse or
+                // validation failure propagates as an error and exits
+                // non-zero, same as `run` without `--check`.
+                let plan = crate::execution::sched_plan::SchedPlan::build(
+                    launch_dump,
+                    None,
+                    &resolved.path,
+                    &common.sched_opts.target,
+                    common.sched_opts.sched_apply,
+                )
+                .wrap_err_with(|| {
+                    format!("failed to parse platform file {}", resolved.path.display())
+                })?;
                 println!(
-                    "Platform file: {} (target: {}) — OK",
+                    "Platform file: {} (target: {}) — OK, {} node assignment(s)",
                     resolved.path.display(),
-                    common.sched_opts.target
+                    common.sched_opts.target,
+                    plan.assignment_count(),
                 );
                 return Ok(());
             }
