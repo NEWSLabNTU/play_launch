@@ -1,4 +1,7 @@
 // elkjs v0.10.0 — ESM wrapper around elk.bundled.js (UMD)
+// @ts-nocheck — vendored third-party bundle. tsconfig `exclude` does not
+// stop tsc following an *import* into this file, so `npm run typecheck`
+// checked minified elk internals and failed on them. Not our code to fix.
 // Original: https://cdn.jsdelivr.net/npm/elkjs@0.10.0/lib/elk.bundled.js
 // License: EPL-2.0 (Eclipse Public License 2.0)
 var _elk_export;

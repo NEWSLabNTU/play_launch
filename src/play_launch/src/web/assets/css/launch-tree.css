@@ -348,12 +348,6 @@
 
 /* ── Launch Panel (right panel) ── */
 
-.lp-scope-detail,
-.lp-node-detail {
-    overflow-y: auto;
-    flex: 1;
-}
-
 .lp-section {
     padding: 10px 16px;
     border-bottom: 1px solid var(--border);

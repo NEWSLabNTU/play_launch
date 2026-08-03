@@ -217,6 +217,7 @@ export function snapPortsToBorder(cy) {
         let prefersRight = isOutport;  // outports generally face right (toward target)
 
         // Check if there's a connected non-port node to determine which side
+        /** @type {number|null} */
         let connectedLeafX = null;
         edges.forEach(e => {
             const other = e.source().id() === port.id() ? e.target() : e.source();

@@ -12,4 +12,5 @@ export type { NodeStatus } from '../../../../bindings/NodeStatus';
 export type { NodeSummary } from '../../../../bindings/NodeSummary';
 export type { NodeType } from '../../../../bindings/NodeType';
 export type { StateEvent } from '../../../../bindings/StateEvent';
+export type { SystemStatsSnapshot } from '../../../../bindings/SystemStatsSnapshot';
 export type { UnifiedStatus } from '../../../../bindings/UnifiedStatus';
