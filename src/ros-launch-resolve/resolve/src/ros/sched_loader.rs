@@ -798,6 +798,25 @@ fn describe_map_warning(w: &MapWarning) -> String {
              See the `chain-sampling-feasibility` manifest diagnostic for the per-boundary \
              breakdown."
         ),
+        MapWarning::ChainFeasibleWithoutWcet {
+            chain,
+            boundaries_without_wcet,
+        } => {
+            let (subject, pronoun) = if boundaries_without_wcet.len() == 1 {
+                ("boundary", "it")
+            } else {
+                ("boundaries", "them")
+            };
+            format!(
+                "scheduling: chain '{chain}' is feasible ON INCOMPLETE EVIDENCE — {subject} {} \
+                 carr{} no measured WCET, so the sampling cost counted {pronoun} as ZERO \
+                 execution time. The reported slack is an upper bound on what the chain can \
+                 afford, not a statement about what it costs; supply a WCET to make the verdict \
+                 mean what it says.",
+                boundaries_without_wcet.join(", "),
+                if boundaries_without_wcet.len() == 1 { "ies" } else { "y" },
+            )
+        }
         MapWarning::BandTooNarrow {
             distinct_classes,
             band_width,

@@ -36,10 +36,10 @@ eyre = "0.6.12"
 play_launch_msgs = "*"
 play_launch_parser = { path = "../ros-launch-resolve/parser/crates/play_launch_parser" }
 ros-launch-resolve = { path = "../ros-launch-resolve/resolve" }
-ros-launch-manifest-types = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.0" }
-ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.0" }
-ros-launch-manifest-sched = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.0" }
-ros-launch-manifest-model = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.0" }
+ros-launch-manifest-types = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.4" }
+ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.4" }
+ros-launch-manifest-sched = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.4" }
+ros-launch-manifest-model = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.4" }
 spsc_shm = { path = "../spsc_shm" }
 futures = "0.3.30"
 glob = "0.3"

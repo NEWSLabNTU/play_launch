@@ -7,6 +7,7 @@
 //! is post arg-binding, post condition-filtering, post cross-scope merge —
 //! no variables or conditions survive into the artifact.
 
+use indexmap::IndexMap;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -133,7 +134,7 @@ fn find_node_decl<'a>(
 /// `structure.nodes` (e.g. `/control/control_node`). Exact hit wins; else a
 /// UNIQUE bare-name (last path segment) match — the same vocabulary the
 /// sched crate's assign/override selectors use; else the ref is kept as-is.
-fn resolve_node_ref(nodes: &BTreeMap<String, model::NodeInstance>, node_ref: &str) -> String {
+fn resolve_node_ref(nodes: &IndexMap<String, model::NodeInstance>, node_ref: &str) -> String {
     if nodes.contains_key(node_ref) {
         return node_ref.to_string();
     }
@@ -146,7 +147,7 @@ fn resolve_node_ref(nodes: &BTreeMap<String, model::NodeInstance>, node_ref: &st
 }
 
 /// Reconcile an endpoint ref (`<node ref>/<endpoint>`).
-fn resolve_endpoint_ref(nodes: &BTreeMap<String, model::NodeInstance>, ep_ref: &str) -> String {
+fn resolve_endpoint_ref(nodes: &IndexMap<String, model::NodeInstance>, ep_ref: &str) -> String {
     match ep_ref.rsplit_once('/') {
         Some((node_ref, ep)) => format!("{}/{ep}", resolve_node_ref(nodes, node_ref)),
         None => ep_ref.to_string(),

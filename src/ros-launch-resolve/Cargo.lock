@@ -587,6 +587,8 @@ checksum = "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -1048,8 +1050,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "ros-launch-manifest-check"
-version = "0.1.0"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.0#172aa538bf22158a9ce463e39db2003ba95b39e4"
+version = "0.1.4"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.4#234a0058f72f1f58655e87a720ea3a5f823645e0"
 dependencies = [
  "codespan-reporting",
  "petgraph",
@@ -1060,9 +1062,10 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-model"
-version = "0.1.0"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.0#172aa538bf22158a9ce463e39db2003ba95b39e4"
+version = "0.1.4"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.4#234a0058f72f1f58655e87a720ea3a5f823645e0"
 dependencies = [
+ "indexmap",
  "ros-launch-manifest-sched",
  "serde",
  "serde_yaml_ng",
@@ -1072,8 +1075,8 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-sched"
-version = "0.1.0"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.0#172aa538bf22158a9ce463e39db2003ba95b39e4"
+version = "0.1.4"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.4#234a0058f72f1f58655e87a720ea3a5f823645e0"
 dependencies = [
  "serde",
  "serde_yaml_ng",
@@ -1083,8 +1086,8 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-types"
-version = "0.1.0"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.0#172aa538bf22158a9ce463e39db2003ba95b39e4"
+version = "0.1.4"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.4#234a0058f72f1f58655e87a720ea3a5f823645e0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1099,6 +1102,7 @@ dependencies = [
  "chrono",
  "clap",
  "eyre",
+ "indexmap",
  "num_cpus",
  "play_launch_parser",
  "pyo3",

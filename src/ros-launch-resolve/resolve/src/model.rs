@@ -233,6 +233,17 @@ pub fn build_checked_model(
                 inst.lifecycle_autostart = Some(autostart);
             }
         }
+        // `[[component]] params` / `params_files` are per-node too, so they are
+        // projected here for the same reason. Before this, a deployment-time
+        // parameter (a `qos_overrides.…` chosen per system, a parameter FILE)
+        // could only be typed into the resolved model by hand, and re-resolving
+        // dropped it — nano-ros phase-330 W4 found two workspaces in exactly
+        // that state, which is the issue-0380 shape: the artifact was the only
+        // record of the intent.
+        model
+            .meta
+            .diagnostics
+            .extend(cfg.apply_params_to_nodes(&mut model.structure.nodes));
         model.meta.diagnostics.extend(diags);
         // Hash the system config into provenance.
         {

@@ -12,6 +12,8 @@ repository.workspace = true
 description = "Resolve a ROS 2 launch tree into a checked SystemModel"
 
 [dependencies]
+# issue 0382 — `structure.nodes` is an order-preserving map.
+indexmap = { version = "2", features = ["serde"] }
 ros-launch-manifest-types = { workspace = true }
 ros-launch-manifest-model = { workspace = true }
 ros-launch-manifest-sched = { workspace = true }
