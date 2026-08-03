@@ -11,6 +11,14 @@ get `unrecognized subcommand`.
 | `play_launch check <pkg> <f> --format json` | `ros-launch-resolve check <pkg> <f> --format json` |
 | `play_launch resolve <pkg> <f> -o m.yaml` | `ros-launch-resolve resolve <pkg> <f> -o m.yaml` |
 
+## Where `ros-launch-resolve` comes from
+
+`pip install play_launch` installs it. The 0.9.0 wheel ships both binaries —
+`play_launch` (launch, run, up; needs a ROS install) and `ros-launch-resolve`
+(resolve, dump, check, contract, plot; needs no ROS install at all). Nothing
+extra to install, no second package. In a source checkout, `just build`
+builds it into `src/ros-launch-resolve/target/release/`.
+
 ## Why
 
 **`replay` → `up`.** It replayed nothing. It loads a resolved SystemModel and
@@ -30,6 +38,11 @@ RFC-0060, printing a deprecation warning on every call.
 
 `run` validates the scheduling platform file only, and says so. Contracts are
 keyed by launch file and `run` has none, so no contract sidecar can apply.
+
+"Validates" means it loads and derives the plan, the same way `run` without
+`--check` does — a `--sched` path that does not exist or does not parse fails
+the check and exits non-zero. It never reports OK for a file it merely
+located.
 
 ## Compatibility
 

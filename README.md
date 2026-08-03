@@ -19,6 +19,10 @@ Install from PyPI:
 pip install play_launch
 ```
 
+This installs two commands: `play_launch` (launch, run, up — needs a ROS
+install) and `ros-launch-resolve` (resolve, dump, check, contract, plot —
+needs no ROS install at all).
+
 Optional: grant the helper binaries the capabilities they need for per-process I/O
 monitoring and non-root RT scheduling (requires sudo):
 
@@ -70,12 +74,15 @@ play_launch run <package> <executable> [arguments...]
 Record first, replay multiple times:
 
 ```bash
-# Record
+# Resolve once — writes system_model.yaml
 ros-launch-resolve dump launch <package> <launch_file> [arguments...]
 
-# Replay
-play_launch up
+# Replay it, as often as you like
+play_launch up system_model.yaml
 ```
+
+`up` takes the model path positionally or as `--model <path>`; it is required
+either way, since the model is the only thing `up` spawns from.
 
 ## Features
 
@@ -146,7 +153,8 @@ processes:
 Apply configuration:
 
 ```bash
-play_launch up --config config.yaml
+play_launch launch <package> <launch_file> --config config.yaml
+play_launch up system_model.yaml --config config.yaml
 ```
 
 ## Visualization
@@ -211,7 +219,7 @@ play_launch run <package> <executable> [args...]
 
 # Dump and up (dump emits the SystemModel by default — one artifact)
 ros-launch-resolve dump launch <package> <launch_file> [args...]
-play_launch up [--model system_model.yaml]
+play_launch up system_model.yaml            # or: play_launch up --model system_model.yaml
 
 # Parser selection (Rust is default)
 play_launch launch <pkg> <file> --parser rust     # Default, fast
