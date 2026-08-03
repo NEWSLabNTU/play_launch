@@ -35,9 +35,37 @@ fn check_names_both_replacements() {
         err.contains("launch demo_pkg a.launch.xml --check"),
         "must name the gate replacement, echoing the user's args: {err}"
     );
+    // The whole point of keeping the old argument struct around is that the
+    // replacement we print is pasteable. Naming the binary is not enough --
+    // the user's own diagnostic flags have to survive the translation.
     assert!(
-        err.contains("ros-launch-resolve check"),
-        "must name where the diagnostics went: {err}"
+        err.contains("ros-launch-resolve check demo_pkg a.launch.xml --format json"),
+        "must echo the user's diagnostic flags against the new binary: {err}"
+    );
+    // An eyre `Location:` footer reads as an internal crash in the exact
+    // scenario this handler exists for (surfacing from a cmake configure).
+    assert!(
+        !err.contains("Location:"),
+        "migration guidance must not carry a source-location footer: {err}"
+    );
+}
+
+#[test]
+fn check_echo_omits_flags_the_user_did_not_pass() {
+    let env = fixtures::install_env();
+    let mut cmd = fixtures::play_launch_cmd(&env);
+    cmd.args(["check", "demo_pkg", "a.launch.xml"]);
+    let out = cmd.output().expect("failed to run play_launch");
+
+    assert!(!out.status.success(), "`check` must exit non-zero");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("ros-launch-resolve check demo_pkg a.launch.xml\n"),
+        "bare invocation must echo bare, with no invented defaults: {err}"
+    );
+    assert!(
+        !err.contains("--format"),
+        "must not pad the echo with defaults the user never typed: {err}"
     );
 }
 
