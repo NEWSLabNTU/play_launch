@@ -40,10 +40,18 @@ fn logs_to_stderr(command: &Command) -> bool {
 /// detail, not level).
 fn init_tracing(command: &Command) {
     let use_env_filter = std::env::var("RUST_LOG").is_ok();
+    // Show the emitting module ONLY when the user asked for `RUST_LOG` — i.e.
+    // is debugging. Left on by default, every ordinary `play_launch dump` run
+    // printed `ros_launch_resolve::verbs::dump` beside its progress lines,
+    // naming the developer-only binary on the happy path. A target is a
+    // developer's routing key, not part of a user-facing message.
+    let with_target = use_env_filter;
     // `fmt()`'s builder needs the writer chosen before `.init()`, and the two
     // writer types differ, so the branch is duplicated rather than factored.
     if logs_to_stderr(command) {
-        let builder = tracing_subscriber::fmt().with_writer(std::io::stderr);
+        let builder = tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_target(with_target);
         if use_env_filter {
             builder
                 .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -51,16 +59,28 @@ fn init_tracing(command: &Command) {
         } else {
             builder.with_max_level(tracing::Level::INFO).init();
         }
-    } else if use_env_filter {
-        tracing_subscriber::fmt::init();
     } else {
-        tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::INFO)
-            .init();
+        let builder = tracing_subscriber::fmt().with_target(with_target);
+        if use_env_filter {
+            builder
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .init();
+        } else {
+            builder.with_max_level(tracing::Level::INFO).init();
+        }
     }
 }
 
 fn main() -> eyre::Result<()> {
+    // Report errors as message + causes, with no `Location:` footer pointing
+    // into `src/ros-launch-resolve/` — see `util::cli_errors`.
+    ros_launch_resolve::util::cli_errors::install();
+
+    // Announce which binary is producing SystemModels, so `meta.resolver`
+    // names `play_launch` at the version the user installed rather than the
+    // shared library crate. See `ros_launch_resolve::producer`.
+    ros_launch_resolve::producer::set(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+
     // Parse command-line options first (before initializing tracing)
     let opts = Options::parse();
 

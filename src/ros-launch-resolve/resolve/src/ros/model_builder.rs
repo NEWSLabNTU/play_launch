@@ -856,14 +856,17 @@ pub fn build_system_model(
             version: model::SCHEMA_VERSION,
             args,
             inputs,
-            resolver: Some(model::ResolverInfo {
-                // Identify the tool that actually produced this model. The
-                // string moved here with the code and still said
-                // "play_launch", which would have made every model resolved by
-                // this crate misreport its own provenance — the field exists
-                // precisely so a consumer can tell what built the artifact.
-                tool: env!("CARGO_PKG_NAME").to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
+            resolver: Some({
+                // Identify the tool that actually produced this model — the
+                // field exists precisely so a consumer can tell what built
+                // the artifact. That is the BINARY the user ran, announced by
+                // its `main` (see `crate::producer`), not this library
+                // crate's own `CARGO_PKG_*`: reading the latter stamped
+                // `ros-launch-resolve` / `0.1.0` into models written by
+                // `play_launch 0.9.0`, naming a developer binary the user was
+                // never shipped.
+                let (tool, version) = crate::producer::get();
+                model::ResolverInfo { tool, version }
             }),
             diagnostics,
         },

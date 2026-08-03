@@ -90,6 +90,37 @@ fn resolve_writes_a_system_model() {
         "the emitted file must be a SystemModel:\n{model}"
     );
 
+    // `meta.resolver` must name the BINARY the user ran, at the version they
+    // installed. It read this library crate's own `CARGO_PKG_*`, so every
+    // model `play_launch resolve` wrote — the ONE user-facing artifact, which
+    // people commit to git — was stamped `tool: ros-launch-resolve` /
+    // `version: 0.1.0`: a developer binary that is not in the wheel, at a
+    // version unrelated to the 0.9.0 that produced it.
+    let parsed: serde_json::Value = serde_yaml_ng::from_str(&model).expect("parse model yaml");
+    let resolver = &parsed["meta"]["resolver"];
+    assert_eq!(
+        resolver["tool"].as_str(),
+        Some("play_launch"),
+        "meta.resolver.tool must name the binary the user ran:\n{resolver:?}"
+    );
+    // Cross-checked against what the binary reports for `--version`, so this
+    // needs no hard-coded number and cannot rot at the next release bump.
+    let version_out = fixtures::play_launch_cmd(&env)
+        .arg("--version")
+        .output()
+        .expect("failed to run play_launch --version");
+    let reported = String::from_utf8_lossy(&version_out.stdout);
+    let reported = reported
+        .split_whitespace()
+        .next_back()
+        .expect("`--version` printed nothing");
+    assert_eq!(
+        resolver["version"].as_str(),
+        Some(reported),
+        "meta.resolver.version must be the version the binary reports \
+         ({reported}), not the library crate's:\n{resolver:?}"
+    );
+
     // ...and `up` must ACCEPT what `resolve` just wrote — the half of the
     // round trip that did not exist before this change (with `resolve` and
     // `dump` both gone from play_launch, a pip-only user had `up` and no
@@ -380,4 +411,75 @@ fn help_never_names_the_developer_binary() {
         checked >= 15,
         "the help walk must reach every subcommand; it visited only {checked} pages"
     );
+}
+
+/// The same rule, on the surface `--help` cannot see: a TRIGGERED ERROR.
+///
+/// `help_never_names_the_developer_binary` above walks static help text. But
+/// the five reshaped verbs live in `src/ros-launch-resolve/resolve/`, and
+/// eyre's default handler appends the source location it captured to every
+/// error a `fn main() -> Result<()>` reports:
+///
+/// ```text
+/// Error: Launch file not found: /nonexistent/foo.launch.xml
+///
+/// Location:
+///     src/ros-launch-resolve/resolve/src/verbs/mod.rs:93:24
+/// ```
+///
+/// So every failing `resolve`/`dump`/`check`/`plot`/`contract` run printed the
+/// developer-only binary's name to a user who only ever installed
+/// `play_launch` — invisibly to any help audit. `util::cli_errors` replaces
+/// that report; this pins it.
+///
+/// Each case must FAIL (a passing command proves nothing about error output),
+/// and the assertion covers stdout and stderr together.
+#[test]
+fn a_triggered_error_never_names_the_developer_binary() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+
+    // Every reshaped verb, each driven into a failure it owns.
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["resolve", "/nonexistent/foo.launch.xml", "-o", "/dev/null"],
+        vec!["check", "/nonexistent/foo.launch.xml"],
+        vec!["dump", "launch", "/nonexistent/foo.launch.xml"],
+        vec!["contract", "eject", "/nonexistent/foo.launch.xml"],
+        vec!["plot", "--log-dir", "/nonexistent/logs"],
+        // A package name that resolves to nothing takes the other arm of
+        // `resolve_launch_file`, whose message this wave also rewrote.
+        vec!["check", "no_such_package_anywhere", "no_such.launch.xml"],
+    ];
+
+    for args in cases {
+        let mut cmd = fixtures::play_launch_cmd(&env);
+        cmd.args(&args);
+        let out = cmd.output().expect("failed to run play_launch");
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let label = format!("play_launch {}", args.join(" "));
+
+        assert!(
+            !out.status.success(),
+            "`{label}` was supposed to FAIL — this case no longer tests error output:\n{combined}"
+        );
+        assert!(
+            !combined.contains("ros-launch-resolve"),
+            "`{label}` named the developer-only binary in its error output:\n{combined}"
+        );
+        // The location footer is how the name leaked; reject it directly too,
+        // so a future handler change that reintroduces file paths is caught
+        // even if the path happens not to contain the binary's name.
+        assert!(
+            !combined.contains("Location:"),
+            "`{label}` printed an eyre `Location:` footer — an internal source \
+             path is not a user-facing error report:\n{combined}"
+        );
+    }
 }
