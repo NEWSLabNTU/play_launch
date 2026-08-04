@@ -486,10 +486,19 @@ pub async fn run_monitoring_task(
                 monitor.io_stats_cache.clear();
                 monitor.net_connections_cache = None;
 
-                // Refresh subprocess tree cache every 1 second,
-                // OR immediately when the monitored PID set changes (new process registered).
-                // Process trees are stable in steady-state; no need to walk /proc every tick.
-                const SUBPROCESS_CACHE_INTERVAL: Duration = Duration::from_secs(1);
+                // Refresh the subprocess tree cache periodically, OR immediately when the
+                // monitored PID set changes (new process registered).
+                //
+                // This must exceed the sample interval or the cache is dead code: at the 1 s
+                // it used to hold, against a 2 s default tick, the TTL had always expired by
+                // the time it was checked, so the walk ran every tick anyway and the "no need
+                // to walk /proc every tick" claim was never true. Measured on an AGX Orin
+                // supervising 43 processes, one full walk reads 567
+                // /proc/<pid>/task/<tid>/children files and costs 13.2 ms.
+                //
+                // 10 s is still far shorter than a process tree's lifetime, and a *new*
+                // member never waits for it because pids_changed forces a refresh.
+                const SUBPROCESS_CACHE_INTERVAL: Duration = Duration::from_secs(10);
                 let pids_changed = processes.len() != monitor.subprocess_cache.len()
                     || processes.keys().any(|pid| !monitor.subprocess_cache.contains_key(pid));
                 if pids_changed || monitor.subprocess_cache_last_refresh.elapsed() >= SUBPROCESS_CACHE_INTERVAL {
