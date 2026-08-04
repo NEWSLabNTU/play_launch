@@ -15,7 +15,18 @@ use super::resource_monitor::{ResourceMetrics, SystemStats};
 /// Manages CSV writers for per-process metrics and system-wide stats.
 #[derive(Default)]
 pub struct CsvState {
-    pub csv_writers: HashMap<u32, Writer<File>>, // PID -> CSV writer
+    /// Keyed by CSV PATH, not by PID.
+    ///
+    /// The path depends only on the node's output directory, so keying by PID
+    /// meant a respawn — new PID, same directory — took the vacant-entry
+    /// branch and `File::create`d the file again, destroying every sample
+    /// collected before the restart and permanently freezing the web UI's
+    /// Metrics tab (its SSE handler tails from `SeekFrom::End(0)`, so after a
+    /// truncation it sits past EOF and never emits another row). Keying by
+    /// path means the writer is reused and rows APPEND; the `pid` column
+    /// already distinguishes them. It also bounds the map by node count
+    /// rather than by respawn count — each entry holds an open file handle.
+    pub csv_writers: HashMap<PathBuf, Writer<File>>,
     pub system_csv_writer: Option<Writer<File>>, // System-wide stats CSV writer
 }
 
@@ -26,11 +37,15 @@ impl CsvState {
 
     pub fn write_csv(&mut self, output_dir: &Path, metrics: &ResourceMetrics) -> Result<()> {
         let pid = metrics.pid;
+        let csv_path = get_csv_path(output_dir);
 
-        // Get or create CSV writer for this PID
-        if let std::collections::hash_map::Entry::Vacant(e) = self.csv_writers.entry(pid) {
-            let csv_path = get_csv_path(output_dir);
-
+        // Get or create the writer for this FILE. First write for a path
+        // truncates deliberately: `initialize_metrics_csv` seeds a shorter
+        // legacy header, and this replaces it with METRICS_CSV_HEADER.
+        // Subsequent writes — including after a respawn — reuse the writer.
+        if let std::collections::hash_map::Entry::Vacant(e) =
+            self.csv_writers.entry(csv_path.clone())
+        {
             // Create parent directories
             if let Some(parent) = csv_path.parent() {
                 fs::create_dir_all(parent).wrap_err_with(|| {
@@ -53,8 +68,8 @@ impl CsvState {
 
         let writer = self
             .csv_writers
-            .get_mut(&pid)
-            .ok_or_else(|| eyre::eyre!("CSV writer not found for PID {}", pid))?;
+            .get_mut(&csv_path)
+            .ok_or_else(|| eyre::eyre!("CSV writer not found for {}", csv_path.display()))?;
 
         // Format timestamp
         let timestamp_str = format_timestamp(metrics.timestamp);
@@ -303,8 +318,21 @@ fn get_csv_path(output_dir: &Path) -> PathBuf {
 /// Initialize CSV file with headers for a given output directory.
 /// This should be called as soon as monitoring is enabled to ensure CSV files
 /// exist even if the node dies before metrics are collected.
+/// IDEMPOTENT: returns early if the file already exists. It is called on every
+/// spawn, including a RESPAWN, and `File::create` truncates — so this used to
+/// destroy the metrics collected before a node restarted, which is half of why
+/// the web UI's Metrics tab froze mid-run. "Ensure it exists" must not mean
+/// "destroy it if it does".
 pub fn initialize_metrics_csv(output_dir: &Path) -> Result<()> {
     let csv_path = output_dir.join("metrics.csv");
+
+    if csv_path.exists() {
+        debug!(
+            "metrics CSV already exists, keeping it: {}",
+            csv_path.display()
+        );
+        return Ok(());
+    }
 
     // Create parent directories if needed
     if let Some(parent) = csv_path.parent() {
@@ -381,5 +409,106 @@ mod tests {
         let time = SystemTime::UNIX_EPOCH + Duration::from_secs(1234567890);
         let formatted = format_timestamp(time);
         assert!(formatted.starts_with("2009-02-13"));
+    }
+
+    fn sample(pid: u32) -> crate::monitoring::resource_monitor::ResourceMetrics {
+        use crate::monitoring::resource_monitor::{ProcessState, ResourceMetrics};
+        ResourceMetrics {
+            timestamp: SystemTime::UNIX_EPOCH,
+            pid,
+            cpu_percent: 1.0,
+            cpu_user_time: 0,
+            rss_bytes: 0,
+            vms_bytes: 0,
+            io_read_bytes: 0,
+            io_write_bytes: 0,
+            total_read_bytes: 0,
+            total_write_bytes: 0,
+            io_syscr: 0,
+            io_syscw: 0,
+            io_storage_read_bytes: 0,
+            io_storage_write_bytes: 0,
+            io_cancelled_write_bytes: 0,
+            total_read_rate_bps: None,
+            total_write_rate_bps: None,
+            state: ProcessState::Sleeping,
+            num_threads: 1,
+            num_fds: 1,
+            num_processes: 1,
+            gpu_memory_bytes: None,
+            gpu_utilization_percent: None,
+            gpu_memory_utilization_percent: None,
+            gpu_temperature_celsius: None,
+            gpu_power_milliwatts: None,
+            gpu_graphics_clock_mhz: None,
+            gpu_memory_clock_mhz: None,
+            tcp_connections: 0,
+            udp_connections: 0,
+        }
+    }
+
+    /// `initialize_metrics_csv` runs on every spawn, including a respawn, so
+    /// it must not clobber an existing file. Before this it called
+    /// `File::create` unconditionally — the second of two truncation paths
+    /// that emptied metrics.csv mid-run.
+    #[test]
+    fn initialize_metrics_csv_keeps_an_existing_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+
+        initialize_metrics_csv(dir).unwrap();
+        let mut state = CsvState::new();
+        state.write_csv(dir, &sample(1001)).unwrap();
+
+        // Node restarts: the actor calls this again for the same directory.
+        initialize_metrics_csv(dir).unwrap();
+
+        let body = std::fs::read_to_string(dir.join("metrics.csv")).unwrap();
+        assert!(
+            body.contains(",1001,"),
+            "re-initialising destroyed the existing samples:\n{body}"
+        );
+    }
+
+    /// A respawned node must APPEND to its metrics.csv, not truncate it.
+    ///
+    /// `csv_writers` was keyed by PID while the file path depends only on the
+    /// output directory, so a respawn — new PID, same directory — took the
+    /// vacant-entry branch and `File::create`d the file again, destroying
+    /// every sample collected before the restart.
+    ///
+    /// It also froze the web UI's Metrics tab permanently: the SSE handler
+    /// tails this file from `SeekFrom::End(0)`, so once it is truncated the
+    /// reader sits past EOF and never emits another row. Reproduced against a
+    /// real run before this test was written — 11 lines before the kill, 10
+    /// after, containing only the new PID.
+    #[test]
+    fn a_respawned_pid_appends_instead_of_truncating() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        let mut state = CsvState::new();
+
+        state.write_csv(dir, &sample(1001)).unwrap();
+        state.write_csv(dir, &sample(1001)).unwrap();
+        // Same node, restarted: different PID, same output directory.
+        state.write_csv(dir, &sample(2002)).unwrap();
+
+        let body = std::fs::read_to_string(dir.join("metrics.csv")).unwrap();
+        let rows: Vec<&str> = body.lines().skip(1).filter(|l| !l.is_empty()).collect();
+
+        assert_eq!(rows.len(), 3, "all three samples must survive:\n{body}");
+        assert!(
+            rows.iter().any(|r| r.contains(",1001,")),
+            "pre-respawn history was destroyed:\n{body}"
+        );
+        assert!(
+            rows.iter().any(|r| r.contains(",2002,")),
+            "post-respawn sample missing:\n{body}"
+        );
+        assert_eq!(
+            body.matches("timestamp,pid").count(),
+            1,
+            "header must be written exactly once:\n{body}"
+        );
     }
 }
