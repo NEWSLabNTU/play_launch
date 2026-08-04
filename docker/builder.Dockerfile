@@ -70,8 +70,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH
+# The version MUST match rust-toolchain.toml. Installing `stable` here is what
+# let the image drift ahead of developer machines on every rebuild, so a lint
+# gate could pass locally and fail in CI. Bump both in the same commit.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain stable --profile minimal && \
+    sh -s -- -y --default-toolchain 1.97.1 --profile minimal && \
     rustup component add clippy rustfmt && \
     rustup toolchain install nightly --profile minimal --component rustfmt && \
     rustc --version

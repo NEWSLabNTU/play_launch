@@ -1,0 +1,23 @@
+# Pinned so a lint gate cannot pass locally and fail in CI.
+#
+# Before this, the builder image installed `--default-toolchain stable` and
+# picked up whatever was current on each rebuild, while developer machines
+# drifted independently. That produced three different toolchains at once
+# (local 1.96.0, CI 1.97.0, released stable 1.97.1) and a red `main` from a
+# clippy lint that only the CI toolchain emitted — attributed to an unrelated
+# commit, because the offending line was months old and simply newly flagged.
+#
+# An exact version, not "stable": the point is that upgrading is a deliberate
+# commit whose diff shows which new lints had to be satisfied, rather than
+# something that happens to whoever rebuilds the image next.
+#
+# `cargo +nightly fmt` still works — an explicit `+toolchain` overrides this
+# file. Nightly is needed because rustfmt.toml uses unstable options
+# (`imports_granularity`, `format_code_in_doc_comments`).
+#
+# To upgrade: bump `channel`, run `just check`, fix what the new lints find,
+# and update `docker/builder.Dockerfile` in the same commit so the image and
+# this file never disagree.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]

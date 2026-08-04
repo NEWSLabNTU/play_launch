@@ -331,6 +331,22 @@ pub async fn parse_to_launch_dump(
     Ok((dump, launch_path))
 }
 
+
+/// Parse `KEY:=VALUE` launch arguments, warning on anything that isn't.
+pub fn parse_launch_arguments(args: &[String]) -> std::collections::HashMap<String, String> {
+    args.iter()
+        .filter_map(|arg| {
+            let parts: Vec<&str> = arg.splitn(2, ":=").collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                tracing::warn!("Ignoring invalid launch argument (expected KEY:=VALUE): {arg}");
+                None
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::reclassify_launch_file_arg;
@@ -486,19 +502,4 @@ mod tests {
         assert_eq!(file, None);
         assert_eq!(args, v(&["host:=robot1"]));
     }
-}
-
-/// Parse `KEY:=VALUE` launch arguments, warning on anything that isn't.
-pub fn parse_launch_arguments(args: &[String]) -> std::collections::HashMap<String, String> {
-    args.iter()
-        .filter_map(|arg| {
-            let parts: Vec<&str> = arg.splitn(2, ":=").collect();
-            if parts.len() == 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
-            } else {
-                tracing::warn!("Ignoring invalid launch argument (expected KEY:=VALUE): {arg}");
-                None
-            }
-        })
-        .collect()
 }
