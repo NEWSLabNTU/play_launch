@@ -100,7 +100,7 @@ pub fn collect_system_stats(
     // Collect network metrics (aggregate all interfaces)
     let mut network_rx_bytes: u64 = 0;
     let mut network_tx_bytes: u64 = 0;
-    for (_, network) in networks.iter() {
+    for network in networks.values() {
         network_rx_bytes += network.total_received();
         network_tx_bytes += network.total_transmitted();
     }
