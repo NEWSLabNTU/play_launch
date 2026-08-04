@@ -155,24 +155,64 @@ async fn stream_file_to_channel(
         let _ = tx.send(Ok(Event::default().data(line))).await;
     }
 
-    // Seek to end of file
-    reader.seek(SeekFrom::End(0))?;
+    tail_lines_to_channel(&mut reader, path, &tx, "log").await
+}
 
-    // Poll for new content
+/// Tail an already-opened file, forwarding each new line as an SSE event.
+///
+/// Shared by the log and metrics streams, which had byte-identical copies of
+/// this loop. That duplication was a hazard, not just noise: a fix applied to
+/// one and not the other looks complete and is not.
+///
+/// TRUNCATION. Both copies seeked to the end and then only ever read forward,
+/// so if the file shrank underneath them the reader sat past EOF and the
+/// stream went silent for good — no error, no reconnect, just a UI that
+/// stopped updating. That is what froze the Metrics tab when a respawn
+/// re-created `metrics.csv`. The writer no longer truncates, but a reader
+/// that cannot survive it is one `File::create` away from the same silence,
+/// so detect it here too: on EOF, compare the file's length against our
+/// offset, and if the file is now shorter, start again from the top.
+///
+/// Re-reading from the top re-sends the CSV header, which is correct rather
+/// than merely tolerable — the client rebuilds its column map from it, so a
+/// file replaced with a different schema is handled.
+async fn tail_lines_to_channel(
+    reader: &mut BufReader<std::fs::File>,
+    path: &std::path::Path,
+    tx: &mpsc::Sender<Result<Event, Infallible>>,
+    what: &str,
+) -> eyre::Result<()> {
+    let mut pos = reader.seek(SeekFrom::End(0))?;
     let mut line_buf = String::new();
+
     loop {
         if tx.is_closed() {
-            debug!("SSE channel closed, stopping file stream");
+            debug!("SSE channel closed, stopping {what} stream");
             return Ok(());
         }
 
         line_buf.clear();
         match reader.read_line(&mut line_buf) {
             Ok(0) => {
-                // No new data, wait and try again
+                // EOF. Before sleeping, check whether the file shrank — the
+                // only signal available that someone truncated it, since a
+                // truncating rewrite keeps the same inode.
+                if let Ok(meta) = std::fs::metadata(path)
+                    && meta.len() < pos
+                {
+                    warn!(
+                        "{what} file {} shrank ({} -> {} bytes); re-reading from the start",
+                        path.display(),
+                        pos,
+                        meta.len()
+                    );
+                    pos = reader.seek(SeekFrom::Start(0))?;
+                    continue;
+                }
                 tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
             }
-            Ok(_) => {
+            Ok(n) => {
+                pos += n as u64;
                 let line = line_buf.trim_end();
                 if !line.is_empty() {
                     let _ = tx
@@ -185,7 +225,7 @@ async fn stream_file_to_channel(
                 }
             }
             Err(e) => {
-                warn!("Error reading log file: {}", e);
+                warn!("Error reading {what} file: {e}");
                 tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
             }
         }
@@ -458,36 +498,70 @@ async fn stream_file_to_channel_with_initial(
         let _ = tx.send(Ok(Event::default().data(line))).await;
     }
 
-    // Seek to end and poll for new content
-    reader.seek(SeekFrom::End(0))?;
-    let mut line_buf = String::new();
+    tail_lines_to_channel(&mut reader, path, &tx, "metrics").await
+}
 
-    loop {
-        if tx.is_closed() {
-            debug!("SSE channel closed, stopping metrics file stream");
-            return Ok(());
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
 
-        line_buf.clear();
-        match reader.read_line(&mut line_buf) {
-            Ok(0) => {
-                tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
-            }
-            Ok(_) => {
-                let line = line_buf.trim_end();
-                if !line.is_empty() {
-                    let _ = tx
-                        .send(Ok(Event::default().data(truncate_line(line))))
-                        .await;
-                }
-                if line_buf.capacity() > MAX_LINE_LEN * 2 {
-                    line_buf = String::new();
-                }
-            }
-            Err(e) => {
-                warn!("Error reading metrics file: {}", e);
-                tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)).await;
-            }
+    /// A tail must survive the file being truncated underneath it.
+    ///
+    /// Both tail loops seeked to the end and only read forward, so a shrinking
+    /// file left the reader past EOF and the stream silent forever — the
+    /// mechanism that froze the web UI's Metrics tab when a respawn re-created
+    /// `metrics.csv`. Without the shrink check in `tail_lines_to_channel` this
+    /// test times out with zero post-truncation lines.
+    #[tokio::test]
+    async fn a_truncated_file_is_re_read_from_the_start() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("metrics.csv");
+        std::fs::write(&path, "header\nold-1\nold-2\n").unwrap();
+
+        let (tx, mut rx) = mpsc::channel::<Result<Event, Infallible>>(100);
+        let file = std::fs::File::open(&path).unwrap();
+        let mut reader = BufReader::new(file);
+        let p = path.clone();
+        tokio::spawn(async move {
+            let _ = tail_lines_to_channel(&mut reader, &p, &tx, "test").await;
+        });
+
+        // Appends arrive normally.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
+            writeln!(f, "old-3").unwrap();
         }
+        let before = collect_for(&mut rx, Duration::from_millis(1200)).await;
+        assert!(
+            before.iter().any(|l| l.contains("old-3")),
+            "append before truncation should stream: {before:?}"
+        );
+
+        // Truncate and write fresh, SHORTER content — a respawn rewriting the file.
+        std::fs::write(&path, "header\nnew-1\n").unwrap();
+
+        let after = collect_for(&mut rx, Duration::from_millis(3000)).await;
+        assert!(
+            after.iter().any(|l| l.contains("new-1")),
+            "post-truncation content must reach the client, got: {after:?}"
+        );
+    }
+
+    /// Drain whatever arrives within `window`, returning the event payloads.
+    async fn collect_for(
+        rx: &mut mpsc::Receiver<Result<Event, Infallible>>,
+        window: Duration,
+    ) -> Vec<String> {
+        let deadline = tokio::time::Instant::now() + window;
+        let mut out = Vec::new();
+        while let Ok(Some(Ok(ev))) = tokio::time::timeout_at(deadline, rx.recv()).await {
+            out.push(format!("{ev:?}"));
+        }
+        out
     }
 }
