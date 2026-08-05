@@ -495,8 +495,7 @@ pub async fn run_interception_task(
             &frontiers,
             &stats,
             total_events,
-            &names.names,
-            &names.types,
+            &names,
             total_dropped,
             tracer.as_ref(),
         )?;
@@ -602,8 +601,7 @@ fn write_summaries(
     frontiers: &HashMap<u64, FrontierState>,
     stats: &HashMap<u64, TopicStats>,
     total_events: u64,
-    names: &HashMap<u64, String>,
-    types: &HashMap<u64, String>,
+    catalog: &NameCatalog,
     total_dropped: u64,
     tracer: Option<&trace::TraceRecorder>,
 ) -> eyre::Result<()> {
@@ -638,8 +636,8 @@ fn write_summaries(
                         stamp_sec: f.stamp_sec,
                         stamp_nanosec: f.stamp_nanosec,
                         event_count: f.event_count,
-                        name: names.get(&hash).cloned(),
-                        msg_type: types.get(&hash).cloned(),
+                        name: catalog.names.get(&hash).cloned(),
+                        msg_type: catalog.types.get(&hash).cloned(),
                     },
                 )
             })
@@ -691,8 +689,8 @@ fn write_summaries(
                         take_count: ts.take_count,
                         duration_ms,
                         avg_pub_rate_hz,
-                        name: names.get(&hash).cloned(),
-                        msg_type: types.get(&hash).cloned(),
+                        name: catalog.names.get(&hash).cloned(),
+                        msg_type: catalog.types.get(&hash).cloned(),
                     },
                 )
             })

@@ -3653,8 +3653,6 @@ mod tests {
         assert!(msg.contains("does_not_exist"), "names the path: {msg}");
     }
 
-
-
     #[test]
     fn test_discover_overlay_root_env_var_wins_over_xdg() {
         let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());

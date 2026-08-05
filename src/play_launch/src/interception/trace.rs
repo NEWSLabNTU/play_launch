@@ -24,9 +24,7 @@
 //! without a `std_msgs/Header` carry stamp 0 and cannot be linked; they still
 //! appear as instants, just unconnected.
 
-use std::collections::HashMap;
-use std::io::Write;
-use std::path::Path;
+use std::{collections::HashMap, io::Write, path::Path};
 
 use super::{EventKind, InterceptionEvent};
 
@@ -186,14 +184,27 @@ mod tests {
     #[test]
     fn publish_and_take_of_one_message_share_a_flow() {
         let mut t = TraceRecorder::new();
-        t.observe("/a", &ev(EventKind::Publish, 7, 1, 500, 1_000_000), Some("/scan"));
-        t.observe("/b", &ev(EventKind::Take, 7, 1, 500, 2_000_000), Some("/scan"));
+        t.observe(
+            "/a",
+            &ev(EventKind::Publish, 7, 1, 500, 1_000_000),
+            Some("/scan"),
+        );
+        t.observe(
+            "/b",
+            &ev(EventKind::Take, 7, 1, 500, 2_000_000),
+            Some("/scan"),
+        );
 
         let flows: Vec<_> = t
             .events
             .iter()
             .filter(|e| e["cat"] == "msg")
-            .map(|e| (e["ph"].as_str().unwrap().to_string(), e["id"].as_u64().unwrap()))
+            .map(|e| {
+                (
+                    e["ph"].as_str().unwrap().to_string(),
+                    e["id"].as_u64().unwrap(),
+                )
+            })
             .collect();
         assert_eq!(flows.len(), 2, "one open and one close: {flows:?}");
         assert_eq!(flows[0].0, "s");

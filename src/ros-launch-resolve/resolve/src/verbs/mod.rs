@@ -331,7 +331,6 @@ pub async fn parse_to_launch_dump(
     Ok((dump, launch_path))
 }
 
-
 /// Parse `KEY:=VALUE` launch arguments, warning on anything that isn't.
 pub fn parse_launch_arguments(args: &[String]) -> std::collections::HashMap<String, String> {
     args.iter()
@@ -404,7 +403,8 @@ mod tests {
         let got = resolve_launch_file("demo_pkg", Some("talker.launch.py")).unwrap();
         assert_eq!(
             got,
-            tmp.path().join("share/demo_pkg/launch/topics/talker.launch.py")
+            tmp.path()
+                .join("share/demo_pkg/launch/topics/talker.launch.py")
         );
     }
 
@@ -425,7 +425,8 @@ mod tests {
         let got = resolve_launch_file("demo_pkg", Some("launch/topics/dup.launch.py")).unwrap();
         assert_eq!(
             got,
-            tmp.path().join("share/demo_pkg/launch/topics/dup.launch.py")
+            tmp.path()
+                .join("share/demo_pkg/launch/topics/dup.launch.py")
         );
     }
 
@@ -439,7 +440,8 @@ mod tests {
         let got = resolve_launch_file("demo_pkg", Some("topics/talker.launch.py")).unwrap();
         assert_eq!(
             got,
-            tmp.path().join("share/demo_pkg/launch/topics/talker.launch.py")
+            tmp.path()
+                .join("share/demo_pkg/launch/topics/talker.launch.py")
         );
     }
 

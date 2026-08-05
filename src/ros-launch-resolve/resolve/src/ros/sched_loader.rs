@@ -814,7 +814,11 @@ fn describe_map_warning(w: &MapWarning) -> String {
                  afford, not a statement about what it costs; supply a WCET to make the verdict \
                  mean what it says.",
                 boundaries_without_wcet.join(", "),
-                if boundaries_without_wcet.len() == 1 { "ies" } else { "y" },
+                if boundaries_without_wcet.len() == 1 {
+                    "ies"
+                } else {
+                    "y"
+                },
             )
         }
         MapWarning::BandTooNarrow {

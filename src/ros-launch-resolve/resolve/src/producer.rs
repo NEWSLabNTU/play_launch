@@ -38,9 +38,10 @@ pub fn set(tool: impl Into<String>, version: impl Into<String>) {
 
 /// The `(tool, version)` pair to stamp into `meta.resolver`.
 pub fn get() -> (String, String) {
-    PRODUCER.get().cloned().unwrap_or_else(|| {
-        (DEFAULT_TOOL.to_string(), DEFAULT_VERSION.to_string())
-    })
+    PRODUCER
+        .get()
+        .cloned()
+        .unwrap_or_else(|| (DEFAULT_TOOL.to_string(), DEFAULT_VERSION.to_string()))
 }
 
 #[cfg(test)]
