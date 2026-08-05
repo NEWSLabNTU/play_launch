@@ -18,6 +18,11 @@ nodes:
       sample:
         trigger: { timer: { rate_hz: 50 } }
         output: [scan]
+        # The boundary's own execution cost. Without it the feasibility check
+        # counts this hop as ZERO and says so ("feasible ON INCOMPLETE
+        # EVIDENCE") — the verdict would be optimistic by an unknown amount.
+        # 2 ms matches the node's burn_ms in bringup.launch.xml.
+        max_latency_ms: 2
 
   obstacle_detector:
     criticality: high

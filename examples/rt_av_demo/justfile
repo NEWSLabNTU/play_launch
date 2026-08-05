@@ -9,6 +9,10 @@
 # Without CAP_SYS_NICE on play_launch_rt_helper the RT-on run is identical to
 # the RT-off one and the comparison is meaningless. `just ab` refuses to run
 # rather than print a table showing no difference.
+#
+# NOTE: a file capability lives on the inode, so ANY rebuild of play_launch
+# replaces play_launch_rt_helper and silently drops it. Re-run `just setcap`
+# after every build, not just the first one.
 
 repo := justfile_directory() / "../.."
 play_launch := repo / "install/play_launch/lib/play_launch/play_launch"

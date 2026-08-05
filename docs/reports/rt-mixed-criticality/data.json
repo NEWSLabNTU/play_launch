@@ -1,0 +1,39 @@
+{
+  "stats": {
+    "off": {
+      "p50": 46.958,
+      "p99": 94.181,
+      "max": 115.955,
+      "missed": 272,
+      "total": 1013,
+      "miss_pct": 26.850937808489636
+    },
+    "on": {
+      "p50": 13.193,
+      "p99": 13.345,
+      "max": 13.411,
+      "missed": 0,
+      "total": 1039,
+      "miss_pct": 0.0
+    }
+  },
+  "throughput": {
+    "off": {
+      "safety": 3660,
+      "planning": 253,
+      "perception": 57,
+      "telemetry": 736,
+      "tools": 2979
+    },
+    "on": {
+      "safety": 3735,
+      "planning": 252,
+      "perception": 57,
+      "telemetry": 462,
+      "tools": 2206
+    }
+  },
+  "deadline_ms": 60.0,
+  "warmup": 200,
+  "window_ms": 400
+}

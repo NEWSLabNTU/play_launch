@@ -380,6 +380,17 @@ fn flatten_to_one_tier_per_node(table: &ResolvedTierTable) -> ResolvedTierTable 
 /// the plan (including the default tier) is a warning, not an error (the
 /// spec may simply be ahead of the launch tree, e.g. authored for a node
 /// that was since removed).
+/// Scheduling classes for which `sched_setscheduler(2)` requires
+/// `sched_priority == 0`. Any other value is not merely ignored — the syscall
+/// rejects it with `EINVAL` — so a tier carrying both a non-RT class and a
+/// non-zero priority describes a state the kernel cannot be in.
+fn is_explicitly_non_rt(sched_class: Option<&str>) -> bool {
+    matches!(
+        sched_class,
+        Some("SCHED_OTHER") | Some("SCHED_BATCH") | Some("SCHED_IDLE")
+    )
+}
+
 fn apply_overrides(
     table: &mut ResolvedTierTable,
     overrides: &std::collections::BTreeMap<
@@ -412,8 +423,49 @@ fn apply_overrides(
             }
             if let Some(sc) = &posix.sched_class {
                 tier.sched_class = Some(sc.clone());
+                // Demoting a tier out of the RT classes must drop its priority
+                // with it. The mapper may already have derived an RT priority
+                // for this node from its rate/deadline; leaving that in place
+                // produces a tier like `SCHED_OTHER 10`, which the kernel
+                // cannot represent — `sched_setscheduler(2)` requires priority
+                // 0 for SCHED_OTHER/BATCH/IDLE. The apply path ignores the
+                // priority for those classes, so the process ends up at 0 and
+                // every report saying otherwise is wrong. An explicit
+                // `priority:` in the same override still wins, below.
+                if is_explicitly_non_rt(Some(sc)) {
+                    match posix.priority {
+                        None => tier.priority = 0,
+                        Some(p) if p != 0 => {
+                            warnings.push(format!(
+                                "scheduling: override for `{selector}` sets {sc} with priority \
+                                 {p}, but the kernel requires priority 0 for {sc} — the priority \
+                                 will not take effect"
+                            ));
+                        }
+                        Some(_) => {}
+                    }
+                }
             }
-            if tier.class.is_none() {
+            // An override marks a tier as deliberately managed, which for an
+            // RT class means `real_time`. Do NOT apply that label to a tier
+            // the same override just pinned to SCHED_OTHER/BATCH/IDLE — it
+            // reaches the user in `system_model.yaml`'s execution layer, where
+            // `class: real_time` next to `sched_class: SCHED_OTHER` reads as a
+            // contradiction. Nothing branches on `real_time` (only
+            // `time_triggered` is ever tested), so leaving it unset is inert.
+            if is_explicitly_non_rt(tier.sched_class.as_deref()) {
+                // The mapper already labelled this tier `real_time` before the
+                // override demoted it to SCHED_OTHER/BATCH/IDLE. Leaving the
+                // label would ship `class: real_time` beside
+                // `sched_class: SCHED_OTHER` in `system_model.yaml`'s execution
+                // layer — a self-contradicting pair. Only that one label is
+                // cleared: `time_triggered` carries v1 semantics this override
+                // does not speak to. Nothing branches on `real_time`, so this
+                // is inert beyond the artifact.
+                if tier.class.as_deref() == Some("real_time") {
+                    tier.class = None;
+                }
+            } else if tier.class.is_none() {
                 tier.class = Some("real_time".to_string());
             }
             if let Some(member) = tier.members.first() {
@@ -473,11 +525,17 @@ fn tiers_push_override(
     sched_class: Option<String>,
     core: Option<u32>,
 ) {
+    // `real_time` describes a tier the override promoted INTO the RT classes.
+    // An override that names SCHED_OTHER/BATCH/IDLE is doing the opposite —
+    // pinning a node out of them — and labelling that `real_time` ships a
+    // self-contradicting pair (`class: real_time` beside
+    // `sched_class: SCHED_OTHER`) into `system_model.yaml`'s execution layer.
+    let class = (!is_explicitly_non_rt(sched_class.as_deref())).then(|| "real_time".to_string());
     table.tiers.push(ResolvedTier {
         name: node_fqn.clone(),
         priority,
         sched_class,
-        class: Some("real_time".to_string()),
+        class,
         core,
         members: vec![node_fqn],
         ..Default::default()
@@ -676,7 +734,33 @@ pub fn derive_sched_plan(
     if let PlatformResources::Posix(res) = &file.resources
         && let Some(band) = res.rt_priority_band
     {
-        let violations = band_violations(&plan, &band);
+        // `band_violations` compares every tier's priority against the band
+        // without looking at its scheduling class. `rt_priority_band` is a
+        // REAL-TIME priority range, and a SCHED_OTHER tier necessarily carries
+        // priority 0 — `sched_setscheduler(2)` requires `sched_priority == 0`
+        // for SCHED_OTHER/BATCH/IDLE. Passing those to the band check reported
+        // every deliberately-best-effort node as a violation and then "clamped"
+        // it into the RT band, so `check --explain` printed `SCHED_OTHER 10`:
+        // a combination Linux cannot represent, and not what gets applied
+        // (`sched::apply_to_tid` ignores priority for SCHED_OTHER, so the
+        // kernel ends up at 0). In strict mode the same unfiltered list is
+        // fatal, which would reject a valid platform file for pinning
+        // best-effort work out of the RT band — exactly what `overrides` are
+        // for.
+        //
+        // Only explicitly non-RT classes are skipped. A tier with no
+        // `sched_class` keeps its band check: absent an explicit class the
+        // intent is unknown, and silently exempting it would hide real
+        // violations.
+        let violations: Vec<_> = band_violations(&plan, &band)
+            .into_iter()
+            .filter(|v| {
+                plan.tiers
+                    .iter()
+                    .find(|t| t.name == v.tier)
+                    .is_none_or(|t| !is_explicitly_non_rt(t.sched_class.as_deref()))
+            })
+            .collect();
         if !violations.is_empty() {
             match mode {
                 SchedApplyMode::Strict => {
@@ -2116,6 +2200,52 @@ overrides:
             let err = derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Strict)
                 .expect_err("strict mode must error on band violation");
             assert!(err.to_string().contains("band"), "{err}");
+        });
+    }
+
+    /// A node pinned to SCHED_OTHER is not a band violation.
+    ///
+    /// `sched_setscheduler(2)` requires `sched_priority == 0` for
+    /// SCHED_OTHER, so such a tier always sits below any RT band. Treating
+    /// that as a violation clamped it INTO the band, making `check --explain`
+    /// print `SCHED_OTHER 10` — a combination Linux cannot represent and not
+    /// what gets applied — and made strict mode reject a platform file for
+    /// doing exactly what `overrides` exist to do.
+    #[test]
+    fn derive_sched_other_override_is_not_a_band_violation() {
+        let dump = dump_two_plain_nodes();
+        let index = index_with_rates();
+        let yaml = "\
+target: posix
+mapper: rate_monotonic
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+overrides:
+  slow_node: { sched_class: SCHED_OTHER }
+";
+        with_temp_file("yaml", yaml, |path| {
+            let derived =
+                derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
+                    .expect("SCHED_OTHER override must not be a violation");
+            let slow = derived
+                .plan
+                .tiers
+                .iter()
+                .find(|t| t.members == vec!["/slow_node".to_string()])
+                .unwrap();
+            assert_eq!(
+                slow.priority, 0,
+                "priority must stay 0 — the kernel rejects anything else for SCHED_OTHER"
+            );
+            assert!(
+                !derived.warnings.iter().any(|w| w.contains("clamping")),
+                "no clamp warning expected, got {:?}",
+                derived.warnings
+            );
+
+            // And strict must not reject it either.
+            derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Strict)
+                .expect("strict mode must accept a best-effort override");
         });
     }
 

@@ -1,0 +1,6 @@
+# The PDF is a build product; the figures and data.json are not — they are the
+# archived experiment, and committing them means this report compiles without
+# access to the machine it was measured on.
+report.pdf
+# Review renders produced by `typst compile report.typ page-{n}.png`.
+page-*.png

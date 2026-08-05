@@ -1,0 +1,203 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 288" font-family="sans-serif">
+<line x1="170.0" x2="170.0" y1="18" y2="267" stroke="#e0dcd6"/>
+<text x="170.0" y="286" font-size="11" fill="#a8a29e" text-anchor="middle">0 ms</text>
+<line x1="347.5" x2="347.5" y1="18" y2="267" stroke="#e0dcd6"/>
+<text x="347.5" y="286" font-size="11" fill="#a8a29e" text-anchor="middle">100 ms</text>
+<line x1="525.0" x2="525.0" y1="18" y2="267" stroke="#e0dcd6"/>
+<text x="525.0" y="286" font-size="11" fill="#a8a29e" text-anchor="middle">200 ms</text>
+<line x1="702.5" x2="702.5" y1="18" y2="267" stroke="#e0dcd6"/>
+<text x="702.5" y="286" font-size="11" fill="#a8a29e" text-anchor="middle">300 ms</text>
+<line x1="880.0" x2="880.0" y1="18" y2="267" stroke="#e0dcd6"/>
+<text x="880.0" y="286" font-size="11" fill="#a8a29e" text-anchor="middle">400 ms</text>
+<text x="170" y="17" font-size="11" fill="#c2410c" font-weight="bold" letter-spacing="1">RT OFF</text>
+<text x="160" y="36" font-size="11" fill="#c2410c" font-weight="bold" text-anchor="end">lidar_driver</text>
+<rect x="170" y="26" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="189.8" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="207.6" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="264.3" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="289.1" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="313.0" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="349.6" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="394.4" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="432.9" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="473.8" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="496.8" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="534.1" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="576.1" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="619.3" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="658.3" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="676.3" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="720.7" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="754.2" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="793.3" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="825.4" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="858.5" y="26" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<text x="160" y="54" font-size="11" fill="#c2410c" font-weight="bold" text-anchor="end">obstacle_detector</text>
+<rect x="170" y="44" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="190.5" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="210.4" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="264.5" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="304.2" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="328.2" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="358.3" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="385.3" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="438.6" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="479.2" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="501.1" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="545.3" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="603.3" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="658.6" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="692.3" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="722.4" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="754.4" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="801.3" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="841.5" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="867.8" y="44" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<text x="160" y="72" font-size="11" fill="#c2410c" font-weight="bold" text-anchor="end">brake_controller</text>
+<rect x="170" y="62" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="190.8" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="196.2" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="274.9" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="314.0" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="328.2" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="344.5" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="385.4" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="390.8" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="470.2" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="490.5" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="545.1" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="592.9" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="609.7" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="683.2" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="708.0" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="754.3" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="759.8" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="841.5" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<rect x="846.9" y="62" width="2.4" height="13" rx="1" fill="#c2410c"/>
+<text x="160" y="90" font-size="11" fill="#a8a29e" font-weight="normal" text-anchor="end">path_planner</text>
+<rect x="170" y="80" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="309.3" y="80" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="479.0" y="80" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="658.5" y="80" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="835.2" y="80" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<text x="160" y="108" font-size="11" fill="#a8a29e" font-weight="normal" text-anchor="end">telemetry_logger</text>
+<rect x="170" y="98" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="210.4" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="254.9" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="344.5" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="423.2" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="488.5" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="534.3" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="584.4" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="629.0" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="708.1" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="784.3" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="858.6" y="98" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<text x="160" y="126" font-size="11" fill="#a8a29e" font-weight="normal" text-anchor="end">rosbag_recorder</text>
+<rect x="170" y="116" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="221.8" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="309.3" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="344.3" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="385.2" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="486.1" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="512.8" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="572.5" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="647.9" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="692.3" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="793.3" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="841.2" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="874.6" y="116" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<text x="170" y="155" font-size="11" fill="#0f766e" font-weight="bold" letter-spacing="1">RT ON</text>
+<text x="160" y="174" font-size="11" fill="#c2410c" font-weight="bold" text-anchor="end">lidar_driver</text>
+<rect x="170" y="164" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="186.9" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="222.4" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="257.9" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="293.4" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="328.9" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="364.4" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="399.9" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="435.4" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="470.9" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="506.4" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="541.9" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="577.4" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="612.9" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="648.4" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="683.9" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="719.4" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="754.9" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="790.4" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="825.9" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="861.4" y="164" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<text x="160" y="192" font-size="11" fill="#c2410c" font-weight="bold" text-anchor="end">obstacle_detector</text>
+<rect x="170" y="182" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="201.2" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="236.7" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="272.3" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="307.7" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="343.3" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="378.7" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="414.3" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="449.7" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="485.3" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="520.8" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="556.2" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="591.7" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="627.2" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="662.7" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="698.2" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="733.7" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="769.3" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="804.7" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="840.2" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="875.7" y="182" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<text x="160" y="210" font-size="11" fill="#c2410c" font-weight="bold" text-anchor="end">brake_controller</text>
+<rect x="170" y="200" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="171.3" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="206.8" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="242.2" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="277.8" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="313.2" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="348.8" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="384.3" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="419.8" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="455.2" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="490.8" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="526.4" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="561.7" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="597.2" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="632.8" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="668.2" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="703.7" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="739.2" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="774.8" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="810.2" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<rect x="845.8" y="200" width="2.4" height="13" rx="1" fill="#0f766e"/>
+<text x="160" y="228" font-size="11" fill="#a8a29e" font-weight="normal" text-anchor="end">path_planner</text>
+<rect x="170" y="218" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="215.5" y="218" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="392.8" y="218" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="572.3" y="218" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="748.0" y="218" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<text x="160" y="246" font-size="11" fill="#a8a29e" font-weight="normal" text-anchor="end">telemetry_logger</text>
+<rect x="170" y="236" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="178.2" y="236" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="242.4" y="236" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="323.8" y="236" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="426.9" y="236" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="497.7" y="236" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="572.4" y="236" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="712.5" y="236" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="781.7" y="236" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<text x="160" y="264" font-size="11" fill="#a8a29e" font-weight="normal" text-anchor="end">rosbag_recorder</text>
+<rect x="170" y="254" width="710" height="13" rx="2" fill="#e0dcd6" opacity="0.5"/>
+<rect x="278.2" y="254" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="420.1" y="254" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="499.5" y="254" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="535.4" y="254" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="607.3" y="254" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="633.3" y="254" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="742.7" y="254" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+<rect x="849.2" y="254" width="2.4" height="13" rx="1" fill="#a8a29e"/>
+</svg>

@@ -1,0 +1,40 @@
+# Build the mixed-criticality RT report.
+#
+#   just report    regenerate figures from the last `just ab` run, then compile
+#   just pdf       compile only (figures and data.json as they stand)
+#   just watch     recompile on edit
+#
+# The figures and every number in the prose are generated from the run
+# directories by scripts/make_figures.py. Editing a number in report.typ is
+# therefore not possible — which is the point: a stale sentence cannot survive
+# beside a fresh figure.
+
+demo := justfile_directory() / "../../../examples/rt_av_demo"
+
+default:
+    @just --list
+
+# Regenerate figures + data from the demo's last A/B run, then compile.
+report: figures pdf
+
+# Pull figures and numbers out of examples/rt_av_demo/out/.
+figures:
+    #!/usr/bin/env bash
+    set -e
+    if [ ! -d "{{ demo }}/out/trace-on" ]; then
+        echo "No run to read. Produce one first:" >&2
+        echo "  cd {{ demo }} && just ab" >&2
+        exit 1
+    fi
+    python3 "{{ justfile_directory() }}/scripts/make_figures.py" \
+        "{{ demo }}/out" "{{ justfile_directory() }}"
+
+pdf:
+    cd "{{ justfile_directory() }}" && typst compile report.typ report.pdf
+
+watch:
+    cd "{{ justfile_directory() }}" && typst watch report.typ report.pdf
+
+clean:
+    rm -f "{{ justfile_directory() }}/report.pdf"
+    rm -rf "{{ justfile_directory() }}/figures"

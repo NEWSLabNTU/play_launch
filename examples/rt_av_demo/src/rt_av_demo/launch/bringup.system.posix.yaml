@@ -9,16 +9,20 @@ mapper: chain_aware
 resources:
   rt_priority_band: { min: 10, max: 40 }
 
-  # THE experiment's precondition. This machine has 32 cores; six nodes on 32
-  # cores never contend, so RT-on and RT-off would produce identical timelines
-  # and the honest conclusion would be "scheduling changed nothing". Confining
-  # everything to two CPUs puts ~4 CPU-hungry threads on 2 cores, which is
-  # what makes priority decide anything at all.
+  # THE experiment's precondition. This machine has 32 logical CPUs; ten nodes
+  # on 32 CPUs never contend, so RT-on and RT-off would produce identical
+  # timelines and the honest conclusion would be "scheduling changed nothing".
+  #
+  # ONE CPU, and that is measured rather than assumed. On two the safety chain
+  # missed zero deadlines at every load tried, up to 60 ms best-effort burns:
+  # CFS sleeper fairness serves a low-duty-cycle chain promptly while a spare
+  # CPU exists. Only on a single runqueue does priority decide anything.
   #
   # Note this declares intent to the mapper; it is not kernel isolation
   # (`/sys/devices/system/cpu/isolated` is empty here). The justfile's
-  # `taskset` is what actually confines the processes.
-  isolated_cpus: [2, 3]
+  # `taskset` is what actually confines the processes, and the two must agree
+  # — they did not until 2026-08-05, when this still said [2, 3].
+  isolated_cpus: [2]
 
 overrides:
   # Best-effort work is pinned OUT of the real-time band explicitly rather

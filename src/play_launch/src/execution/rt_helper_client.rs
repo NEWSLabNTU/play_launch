@@ -21,7 +21,7 @@
 use eyre::{Context, Result};
 use play_launch::{
     ipc::{SchedRequest, SchedResponse, decode_message, encode_message},
-    sched::{AppliedTier, SchedApplyError},
+    sched::{AppliedTier, SchedApplyError, SchedPolicy},
 };
 use std::{os::unix::io::FromRawFd, path::PathBuf, process::Stdio, time::Duration};
 use tokio::{
@@ -29,7 +29,7 @@ use tokio::{
     process::{Child, Command},
     sync::{mpsc, oneshot},
 };
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Delay after spawning helper to let it initialize before first ping
 const HELPER_INIT_DELAY: Duration = Duration::from_millis(100);
@@ -358,15 +358,66 @@ impl SchedHelper {
 /// composable-on-LOADED) so the helper-vs-direct choice isn't triplicated.
 /// Each site's existing Off/Warn/Strict semantics are unchanged by this —
 /// this function only decides HOW to apply, not WHETHER to.
+/// Spell a policy the way every other surface does.
+///
+/// `check --explain`, `system_model.yaml` and `chrt -p` all print
+/// `SCHED_FIFO`; a log line reading `Fifo` (the `Debug` spelling) is one more
+/// thing to translate when cross-checking them against each other, which is
+/// exactly what someone reads these lines to do.
+fn policy_name(policy: SchedPolicy) -> &'static str {
+    match policy {
+        SchedPolicy::Fifo => "SCHED_FIFO",
+        SchedPolicy::Rr => "SCHED_RR",
+        SchedPolicy::Other => "SCHED_OTHER",
+    }
+}
+
 pub async fn apply_sched(
     helper: Option<&SchedHelper>,
     pid: u32,
     tier: &AppliedTier,
 ) -> Result<(), SchedApplyError> {
-    match helper {
+    let result = match helper {
         Some(h) => h.apply(pid, tier).await,
         None => crate::execution::sched_apply::apply_tier(pid, tier),
+    };
+
+    // Report what was actually applied, not merely that a plan existed.
+    //
+    // Until this existed, `--sched-apply off` and `--sched-apply strict` runs
+    // produced byte-identical scheduling logs: play_launch logged the derived
+    // plan either way and never logged the application, so the only way to
+    // tell whether real-time scheduling took effect was `chrt -p` against a
+    // live process. A run that silently applied nothing looked exactly like
+    // one that worked.
+    //
+    // Real-time is `info!` because "this process is now SCHED_FIFO at
+    // priority N on CPU M" is the outcome the user asked for and cannot
+    // otherwise observe. Best-effort stays `debug!` — SCHED_OTHER at
+    // priority 0 is what every process already gets, so logging it for each
+    // node would be noise that buries the RT lines.
+    if result.is_ok() {
+        let core = tier
+            .core
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        match tier.policy {
+            SchedPolicy::Fifo | SchedPolicy::Rr => info!(
+                "sched: pid {} -> {} priority {} cpu {} (tier '{}')",
+                pid,
+                policy_name(tier.policy),
+                tier.priority,
+                core,
+                tier.tier_name
+            ),
+            SchedPolicy::Other => debug!(
+                "sched: pid {} -> SCHED_OTHER cpu {} (tier '{}')",
+                pid, core, tier.tier_name
+            ),
+        }
     }
+
+    result
 }
 
 /// Find the helper binary with fallback chain:
@@ -455,6 +506,16 @@ fn create_pipe() -> Result<(std::os::unix::io::RawFd, std::os::unix::io::RawFd)>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The apply log is read by cross-checking it against `check --explain`,
+    /// `system_model.yaml` and `chrt -p`, all of which spell policies
+    /// `SCHED_*`. The `Debug` spelling (`Fifo`) would not match any of them.
+    #[test]
+    fn policy_names_match_the_kernel_spelling() {
+        assert_eq!(policy_name(SchedPolicy::Fifo), "SCHED_FIFO");
+        assert_eq!(policy_name(SchedPolicy::Rr), "SCHED_RR");
+        assert_eq!(policy_name(SchedPolicy::Other), "SCHED_OTHER");
+    }
 
     #[test]
     fn test_create_pipe() {
