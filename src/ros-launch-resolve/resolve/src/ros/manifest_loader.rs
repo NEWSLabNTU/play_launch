@@ -59,30 +59,44 @@ pub struct ContractSources {
 ///
 /// First existing of, in order (no cross-root merging):
 /// 1. `explicit` (the `--contracts <dir>` flag) — when given, the rest are
-///    not consulted, and it's returned unconditionally (even if the
-///    directory doesn't exist yet — matches the pre-41.3 behavior where a
-///    typo'd `--contracts` path simply resolves no files rather than
-///    silently falling back to a standard location).
-/// 2. `$PLAY_LAUNCH_CONTRACTS`
+///    not consulted. It MUST exist: naming a directory that is not there is
+///    a user error, and the previous behaviour of accepting it silently
+///    meant a typo produced "0 overlay, 1 provider" and exit 0, so a CI gate
+///    reported success having validated against the vendor's provider
+///    contract rather than the overlay it was told to use. `--sched`
+///    already errors on a missing explicit path; this matches it.
+/// 2. `$PLAY_LAUNCH_CONTRACTS` — skipped when it does not name a directory.
+///    Deliberately lenient, unlike `--contracts`: it is often exported
+///    globally in a shell profile, so a machine without that directory must
+///    not fail every invocation. The flag is per-command and unambiguous;
+///    the variable is ambient.
 /// 3. `$XDG_CONFIG_HOME/play_launch/contracts` (default
 ///    `~/.config/play_launch/contracts`, when `XDG_CONFIG_HOME` is unset)
 /// 4. `/etc/play_launch/contracts`
 ///
-/// Candidates 2-4 must exist (`is_dir()`) to be selected; candidate 1 always
-/// wins when present regardless of existence. Returns `None` when nothing
-/// resolves — both contract and platform-file overlay channels are then
-/// disabled.
-pub fn discover_overlay_root(explicit: Option<&Path>) -> Option<PathBuf> {
+/// Candidates 3-4 are ambient discovery: they are skipped when absent, which
+/// is the point of them. Returns `Ok(None)` when nothing resolves — both the
+/// contract and platform-file overlay channels are then disabled.
+pub fn discover_overlay_root(explicit: Option<&Path>) -> eyre::Result<Option<PathBuf>> {
     if let Some(p) = explicit {
+        if !p.is_dir() {
+            return Err(eyre::eyre!(
+                "--contracts {} is not a directory.\n\
+                 \n\
+                 The overlay root must exist. Create it, or drop --contracts to \
+                 use the provider contracts shipped next to the launch file.",
+                p.display()
+            ));
+        }
         debug!("overlay root: explicit --contracts {}", p.display());
-        return Some(p.to_path_buf());
+        return Ok(Some(p.to_path_buf()));
     }
 
     if let Ok(v) = std::env::var("PLAY_LAUNCH_CONTRACTS") {
         let p = PathBuf::from(v);
         if p.is_dir() {
             debug!("overlay root: $PLAY_LAUNCH_CONTRACTS {}", p.display());
-            return Some(p);
+            return Ok(Some(p));
         }
     }
 
@@ -101,18 +115,18 @@ pub fn discover_overlay_root(explicit: Option<&Path>) -> Option<PathBuf> {
         let p = base.join("play_launch").join("contracts");
         if p.is_dir() {
             debug!("overlay root: XDG_CONFIG_HOME {}", p.display());
-            return Some(p);
+            return Ok(Some(p));
         }
     }
 
     let etc = PathBuf::from("/etc/play_launch/contracts");
     if etc.is_dir() {
         debug!("overlay root: /etc {}", etc.display());
-        return Some(etc);
+        return Ok(Some(etc));
     }
 
     debug!("overlay root: none of the standard locations exist (no overlay)");
-    None
+    Ok(None)
 }
 
 /// A loaded and resolved manifest bound to a specific scope.
@@ -3600,21 +3614,46 @@ mod tests {
     }
 
     #[test]
-    fn test_discover_overlay_root_explicit_always_wins() {
+    fn test_discover_overlay_root_explicit_wins_over_other_channels() {
         let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
-        // Explicit path returned unconditionally, even if it doesn't exist
-        // and even with other channels present.
         let tmp = tempfile::TempDir::new().unwrap();
         let env_dir = tmp.path().join("env_root");
         std::fs::create_dir_all(&env_dir).unwrap();
         let _env = EnvVarRestore::set("PLAY_LAUNCH_CONTRACTS", &env_dir);
 
-        let explicit = tmp.path().join("does_not_exist");
+        let explicit = tmp.path().join("explicit_root");
+        std::fs::create_dir_all(&explicit).unwrap();
         assert_eq!(
-            discover_overlay_root(Some(&explicit)),
+            discover_overlay_root(Some(&explicit)).unwrap(),
             Some(explicit.clone())
         );
     }
+
+    /// A `--contracts` path that does not exist is a user error, not a
+    /// reason to quietly use something else.
+    ///
+    /// It used to be accepted unconditionally, so the overlay simply resolved
+    /// no files and the provider sidecar supplied the contract instead:
+    /// "0 overlay, 1 provider", exit 0. A CI gate would report success having
+    /// validated against the vendor's contract rather than the overlay it was
+    /// told to use. `--sched` already hard-errors on a missing explicit path.
+    #[test]
+    fn test_discover_overlay_root_explicit_must_exist() {
+        let _lock = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        // A valid fallback is present, to prove we do not silently take it.
+        let env_dir = tmp.path().join("env_root");
+        std::fs::create_dir_all(&env_dir).unwrap();
+        let _env = EnvVarRestore::set("PLAY_LAUNCH_CONTRACTS", &env_dir);
+
+        let missing = tmp.path().join("does_not_exist");
+        let err = discover_overlay_root(Some(&missing)).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("is not a directory"), "{msg}");
+        assert!(msg.contains("does_not_exist"), "names the path: {msg}");
+    }
+
+
 
     #[test]
     fn test_discover_overlay_root_env_var_wins_over_xdg() {
@@ -3628,7 +3667,7 @@ mod tests {
         let _env = EnvVarRestore::set("PLAY_LAUNCH_CONTRACTS", &env_dir);
         let _xdg = EnvVarRestore::set("XDG_CONFIG_HOME", &tmp.path().join("xdg_root"));
 
-        assert_eq!(discover_overlay_root(None), Some(env_dir));
+        assert_eq!(discover_overlay_root(None).unwrap(), Some(env_dir));
     }
 
     #[test]
@@ -3642,7 +3681,7 @@ mod tests {
         let _env = EnvVarRestore::unset("PLAY_LAUNCH_CONTRACTS");
         let _xdg = EnvVarRestore::set("XDG_CONFIG_HOME", &xdg_base);
 
-        assert_eq!(discover_overlay_root(None), Some(xdg_dir));
+        assert_eq!(discover_overlay_root(None).unwrap(), Some(xdg_dir));
     }
 
     #[test]
@@ -3658,7 +3697,7 @@ mod tests {
         let _env = EnvVarRestore::set("PLAY_LAUNCH_CONTRACTS", &tmp.path().join("nope"));
         let _xdg = EnvVarRestore::set("XDG_CONFIG_HOME", &xdg_base);
 
-        assert_eq!(discover_overlay_root(None), Some(xdg_dir));
+        assert_eq!(discover_overlay_root(None).unwrap(), Some(xdg_dir));
     }
 
     #[test]
@@ -3675,7 +3714,7 @@ mod tests {
         let _xdg = EnvVarRestore::set("XDG_CONFIG_HOME", std::path::Path::new(""));
         let _home = EnvVarRestore::set("HOME", &home);
 
-        assert_eq!(discover_overlay_root(None), Some(default_xdg_dir));
+        assert_eq!(discover_overlay_root(None).unwrap(), Some(default_xdg_dir));
     }
 
     #[test]
@@ -3696,6 +3735,6 @@ mod tests {
             return;
         }
 
-        assert_eq!(discover_overlay_root(None), None);
+        assert_eq!(discover_overlay_root(None).unwrap(), None);
     }
 }

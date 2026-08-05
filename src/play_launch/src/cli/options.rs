@@ -891,13 +891,15 @@ impl CommonOptions {
     /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
     /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
     /// `/etc/play_launch/contracts` — first existing wins.
-    pub fn contract_sources(&self) -> ros_launch_resolve::ros::manifest_loader::ContractSources {
-        ros_launch_resolve::ros::manifest_loader::ContractSources {
+    pub fn contract_sources(
+        &self,
+    ) -> eyre::Result<ros_launch_resolve::ros::manifest_loader::ContractSources> {
+        Ok(ros_launch_resolve::ros::manifest_loader::ContractSources {
             overlay: ros_launch_resolve::ros::manifest_loader::discover_overlay_root(
                 self.contract_opts.contracts.as_deref(),
-            ),
+            )?,
             provider: !self.contract_opts.no_provider_contracts,
-        }
+        })
     }
 }
 

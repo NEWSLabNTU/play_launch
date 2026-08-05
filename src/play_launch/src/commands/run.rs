@@ -207,7 +207,7 @@ async fn run_direct(
     // discovery and the `--no-provider-contracts` gate
     // (`CommonOptions::contract_sources`) are shared with contract
     // resolution regardless.
-    let sched_sources = common.contract_sources();
+    let sched_sources = common.contract_sources()?;
     let resolved_sched = ros_launch_resolve::ros::sched_loader::resolve_platform_file(
         launch_dump,
         common.sched_opts.sched.as_deref(),

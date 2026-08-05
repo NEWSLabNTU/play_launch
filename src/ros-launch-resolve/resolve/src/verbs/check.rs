@@ -66,11 +66,11 @@ impl CheckInputs {
     /// isn't given: `$PLAY_LAUNCH_CONTRACTS`, then
     /// `$XDG_CONFIG_HOME/play_launch/contracts`, then
     /// `/etc/play_launch/contracts` — first existing wins.
-    fn contract_sources(&self) -> manifest_loader::ContractSources {
-        manifest_loader::ContractSources {
-            overlay: manifest_loader::discover_overlay_root(self.contracts.as_deref()),
+    fn contract_sources(&self) -> eyre::Result<manifest_loader::ContractSources> {
+        Ok(manifest_loader::ContractSources {
+            overlay: manifest_loader::discover_overlay_root(self.contracts.as_deref())?,
             provider: !self.no_provider_contracts,
-        }
+        })
     }
 }
 
@@ -112,7 +112,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // Load and check manifests: overlay > provider sidecar. The provider
     // channel is on by default, so `check` works with no manifest flags at
     // all whenever the launch file ships sidecar contracts.
-    let sources = inputs.contract_sources();
+    let sources = inputs.contract_sources()?;
     let index = manifest_loader::load_manifests(&dump, &sources)?;
 
     // Export the declared causal graph (Phase 42.1). This is an export, not

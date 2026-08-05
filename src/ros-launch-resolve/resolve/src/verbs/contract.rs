@@ -63,7 +63,7 @@ pub fn eject(inputs: ContractEjectInputs) -> Result<()> {
     // discovery `check --contracts` uses, erroring if nothing exists yet.
     let overlay_root: PathBuf = match &inputs.into {
         Some(p) => p.clone(),
-        None => manifest_loader::discover_overlay_root(None).ok_or_else(|| {
+        None => manifest_loader::discover_overlay_root(None)?.ok_or_else(|| {
             eyre!(
                 "no overlay root found and no --into given; pass --into <dir> \
                  (e.g. --into ~/.config/play_launch/contracts) or set $PLAY_LAUNCH_CONTRACTS"
