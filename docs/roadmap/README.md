@@ -183,7 +183,23 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   [phase-55-launch-toolchain-consolidation.md](./phase-55-launch-toolchain-consolidation.md).
   Design: [docs/design/launch-toolchain-topology.md](../design/launch-toolchain-topology.md).
   Counterpart: nano-ros phase-332.
-- **Phase 56** — ✅ CLI verb reshape for 0.9.0: `check` → `--check` + a layer-2
-  verb, `replay` → `up`, `resolve` removed. Removed verbs error naming their
-  replacement; hidden variants delete at 1.0.0.
+- **Phase 56** — ✅ CLI verb reshape for 0.9.0: `replay` → `up`; the removed
+  verb errors naming its replacement, and the hidden variant deletes at 1.0.0.
+  The wave that moved `resolve`/`dump`/`check`/`plot`/`contract` onto
+  `ros-launch-resolve` was **reverted** (Phase 56 amendment, D2/D5) — it left
+  no `play_launch` verb able to write the `system_model.yaml` that `up`
+  requires, and pointed users at a developer binary they do not have.
   [phase-56-cli-verb-reshape.md](./phase-56-cli-verb-reshape.md).
+- **Phase 57** — ✅ mixed-criticality RT demo + Chrome timeline export. Proves
+  the RT apply path does something: on one CPU the safety chain goes from
+  272/1013 frames past its 60 ms deadline to 0/1039 (p99 106.6 → 13.3 ms), at
+  a 26–37% cost to best-effort throughput. Verified against live processes with
+  `chrt -p`, because both runs' logs were byte-identical until this phase added
+  apply logging. Workspace: `examples/rt_av_demo/`. Report:
+  [docs/reports/rt-mixed-criticality/](../reports/rt-mixed-criticality/).
+  [phase-57-rt-mixed-criticality-demo.md](./phase-57-rt-mixed-criticality-demo.md).
+- **Phase 58** — 📋 deriving scheduling from contracts: cost as a first-class
+  fact (`exec_ms`, today conflated with `max_latency_ms`), then deadline
+  decomposition and `SCHED_DEADLINE` reservations. Study:
+  [docs/research/scheduling-derivation-prior-art.md](../research/scheduling-derivation-prior-art.md).
+  [phase-58-scheduling-derivation.md](./phase-58-scheduling-derivation.md).
