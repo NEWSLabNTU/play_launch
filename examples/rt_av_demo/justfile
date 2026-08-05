@@ -202,6 +202,33 @@ _report:
                  f"  just --set launch_args 'tool_burn:=40.0' ab\n"
                  f"or narrow `cpus`.")
 
+    def published(d):
+        """Messages published per node, from the trace. This is what the
+        safety chain's determinism COSTS: priority is zero-sum on a saturated
+        core, so the best-effort nodes get less CPU and publish less. Reporting
+        only the chain would show the benefit and hide the bill."""
+        import json, collections
+        path = f"out/trace-{d}/play_log/latest/interception/trace.json"
+        try:
+            ev = json.load(open(path))
+        except (OSError, ValueError):
+            return None
+        rows = {x["pid"]: x["args"]["name"] for x in ev if x["ph"] == "M"}
+        return collections.Counter(
+            rows[x["pid"]] for x in ev if x.get("cat") == "publish"
+        )
+
+    p_off, p_on = published("off"), published("on")
+    if p_off and p_on:
+        print("published messages, by criticality band:")
+        for band in ("/safety/", "/planning/", "/perception/", "/telemetry/", "/tools/"):
+            a = sum(v for k, v in p_off.items() if k.startswith(band))
+            b = sum(v for k, v in p_on.items() if k.startswith(band))
+            if not a:
+                continue
+            print(f"  {band.strip('/'):12} {a:6} -> {b:6}  ({100*(b-a)/a:+.0f}%)")
+        print()
+
     if r_on[4] < r_off[4]:
         print(f"RT reduced steady-state deadline misses {r_off[4]} -> {r_on[4]} "
               f"(p99 {r_off[2]:.1f}ms -> {r_on[2]:.1f}ms).")

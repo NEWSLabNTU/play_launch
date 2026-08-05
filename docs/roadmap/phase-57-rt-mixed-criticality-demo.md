@@ -156,17 +156,31 @@ run is identical to RT-off and the whole experiment is inconclusive. The
 harness must detect and refuse to report in that case rather than emit a
 comparison showing no difference.
 
-**Status: this prerequisite is unmet on the development host, so the RT-on
-half has never run.** Measured: `ulimit -r` is 0 and `chrt -f 10 true` fails
-with `Operation not permitted`, so `SCHED_FIFO` is unreachable for this user
-by any route. `getcap` on the built helper returns nothing. Everything else in
-this phase is verified end to end — the trace exporter, the workspace, the
-baseline calibration above, and `just ab`'s refusal — but the central claim
-("with `strict` the chain holds its deadline") is **unverified**. `just setcap`
-needs a password and cannot be run unattended.
+## Result (measured 2026-08-05, after `just setcap`)
 
-One consequence worth stating plainly: the 60 ms deadline is an a-priori
-choice, not one calibrated against a measured RT-on distribution. The
-principled version sets the deadline above RT-on p99 and below RT-off p99;
-that requires the capability. If RT-on p99 lands near 60 ms, the deadline
-should be revisited before this demo is used as evidence of anything.
+The claim holds. One core, same binaries, same load, one flag:
+
+| | p50 | p99 | max | missed |
+|---|---|---|---|---|
+| RT off | 47.4 ms | 106.6 ms | 113.1 ms | **287 / 1016** |
+| RT on | 13.1 ms | 13.3 ms | 13.4 ms | **0 / 1039** |
+
+RT-on latency is essentially deterministic, and 13 ms is exactly the chain's
+own work (2 + 8 + 3 ms) — under `SCHED_FIFO` the chain waits for nothing.
+
+Verified against the live processes rather than the log, which does not say
+what it applied: `chrt -p` during an RT-on run reports `SCHED_FIFO` at 38 /
+39 / 40 on lidar_driver / obstacle_detector / brake_controller — matching what
+`just check` derived from the contract — and `SCHED_OTHER` 0 on the
+best-effort nodes, all confined to CPU 2. Both halves' logs are byte-identical
+in their scheduling lines, so **the log is not evidence that scheduling
+applied**; only inspecting the processes is.
+
+What it costs, from the same traces: safety +2%, planning/perception
+unchanged, telemetry **-34%**, tools **-16%**. Priority is zero-sum on a
+saturated core. `just ab` prints this table alongside the latency one — a
+report showing only the chain would advertise the benefit and hide the bill.
+
+The 60 ms deadline, chosen a-priori, turns out to be well placed: 4.5x above
+RT-on p99 and well below RT-off p99. That is now a measured statement rather
+than a guess.
