@@ -337,7 +337,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
 1. **Declare paths with explicit triggers.** Every path that will
    participate in a chain needs an explicit `trigger:` — `timer`,
-   `input`, `once`, or `spontaneous` (§[Path triggers](../../src/ros-launch-manifest/docs/launch-manifest.md#path-triggers-trigger)
+   `input`, `once`, or `spontaneous` (§[Path triggers](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.4/docs/launch-manifest.md#path-triggers-trigger)
    in the manifest format reference):
 
    ```yaml
@@ -359,7 +359,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    top-level, integrator-owned section (root contract or overlay) —
    segments alternate between `{ scope, path }` hops and `{ via: <topic> }`
    connectors; two path segments may never sit adjacent without an
-   explicit `via:` between them (§[Cross-scope chains](../../src/ros-launch-manifest/docs/launch-manifest.md#cross-scope-chains-chains)):
+   explicit `via:` between them (§[Cross-scope chains](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.4/docs/launch-manifest.md#cross-scope-chains-chains)):
 
    ```yaml
    chains:
@@ -382,7 +382,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    ```
 
    Three rules cover a chain end to end (full severities in the [manifest
-   format reference](../../src/ros-launch-manifest/docs/launch-manifest.md#static-validation)):
+   format reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.4/docs/launch-manifest.md#static-validation)):
    `chain-link` (error — every `via:` topic exists, is output by the
    preceding segment, and is consumed by the following one; a `via:`
    landing on a `timer` boundary is consumed through that node's own
@@ -619,7 +619,7 @@ play_launch launch rt_demo bringup.launch.xml --sched system.toml --sched-apply 
 ```
 
 Full schema reference (tiers, placement, binding selectors, validation
-rules): [`src/ros-launch-manifest/docs/scheduling.md`](../../src/ros-launch-manifest/docs/scheduling.md#toml-schema).
+rules): [`ros-launch-manifest/docs/scheduling.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.4/docs/scheduling.md#toml-schema).
 
 **This path is deprecated but fully supported** — it is not going away until
 `nano-ros` migrates to the v2 schema (Phase 41.6, not yet scheduled). New
@@ -649,9 +649,9 @@ here changes existing behavior.
 ## 6. Related documents
 
 - Design of record (v2, derived scheduling): [`docs/superpowers/specs/2026-07-16-rt-config-v2-design.md`](../superpowers/specs/2026-07-16-rt-config-v2-design.md)
-- Spec schema in depth (v1 + v2): [`src/ros-launch-manifest/docs/scheduling.md`](../../src/ros-launch-manifest/docs/scheduling.md)
+- Spec schema in depth (v1 + v2): [`ros-launch-manifest/docs/scheduling.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.4/docs/scheduling.md)
 - Design of record (apply-layer): [`docs/superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md`](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md)
 - Design of record (RT helper, per-TID, capabilities): [`docs/superpowers/specs/2026-07-14-rt-helper-design.md`](../superpowers/specs/2026-07-14-rt-helper-design.md)
 - Design of record (chains, §1.7): [vocabulary v2](../superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md) · [chain-aware mapper](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md)
-- Manifest format reference (triggers, `chains:`, rule severities): [`src/ros-launch-manifest/docs/launch-manifest.md`](../../src/ros-launch-manifest/docs/launch-manifest.md#vocabulary-v2)
+- Manifest format reference (triggers, `chains:`, rule severities): [`ros-launch-manifest/docs/launch-manifest.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.4/docs/launch-manifest.md#vocabulary-v2)
 - Roadmap and implementation history: [`docs/roadmap/phase-38-linux_rt_scheduling.md`](../roadmap/phase-38-linux_rt_scheduling.md), [`docs/roadmap/phase-41-rt_config_v2.md`](../roadmap/phase-41-rt_config_v2.md), [`docs/roadmap/phase-44-vocab_v2_chain_mapper.md`](../roadmap/phase-44-vocab_v2_chain_mapper.md)

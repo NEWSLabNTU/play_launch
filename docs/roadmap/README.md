@@ -91,7 +91,10 @@ See [phase-30b-group_scopes.md](./phase-30b-group_scopes.md).
 Per-launch-file manifest system. Describes expected communication graph: topics, services, actions, QoS, timing contracts. Manifest crate, parser integration, executor audit. Uses Phase 30 scope table as the bridge between manifests and record.json.
 
 See [phase-31-launch_manifest.md](./phase-31-launch_manifest.md).
-Design: [docs/design/launch-manifest.md](../design/launch-manifest.md).
+Design: `docs/launch-manifest.md` in the `ros-launch-manifest` crate — moved
+there in phase 31, and since phase-55 W2 that crate is a git dependency pinned
+by tag, so the file is no longer in this repo (find it under
+`~/.cargo/git/checkouts/ros-launch-manifest-*/`).
 
 ### Phase 36: Runtime Enforcement (in progress)
 
