@@ -8,6 +8,8 @@
 //! - Aggregating frontier state and message statistics
 //! - Writing summary files on shutdown
 
+pub mod trace;
+
 use crate::cli::config::InterceptionSettings;
 use eyre::Context;
 use serde::Serialize;
@@ -16,7 +18,7 @@ use std::{
     os::fd::RawFd,
     path::{Path, PathBuf},
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // ---------------------------------------------------------------------------
 // InterceptionEvent — must match the #[repr(C)] layout in the .so
@@ -106,6 +108,12 @@ const _: () = assert!(size_of::<InterceptionEvent>() == 40);
 
 /// Holds the consumer side of a shared memory ring buffer for one child process.
 pub struct ChildConsumer {
+    /// Which node's ring this is.
+    ///
+    /// Events carry no PID — each child gets its own ring, so the owner is
+    /// only knowable here, at setup. Without it a trace cannot say WHICH node
+    /// published, which is most of what makes a timeline readable.
+    pub node_name: String,
     pub consumer: spsc_shm::Consumer<InterceptionEvent>,
     /// eventfd for async wakeup (not yet used — using timer-based polling).
     #[allow(dead_code)]
@@ -167,6 +175,7 @@ pub fn find_interception_so() -> Option<PathBuf> {
 ///
 /// Returns a `ChildConsumer` that the `InterceptionListener` will poll.
 pub fn setup_child_interception(
+    node_name: &str,
     env: &mut HashMap<String, String>,
     so_path: &Path,
     config: &InterceptionSettings,
@@ -211,6 +220,7 @@ pub fn setup_child_interception(
     }
 
     Ok(ChildConsumer {
+        node_name: node_name.to_string(),
         consumer,
         event_fd,
         shm_fd,
@@ -318,6 +328,15 @@ struct NameCatalog {
 }
 
 impl NameCatalog {
+    /// Topic name for a hash, once its chunked declaration has assembled.
+    ///
+    /// Returns `None` early in a run: names arrive as multi-event chunks, so
+    /// the first publishes on a topic are seen before its name is. The trace
+    /// falls back to `topic#<hash>` for those rather than dropping them.
+    fn name_of(&self, hash: u64) -> Option<&str> {
+        self.names.get(&hash).map(String::as_str)
+    }
+
     fn observe(&mut self, event: &InterceptionEvent) {
         match event.kind {
             EventKind::TopicNameDeclared => {
@@ -391,6 +410,7 @@ pub async fn run_interception_task(
     // never an overestimate.
     let mut drop_counts: HashMap<usize, u64> = HashMap::new();
     let mut total_events: u64 = 0;
+    let mut tracer = config.trace.then(trace::TraceRecorder::new);
 
     let poll_interval = tokio::time::Duration::from_millis(10);
 
@@ -417,6 +437,9 @@ pub async fn run_interception_task(
                         );
                         process_event(&event, &config, &mut frontiers, &mut stats);
                         names.observe(&event);
+                        if let Some(t) = tracer.as_mut() {
+                            t.observe(&child.node_name, &event, names.name_of(event.topic_hash));
+                        }
                         if event.kind == EventKind::RingOverflowReport {
                             drop_counts.insert(child_idx, event.monotonic_ns);
                         }
@@ -440,6 +463,9 @@ pub async fn run_interception_task(
             total_events += 1;
             process_event(&event, &config, &mut frontiers, &mut stats);
             names.observe(&event);
+            if let Some(t) = tracer.as_mut() {
+                t.observe(&child.node_name, &event, names.name_of(event.topic_hash));
+            }
             if event.kind == EventKind::RingOverflowReport {
                 drop_counts.insert(child_idx, event.monotonic_ns);
             }
@@ -472,6 +498,7 @@ pub async fn run_interception_task(
             &names.names,
             &names.types,
             total_dropped,
+            tracer.as_ref(),
         )?;
     } else {
         debug!("Interception task: no events received");
@@ -578,6 +605,7 @@ fn write_summaries(
     names: &HashMap<u64, String>,
     types: &HashMap<u64, String>,
     total_dropped: u64,
+    tracer: Option<&trace::TraceRecorder>,
 ) -> eyre::Result<()> {
     let interception_dir = log_dir.join("interception");
     std::fs::create_dir_all(&interception_dir)?;
@@ -681,6 +709,36 @@ fn write_summaries(
             stats_output.len(),
             path.display()
         );
+    }
+
+    if let Some(t) = tracer {
+        let path = interception_dir.join("trace.json");
+        if t.is_empty() {
+            // Say so rather than leaving an empty file to be puzzled over:
+            // the usual cause is that no traffic flowed while tracing was on.
+            warn!(
+                "Interception: trace enabled but no publish/take events were seen; \
+                 not writing {}",
+                path.display()
+            );
+        } else {
+            t.write(&path)?;
+            let unstamped = t.unstamped();
+            info!(
+                "Interception: Chrome trace written to {} (load in chrome://tracing)",
+                path.display()
+            );
+            if unstamped > 0 {
+                // Without a header stamp there is nothing to correlate a take
+                // with its publish, so the timeline shows events but draws no
+                // chain arrows. Better to explain that than let it look broken.
+                warn!(
+                    "Interception: {unstamped} event(s) had no header stamp and are \
+                     shown without flow arrows — messages need a std_msgs/Header \
+                     for end-to-end linking"
+                );
+            }
+        }
     }
 
     if total_dropped > 0 {

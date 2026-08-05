@@ -139,6 +139,13 @@ pub struct InterceptionSettings {
     #[serde(default = "default_true")]
     pub stats: bool,
 
+    /// Write a Chrome Trace Event timeline (`interception/trace.json`).
+    ///
+    /// Off by default: it records every publish/take rather than a summary,
+    /// so the file grows with traffic. Load it in `chrome://tracing`.
+    #[serde(default)]
+    pub trace: bool,
+
     /// SPSC ring buffer capacity per child process (default: 65536)
     #[serde(default = "default_ring_capacity")]
     pub ring_capacity: usize,
@@ -150,6 +157,7 @@ impl Default for InterceptionSettings {
             enabled: false,
             frontier: default_true(),
             stats: default_true(),
+            trace: false,
             ring_capacity: default_ring_capacity(),
         }
     }

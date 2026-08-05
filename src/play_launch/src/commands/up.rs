@@ -543,7 +543,13 @@ pub(crate) async fn play(
                 info!("Interception enabled (so: {})", so_path.display());
                 // Inject LD_PRELOAD + fd env vars into each pure node
                 for ctx in &mut pure_node_contexts {
+                    let node_name = interception_node_name(
+                        ctx.model_fqn.as_deref(),
+                        ctx.record.name.as_deref(),
+                        ctx.record.exec_name.as_deref(),
+                    );
                     match crate::interception::setup_child_interception(
+                        &node_name,
                         &mut ctx.cmdline.env,
                         &so_path,
                         &runtime_config.interception,
@@ -555,7 +561,13 @@ pub(crate) async fn play(
                 }
                 // Inject into each container
                 for ctx in &mut container_contexts {
+                    let node_name = interception_node_name(
+                        ctx.node_context.model_fqn.as_deref(),
+                        ctx.node_context.record.name.as_deref(),
+                        ctx.node_context.record.exec_name.as_deref(),
+                    );
                     match crate::interception::setup_child_interception(
+                        &node_name,
                         &mut ctx.node_context.cmdline.env,
                         &so_path,
                         &runtime_config.interception,
@@ -1255,6 +1267,24 @@ pub(crate) async fn play(
 /// scopes into their file); namespace is a per-node property, so
 /// `ScopeEntry.ns` is left empty. Scope ids are assigned by the model's stable
 /// `structure.scopes` key order.
+/// Best available display name for a traced child.
+///
+/// Prefers the model FQN (`/safety/brake_controller`) so a trace row reads the
+/// way the launch file does; falls back to the record's name, then the
+/// executable, then a placeholder — a trace row labelled `<unnamed>` is worth
+/// more than one silently attributed to the wrong node.
+fn interception_node_name(
+    model_fqn: Option<&str>,
+    name: Option<&str>,
+    exec_name: Option<&str>,
+) -> String {
+    model_fqn
+        .or(name)
+        .or(exec_name)
+        .unwrap_or("<unnamed>")
+        .to_string()
+}
+
 /// Map each member's canonical id to its launch scope, joining on FQN.
 ///
 /// The scope tables are keyed by fully-qualified node name; the web UI, the
