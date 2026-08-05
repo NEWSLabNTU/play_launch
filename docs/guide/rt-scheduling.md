@@ -44,7 +44,7 @@ node, and one composable filter) with the launch file, contract, and
 platform files committed:
 
 ```bash
-just build && just setcap        # one-time: grant the helper its capability
+just build && just setcap        # grant the helper its capability (re-run after EVERY build)
 cd tests/fixtures/rt_workspace
 just build                       # colcon build of the rt_demo package
 just check                       # validate contracts + scheduling, several ways

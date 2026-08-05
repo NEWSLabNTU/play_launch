@@ -17,6 +17,14 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0015** — a file capability lives on the inode, so `just build` replaces
+`play_launch_rt_helper` and drops the `cap_sys_nice` that `just setcap`
+granted; the failure surfaces on the next RT run. The guide documents this,
+so the gap is timing rather than knowledge: nothing says it at the moment of
+loss. Friction, not a correctness hole — `--sched-apply strict` errors clearly
+and `rt_av_demo`'s `ab` recipe refuses rather than reporting a vacuous
+comparison. See `0015-*`.
+
 ## Resolved
 
 **#0014** — `test_isolated_external_subscriber` hard-coded `ROS_DOMAIN_ID=199`

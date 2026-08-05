@@ -255,6 +255,53 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-08-06**: Phase 58 planned — deriving scheduling from contracts.
+  Study: `docs/research/scheduling-derivation-prior-art.md` (options A–G:
+  Audsley OPA, deadline decomposition, reservations, LET, CP synthesis,
+  compositional analysis, callback granularity). Four findings from the
+  current code, all blocking or shaping that work: (1) **contracts declare
+  budgets, never costs** — `sched_derive.rs` passes a path's
+  `max_latency_ms` in as `exec_ms`, so no true execution time exists in the
+  model and response-time analysis / reservation sizing / OPA are all
+  unreachable; (2) `ResolvedChain` is sequences all the way down, so a
+  diamond linearises correctly for *ranking* and wrongly for *costing*
+  (fork-join needs max-over-branches, feasibility sums); (3) the mapper
+  design's fan-in rule ("longest-path-to-sink") has never had an input that
+  would distinguish it from declaration order, because `push_segment_node`
+  merges in declaration order and an authored chain never presents a fan-in;
+  (4) **`sched_setattr(2)` returns EPERM when a thread's affinity mask does
+  not include all CPUs** — our per-node affinity and `rt_av_demo`'s `taskset`
+  are exactly that condition, so `SCHED_DEADLINE` and the current
+  partitioning are mutually exclusive (deadline tasks need exclusive
+  cpusets). Roadmap: `docs/roadmap/phase-58-scheduling-derivation.md`.
+- **2026-08-05**: Phase 57 — mixed-criticality RT demo + Chrome timeline
+  export. `examples/rt_av_demo/` is a standalone ROS 2 workspace (plain
+  `rclcpp`, standard launch XML) whose lidar→detector→brake chain carries a
+  60 ms deadline; `just ab` runs it twice (`--sched-apply off`, then
+  `strict`) and compares. Measured: **272/1013 frames past deadline → 0/1039**,
+  p99 106.6 → 13.3 ms, at a **26–37% cost to best-effort throughput**.
+  Calibration changed two design assumptions: two CPUs cannot manufacture
+  contention on a 32-thread host (CFS sleeper fairness serves a low-duty
+  chain promptly while a spare CPU exists — zero misses at every load tried),
+  so the workload is confined to ONE CPU; and the comparison must judge
+  *steady state*, since discovery makes the first ~4 s miss by 150 ms
+  regardless of scheduling. `just ab` refuses rather than reports when the
+  baseline meets its deadline or when the helper lacks `CAP_SYS_NICE`.
+  New: `interception.trace` config → `play_log/<ts>/interception/trace.json`
+  in Chrome Trace Event format (rows = nodes, flow arrows = messages,
+  correlated by `header.stamp`). Report:
+  `docs/reports/rt-mixed-criticality/` (Typst; `just report` regenerates
+  every figure and number from the run — no hand-typed values).
+  Four scheduling defects fixed along the way: `band_violations` compared
+  `SCHED_OTHER` tiers against the RT band and "clamped" them into it, so
+  `check --explain` printed `SCHED_OTHER 10` (a state Linux cannot represent,
+  and fatal in strict mode — it would have rejected valid platform files);
+  demotion left a stale mapper-derived priority; `class: real_time` shipped
+  on best-effort tiers in `system_model.yaml`; and **application was never
+  logged**, so both halves of an A/B produced byte-identical scheduling logs
+  and `chrt -p` was the only way to tell RT had applied. Note issue #0015:
+  any rebuild replaces `play_launch_rt_helper` and silently drops its
+  capability — `just setcap` after every build.
 - **2026-07-31**: Removed `<node machine=>` — it is ROS 1 roslaunch syntax,
   not ROS 2 (`launch_ros`'s `Node.parse()` has no such attribute;
   `launch_xml` rejects it; `ros2/design` #255 closed unmerged). The Rust
