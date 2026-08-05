@@ -1,0 +1,29 @@
+# Scheduling platform file for bringup.launch.xml (Phase 41 v2 schema).
+#
+# `chain_aware` ranks the lidar_to_brake chain drain-toward-sink —
+# brake_controller > obstacle_detector > lidar_driver — so the hop nearest the
+# actuator preempts the ones feeding it.
+target: posix
+mapper: chain_aware
+
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+
+  # THE experiment's precondition. This machine has 32 cores; six nodes on 32
+  # cores never contend, so RT-on and RT-off would produce identical timelines
+  # and the honest conclusion would be "scheduling changed nothing". Confining
+  # everything to two CPUs puts ~4 CPU-hungry threads on 2 cores, which is
+  # what makes priority decide anything at all.
+  #
+  # Note this declares intent to the mapper; it is not kernel isolation
+  # (`/sys/devices/system/cpu/isolated` is empty here). The justfile's
+  # `taskset` is what actually confines the processes.
+  isolated_cpus: [2, 3]
+
+overrides:
+  # Best-effort work is pinned OUT of the real-time band explicitly rather
+  # than left to the mapper's default. If these ever drifted into SCHED_FIFO
+  # they would compete with the safety chain on equal terms and the demo would
+  # quietly stop demonstrating anything.
+  map_loader: { sched_class: SCHED_OTHER }
+  telemetry_logger: { sched_class: SCHED_OTHER }

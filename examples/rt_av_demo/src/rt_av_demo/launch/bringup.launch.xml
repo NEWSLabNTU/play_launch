@@ -1,0 +1,97 @@
+<!-- Mixed-criticality AV workload for exercising play_launch RT scheduling.
+     Standard ROS 2 launch XML — nothing play_launch-specific.
+
+     Three criticality bands that genuinely compete for CPU:
+       safety      lidar -> obstacle_detector -> brake_controller  (60 ms)
+       mission     path_planner
+       best_effort map_loader, telemetry_logger
+
+     The safety chain is what the deadline is measured on; everything else
+     exists to contend with it. Burn/rate are parameters so the pressure can
+     be retuned for a different machine without recompiling. -->
+<launch>
+  <arg name="lidar_hz"      default="50.0"/>
+  <arg name="detect_burn"   default="8.0"/>
+  <arg name="brake_burn"    default="3.0"/>
+  <arg name="deadline_ms"   default="60.0"/>
+  <arg name="planner_burn"  default="40.0"/>
+  <arg name="maploader_burn" default="120.0"/>
+  <arg name="logger_burn"   default="25.0"/>
+  <arg name="tool_burn"     default="5.0"/>
+  <arg name="tool_hz"       default="30.0"/>
+
+  <group>
+    <push-ros-namespace namespace="safety"/>
+    <node pkg="rt_av_demo" exec="lidar_driver" name="lidar_driver" output="screen">
+      <param name="rate_hz" value="$(var lidar_hz)"/>
+      <param name="burn_ms" value="2.0"/>
+    </node>
+    <node pkg="rt_av_demo" exec="obstacle_detector" name="obstacle_detector" output="screen">
+      <param name="burn_ms" value="$(var detect_burn)"/>
+    </node>
+    <node pkg="rt_av_demo" exec="brake_controller" name="brake_controller" output="screen">
+      <param name="burn_ms" value="$(var brake_burn)"/>
+      <param name="deadline_ms" value="$(var deadline_ms)"/>
+    </node>
+  </group>
+
+  <group>
+    <push-ros-namespace namespace="planning"/>
+    <node pkg="rt_av_demo" exec="load_node" name="path_planner" output="screen">
+      <param name="rate_hz" value="10.0"/>
+      <param name="burn_ms" value="$(var planner_burn)"/>
+      <param name="out_topic" value="path"/>
+    </node>
+  </group>
+
+  <group>
+    <push-ros-namespace namespace="perception"/>
+    <node pkg="rt_av_demo" exec="load_node" name="map_loader" output="screen">
+      <param name="rate_hz" value="2.0"/>
+      <param name="burn_ms" value="$(var maploader_burn)"/>
+      <param name="out_topic" value="map_tiles"/>
+    </node>
+  </group>
+
+  <group>
+    <push-ros-namespace namespace="telemetry"/>
+    <node pkg="rt_av_demo" exec="load_node" name="telemetry_logger" output="screen">
+      <param name="rate_hz" value="30.0"/>
+      <param name="burn_ms" value="$(var logger_burn)"/>
+      <param name="out_topic" value="telemetry"/>
+    </node>
+  </group>
+
+  <!-- The support nodes any real stack runs alongside the driving software.
+       They matter to the experiment because CFS shares the CPU between
+       runnable threads: the safety chain's ~13 ms of work stretches by
+       roughly (runnable threads / cores), so thread COUNT — not just total
+       load — is what pushes the chain past its deadline. With these four the
+       demo is ~10 threads on 2 cores; without them the chain stayed under
+       60 ms and the experiment proved nothing. They need no entry in the
+       platform file: with no timing facts the mapper leaves them
+       SCHED_OTHER, which is what they should be. -->
+  <group>
+    <push-ros-namespace namespace="tools"/>
+    <node pkg="rt_av_demo" exec="load_node" name="rosbag_recorder" output="screen">
+      <param name="rate_hz" value="$(var tool_hz)"/>
+      <param name="burn_ms" value="$(var tool_burn)"/>
+      <param name="out_topic" value="bag_status"/>
+    </node>
+    <node pkg="rt_av_demo" exec="load_node" name="diagnostics_aggregator" output="screen">
+      <param name="rate_hz" value="$(var tool_hz)"/>
+      <param name="burn_ms" value="$(var tool_burn)"/>
+      <param name="out_topic" value="diagnostics"/>
+    </node>
+    <node pkg="rt_av_demo" exec="load_node" name="visualizer" output="screen">
+      <param name="rate_hz" value="$(var tool_hz)"/>
+      <param name="burn_ms" value="$(var tool_burn)"/>
+      <param name="out_topic" value="markers"/>
+    </node>
+    <node pkg="rt_av_demo" exec="load_node" name="health_monitor" output="screen">
+      <param name="rate_hz" value="$(var tool_hz)"/>
+      <param name="burn_ms" value="$(var tool_burn)"/>
+      <param name="out_topic" value="health"/>
+    </node>
+  </group>
+</launch>

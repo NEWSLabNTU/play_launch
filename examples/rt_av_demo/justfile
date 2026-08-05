@@ -1,0 +1,218 @@
+# Mixed-criticality RT demo — build, run, and the A/B experiment.
+#
+#   just build     colcon build this workspace
+#   just check     validate the contract + show the derived schedule
+#   just trace     one run with RT applied, dumps a Chrome trace
+#   just ab        THE experiment: same workload with RT off, then on
+#
+# Prerequisite for anything involving RT: `just setcap` in the repo root.
+# Without CAP_SYS_NICE on play_launch_rt_helper the RT-on run is identical to
+# the RT-off one and the comparison is meaningless. `just ab` refuses to run
+# rather than print a table showing no difference.
+
+repo := justfile_directory() / "../.."
+play_launch := repo / "install/play_launch/lib/play_launch/play_launch"
+interception_so := repo / "src/play_launch_interception/target/release/libplay_launch_interception.so"
+
+# How long each run lasts, and which CPUs the demo may use.
+#
+# ONE core, and that is calibrated, not arbitrary. Measured on this 32-core
+# host: on two cores the safety chain misses ZERO deadlines no matter how much
+# best-effort load is piled on (tested up to 60 ms burns — p99 stayed at
+# 36 ms). CFS sleeper fairness is why: the chain is a low-duty-cycle task that
+# sleeps between frames, so it accumulates low vruntime and gets picked first
+# on every wake. CFS is genuinely good at exactly this. Only when the chain
+# and the load share a single runqueue does priority start to matter.
+#
+# Widening this back to two cores does not weaken the experiment — it deletes
+# it, and `just ab` will say INCONCLUSIVE rather than pretend otherwise.
+duration := "25"
+cpus := "2"
+
+# Extra launch arguments, for retuning the pressure on a different machine
+# without editing the launch file — e.g. `just --set launch_args
+# "tool_burn:=45.0" ab`. Every burn and rate in bringup.launch.xml is an
+# <arg>, so any of them can be overridden here.
+launch_args := ""
+
+# Samples to discard at the start of a run. Node discovery and DDS matching
+# make the first seconds miss deadlines by 150 ms in ways scheduling cannot
+# fix — counting them makes any baseline look like it failed, which would let
+# a workload that never actually contends pass for a successful experiment.
+warmup := "200"
+
+default:
+    @just --list
+
+# Build the demo workspace.
+build:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/humble/setup.bash
+    cd "{{ justfile_directory() }}"
+    colcon build --symlink-install
+    echo "built. now: just check"
+
+# Validate the contract and print the derived schedule with provenance.
+check:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/humble/setup.bash
+    source "{{ repo }}/install/setup.bash"
+    source "{{ justfile_directory() }}/install/setup.bash"
+    "{{ play_launch }}" check rt_av_demo bringup.launch.xml \
+        --sched "$(ros2 pkg prefix rt_av_demo)/share/rt_av_demo/launch/bringup.system.posix.yaml" \
+        --explain
+
+# One run with RT applied; dumps a Chrome trace.
+#
+# Open the printed trace.json in chrome://tracing. Rows are nodes, arrows are
+# messages flowing along the chain.
+trace:
+    #!/usr/bin/env bash
+    set -e
+    just _run on "{{ justfile_directory() }}/out/trace-on"
+    echo
+    echo "Chrome trace: $(ls {{ justfile_directory() }}/out/trace-on/play_log/*/interception/trace.json)"
+    echo "Open chrome://tracing and load that file."
+
+# THE experiment. Same workload twice: RT off, then RT on.
+ab:
+    #!/usr/bin/env bash
+    set -e
+    cd "{{ justfile_directory() }}"
+
+    # Refuse rather than produce a meaningless comparison. Without the
+    # capability the "on" run cannot apply anything, so both halves would be
+    # identical and the table would read as "RT does nothing".
+    helper="{{ repo }}/install/play_launch/lib/play_launch/play_launch_rt_helper"
+    if ! getcap "$helper" 2>/dev/null | grep -q cap_sys_nice && [ "$(id -u)" != "0" ]; then
+        echo "REFUSING: play_launch_rt_helper lacks cap_sys_nice, so the RT-on run" >&2
+        echo "would apply nothing and the comparison would be vacuous." >&2
+        echo "Run 'just setcap' in {{ repo }} first." >&2
+        exit 1
+    fi
+
+    rm -rf out
+    just _run off out/trace-off
+    just _run on  out/trace-on
+    just _report
+
+# Internal: one run. $1 = off|on, $2 = output dir.
+_run mode outdir:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/humble/setup.bash
+    source "{{ repo }}/install/setup.bash"
+    source "{{ justfile_directory() }}/install/setup.bash"
+
+    mkdir -p "{{ outdir }}"
+    cd "{{ outdir }}"
+
+    cat > cfg.yaml <<'YAML'
+    interception:
+      enabled: true
+      trace: true
+    YAML
+
+    sched="$(ros2 pkg prefix rt_av_demo)/share/rt_av_demo/launch/bringup.system.posix.yaml"
+    apply=$([ "{{ mode }}" = "on" ] && echo strict || echo off)
+
+    export PLAY_LAUNCH_INTERCEPTION_SO="{{ interception_so }}"
+    export ROS_DOMAIN_ID=$(( 60 + RANDOM % 20 ))
+
+    echo "=== run: RT {{ mode }} (--sched-apply $apply) ==="
+    # taskset is what ACTUALLY confines the workload; isolated_cpus in the
+    # platform file only declares the intent to the mapper.
+    timeout {{ duration }} taskset -c {{ cpus }} \
+        "{{ play_launch }}" launch rt_av_demo bringup.launch.xml \
+        --sched "$sched" --sched-apply "$apply" \
+        --config cfg.yaml --disable-web-ui {{ launch_args }} > run.log 2>&1 || true
+
+    # `latest`, not a glob: play_log holds both the timestamp directory and a
+    # `latest` symlink to it, so `play_log/*/` matches the same run twice and
+    # doubles every count.
+    out=play_log/latest/node/brake_controller/out
+    echo "  chain samples: $(grep -c '^CHAIN ' "$out" 2>/dev/null || echo 0)"
+    if grep -qi 'cap_sys_nice\|permission denied\|failed to set' run.log; then
+        echo "  WARNING: run.log mentions a privilege failure — scheduling may not have applied"
+    fi
+
+# Internal: compare the two runs.
+_report:
+    #!/usr/bin/env bash
+    set -e
+    cd "{{ justfile_directory() }}"
+    python3 - {{ warmup }} <<'PY'
+    import sys
+
+    warmup = int(sys.argv[1])
+
+    def samples(d):
+        """Steady-state chain samples. Startup is discarded: the first seconds
+        miss by ~150 ms purely from discovery, and scheduling cannot fix that.
+        Counting them would let a non-contending workload look like a
+        successful experiment."""
+        path = f"out/trace-{d}/play_log/latest/node/brake_controller/out"
+        try:
+            lines = open(path).readlines()
+        except OSError:
+            return None
+        out = []
+        for line in lines:
+            if not line.startswith("CHAIN "):
+                continue
+            kv = dict(p.split("=", 1) for p in line.split()[1:])
+            if int(kv["seq"]) <= warmup:
+                continue
+            out.append((float(kv["latency_ms"]), kv["late"] == "1"))
+        return out
+
+    off, on = samples("off"), samples("on")
+    for name, s in (("off", off), ("on", on)):
+        if s is None:
+            sys.exit(f"no brake_controller output for the RT-{name} run — it did not launch")
+        if len(s) < 100:
+            sys.exit(f"RT-{name} produced only {len(s)} steady-state samples after a "
+                     f"{warmup}-sample warmup — too few to compare. Raise `duration`.")
+
+    def row(name, xs):
+        lat = sorted(x for x, _ in xs)
+        miss = sum(1 for _, late in xs if late)
+        p = lambda q: lat[min(int(len(lat) * q), len(lat) - 1)]
+        return (name, p(0.50), p(0.99), lat[-1], miss, len(xs))
+
+    r_off, r_on = row("RT OFF", off), row("RT ON", on)
+    print()
+    print(f"steady state only, first {warmup} samples discarded")
+    print(f"{'':8} {'p50':>9} {'p99':>9} {'max':>9} {'missed':>12}")
+    for n, p50, p99, mx, miss, tot in (r_off, r_on):
+        print(f"{n:8} {p50:8.1f}ms {p99:8.1f}ms {mx:8.1f}ms {miss:>6}/{tot:<5}")
+    print()
+
+    # A baseline that already meets its deadline means the workload never
+    # contended, so the RT-on result proves nothing. That is inconclusive, not
+    # success — the same vacuous-pass shape as issues 0008/0012/0014. Judged on
+    # steady state: an earlier version of this check counted startup misses and
+    # would have called a completely uncontended run a success.
+    if r_off[4] == 0:
+        sys.exit(f"INCONCLUSIVE: the RT-off baseline missed no deadlines in steady\n"
+                 f"state (p99 {r_off[2]:.1f}ms against a {60.0}ms deadline), so there was\n"
+                 f"nothing for scheduling to fix. Add pressure and re-run, e.g.\n"
+                 f"  just --set launch_args 'tool_burn:=40.0' ab\n"
+                 f"or narrow `cpus`.")
+
+    if r_on[4] < r_off[4]:
+        print(f"RT reduced steady-state deadline misses {r_off[4]} -> {r_on[4]} "
+              f"(p99 {r_off[2]:.1f}ms -> {r_on[2]:.1f}ms).")
+    else:
+        print(f"NO IMPROVEMENT: {r_off[4]} -> {r_on[4]} misses. Either the schedule\n"
+              "did not apply (check out/trace-on/run.log for a privilege warning) or\n"
+              "the safety chain is not the priority the mapper derived — compare\n"
+              "against `just check`.")
+        sys.exit(1)
+    PY
+
+# Remove build and run artifacts.
+clean:
+    rm -rf build install log out

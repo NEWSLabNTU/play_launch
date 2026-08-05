@@ -35,8 +35,31 @@ Both were measured, and both change the design.
 
 **32 cores.** Six nodes on 32 cores never contend, so RT-on and RT-off produce
 identical timelines and the honest reading is "scheduling changed nothing".
-Contention is therefore *manufactured*: the workspace is confined to 2 CPUs so
-runnable threads outnumber cores.
+Contention is therefore *manufactured*: the workspace is confined with
+`taskset` so runnable threads outnumber cores.
+
+**Calibration (measured, supersedes the estimate above).** Two CPUs is not
+enough to manufacture contention here. Measured on the RT-off baseline: on two
+cores the chain missed **zero** deadlines at every load tried, up to 60 ms
+best-effort burns (p99 stayed at 36 ms). The reason is CFS sleeper fairness —
+the chain is a low-duty-cycle task that sleeps between frames, accrues low
+vruntime, and is picked first on each wake. CFS is genuinely good at this, and
+no amount of added best-effort load changes it while a spare core exists.
+
+The calibrated operating point is therefore **one core** (`cpus := "2"`) with
+four extra best-effort "tool" nodes at a 5 ms burn. Measured baseline over
+three repetitions: p50 42-48 ms, p99 90-93 ms, **17-30% of frames past the
+60 ms deadline, with no message loss** (~1015 of ~1015 delivered). Confining
+to a single CPU makes the run sensitive to whatever else the host puts on that
+core, so the miss rate is noisy across runs — 17% to 77% observed. It never
+approached zero, which is all the guard requires, but it is not a stable
+number and should not be quoted as one. Heavier
+loads were rejected as dishonest: at a 10 ms tool burn the chain stops keeping
+up and *drops* messages, which is system collapse rather than a deadline miss.
+
+Note `sched_rt_runtime_us` = 950000, so on a single core the RT-on run leaves
+best-effort work 5% of the CPU. The tool nodes will crawl. That is the
+intended demonstration, not a fault.
 
 **`PREEMPT_DYNAMIC`, not `PREEMPT_RT`**, and `/sys/devices/system/cpu/isolated`
 is empty — note the existing fixture *declares* `isolated_cpus: [0]`, which is
@@ -48,6 +71,14 @@ demonstrable, and a miss means scheduling rather than kernel jitter.
 baseline that passes means the experiment did not contend, so the result is
 inconclusive — not a success. This is the vacuous-pass shape that issues 0008,
 0012 and 0014 all had, and it is the single most likely way this demo lies.
+
+**The check must judge steady state.** The first ~4 s of any run miss the
+deadline by 150 ms from node discovery and DDS matching alone — misses that
+scheduling cannot fix and that RT-on will show too. A first cut of this
+harness counted them, which meant a workload that never contended at all
+still satisfied "the baseline misses deadlines". The comparison therefore
+discards the first `warmup` (default 200) samples on both sides, and the
+baseline must miss *after* that.
 
 ## W1 — Chrome trace export from interception
 
@@ -85,6 +116,14 @@ stay ordinary ROS.
 | `/planning/path_planner` | 10 Hz | mission | ~40 ms burst |
 | `/perception/map_loader` | 2 Hz | best_effort | ~120 ms burst |
 | `/telemetry/logger` | continuous | best_effort | steady burn |
+| `/tools/{rosbag_recorder, diagnostics_aggregator, visualizer, health_monitor}` | 30 Hz | best_effort | 5 ms each |
+
+The four `tools` nodes were added during calibration. They are the support
+software any real stack runs alongside the driving code, and they matter
+because CFS stretches a task by roughly (runnable threads / cores): thread
+*count*, not just total load, is what pushes the chain past its deadline.
+They need no platform-file entry — with no timing facts the mapper leaves
+them `SCHED_OTHER`, which is correct for them.
 
 Plus `bringup.launch.xml`, `bringup.contract.yaml` (declaring the
 `lidar_to_brake` chain with its 60 ms budget and per-node `criticality`), and
@@ -116,3 +155,18 @@ thread run-time), and any change to the scheduling mappers themselves.
 run is identical to RT-off and the whole experiment is inconclusive. The
 harness must detect and refuse to report in that case rather than emit a
 comparison showing no difference.
+
+**Status: this prerequisite is unmet on the development host, so the RT-on
+half has never run.** Measured: `ulimit -r` is 0 and `chrt -f 10 true` fails
+with `Operation not permitted`, so `SCHED_FIFO` is unreachable for this user
+by any route. `getcap` on the built helper returns nothing. Everything else in
+this phase is verified end to end — the trace exporter, the workspace, the
+baseline calibration above, and `just ab`'s refusal — but the central claim
+("with `strict` the chain holds its deadline") is **unverified**. `just setcap`
+needs a password and cannot be run unattended.
+
+One consequence worth stating plainly: the 60 ms deadline is an a-priori
+choice, not one calibrated against a measured RT-on distribution. The
+principled version sets the deadline above RT-on p99 and below RT-off p99;
+that requires the capability. If RT-on p99 lands near 60 ms, the deadline
+should be revisited before this demo is used as evidence of anything.

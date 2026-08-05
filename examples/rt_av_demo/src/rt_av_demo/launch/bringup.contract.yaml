@@ -1,0 +1,85 @@
+# Provider sidecar for bringup.launch.xml — ships in rt_av_demo's installed
+# share dir, discovered automatically by `play_launch check/resolve`.
+#
+# The numbers here are the workload's declared intent. They must stay
+# consistent with the launch file's burn parameters, because the chain budget
+# is checked against the DECLARED costs, not the measured ones: a contract
+# claiming 8 ms for a node that burns 40 would pass the checker and miss every
+# deadline at runtime.
+version: 1
+
+nodes:
+  lidar_driver:
+    criticality: high
+    pub:
+      scan:
+        min_rate_hz: 50
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [scan]
+
+  obstacle_detector:
+    criticality: high
+    sub:
+      scan:
+        min_rate_hz: 50
+    pub:
+      obstacles:
+        min_rate_hz: 50
+    paths:
+      detect:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency_ms: 12
+
+  brake_controller:
+    criticality: high
+    sub:
+      obstacles:
+        min_rate_hz: 50
+        max_age_ms: 60
+    pub:
+      brake_cmd:
+        min_rate_hz: 50
+    paths:
+      brake:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency_ms: 8
+
+# The safety chain, and the claim under test.
+#
+# sampling_cost = the 50 Hz boundary's period = 20 ms.
+# event segment  = detect 12 ms + brake 8 ms = 20 ms.
+# total          = 40 ms, inside the 60 ms budget with 20 ms of honest slack.
+#
+# That slack is where scheduling lives. With RT applied the chain should land
+# well under 60 ms; without it, the mission and best-effort load eats the slack
+# and the deadline is missed. The budget is deliberately not tight — a chain
+# that only just fits would miss for arithmetic reasons rather than scheduling
+# ones, and would prove nothing.
+chains:
+  lidar_to_brake:
+    semantics: reaction
+    max_latency_ms: 60
+    segments:
+      - { scope: /, path: sample }
+      - { via: /safety/scan }
+      - { scope: /, path: detect }
+      - { via: /safety/obstacles }
+      - { scope: /, path: brake }
+
+topics:
+  /safety/scan:
+    type: rt_av_demo/msg/Stamped
+    pub: [lidar_driver/scan]
+    sub: [obstacle_detector/scan]
+  /safety/obstacles:
+    type: rt_av_demo/msg/Stamped
+    pub: [obstacle_detector/obstacles]
+    sub: [brake_controller/obstacles]
+  /safety/brake_cmd:
+    type: rt_av_demo/msg/Stamped
+    pub: [brake_controller/brake_cmd]
+    sub: []
