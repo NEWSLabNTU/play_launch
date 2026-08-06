@@ -77,7 +77,7 @@ pub(crate) fn resolve_substitution_string(
 /// ```
 ///
 /// Note: Limited support - we concatenate and return the expression as-is
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct PythonExpression {
     expression: String,
@@ -86,7 +86,7 @@ pub struct PythonExpression {
 #[pymethods]
 impl PythonExpression {
     #[new]
-    fn new(py: Python, expression: Vec<PyObject>) -> PyResult<Self> {
+    fn new(py: Python, expression: Vec<Py<PyAny>>) -> PyResult<Self> {
         // Convert each element to string and concatenate
         let mut result = String::new();
         for obj in expression {
@@ -140,16 +140,16 @@ impl PythonExpression {
 /// ```
 ///
 /// Executes a shell command and returns its output
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct Command {
-    command: Vec<PyObject>,
+    command: Vec<Py<PyAny>>,
 }
 
 #[pymethods]
 impl Command {
     #[new]
-    fn new(command: Vec<PyObject>) -> Self {
+    fn new(command: Vec<Py<PyAny>>) -> Self {
         Self { command }
     }
 

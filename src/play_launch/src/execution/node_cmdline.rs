@@ -152,7 +152,7 @@ fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
 pub(crate) fn eval_python_str(expr: &str) -> Option<String> {
     use pyo3::prelude::*;
     let code = std::ffi::CString::new(expr).ok()?;
-    Python::with_gil(|py| py.eval(&code, None, None).ok()?.extract::<String>().ok())
+    Python::attach(|py| py.eval(&code, None, None).ok()?.extract::<String>().ok())
 }
 
 /// Split a canonical model FQN (`model::Structure::nodes` key, e.g.

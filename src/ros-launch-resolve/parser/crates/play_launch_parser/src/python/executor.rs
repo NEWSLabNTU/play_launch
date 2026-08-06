@@ -18,7 +18,7 @@ impl PythonLaunchExecutor {
 
     /// Execute a Python launch file and capture entities
     pub fn execute(&self, launch_file_path: &str) -> Result<()> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             log::debug!("Executing Python launch file: {}", launch_file_path);
 
             // Register PyO3 mock modules in sys.modules
@@ -162,7 +162,7 @@ if not _ok:
                     )
                 })?;
 
-            let launch_desc: PyObject = gen_fn.call0()?.into();
+            let launch_desc: Py<PyAny> = gen_fn.call0()?.into();
 
             // Visit all entities in the launch description
             visit_launch_description(py, &launch_desc)?;
@@ -178,7 +178,7 @@ if not _ok:
 }
 
 /// Process launch arguments and re-resolve any containers with unresolved names
-fn process_launch_arguments(_py: Python, _launch_desc: &PyObject) -> PyResult<()> {
+fn process_launch_arguments(_py: Python, _launch_desc: &Py<PyAny>) -> PyResult<()> {
     use crate::{
         python::bridge::{
             update_captured_containers, update_captured_load_nodes, update_captured_nodes,
@@ -368,10 +368,10 @@ fn process_launch_arguments(_py: Python, _launch_desc: &PyObject) -> PyResult<()
 }
 
 /// Visit all entities in a launch description
-fn visit_launch_description(py: Python, launch_desc: &PyObject) -> PyResult<()> {
+fn visit_launch_description(py: Python, launch_desc: &Py<PyAny>) -> PyResult<()> {
     // Get entities from launch description (it's a property, not a method)
     let entities = launch_desc.getattr(py, "actions")?;
-    let entities_list: Vec<PyObject> = entities.extract(py)?;
+    let entities_list: Vec<Py<PyAny>> = entities.extract(py)?;
 
     log::debug!(
         "Visiting {} entities in launch description",
@@ -387,7 +387,7 @@ fn visit_launch_description(py: Python, launch_desc: &PyObject) -> PyResult<()> 
 }
 
 /// Visit a single entity
-fn visit_entity(py: Python, entity: &PyObject) -> PyResult<()> {
+fn visit_entity(py: Python, entity: &Py<PyAny>) -> PyResult<()> {
     // Get entity type
     let entity_class = entity.getattr(py, "__class__")?;
     let entity_type = entity_class
@@ -409,7 +409,7 @@ fn visit_entity(py: Python, entity: &PyObject) -> PyResult<()> {
 
             // Result should be a list of entities or None
             if !result.is_none(py)
-                && let Ok(entities) = result.extract::<Vec<PyObject>>(py)
+                && let Ok(entities) = result.extract::<Vec<Py<PyAny>>>(py)
             {
                 for entity in entities {
                     visit_entity(py, &entity)?;
@@ -426,7 +426,7 @@ fn visit_entity(py: Python, entity: &PyObject) -> PyResult<()> {
             log::debug!("Processing GroupAction");
             // Get nested actions and visit them
             let sub_entities = entity.getattr(py, "actions")?;
-            let sub_list: Vec<PyObject> = sub_entities.extract(py)?;
+            let sub_list: Vec<Py<PyAny>> = sub_entities.extract(py)?;
             log::debug!("GroupAction contains {} sub-actions", sub_list.len());
             for sub in sub_list {
                 visit_entity(py, &sub)?;

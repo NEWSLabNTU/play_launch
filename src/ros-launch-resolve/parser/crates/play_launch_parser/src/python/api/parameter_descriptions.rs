@@ -18,10 +18,10 @@ use pyo3::{prelude::*, types::PyDict};
 /// ```
 ///
 /// Wraps a parameter file path (which can be a substitution)
-#[pyclass(module = "launch_ros.parameter_descriptions")]
+#[pyclass(module = "launch_ros.parameter_descriptions", from_py_object)]
 #[derive(Clone)]
 pub struct ParameterFile {
-    param_file: PyObject,
+    param_file: Py<PyAny>,
     #[allow(dead_code)] // For API compatibility
     allow_substs: bool,
 }
@@ -31,7 +31,7 @@ impl ParameterFile {
     #[new]
     #[pyo3(signature = (param_file, *, allow_substs=false, **_kwargs))]
     fn new(
-        param_file: PyObject,
+        param_file: Py<PyAny>,
         allow_substs: Option<bool>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
@@ -71,12 +71,12 @@ impl ParameterFile {
 /// ```
 ///
 /// Wraps a parameter value with optional type information
-#[pyclass(module = "launch_ros.parameter_descriptions")]
+#[pyclass(module = "launch_ros.parameter_descriptions", from_py_object)]
 #[derive(Clone)]
 pub struct ParameterValue {
-    value: PyObject,
+    value: Py<PyAny>,
     #[allow(dead_code)] // For API compatibility
-    value_type: Option<PyObject>,
+    value_type: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -84,8 +84,8 @@ impl ParameterValue {
     #[new]
     #[pyo3(signature = (value, *, value_type=None, **_kwargs))]
     fn new(
-        value: PyObject,
-        value_type: Option<PyObject>,
+        value: Py<PyAny>,
+        value_type: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         Ok(Self { value, value_type })

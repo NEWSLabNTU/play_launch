@@ -18,16 +18,16 @@ use crate::python::api::utils as sub_utils;
 /// ```
 ///
 /// Returns the boolean NOT of the input
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct NotSubstitution {
-    condition: PyObject,
+    condition: Py<PyAny>,
 }
 
 #[pymethods]
 impl NotSubstitution {
     #[new]
-    fn new(condition: PyObject) -> Self {
+    fn new(condition: Py<PyAny>) -> Self {
         Self { condition }
     }
 
@@ -67,17 +67,17 @@ impl NotSubstitution {
 /// ```
 ///
 /// Returns the boolean AND of two inputs
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct AndSubstitution {
-    left: PyObject,
-    right: PyObject,
+    left: Py<PyAny>,
+    right: Py<PyAny>,
 }
 
 #[pymethods]
 impl AndSubstitution {
     #[new]
-    fn new(left: PyObject, right: PyObject) -> Self {
+    fn new(left: Py<PyAny>, right: Py<PyAny>) -> Self {
         Self { left, right }
     }
 
@@ -106,17 +106,17 @@ impl AndSubstitution {
 /// ```
 ///
 /// Returns the boolean OR of two inputs
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct OrSubstitution {
-    left: PyObject,
-    right: PyObject,
+    left: Py<PyAny>,
+    right: Py<PyAny>,
 }
 
 #[pymethods]
 impl OrSubstitution {
     #[new]
-    fn new(left: PyObject, right: PyObject) -> Self {
+    fn new(left: Py<PyAny>, right: Py<PyAny>) -> Self {
         Self { left, right }
     }
 
@@ -145,17 +145,17 @@ impl OrSubstitution {
 /// ```
 ///
 /// Returns true if two values are equal
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct EqualsSubstitution {
-    left: PyObject,
-    right: PyObject,
+    left: Py<PyAny>,
+    right: Py<PyAny>,
 }
 
 #[pymethods]
 impl EqualsSubstitution {
     #[new]
-    fn new(left: PyObject, right: PyObject) -> Self {
+    fn new(left: Py<PyAny>, right: Py<PyAny>) -> Self {
         Self { left, right }
     }
 
@@ -196,18 +196,18 @@ impl EqualsSubstitution {
 /// ```
 ///
 /// Returns if_value if condition is true, else returns else_value
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct IfElseSubstitution {
-    condition: PyObject,
-    if_value: PyObject,
-    else_value: PyObject,
+    condition: Py<PyAny>,
+    if_value: Py<PyAny>,
+    else_value: Py<PyAny>,
 }
 
 #[pymethods]
 impl IfElseSubstitution {
     #[new]
-    fn new(condition: PyObject, if_value: PyObject, else_value: PyObject) -> Self {
+    fn new(condition: Py<PyAny>, if_value: Py<PyAny>, else_value: Py<PyAny>) -> Self {
         Self {
             condition,
             if_value,
@@ -253,17 +253,17 @@ impl IfElseSubstitution {
 /// ```
 ///
 /// Returns true if two values are NOT equal
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct NotEqualsSubstitution {
-    left: PyObject,
-    right: PyObject,
+    left: Py<PyAny>,
+    right: Py<PyAny>,
 }
 
 #[pymethods]
 impl NotEqualsSubstitution {
     #[new]
-    fn new(left: PyObject, right: PyObject) -> Self {
+    fn new(left: Py<PyAny>, right: Py<PyAny>) -> Self {
         Self { left, right }
     }
 

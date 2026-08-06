@@ -20,16 +20,16 @@ use pyo3::{prelude::*, types::PyDict};
 ///
 /// LifecycleNode is similar to Node but adds lifecycle management support
 /// For now, we treat it the same as a regular Node
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct LifecycleNode {
     package: String,
     executable: String,
     name: Option<String>,
     namespace: Option<String>,
-    parameters: Vec<PyObject>,
-    remappings: Vec<PyObject>,
-    arguments: Vec<PyObject>,
+    parameters: Vec<Py<PyAny>>,
+    remappings: Vec<Py<PyAny>>,
+    arguments: Vec<Py<PyAny>>,
     #[allow(dead_code)] // Keep for API compatibility
     output: String,
 }
@@ -52,13 +52,13 @@ impl LifecycleNode {
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python,
-        package: PyObject,
-        executable: PyObject,
-        name: Option<PyObject>,
-        namespace: Option<PyObject>,
-        parameters: Option<Vec<PyObject>>,
-        remappings: Option<Vec<PyObject>>,
-        arguments: Option<Vec<PyObject>>,
+        package: Py<PyAny>,
+        executable: Py<PyAny>,
+        name: Option<Py<PyAny>>,
+        namespace: Option<Py<PyAny>>,
+        parameters: Option<Vec<Py<PyAny>>>,
+        remappings: Option<Vec<Py<PyAny>>>,
+        arguments: Option<Vec<Py<PyAny>>>,
         output: Option<String>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
@@ -102,8 +102,8 @@ impl LifecycleNode {
 }
 
 impl LifecycleNode {
-    /// Convert PyObject to string (static version for use in constructor)
-    fn pyobject_to_string_static(py: Python, obj: &PyObject) -> PyResult<String> {
+    /// Convert Py<PyAny> to string (static version for use in constructor)
+    fn pyobject_to_string_static(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         // Try direct string extraction
         if let Ok(s) = obj.extract::<String>(py) {
             return Ok(s);
@@ -223,7 +223,7 @@ impl LifecycleNode {
             let param_any = param_obj.bind(py);
 
             // Try to extract as dict (most common case for parameters)
-            if let Ok(param_dict) = param_any.downcast::<pyo3::types::PyDict>() {
+            if let Ok(param_dict) = param_any.cast::<pyo3::types::PyDict>() {
                 for (key, value) in param_dict.iter() {
                     let key_str = key.extract::<String>()?;
                     // Convert value to string
@@ -277,7 +277,7 @@ impl LifecycleNode {
 
         for remap_obj in &self.remappings {
             let remap_any = remap_obj.bind(py);
-            if let Ok(remap_tuple) = remap_any.downcast::<pyo3::types::PyTuple>()
+            if let Ok(remap_tuple) = remap_any.cast::<pyo3::types::PyTuple>()
                 && remap_tuple.len() == 2
             {
                 // Extract both elements and convert to strings
@@ -322,10 +322,10 @@ impl LifecycleNode {
         Ok(parsed_args)
     }
 
-    /// Convert PyObject to string (handles substitutions)
+    /// Convert Py<PyAny> to string (handles substitutions)
     fn pyobject_to_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
         let py = obj.py();
-        let py_obj: PyObject = obj.clone().unbind();
+        let py_obj: Py<PyAny> = obj.clone().unbind();
         crate::python::api::utils::pyobject_to_string(py, &py_obj)
     }
 }
@@ -345,7 +345,7 @@ impl LifecycleNode {
 ///
 /// Triggers a lifecycle state transition for managed nodes.
 /// For static analysis, we just capture the intent without executing transitions.
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct LifecycleTransition {
     #[allow(dead_code)] // Stored for API compatibility

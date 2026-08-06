@@ -13,10 +13,10 @@ use pyo3::{IntoPyObjectExt, prelude::*};
 /// ```
 ///
 /// This action executes a Python function and captures the returned actions.
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct OpaqueFunction {
-    function: Option<PyObject>,
+    function: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -24,7 +24,7 @@ impl OpaqueFunction {
     #[new]
     #[pyo3(signature = (*, function=None, **_kwargs))]
     fn new(
-        function: Option<PyObject>,
+        function: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         Ok(Self { function })
@@ -36,7 +36,7 @@ impl OpaqueFunction {
 
     /// Execute the function and return the result
     /// This is called by our executor
-    pub fn execute(&self, py: Python) -> PyResult<PyObject> {
+    pub fn execute(&self, py: Python) -> PyResult<Py<PyAny>> {
         log::debug!("OpaqueFunction::execute called");
         if let Some(ref func) = self.function {
             log::debug!("OpaqueFunction has function, executing it");
@@ -140,7 +140,7 @@ context = MockLaunchContext(launch_configurations, ros_namespace, resolve_substi
             if !global_params.is_empty() {
                 let gp_list = pyo3::types::PyList::empty(py);
                 for (name, value_str) in &global_params {
-                    let py_value: PyObject = if let Ok(f) = value_str.parse::<f64>() {
+                    let py_value: Py<PyAny> = if let Ok(f) = value_str.parse::<f64>() {
                         if !value_str.contains('.') {
                             if let Ok(i) = value_str.parse::<i64>() {
                                 i.into_py_any(py)?
@@ -208,7 +208,7 @@ context = MockLaunchContext(launch_configurations, ros_namespace, resolve_substi
             log::debug!("OpaqueFunction returned type: {}", result_type);
 
             // If it's a list, log the count
-            if let Ok(list) = result.bind(py).extract::<Vec<PyObject>>() {
+            if let Ok(list) = result.bind(py).extract::<Vec<Py<PyAny>>>() {
                 log::debug!("OpaqueFunction returned list with {} items", list.len());
             }
 

@@ -25,15 +25,15 @@ use pyo3::{
 ///     remappings=[...],
 /// )
 /// ```
-#[pyclass(module = "launch_ros.descriptions")]
+#[pyclass(module = "launch_ros.descriptions", from_py_object)]
 #[derive(Clone)]
 pub struct ComposableNode {
     package: String,
     plugin: String,
     name: String,
     namespace: Option<String>,
-    parameters: Vec<PyObject>,
-    remappings: Vec<PyObject>,
+    parameters: Vec<Py<PyAny>>,
+    remappings: Vec<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -52,12 +52,12 @@ impl ComposableNode {
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python,
-        package: PyObject,
-        plugin: PyObject,
-        name: PyObject,
-        namespace: Option<PyObject>,
-        parameters: Option<Vec<PyObject>>,
-        remappings: Option<Vec<PyObject>>,
+        package: Py<PyAny>,
+        plugin: Py<PyAny>,
+        name: Py<PyAny>,
+        namespace: Option<Py<PyAny>>,
+        parameters: Option<Vec<Py<PyAny>>>,
+        remappings: Option<Vec<Py<PyAny>>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         // Convert PyObjects to strings (handles both strings and substitutions/lists)
@@ -119,19 +119,19 @@ impl ComposableNode {
     }
 
     #[getter]
-    fn parameters(&self) -> Vec<PyObject> {
+    fn parameters(&self) -> Vec<Py<PyAny>> {
         self.parameters.clone()
     }
 
     #[getter]
-    fn remappings(&self) -> Vec<PyObject> {
+    fn remappings(&self) -> Vec<Py<PyAny>> {
         self.remappings.clone()
     }
 }
 
 impl ComposableNode {
-    /// Convert a PyObject to a string (handles both strings and substitutions)
-    fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
+    /// Convert a Py<PyAny> to a string (handles both strings and substitutions)
+    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         crate::python::api::utils::pyobject_to_string(py, obj)
     }
 
@@ -173,8 +173,8 @@ impl ComposableNode {
 
         // Parse parameters and remappings from Python objects
         let parameters =
-            Python::with_gil(|py| self.parse_parameters(py, &node_fqn).unwrap_or_default());
-        let remappings = Python::with_gil(|py| self.parse_remappings(py).unwrap_or_default());
+            Python::attach(|py| self.parse_parameters(py, &node_fqn).unwrap_or_default());
+        let remappings = Python::attach(|py| self.parse_remappings(py).unwrap_or_default());
 
         // Build full target container name: namespace + name
         // Normalize to ensure consistent path format with leading slash
@@ -282,15 +282,15 @@ impl ComposableNode {
             }
 
             // Dict (single parameter dict or nested dict)
-            if let Ok(dict) = param_any.downcast::<PyDict>() {
+            if let Ok(dict) = param_any.cast::<PyDict>() {
                 Node::parse_dict_params(dict, "", &mut parsed_params)?;
                 continue;
             }
 
             // List (list of parameter dicts)
-            if let Ok(list) = param_any.downcast::<PyList>() {
+            if let Ok(list) = param_any.cast::<PyList>() {
                 for item in list.iter() {
-                    if let Ok(dict) = item.downcast::<PyDict>() {
+                    if let Ok(dict) = item.cast::<PyDict>() {
                         Node::parse_dict_params(dict, "", &mut parsed_params)?;
                     }
                 }
@@ -360,7 +360,7 @@ impl ComposableNode {
             let remap_any = remap_obj.bind(py);
 
             // Remappings should be tuples of (from, to)
-            if let Ok(remap_tuple) = remap_any.downcast::<pyo3::types::PyTuple>()
+            if let Ok(remap_tuple) = remap_any.cast::<pyo3::types::PyTuple>()
                 && remap_tuple.len() == 2
             {
                 // Extract both elements and convert to strings

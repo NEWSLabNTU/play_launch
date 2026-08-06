@@ -37,7 +37,7 @@ sha2 = { workspace = true }
 # `.launch.py` executes against the USER's interpreter — the one external
 # requirement of this layer, and the reason it is a separate process from the
 # portable consumers that link it.
-pyo3 = { version = "0.24", features = ["auto-initialize", "py-clone"] }
+pyo3 = { version = "0.29", features = ["auto-initialize", "py-clone"] }
 
 [dev-dependencies]
 tempfile = "3"

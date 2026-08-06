@@ -19,13 +19,13 @@ use pyo3::prelude::*;
 /// ```
 ///
 /// Triggers actions when a target process starts
-#[pyclass(module = "launch.event_handlers")]
+#[pyclass(module = "launch.event_handlers", from_py_object)]
 #[derive(Clone)]
 pub struct OnProcessStart {
     #[allow(dead_code)] // Keep for API compatibility
-    target_action: Option<PyObject>,
+    target_action: Option<Py<PyAny>>,
     #[allow(dead_code)] // Keep for API compatibility
-    on_start: Option<Vec<PyObject>>,
+    on_start: Option<Vec<Py<PyAny>>>,
 }
 
 #[pymethods]
@@ -33,8 +33,8 @@ impl OnProcessStart {
     #[new]
     #[pyo3(signature = (*, target_action=None, on_start=None, **_kwargs))]
     fn new(
-        target_action: Option<PyObject>,
-        on_start: Option<Vec<PyObject>>,
+        target_action: Option<Py<PyAny>>,
+        on_start: Option<Vec<Py<PyAny>>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         let action_count = on_start.as_ref().map_or(0, |v| v.len());
@@ -71,13 +71,13 @@ impl OnProcessStart {
 /// ```
 ///
 /// Triggers actions when a target process exits
-#[pyclass(module = "launch.event_handlers")]
+#[pyclass(module = "launch.event_handlers", from_py_object)]
 #[derive(Clone)]
 pub struct OnProcessExit {
     #[allow(dead_code)] // Keep for API compatibility
-    target_action: Option<PyObject>,
+    target_action: Option<Py<PyAny>>,
     #[allow(dead_code)] // Keep for API compatibility
-    on_exit: Option<Vec<PyObject>>,
+    on_exit: Option<Vec<Py<PyAny>>>,
 }
 
 #[pymethods]
@@ -85,8 +85,8 @@ impl OnProcessExit {
     #[new]
     #[pyo3(signature = (*, target_action=None, on_exit=None, **_kwargs))]
     fn new(
-        target_action: Option<PyObject>,
-        on_exit: Option<Vec<PyObject>>,
+        target_action: Option<Py<PyAny>>,
+        on_exit: Option<Vec<Py<PyAny>>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         let action_count = on_exit.as_ref().map_or(0, |v| v.len());
@@ -125,15 +125,15 @@ impl OnProcessExit {
 /// ```
 ///
 /// Triggers actions when a lifecycle node transitions to a target state
-#[pyclass(module = "launch.event_handlers")]
+#[pyclass(module = "launch.event_handlers", from_py_object)]
 #[derive(Clone)]
 pub struct OnStateTransition {
     #[allow(dead_code)] // Keep for API compatibility
-    target_lifecycle_node: Option<PyObject>,
+    target_lifecycle_node: Option<Py<PyAny>>,
     #[allow(dead_code)] // Keep for API compatibility
     goal_state: Option<String>,
     #[allow(dead_code)] // Keep for API compatibility
-    entities: Option<Vec<PyObject>>,
+    entities: Option<Vec<Py<PyAny>>>,
 }
 
 #[pymethods]
@@ -141,9 +141,9 @@ impl OnStateTransition {
     #[new]
     #[pyo3(signature = (*, target_lifecycle_node=None, goal_state=None, entities=None, **_kwargs))]
     fn new(
-        target_lifecycle_node: Option<PyObject>,
+        target_lifecycle_node: Option<Py<PyAny>>,
         goal_state: Option<String>,
-        entities: Option<Vec<PyObject>>,
+        entities: Option<Vec<Py<PyAny>>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         let entity_count = entities.as_ref().map_or(0, |v| v.len());
@@ -182,11 +182,11 @@ impl OnStateTransition {
 /// ```
 ///
 /// Triggers actions when the launch system shuts down
-#[pyclass(module = "launch.event_handlers")]
+#[pyclass(module = "launch.event_handlers", from_py_object)]
 #[derive(Clone)]
 pub struct OnShutdown {
     #[allow(dead_code)] // Keep for API compatibility
-    on_shutdown: Option<Vec<PyObject>>,
+    on_shutdown: Option<Vec<Py<PyAny>>>,
 }
 
 #[pymethods]
@@ -194,7 +194,7 @@ impl OnShutdown {
     #[new]
     #[pyo3(signature = (*, on_shutdown=None, **_kwargs))]
     fn new(
-        on_shutdown: Option<Vec<PyObject>>,
+        on_shutdown: Option<Vec<Py<PyAny>>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         let action_count = on_shutdown.as_ref().map_or(0, |v| v.len());

@@ -16,7 +16,7 @@ use crate::python::api::utils as sub_utils;
 /// from launch.substitutions import TextSubstitution
 /// text = TextSubstitution(text='literal text')
 /// ```
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct TextSubstitution {
     text: String,
@@ -48,16 +48,16 @@ impl TextSubstitution {
 /// ```
 ///
 /// Joins path components using '/' separator
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct PathJoinSubstitution {
-    substitutions: Vec<PyObject>,
+    substitutions: Vec<Py<PyAny>>,
 }
 
 #[pymethods]
 impl PathJoinSubstitution {
     #[new]
-    fn new(substitutions: Vec<PyObject>) -> Self {
+    fn new(substitutions: Vec<Py<PyAny>>) -> Self {
         Self { substitutions }
     }
 
@@ -112,16 +112,16 @@ impl PathJoinSubstitution {
 /// ```
 ///
 /// Returns substitution format: `$(find-pkg-share package_name)`
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct FindPackageShare {
-    package_name: PyObject,
+    package_name: Py<PyAny>,
 }
 
 #[pymethods]
 impl FindPackageShare {
     #[new]
-    fn new(package_name: PyObject) -> Self {
+    fn new(package_name: Py<PyAny>) -> Self {
         Self { package_name }
     }
 
@@ -131,7 +131,7 @@ impl FindPackageShare {
         // Extract package name (could be string, substitution, or list)
         let pkg = if let Ok(s) = self.package_name.extract::<String>(py) {
             s
-        } else if let Ok(list) = self.package_name.bind(py).downcast::<PyList>() {
+        } else if let Ok(list) = self.package_name.bind(py).cast::<PyList>() {
             // Handle list case: concatenate all elements using __str__()
             let mut result = String::new();
             for item in list.iter() {
@@ -170,7 +170,7 @@ impl FindPackageShare {
         // Extract package name (could be string, LaunchConfiguration, or list)
         let pkg_name = if let Ok(s) = self.package_name.extract::<String>(py) {
             s
-        } else if let Ok(list) = self.package_name.bind(py).downcast::<PyList>() {
+        } else if let Ok(list) = self.package_name.bind(py).cast::<PyList>() {
             // Handle list case: concatenate all elements after performing them
             let mut result = String::new();
             for item in list.iter() {
@@ -243,7 +243,7 @@ impl FindPackageShare {
 /// ```
 ///
 /// Returns substitution format: `$(dirname)`
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct ThisLaunchFileDir {}
 
@@ -272,16 +272,16 @@ impl ThisLaunchFileDir {
 /// ```
 ///
 /// Reads file contents and returns as string
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct FileContent {
-    path: PyObject,
+    path: Py<PyAny>,
 }
 
 #[pymethods]
 impl FileContent {
     #[new]
-    fn new(path: PyObject) -> Self {
+    fn new(path: Py<PyAny>) -> Self {
         Self { path }
     }
 
@@ -360,7 +360,7 @@ impl FileContent {
 /// ```
 ///
 /// Generates an anonymous name with a random suffix
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct AnonName {
     name: String,
@@ -391,11 +391,11 @@ impl AnonName {
 /// ```
 ///
 /// Finds the full path to an executable within a ROS package
-#[pyclass(module = "launch_ros.substitutions")]
+#[pyclass(module = "launch_ros.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct ExecutableInPackage {
-    package: PyObject,
-    executable: PyObject,
+    package: Py<PyAny>,
+    executable: Py<PyAny>,
 }
 
 #[pymethods]
@@ -403,8 +403,8 @@ impl ExecutableInPackage {
     #[new]
     #[pyo3(signature = (package, executable, **_kwargs))]
     fn new(
-        package: PyObject,
-        executable: PyObject,
+        package: Py<PyAny>,
+        executable: Py<PyAny>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         Self {
@@ -448,16 +448,16 @@ impl ExecutableInPackage {
 /// ```
 ///
 /// Finds the install prefix path of a ROS package (different from FindPackageShare)
-#[pyclass(module = "launch_ros.substitutions")]
+#[pyclass(module = "launch_ros.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct FindPackage {
-    package: PyObject,
+    package: Py<PyAny>,
 }
 
 #[pymethods]
 impl FindPackage {
     #[new]
-    fn new(package: PyObject) -> Self {
+    fn new(package: Py<PyAny>) -> Self {
         Self { package }
     }
 
@@ -487,7 +487,7 @@ impl FindPackage {
 /// ```
 ///
 /// Returns the launch log directory path
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct LaunchLogDir {}
 
@@ -521,7 +521,7 @@ impl LaunchLogDir {
 /// ```
 ///
 /// Returns the full path to the current launch file
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct ThisLaunchFile {}
 

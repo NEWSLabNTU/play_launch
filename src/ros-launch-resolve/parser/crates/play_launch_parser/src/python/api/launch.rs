@@ -14,13 +14,13 @@ use pyo3::prelude::*;
 #[pyclass(module = "launch")]
 pub struct LaunchDescription {
     #[pyo3(get)]
-    pub actions: Vec<PyObject>,
+    pub actions: Vec<Py<PyAny>>,
 }
 
 #[pymethods]
 impl LaunchDescription {
     #[new]
-    fn new(actions: Vec<PyObject>) -> Self {
+    fn new(actions: Vec<Py<PyAny>>) -> Self {
         Self { actions }
     }
 

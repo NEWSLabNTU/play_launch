@@ -54,7 +54,7 @@ pub fn run_dump_launch(
     let output_for_check = output.clone();
 
     std::thread::spawn(move || -> Result<()> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Setup Python path to include ROS2 packages
             setup_python_path(py).wrap_err("Failed to setup Python path")?;
 
@@ -146,7 +146,7 @@ pub fn run_plot(
     let metrics = metrics.to_vec();
 
     std::thread::spawn(move || -> Result<()> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Setup Python path to include ROS2 packages
             setup_python_path(py).wrap_err("Failed to setup Python path")?;
 

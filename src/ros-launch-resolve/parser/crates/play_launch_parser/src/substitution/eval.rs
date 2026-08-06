@@ -156,7 +156,7 @@ fn python_eval_fallback(expr: &str) -> Result<String, SubstitutionError> {
 
     log::debug!("Evaluating $(eval {})", expr);
 
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let expr_cstr = std::ffi::CString::new(expr).map_err(|e| {
             SubstitutionError::InvalidSubstitution(format!("Expression contains null byte: {}", e))
         })?;

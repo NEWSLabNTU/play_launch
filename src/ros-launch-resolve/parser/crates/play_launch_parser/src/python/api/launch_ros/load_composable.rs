@@ -26,12 +26,12 @@ use pyo3::prelude::*;
 /// ```
 ///
 /// Loads composable nodes into an existing container
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct LoadComposableNodes {
     #[allow(dead_code)] // Keep for API compatibility
-    target_container: PyObject,
-    composable_node_descriptions: Vec<PyObject>,
+    target_container: Py<PyAny>,
+    composable_node_descriptions: Vec<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -40,9 +40,9 @@ impl LoadComposableNodes {
     #[pyo3(signature = (*, target_container, composable_node_descriptions, condition=None, **_kwargs))]
     fn new(
         py: Python,
-        target_container: PyObject,
-        composable_node_descriptions: Vec<PyObject>,
-        condition: Option<PyObject>,
+        target_container: Py<PyAny>,
+        composable_node_descriptions: Vec<Py<PyAny>>,
+        condition: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Extract target container name for logging
@@ -116,8 +116,8 @@ impl LoadComposableNodes {
     /// Capture composable nodes from the descriptions list
     fn capture_composable_nodes(
         py: Python,
-        target_container: &PyObject,
-        descriptions: &[PyObject],
+        target_container: &Py<PyAny>,
+        descriptions: &[Py<PyAny>],
     ) -> PyResult<()> {
         use crate::{
             captures::LoadNodeCapture,
@@ -232,7 +232,7 @@ impl LoadComposableNodes {
     }
 
     /// Evaluate a condition object (same logic as Node)
-    fn evaluate_condition(py: Python, condition: &PyObject) -> PyResult<bool> {
+    fn evaluate_condition(py: Python, condition: &Py<PyAny>) -> PyResult<bool> {
         let cond_ref = condition.bind(py);
 
         // Try calling evaluate() method on the condition object
@@ -248,7 +248,7 @@ impl LoadComposableNodes {
         Ok(true)
     }
 
-    /// Extract target container name and namespace from a PyObject
+    /// Extract target container name and namespace from a Py<PyAny>
     ///
     /// The target_container can be:
     /// - A ComposableNodeContainer instance
@@ -256,7 +256,7 @@ impl LoadComposableNodes {
     /// - A LaunchConfiguration or other substitution
     fn extract_target_container(
         py: Python,
-        target: &PyObject,
+        target: &Py<PyAny>,
     ) -> PyResult<(String, Option<String>)> {
         let target_ref = target.bind(py);
 
@@ -414,11 +414,11 @@ impl LoadComposableNodes {
     fn extract_parameters(params_obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, String)>> {
         let mut parsed_params = Vec::new();
 
-        if let Ok(params_list) = params_obj.downcast::<pyo3::types::PyList>() {
+        if let Ok(params_list) = params_obj.cast::<pyo3::types::PyList>() {
             log::trace!("extract_parameters: {} items", params_list.len());
 
             for (idx, param_item) in params_list.iter().enumerate() {
-                if let Ok(param_dict) = param_item.downcast::<pyo3::types::PyDict>() {
+                if let Ok(param_dict) = param_item.cast::<pyo3::types::PyDict>() {
                     log::trace!(
                         "extract_parameters: item {} is dict with {} keys",
                         idx,
@@ -535,9 +535,9 @@ impl LoadComposableNodes {
     fn extract_remappings(remaps_obj: &Bound<'_, PyAny>) -> PyResult<Vec<(String, String)>> {
         let mut parsed_remaps = Vec::new();
 
-        if let Ok(remaps_list) = remaps_obj.downcast::<pyo3::types::PyList>() {
+        if let Ok(remaps_list) = remaps_obj.cast::<pyo3::types::PyList>() {
             for remap_item in remaps_list.iter() {
-                if let Ok(remap_tuple) = remap_item.downcast::<pyo3::types::PyTuple>()
+                if let Ok(remap_tuple) = remap_item.cast::<pyo3::types::PyTuple>()
                     && remap_tuple.len() == 2
                 {
                     // Use pyobject_to_string to handle LaunchConfiguration objects
@@ -551,10 +551,10 @@ impl LoadComposableNodes {
         Ok(parsed_remaps)
     }
 
-    /// Convert PyObject to string (handles substitutions)
+    /// Convert Py<PyAny> to string (handles substitutions)
     fn pyobject_to_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
         let py = obj.py();
-        let py_obj: PyObject = obj.clone().unbind();
+        let py_obj: Py<PyAny> = obj.clone().unbind();
         crate::python::api::utils::pyobject_to_string(py, &py_obj)
     }
 }

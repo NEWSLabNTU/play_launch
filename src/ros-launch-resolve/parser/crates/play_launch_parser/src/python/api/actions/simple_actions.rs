@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 /// ```
 ///
 /// Logs an information message when the action is executed
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct LogInfo {
     msg: String,
@@ -25,7 +25,7 @@ impl LogInfo {
     #[pyo3(signature = (*, msg, **_kwargs))]
     fn new(
         py: Python,
-        msg: PyObject,
+        msg: Py<PyAny>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Convert msg to string (handles strings, lists, LaunchConfiguration, etc.)
@@ -42,9 +42,9 @@ impl LogInfo {
 }
 
 impl LogInfo {
-    /// Convert a PyObject to a string (handles both strings and substitutions)
+    /// Convert a Py<PyAny> to a string (handles both strings and substitutions)
     /// Same logic as Node::pyobject_to_string
-    fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
+    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         crate::python::api::utils::pyobject_to_string(py, obj)
     }
 }
@@ -60,7 +60,7 @@ impl LogInfo {
 /// ```
 ///
 /// Sets an environment variable
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct SetEnvironmentVariable {
     name: String,
@@ -70,7 +70,7 @@ pub struct SetEnvironmentVariable {
 #[pymethods]
 impl SetEnvironmentVariable {
     #[new]
-    fn new(py: Python, name: PyObject, value: PyObject) -> PyResult<Self> {
+    fn new(py: Python, name: Py<PyAny>, value: Py<PyAny>) -> PyResult<Self> {
         // Convert PyObjects to strings (handles strings, substitutions, and lists)
         let name_str = Self::pyobject_to_string(py, &name)?;
         let value_str = Self::pyobject_to_string(py, &value)?;
@@ -92,9 +92,9 @@ impl SetEnvironmentVariable {
 }
 
 impl SetEnvironmentVariable {
-    /// Convert a PyObject to a string (handles strings, substitutions, and lists)
+    /// Convert a Py<PyAny> to a string (handles strings, substitutions, and lists)
     /// Reuses the same pattern as LogInfo
-    fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
+    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         crate::python::api::utils::pyobject_to_string(py, obj)
     }
 }
@@ -108,7 +108,7 @@ impl SetEnvironmentVariable {
 /// ```
 ///
 /// Unsets an environment variable
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct UnsetEnvironmentVariable {
     name: String,
@@ -146,7 +146,7 @@ impl UnsetEnvironmentVariable {
 /// ```
 ///
 /// Executes a non-ROS process
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct ExecuteProcess {
     cmd: Vec<String>,
@@ -164,9 +164,9 @@ impl ExecuteProcess {
     #[pyo3(signature = (*, cmd, cwd=None, name=None, output=None, **_kwargs))]
     fn new(
         py: Python,
-        cmd: Vec<PyObject>,
-        cwd: Option<PyObject>,
-        name: Option<PyObject>,
+        cmd: Vec<Py<PyAny>>,
+        cwd: Option<Py<PyAny>>,
+        name: Option<Py<PyAny>>,
         output: Option<String>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
@@ -201,9 +201,9 @@ impl ExecuteProcess {
 }
 
 impl ExecuteProcess {
-    /// Convert a PyObject to a string (handles strings, substitutions, and lists)
+    /// Convert a Py<PyAny> to a string (handles strings, substitutions, and lists)
     /// Reuses the same pattern as SetEnvironmentVariable
-    fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
+    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         crate::python::api::utils::pyobject_to_string(py, obj)
     }
 }
@@ -220,11 +220,11 @@ impl ExecuteProcess {
 /// ```
 ///
 /// Executes a process on the local system with more control than ExecuteProcess
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct ExecuteLocal {
     #[allow(dead_code)] // Keep for future use
-    process_description: Option<PyObject>,
+    process_description: Option<Py<PyAny>>,
     #[allow(dead_code)] // Keep for future use
     cmd: Option<Vec<String>>,
     #[allow(dead_code)] // Keep for future use
@@ -238,7 +238,7 @@ impl ExecuteLocal {
     #[new]
     #[pyo3(signature = (*, process_description=None, cmd=None, cwd=None, output=None, shell=None, **_kwargs))]
     fn new(
-        process_description: Option<PyObject>,
+        process_description: Option<Py<PyAny>>,
         cmd: Option<Vec<String>>,
         cwd: Option<String>,
         output: Option<String>,
@@ -282,13 +282,13 @@ impl ExecuteLocal {
 /// ```
 ///
 /// Executes actions after a delay
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct TimerAction {
     #[allow(dead_code)] // Keep for future use
     period: f64,
     #[allow(dead_code)] // Keep for future use
-    actions: Vec<PyObject>,
+    actions: Vec<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -297,7 +297,7 @@ impl TimerAction {
     #[pyo3(signature = (*, period, actions, **_kwargs))]
     fn new(
         period: f64,
-        actions: Vec<PyObject>,
+        actions: Vec<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         log::debug!("Python Launch TimerAction: period={}s", period);
@@ -326,15 +326,15 @@ impl TimerAction {
 ///
 /// Adds a Python coroutine function to the launch run loop.
 /// For static analysis, we just capture that it was called.
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct OpaqueCoroutine {
     #[allow(dead_code)] // Keep for future use
-    coroutine: PyObject,
+    coroutine: Py<PyAny>,
     #[allow(dead_code)] // Keep for future use
-    args: Vec<PyObject>,
+    args: Vec<Py<PyAny>>,
     #[allow(dead_code)] // Keep for future use
-    func_kwargs: Option<PyObject>,
+    func_kwargs: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -342,9 +342,9 @@ impl OpaqueCoroutine {
     #[new]
     #[pyo3(signature = (*, coroutine, args=None, kwargs=None, **_extra_kwargs))]
     fn new(
-        coroutine: PyObject,
-        args: Option<Vec<PyObject>>,
-        kwargs: Option<PyObject>,
+        coroutine: Py<PyAny>,
+        args: Option<Vec<Py<PyAny>>>,
+        kwargs: Option<Py<PyAny>>,
         _extra_kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         log::debug!("Python Launch OpaqueCoroutine: coroutine provided");

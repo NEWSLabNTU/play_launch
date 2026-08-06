@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 ///
 /// For now, this is a placeholder. Launch arguments are typically
 /// passed via command line, not captured from Python files.
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct DeclareLaunchArgument {
     name: String,
@@ -33,13 +33,13 @@ impl DeclareLaunchArgument {
     fn new(
         py: Python,
         name: String,
-        default_value: Option<PyObject>,
+        default_value: Option<Py<PyAny>>,
         description: Option<String>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         use crate::python::bridge::with_launch_context;
 
-        // Convert default_value PyObject to string (may be string, substitution, or list)
+        // Convert default_value Py<PyAny> to string (may be string, substitution, or list)
         // Special case: when default_value is a LaunchConfiguration with the same name,
         // we need to call perform() to resolve it using the LaunchConfiguration's own
         // stored default (not the context lookup, which would be circular).
@@ -98,9 +98,9 @@ impl DeclareLaunchArgument {
 }
 
 impl DeclareLaunchArgument {
-    /// Convert PyObject to string (handles strings, substitutions, and lists)
+    /// Convert Py<PyAny> to string (handles strings, substitutions, and lists)
     /// For substitutions, this will call perform() to resolve them
-    fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
+    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         crate::python::api::utils::pyobject_to_string(py, obj)
     }
 }

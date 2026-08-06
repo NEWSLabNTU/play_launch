@@ -3,7 +3,7 @@
 use crate::python::bridge::capture_include;
 use pyo3::prelude::*;
 
-/// Convert PyObject to string for launch arguments (handles strings, lists, substitutions)
+/// Convert Py<PyAny> to string for launch arguments (handles strings, lists, substitutions)
 /// CRITICAL: Unlike pyobject_to_string, this function RESOLVES LaunchConfiguration objects
 /// instead of preserving them as "$(var name)" strings. This is necessary because include
 /// arguments are used to set variables in the included file's context, not for replay.
@@ -16,7 +16,7 @@ fn pyobject_to_string_for_include_args(py: Python, obj: &Bound<'_, PyAny>) -> Py
     }
 
     // Handle lists (concatenate elements recursively)
-    if let Ok(list) = obj.downcast::<PyList>() {
+    if let Ok(list) = obj.cast::<PyList>() {
         let mut result = String::new();
         for item in list.iter() {
             let item_str = pyobject_to_string_for_include_args(py, &item)?;
@@ -88,11 +88,11 @@ fn pyobject_to_string_for_include_args(py: Python, obj: &Bound<'_, PyAny>) -> Py
 /// ```
 ///
 /// Includes another launch file (Python, XML, or YAML)
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct IncludeLaunchDescription {
     #[allow(dead_code)] // Stored for API compatibility, used during construction
-    launch_description_source: PyObject,
+    launch_description_source: Py<PyAny>,
     #[allow(dead_code)] // Stored for API compatibility, used during construction
     launch_arguments: Vec<(String, String)>,
 }
@@ -103,15 +103,15 @@ impl IncludeLaunchDescription {
     #[pyo3(signature = (launch_description_source, *, launch_arguments=None, **_kwargs))]
     fn new(
         py: Python,
-        launch_description_source: PyObject,
-        launch_arguments: Option<PyObject>,
+        launch_description_source: Py<PyAny>,
+        launch_arguments: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Parse launch_arguments
         let mut args = Vec::new();
         if let Some(launch_args_obj) = launch_arguments {
             // Try to extract as dict
-            if let Ok(dict) = launch_args_obj.bind(py).downcast::<pyo3::types::PyDict>() {
+            if let Ok(dict) = launch_args_obj.bind(py).cast::<pyo3::types::PyDict>() {
                 for (key, value) in dict.iter() {
                     let key_str = key.extract::<String>()?;
                     // Try to extract value as string, list, or substitution
@@ -123,7 +123,7 @@ impl IncludeLaunchDescription {
             else if let Ok(iter) = launch_args_obj.bind(py).try_iter() {
                 for item in iter {
                     let item = item?;
-                    if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>()
+                    if let Ok(tuple) = item.cast::<pyo3::types::PyTuple>()
                         && tuple.len() == 2
                     {
                         let key = tuple.get_item(0)?.extract::<String>()?;

@@ -20,7 +20,7 @@ use super::resolve_substitution_string;
 /// ```
 ///
 /// When converted to string, returns substitution format: `$(var variable_name)`
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct LaunchConfiguration {
     variable_name: String,
@@ -34,13 +34,13 @@ impl LaunchConfiguration {
     #[pyo3(signature = (variable_name, *, default=None, **_kwargs))]
     fn new(
         variable_name: String,
-        default: Option<PyObject>,
+        default: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         // Accept str, bool, or any type — convert to string for storage.
         // ROS 2 accepts SomeSubstitutionsType which includes bool, list, etc.
         let default = default.map(|obj| {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 obj.bind(py)
                     .str()
                     .map_or_else(|_| format!("{:?}", obj), |s| s.to_string())
@@ -126,7 +126,7 @@ impl LaunchConfiguration {
 /// ```
 ///
 /// Returns substitution format: `$(env VAR_NAME)` or `$(optenv VAR_NAME default)`
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct EnvironmentVariable {
     name: String,
@@ -166,16 +166,16 @@ impl EnvironmentVariable {
 /// ```
 ///
 /// Reads a ROS parameter value and returns it as a string
-#[pyclass(module = "launch_ros.substitutions")]
+#[pyclass(module = "launch_ros.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct Parameter {
-    name: PyObject,
+    name: Py<PyAny>,
 }
 
 #[pymethods]
 impl Parameter {
     #[new]
-    fn new(name: PyObject) -> Self {
+    fn new(name: Py<PyAny>) -> Self {
         Self { name }
     }
 
@@ -205,16 +205,16 @@ impl Parameter {
 /// ```
 ///
 /// Converts a value to a boolean string representation ("true" or "false")
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct BooleanSubstitution {
-    value: PyObject,
+    value: Py<PyAny>,
 }
 
 #[pymethods]
 impl BooleanSubstitution {
     #[new]
-    fn new(value: PyObject) -> Self {
+    fn new(value: Py<PyAny>) -> Self {
         Self { value }
     }
 
@@ -255,16 +255,16 @@ impl BooleanSubstitution {
 /// ```
 ///
 /// Searches PATH for an executable
-#[pyclass(module = "launch.substitutions")]
+#[pyclass(module = "launch.substitutions", from_py_object)]
 #[derive(Clone)]
 pub struct FindExecutable {
-    name: PyObject,
+    name: Py<PyAny>,
 }
 
 #[pymethods]
 impl FindExecutable {
     #[new]
-    fn new(name: PyObject) -> Self {
+    fn new(name: Py<PyAny>) -> Self {
         Self { name }
     }
 

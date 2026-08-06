@@ -11,11 +11,11 @@ use pyo3::prelude::*;
 /// ```
 ///
 /// Pushes a namespace onto the namespace stack
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct PushRosNamespace {
     #[allow(dead_code)] // Stored for API compatibility
-    namespace: PyObject,
+    namespace: Py<PyAny>,
     /// Whether this PushRosNamespace actually pushed a namespace onto the stack.
     /// Empty or root ("/") namespaces are no-ops in push_namespace(), so
     /// GroupAction must know whether to pop for each PushRosNamespace action.
@@ -26,7 +26,7 @@ pub struct PushRosNamespace {
 #[pymethods]
 impl PushRosNamespace {
     #[new]
-    fn new(py: Python, namespace: PyObject) -> PyResult<Self> {
+    fn new(py: Python, namespace: Py<PyAny>) -> PyResult<Self> {
         // Convert namespace to string
         let namespace_str = if let Ok(s) = namespace.extract::<String>(py) {
             s
@@ -62,7 +62,7 @@ impl PushRosNamespace {
 /// ```
 ///
 /// Pops a namespace from the namespace stack
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct PopRosNamespace {}
 

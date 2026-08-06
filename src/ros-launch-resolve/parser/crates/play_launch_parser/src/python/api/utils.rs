@@ -12,7 +12,7 @@ use pyo3::{
 
 /// Create a LaunchContext-like Python object with access to launch configurations
 /// This allows substitutions to resolve LaunchConfiguration values during perform()
-pub fn create_launch_context(py: Python) -> PyResult<PyObject> {
+pub fn create_launch_context(py: Python) -> PyResult<Py<PyAny>> {
     use crate::python::bridge::with_launch_context;
 
     // Get resolved configurations and global parameters from the thread-local LaunchContext
@@ -44,7 +44,7 @@ pub fn create_launch_context(py: Python) -> PyResult<PyObject> {
         for (name, value_str) in &global_params {
             // Convert string values back to typed Python values (float/int/str)
             // so arithmetic in Python launch files works correctly
-            let py_value: PyObject = if let Ok(f) = value_str.parse::<f64>() {
+            let py_value: Py<PyAny> = if let Ok(f) = value_str.parse::<f64>() {
                 // Check if it could be an integer (no decimal point in original)
                 if !value_str.contains('.') {
                     if let Ok(i) = value_str.parse::<i64>() {
@@ -74,7 +74,7 @@ pub fn create_launch_context(py: Python) -> PyResult<PyObject> {
     Ok(context.into())
 }
 
-/// Convert a PyObject to String, handling ROS 2's SomeSubstitutionsType pattern.
+/// Convert a Py<PyAny> to String, handling ROS 2's SomeSubstitutionsType pattern.
 ///
 /// This function accepts three forms that match ROS 2's `SomeSubstitutionsType`:
 /// 1. **Plain string**: `"literal_value"`
@@ -140,7 +140,7 @@ pub fn create_launch_context(py: Python) -> PyResult<PyObject> {
 ///
 /// This function is called during launch file parsing (one-time cost),
 /// not during node runtime, so performance impact is negligible.
-pub fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
+pub fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
     use pyo3::types::{PyBool, PyList};
     let obj_ref = obj.bind(py);
 
@@ -158,7 +158,7 @@ pub fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
     }
 
     // Handle lists (concatenate elements recursively)
-    if let Ok(list) = obj_ref.downcast::<PyList>() {
+    if let Ok(list) = obj_ref.cast::<PyList>() {
         let mut result = String::new();
         for item in list.iter() {
             let item_str = pyobject_to_string(py, &item.into())?;
@@ -221,7 +221,7 @@ pub fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
     Ok(obj_ref.str()?.to_string())
 }
 
-/// Check if a PyObject is a substitution that needs evaluation during parsing.
+/// Check if a Py<PyAny> is a substitution that needs evaluation during parsing.
 ///
 /// Substitutions that need evaluation include:
 /// - **Conditional substitutions**: EqualsSubstitution, NotEqualsSubstitution, IfElseSubstitution,
@@ -257,12 +257,12 @@ fn is_evaluating_substitution(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     ))
 }
 
-/// Try `perform(context)` on a PyObject, then fall back to string conversion.
+/// Try `perform(context)` on a Py<PyAny>, then fall back to string conversion.
 ///
 /// Used by substitution structs that need to resolve operands which may themselves
 /// be substitutions (e.g., EqualsSubstitution comparing two LaunchConfigurations).
 pub fn perform_or_to_string(
-    obj: &PyObject,
+    obj: &Py<PyAny>,
     py: Python,
     context: &Bound<'_, PyAny>,
 ) -> PyResult<String> {
@@ -280,11 +280,11 @@ pub fn perform_or_to_string(
     pyobject_to_string(py, obj)
 }
 
-/// Convert a PyObject to a boolean value.
+/// Convert a Py<PyAny> to a boolean value.
 ///
 /// Handles bool extraction, string-to-bool conversion ("true"/"1"/"yes"),
 /// and __str__() fallback. Used by And/Or/IfElse substitutions.
-pub fn pyobject_to_bool(obj: &PyObject, py: Python) -> PyResult<bool> {
+pub fn pyobject_to_bool(obj: &Py<PyAny>, py: Python) -> PyResult<bool> {
     if let Ok(b) = obj.extract::<bool>(py) {
         return Ok(b);
     }
@@ -309,8 +309,8 @@ mod tests {
 
     #[test]
     fn test_pyobject_to_string_plain_string() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        Python::attach(|py| {
             let s = "hello world";
             let py_str = s.into_py_any(py).unwrap();
             let result = pyobject_to_string(py, &py_str).unwrap();
@@ -320,8 +320,8 @@ mod tests {
 
     #[test]
     fn test_pyobject_to_string_list() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        Python::attach(|py| {
             // Create a list: ["hello", " ", "world"]
             let list = pyo3::types::PyList::new(py, ["hello", " ", "world"]).unwrap();
             let py_list = list.into_any().unbind();
@@ -332,8 +332,8 @@ mod tests {
 
     #[test]
     fn test_pyobject_to_string_number() {
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
+        pyo3::Python::initialize();
+        Python::attach(|py| {
             let num: i64 = 42;
             let py_num = num.into_py_any(py).unwrap();
             let result = pyobject_to_string(py, &py_num).unwrap();

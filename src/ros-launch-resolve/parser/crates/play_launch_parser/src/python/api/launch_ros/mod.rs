@@ -32,13 +32,13 @@ use pyo3::{prelude::*, types::PyDict};
 /// ```
 ///
 /// Sets a global ROS parameter that applies to all nodes
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct SetParameter {
     #[allow(dead_code)] // Stored for API compatibility
     name: String,
     #[allow(dead_code)] // Stored for API compatibility
-    value: PyObject,
+    value: Py<PyAny>,
 }
 
 #[pymethods]
@@ -48,7 +48,7 @@ impl SetParameter {
     fn new(
         py: Python,
         name: String,
-        value: PyObject,
+        value: Py<PyAny>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         // Try to resolve the value if it's a substitution (like LaunchConfiguration)
@@ -87,8 +87,8 @@ impl SetParameter {
 }
 
 impl SetParameter {
-    /// Resolve a value PyObject, attempting to resolve substitutions if possible
-    fn resolve_value(py: Python, obj: &PyObject) -> PyResult<String> {
+    /// Resolve a value Py<PyAny>, attempting to resolve substitutions if possible
+    fn resolve_value(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         use crate::python::api::utils::create_launch_context;
 
         let obj_ref = obj.bind(py);
@@ -122,11 +122,11 @@ impl SetParameter {
 ///
 /// Loads parameters from a YAML file and applies them to nodes.
 /// For static analysis, we just capture the intent without loading the file.
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct SetParametersFromFile {
     #[allow(dead_code)] // Stored for API compatibility
-    filename: PyObject,
+    filename: Py<PyAny>,
     #[allow(dead_code)] // Stored for API compatibility
     node_name: Option<String>,
 }
@@ -136,7 +136,7 @@ impl SetParametersFromFile {
     #[new]
     #[pyo3(signature = (filename, *, node_name=None, **_kwargs))]
     fn new(
-        filename: PyObject,
+        filename: Py<PyAny>,
         node_name: Option<String>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> Self {
@@ -171,13 +171,13 @@ impl SetParametersFromFile {
 ///
 /// Timer that uses ROS time instead of wall clock time.
 /// Requires use_sim_time to be set for simulation time support.
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct RosTimer {
     #[allow(dead_code)] // Keep for future use
-    period: PyObject,
+    period: Py<PyAny>,
     #[allow(dead_code)] // Keep for future use
-    actions: Option<PyObject>,
+    actions: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -186,8 +186,8 @@ impl RosTimer {
     #[pyo3(signature = (*, period, actions=None, **_kwargs))]
     fn new(
         py: Python,
-        period: PyObject,
-        actions: Option<PyObject>,
+        period: Py<PyAny>,
+        actions: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Convert period to string for logging
@@ -219,7 +219,7 @@ impl RosTimer {
 ///
 /// Sets the 'use_sim_time' parameter in the current context.
 /// This enables simulation time for ROS nodes.
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct SetUseSimTime {
     value: bool,
@@ -247,7 +247,7 @@ impl SetUseSimTime {
 /// ```
 ///
 /// Sets a remapping rule in the current context for nodes in the same scope.
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct SetRemap {
     src: String,
@@ -277,17 +277,17 @@ impl SetRemap {
 /// ```
 ///
 /// Sets the ROS log directory for nodes launched in the same scope.
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct SetROSLogDir {
     #[allow(dead_code)] // Keep for future use
-    log_dir: PyObject,
+    log_dir: Py<PyAny>,
 }
 
 #[pymethods]
 impl SetROSLogDir {
     #[new]
-    fn new(log_dir: PyObject) -> Self {
+    fn new(log_dir: Py<PyAny>) -> Self {
         log::debug!("Python Launch SetROSLogDir: log directory provided");
         Self { log_dir }
     }

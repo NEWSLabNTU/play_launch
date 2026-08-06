@@ -33,7 +33,7 @@ pub fn make_namespace_absolute(namespace: String) -> String {
 /// Joins a namespace prefix with a name
 #[pyfunction]
 #[pyo3(signature = (prefix, name))]
-pub fn prefix_namespace(py: Python, prefix: PyObject, name: String) -> PyResult<String> {
+pub fn prefix_namespace(py: Python, prefix: Py<PyAny>, name: String) -> PyResult<String> {
     // Handle None prefix (treat as empty string)
     let prefix_str = if prefix.is_none(py) {
         String::new()

@@ -21,7 +21,7 @@ use pyo3::{prelude::*, types::PyDict};
 ///     ]
 /// )
 /// ```
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct ComposableNodeContainer {
     name: String,
@@ -49,17 +49,17 @@ impl ComposableNodeContainer {
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python,
-        name: PyObject,
-        namespace: Option<PyObject>,
-        package: PyObject,
-        executable: PyObject,
+        name: Py<PyAny>,
+        namespace: Option<Py<PyAny>>,
+        package: Py<PyAny>,
+        executable: Py<PyAny>,
         composable_node_descriptions: Option<Vec<Py<ComposableNode>>>,
-        condition: Option<PyObject>,
+        condition: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let composable_nodes = composable_node_descriptions.unwrap_or_default();
 
-        // Convert PyObject parameters to strings (may be substitutions)
+        // Convert Py<PyAny> parameters to strings (may be substitutions)
         // For name and namespace, resolve substitutions if present
         log::debug!("ComposableNodeContainer::new: creating container");
 
@@ -166,19 +166,19 @@ impl ComposableNodeContainer {
 }
 
 impl ComposableNodeContainer {
-    /// Resolve a PyObject substitution by calling perform() if available
+    /// Resolve a Py<PyAny> substitution by calling perform() if available
     ///
     /// For substitutions like LaunchConfiguration, this calls perform() to get the resolved value.
     /// For lists, recursively resolves each element.
     /// Otherwise falls back to pyobject_to_string.
-    fn resolve_pyobject_substitution(py: Python, obj: &PyObject) -> PyResult<String> {
+    fn resolve_pyobject_substitution(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         use crate::python::api::utils::create_launch_context;
         use pyo3::types::PyList;
 
         let obj_ref = obj.bind(py);
 
         // Handle lists specially - resolve each element
-        if let Ok(list) = obj_ref.downcast::<PyList>() {
+        if let Ok(list) = obj_ref.cast::<PyList>() {
             let mut result = String::new();
             for item in list.iter() {
                 let item_resolved = Self::resolve_pyobject_substitution(py, &item.into())?;
@@ -277,7 +277,7 @@ impl ComposableNodeContainer {
         // ROS2 composable nodes inherit the ROS context namespace (from push-ros-namespace),
         // NOT the container's own namespace.
         let full_ns_opt = Some(full_namespace);
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             for node_obj in &container.composable_nodes {
                 let node = node_obj.borrow(py);
                 node.capture_as_load_node(&container.name, &full_ns_opt, &ros_namespace);
@@ -286,7 +286,7 @@ impl ComposableNodeContainer {
     }
 
     /// Evaluate a condition object (same logic as Node)
-    fn evaluate_condition(py: Python, condition: &PyObject) -> PyResult<bool> {
+    fn evaluate_condition(py: Python, condition: &Py<PyAny>) -> PyResult<bool> {
         let cond_ref = condition.bind(py);
 
         log::debug!(
@@ -307,8 +307,8 @@ impl ComposableNodeContainer {
         Ok(true)
     }
 
-    /// Convert PyObject to string (handles both strings and substitutions)
-    fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
+    /// Convert Py<PyAny> to string (handles both strings and substitutions)
+    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         crate::python::api::utils::pyobject_to_string(py, obj)
     }
 }

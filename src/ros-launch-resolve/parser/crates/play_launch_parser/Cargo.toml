@@ -21,7 +21,7 @@ regex = "1.10"
 rand = "0.8"
 
 # Python support (mandatory)
-pyo3 = { version = "0.24", features = ["auto-initialize", "py-clone"] }
+pyo3 = { version = "0.29", features = ["auto-initialize", "py-clone"] }
 once_cell = "1.19"
 
 # Performance optimizations (Phase 7.1)

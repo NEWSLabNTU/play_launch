@@ -14,13 +14,13 @@ use pyo3::prelude::*;
 /// ```
 ///
 /// Sets a launch configuration value
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct SetLaunchConfiguration {
     #[allow(dead_code)] // Stored for API compatibility
-    name: PyObject,
+    name: Py<PyAny>,
     #[allow(dead_code)] // Stored for API compatibility
-    value: PyObject,
+    value: Py<PyAny>,
 }
 
 #[pymethods]
@@ -29,8 +29,8 @@ impl SetLaunchConfiguration {
     #[pyo3(signature = (name, value, **_kwargs))]
     fn new(
         py: Python,
-        name: PyObject,
-        value: PyObject,
+        name: Py<PyAny>,
+        value: Py<PyAny>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Convert name to string (may be a substitution)
@@ -81,18 +81,18 @@ impl SetLaunchConfiguration {
 /// ```
 ///
 /// Event handlers allow actions to be triggered in response to events
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct RegisterEventHandler {
     #[allow(dead_code)] // Keep for API compatibility
-    event_handler: PyObject,
+    event_handler: Py<PyAny>,
 }
 
 #[pymethods]
 impl RegisterEventHandler {
     #[new]
     #[pyo3(signature = (event_handler, **_kwargs))]
-    fn new(event_handler: PyObject, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
+    fn new(event_handler: Py<PyAny>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
         log::debug!("Python Launch RegisterEventHandler created (limited support)");
         Self { event_handler }
     }
@@ -112,7 +112,7 @@ impl RegisterEventHandler {
 ///
 /// Pushes the current environment state onto a stack.
 /// This allows temporary environment modifications that can be reverted with PopEnvironment.
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct PushEnvironment {}
 
@@ -140,7 +140,7 @@ impl PushEnvironment {
 ///
 /// Pops the most recent environment state from the stack, restoring it.
 /// Must be paired with a previous PushEnvironment.
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct PopEnvironment {}
 
@@ -167,7 +167,7 @@ impl PopEnvironment {
 /// ```
 ///
 /// Resets the environment to its initial state (before any modifications).
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct ResetEnvironment {}
 
@@ -196,11 +196,11 @@ impl ResetEnvironment {
 /// ```
 ///
 /// Appends (or prepends) a value to an existing environment variable.
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct AppendEnvironmentVariable {
     name: String,
-    value: PyObject,
+    value: Py<PyAny>,
     #[allow(dead_code)]
     prepend: bool,
     #[allow(dead_code)]
@@ -213,10 +213,10 @@ impl AppendEnvironmentVariable {
     #[pyo3(signature = (name, value, *, prepend=None, separator=None, **_kwargs))]
     fn new(
         py: Python,
-        name: PyObject,
-        value: PyObject,
-        prepend: Option<PyObject>,
-        separator: Option<PyObject>,
+        name: Py<PyAny>,
+        value: Py<PyAny>,
+        prepend: Option<Py<PyAny>>,
+        separator: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
         // Convert name to string (handles strings, substitutions, and lists)
@@ -243,7 +243,7 @@ impl AppendEnvironmentVariable {
             ":".to_string()
         };
 
-        // Convert PyObject to string for logging
+        // Convert Py<PyAny> to string for logging
         let value_str = if let Ok(s) = value.extract::<String>(py) {
             s.clone()
         } else if let Ok(str_result) = value.call_method0(py, "__str__") {
@@ -293,9 +293,9 @@ impl AppendEnvironmentVariable {
 }
 
 impl AppendEnvironmentVariable {
-    /// Convert a PyObject to a string (handles strings, substitutions, and lists)
+    /// Convert a Py<PyAny> to a string (handles strings, substitutions, and lists)
     /// Reuses the same pattern as SetEnvironmentVariable
-    fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
+    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         crate::python::api::utils::pyobject_to_string(py, obj)
     }
 }
@@ -310,7 +310,7 @@ impl AppendEnvironmentVariable {
 ///
 /// Pushes the current launch configurations onto a stack.
 /// This allows temporary configuration modifications that can be reverted with PopLaunchConfigurations.
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct PushLaunchConfigurations {}
 
@@ -338,7 +338,7 @@ impl PushLaunchConfigurations {
 ///
 /// Pops the most recent launch configurations from the stack, restoring them.
 /// Must be paired with a previous PushLaunchConfigurations.
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct PopLaunchConfigurations {}
 
@@ -365,7 +365,7 @@ impl PopLaunchConfigurations {
 /// ```
 ///
 /// Resets all launch configurations to their initial state (clearing any modifications).
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct ResetLaunchConfigurations {}
 
@@ -394,7 +394,7 @@ impl ResetLaunchConfigurations {
 /// ```
 ///
 /// Removes a specific launch configuration variable.
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct UnsetLaunchConfiguration {
     name: String,
@@ -423,7 +423,7 @@ impl UnsetLaunchConfiguration {
 ///
 /// Triggers a shutdown of the launch system when executed.
 /// For static analysis, this is purely informational.
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct Shutdown {
     #[allow(dead_code)] // Keep for future use

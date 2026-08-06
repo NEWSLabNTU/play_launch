@@ -19,14 +19,14 @@ use pyo3::{
 /// ```
 ///
 /// Evaluates to true if the predicate evaluates to a truthy value
-#[pyclass(module = "launch.conditions")]
+#[pyclass(module = "launch.conditions", from_py_object)]
 pub struct IfCondition {
-    predicate: PyObject,
+    predicate: Py<PyAny>,
 }
 
 impl Clone for IfCondition {
     fn clone(&self) -> Self {
-        Python::with_gil(|py| Self {
+        Python::attach(|py| Self {
             predicate: self.predicate.clone_ref(py),
         })
     }
@@ -35,7 +35,7 @@ impl Clone for IfCondition {
 #[pymethods]
 impl IfCondition {
     #[new]
-    fn new(predicate: PyObject) -> Self {
+    fn new(predicate: Py<PyAny>) -> Self {
         Self { predicate }
     }
 
@@ -62,7 +62,7 @@ impl IfCondition {
 }
 
 impl IfCondition {
-    /// Convert predicate PyObject to string
+    /// Convert predicate Py<PyAny> to string
     fn predicate_to_string(&self, py: Python) -> PyResult<String> {
         let pred_ref = self.predicate.bind(py);
 
@@ -142,14 +142,14 @@ impl IfCondition {
 /// ```
 ///
 /// Evaluates to true if the predicate evaluates to a falsy value (inverted IfCondition)
-#[pyclass(module = "launch.conditions")]
+#[pyclass(module = "launch.conditions", from_py_object)]
 pub struct UnlessCondition {
-    predicate: PyObject,
+    predicate: Py<PyAny>,
 }
 
 impl Clone for UnlessCondition {
     fn clone(&self) -> Self {
-        Python::with_gil(|py| Self {
+        Python::attach(|py| Self {
             predicate: self.predicate.clone_ref(py),
         })
     }
@@ -158,7 +158,7 @@ impl Clone for UnlessCondition {
 #[pymethods]
 impl UnlessCondition {
     #[new]
-    fn new(predicate: PyObject) -> Self {
+    fn new(predicate: Py<PyAny>) -> Self {
         Self { predicate }
     }
 
@@ -181,7 +181,7 @@ impl UnlessCondition {
 }
 
 impl UnlessCondition {
-    /// Convert predicate PyObject to string (same logic as IfCondition)
+    /// Convert predicate Py<PyAny> to string (same logic as IfCondition)
     fn predicate_to_string(&self, py: Python) -> PyResult<String> {
         let pred_ref = self.predicate.bind(py);
 
@@ -223,7 +223,7 @@ impl UnlessCondition {
 ///
 /// condition = LaunchConfigurationEquals('variable_name', 'expected_value')
 /// ```
-#[pyclass(module = "launch.conditions")]
+#[pyclass(module = "launch.conditions", from_py_object)]
 #[derive(Clone)]
 pub struct LaunchConfigurationEquals {
     variable_name: String,
@@ -267,7 +267,7 @@ impl LaunchConfigurationEquals {
 ///
 /// condition = LaunchConfigurationNotEquals('variable_name', 'expected_value')
 /// ```
-#[pyclass(module = "launch.conditions")]
+#[pyclass(module = "launch.conditions", from_py_object)]
 #[derive(Clone)]
 pub struct LaunchConfigurationNotEquals {
     variable_name: String,

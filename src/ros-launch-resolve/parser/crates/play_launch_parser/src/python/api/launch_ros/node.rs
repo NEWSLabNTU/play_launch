@@ -27,19 +27,19 @@ use pyo3::{
 /// ```
 ///
 /// When constructed, automatically captures the node definition.
-#[pyclass(module = "launch_ros.actions")]
+#[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct Node {
     package: String,
     executable: String,
     name: Option<String>,
     namespace: Option<String>,
-    parameters: Vec<PyObject>,
-    remappings: Vec<PyObject>,
+    parameters: Vec<Py<PyAny>>,
+    remappings: Vec<Py<PyAny>>,
     arguments: Vec<String>,
     env_vars: Vec<(String, String)>,
     #[allow(dead_code)] // Used for condition evaluation, not stored in captures
-    condition: Option<PyObject>,
+    condition: Option<Py<PyAny>>,
 }
 
 #[pymethods]
@@ -61,15 +61,15 @@ impl Node {
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python,
-        package: PyObject,
-        executable: PyObject,
-        name: Option<PyObject>,
-        namespace: Option<PyObject>,
-        parameters: Option<Vec<PyObject>>,
-        remappings: Option<Vec<PyObject>>,
-        arguments: Option<Vec<PyObject>>,
+        package: Py<PyAny>,
+        executable: Py<PyAny>,
+        name: Option<Py<PyAny>>,
+        namespace: Option<Py<PyAny>>,
+        parameters: Option<Vec<Py<PyAny>>>,
+        remappings: Option<Vec<Py<PyAny>>>,
+        arguments: Option<Vec<Py<PyAny>>>,
         env: Option<Vec<(String, String)>>,
-        condition: Option<PyObject>,
+        condition: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         // Convert PyObjects to strings (handles both strings and substitutions)
@@ -97,7 +97,7 @@ impl Node {
             })
             .transpose()?;
 
-        // Convert arguments from Vec<PyObject> to Vec<String>
+        // Convert arguments from Vec<Py<PyAny>> to Vec<String>
         let arguments_vec = if let Some(args) = arguments {
             args.iter()
                 .map(|obj| Self::pyobject_to_string(py, obj))
@@ -155,7 +155,7 @@ impl Node {
     /// Evaluate a condition object
     ///
     /// Calls the evaluate() method on the condition if it exists
-    pub(super) fn evaluate_condition(py: Python, condition: &PyObject) -> PyResult<bool> {
+    pub(super) fn evaluate_condition(py: Python, condition: &Py<PyAny>) -> PyResult<bool> {
         let cond_ref = condition.bind(py);
 
         // Try calling evaluate() method on the condition object
@@ -173,16 +173,16 @@ impl Node {
         Ok(true)
     }
 
-    /// Convert a PyObject to a string (handles both strings and substitutions)
-    fn pyobject_to_string(py: Python, obj: &PyObject) -> PyResult<String> {
+    /// Convert a Py<PyAny> to a string (handles both strings and substitutions)
+    fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         crate::python::api::utils::pyobject_to_string(py, obj)
     }
 
     /// Capture node to global storage
     fn capture_node(node: &Node) {
         // Parse parameters and remappings from Python objects
-        let all_params = Python::with_gil(|py| node.parse_parameters(py).unwrap_or_default());
-        let remappings = Python::with_gil(|py| node.parse_remappings(py).unwrap_or_default());
+        let all_params = Python::attach(|py| node.parse_parameters(py).unwrap_or_default());
+        let remappings = Python::attach(|py| node.parse_remappings(py).unwrap_or_default());
 
         // Separate regular parameters from parameter files
         let mut parameters = Vec::new();
@@ -301,15 +301,15 @@ impl Node {
             }
 
             // Case 2: Dict (single parameter dict or nested dict)
-            if let Ok(dict) = param_any.downcast::<PyDict>() {
+            if let Ok(dict) = param_any.cast::<PyDict>() {
                 Self::parse_dict_params(dict, "", &mut parsed_params)?;
                 continue;
             }
 
             // Case 3: List (list of parameter dicts)
-            if let Ok(list) = param_any.downcast::<PyList>() {
+            if let Ok(list) = param_any.cast::<PyList>() {
                 for item in list.iter() {
-                    if let Ok(dict) = item.downcast::<PyDict>() {
+                    if let Ok(dict) = item.cast::<PyDict>() {
                         Self::parse_dict_params(dict, "", &mut parsed_params)?;
                     }
                 }
@@ -366,7 +366,7 @@ impl Node {
             };
 
             // Check if value is a nested dict
-            if let Ok(nested_dict) = value.downcast::<PyDict>() {
+            if let Ok(nested_dict) = value.cast::<PyDict>() {
                 // Recursively parse nested dict
                 Self::parse_dict_params(nested_dict, &full_key, params)?;
             } else {
@@ -386,7 +386,7 @@ impl Node {
                         && let Ok(iter) = items.try_iter()
                     {
                         for item in iter.flatten() {
-                            if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>()
+                            if let Ok(tuple) = item.cast::<pyo3::types::PyTuple>()
                                 && tuple.len() == 2
                             {
                                 let k = tuple.get_item(0)?.extract::<String>()?;
@@ -403,7 +403,7 @@ impl Node {
                                     .unwrap_or_default()
                                     == "dict"
                                 {
-                                    if let Ok(sub_dict) = v.downcast::<PyDict>() {
+                                    if let Ok(sub_dict) = v.cast::<PyDict>() {
                                         Self::parse_dict_params(sub_dict, &sub_key, params)?;
                                     } else {
                                         let val = Self::extract_param_value(&v)?;
@@ -461,7 +461,7 @@ impl Node {
         }
 
         // Try list (convert to Python-style string with quoted string elements)
-        if let Ok(list) = value.downcast::<PyList>() {
+        if let Ok(list) = value.cast::<PyList>() {
             let mut formatted_items = Vec::new();
             for item in list.iter() {
                 let val = Self::extract_param_value(&item)?;
@@ -483,7 +483,7 @@ impl Node {
         // For substitutions (including PythonExpression), use the centralized utility
         // This handles evaluation of PythonExpression and other evaluating substitutions
         let py = value.py();
-        let obj_py: PyObject = value.clone().unbind();
+        let obj_py: Py<PyAny> = value.clone().unbind();
         crate::python::api::utils::pyobject_to_string(py, &obj_py)
     }
 
@@ -500,7 +500,7 @@ impl Node {
             let remap_any = remap_obj.bind(py);
 
             // Remappings should be tuples of (from, to)
-            if let Ok(remap_tuple) = remap_any.downcast::<pyo3::types::PyTuple>()
+            if let Ok(remap_tuple) = remap_any.cast::<pyo3::types::PyTuple>()
                 && remap_tuple.len() == 2
             {
                 // Extract both elements and convert to strings

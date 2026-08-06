@@ -41,7 +41,7 @@ fn record_to_dict(py: Python<'_>, record: &RecordJson) -> PyResult<Py<PyDict>> {
         .map_err(|e| PyRuntimeError::new_err(format!("Serialization error: {e}")))?;
     let obj: Bound<'_, PyDict> = pythonize::pythonize(py, &value)
         .map_err(|e| PyRuntimeError::new_err(format!("Conversion error: {e}")))?
-        .downcast_into()
+        .cast_into()
         .map_err(|e| PyRuntimeError::new_err(format!("Expected dict, got: {e}")))?;
     Ok(obj.unbind())
 }

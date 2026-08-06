@@ -15,11 +15,11 @@ use pyo3::prelude::*;
 /// ```
 ///
 /// Groups actions together with optional scoping
-#[pyclass(module = "launch.actions")]
+#[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct GroupAction {
     #[pyo3(get)] // Make actions directly accessible as an attribute (like LaunchDescription)
-    pub actions: Vec<PyObject>,
+    pub actions: Vec<Py<PyAny>>,
     #[allow(dead_code)] // Keep for API compatibility
     scoped: bool,
     #[allow(dead_code)] // Keep for API compatibility
@@ -32,7 +32,7 @@ impl GroupAction {
     #[pyo3(signature = (actions, *, scoped=true, forwarding=true, **_kwargs))]
     fn new(
         py: Python,
-        actions: Vec<PyObject>,
+        actions: Vec<Py<PyAny>>,
         scoped: Option<bool>,
         forwarding: Option<bool>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,

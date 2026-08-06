@@ -21,16 +21,16 @@ use pyo3::prelude::*;
 /// ```
 ///
 /// Represents a Python launch file source for IncludeLaunchDescription
-#[pyclass(module = "launch.launch_description_sources")]
+#[pyclass(module = "launch.launch_description_sources", from_py_object)]
 #[derive(Clone)]
 pub struct PythonLaunchDescriptionSource {
-    launch_file_path: PyObject,
+    launch_file_path: Py<PyAny>,
 }
 
 #[pymethods]
 impl PythonLaunchDescriptionSource {
     #[new]
-    fn new(launch_file_path: PyObject) -> Self {
+    fn new(launch_file_path: Py<PyAny>) -> Self {
         Self { launch_file_path }
     }
 
@@ -48,9 +48,9 @@ impl PythonLaunchDescriptionSource {
     }
 }
 
-/// Helper to resolve a path from a PyObject (handles substitutions)
+/// Helper to resolve a path from a Py<PyAny> (handles substitutions)
 /// Shared by all LaunchDescriptionSource types
-fn resolve_path(py: Python, path_obj: &PyObject) -> PyResult<String> {
+fn resolve_path(py: Python, path_obj: &Py<PyAny>) -> PyResult<String> {
     // Try to extract as string
     if let Ok(s) = path_obj.extract::<String>(py) {
         return Ok(s);
@@ -65,7 +65,7 @@ fn resolve_path(py: Python, path_obj: &PyObject) -> PyResult<String> {
     let context_obj = context.map(|c| c.unbind()).unwrap_or_else(|| py.None());
 
     // Try to extract as list of substitutions
-    if let Ok(list) = path_obj.bind(py).downcast::<pyo3::types::PyList>() {
+    if let Ok(list) = path_obj.bind(py).cast::<pyo3::types::PyList>() {
         let mut parts = Vec::new();
         for item in list.iter() {
             // Try perform() first for substitutions like FindPackageShare
@@ -108,16 +108,16 @@ fn resolve_path(py: Python, path_obj: &PyObject) -> PyResult<String> {
 /// ```
 ///
 /// Represents an XML launch file source for IncludeLaunchDescription
-#[pyclass(module = "launch.launch_description_sources")]
+#[pyclass(module = "launch.launch_description_sources", from_py_object)]
 #[derive(Clone)]
 pub struct XMLLaunchDescriptionSource {
-    launch_file_path: PyObject,
+    launch_file_path: Py<PyAny>,
 }
 
 #[pymethods]
 impl XMLLaunchDescriptionSource {
     #[new]
-    fn new(launch_file_path: PyObject) -> Self {
+    fn new(launch_file_path: Py<PyAny>) -> Self {
         Self { launch_file_path }
     }
 
@@ -141,16 +141,16 @@ impl XMLLaunchDescriptionSource {
 /// ```
 ///
 /// Represents a YAML launch file source for IncludeLaunchDescription
-#[pyclass(module = "launch.launch_description_sources")]
+#[pyclass(module = "launch.launch_description_sources", from_py_object)]
 #[derive(Clone)]
 pub struct YAMLLaunchDescriptionSource {
-    launch_file_path: PyObject,
+    launch_file_path: Py<PyAny>,
 }
 
 #[pymethods]
 impl YAMLLaunchDescriptionSource {
     #[new]
-    fn new(launch_file_path: PyObject) -> Self {
+    fn new(launch_file_path: Py<PyAny>) -> Self {
         Self { launch_file_path }
     }
 
@@ -174,16 +174,16 @@ impl YAMLLaunchDescriptionSource {
 /// ```
 ///
 /// Automatically detects the launch file type based on extension
-#[pyclass(module = "launch.launch_description_sources")]
+#[pyclass(module = "launch.launch_description_sources", from_py_object)]
 #[derive(Clone)]
 pub struct FrontendLaunchDescriptionSource {
-    launch_file_path: PyObject,
+    launch_file_path: Py<PyAny>,
 }
 
 #[pymethods]
 impl FrontendLaunchDescriptionSource {
     #[new]
-    fn new(launch_file_path: PyObject) -> Self {
+    fn new(launch_file_path: Py<PyAny>) -> Self {
         Self { launch_file_path }
     }
 
@@ -207,16 +207,16 @@ impl FrontendLaunchDescriptionSource {
 /// ```
 ///
 /// Automatically detects the launch file type
-#[pyclass(module = "launch.launch_description_sources")]
+#[pyclass(module = "launch.launch_description_sources", from_py_object)]
 #[derive(Clone)]
 pub struct AnyLaunchDescriptionSource {
-    launch_file_path: PyObject,
+    launch_file_path: Py<PyAny>,
 }
 
 #[pymethods]
 impl AnyLaunchDescriptionSource {
     #[new]
-    fn new(launch_file_path: PyObject) -> Self {
+    fn new(launch_file_path: Py<PyAny>) -> Self {
         Self { launch_file_path }
     }
 
