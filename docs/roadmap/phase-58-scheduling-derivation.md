@@ -191,6 +191,57 @@ to be *rejected*, which is a later decision.
   `diagnostics/diagnostic_data.rs`), so the pattern is not new to this
   codebase — though its grammar is not identical to the one above.
 
+### Target shape
+
+What `rt_av_demo` looks like once W1 and W1b have both landed. Contract —
+requirements only, still platform-agnostic, nothing about cost:
+
+```yaml
+nodes:
+  obstacle_detector:
+    criticality: high
+    sub: { scan: { min_rate_hz: 50 } }
+    pub: { obstacles: { min_rate_hz: 50 } }
+    paths:
+      detect:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 12ms          # was max_latency_ms: 12
+
+chains:
+  lidar_to_brake:
+    semantics: reaction
+    max_latency: 60ms              # was max_latency_ms: 60
+```
+
+Platform file — machine facts, now including what the work costs here:
+
+```yaml
+target: posix
+mapper: chain_aware
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+  isolated_cpus: [2]
+overrides:
+  obstacle_detector: { budget: 8ms }        # NEW (W1) — cost, authorable at last
+  map_loader:        { sched_class: SCHED_OTHER }
+```
+
+Full rename map:
+
+| today | planned | side |
+|---|---|---|
+| `max_latency_ms` | `max_latency` | contract (`PathDecl`, `ChainDecl`) |
+| `max_age_ms` | `max_age` | contract (`EndpointProps`) |
+| `max_transport_ms` | `max_transport` | contract (`EndpointProps`, `TopicDecl`) |
+| `max_response_ms` | `max_response` | contract (`SrvEndpointProps`) |
+| `max_interval_ms`, `timeout_ms` | `max_interval`, `timeout` | contract (`Sync`) |
+| `jitter_ms`, `tolerance_ms` | `jitter`, `tolerance` | contract |
+| `lifespan_ms` | `lifespan` | contract (`QosDecl`) |
+| `deadline_us`, `period_us`, `budget_us` | `deadline`, `period`, `budget` | platform (`TierDef`, `TierPlatformSpec`) |
+| `spin_period_us`, `time_slice_us` | `spin_period`, `time_slice` | platform |
+| `min_rate_hz`, `max_rate_hz`, `rate_hz` | *unchanged* | contract — see below |
+
 ### Scope boundary
 
 Rate fields (`rate_hz`, `min_rate_hz`, `max_rate_hz`) are **out of scope**.
