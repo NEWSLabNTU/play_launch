@@ -256,6 +256,91 @@ existing contract without a coordinated release.
 
 ---
 
+## W1c — Audit: what else sits in the wrong file
+
+Running the same test that moved cost (*does this value survive a change of
+machine or deployment?*) across the whole vocabulary. Ordered by confidence.
+
+### 1. `max_transport_ms` is a platform cost in the agnostic file — same error as `budget`
+
+Declared on `TopicDecl` and overridable per `EndpointProps`, documented as
+"Worst-case transport latency (ms) for this topic hop", defaulting to 0 and
+"absorbed into scope residual". So it is not a requirement the software must
+meet — it is a **cost term in the latency budget arithmetic**, exactly like
+`budget`. And it is not platform-agnostic:
+
+| deployment | transport |
+|---|---|
+| composables in one container with `use_intra_process_comms` | pointer pass |
+| separate processes, same host | DDS shared memory / loopback |
+| across hosts | network |
+
+play_launch itself moves a system between the first two rows **with a CLI
+flag**: `--container-mode isolated` fork+execs each composable into its own
+process, so intra-process comms stops applying. Nothing in the contract
+changes. `docs/guide/multi-host.md` moves it to the third row by partitioning
+one launch across machines at resolve time — again with the contract
+unchanged.
+
+A number that a `--container-mode` flag can invalidate does not belong in the
+platform-agnostic file. It belongs beside `budget`, and for the same reason:
+computation cost and transport cost are the two halves of a latency budget, and
+both are properties of where you deployed, not of what you wrote.
+
+### 2. v1's `TierDef` mixes requirements into the facts file — already fixed, accidentally
+
+`TierDef` carries `deadline_us`, `period_us` and `class` alongside `budget_us`,
+`spin_period_us` and `time_slice_us`. The first three are *requirements*:
+a deadline duplicates the contract's `max_latency`, a period derives from its
+`rate_hz`, and `class` (`best_effort | real_time | time_triggered`) overlaps
+`criticality`. The last three are *facts* about the machine.
+
+That mixing is historical, not a mistake: v1 was a standalone `system.toml`
+predating the contract/platform split, so it had to carry both.
+
+This reframes W1. v2 did not "forget" `budget_us` — it correctly purged the
+requirement-shaped fields from the platform file and took a fact with them.
+`budget` is collateral damage from a good decision, which is why restoring it
+is a restoration rather than a new idea.
+
+### 3. `TopicDecl.drop` is a deployment property (medium confidence)
+
+`max_count`/`max_consecutive` describe transport loss, which depends on the
+link — near zero on loopback, not on a congested network. Same argument as
+`max_transport_ms`. Note the asymmetry the spec already draws: `PathDecl.drop`
+is end-to-end and includes a node *internally* skipping messages, which is
+code behaviour and does belong in the contract. So the two `drop` fields are
+not the same kind of thing despite sharing a type.
+
+### 4. `qos.depth` is tuning, not interface (medium confidence)
+
+`QosDecl` is genuinely split-natured. `reliability`, `durability`, `history`
+and `liveliness` are **interface** properties — they decide pub/sub
+compatibility, so they are part of the contract in the strict sense (the
+`qos-match` and `qos-compat` rules exist for exactly this). But `depth` is a
+buffer-size knob trading memory against loss tolerance, and `lifespan_ms` is a
+retention policy. Those are tuned per deployment.
+
+No action proposed. Splitting `qos:` would fight ROS 2's own presentation of it
+as one profile, and the cost of the confusion is low. Recorded so the
+inconsistency is known rather than rediscovered.
+
+### 5. `jitter_ms` is ambiguous (low confidence)
+
+Jitter is *caused by* scheduling — a platform effect. But "I tolerate ≤5 ms
+jitter" is a requirement. The field name does not say which it is, and unlike
+the cases above there is no consumer to disambiguate it: nothing reads
+`jitter_ms` today. Decide what it means before something starts to.
+
+### Proposed action
+
+Only finding 1 is actionable now, and it is the same change as W1 with the same
+justification, so it should land with it: `max_transport` moves to the platform
+file, keeping the contract's field as a deprecated alias exactly as W1b does
+for every other renamed field. Findings 2-5 are recorded, not scheduled.
+
+---
+
 ## W2 — Measure cost instead of asking for it
 
 W1 without W2 asks integrators to invent numbers, which is how the budget/cost
