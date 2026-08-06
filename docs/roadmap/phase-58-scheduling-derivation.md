@@ -80,15 +80,17 @@ and the fix is to follow each rather than to unify them:
 | contract (requirements) | `_ms` | `max_` | `max_latency_ms`, `max_age_ms`, `max_transport_ms`, `max_response_ms` |
 | platform / sched (facts) | `_us` | none | `deadline_us`, `period_us`, `budget_us`, `spin_period_us` |
 
-`budget_us` therefore needs no new name: it matches `deadline_us`/`period_us`
-on the side it lives on, and it is already this codebase's word for exactly
-this quantity. `max_latency_ms` stays untouched.
+`budget_us` therefore needs no new name *under today's convention*: it matches
+`deadline_us`/`period_us` on the side it lives on, and it is already this
+codebase's word for exactly this quantity. `max_latency_ms` stays untouched.
 
-The ms/µs split across the two files is deliberate, not an oversight:
-contracts are human-authored requirements at millisecond granularity, while
-scheduling parameters need sub-millisecond precision (a 20 ms period is 20000
-µs, and budgets under 1 ms are ordinary). Recorded here so nobody "fixes" it
-later.
+**Superseded in part by [W1b](#w1b--units-move-onto-the-value).** An earlier
+draft justified the ms/µs split across the two files as deliberate — contracts
+being human-authored at millisecond granularity, scheduling parameters needing
+sub-millisecond precision. That was a rationalisation of an inconsistency
+rather than a reason for it. W1b moves the unit onto the value and keeps
+`budget_us` only as a deprecated alias. W1 can land either way: with the alias
+if W1b has not shipped, with `budget: 8ms` once it has.
 
 **Honesty about what `budget_us` is.** Not a proven WCET — there is no static
 analysis here. It is a declared high-percentile observed cost, used *as* an
@@ -106,6 +108,100 @@ must show which and why.
 provenance; `rt_av_demo` declares real costs; `feasible ON INCOMPLETE
 EVIDENCE` fires only when cost is genuinely absent; a test fails if a deadline
 is ever used as a cost again.
+
+---
+
+## W1b — Units move onto the value
+
+**Decision (2026-08-06):** time-valued fields carry their unit in the *value*,
+not the name — `max_latency: 12ms`, `budget: 8ms`, `period: 20ms` — with the
+existing `*_ms` / `*_us` names accepted as deprecated aliases.
+
+### Why
+
+`budget_us: 8` when the author meant 8 ms is a **1000x error that
+type-checks**, and the value flows into a reservation. That is the same species
+as the two defects Phase 57 found — a deadline used as a cost, a `SCHED_OTHER`
+tier clamped into an RT band — a wrong value that is *structurally
+representable*. A unit suffix makes it unrepresentable.
+
+It also retires the ms/µs split between the two files. An earlier draft of W1
+recorded that split as "deliberate". That was rationalisation: contracts think
+in milliseconds and scheduling needs microseconds, so the inconsistency got a
+justification instead of a fix. With units on values each author writes what
+they mean and no reader converts.
+
+### The places (every timing value in the vocabulary)
+
+**Contract — platform-agnostic requirements** (`types/src/types.rs`), all
+`f64` except `lifespan_ms`:
+
+| struct | fields |
+|---|---|
+| `EndpointProps` | `min_rate_hz`, `max_rate_hz`, `jitter_ms`, `max_age_ms`, `max_transport_ms` |
+| `SrvEndpointProps` | `max_response_ms` |
+| `TopicDecl` | `rate_hz`, `max_transport_ms` |
+| `QosDecl` | `lifespan_ms` (`u64`) |
+| `PathDecl` | `max_latency_ms`, `tolerance_ms` |
+| `Sync` | `max_interval_ms`, `timeout_ms` |
+| `ChainDecl` | `max_latency_ms` |
+
+**Platform / sched — machine facts** (`sched/src/types.rs`), all `u64`:
+
+| struct | fields |
+|---|---|
+| `TierDef` | `deadline_us`, `period_us`, `budget_us`, `spin_period_us` |
+| `TierPlatformSpec` | `deadline_us`, `budget_us`, `period_us`, `time_slice_us` |
+
+**Platform v2** (`sched/src/platform.rs`): **none.** `PosixResources` is
+`rt_priority_band` + `isolated_cpus`; `PosixOverride` is `priority` + `core` +
+`sched_class`. Every platform-side timing field above lives in a v1 structure
+reachable only through the deprecated TOML bridge — which is the same finding
+as W1's, stated structurally: the v2 schema has no timing surface at all.
+
+Note also `f64` on the contract side against `u64` on the platform side. A
+duration type unifies that too.
+
+### The options considered
+
+| | approach | verdict |
+|---|---|---|
+| A | status quo — unit in the field name | rejected: keeps the 1000x error representable |
+| B | unit in value, flag day | rejected: ~14 YAML files here, ~75 Autoware contracts, plus nano-ros on the same tag-pinned types |
+| C | **unit in value, old names as deprecated aliases, emit canonical** | **chosen** |
+| D | unit in value for new fields only | rejected: strictly increases inconsistency |
+
+C needs no `version: 2` gate. The contract's `version:` field is currently
+parsed and never branched on (`yaml_u32(doc, "version").unwrap_or(1)`), so the
+lever exists unimplemented — it only becomes necessary if the old form is ever
+to be *rejected*, which is a later decision.
+
+### Rules
+
+- **Grammar:** decimal number + unit from `ns | us | ms | s`. Decimals accepted
+  on read (`1.5ms`) — forcing `1500us` is unit gymnastics.
+- **Bare numbers rejected.** An unsuffixed value is an error, not a default.
+  Guessing here reintroduces exactly the ambiguity the change removes.
+- **Emit canonical only,** in the finest unit that keeps the value an integer,
+  so the generated `system_model.yaml` diffs stably and floats never reach a
+  scheduling parameter.
+- **Aliases warn,** via a lint, following the `explicit-trigger` precedent that
+  already nudges authors toward newer vocabulary.
+- **`humantime-serde` is already a play_launch dependency** (used in
+  `diagnostics/diagnostic_data.rs`), so the pattern is not new to this
+  codebase — though its grammar is not identical to the one above.
+
+### Scope boundary
+
+Rate fields (`rate_hz`, `min_rate_hz`, `max_rate_hz`) are **out of scope**.
+`50hz` is tempting and symmetric, but frequency is not a duration, it needs its
+own unit set, and the error it prevents is far less costly than a 1000x
+duration slip. Revisit separately or not at all.
+
+This is a vocabulary change in the tag-pinned `ros-launch-manifest`, so it
+carries the coordinated-bump constraint above. It is deliberately **not** on
+W1's critical path: W1 lands `budget` authoring, and the alias handles every
+existing contract without a coordinated release.
 
 ---
 
