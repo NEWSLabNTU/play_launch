@@ -201,8 +201,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   apply logging. Workspace: `examples/rt_av_demo/`. Report:
   [docs/reports/rt-mixed-criticality/](../reports/rt-mixed-criticality/).
   [phase-57-rt-mixed-criticality-demo.md](./phase-57-rt-mixed-criticality-demo.md).
-- **Phase 58** — 📋 deriving scheduling from contracts: cost as a first-class
-  fact (`exec_ms`, today conflated with `max_latency_ms`), then deadline
-  decomposition and `SCHED_DEADLINE` reservations. Study:
+- **Phase 58** — 📋 deriving scheduling from contracts. Cost is unauthorable in
+  the v2 platform schema, so `sched_derive.rs` substitutes a path's *deadline*
+  for its cost; W1 makes it authorable, then deadline decomposition (W3) and
+  `SCHED_DEADLINE` reservations (W4). Study:
   [docs/research/scheduling-derivation-prior-art.md](../research/scheduling-derivation-prior-art.md).
   [phase-58-scheduling-derivation.md](./phase-58-scheduling-derivation.md).
+- **Phase 59** — 📋 timing vocabulary: units move onto the value
+  (`max_latency: 12ms`), because `budget_us: 8` meaning 8 ms is a 1000x error
+  that type-checks. Split out of Phase 58 — independent work, and cheaper now
+  than it will ever be again: the real corpus uses two renameable field names.
+  [phase-59-timing-vocabulary.md](./phase-59-timing-vocabulary.md).

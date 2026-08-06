@@ -4,6 +4,10 @@
 **Study of record:** [`docs/research/scheduling-derivation-prior-art.md`](../research/scheduling-derivation-prior-art.md)
 **Predecessor:** Phase 57 (mixed-criticality RT demo) — supplies the measurement
 harness this phase's claims are checked against.
+**Split out:** the vocabulary/units migration is
+[Phase 59](./phase-59-timing-vocabulary.md). It touches adjacent fields but is
+independent work; coupling it here would stall W1 behind a cross-repo
+negotiation.
 
 ## Why
 
@@ -26,44 +30,54 @@ largest architectural collision.
   inconclusive, not a success.
 - **No invented numbers.** Where a cost is unknown the model says so — "absent"
   and "zero" stay distinct, as `chain-sampling-feasibility` already insists.
-- **`ros-launch-manifest` is a git dependency pinned by tag.** Vocabulary
-  changes (W1) need a coordinated tag bump in both
-  `src/play_launch/Cargo.toml` and `src/ros-launch-resolve/Cargo.toml`. Never
-  split the revision — one instance of `SystemModel` or the type becomes two.
+- **`ros-launch-manifest` is a git dependency pinned by tag.** Schema changes
+  need a coordinated tag bump in both `src/play_launch/Cargo.toml` and
+  `src/ros-launch-resolve/Cargo.toml`. Never split the revision — one instance
+  of `SystemModel` or the type becomes two.
 - **Nothing here claims hard real-time.** The host is `PREEMPT_DYNAMIC`. These
   are analyses over declared facts, not proofs.
 
 ---
 
-## W1 — Cost as a first-class fact, on the platform side
+## W1 — Make cost authorable
 
 The enabling change. Nothing else in this phase is reachable without it.
+Deliberately the smallest change that unblocks the rest: **additive, no
+renames, no field moves.**
 
-**Cost does not belong in the contract.** Execution time is a property of
-(code, hardware). The contract is the platform-*agnostic* file — rates,
-deadlines, criticality: things that stay true when you change machine. Putting
-a cost there and "converting" it with a scale factor invents a reference
-platform nobody owns and no one can verify. Rejected.
+### Cost belongs on the platform side
 
-Cost belongs in the **platform file**, beside the other machine facts
-(`rt_priority_band`, `isolated_cpus`). That file is already per-target and
-already ships through the same provider-sidecar + user-overlay channels, so an
-integrator writing one for their machine is the existing workflow, not a new
-one.
+Execution time is a property of (code, hardware). The contract is the
+platform-*agnostic* file — rates, deadlines, criticality: things that stay true
+when you change machine. An earlier draft put an `exec_ms` in the contract with
+a platform `exec_scale` to convert it, which invents a reference machine nobody
+owns and no one can verify. Rejected.
 
-**The field already exists — v2 just cannot author it.** `TierDef.budget_us`
-is documented as "Execution-time budget (µs) — EDF/sporadic". It flows through
-`ResolvedTier` into the SystemModel's execution layer, whose portable head is
-documented as `class, deadline_us, period_us, budget_us`. But it is only ever
-*populated* from the v1 legacy `system.toml` bridge; nothing in the v2 schema
-(`mapper` + `resources` + `overrides`) sets it, so on every v2 path it is
+Cost belongs in the **platform file**, beside `rt_priority_band` and
+`isolated_cpus`. That file is already per-target and already ships through the
+provider-sidecar + user-overlay channels, so an integrator writing one for
+their machine is the existing workflow, not a new one.
+
+### The field already exists — v2 just cannot author it
+
+`TierDef.budget_us` is documented as "Execution-time budget (µs) —
+EDF/sporadic". It flows through `ResolvedTier` into the SystemModel's execution
+layer, whose portable head is `class, deadline_us, period_us, budget_us`. But
+only the v1 `system.toml` bridge populates it; the v2 schema (`mapper` +
+`resources` + `overrides`) has no way to set it, so on every v2 path it is
 `None`.
 
-So W1 is not "add a cost field". It is **give v2 a way to author `budget_us`**,
-and stop the conflation that filled the gap:
+And v2 did not simply forget it. `TierDef` mixes *requirements* (`deadline_us`,
+`period_us`, `class` — which duplicate the contract's `max_latency`, `rate_hz`
+and `criticality`) with *facts* (`budget_us`, `spin_period_us`,
+`time_slice_us`). That mixing is historical: v1 was a standalone `system.toml`
+predating the contract/platform split, so it carried both. v2 correctly purged
+the requirement-shaped fields — and took one fact with them. **Restoring
+`budget` is a restoration, not a new idea.**
+
+### Shape
 
 ```yaml
-# platform file — machine facts, including what work costs on THIS machine
 target: posix
 mapper: chain_aware
 resources:
@@ -72,272 +86,33 @@ overrides:
   obstacle_detector: { budget_us: 8000 }
 ```
 
-**Naming.** The two files already have consistent, *different* conventions,
-and the fix is to follow each rather than to unify them:
+`overrides` rather than a new `costs:` section, on purpose: it is the smallest
+additive change, and it is enough for W4 (reservations are per-node — one
+thread group, one reservation). It is *not* enough for W3, which wants per-path
+cost. See open question 1; a `costs:` section is the likely answer, and
+deferring it keeps W1 shippable.
 
-| side | unit | bound prefix | examples |
-|---|---|---|---|
-| contract (requirements) | `_ms` | `max_` | `max_latency_ms`, `max_age_ms`, `max_transport_ms`, `max_response_ms` |
-| platform / sched (facts) | `_us` | none | `deadline_us`, `period_us`, `budget_us`, `spin_period_us` |
+Naming follows today's convention (`budget_us` matches `deadline_us` /
+`period_us` on the side it lives on). Phase 59 may rename it to `budget: 8ms`;
+W1 does not depend on which lands first.
 
-`budget_us` therefore needs no new name *under today's convention*: it matches
-`deadline_us`/`period_us` on the side it lives on, and it is already this
-codebase's word for exactly this quantity. `max_latency_ms` stays untouched.
+### Also in W1
 
-**Superseded in part by [W1b](#w1b--units-move-onto-the-value).** An earlier
-draft justified the ms/µs split across the two files as deliberate — contracts
-being human-authored at millisecond granularity, scheduling parameters needing
-sub-millisecond precision. That was a rationalisation of an inconsistency
-rather than a reason for it. W1b moves the unit onto the value and keeps
-`budget_us` only as a deprecated alias. W1 can land either way: with the alias
-if W1b has not shipped, with `budget: 8ms` once it has.
+Stop passing `max_latency_ms` as `exec_ms` in `sched_derive.rs`. That single
+line is the conflation; with a real source for cost it becomes "read the
+budget, or report absent" — never "substitute the deadline". Fixing it will
+change existing feasibility verdicts, so the diff must show which and why.
 
-**Honesty about what `budget_us` is.** Not a proven WCET — there is no static
+**Honesty about what a budget is.** Not a proven WCET — there is no static
 analysis here. It is a declared high-percentile observed cost, used *as* an
-upper bound. `check --explain` must show its provenance (declared / overridden
-/ measured) so nobody reads it as a proof.
+upper bound. `check --explain` must show provenance (declared / overridden /
+measured) so nobody reads it as a proof.
 
-**Also in W1:** stop passing `max_latency_ms` as `exec_ms` in
-`sched_derive.rs`. That single line is the conflation; with a real source for
-cost it becomes "read the budget, or report absent" — never "substitute the
-deadline". Fixing it will change existing feasibility verdicts, so the diff
-must show which and why.
-
-**Done when:** a v2 platform file can author `budget_us` and it reaches
+**Done when:** a v2 platform file can author a cost and it reaches
 `execution.tiers`; `check --explain` distinguishes budget from cost with
 provenance; `rt_av_demo` declares real costs; `feasible ON INCOMPLETE
 EVIDENCE` fires only when cost is genuinely absent; a test fails if a deadline
 is ever used as a cost again.
-
----
-
-## W1b — Units move onto the value
-
-**Decision (2026-08-06):** time-valued fields carry their unit in the *value*,
-not the name — `max_latency: 12ms`, `budget: 8ms`, `period: 20ms` — with the
-existing `*_ms` / `*_us` names accepted as deprecated aliases.
-
-### Why
-
-`budget_us: 8` when the author meant 8 ms is a **1000x error that
-type-checks**, and the value flows into a reservation. That is the same species
-as the two defects Phase 57 found — a deadline used as a cost, a `SCHED_OTHER`
-tier clamped into an RT band — a wrong value that is *structurally
-representable*. A unit suffix makes it unrepresentable.
-
-It also retires the ms/µs split between the two files. An earlier draft of W1
-recorded that split as "deliberate". That was rationalisation: contracts think
-in milliseconds and scheduling needs microseconds, so the inconsistency got a
-justification instead of a fix. With units on values each author writes what
-they mean and no reader converts.
-
-### The places (every timing value in the vocabulary)
-
-**Contract — platform-agnostic requirements** (`types/src/types.rs`), all
-`f64` except `lifespan_ms`:
-
-| struct | fields |
-|---|---|
-| `EndpointProps` | `min_rate_hz`, `max_rate_hz`, `jitter_ms`, `max_age_ms`, `max_transport_ms` |
-| `SrvEndpointProps` | `max_response_ms` |
-| `TopicDecl` | `rate_hz`, `max_transport_ms` |
-| `QosDecl` | `lifespan_ms` (`u64`) |
-| `PathDecl` | `max_latency_ms`, `tolerance_ms` |
-| `Sync` | `max_interval_ms`, `timeout_ms` |
-| `ChainDecl` | `max_latency_ms` |
-
-**Platform / sched — machine facts** (`sched/src/types.rs`), all `u64`:
-
-| struct | fields |
-|---|---|
-| `TierDef` | `deadline_us`, `period_us`, `budget_us`, `spin_period_us` |
-| `TierPlatformSpec` | `deadline_us`, `budget_us`, `period_us`, `time_slice_us` |
-
-**Platform v2** (`sched/src/platform.rs`): **none.** `PosixResources` is
-`rt_priority_band` + `isolated_cpus`; `PosixOverride` is `priority` + `core` +
-`sched_class`. Every platform-side timing field above lives in a v1 structure
-reachable only through the deprecated TOML bridge — which is the same finding
-as W1's, stated structurally: the v2 schema has no timing surface at all.
-
-Note also `f64` on the contract side against `u64` on the platform side. A
-duration type unifies that too.
-
-### The options considered
-
-| | approach | verdict |
-|---|---|---|
-| A | status quo — unit in the field name | rejected: keeps the 1000x error representable |
-| B | unit in value, flag day | rejected: ~14 YAML files here, ~75 Autoware contracts, plus nano-ros on the same tag-pinned types |
-| C | **unit in value, old names as deprecated aliases, emit canonical** | **chosen** |
-| D | unit in value for new fields only | rejected: strictly increases inconsistency |
-
-C needs no `version: 2` gate. The contract's `version:` field is currently
-parsed and never branched on (`yaml_u32(doc, "version").unwrap_or(1)`), so the
-lever exists unimplemented — it only becomes necessary if the old form is ever
-to be *rejected*, which is a later decision.
-
-### Rules
-
-- **Grammar:** decimal number + unit from `ns | us | ms | s`. Decimals accepted
-  on read (`1.5ms`) — forcing `1500us` is unit gymnastics.
-- **Bare numbers rejected.** An unsuffixed value is an error, not a default.
-  Guessing here reintroduces exactly the ambiguity the change removes.
-- **Emit canonical only,** in the finest unit that keeps the value an integer,
-  so the generated `system_model.yaml` diffs stably and floats never reach a
-  scheduling parameter.
-- **Aliases warn,** via a lint, following the `explicit-trigger` precedent that
-  already nudges authors toward newer vocabulary.
-- **`humantime-serde` is already a play_launch dependency** (used in
-  `diagnostics/diagnostic_data.rs`), so the pattern is not new to this
-  codebase — though its grammar is not identical to the one above.
-
-### Target shape
-
-What `rt_av_demo` looks like once W1 and W1b have both landed. Contract —
-requirements only, still platform-agnostic, nothing about cost:
-
-```yaml
-nodes:
-  obstacle_detector:
-    criticality: high
-    sub: { scan: { min_rate_hz: 50 } }
-    pub: { obstacles: { min_rate_hz: 50 } }
-    paths:
-      detect:
-        trigger: { input: [scan] }
-        output: [obstacles]
-        max_latency: 12ms          # was max_latency_ms: 12
-
-chains:
-  lidar_to_brake:
-    semantics: reaction
-    max_latency: 60ms              # was max_latency_ms: 60
-```
-
-Platform file — machine facts, now including what the work costs here:
-
-```yaml
-target: posix
-mapper: chain_aware
-resources:
-  rt_priority_band: { min: 10, max: 40 }
-  isolated_cpus: [2]
-overrides:
-  obstacle_detector: { budget: 8ms }        # NEW (W1) — cost, authorable at last
-  map_loader:        { sched_class: SCHED_OTHER }
-```
-
-Full rename map:
-
-| today | planned | side |
-|---|---|---|
-| `max_latency_ms` | `max_latency` | contract (`PathDecl`, `ChainDecl`) |
-| `max_age_ms` | `max_age` | contract (`EndpointProps`) |
-| `max_transport_ms` | `max_transport` | contract (`EndpointProps`, `TopicDecl`) |
-| `max_response_ms` | `max_response` | contract (`SrvEndpointProps`) |
-| `max_interval_ms`, `timeout_ms` | `max_interval`, `timeout` | contract (`Sync`) |
-| `jitter_ms`, `tolerance_ms` | `jitter`, `tolerance` | contract |
-| `lifespan_ms` | `lifespan` | contract (`QosDecl`) |
-| `deadline_us`, `period_us`, `budget_us` | `deadline`, `period`, `budget` | platform (`TierDef`, `TierPlatformSpec`) |
-| `spin_period_us`, `time_slice_us` | `spin_period`, `time_slice` | platform |
-| `min_rate_hz`, `max_rate_hz`, `rate_hz` | *unchanged* | contract — see below |
-
-### Scope boundary
-
-Rate fields (`rate_hz`, `min_rate_hz`, `max_rate_hz`) are **out of scope**.
-`50hz` is tempting and symmetric, but frequency is not a duration, it needs its
-own unit set, and the error it prevents is far less costly than a 1000x
-duration slip. Revisit separately or not at all.
-
-This is a vocabulary change in the tag-pinned `ros-launch-manifest`, so it
-carries the coordinated-bump constraint above. It is deliberately **not** on
-W1's critical path: W1 lands `budget` authoring, and the alias handles every
-existing contract without a coordinated release.
-
----
-
-## W1c — Audit: what else sits in the wrong file
-
-Running the same test that moved cost (*does this value survive a change of
-machine or deployment?*) across the whole vocabulary. Ordered by confidence.
-
-### 1. `max_transport_ms` is a platform cost in the agnostic file — same error as `budget`
-
-Declared on `TopicDecl` and overridable per `EndpointProps`, documented as
-"Worst-case transport latency (ms) for this topic hop", defaulting to 0 and
-"absorbed into scope residual". So it is not a requirement the software must
-meet — it is a **cost term in the latency budget arithmetic**, exactly like
-`budget`. And it is not platform-agnostic:
-
-| deployment | transport |
-|---|---|
-| composables in one container with `use_intra_process_comms` | pointer pass |
-| separate processes, same host | DDS shared memory / loopback |
-| across hosts | network |
-
-play_launch itself moves a system between the first two rows **with a CLI
-flag**: `--container-mode isolated` fork+execs each composable into its own
-process, so intra-process comms stops applying. Nothing in the contract
-changes. `docs/guide/multi-host.md` moves it to the third row by partitioning
-one launch across machines at resolve time — again with the contract
-unchanged.
-
-A number that a `--container-mode` flag can invalidate does not belong in the
-platform-agnostic file. It belongs beside `budget`, and for the same reason:
-computation cost and transport cost are the two halves of a latency budget, and
-both are properties of where you deployed, not of what you wrote.
-
-### 2. v1's `TierDef` mixes requirements into the facts file — already fixed, accidentally
-
-`TierDef` carries `deadline_us`, `period_us` and `class` alongside `budget_us`,
-`spin_period_us` and `time_slice_us`. The first three are *requirements*:
-a deadline duplicates the contract's `max_latency`, a period derives from its
-`rate_hz`, and `class` (`best_effort | real_time | time_triggered`) overlaps
-`criticality`. The last three are *facts* about the machine.
-
-That mixing is historical, not a mistake: v1 was a standalone `system.toml`
-predating the contract/platform split, so it had to carry both.
-
-This reframes W1. v2 did not "forget" `budget_us` — it correctly purged the
-requirement-shaped fields from the platform file and took a fact with them.
-`budget` is collateral damage from a good decision, which is why restoring it
-is a restoration rather than a new idea.
-
-### 3. `TopicDecl.drop` is a deployment property (medium confidence)
-
-`max_count`/`max_consecutive` describe transport loss, which depends on the
-link — near zero on loopback, not on a congested network. Same argument as
-`max_transport_ms`. Note the asymmetry the spec already draws: `PathDecl.drop`
-is end-to-end and includes a node *internally* skipping messages, which is
-code behaviour and does belong in the contract. So the two `drop` fields are
-not the same kind of thing despite sharing a type.
-
-### 4. `qos.depth` is tuning, not interface (medium confidence)
-
-`QosDecl` is genuinely split-natured. `reliability`, `durability`, `history`
-and `liveliness` are **interface** properties — they decide pub/sub
-compatibility, so they are part of the contract in the strict sense (the
-`qos-match` and `qos-compat` rules exist for exactly this). But `depth` is a
-buffer-size knob trading memory against loss tolerance, and `lifespan_ms` is a
-retention policy. Those are tuned per deployment.
-
-No action proposed. Splitting `qos:` would fight ROS 2's own presentation of it
-as one profile, and the cost of the confusion is low. Recorded so the
-inconsistency is known rather than rediscovered.
-
-### 5. `jitter_ms` is ambiguous (low confidence)
-
-Jitter is *caused by* scheduling — a platform effect. But "I tolerate ≤5 ms
-jitter" is a requirement. The field name does not say which it is, and unlike
-the cases above there is no consumer to disambiguate it: nothing reads
-`jitter_ms` today. Decide what it means before something starts to.
-
-### Proposed action
-
-Only finding 1 is actionable now, and it is the same change as W1 with the same
-justification, so it should land with it: `max_transport` moves to the platform
-file, keeping the contract's field as a deprecated alias exactly as W1b does
-for every other renamed field. Findings 2-5 are recorded, not scheduled.
 
 ---
 
@@ -352,10 +127,10 @@ path's cost for an input-triggered path: *take(input) → publish(output)* for
 one message. Phase 57's trace exporter already builds those flows.
 
 **Deliverable:** a verb that turns a run into a platform-file fragment —
-per-path observed cost at p50/p99/max, emitted as a platform-file
-`budget_us` fragment for the author to review and paste, never silently
-written back. Note the unit change: the trace measures in nanoseconds, the
-contract thinks in milliseconds, and the field is microseconds.
+per-path observed cost at p50/p99/max, for the author to review and paste,
+never silently written back. Note the unit change: the trace measures in
+nanoseconds, the contract thinks in milliseconds, and the field is
+microseconds — which is one of Phase 59's motivations.
 
 **Limits to state in the output:** timer-triggered paths have no input take to
 anchor against; messages without `header.stamp` cannot be correlated (the
@@ -377,8 +152,8 @@ the topology in order.
 **Policies** (platform file selects, same channel as `mapper:`):
 - *fair laxity* — distribute slack equally. Needs budgets only, so it works
   before W1 lands.
-- *proportional to cost* — distribute slack in proportion to `budget_us`.
-  Needs W1. The better default once cost exists.
+- *proportional to cost* — distribute slack in proportion to the declared
+  cost. Needs W1. The better default once cost exists.
 
 **Why this answers the DAG question.** Decompose along each path; a node on
 several paths takes the **tightest** resulting deadline. Multiple paths between
@@ -387,6 +162,24 @@ over one node. The `ResolvedChain` sequence-only limitation (study finding 2)
 still blocks correct *feasibility* math for fork-join (`max` over branches, not
 sum), so either restrict W3 to series budgets or add a branch-carrying variant.
 Decide before implementing; do not linearise a diamond and sum it.
+
+**Transport cost lands here, not earlier.** `max_transport_ms` is declared on
+`TopicDecl`, documented as "worst-case transport latency for this topic hop",
+defaults to 0 and is "absorbed into scope residual" — so it is not a
+requirement but a **cost term in the latency budget**, the transport half of
+what `budget` is for computation. It is deployment-dependent by the same test:
+a pointer pass for composables sharing a container with intra-process comms,
+DDS shared memory across processes, the network across hosts — and
+`--container-mode isolated` moves a system between the first two *with a CLI
+flag*, while `docs/guide/multi-host.md` moves it to the third, both with the
+contract unchanged.
+
+By the principle it should move to the platform file. By the evidence it should
+not move yet: `max_transport_ms` appears in **exactly one file in this repo, a
+test fixture**, and in none of the real Autoware contracts. Moving an unused
+field costs a schema change, an alias and a cross-repo bump for no present
+benefit. W3 is the first work that consumes transport cost in budget
+arithmetic, so W3 is when it moves.
 
 **Done when:** a `deadline_decomposition` mapper produces per-node deadlines
 with `--explain` provenance; `rt_av_demo` runs A/B against `chain_aware` on the
@@ -423,10 +216,10 @@ The spike answers, on this host, before any implementation:
 - Affinity handling forks: FIFO/RR keep `sched_setaffinity`; DEADLINE uses
   cpusets. The platform file's `isolated_cpus` finally means something
   operational rather than declarative.
-- Derivation: period from `min_rate_hz`, runtime from `budget_us` (W1) —
-  which is what that field has meant since v1 ("EDF/sporadic"), so a
-  reservation is its first real consumer,
-  deadline from the decomposition (W3) or the declared budget.
+- Derivation: period from `min_rate_hz`, runtime from the declared cost (W1) —
+  which is what `budget_us` has meant since v1 ("EDF/sporadic"), so a
+  reservation is its first real consumer; deadline from the decomposition (W3)
+  or the declared budget.
 
 **Done when:** `rt_av_demo` runs a third arm — FIFO vs DEADLINE vs off — and
 the report shows whether reservations keep the chain's deadline while returning
@@ -464,6 +257,30 @@ written down.
 
 Both are worth a try when the executor is ours. Neither blocks W1–W4.
 
+---
+
+## Recorded findings — not scheduled
+
+From auditing the contract/platform split with the same test that moved cost
+(*does this value survive a change of machine or deployment?*). Kept here so
+they are not rediscovered; none has a consumer that makes it worth a schema
+change today.
+
+- **`TopicDecl.drop` is a deployment property.** `max_count` /
+  `max_consecutive` describe transport loss, which depends on the link. Note
+  the asymmetry the spec already draws: `PathDecl.drop` is end-to-end and
+  includes a node *internally* skipping messages, which is code behaviour and
+  does belong in the contract. Two fields, one type, different natures.
+- **`QosDecl` mixes interface with tuning.** `reliability`, `durability`,
+  `history` and `liveliness` decide pub/sub compatibility — genuinely
+  contract. `depth` is a buffer-size knob and `lifespan_ms` a retention
+  policy — deployment. No action proposed: splitting `qos:` would fight ROS 2's
+  own presentation of it as one profile, and the cost of the confusion is low.
+- **`jitter_ms` is ambiguous.** Jitter is *caused by* scheduling (a platform
+  effect), but "I tolerate ≤5 ms jitter" is a requirement. The name does not
+  say which, and nothing reads the field today, so nothing forces the question.
+  Decide before something does.
+
 ## Open questions
 
 1. Per-node or per-path cost? `overrides` is keyed per node, and the apply
@@ -471,7 +288,10 @@ Both are worth a try when the executor is ours. Neither blocks W1–W4.
    feasibility wants per path — `ChainElement::Boundary.exec_ms` is per
    (node, path), which is exactly why the conflation reached for the
    contract's per-path `max_latency_ms`. Per-node is enough for W4 and not
-   for W3.
+   for W3. A `costs:` section keyed node→path is the likely answer, and it
+   would also give transport cost (W3) somewhere to live that is not keyed by
+   node — the platform file is node-keyed today and costs are per-node *and*
+   per-topic.
 2. Should W3 decomposition run over declared chains only, or over a derived
    causal DAG? The DAG extraction is the larger idea; decomposition works
    either way, and shipping it on chains first keeps the two decisions apart.
@@ -484,4 +304,5 @@ Both are worth a try when the executor is ours. Neither blocks W1–W4.
 Hard real-time guarantees; static WCET analysis; changing the `chain_aware`
 mapper's semantics (it stays, as the option that needs no cost); replacing
 `chains:` (the study found no case for removing it — causality says what *can*
-happen, not which path is accountable, what its budget is, or its semantics).
+happen, not which path is accountable, what its budget is, or its semantics);
+the units migration (Phase 59).
