@@ -24,7 +24,7 @@ real-time literature needs cost.
 
 Established by reading the current implementation, not from the literature.
 
-### 1. There is no WCET in the vocabulary; budget is being used as cost
+### 1. A deadline is being used as a cost; the cost field exists but v2 cannot author it
 
 `sched_derive.rs` passes a path's declared latency budget in as its execution
 time:
@@ -42,6 +42,24 @@ a chain's computed sampling cost, so the feasibility verdict errs conservative
 This is also why `check` reports `feasible ON INCOMPLETE EVIDENCE` when a
 boundary omits the field: absent a declared value the hop is counted as *zero*
 cost, and "absent" and "zero" are not the same answer.
+
+**Correction (2026-08-06).** This finding first read "there is no WCET in the
+vocabulary", which is wrong, and the error mattered: it led to a design that
+put a `exec_ms` in the *contract* with a platform `exec_scale` to convert it —
+i.e. a platform-dependent quantity in the platform-agnostic file, reconciled by
+a reference machine nobody owns.
+
+`TierDef.budget_us` already exists and is documented as "Execution-time budget
+(µs) — EDF/sporadic". It is plumbed through `ResolvedTier` into the
+SystemModel's execution layer, whose portable head is `class, deadline_us,
+period_us, budget_us`. What is missing is narrower: **only the deprecated v1
+`system.toml` bridge populates it.** The v2 schema (`mapper` + `resources` +
+`overrides`) has no way to author it, so on every v2 path it is `None` — which
+is the vacuum `max_latency_ms` was substituted into.
+
+The correct home for cost is the platform file, beside `rt_priority_band` and
+`isolated_cpus`, because cost is a property of (code, hardware). The contract
+stays agnostic. See `phase-58` W1.
 
 Consequence: response-time analysis, reservation sizing, and optimal priority
 assignment are all unreachable until cost is a first-class fact.

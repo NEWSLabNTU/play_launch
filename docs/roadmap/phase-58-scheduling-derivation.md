@@ -9,10 +9,11 @@ harness this phase's claims are checked against.
 
 Today exactly one derivation exists: `chain_aware` turns an authored `chains:`
 block into fixed priorities. The study found four families that need no
-authored chain, and one defect that blocks most of them: **our contracts
-declare budgets, never costs**. `sched_derive.rs` passes a path's
-`max_latency_ms` in as its execution time, so no true cost appears anywhere in
-the model.
+authored chain, and one defect that blocks most of them: **nothing a v2 user
+can author declares execution cost**. The field exists (`budget_us`) and is
+plumbed to the model, but only the deprecated v1 TOML bridge populates it — so
+`sched_derive.rs` substitutes a path's `max_latency_ms`, its *deadline*, and no
+true cost appears anywhere in the model.
 
 Ordering follows what each option needs, not how interesting it is. W1 unblocks
 the rest; B lands before C because it runs on budgets alone; C carries the
@@ -34,53 +35,77 @@ largest architectural collision.
 
 ---
 
-## W1 — Cost as a first-class, platform-agnostic fact
+## W1 — Cost as a first-class fact, on the platform side
 
 The enabling change. Nothing else in this phase is reachable without it.
 
-**Schema.** Add `exec_ms` to `PathDecl`, distinct from `max_latency_ms`:
+**Cost does not belong in the contract.** Execution time is a property of
+(code, hardware). The contract is the platform-*agnostic* file — rates,
+deadlines, criticality: things that stay true when you change machine. Putting
+a cost there and "converting" it with a scale factor invents a reference
+platform nobody owns and no one can verify. Rejected.
+
+Cost belongs in the **platform file**, beside the other machine facts
+(`rt_priority_band`, `isolated_cpus`). That file is already per-target and
+already ships through the same provider-sidecar + user-overlay channels, so an
+integrator writing one for their machine is the existing workflow, not a new
+one.
+
+**The field already exists — v2 just cannot author it.** `TierDef.budget_us`
+is documented as "Execution-time budget (µs) — EDF/sporadic". It flows through
+`ResolvedTier` into the SystemModel's execution layer, whose portable head is
+documented as `class, deadline_us, period_us, budget_us`. But it is only ever
+*populated* from the v1 legacy `system.toml` bridge; nothing in the v2 schema
+(`mapper` + `resources` + `overrides`) sets it, so on every v2 path it is
+`None`.
+
+So W1 is not "add a cost field". It is **give v2 a way to author `budget_us`**,
+and stop the conflation that filled the gap:
 
 ```yaml
-paths:
-  detect:
-    trigger: { input: [scan] }
-    output: [obstacles]
-    max_latency_ms: 12       # budget — what this path is ALLOWED
-    exec_ms: 8               # cost — what this path COSTS
-```
-
-**Platform-agnostic, via the split that already exists.** Cost is a property of
-(code, hardware), but the contract is provider-owned and the platform file is
-integrator-owned. So the contract states cost on a *reference* basis and the
-platform file converts:
-
-```yaml
-# platform file (integrator)
+# platform file — machine facts, including what work costs on THIS machine
+target: posix
+mapper: chain_aware
 resources:
-  exec_scale: 1.4            # this machine is 1.4x slower than the reference
+  rt_priority_band: { min: 10, max: 40 }
 overrides:
-  obstacle_detector: { exec_ms: 11 }   # measured here; beats any scaling
+  obstacle_detector: { budget_us: 8000 }
 ```
 
-A single scalar is deliberately crude — it does not model cache, memory
-bandwidth, or big.LITTLE asymmetry. It is a stated approximation whose job is
-to make the reference basis explicit rather than implied. Per-node overrides are
-the escape hatch when the scalar is wrong, and they are the same override
-channel scheduling already uses.
+**Naming.** The two files already have consistent, *different* conventions,
+and the fix is to follow each rather than to unify them:
 
-**Honesty about what `exec_ms` is.** Not a proven WCET — we have no static
-analysis. It is a declared high-percentile observed cost. `check --explain`
-must show its provenance (declared / scaled / overridden / measured) so nobody
-reads it as a bound.
+| side | unit | bound prefix | examples |
+|---|---|---|---|
+| contract (requirements) | `_ms` | `max_` | `max_latency_ms`, `max_age_ms`, `max_transport_ms`, `max_response_ms` |
+| platform / sched (facts) | `_us` | none | `deadline_us`, `period_us`, `budget_us`, `spin_period_us` |
+
+`budget_us` therefore needs no new name: it matches `deadline_us`/`period_us`
+on the side it lives on, and it is already this codebase's word for exactly
+this quantity. `max_latency_ms` stays untouched.
+
+The ms/µs split across the two files is deliberate, not an oversight:
+contracts are human-authored requirements at millisecond granularity, while
+scheduling parameters need sub-millisecond precision (a 20 ms period is 20000
+µs, and budgets under 1 ms are ordinary). Recorded here so nobody "fixes" it
+later.
+
+**Honesty about what `budget_us` is.** Not a proven WCET — there is no static
+analysis here. It is a declared high-percentile observed cost, used *as* an
+upper bound. `check --explain` must show its provenance (declared / overridden
+/ measured) so nobody reads it as a proof.
 
 **Also in W1:** stop passing `max_latency_ms` as `exec_ms` in
-`sched_derive.rs`. That single line is the conflation; fixing it will change
-existing feasibility verdicts, so the diff must show which and why.
+`sched_derive.rs`. That single line is the conflation; with a real source for
+cost it becomes "read the budget, or report absent" — never "substitute the
+deadline". Fixing it will change existing feasibility verdicts, so the diff
+must show which and why.
 
-**Done when:** `check --explain` distinguishes budget from cost with
-provenance; `rt_av_demo`'s contract declares real costs; the
-`feasible ON INCOMPLETE EVIDENCE` path fires only when cost is genuinely
-absent; a test fails if budget is ever used as cost again.
+**Done when:** a v2 platform file can author `budget_us` and it reaches
+`execution.tiers`; `check --explain` distinguishes budget from cost with
+provenance; `rt_av_demo` declares real costs; `feasible ON INCOMPLETE
+EVIDENCE` fires only when cost is genuinely absent; a test fails if a deadline
+is ever used as a cost again.
 
 ---
 
@@ -94,9 +119,11 @@ with `CLOCK_MONOTONIC` and correlates them by header stamp — that is exactly a
 path's cost for an input-triggered path: *take(input) → publish(output)* for
 one message. Phase 57's trace exporter already builds those flows.
 
-**Deliverable:** a verb that turns a run into a contract fragment —
-per-path observed cost at p50/p99/max, emitted in `exec_ms` form for the author
-to review and paste, never silently written back.
+**Deliverable:** a verb that turns a run into a platform-file fragment —
+per-path observed cost at p50/p99/max, emitted as a platform-file
+`budget_us` fragment for the author to review and paste, never silently
+written back. Note the unit change: the trace measures in nanoseconds, the
+contract thinks in milliseconds, and the field is microseconds.
 
 **Limits to state in the output:** timer-triggered paths have no input take to
 anchor against; messages without `header.stamp` cannot be correlated (the
@@ -118,8 +145,8 @@ the topology in order.
 **Policies** (platform file selects, same channel as `mapper:`):
 - *fair laxity* — distribute slack equally. Needs budgets only, so it works
   before W1 lands.
-- *proportional to cost* — distribute slack in proportion to `exec_ms`. Needs
-  W1. The better default once cost exists.
+- *proportional to cost* — distribute slack in proportion to `budget_us`.
+  Needs W1. The better default once cost exists.
 
 **Why this answers the DAG question.** Decompose along each path; a node on
 several paths takes the **tightest** resulting deadline. Multiple paths between
@@ -164,7 +191,9 @@ The spike answers, on this host, before any implementation:
 - Affinity handling forks: FIFO/RR keep `sched_setaffinity`; DEADLINE uses
   cpusets. The platform file's `isolated_cpus` finally means something
   operational rather than declarative.
-- Derivation: period from `min_rate_hz`, runtime from `exec_ms` (W1),
+- Derivation: period from `min_rate_hz`, runtime from `budget_us` (W1) —
+  which is what that field has meant since v1 ("EDF/sporadic"), so a
+  reservation is its first real consumer,
   deadline from the decomposition (W3) or the declared budget.
 
 **Done when:** `rt_av_demo` runs a third arm — FIFO vs DEADLINE vs off — and
@@ -205,8 +234,12 @@ Both are worth a try when the executor is ours. Neither blocks W1–W4.
 
 ## Open questions
 
-1. Does `exec_scale` earn its place, or should the reference basis be recorded
-   and left unscaled until someone has two machines to compare?
+1. Per-node or per-path cost? `overrides` is keyed per node, and the apply
+   layer is per-node too (one thread group, one reservation). But chain
+   feasibility wants per path — `ChainElement::Boundary.exec_ms` is per
+   (node, path), which is exactly why the conflation reached for the
+   contract's per-path `max_latency_ms`. Per-node is enough for W4 and not
+   for W3.
 2. Should W3 decomposition run over declared chains only, or over a derived
    causal DAG? The DAG extraction is the larger idea; decomposition works
    either way, and shipping it on chains first keeps the two decisions apart.
