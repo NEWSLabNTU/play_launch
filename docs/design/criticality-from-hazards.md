@@ -306,7 +306,7 @@ by `sched_rt_runtime_us` — which Phase 57 measured as best-effort losing
 26–37% of its throughput. That is temporal interference; it merely happened to
 point in the benign direction.
 
-### The division of labour
+### The division of labour — and how W4 changes it
 
 | role | source |
 |---|---|
@@ -317,6 +317,31 @@ point in the benign direction.
 Three inputs, three distinct roles. Today all three are muddled: criticality is
 a meaningless label doing both partition and ordering work, and cost does not
 exist.
+
+**Superseded once phase 58 W3+W4 land.** `SCHED_DEADLINE` is GEDF + CBS, and
+per `sched(7)` deadline threads "preempt any thread scheduled under one of the
+other policies" — they carry **no priority number and no band**. So:
+
+- the *partition* row evaporates for reserved nodes: band compression is a
+  `SCHED_FIFO` artifact, and CBS gives every reserved task a bandwidth
+  guarantee by construction, so criticality is not needed to decide who gets
+  isolation;
+- the *order* row is fully covered by W3's decomposed deadlines under EDF.
+
+With (C, T, D) complete, classical real-time theory schedules the system with
+no criticality input at all. **Criticality's remaining scheduling job is
+overload arbitration** — when admission control rejects an infeasible set,
+deciding who is refused a reservation. Timing facts cannot answer "who matters
+less"; that is precisely the question they do not contain.
+
+This is Vestal's actual mixed-criticality premise: criticality is a
+**degradation policy**, not a priority input. Today we use it as a priority
+input and implement no degradation, which is backwards. After W3/W4 it should
+stop feeding the ordering and start feeding admission — see phase 58 W4.
+
+A residual need survives in hybrid systems: a node with no declared cost cannot
+be reserved and falls back to FIFO/OTHER, where the band and its barrier still
+apply.
 
 ## Scope boundary
 

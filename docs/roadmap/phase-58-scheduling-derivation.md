@@ -221,6 +221,28 @@ The spike answers, on this host, before any implementation:
   reservation is its first real consumer; deadline from the decomposition (W3)
   or the declared budget.
 
+### Admission control needs a policy — currently unowned
+
+The spike's third question ("what does admission control reject, and is the
+error legible?") has a consequence the rest of this phase does not cover. When
+the reservation set does not fit, **something must decide who is refused**, and
+no timing fact answers "who matters less".
+
+Criticality answers it — and this is where criticality's job moves to. Once W3
+supplies deadlines and W4 supplies reservations, criticality stops being a
+priority input: `SCHED_DEADLINE` has no priority number, CBS gives every
+reserved task isolation by construction, and EDF orders them by deadline. What
+remains is exactly Vestal's original premise — criticality as a **degradation
+policy**. See
+[`criticality-from-hazards.md`](../design/criticality-from-hazards.md) §"The
+division of labour", which records the supersession.
+
+Concretely W4 must decide: on an infeasible set, refuse reservations
+lowest-criticality-first and let those nodes fall back to `SCHED_OTHER`, or
+refuse the launch outright under `--sched-apply strict`. Both are defensible;
+neither is designed. Failing to choose means the kernel chooses arbitrarily,
+which for a safety classification is the worst option.
+
 **Done when:** `rt_av_demo` runs a third arm — FIFO vs DEADLINE vs off — and
 the report shows whether reservations keep the chain's deadline while returning
 best-effort throughput. That is the claim; if throughput does not recover, say
