@@ -76,6 +76,37 @@ methods cannot express that. This is a strong argument that STPA's vocabulary �
 outcomes and control actions — is the right one for a *scheduling* contract
 specifically.
 
+## Cross-domain evidence: criticality is always *net of mitigation*
+
+Surveying how four domains actually assign integrity levels turns up one shared
+structure, and it is not raw reachability:
+
+| domain | standard | level derived from | **narrowed by** |
+|---|---|---|---|
+| vehicles | ISO 26262 | hazardous event, S × E × C | ASIL **decomposition** across sufficiently independent elements |
+| drones | SORA (JARUS/EASA) | ground risk class + air risk class | **mitigations** M1–M3 lower the class; robustness = integrity + assurance |
+| industrial robots | ISO 13849 / ISO 10218 | required risk reduction → Performance Level (PLd required by 10218) | **safety functions** — monitored stop, speed & separation, power & force limiting — "part of the robot **or** provided by a protective device" |
+| any CPS | Simplex / runtime assurance | the complex controller is unverified | a **high-assurance controller + decision module** bounds it |
+
+In every one, the integrity a component needs is **what its failure can cause
+given the mitigations in place** — never what it can reach. The Simplex
+formulation is the clearest: a high-performance controller "not required to
+provide guarantees" is paired with a verified baseline controller and a
+switching decision module. The complex stack does not have to be high-integrity
+*because the architecture bounds it*.
+
+This is also how real systems avoid the outcome that pure reachability
+produces. Nobody develops an entire autonomy stack to ASIL D. They build a
+small, simple, independent channel that can force a safe state, certify *that*
+high, and let the complex pipeline sit lower. Jiao's "Safe IO Cell" — an
+independent supervision domain that "checks commanded values against predefined
+envelopes" and can "deassert motor enable or engage brakes regardless of
+primary controller behavior" — is the same architecture in a robotics setting.
+
+**The design below therefore propagates severity from the control action
+upstream, attenuated at declared mitigation barriers.** Reachability sets the
+ceiling; mitigation brings it down.
+
 ## Proposal
 
 Declare the **outcome**, link it to the **control action**, derive the rest.
@@ -133,9 +164,21 @@ documented as "max over the chain's member nodes".
 still ASIL D. The standard has no attenuation, and hop-count decay would be a
 fabrication. Stated explicitly because it is the tempting shortcut.
 
-**R3 — Propagation follows causal edges only.** `state: true` breaks it —
-already the `causal-dag` rule's semantics. A node feeding only a buffered/state
-input does not causally drive the control action.
+**R3 — Propagation follows every data edge; `state:` breaks cycles, not
+severity.** An earlier draft stopped propagation at `state: true` edges. That
+was wrong, and the error is instructive: `state: true` means "polled, does not
+create a causal *cycle*" — it was designed for cycle-breaking, and reusing it
+for safety-irrelevance is a semantic overload. A node reading a stale pose can
+absolutely produce hazardous output. Severity therefore traverses state edges
+too; `state:` is used only to terminate the walk, exactly as `causal-dag` uses
+it today.
+
+The tempting alternative — propagate only over `required: true` edges — is
+worse, and dangerously so. `required` defaults to **false**, and the spec says
+"an endpoint with no properties is causal and optional — the most common case".
+A required-only rule would derive QM for nearly everything in the existing
+corpus: a safety classification **failing open**, silently. Over-assignment
+fails safe; that rule fails open. Take the over-assignment.
 
 **R4 — Decomposition may LOWER, given verified independence.** ISO 26262
 permits ASIL D → B(D) + B(D), or D(D) + QM(D), across "sufficiently independent
@@ -155,6 +198,36 @@ normally a manual argument in a safety case.**
 
 **R5 — Unreachable is QM**, but a node the author declared critical that
 reaches no control action is a *finding*, never a silent downgrade.
+
+**R6 — A mitigation barrier attenuates severity upstream of it.** This is the
+rule the cross-domain survey demands, and the one that keeps a real stack from
+collapsing into a single ASIL D class.
+
+```yaml
+mitigations:
+  emergency_stop:
+    bounds: vehicle_fails_to_stop
+    residual: ASIL_B          # what remains when this channel works
+    channel: /safety/estop_cmd
+```
+
+Semantics: severity propagates upstream from the hazard's control action at
+full strength until the walk reaches a node that the mitigation channel bounds;
+from there upstream it continues at `residual`. The **mitigation channel itself
+inherits the full severity** — it is now the thing that must not fail. That is
+Simplex expressed in a contract: the high-assurance controller becomes the
+ASIL D element and the complex pipeline drops to `residual`.
+
+The barrier is only valid if the channel is **independent** of what it bounds —
+the same disjoint-ancestor test as R4. A mitigation whose channel shares an
+ancestor with the path it claims to bound is a common-cause failure, and the
+checker rejects it naming the shared node. This is the single most valuable
+check in the design, because in a hand-written safety case it is an assertion
+nobody can mechanically verify.
+
+`residual` is authored, not computed. Deriving it would require quantitative
+risk reduction (SORA's robustness levels, ISO 13849's PFHd), which is HARA
+territory and out of scope per the boundary below.
 
 ## Worked example — `rt_av_demo`
 
@@ -176,6 +249,35 @@ This **reproduces the hand-written `criticality: high` on exactly those three
 nodes and nothing on the rest**, from one declaration instead of three, with a
 reason attached. Reproducing the existing human judgment is the test a
 derivation must pass before it is trustworthy; it passes on the case we have.
+
+### The same system with a safety channel (R6)
+
+`rt_av_demo` has no mitigation, which is why every chain node lands at ASIL D.
+Add the architecture a real vehicle would have:
+
+```yaml
+mitigations:
+  independent_estop:
+    bounds: vehicle_fails_to_stop
+    residual: ASIL_B
+    channel: /safety/estop_cmd       # from a monitor reading wheel speed + range directly
+```
+
+| node | before R6 | after R6 | why |
+|---|---|---|---|
+| `estop_monitor` | — | **ASIL D** | it is now what must not fail |
+| `brake_controller` | ASIL D | ASIL B | bounded by the channel |
+| `obstacle_detector` | ASIL D | ASIL B | upstream of the barrier |
+| `lidar_driver` | ASIL D | ASIL B | upstream of the barrier |
+| everything else | QM | QM | reaches no control action |
+
+Valid only if `estop_monitor` shares no ancestor with the chain it bounds. If
+it took its range input from `obstacle_detector`, the checker rejects the
+mitigation — a common-cause failure, mechanically detected.
+
+This is the whole point of the rule: it moves one small node up and a whole
+pipeline down, which is what real safety architecture does and what pure
+reachability cannot express.
 
 ## Deriving the scheduling context
 
@@ -261,6 +363,48 @@ Fix regardless of whether the rest lands:
    failing open. Make it an error.
 2. Nothing validates criticality against structure.
 
+## Issues found by writing contracts against this design
+
+Recorded because a design that reads as settled is harder to correct than one
+that carries its own defects.
+
+**Resolved by R3/R6 above:**
+
+1. *Reachability is not causal necessity.* `map_loader → path_planner → … →
+   brake_cmd` derives ASIL D, but the planner works without fresh tiles. The
+   fix is not a cleverer propagation rule — it is R6: if a mitigation bounds the
+   planning path, everything upstream drops to `residual`. Where no mitigation
+   exists, ASIL D is the correct and uncomfortable answer that ISO 26262 gives
+   too.
+2. *`state:` was overloaded for safety propagation.* Corrected in R3.
+3. *Everything becomes ASIL D.* True without mitigations, and then it is a fact
+   about the architecture rather than an artifact of the method. R6 is how a
+   real system narrows it.
+
+**Open, and not resolved by this design:**
+
+4. **Ownership conflict.** `hazards:` and `mitigations:` must be
+   integrator-owned (root contract or overlay), matching the `chains:`
+   precedent — a package provider cannot know system hazards. But today
+   `criticality:` lives in `nodes.<name>`, inside *provider-shipped* sidecars.
+   The migration path below keeps node-level criticality as an override, which
+   puts an integrator-level safety judgment in a provider-level file: the same
+   misplacement class this document exists to fix. Either the override moves to
+   the overlay, or the inconsistency is accepted and documented.
+5. **ASIL is not priority.** ASIL is development rigour plus an FFI obligation;
+   priority is execution order. This design keeps them separate (partition from
+   criticality, order from timing), but nothing *enforces* the separation, and
+   "higher ASIL ⇒ higher priority" is a plausible-looking next step that would
+   be wrong.
+6. **A control action is assumed to be a published topic.** A watchdog whose
+   safety role is *withholding* `motor_enable`, or a control action delivered by
+   a service call, cannot be expressed.
+7. **`severity_levels` must be system-global.** Declared per contract, two
+   contracts can disagree with no merge rule.
+8. **No mode conditioning.** A hazard that exists only in autonomous mode
+   cannot be expressed; vocabulary v2 deferred mode conditioning, so a node
+   critical only in one mode is over-assigned in all of them.
+
 ## Open questions
 
 1. Does `severity` belong on the hazard only, or may a control action carry its
@@ -284,5 +428,13 @@ Fix regardless of whether the rest lands:
   [AADL fault modeling within an ARP4761 safety assessment](https://apps.dtic.mil/sti/tr/pdf/ADA610294.pdf)
 - [Freedom from interference — temporal](https://piembsystech.com/freedom-from-interference-iso-26262/) ·
   [Jiao: mixed-criticality robotics isolation](https://arxiv.org/html/2605.03641)
+- Cross-domain mitigation structure:
+  [SORA (EASA)](https://www.easa.europa.eu/en/domains/drones-air-mobility/operating-drone/specific-category-civil-drones/specific-operations-risk-assessment-sora) ·
+  [ISO 10218-1:2025 robotics safety requirements](https://www.iso.org/obp/ui/en/#!iso:std:73933:en) ·
+  [Industrial robot safety standards overview](https://www.evsint.com/industrial-robot-safety-standards-iso-10218-ce-marking-2026/)
+- Simplex / runtime assurance:
+  [The Black-Box Simplex Architecture](https://arxiv.org/pdf/2102.12981) ·
+  [Neural Simplex Architecture](https://www3.cs.stonybrook.edu/~stoller/papers/nfm2020.pdf) ·
+  [Mission-level runtime assurance for autonomous driving](https://arxiv.org/pdf/2606.06996)
 - [Modular safety cases from assume-guarantee contracts](https://link.springer.com/chapter/10.1007/978-3-030-26250-1_3) ·
   [Pacti: assume-guarantee contracts](https://dl.acm.org/doi/full/10.1145/3704736)
