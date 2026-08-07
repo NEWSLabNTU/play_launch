@@ -266,6 +266,14 @@ From auditing the contract/platform split with the same test that moved cost
 they are not rediscovered; none has a consumer that makes it worth a schema
 change today.
 
+**`criticality:` is a separate track.** The audit found it to be a label whose
+only meaning is its enum variant order, which is a design problem rather than a
+misplacement — see
+[`docs/design/criticality-from-hazards.md`](../design/criticality-from-hazards.md),
+which proposes deriving it from declared hazards and reaches the conclusion
+that W4's reservations are the ISO 26262 freedom-from-interference mechanism,
+not merely a nicer isolation story.
+
 - **`TopicDecl.drop` is a deployment property.** `max_count` /
   `max_consecutive` describe transport loss, which depends on the link. Note
   the asymmetry the spec already draws: `PathDecl.drop` is end-to-end and

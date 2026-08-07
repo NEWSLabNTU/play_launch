@@ -428,6 +428,8 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
   - `container-isolation.md` — why containers, Linux isolation, RMW consequences
   - `context-unification.md` — parser LaunchContext unification (Phase 17)
   - `system-model.md` — the SystemModel artifact: layout, layers, producer/consumer split
+  - `criticality-from-hazards.md` — deriving criticality (and reservations)
+    from declared hazards instead of a `high|medium|low` label
   - `unified-system-model.md` — Phase 46: the SystemModel as the ONE complete artifact (`record.json` retired to deprecated compat)
   - Manifest design docs moved to `src/ros-launch-manifest/docs/` (Phase 31)
   - `rcl-interception.md` — RCL interception architecture + graph discovery evolution
