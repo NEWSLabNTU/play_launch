@@ -121,7 +121,7 @@ fn params_to_yaml(params: &HashMap<String, String>) -> String {
 /// Parse a resolved parameter value string into the most specific YAML type.
 /// Values in record.json are already fully resolved by the parser — no Python
 /// expressions remain. This function only does type inference matching rcl's
-/// behavior for `-p` arguments: bool, integer, float, or string.
+/// behavior for `-p` arguments: bool, integer, float, sequence, or string.
 fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
     use yaml_rust2::Yaml;
 
@@ -140,6 +140,54 @@ fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
     // Float (only if it looks like a float — has decimal point or scientific notation)
     if (s.contains('.') || s.contains('e') || s.contains('E')) && s.parse::<f64>().is_ok() {
         return Yaml::Real(s.to_string());
+    }
+
+    // Sequence ("[1.0, 0.0, ...]"): array-typed parameters arrive from the
+    // recorder as their bracketed string form. Writing that to overrides.yaml as
+    // a quoted string changes the ROS parameter type from e.g. double_array to
+    // string, which nodes with statically typed declarations reject fatally
+    // ("Wrong parameter type... is not allowed"). Recurse per element; if any
+    // element fails to parse as a scalar the whole value stays a string.
+    if let Some(inner) = s
+        .trim()
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
+        let trimmed = inner.trim();
+        if trimmed.is_empty() {
+            return Yaml::Array(vec![]);
+        }
+        let items: Vec<Yaml> = trimmed
+            .split(',')
+            .map(|item| str_to_yaml(item.trim()))
+            .collect();
+        // Nested brackets split naively would mangle; only accept flat scalar lists.
+        if !inner.contains('[') {
+            return Yaml::Array(items);
+        }
+    }
+
+    // Mapping ("{'enable': False, 'pose': [...]}"): dict-valued parameters arrive
+    // as their Python repr. ros2 launch flattens these into dotted parameter names
+    // (user_defined_initial_pose.enable, ...); a node that statically declares the
+    // dotted names gets nothing from the repr string and aborts with "Statically
+    // typed parameter ... must be initialized". Rewrite the repr into YAML and
+    // parse it into a real mapping, so the params file carries the nested keys.
+    // The rewrite is textual (repr quoting and literals are regular enough for
+    // recorded launch values); on any parse failure the value stays a string.
+    if s.trim_start().starts_with('{') {
+        let yamlish = s
+            .replace('\'', "\"")
+            .replace(": True", ": true")
+            .replace(": False", ": false")
+            .replace(": None", ": null");
+        if let Ok(mut docs) = yaml_rust2::YamlLoader::load_from_str(&yamlish) {
+            if docs.len() == 1 {
+                if let doc @ Yaml::Hash(_) = docs.remove(0) {
+                    return doc;
+                }
+            }
+        }
     }
 
     // Everything else is a string
@@ -656,6 +704,22 @@ impl NodeCommandLine {
                         // Skip names with "::" — rcl's parser treats "::" as a
                         // separator token, not a literal. These params are already
                         // loaded via --params-file so the inline -p is redundant.
+                        //
+                        // Skip mapping values — rcl only accepts scalars and flow
+                        // sequences inline; a dict (recorded as its Python repr,
+                        // e.g. `{'enable': False, ...}`) makes rcl abort the whole
+                        // node with "Couldn't parse parameter override rule".
+                        // Compound parameters reach the node via --params-file;
+                        // an inline mapping never can.
+                        if value.trim_start().starts_with('{') {
+                            tracing::warn!(
+                                "Skipping inline -p for parameter '{}': mapping values \
+                                 cannot be passed on the command line (value: {})",
+                                name,
+                                value
+                            );
+                            return false;
+                        }
                         !value.is_empty() && !name.contains("::")
                     })
                     .flat_map(move |(name, value)| {
