@@ -1,0 +1,43 @@
+# Test fixture: manifest with if:/unless: conditions.
+# All args are mandatory — values provided by scope args at check time.
+args:
+  use_feature_a:
+  use_feature_b:
+  sensor_model:
+
+version: 1
+
+nodes:
+  always_present:
+    pub: [output]
+
+  feature_a_node:
+    if: $(var use_feature_a)
+    pub: [data_a]
+
+  feature_b_node:
+    if: $(var use_feature_b)
+    pub: [data_b]
+
+  legacy_node:
+    unless: $(var use_feature_a)
+    pub: [legacy_output]
+
+  sensor_specific:
+    if: $(var sensor_model) == 'velodyne'
+    pub: [pointcloud]
+
+topics:
+  always_topic:
+    type: std_msgs/msg/String
+    pub: [always_present/output]
+
+  feature_a_topic:
+    if: $(var use_feature_a)
+    type: std_msgs/msg/Float64
+    pub: [feature_a_node/data_a]
+
+  feature_b_topic:
+    if: $(var use_feature_b)
+    type: std_msgs/msg/Float64
+    pub: [feature_b_node/data_b]

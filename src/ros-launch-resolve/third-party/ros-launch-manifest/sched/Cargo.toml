@@ -1,0 +1,13 @@
+[package]
+name = "ros-launch-manifest-sched"
+version.workspace = true
+edition.workspace = true
+description = "Portable scheduling spec and chain-aware mapping for launch-based systems, shared by Linux and RTOS realizers"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+toml = "0.8"
+serde_yaml_ng = "0.10"

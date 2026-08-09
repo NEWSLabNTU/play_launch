@@ -1,0 +1,120 @@
+# Autoware-like perception pipeline: lidar → cropbox → ground → fusion → tracker.
+# Clean manifest — all budgets, rates, and drops are feasible.
+#
+# Topic naming: topic keys are ROS topic names.
+# - Relative (`cropped_points`): resolved against scope ns at check time.
+# - Absolute (`/sensing/lidar/pointcloud`): unchanged, references topics
+#   from a different subsystem.
+version: 1
+
+nodes:
+  cropbox:
+    sub:
+      raw_points:
+        min_rate_hz: 10
+    pub:
+      cropped_points:
+        min_rate_hz: 10
+    paths:
+      main:
+        input: raw_points
+        output: [cropped_points]
+        max_latency_ms: 5
+
+  ground_filter:
+    sub:
+      input_points:
+        min_rate_hz: 10
+    pub:
+      no_ground:
+        min_rate_hz: 10
+      ground:
+        min_rate_hz: 10
+    paths:
+      filter:
+        input: input_points
+        output: [no_ground, ground]
+        max_latency_ms: 15
+
+  fusion:
+    sub:
+      lidar_objects:
+        min_rate_hz: 10
+      camera_objects:
+        min_rate_hz: 10
+        state: true
+    pub:
+      fused_objects:
+        min_rate_hz: 10
+    paths:
+      main:
+        input: lidar_objects
+        output: [fused_objects]
+        max_latency_ms: 10
+
+  tracker:
+    sub:
+      detected_objects:
+        min_rate_hz: 10
+    pub:
+      tracked_objects:
+        min_rate_hz: 10
+    paths:
+      main:
+        input: detected_objects
+        output: [tracked_objects]
+        max_latency_ms: 20
+        drop: 2 / 100
+
+topics:
+  # Absolute — raw pointcloud from sensing subsystem (cross-scope input).
+  /sensing/lidar/pointcloud:
+    type: sensor_msgs/msg/PointCloud2
+    sub: [cropbox/raw_points]
+    rate_hz: 10
+    qos:
+      reliability: best_effort
+
+  # Relative — intra-scope topics within perception.
+  cropped_points:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [cropbox/cropped_points]
+    sub: [ground_filter/input_points]
+    rate_hz: 10
+    qos:
+      reliability: best_effort
+
+  no_ground_points:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [ground_filter/no_ground]
+    sub: [fusion/lidar_objects]
+    rate_hz: 10
+    qos:
+      reliability: best_effort
+
+  camera_detections:
+    type: autoware_msgs/msg/DetectedObjects
+    pub: [fusion/camera_objects]
+    sub: []
+    rate_hz: 10
+    qos:
+      reliability: best_effort
+
+  fused_objects:
+    type: autoware_msgs/msg/DetectedObjects
+    pub: [fusion/fused_objects]
+    sub: [tracker/detected_objects]
+    rate_hz: 10
+
+  tracked_objects:
+    type: autoware_msgs/msg/TrackedObjects
+    pub: [tracker/tracked_objects]
+    sub: []
+    rate_hz: 10
+
+paths:
+  perception:
+    input: /sensing/lidar/pointcloud
+    output: [tracked_objects]
+    max_latency_ms: 60
+    drop: 4 / 100

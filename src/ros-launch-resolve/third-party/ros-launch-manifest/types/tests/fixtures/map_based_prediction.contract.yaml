@@ -1,0 +1,84 @@
+# Source: https://github.com/autowarefoundation/autoware (Apache-2.0), via
+# https://github.com/tier4/autoware-contract — copied verbatim for test
+# fixture purposes (Phase 44.1/44.2).
+# autoware_map_based_prediction/map_based_prediction.launch.xml
+# Namespace: /perception/object_recognition/prediction
+#
+# Sources:
+#   launch:  /opt/autoware/1.5.0/share/autoware_map_based_prediction/launch/map_based_prediction.launch.xml
+#   source:  autoware_universe/perception/autoware_map_based_prediction/src/map_based_prediction_node.cpp
+
+# Args from map_based_prediction.launch.xml
+args:
+  input_topic:
+  output_topic:
+  use_vector_map:
+
+version: 1
+
+nodes:
+  # --- Map Based Prediction ---
+  # Regular node (not composable)
+  # Execution: callback-driven (triggered by tracked_objects arrival)
+  map_based_prediction:
+    sub:
+      tracked_objects:              # ~/input/objects ← /perception/.../tracking/objects — QoS(1)
+        min_rate_hz: 10             # from multi_object_tracker
+      vector_map:                   # /vector_map ← /map/vector_map — QoS(1).transient_local()
+        state: true
+        required: true
+      traffic_signals:              # /traffic_signals — InterProcessPollingSubscriber (on-demand)
+        state: true
+    pub:
+      predicted_objects:            # ~/output/objects — QoS(1)
+        min_rate_hz: 10
+    paths:
+      main:
+        input: tracked_objects
+        output: [predicted_objects]
+        max_latency_ms: 30          # trajectory prediction for each tracked object
+
+topics:
+  # /perception/object_recognition/tracking/objects — absolute, cross-scope
+  /perception/object_recognition/tracking/objects:
+    type: autoware_perception_msgs/msg/TrackedObjects
+    sub: [map_based_prediction/tracked_objects]
+    qos:
+      reliability: reliable           # QoS(1)
+      depth: 1
+
+  # /map/vector_map — absolute, transient_local
+  /map/vector_map:
+    type: autoware_map_msgs/msg/LaneletMapBin
+    sub: [map_based_prediction/vector_map]
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # /perception/traffic_light_recognition/traffic_signals — polled
+  /perception/traffic_light_recognition/traffic_signals:
+    type: autoware_perception_msgs/msg/TrafficLightGroupArray
+    sub: [map_based_prediction/traffic_signals]
+
+  # absolute — ~/output/objects → /perception/object_recognition/objects (consumed by planners)
+  /perception/object_recognition/objects:
+    type: autoware_perception_msgs/msg/PredictedObjects
+    pub: [map_based_prediction/predicted_objects]
+    rate_hz: 10
+    qos:
+      reliability: reliable           # QoS(1)
+      depth: 1
+
+  # Pre-remap aliases — the node also exposes ~/input/objects and
+  # ~/output/objects on its own namespace (`/perception/.../map_based_prediction/...`)
+  # alongside the remapped canonicals above. Same endpoints, second
+  # topic linkage.
+  /perception/object_recognition/prediction/map_based_prediction/input/objects:
+    type: autoware_perception_msgs/msg/TrackedObjects
+    sub: [map_based_prediction/tracked_objects]
+    qos: { reliability: reliable, depth: 1 }
+  /perception/object_recognition/prediction/map_based_prediction/output/objects:
+    type: autoware_perception_msgs/msg/PredictedObjects
+    pub: [map_based_prediction/predicted_objects]
+    qos: { reliability: reliable, depth: 1 }

@@ -1,0 +1,322 @@
+# Source: https://github.com/autowarefoundation/autoware (Apache-2.0), via
+# https://github.com/tier4/autoware-contract — copied verbatim for test
+# fixture purposes (Phase 44.1/44.2).
+# autoware_vehicle_cmd_gate/vehicle_cmd_gate.launch.xml
+# Composable in /control/control_container (push-ros-namespace: control)
+#
+# Sources:
+#   source: autoware_universe/control/autoware_vehicle_cmd_gate/src/vehicle_cmd_gate.cpp
+#   source: autoware_universe/control/autoware_vehicle_cmd_gate/src/vehicle_cmd_gate.hpp
+#   launch: /opt/autoware/1.5.0/share/tier4_control_launch/launch/control.launch.xml (line 93+)
+version: 1
+
+nodes:
+  # Selects between auto / external / emergency control commands and applies
+  # filtering before publishing to the vehicle. All "output/*" publishers use
+  # rclcpp::QoS(1).transient_local() (durable_qos in source).
+  vehicle_cmd_gate:
+    sub:
+      # ~/input/auto/control_cmd → /control/trajectory_follower/control_cmd
+      auto_control_cmd:
+        min_rate_hz: 30                          # driven by controller (30 Hz)
+      # ~/input/auto/turn_indicators_cmd → /planning/turn_indicators_cmd (polling)
+      auto_turn_indicators_cmd:
+        state: true
+      # ~/input/auto/hazard_lights_cmd → /planning/hazard_lights_cmd (polling)
+      auto_hazard_lights_cmd:
+        state: true
+      # ~/input/auto/gear_cmd → /control/shift_decider/gear_cmd (polling)
+      auto_gear_cmd:
+        state: true
+      # ~/input/external/control_cmd → /external/selected/control_cmd
+      external_control_cmd: {}
+      # ~/input/external/turn_indicators_cmd → /external/selected/turn_indicators_cmd (polling)
+      external_turn_indicators_cmd:
+        state: true
+      # ~/input/external/hazard_lights_cmd → /external/selected/hazard_lights_cmd (polling)
+      external_hazard_lights_cmd:
+        state: true
+      # ~/input/external/gear_cmd → /external/selected/gear_cmd (polling)
+      external_gear_cmd:
+        state: true
+      # ~/input/external_emergency_stop_heartbeat → /external/selected/heartbeat
+      external_emergency_stop_heartbeat: {}
+      # ~/input/gate_mode → /control/gate_mode_cmd
+      gate_mode: {}
+      # ~/input/emergency/control_cmd → /system/emergency/control_cmd
+      emergency_control_cmd: {}
+      # ~/input/emergency/turn_indicators_cmd → /system/emergency/turn_indicators_cmd (polling)
+      emergency_turn_indicators_cmd:
+        state: true
+      # ~/input/emergency/hazard_lights_cmd → /system/emergency/hazard_lights_cmd (polling)
+      emergency_hazard_lights_cmd:
+        state: true
+      # ~/input/emergency/gear_cmd → /system/emergency/gear_cmd (polling)
+      emergency_gear_cmd:
+        state: true
+      # ~/input/mrm_state → /system/fail_safe/mrm_state
+      mrm_state: {}
+      # ~/input/operation_mode → /system/operation_mode/state — QoS(1).transient_local()
+      operation_mode:
+        state: true
+      # ~/input/kinematics → /localization/kinematic_state (lambda subscriber, QoS(1))
+      kinematics:
+        state: true
+      # ~/input/acceleration → /localization/acceleration (lambda subscriber, QoS(1))
+      acceleration:
+        state: true
+      # ~/input/steering → /vehicle/status/steering_status
+      steering:
+        state: true
+      # ~/input/engage → /autoware/engage (deprecated)
+      engage: {}
+    pub:
+      # ~/output/control_cmd → /control/command/control_cmd — QoS(1).transient_local()
+      control_cmd:
+        min_rate_hz: 30                          # gated/filtered controller stream
+      # ~/output/gear_cmd → /control/command/gear_cmd — QoS(1).transient_local()
+      gear_cmd: {}
+      # ~/output/turn_indicators_cmd → /control/command/turn_indicators_cmd — QoS(1).transient_local()
+      turn_indicators_cmd: {}
+      # ~/output/hazard_lights_cmd → /control/command/hazard_lights_cmd — QoS(1).transient_local()
+      hazard_lights_cmd: {}
+      # ~/output/vehicle_cmd_emergency → /control/command/emergency_cmd — QoS(1).transient_local()
+      vehicle_cmd_emergency: {}
+      # ~/output/gate_mode → /control/current_gate_mode — QoS(1).transient_local()
+      gate_mode_out: {}
+      # ~/output/engage → /api/autoware/get/engage — QoS(1).transient_local()
+      engage_out: {}
+      # ~/output/external_emergency → /api/autoware/get/emergency — QoS(1).transient_local()
+      external_emergency: {}
+      # ~/output/operation_mode → /control/vehicle_cmd_gate/operation_mode — QoS(1).transient_local()
+      operation_mode_out: {}
+    srv:
+      # ~/service/engage → /api/autoware/set/engage
+      engage_service: {}
+      # ~/service/external_emergency → /api/autoware/set/emergency
+      external_emergency_service: {}
+      # ~/service/external_emergency_stop → ~/external_emergency_stop (deprecated; node-relative)
+      external_emergency_stop: {}
+      # ~/service/clear_external_emergency_stop → ~/clear_external_emergency_stop (deprecated; node-relative)
+      clear_external_emergency_stop: {}
+    paths:
+      command:
+        input: auto_control_cmd
+        output: [control_cmd]
+        max_latency_ms: 10                       # filter + publish at controller rate
+      gate_status:
+        input: gate_mode
+        output: [gate_mode_out]
+        max_latency_ms: 50                       # status timer ~ update_rate (10 Hz default)
+
+topics:
+  # ── Outputs (resolved absolute names) ──
+
+  # ~/output/control_cmd → /control/command/control_cmd — QoS(1).transient_local()
+  /control/command/control_cmd:
+    type: autoware_control_msgs/msg/Control
+    pub: [vehicle_cmd_gate/control_cmd]
+    rate_hz: 30
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # ~/output/gear_cmd → /control/command/gear_cmd — QoS(1).transient_local()
+  /control/command/gear_cmd:
+    type: autoware_vehicle_msgs/msg/GearCommand
+    pub: [vehicle_cmd_gate/gear_cmd]
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # ~/output/turn_indicators_cmd → /control/command/turn_indicators_cmd — QoS(1).transient_local()
+  /control/command/turn_indicators_cmd:
+    type: autoware_vehicle_msgs/msg/TurnIndicatorsCommand
+    pub: [vehicle_cmd_gate/turn_indicators_cmd]
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # ~/output/hazard_lights_cmd → /control/command/hazard_lights_cmd — QoS(1).transient_local()
+  /control/command/hazard_lights_cmd:
+    type: autoware_vehicle_msgs/msg/HazardLightsCommand
+    pub: [vehicle_cmd_gate/hazard_lights_cmd]
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # ~/output/vehicle_cmd_emergency → /control/command/emergency_cmd — QoS(1).transient_local()
+  /control/command/emergency_cmd:
+    type: tier4_vehicle_msgs/msg/VehicleEmergencyStamped
+    pub: [vehicle_cmd_gate/vehicle_cmd_emergency]
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # ~/output/gate_mode → /control/current_gate_mode — QoS(1).transient_local()
+  /control/current_gate_mode:
+    type: tier4_control_msgs/msg/GateMode
+    pub: [vehicle_cmd_gate/gate_mode_out]
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # ~/output/engage → /api/autoware/get/engage — QoS(1).transient_local()
+  /api/autoware/get/engage:
+    type: autoware_vehicle_msgs/msg/Engage
+    pub: [vehicle_cmd_gate/engage_out]
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # ~/output/external_emergency → /api/autoware/get/emergency — QoS(1).transient_local()
+  /api/autoware/get/emergency:
+    type: tier4_external_api_msgs/msg/Emergency
+    pub: [vehicle_cmd_gate/external_emergency]
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # ~/output/operation_mode → /control/vehicle_cmd_gate/operation_mode — QoS(1).transient_local()
+  /control/vehicle_cmd_gate/operation_mode:
+    type: autoware_adapi_v1_msgs/msg/OperationModeState
+    pub: [vehicle_cmd_gate/operation_mode_out]
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # ── Inputs (resolved absolute names) ──
+
+  # ~/input/auto/control_cmd → /control/trajectory_follower/control_cmd
+  /control/trajectory_follower/control_cmd:
+    type: autoware_control_msgs/msg/Control
+    sub: [vehicle_cmd_gate/auto_control_cmd]
+
+  # ~/input/auto/turn_indicators_cmd → /planning/turn_indicators_cmd
+  /planning/turn_indicators_cmd:
+    type: autoware_vehicle_msgs/msg/TurnIndicatorsCommand
+    sub: [vehicle_cmd_gate/auto_turn_indicators_cmd]
+
+  # ~/input/auto/hazard_lights_cmd → /planning/hazard_lights_cmd
+  /planning/hazard_lights_cmd:
+    type: autoware_vehicle_msgs/msg/HazardLightsCommand
+    sub: [vehicle_cmd_gate/auto_hazard_lights_cmd]
+
+  # ~/input/auto/gear_cmd → /control/shift_decider/gear_cmd
+  /control/shift_decider/gear_cmd:
+    type: autoware_vehicle_msgs/msg/GearCommand
+    sub: [vehicle_cmd_gate/auto_gear_cmd]
+
+  # ~/input/external/control_cmd → /external/selected/control_cmd
+  /external/selected/control_cmd:
+    type: autoware_control_msgs/msg/Control
+    sub: [vehicle_cmd_gate/external_control_cmd]
+
+  # ~/input/external/turn_indicators_cmd → /external/selected/turn_indicators_cmd
+  /external/selected/turn_indicators_cmd:
+    type: autoware_vehicle_msgs/msg/TurnIndicatorsCommand
+    sub: [vehicle_cmd_gate/external_turn_indicators_cmd]
+
+  # ~/input/external/hazard_lights_cmd → /external/selected/hazard_lights_cmd
+  /external/selected/hazard_lights_cmd:
+    type: autoware_vehicle_msgs/msg/HazardLightsCommand
+    sub: [vehicle_cmd_gate/external_hazard_lights_cmd]
+
+  # ~/input/external/gear_cmd → /external/selected/gear_cmd
+  /external/selected/gear_cmd:
+    type: autoware_vehicle_msgs/msg/GearCommand
+    sub: [vehicle_cmd_gate/external_gear_cmd]
+
+  # ~/input/external_emergency_stop_heartbeat → /external/selected/heartbeat
+  /external/selected/heartbeat:
+    type: autoware_adapi_v1_msgs/msg/ManualOperatorHeartbeat
+    sub: [vehicle_cmd_gate/external_emergency_stop_heartbeat]
+
+  # ~/input/gate_mode → /control/gate_mode_cmd
+  /control/gate_mode_cmd:
+    type: tier4_control_msgs/msg/GateMode
+    sub: [vehicle_cmd_gate/gate_mode]
+
+  # ~/input/emergency/control_cmd → /system/emergency/control_cmd
+  /system/emergency/control_cmd:
+    type: autoware_control_msgs/msg/Control
+    sub: [vehicle_cmd_gate/emergency_control_cmd]
+
+  # ~/input/emergency/turn_indicators_cmd → /system/emergency/turn_indicators_cmd
+  /system/emergency/turn_indicators_cmd:
+    type: autoware_vehicle_msgs/msg/TurnIndicatorsCommand
+    sub: [vehicle_cmd_gate/emergency_turn_indicators_cmd]
+
+  # ~/input/emergency/hazard_lights_cmd → /system/emergency/hazard_lights_cmd
+  /system/emergency/hazard_lights_cmd:
+    type: autoware_vehicle_msgs/msg/HazardLightsCommand
+    sub: [vehicle_cmd_gate/emergency_hazard_lights_cmd]
+
+  # ~/input/emergency/gear_cmd → /system/emergency/gear_cmd
+  /system/emergency/gear_cmd:
+    type: autoware_vehicle_msgs/msg/GearCommand
+    sub: [vehicle_cmd_gate/emergency_gear_cmd]
+
+  # ~/input/mrm_state → /system/fail_safe/mrm_state
+  /system/fail_safe/mrm_state:
+    type: autoware_adapi_v1_msgs/msg/MrmState
+    sub: [vehicle_cmd_gate/mrm_state]
+
+  # ~/input/operation_mode → /system/operation_mode/state — QoS(1).transient_local()
+  /system/operation_mode/state:
+    type: autoware_adapi_v1_msgs/msg/OperationModeState
+    sub: [vehicle_cmd_gate/operation_mode]
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  # ~/input/kinematics → /localization/kinematic_state
+  /localization/kinematic_state:
+    type: nav_msgs/msg/Odometry
+    sub: [vehicle_cmd_gate/kinematics]
+
+  # ~/input/acceleration → /localization/acceleration
+  /localization/acceleration:
+    type: geometry_msgs/msg/AccelWithCovarianceStamped
+    sub: [vehicle_cmd_gate/acceleration]
+
+  # ~/input/steering → /vehicle/status/steering_status
+  /vehicle/status/steering_status:
+    type: autoware_vehicle_msgs/msg/SteeringReport
+    sub: [vehicle_cmd_gate/steering]
+
+  # ~/input/engage → /autoware/engage (deprecated)
+  /autoware/engage:
+    type: autoware_vehicle_msgs/msg/Engage
+    sub: [vehicle_cmd_gate/engage]
+
+services:
+  # ~/service/engage → /api/autoware/set/engage
+  /api/autoware/set/engage:
+    type: tier4_external_api_msgs/srv/Engage
+    server: [vehicle_cmd_gate/engage_service]
+
+  # ~/service/external_emergency → /api/autoware/set/emergency
+  /api/autoware/set/emergency:
+    type: tier4_external_api_msgs/srv/SetEmergency
+    server: [vehicle_cmd_gate/external_emergency_service]
+
+  # ~/service/external_emergency_stop → ~/external_emergency_stop (deprecated; node-relative)
+  /control/vehicle_cmd_gate/external_emergency_stop:
+    type: std_srvs/srv/Trigger
+    server: [vehicle_cmd_gate/external_emergency_stop]
+
+  # ~/service/clear_external_emergency_stop → ~/clear_external_emergency_stop (deprecated; node-relative)
+  /control/vehicle_cmd_gate/clear_external_emergency_stop:
+    type: std_srvs/srv/Trigger
+    server: [vehicle_cmd_gate/clear_external_emergency_stop]

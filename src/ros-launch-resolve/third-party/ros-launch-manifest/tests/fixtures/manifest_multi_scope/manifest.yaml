@@ -1,0 +1,111 @@
+# Nested includes with imports/exports wiring across scope boundaries.
+# Tests: inline includes, external includes, import/export resolution.
+version: 1
+
+nodes:
+  driver:
+    pub:
+      raw_points:
+        min_rate_hz: 10
+    paths:
+      periodic:
+        input: []
+        output: [raw_points]
+        max_latency_ms: 1
+
+topics:
+  raw_points:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [driver/raw_points]
+    sub: [perception/cropbox/input]
+    rate_hz: 10
+    qos:
+      reliability: best_effort
+
+  detections_topic:
+    type: autoware_msgs/msg/DetectedObjects
+    pub: [perception/detector/objects]
+    sub: [planning/planner/obstacles]
+    rate_hz: 10
+
+includes:
+  perception:
+    nodes:
+      cropbox:
+        sub:
+          input:
+            min_rate_hz: 10
+        pub:
+          cropped:
+            min_rate_hz: 10
+        paths:
+          main:
+            input: input
+            output: [cropped]
+            max_latency_ms: 5
+
+      detector:
+        sub:
+          points:
+            min_rate_hz: 10
+        pub:
+          objects:
+            min_rate_hz: 10
+        paths:
+          main:
+            input: points
+            output: [objects]
+            max_latency_ms: 30
+
+    topics:
+      filtered_points:
+        type: sensor_msgs/msg/PointCloud2
+        pub: [cropbox/cropped]
+        sub: [detector/points]
+        rate_hz: 10
+
+    paths:
+      detect:
+        input: input
+        output: [objects]
+        max_latency_ms: 40
+
+  planning:
+    nodes:
+      planner:
+        sub:
+          obstacles:
+            min_rate_hz: 10
+            required: true
+          route:
+            state: true
+            required: true
+        pub:
+          trajectory:
+            min_rate_hz: 10
+        paths:
+          main:
+            input: obstacles
+            output: [trajectory]
+            max_latency_ms: 20
+
+    topics:
+      route_topic:
+        type: autoware_msgs/msg/Route
+        pub: []
+        sub: [planner/route]
+        qos:
+          reliability: reliable
+          durability: transient_local
+
+    paths:
+      plan:
+        input: obstacles
+        output: [trajectory]
+        max_latency_ms: 25
+
+paths:
+  end_to_end:
+    input: sensor_data
+    output: [trajectory]
+    max_latency_ms: 80

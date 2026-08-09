@@ -1,0 +1,21 @@
+# External-topic test fixture (Issue #51).
+#
+# Declares /external/in as expected-external on the pub side. The
+# manifest subscribes to it via the consumer node. The cross-scope
+# dangling-entity rule must NOT fire for /external/in's missing
+# publisher side.
+version: 1
+
+nodes:
+  consumer:
+    sub: [data]
+
+external_topics:
+  /external/in:
+    external: pub
+    type: std_msgs/msg/String
+
+topics:
+  /external/in:
+    type: std_msgs/msg/String
+    sub: [consumer/data]

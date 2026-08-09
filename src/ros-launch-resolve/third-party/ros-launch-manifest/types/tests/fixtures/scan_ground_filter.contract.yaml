@@ -1,0 +1,48 @@
+# Source: https://github.com/autowarefoundation/autoware (Apache-2.0), via
+# https://github.com/tier4/autoware-contract — copied verbatim for test
+# fixture purposes (Phase 44.1/44.2).
+# autoware_ground_segmentation/scan_ground_filter.launch.xml
+# Namespace: /perception/obstacle_segmentation
+#
+# Removes ground points from raw lidar pointcloud. Default ground
+# filter implementation used in Autoware planning_simulator's
+# production configurations.
+#
+# Sources:
+#   source: autoware.universe/perception/autoware_ground_segmentation/src/scan_ground_filter/
+#
+# NOT exercised by planning_simulator (dummy_perception_publisher
+# publishes /perception/obstacle_segmentation/pointcloud directly).
+# Authored for production-Autoware contract completeness.
+version: 1
+
+nodes:
+  scan_ground_filter:
+    sub:
+      input:                                    # ~/input → /sensing/lidar/concatenated/pointcloud
+        state: true
+    pub:
+      no_ground_pointcloud:                     # ~/output → /perception/obstacle_segmentation/pointcloud
+        min_rate_hz: 10
+    paths:
+      main:
+        input: input
+        output: [no_ground_pointcloud]
+        max_latency_ms: 30
+
+topics:
+  /sensing/lidar/concatenated/pointcloud:
+    type: sensor_msgs/msg/PointCloud2
+    sub: [scan_ground_filter/input]
+    qos:
+      reliability: best_effort                  # SensorDataQoS
+      depth: 1
+
+  /perception/obstacle_segmentation/pointcloud:
+    type: sensor_msgs/msg/PointCloud2
+    pub: [scan_ground_filter/no_ground_pointcloud]
+    rate_hz: 10
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1

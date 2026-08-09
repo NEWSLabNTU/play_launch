@@ -1,0 +1,75 @@
+# Fork-join (parallel) pipeline for critical-path testing.
+#
+#         ┌→ lidar_detector (50ms) →┐
+#  in →   │                         ├→ fusion (20ms) → out
+#         └→ camera_detector (30ms) →┘
+#
+# Critical path: max(50, 30) + 20 = 70ms
+# Sum of all nodes (incorrect old check): 50 + 30 + 20 = 100ms
+version: 1
+
+nodes:
+  lidar_detector:
+    sub:
+      input: { min_rate_hz: 10 }
+    pub:
+      out: { min_rate_hz: 10 }
+    paths:
+      main:
+        input: input
+        output: [out]
+        max_latency_ms: 50
+
+  camera_detector:
+    sub:
+      input: { min_rate_hz: 10 }
+    pub:
+      out: { min_rate_hz: 10 }
+    paths:
+      main:
+        input: input
+        output: [out]
+        max_latency_ms: 30
+
+  fusion:
+    sub:
+      lidar: { min_rate_hz: 10 }
+      camera: { min_rate_hz: 10 }
+    pub:
+      out: { min_rate_hz: 10 }
+    paths:
+      main:
+        input: [lidar, camera]
+        output: [out]
+        correlation: timestamp
+        tolerance_ms: 50
+        max_latency_ms: 20
+
+topics:
+  /sensor/raw:
+    type: sensor_msgs/msg/PointCloud2
+    sub: [lidar_detector/input, camera_detector/input]
+    rate_hz: 10
+
+  /perception/lidar_objects:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    pub: [lidar_detector/out]
+    sub: [fusion/lidar]
+    rate_hz: 10
+
+  /perception/camera_objects:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    pub: [camera_detector/out]
+    sub: [fusion/camera]
+    rate_hz: 10
+
+  /perception/fused_objects:
+    type: autoware_perception_msgs/msg/DetectedObjects
+    pub: [fusion/out]
+    rate_hz: 10
+
+paths:
+  pipeline:
+    input: /sensor/raw
+    output: [/perception/fused_objects]
+    max_latency_ms: 70    # critical path = max(50, 30) + 20 = 70

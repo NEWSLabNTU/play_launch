@@ -1,0 +1,16 @@
+# Publisher with min_rate_hz LOWER than topic rate_hz.
+# When merged with manifest_rate_sub_demand at the same topic,
+# rate-hierarchy should error: pub can't sustain channel rate.
+version: 1
+
+nodes:
+  slow_publisher:
+    pub:
+      out:
+        min_rate_hz: 5     # Pub promises only 5 Hz
+
+topics:
+  /shared_stream:
+    type: std_msgs/msg/String
+    pub: [slow_publisher/out]
+    rate_hz: 10            # Channel claims 10 Hz — pub can't sustain

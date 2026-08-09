@@ -1,0 +1,7 @@
+/target/
+
+# Editor temp files
+*~
+*.swp
+*.swo
+.*.swp

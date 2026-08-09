@@ -1,0 +1,105 @@
+# Satisfiability test: multi-variant localization with enum + bool args.
+#
+# Pattern: pose_source (3 choices: ndt, eagleye, gnss) selects which
+# localization node provides pose data. use_twist (bool) controls an
+# optional twist estimator. All variants must provide a publisher for
+# the localization_pose topic.
+#
+# This manifest is variant-COMPLETE: every arg combination produces
+# at least one publisher for localization_pose and (when use_twist=true)
+# twist_estimate.
+args:
+  pose_source:
+    choices: [ndt, eagleye, gnss]
+  use_twist:
+    type: bool
+
+version: 1
+
+nodes:
+  ndt_node:
+    if: $(var pose_source) == 'ndt'
+    sub:
+      pointcloud: {}
+      map:
+        state: true
+        required: true
+    pub:
+      pose:
+        min_rate_hz: 10
+    paths:
+      main:
+        input: pointcloud
+        output: [pose]
+        max_latency_ms: 30
+
+  eagleye_node:
+    if: $(var pose_source) == 'eagleye'
+    sub:
+      gnss_fix: {}
+      imu: {}
+    pub:
+      pose:
+        min_rate_hz: 10
+      twist: {}
+    paths:
+      main:
+        input: gnss_fix
+        output: [pose]
+        max_latency_ms: 15
+
+  gnss_node:
+    if: $(var pose_source) == 'gnss'
+    sub:
+      gnss_fix: {}
+    pub:
+      pose:
+        min_rate_hz: 5
+    paths:
+      main:
+        input: gnss_fix
+        output: [pose]
+        max_latency_ms: 5
+
+  twist_estimator:
+    if: $(var use_twist)
+    sub:
+      imu: {}
+    pub:
+      twist: {}
+
+  ekf:
+    sub:
+      pose_input: {}
+      twist_input:
+        state: true
+    pub:
+      ekf_pose:
+        min_rate_hz: 10
+    paths:
+      main:
+        input: pose_input
+        output: [ekf_pose]
+        max_latency_ms: 5
+
+topics:
+  localization_pose:
+    type: geometry_msgs/msg/PoseStamped
+    pub:
+      - ndt_node/pose
+      - eagleye_node/pose
+      - gnss_node/pose
+    sub: [ekf/pose_input]
+
+  twist_data:
+    type: geometry_msgs/msg/TwistStamped
+    pub:
+      - eagleye_node/twist
+      - twist_estimator/twist
+    sub: []
+
+paths:
+  localization:
+    input: pointcloud
+    output: [pose_output]
+    max_latency_ms: 40

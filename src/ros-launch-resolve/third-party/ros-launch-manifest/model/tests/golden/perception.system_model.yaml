@@ -1,0 +1,180 @@
+# Golden SystemModel fixture — the design-doc perception example, resolved.
+# One concrete variant: mode=velodyne, MCU imu node + Linux pipeline.
+meta:
+  version: 1
+  args:
+    mode: velodyne
+    use_sim: 'false'
+  inputs:
+    - path: perception.yaml
+      sha256: 3f786850e387550fdab836ed7e6dc881de23001b1a2d4e4df1e69cbbd1a1d2f3
+    - path: system.toml
+      sha256: 89e6c98d92887913cadf06b2adb97f26cde4849b3d1b6a4e6f8c3f2a1b0c9d8e
+  record:
+    path: perception.record.json
+    sha256: 1f2e3d4c5b6a79880716253443526170f8e9dacb0badc0de1234567890abcdef
+  resolver:
+    tool: play_launch
+    version: 0.9.0
+  diagnostics:
+    - "warning[dangling-entity]: topic '/sensing/gnss' has 0 publishers across the manifest tree"
+
+structure:
+  scopes:
+    /perception:
+      manifest: perception.yaml
+    /perception/detection:
+      parent: /perception
+      manifest: detection.yaml
+  nodes:
+    /perception/detection/detector:
+      scope: /perception/detection
+      pkg: lidar_centerpoint
+      exec: detector_node
+      remaps:
+        - from: /points
+          to: /sensing/lidar/points
+      ros_args:
+        - --log-level
+        - detector_node:=debug
+      respawn: true
+      respawn_delay: 2.5
+      env:
+        - name: CUDA_VISIBLE_DEVICES
+          value: '0'
+    /sensing/imu_node:
+      scope: /perception
+      pkg: imu_driver
+      exec: imu_node
+      criticality: high
+      params:
+        rate_hz: 100
+        frame_id: imu_link
+        use_filter: true
+        offsets:
+          - '0.1'
+          - '0.2' 
+    /perception/tracker:
+      scope: /perception
+      pkg: multi_object_tracker
+      plugin: tracker::TrackerNode
+      container: /perception/pipeline_container
+      lifecycle: true
+      lifecycle_autostart: active
+  topics:
+    /sensing/pointcloud:
+      type: sensor_msgs/msg/PointCloud2
+      sub:
+        - /perception/detection/detector/pointcloud
+    /perception/objects:
+      type: autoware_perception_msgs/msg/DetectedObjects
+      pub:
+        - /perception/detection/detector/objects
+      sub:
+        - /perception/tracker/input
+  services:
+    /perception/trigger:
+      type: std_srvs/srv/Trigger
+      server:
+        - /perception/detection/detector/trigger
+
+contracts:
+  pub_endpoints:
+    /perception/detection/detector/objects:
+      min_rate_hz: 10.0
+      jitter_ms: 5.0
+      qos:
+        reliability: best_effort
+        depth: 1
+  sub_endpoints:
+    /perception/detection/detector/pointcloud:
+      min_rate_hz: 10.0
+      max_age_ms: 100.0
+    /perception/tracker/input:
+      min_rate_hz: 9.0
+      state: true
+  srv_endpoints:
+    /perception/detection/detector/trigger:
+      max_response_ms: 100.0
+  node_paths:
+    /perception/detection/detector/main:
+      input:
+        - /perception/detection/detector/pointcloud
+      output:
+        - /perception/detection/detector/objects
+      max_latency_ms: 30.0
+  scope_paths:
+    /perception/e2e:
+      input:
+        - /sensing/pointcloud
+      output:
+        - /perception/objects
+      max_latency_ms: 85.0
+      correlation: timestamp
+      tolerance_ms: 10.0
+      drop:
+        max_drop_rate: 0.08
+        max_consecutive: 5
+  topics:
+    /sensing/pointcloud:
+      rate_hz: 10.0
+      max_transport_ms: 5.0
+      drop:
+        max_drop_rate: 0.05
+        max_consecutive: 3
+      qos:
+        reliability: best_effort
+        durability: volatile
+        depth: 5
+
+execution:
+  deploy:
+    /perception/detection/detector:
+      target: linux
+      host: main
+    /sensing/imu_node:
+      target: mcu:stm32f4
+      domain: 7
+      locator: tcp/10.0.2.1:7447
+      rmw: zenoh
+      extra:
+        optimize: size
+        features:
+          - safety
+  tiers:
+    high:
+      class: real_time
+      deadline_us: 2000
+      spin_period_us: 1000
+      posix:
+        priority: 80
+        sched_class: SCHED_FIFO
+        core: 2
+      threadx:
+        priority: 4
+        preempt_threshold: 4
+    low:
+      class: best_effort
+      spin_period_us: 10000
+      posix:
+        priority: 10
+  bindings:
+    /perception/detection/detector: high
+    /sensing/imu_node/ctrl: high
+  transports:
+    - kind: ethernet
+      id: eth0
+      ip: 10.0.2.50/24
+      mac: '02:00:00:00:00:01'
+      gateway: 10.0.2.2
+      rmw: zenoh
+      locator: tcp/10.0.2.1:7447
+      domain: 7
+  bridges:
+    - name: uplink
+      from: eth0
+      to: can0
+      topics:
+        - /perception/objects
+  features:
+    - safety

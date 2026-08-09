@@ -1,0 +1,113 @@
+# Autoware-style control scope with conditional checker nodes.
+# Modeled after tier4_control_launch/control.yaml.
+#
+# Pattern: One always-present controller + 4 optional checker nodes,
+# each gated by a bool arg. Refs to conditional nodes are inferred
+# as optional — silently dropped when the node is filtered out.
+args:
+  launch_validator:
+    type: bool
+  launch_aeb:
+    type: bool
+  launch_lane_checker:
+    type: bool
+  launch_collision:
+    type: bool
+
+version: 1
+
+nodes:
+  # Always-present controller
+  controller:
+    sub:
+      trajectory:
+        min_rate_hz: 10
+      kinematic_state:
+        min_rate_hz: 50
+      steering_status:
+        min_rate_hz: 30
+      operation_mode:
+        state: true
+        required: true
+    pub:
+      control_cmd:
+        min_rate_hz: 30
+      predicted_trajectory:
+        min_rate_hz: 30
+    paths:
+      main:
+        input: trajectory
+        output: [control_cmd]
+        max_latency_ms: 10
+
+  # Conditional: control validator
+  control_validator:
+    if: $(var launch_validator)
+    sub:
+      control_cmd: {}
+      kinematic_state:
+        state: true
+      predicted_trajectory: {}
+    pub:
+      validation_status: {}
+
+  # Conditional: AEB
+  aeb:
+    if: $(var launch_aeb)
+    sub:
+      pointcloud: {}
+      velocity_status:
+        state: true
+      predicted_trajectory: {}
+    pub: []
+
+  # Conditional: lane departure checker
+  lane_checker:
+    if: $(var launch_lane_checker)
+    sub:
+      kinematic_state:
+        state: true
+      vector_map:
+        state: true
+        required: true
+      predicted_trajectory: {}
+    pub: []
+
+  # Conditional: collision detector
+  collision_detector:
+    if: $(var launch_collision)
+    sub:
+      kinematic_state:
+        state: true
+      pointcloud:
+        state: true
+    pub: []
+
+topics:
+  control_cmd:
+    type: autoware_control_msgs/msg/Control
+    pub: [controller/control_cmd]
+    sub: [control_validator/control_cmd]
+    rate_hz: 30
+    qos:
+      reliability: reliable
+      durability: transient_local
+      depth: 1
+
+  predicted_trajectory:
+    type: autoware_planning_msgs/msg/Trajectory
+    pub: [controller/predicted_trajectory]
+    sub:
+      - control_validator/predicted_trajectory
+      - aeb/predicted_trajectory
+      - lane_checker/predicted_trajectory
+    rate_hz: 30
+    qos:
+      reliability: reliable
+      depth: 1
+
+paths:
+  control:
+    input: trajectory
+    output: [control_cmd]
+    max_latency_ms: 15

@@ -1,0 +1,14 @@
+[package]
+name = "ros-launch-manifest-check"
+version.workspace = true
+edition.workspace = true
+description = "Static contract checker for launch manifests: wiring, QoS, rate, latency budgets and drops"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ros-launch-manifest-types = { path = "../types" }
+petgraph = "0.8"
+thiserror = "2"
+codespan-reporting = "0.11"
+z3 = "0.12"

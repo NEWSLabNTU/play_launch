@@ -1,0 +1,15 @@
+# Subscriber demanding rate from a topic published in a different scope.
+# When merged with manifest_rate_pub_slow, the cross-scope check verifies
+# the publisher can sustain the channel rate.
+version: 1
+
+nodes:
+  consumer:
+    sub:
+      in:
+        min_rate_hz: 8     # Sub needs 8 Hz
+
+topics:
+  /shared_stream:
+    type: std_msgs/msg/String
+    sub: [consumer/in]
