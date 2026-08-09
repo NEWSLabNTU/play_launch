@@ -313,7 +313,12 @@ pub(crate) async fn play(
             };
 
             let mut executor = context.create_basic_executor();
-            let node = match executor.create_node("play_launch") {
+            // Unique per process: two play_launch instances in one ROS domain (e.g. an
+            // Autoware stack and a scenario runner) with identical node names trip
+            // Autoware's duplicated_node_checker, which gates autonomous-mode
+            // availability through the diagnostic graph.
+            let node_name = format!("play_launch_{}", std::process::id());
+            let node = match executor.create_node(node_name.as_str()) {
                 Ok(n) => Arc::new(n),
                 Err(e) => {
                     error!("Failed to create ROS node: {:#}", e);
