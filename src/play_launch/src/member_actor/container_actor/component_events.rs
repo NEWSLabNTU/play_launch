@@ -350,6 +350,88 @@ impl ComposableSupervisor {
         }
     }
 
+    /// Rescue composable nodes stuck in Loading with NO unique_id — the load
+    /// call's completion never arrived (lost LoadNode response deferred to a
+    /// ComponentEvent that never came, or the spawned load task died). The
+    /// entry would otherwise stay "pending" forever and the member silently
+    /// never exists. Resolve via ListNodes: present → promote, absent →
+    /// re-dispatch the load (safe: an answering container proves it is not
+    /// still constructing the original request), busy → retry next tick.
+    pub(super) async fn rescue_lost_loads(
+        &mut self,
+        clients: &super::ros_client::ContainerClients,
+    ) {
+        use super::ros_client::VerifyOutcome;
+
+        let stuck: Vec<(String, String)> = self
+            .composable_nodes
+            .iter()
+            .filter_map(|(name, entry)| match &entry.state {
+                ComposableState::Loading { started_at }
+                    if entry.unique_id.is_none()
+                        && started_at.elapsed() > self.timings.total_budget =>
+                {
+                    let ns = entry.metadata.namespace.trim_end_matches('/');
+                    Some((name.clone(), format!("{}/{}", ns, entry.metadata.node_name)))
+                }
+                _ => None,
+            })
+            .collect();
+
+        for (name, expected_full_name) in stuck {
+            let container_name = self.name().to_string();
+            match super::ros_client::verify_component_loaded(
+                &container_name,
+                &clients.list_client,
+                &expected_full_name,
+            )
+            .await
+            {
+                VerifyOutcome::Present(unique_id) => {
+                    warn!(
+                        "{}: '{}' was stuck Loading with a lost response; ListNodes \
+                         confirms it loaded (unique_id: {})",
+                        container_name, name, unique_id
+                    );
+                    if let Some(entry) = self.composable_nodes.get_mut(&name) {
+                        entry.unique_id = Some(unique_id);
+                        entry.state = ComposableState::Loaded { unique_id };
+                        entry.load_started_at = None;
+                        emit(
+                            self.state_tx(),
+                            StateEvent::LoadSucceeded {
+                                name: name.clone(),
+                                full_node_name: expected_full_name,
+                                unique_id,
+                            },
+                        )
+                        .await;
+                    }
+                }
+                VerifyOutcome::Absent => {
+                    warn!(
+                        "{}: '{}' was stuck Loading past the {}s budget and the \
+                         container does not have it — the load was lost; re-dispatching",
+                        container_name,
+                        name,
+                        self.timings.total_budget.as_secs()
+                    );
+                    if let Some(entry) = self.composable_nodes.get_mut(&name) {
+                        entry.state = ComposableState::Unloaded;
+                        entry.load_started_at = None;
+                    }
+                    self.handle_load_composable(&name, clients).await;
+                }
+                VerifyOutcome::Unavailable => {
+                    debug!(
+                        "{}: '{}' stuck Loading, container busy; will re-verify",
+                        container_name, name
+                    );
+                }
+            }
+        }
+    }
+
     /// Check for composable nodes stuck in Loading state and promote them to
     /// Loaded if the LoadNode service succeeded more than 10 seconds ago.
     /// This handles DDS event loss where ComponentEvent LOADED never arrives.

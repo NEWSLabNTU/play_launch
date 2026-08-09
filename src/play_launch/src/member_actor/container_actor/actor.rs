@@ -369,6 +369,7 @@ impl ContainerActor {
 
                 _ = loading_timeout_interval.tick() => {
                     self.supervisor.check_loading_timeouts().await;
+                    self.supervisor.rescue_lost_loads(&self.clients).await;
                 }
 
                 _ = self.shutdown_rx.changed() => {

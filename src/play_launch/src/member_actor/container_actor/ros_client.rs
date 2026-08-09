@@ -47,7 +47,7 @@ pub(super) fn container_service(container_fqn: &str, kind: ServiceKind) -> Strin
 }
 
 /// Outcome of a post-timeout ListNodes verification.
-enum VerifyOutcome {
+pub(super) enum VerifyOutcome {
     /// Component is present; carries its unique_id.
     Present(u64),
     /// Container answered and the component is definitively absent.
@@ -548,7 +548,7 @@ pub(super) async fn call_load_node_service(
 /// Post-timeout verification: tri-state — Present(unique_id) when the
 /// container reports `expected_full_name`, Absent when it answered
 /// without it, Unavailable when it could not answer (busy/blocked).
-async fn verify_component_loaded(
+pub(super) async fn verify_component_loaded(
     container_name: &str,
     list_client: &Option<rclrs::Client<composition_interfaces::srv::ListNodes>>,
     expected_full_name: &str,
