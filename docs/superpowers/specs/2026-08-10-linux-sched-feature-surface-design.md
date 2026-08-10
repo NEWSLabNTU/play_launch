@@ -1,7 +1,8 @@
 # Completing the Linux scheduling realizer — the full policy surface
 
-Status: Draft (2026-08-10). Design of record for extending the `posix` realizer
-beyond `SCHED_FIFO`.
+Status: Accepted (2026-08-10). Design of record for extending the `posix`
+realizer beyond `SCHED_FIFO`.
+Roadmap: [phase-60](../../roadmap/phase-60-linux-sched-surface.md) — W1–W8.
 Absorbs: [phase-58](../../roadmap/phase-58-scheduling-derivation.md) **W1**
 (make cost authorable) and **W4** (reservations), which cannot be separated once
 `SCHED_DEADLINE` is derived — a reservation's `runtime` has no source until W1

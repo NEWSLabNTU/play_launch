@@ -4,6 +4,10 @@
 **Study of record:** [`docs/research/scheduling-derivation-prior-art.md`](../research/scheduling-derivation-prior-art.md)
 **Predecessor:** Phase 57 (mixed-criticality RT demo) — supplies the measurement
 harness this phase's claims are checked against.
+**Absorbed:** **W1** (make cost authorable) and **W4** (reservations) moved to
+[Phase 60](./phase-60-linux-sched-surface.md), which cannot derive
+`SCHED_DEADLINE` without them — a reservation's `runtime` has no source until
+cost is authorable. W2, W3 and W5 stay here.
 **Split out:** the vocabulary/units migration is
 [Phase 59](./phase-59-timing-vocabulary.md). It touches adjacent fields but is
 independent work; coupling it here would stall W1 behind a cross-repo

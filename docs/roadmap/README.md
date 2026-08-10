@@ -212,3 +212,20 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   that type-checks. Split out of Phase 58 — independent work, and cheaper now
   than it will ever be again: the real corpus uses two renameable field names.
   [phase-59-timing-vocabulary.md](./phase-59-timing-vocabulary.md).
+- **Phase 60** — 📋 completing the Linux scheduling realizer. The `posix`
+  realizer emits exactly one policy: `SCHED_FIFO` for every ranked node,
+  nothing at all for the rest. `SCHED_RR` parses and is never emitted,
+  `SCHED_DEADLINE` has a *"not applied in v1"* warning, and `budget_us` /
+  `deadline_policy` reach `system_model.yaml` and are consumed by nothing.
+  Migrates the apply layer to `sched_setattr`, adds a typed `posix:` block,
+  derives RR on ties and DEADLINE under an opt-in all-or-nothing rule, and
+  makes `isolated_cpus` mean something. Absorbs Phase 58 W1+W4 — a
+  reservation's runtime has no source until cost is authorable. Four findings
+  shape it: a per-TID sweep multiplies a reservation ~11x; DEADLINE outranks
+  every FIFO thread regardless of priority; a DEADLINE task cannot `fork()`
+  without reset-on-fork, and isolated containers fork per composable; and an
+  exclusive cpuset is **measurably** unreachable from an unprivileged session
+  on stock Ubuntu, so the product path errors with a setup command while the
+  A/B arm runs privileged. Design:
+  [2026-08-10-linux-sched-feature-surface-design.md](../superpowers/specs/2026-08-10-linux-sched-feature-surface-design.md).
+  [phase-60-linux-sched-surface.md](./phase-60-linux-sched-surface.md).
