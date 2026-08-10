@@ -122,7 +122,8 @@ bandwidth, and admission control sees exactly the declared utilization.
 **Stated limit.** With a multi-threaded executor the reservation covers one of
 several executor threads, and the guarantee is unsound. Where we can detect it
 (`--use_multi_threaded_executor` on a container) this is a hard error. For a
-plain node we cannot detect it at all — see open question 3.
+plain node we cannot detect it at all; the limit is documented and warned about
+rather than hidden — see resolved decision 3.
 
 The literature agrees this is the outside-in approximation, not the real answer:
 ROSRT and Wilson et al. set `SCHED_DEADLINE` parameters on a **per-callback**
@@ -148,6 +149,25 @@ partition. That is not a violation: those threads are DDS and executor plumbing,
 they are *meant* to sit below every reservation, and the ordering the mapper
 computed is an ordering over nodes. Only a node with no reservation while its
 peers have one produces the invisible inversion F3 is about.
+
+**And only over nodes carrying timing facts.** A component container declares no
+rate and no deadline — it is a supervisor, not a task. Restricting the rule to
+nodes the mapper could actually rank keeps it aimed at what it protects: an
+inversion is only invisible between nodes that were ranked *against each other*.
+Containers, and any node with no timing fact, are exempt by construction.
+
+**Container policy.** A container takes `SCHED_FIFO` at the maximum of its
+members' derived priorities, and never derives a reservation. Reserving a
+supervisor wastes admission bandwidth on a process that does almost nothing
+steady-state, and F4 shows a reserved container could not `fork()` its
+components at all were reset-on-fork ever dropped. Demoting it instead is not an
+option either: the container's service thread handles `LoadNode` under a 30 s
+ready-pipe timeout, and starving it under RT load reproduces a load-failure mode
+phase 57 already traced once.
+
+Without this scoping the design would be unusable: `--container-mode isolated`
+is the **default**, so under `reservations: required` nearly every real system
+would hit a hard error its author could not fix.
 
 **Consequence, and the knob that makes it workable.** A bare "any budget ⇒ all
 must have one" rule means adding a single `budget_us` breaks launch, while
@@ -287,12 +307,53 @@ ancestor is itself delegated. Two further constraints apply there:
 
 **Consequence.** The provisioning verb must detect and report which of these
 conditions the host fails, with a specific remedy for each, rather than
-attempting the writes and reporting `EACCES`/`EINVAL`. And the "no unpinned
-fallback" decision means a host that cannot construct the partition cannot use
-reservations at all — which is the intended, loud outcome, but it makes the
-quality of this diagnostic the difference between a usable feature and an
-inexplicable one. A spike on the actual target host should precede
-implementation; see open question 6.
+attempting the writes and reporting `EACCES`/`EINVAL`.
+
+### F11a — measured: the partition is unreachable unprivileged on stock Ubuntu
+
+The spike was run rather than scheduled. On the development host
+(Ubuntu 22.04, kernel 6.8.0, systemd 249, cgroup2 unified, 32 CPUs,
+`PREEMPT_DYNAMIC`):
+
+| probe | result |
+|---|---|
+| `user@UID.service` `cgroup.controllers` | `memory pids` — **no cpuset** |
+| `user-UID.slice` / `session-N.scope` | `root:root 0755`; `subtree_control` not writable |
+| `mkdir` under the session scope | `EACCES` |
+| play_launch's own cgroup | `/user.slice/user-UID.slice/session-N.scope` |
+| root `cgroup.subtree_control` | *has* `cpuset` |
+| `cpuset.cpus.isolated` | empty — no `isolcpus=` at boot |
+| `sched_rt_runtime_us` / `sched_rt_period_us` | 950000 / 1000000 → 95 % (F7) |
+| `sched_rr_timeslice_ms` | **100** — confirms the RR degeneracy |
+| `sched_util_clamp_min_rt_default` | **1024** — confirms F5 |
+
+So a top-level `play_launch.slice` *can* hold cpuset, and nothing in the user
+tree can ever migrate into it: the common ancestor is the cgroup root. The
+standard remedy — `Delegate=cpuset` on `user@.service` — does not reach us
+either, because play_launch runs in `session-N.scope`, a **sibling** of
+`user@.service`, not a descendant. `clone3(CLONE_INTO_CGROUP)` is not an escape
+hatch: *"all of the usual restrictions … on placing a process into a version 2
+cgroup apply"*.
+
+**This is not a gap in the design; it is what delegation containment is for.**
+An unprivileged session is *supposed* to be unable to carve exclusive CPUs out
+of the machine.
+
+**Decision — split the product path from the evidence path.**
+
+- **Product.** The rule stands unchanged: `reservations: required` with no
+  partition is a hard error naming the setup command. Correct, loud, and on a
+  stock desktop simply unreachable until an operator provisions the machine —
+  which is how production RT deployments are set up anyway.
+- **Evidence.** The `rt_av_demo` DEADLINE arm runs **as root**, in a
+  root-provisioned slice over the demo's single CPU. A measurement harness may
+  demand privilege the product does not. `just ab` already refuses rather than
+  reports when the baseline meets its deadline or the helper lacks
+  `CAP_SYS_NICE`; it gains a third refusal when not run with the privilege the
+  DEADLINE arm needs.
+
+The shipped default therefore stays `SCHED_FIFO` until an operator provisions,
+and the A/B claim stays measurable. Neither half pretends to be the other.
 
 ## Schema
 
@@ -301,11 +362,11 @@ implementation; see open question 6.
 ```yaml
 target: posix
 mapper: chain_aware
+reservations: off              # off (default) | required — POLICY, not a fact  [F3]
 resources:
   rt_priority_band: { min: 10, max: 40 }
   isolated_cpus: [2, 3]        # semantics CHANGE: advisory -> the exclusive partition
-  reservations: off            # off (default) | required          [F3]
-  cpuset_root: /sys/fs/cgroup/user.slice/…/play_launch.slice   # optional; discovered  [F11]
+  cpuset_root: /sys/fs/cgroup/play_launch.slice     # optional; discovered  [F11]
 overrides:
   obstacle_detector:
     budget_us: 8000            # NEW (W1) — declared cost; the DEADLINE runtime source
@@ -318,7 +379,13 @@ overrides:
     cpus: [4, 5]               # NEW — CpuSet; `core:` kept as a single-element alias
 ```
 
-`PosixResources` gains `reservations` and `cpuset_root`. `PosixOverride` gains
+`reservations` is a **top-level** key beside `mapper:`, not a member of
+`resources:`. `resources:` holds platform *facts* — what the machine has;
+`mapper:` holds *policy* — what to do with them. Whether to reserve is a policy
+choice, and burying it among the facts is the same mixing that phase-58 W1 had
+to unpick from `TierDef`.
+
+`PosixResources` gains `cpuset_root`. `PosixOverride` gains
 `budget_us`, `nice`, `cpus`, `uclamp_min`, `uclamp_max`, and keeps `priority`,
 `core`, `sched_class`.
 
@@ -463,13 +530,13 @@ directory; the provisioning verb also cleans up leftovers from a crash.
 out of band, checked at launch:
 
 ```
-once, as root — location constrained by F11:
-    play_launch setcap --cpuset
-      SLICE=/sys/fs/cgroup/user.slice/user-$UID.slice/user@$UID.service/play_launch.slice
-      preflight: cgroup v2 unified? cpuset delegable (systemd >= 244)?
-                 exclusive CPUs reachable by a nested partition root?
+once, as root — see F11a for why an unprivileged session cannot do this:
+    play_launch setup --cpuset          # `setcap` becomes a hidden alias  [#7]
+      SLICE=/sys/fs/cgroup/play_launch.slice
+      preflight: cgroup v2 unified? cpuset in the parent's subtree_control?
+                 exclusive CPUs reachable by the partition root?
       mkdir  $SLICE
-      enable cpuset in every ancestor's cgroup.subtree_control
+      enable cpuset in $SLICE/cgroup.subtree_control
       chown  $USER  $SLICE  and its cgroup.procs / cgroup.subtree_control
                             / cpuset.cpus / cpuset.cpus.partition
 
@@ -480,12 +547,17 @@ at launch, unprivileged:
       move DEADLINE nodes in; teardown on shutdown
 ```
 
-play_launch must place **itself** under the delegated slice, or moving a spawned
-child into a sibling cgroup violates cgroup v2's common-ancestor rule. Children
-inherit `$SLICE/main` and DEADLINE nodes migrate to `$SLICE/rt-<runid>`. The
-slice cannot sit at the cgroup root for the reason F11 gives — the common
-ancestor would be unwritable — which is why the path is inside the user's own
-delegated subtree and why the verb preflights rather than assumes.
+play_launch must place **itself** under the slice, or moving a spawned child into
+a sibling cgroup violates cgroup v2's common-ancestor rule: once both source and
+destination sit inside the slice, the common ancestor is the slice itself and the
+user has write on it. Children inherit `$SLICE/main` and DEADLINE nodes migrate
+to `$SLICE/rt-<runid>`.
+
+The move of play_launch *into* `$SLICE/main` is the one step that cannot be
+unprivileged (F11a), which is why the launch path for `reservations: required`
+either runs privileged or is started already inside the slice. The verb
+preflights each precondition and names the failing one rather than attempting
+writes and surfacing `EACCES`.
 
 **The RT helper does not grow.** cgroup writes are ordinary file permissions,
 not capabilities; after provisioning the user already holds them. `CAP_SYS_NICE`
@@ -615,62 +687,63 @@ the unit level. Neither derives values from a system description.
 - [ros2-realtime-examples — minimal_scheduling](https://github.com/ros-realtime/ros2-realtime-examples/blob/rolling/minimal_scheduling/README.md)
 - [Jiao: mixed-criticality robotics isolation](https://arxiv.org/html/2605.03641)
 
-## Open questions
+## Resolved decisions
 
-1. **Per-node or per-path cost?** Inherited from phase-58 open question 1.
-   `overrides` is node-keyed and the apply layer is node-keyed (one thread
-   group, one reservation), so per-node is enough for reservations and not for
-   the chain feasibility math, which wants per (node, path). A `costs:` section
-   is the likely answer; deferring it keeps this round shippable.
-2. **What period does an input-triggered node without a declared rate get?**
-   The derivation needs `min_rate_hz`. A node triggered by an input whose
-   publisher declares no rate has no period, so it cannot take a reservation —
-   under `reservations: required` that becomes a hard error, which may be too
-   blunt. Decide whether the rate propagates along the chain from the source.
-3. **Multi-threaded executors on plain nodes are undetectable.** F2's refusal is
-   enforceable for containers (the flag is in the command line) and not for a
-   plain node that constructs a `MultiThreadedExecutor` internally. Options:
-   accept the unsoundness with a documented warning, or require the contract to
-   declare the executor kind. The second is a schema change and a real question
-   about what belongs in a platform-agnostic contract.
-4. **Should a container ever derive a reservation, and does that break F3?** A
-   container that loads and forks is a supervisor, not a periodic task, and
-   reserving bandwidth for it wastes admission budget. Under
-   `--container-mode isolated` the composable *children* are the real nodes and
-   carry their own tiers, so the container arguably wants nothing at all.
-   Proposal: containers never derive `DEADLINE`; they take `SCHED_FIFO` at the
-   max of their members' priorities.
-   **But that proposal contradicts F3 as written** — a `SCHED_FIFO` container
-   sitting in an otherwise all-reservation RT band is precisely the mixed case
-   F3 forbids, so under `reservations: required` it would be a hard error the
-   user cannot fix. Three ways out, none chosen: exempt containers from the band
-   by construction (they are not application nodes); require a budget for
-   containers too and reserve the supervisor's actual small cost; or scope the
-   all-or-nothing rule to nodes that carry timing facts, which is closer to what
-   F3 is really protecting. **This must be settled before implementation** —
-   with `isolated` as the default container mode, nearly every real system hits
-   it.
-5. **Respawn and admission accounting.** The actor system respawns nodes. A
-   respawned reserved node must re-enter the cpuset partition *before*
-   re-applying `SCHED_DEADLINE` (F6), and admission bandwidth must be observably
-   released by the dead process before the replacement asks for it — otherwise a
-   respawn storm produces spurious `EBUSY`. Whether the kernel's release is
-   synchronous with process exit, or whether we must retry, needs measuring.
-6. **Does the cpuset partition construct on the target host at all?** F11's
-   preconditions (delegated subtree placement, `Delegate=cpuset` on systemd
-   ≥ 244, exclusive CPUs available to a nested partition root) are a spike, not
-   a design decision. Run it before implementing: create the slice by hand, read
-   back `cpuset.cpus.partition`, confirm it says `root` and not `root invalid`,
-   move a process in, and set `SCHED_DEADLINE` on it. A negative answer changes
-   the provisioning approach, not the rest of the design.
-7. **`play_launch setcap --cpuset` is a misnomer.** `setcap` means
-   capabilities; this sets up a cgroup. Either the verb is renamed to something
-   that covers both privileged setup steps, or the cpuset provisioning gets its
-   own verb. `verify` covers both regardless.
-8. **`reservations` naming.** It sits in `resources:`, which otherwise holds
-   platform *facts* (`rt_priority_band`, `isolated_cpus`) rather than policy
-   choices. `mapper:` is where policy lives today. Possibly
-   `mapper: chain_aware+reservations`, possibly a sibling `policy:` block.
+The eight questions this design opened are settled. Recorded with their
+reasoning, because a decision without one gets re-litigated.
+
+1. **Cost is per-node this round.** Inherited from phase-58 open question 1.
+   `overrides` is node-keyed and the apply layer is node-keyed — one thread
+   group, one reservation — so per-node is exactly enough for reservations. Per
+   (node, path) matters only for the chain feasibility math in W3, which is out
+   of scope. The `costs:` section stays deferred.
+
+2. **A rate propagates along the chain from its source.** A node triggered by an
+   input whose publisher declares no rate has no period of its own and could not
+   take a reservation. But a chain has one triggering rate by construction, so
+   inheriting the source's rate is a statement of fact rather than an invention.
+   "No rate anywhere on the chain" remains a hard error under
+   `reservations: required`.
+
+3. **Undetectable multi-threaded executors are accepted with a warning.** F2's
+   refusal is enforceable for containers, where `--use_multi_threaded_executor`
+   is on the command line, and not for a plain node that constructs a
+   `MultiThreadedExecutor` internally. Requiring the contract to declare its
+   executor kind was rejected: an executor is a platform implementation detail,
+   and the contract is the platform-*agnostic* file. Putting it there is the
+   same misplacement that `criticality-from-hazards` and phase-58 W1 both spent
+   effort undoing. The limit is documented and warned about, not hidden.
+
+4. **The all-or-nothing rule is scoped to nodes carrying timing facts**, and
+   containers take `SCHED_FIFO` at the max of their members' priorities. See F3.
+
+5. **Respawn admission accounting is measured, not designed.** One test:
+   reserve, kill, immediately re-reserve, and see whether `EBUSY` appears —
+   i.e. whether the kernel releases a dead task's bandwidth synchronously with
+   process exit. Retry-with-backoff only if the measurement says it is needed.
+   Designing for a race that may not exist would be inventing a number, which
+   this phase's global constraint forbids.
+
+6. **Product and evidence paths split.** See F11a — the product keeps the
+   no-fallback rule; the `rt_av_demo` DEADLINE arm runs privileged.
+
+7. **The verb is `play_launch setup [--caps] [--cpuset]`**, with `setcap` kept
+   as a hidden alias. `setcap` names capabilities and now covers a cgroup too.
+
+8. **`reservations:` sits beside `mapper:`, not inside `resources:`.** Facts and
+   policy stay separated. See the schema section.
+
+### Still genuinely open
+
+Nothing blocks implementation. Two items are follow-on work, recorded so they
+are not rediscovered:
+
+- **`SCHED_FLAG_RECLAIM` (GRUB)** is deferred. It bears directly on whether
+  best-effort throughput recovers, since without it a reservation idles its
+  unused bandwidth rather than yielding it. Revisit once the A/B has a number.
+- **Callback-granularity reservations** (phase-58 side-track G) are the real
+  answer to F2 and need an executor we control. ROSRT and Wilson et al. show
+  what it looks like; nothing on vanilla `rclcpp` gets there.
 
 ## Risks
 
@@ -686,13 +759,19 @@ the unit level. Neither derives values from a system description.
   reservation covering one thread of a multi-threaded process. `check --explain`
   shows provenance so nobody reads it as WCET, and no output of this work claims
   a hard real-time guarantee.
-- **The cpuset partition may not be constructible on a given host.** F11's
-  preconditions are environmental, not ours: unified cgroup v2, `cpuset`
-  delegated (systemd ≥ 244, and off by default), and a kernel able to build a
-  nested partition root. Combined with the deliberate refusal to fall back to
-  unpinned `SCHED_DEADLINE`, that means reservations are simply unavailable on
-  some hosts. Intended, but it puts the entire weight of the feature's
-  usability on the preflight diagnostic.
+- **Reservations are unavailable to an unprivileged session, measured — not
+  predicted.** F11a is not a risk to watch for; it is the state of the
+  development host and of any stock Ubuntu desktop. Nothing in the user's cgroup
+  tree is writable and `cpuset` is not delegated, so `reservations: required`
+  ends in a hard error until an operator provisions the machine. That is the
+  intended behaviour, and it means the entire usability of the feature rests on
+  the preflight diagnostic naming the right missing precondition. A vague error
+  here is indistinguishable from a broken feature.
+- **The product's most-tested path will be the one nobody ships.** The A/B arm
+  runs privileged while the product path does not, so the code exercised by the
+  evidence harness is not the code an integrator runs. Whatever differs between
+  them — provisioning, migration, teardown — is untested by the demo and needs
+  its own coverage.
 - **Reservations may not return the throughput they cost.** The phase-57 measured
   26–37 % best-effort loss is the number W4 exists to recover. Without
   `SCHED_FLAG_RECLAIM` (deferred), a reservation idles its unused bandwidth
