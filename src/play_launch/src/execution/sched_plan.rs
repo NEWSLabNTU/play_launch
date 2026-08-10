@@ -23,7 +23,7 @@ use ros_launch_manifest_sched::DEFAULT_TIER;
 
 use crate::{
     cli::options::ContainerMode,
-    execution::sched_apply::{AppliedTier, SchedApplyMode, SchedPolicy},
+    execution::sched_apply::{AppliedTier, CpuSet, SchedApplyMode, SchedPolicy},
 };
 use ros_launch_resolve::ros::{
     launch_dump::LaunchDump,
@@ -141,7 +141,12 @@ impl SchedPlan {
             let applied = AppliedTier {
                 policy,
                 priority,
-                core: tier.core,
+                // The manifest schema still expresses placement as a single
+                // `core`; the apply layer takes a set. Widening the schema
+                // side is the typed-`posix:`-block wave, so this lowers the
+                // one-CPU case for now.
+                cpus: tier.core.map(CpuSet::single),
+                uclamp: None,
                 tier_name: tier.name.clone(),
             };
 
@@ -226,7 +231,8 @@ impl SchedPlan {
                 AppliedTier {
                     policy,
                     priority: spec.priority as i32,
-                    core: spec.core,
+                    cpus: spec.core.map(CpuSet::single),
+                    uclamp: None,
                     tier_name: tier_name.clone(),
                 },
             );
@@ -595,7 +601,7 @@ nodes = ["/control/ndt_localizer"]
                 .for_fqn("/control/ndt_localizer")
                 .expect("node should be in plan");
             assert_eq!(applied.priority, 20);
-            assert_eq!(applied.core, Some(0));
+            assert_eq!(applied.cpus, Some(CpuSet::single(0)));
         });
     }
 
@@ -664,7 +670,7 @@ mod model_tests {
             .expect("plan");
         let t = plan.for_fqn("/a/control_node").expect("bound");
         assert_eq!(t.priority, 40);
-        assert_eq!(t.core, Some(0));
+        assert_eq!(t.cpus, Some(CpuSet::single(0)));
         assert_eq!(t.tier_name, "ctrl");
         assert!(matches!(t.policy, SchedPolicy::Fifo));
     }

@@ -35,7 +35,7 @@ mod tests {
     use super::*;
     use crate::{
         ipc::{decode_message, encode_message},
-        sched::SchedPolicy,
+        sched::{CpuSet, SchedPolicy, Uclamp},
     };
 
     fn roundtrip_request(req: &SchedRequest) {
@@ -58,7 +58,8 @@ mod tests {
             tier: AppliedTier {
                 policy: SchedPolicy::Fifo,
                 priority: 42,
-                core: Some(3),
+                cpus: Some(CpuSet::new([2, 3])),
+                uclamp: Some(Uclamp { min: 0, max: 1024 }),
                 tier_name: "rt-critical".to_string(),
             },
         });

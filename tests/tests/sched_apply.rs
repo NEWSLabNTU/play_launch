@@ -54,28 +54,13 @@ scope = "/"
 /// so this mirrors `src/play_launch/src/execution/sched_apply.rs` closely
 /// enough to gate the strict-abort assertion below.
 fn host_has_sched_privilege() -> bool {
-    // SAFETY: geteuid() takes no arguments and cannot fail.
-    if unsafe { libc::geteuid() } == 0 {
-        return true;
-    }
-
-    const CAP_SYS_NICE: u64 = 23;
-
-    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
-        return false;
-    };
-
-    for line in status.lines() {
-        if let Some(hex) = line.strip_prefix("CapEff:") {
-            let hex = hex.trim();
-            if let Ok(mask) = u64::from_str_radix(hex, 16) {
-                return (mask & (1 << CAP_SYS_NICE)) != 0;
-            }
-            return false;
-        }
-    }
-
-    false
+    // Delegates to the shared probe, which also inspects the
+    // installed rt_helper's FILE capability. The earlier local
+    // version read only `/proc/self/status`, so on a machine where
+    // `just setcap` had been run it reported "unprivileged", and the
+    // strict-abort test then waited 30s for an abort that could never
+    // happen.
+    fixtures::host_can_apply_rt_sched()
 }
 
 /// Spawn `play_launch launch` for the given launch file with `--sched

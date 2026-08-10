@@ -69,9 +69,22 @@ to nodes carrying timing facts, with containers exempt.
 
 **F4 — a `SCHED_DEADLINE` task cannot `fork()`** (`EAGAIN`) unless reset-on-fork
 is set, and `CloneIsolatedComponentManager` forks per composable node under the
-**default** container mode. `SCHED_FLAG_RESET_ON_FORK` is load-bearing, not
-hygiene, and the two effects compose: the fork succeeds, the child starts clean,
-play_launch applies the composable's own tier to it.
+**default** container mode. `SCHED_FLAG_RESET_ON_FORK` is load-bearing there,
+not hygiene, and the two effects compose: the fork succeeds, the child starts
+clean, play_launch applies the composable's own tier to it.
+
+**F12 — but the flag must NOT be set on `SCHED_FIFO`/`SCHED_RR`.** Measured
+while implementing W1: the kernel resets scheduling in `sched_fork()`, which
+runs for **thread** creation too, so the flag stops every thread spawned after
+the per-TID sweep from inheriting the policy via `PTHREAD_INHERIT_SCHED` —
+leaving an arbitrary subset of a node's ~11 threads at `SCHED_OTHER`, which is
+the exact failure the sweep exists to prevent. Setting it uniformly for RT
+failed `per_tid_sched_fifo_launch_privileged_only`; removing it fixed the test.
+`RESET_ON_FORK` is therefore set only for policies the kernel refuses to fork
+from without it. Consequence for W7: a reserved leader carries the flag, so
+threads it creates *after* apply land on `SCHED_OTHER` rather than joining the
+FIFO siblings — acceptable, since only the leader is reserved by design, but
+the sibling-FIFO claim holds only for threads live at apply time.
 
 **F11a — the cpuset partition is unreachable unprivileged. Measured, not
 predicted.** On the development host (Ubuntu 22.04, kernel 6.8, systemd 249,
@@ -112,8 +125,9 @@ only syscall. `libc` has no wrapper, so this means a local `struct sched_attr`
 and a raw `syscall(SYS_sched_setattr, …)`.
 
 `AppliedTier` becomes a lowering of the design's `PosixPlacement`: `CpuSet`
-replaces `core: Option<u32>`, `RESET_ON_FORK` is set unconditionally for every
-RT policy (F4), and uclamp is carried. A one-time capability probe on self
+replaces `core: Option<u32>`, uclamp is carried, and `RESET_ON_FORK` gets a
+single per-policy home (`reset_on_fork_flag`) that returns nothing today —
+see F12 for why setting it for RT would be a regression, not hygiene. A one-time capability probe on self
 establishes what the running kernel accepts — `uclamp` needs ≥ 5.3,
 `DL_OVERRUN` ≥ 4.16.
 

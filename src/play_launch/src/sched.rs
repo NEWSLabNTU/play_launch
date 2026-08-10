@@ -7,8 +7,14 @@
 //!   schema is internally consistent. No syscalls, no process interaction.
 //! - **apply** (this module, phase 2): given an already-spawned PID and a
 //!   pre-resolved [`AppliedTier`], actually sets the Linux scheduling policy,
-//!   real-time priority, and CPU affinity via `sched_setscheduler(2)` /
-//!   `sched_setaffinity(2)`.
+//!   real-time priority, utilization clamp, and CPU affinity via
+//!   `sched_setattr(2)` / `sched_setaffinity(2)`.
+//!
+//! The policy syscall is `sched_setattr(2)`, not `sched_setscheduler(2)`: the
+//! latter cannot express `SCHED_DEADLINE`, utilization clamping, or any
+//! `sched_flags` value, so it could not carry `SCHED_FLAG_RESET_ON_FORK`
+//! either — which a `SCHED_DEADLINE` thread requires before it may `fork(2)`
+//! at all.
 //!
 //! This module is intentionally self-contained: it does not know about
 //! `ResolvedTierTable`, launch dumps, or the actor system. It is pure,
@@ -38,6 +44,215 @@
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Raw `sched_setattr(2)` / `sched_getattr(2)` ABI
+// ---------------------------------------------------------------------------
+//
+// `sched_setscheduler(2)` cannot express `SCHED_DEADLINE`, utilization
+// clamping, or any `sched_flags` value, so the apply layer is built on
+// `sched_setattr(2)` instead. glibc ships no wrapper for it and `libc` exposes
+// neither the function nor `SYS_sched_setattr` on `x86_64-unknown-linux-gnu`
+// (only on aarch64 and the x32 ABI), so both are defined here.
+//
+// `libc::sched_attr` exists but stops at `sched_period` — it is the original
+// 48-byte `SCHED_ATTR_SIZE_VER0` layout, with no `sched_util_min`/`_max`. The
+// full 56-byte VER1 layout is therefore declared locally rather than extended
+// from it.
+
+/// `struct sched_attr` (`SCHED_ATTR_SIZE_VER1`, Linux 5.3+).
+///
+/// Field order and widths are kernel ABI — do not reorder. `size` tells the
+/// kernel how many bytes to read, so sending [`SCHED_ATTR_SIZE_VER0`] makes it
+/// ignore the two trailing uclamp fields on kernels that predate them.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SchedAttr {
+    size: u32,
+    sched_policy: u32,
+    sched_flags: u64,
+    sched_nice: i32,
+    sched_priority: u32,
+    sched_runtime: u64,
+    sched_deadline: u64,
+    sched_period: u64,
+    sched_util_min: u32,
+    sched_util_max: u32,
+}
+
+/// Original layout, through `sched_period` (Linux 3.14).
+const SCHED_ATTR_SIZE_VER0: u32 = 48;
+/// Layout including `sched_util_min`/`sched_util_max` (Linux 5.3).
+const SCHED_ATTR_SIZE_VER1: u32 = 56;
+
+#[cfg(target_arch = "x86_64")]
+const SYS_SCHED_SETATTR: libc::c_long = 314;
+#[cfg(target_arch = "x86_64")]
+const SYS_SCHED_GETATTR: libc::c_long = 315;
+#[cfg(target_arch = "aarch64")]
+const SYS_SCHED_SETATTR: libc::c_long = 274;
+#[cfg(target_arch = "aarch64")]
+const SYS_SCHED_GETATTR: libc::c_long = 275;
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+compile_error!(
+    "play_launch's scheduling apply layer defines sched_setattr/sched_getattr \
+     syscall numbers for x86_64 and aarch64 only (the two architectures the \
+     wheel ships for). Add this target's numbers to sched.rs to build here."
+);
+
+/// `sched_setattr(2)`. `pid == 0` means the calling thread.
+///
+/// # Safety
+/// `attr` must point to a valid, fully initialized [`SchedAttr`] whose `size`
+/// field does not exceed the struct's real size.
+unsafe fn sched_setattr(pid: libc::pid_t, attr: &SchedAttr, flags: u32) -> libc::c_long {
+    unsafe { libc::syscall(SYS_SCHED_SETATTR, pid, attr as *const SchedAttr, flags) }
+}
+
+/// `sched_getattr(2)`. Used by the capability probe and by tests that assert
+/// what was actually applied rather than what we asked for.
+///
+/// # Safety
+/// `attr` must point to a writable [`SchedAttr`] of at least `size` bytes.
+unsafe fn sched_getattr(
+    pid: libc::pid_t,
+    attr: &mut SchedAttr,
+    size: u32,
+    flags: u32,
+) -> libc::c_long {
+    unsafe { libc::syscall(SYS_SCHED_GETATTR, pid, attr as *mut SchedAttr, size, flags) }
+}
+
+/// What the running kernel accepts, probed once.
+///
+/// Needed because `sched_setattr` reports an unsupported flag as `EINVAL` and
+/// an unrecognized struct size as `E2BIG` — neither distinguishable from a bad
+/// parameter without knowing what the kernel supports. Reporting "invalid RT
+/// priority 34" for a uclamp request on a 5.0 kernel sends an integrator
+/// hunting a priority that is fine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KernelSchedSupport {
+    /// `sched_setattr`/`sched_getattr` exist at all (Linux 3.14+).
+    pub setattr: bool,
+    /// Utilization clamping (`SCHED_FLAG_UTIL_CLAMP_*`, Linux 5.3+).
+    pub uclamp: bool,
+}
+
+static KERNEL_SUPPORT: std::sync::OnceLock<KernelSchedSupport> = std::sync::OnceLock::new();
+
+/// Probe (once) what this kernel accepts.
+///
+/// `setattr` is probed with `sched_getattr`, which is read-only and therefore
+/// safe to call on ourselves. `uclamp` is probed with a `sched_setattr` that
+/// carries `SCHED_FLAG_KEEP_ALL`, so policy and parameters are left untouched,
+/// and requests the CFS defaults (`0..=1024`) — on a kernel that supports it
+/// the call is a no-op, and on one that does not it fails without having
+/// changed anything.
+///
+/// `SCHED_FLAG_DL_OVERRUN` is deliberately NOT probed: it is only valid
+/// together with `SCHED_DEADLINE`, so setting it on a non-deadline thread
+/// fails with `EINVAL` whether or not the kernel supports the flag, and the
+/// probe could not tell the two apart. Its support is established where it is
+/// used instead.
+pub fn kernel_sched_support() -> KernelSchedSupport {
+    *KERNEL_SUPPORT.get_or_init(|| {
+        let mut probe = SchedAttr::default();
+        // SAFETY: `probe` is a valid writable SchedAttr of exactly VER1 bytes.
+        let setattr = (unsafe { sched_getattr(0, &mut probe, SCHED_ATTR_SIZE_VER1, 0) }) == 0;
+
+        let uclamp = setattr && {
+            let attr = SchedAttr {
+                size: SCHED_ATTR_SIZE_VER1,
+                sched_flags: (libc::SCHED_FLAG_KEEP_ALL
+                    | libc::SCHED_FLAG_UTIL_CLAMP_MIN
+                    | libc::SCHED_FLAG_UTIL_CLAMP_MAX) as u64,
+                sched_util_min: 0,
+                sched_util_max: UCLAMP_MAX,
+                ..Default::default()
+            };
+            // SAFETY: fully initialized attr whose `size` equals its real size.
+            (unsafe { sched_setattr(0, &attr, 0) }) == 0
+        };
+
+        KernelSchedSupport { setattr, uclamp }
+    })
+}
+
+/// The largest legal utilization-clamp value (the kernel's scale is 0..=1024,
+/// not a percentage).
+pub const UCLAMP_MAX: u32 = 1024;
+
+/// A utilization-clamp request, in the kernel's 0..=1024 scale.
+///
+/// Note that on `SCHED_FIFO`/`SCHED_RR` threads `min` is a no-op in practice:
+/// RT tasks default to `uclamp_min = uclamp_max = 1024` because they "must
+/// always run at a constant frequency to combat undeterministic DVFS rampup
+/// delays", so under `schedutil` they already request the maximum performance
+/// point. The useful RT knob is `max` (run an RT thread *below* the maximum,
+/// which matters on battery). `min` is meaningful for `SCHED_OTHER`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Uclamp {
+    pub min: u32,
+    pub max: u32,
+}
+
+/// A set of CPUs for `sched_setaffinity(2)`.
+///
+/// Replaces the earlier `core: Option<u32>`, which could express exactly one
+/// CPU. Stored sorted and deduplicated so equality is structural.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CpuSet(Vec<u32>);
+
+impl CpuSet {
+    /// Build from any iterator of CPU indices; sorts and deduplicates.
+    pub fn new(cpus: impl IntoIterator<Item = u32>) -> Self {
+        let mut cpus: Vec<u32> = cpus.into_iter().collect();
+        cpus.sort_unstable();
+        cpus.dedup();
+        CpuSet(cpus)
+    }
+
+    /// The single-CPU case, which is what the old `core:` field expressed.
+    pub fn single(cpu: u32) -> Self {
+        CpuSet(vec![cpu])
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn cpus(&self) -> &[u32] {
+        &self.0
+    }
+
+    /// Lower to a `cpu_set_t`. Returns `None` if any CPU is outside
+    /// `CPU_SETSIZE`, since `CPU_SET` on an out-of-range index is UB rather
+    /// than an error the kernel would reject.
+    fn to_cpu_set_t(&self) -> Option<libc::cpu_set_t> {
+        // SAFETY: cpu_set_t is a plain fixed-size bitmask; zeroed is a valid
+        // (empty) value and CPU_SET writes only within it after the bounds
+        // check below.
+        unsafe {
+            let mut set: libc::cpu_set_t = std::mem::zeroed();
+            libc::CPU_ZERO(&mut set);
+            for &cpu in &self.0 {
+                if cpu as usize >= libc::CPU_SETSIZE as usize {
+                    return None;
+                }
+                libc::CPU_SET(cpu as usize, &mut set);
+            }
+            Some(set)
+        }
+    }
+}
+
+impl std::fmt::Display for CpuSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let list: Vec<String> = self.0.iter().map(|c| c.to_string()).collect();
+        write!(f, "{}", list.join(","))
+    }
+}
 
 /// Linux scheduling policy derived from a tier's `sched_class`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,7 +287,13 @@ pub struct AppliedTier {
     pub policy: SchedPolicy,
     /// RT priority for Fifo/Rr; ignored for Other.
     pub priority: i32,
-    pub core: Option<u32>,
+    /// CPUs to pin to; `None` leaves affinity untouched.
+    pub cpus: Option<CpuSet>,
+    /// Utilization clamp; `None` leaves it at the policy default. Carried
+    /// through the wire protocol and applied here, but nothing derives it yet
+    /// — the platform-file vocabulary that authors it arrives with the
+    /// override surface.
+    pub uclamp: Option<Uclamp>,
     /// Diagnostics only (tier name from the resolved spec).
     pub tier_name: String,
 }
@@ -83,6 +304,24 @@ pub enum SchedApplyError {
     PermissionDenied { pid: u32 },
     #[error("invalid RT priority {priority} for pid {pid} (must be 1..=99)")]
     InvalidPriority { pid: u32, priority: i32 },
+    #[error(
+        "{feature} is not supported by this kernel (pid {pid}, errno {errno}); \
+         {requires} is required"
+    )]
+    UnsupportedFeature {
+        pid: u32,
+        feature: String,
+        requires: String,
+        errno: i32,
+    },
+    #[error("invalid CPU set {cpus} for pid {pid}: {reason}")]
+    InvalidCpuSet {
+        pid: u32,
+        cpus: String,
+        reason: String,
+    },
+    #[error("invalid uclamp range {min}..={max} for pid {pid} (need min <= max <= 1024)")]
+    InvalidUclamp { pid: u32, min: u32, max: u32 },
     #[error("{call} failed for pid {pid}: errno {errno}")]
     Syscall {
         pid: u32,
@@ -131,22 +370,45 @@ pub fn proc_start_time(pid: u32) -> Option<u64> {
     starttime.parse::<u64>().ok()
 }
 
-/// Map the current `errno` (via `std::io::Error::last_os_error()`) to a
-/// [`SchedApplyError`] for a given syscall name. `priority` is the value
-/// that was attempted (used only to annotate `InvalidPriority` on `EINVAL`).
+/// Map a failed `sched_setattr` to a [`SchedApplyError`].
 ///
-/// Only appropriate for the policy/priority syscall (`sched_setscheduler`):
-/// an `EINVAL` there really does mean "priority rejected". Affinity errors
-/// go through [`map_affinity_errno`] instead, since `EINVAL` there means
-/// something else entirely (bad core id / cpu mask), not a bad priority.
-fn map_errno(pid: u32, call: &'static str, priority: i32) -> SchedApplyError {
+/// `EINVAL` is deliberately NOT translated to `InvalidPriority` unconditionally
+/// — that was defensible when `sched_setscheduler` was the only caller, but
+/// `sched_setattr` also returns `EINVAL` for an unsupported `sched_flags` bit
+/// and `E2BIG` for a `struct sched_attr` larger than the kernel understands. A
+/// uclamp request on a pre-5.3 kernel would otherwise be reported as "invalid
+/// RT priority 34", sending the reader after a priority that is fine. The
+/// kernel probe ([`kernel_sched_support`]) is what tells the two apart.
+fn map_setattr_errno(pid: u32, requested_uclamp: bool, priority: i32) -> SchedApplyError {
     let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    let support = kernel_sched_support();
+
     match errno {
         libc::EPERM => SchedApplyError::PermissionDenied { pid },
+        libc::E2BIG => SchedApplyError::UnsupportedFeature {
+            pid,
+            feature: "struct sched_attr (SCHED_ATTR_SIZE_VER1)".to_string(),
+            requires: "Linux 5.3+".to_string(),
+            errno,
+        },
+        libc::EINVAL if requested_uclamp && !support.uclamp => {
+            SchedApplyError::UnsupportedFeature {
+                pid,
+                feature: "utilization clamping (SCHED_FLAG_UTIL_CLAMP_MIN/MAX)".to_string(),
+                requires: "Linux 5.3+".to_string(),
+                errno,
+            }
+        }
+        libc::EINVAL if !support.setattr => SchedApplyError::UnsupportedFeature {
+            pid,
+            feature: "sched_setattr(2)".to_string(),
+            requires: "Linux 3.14+".to_string(),
+            errno,
+        },
         libc::EINVAL => SchedApplyError::InvalidPriority { pid, priority },
         _ => SchedApplyError::Syscall {
             pid,
-            call: call.to_string(),
+            call: "sched_setattr".to_string(),
             errno,
         },
     }
@@ -178,25 +440,83 @@ fn map_affinity_errno(pid: u32) -> SchedApplyError {
 /// `tid` is passed to `sched_setscheduler`/`sched_setaffinity` as the target
 /// `pid` argument — per `sched_setscheduler(2)`, passing a TID (not just the
 /// thread-group leader's PID) targets that specific thread.
+/// `SCHED_FLAG_RESET_ON_FORK`, for the policies that require it — and only
+/// those.
+///
+/// Today that is nothing: `SCHED_DEADLINE` is the only policy the kernel
+/// refuses to `fork(2)` from without the flag, and this apply layer cannot
+/// express `SCHED_DEADLINE` yet. The function exists so the rule has one
+/// home, with its justification, rather than being rediscovered as a
+/// mysterious thread at `SCHED_OTHER`.
+///
+/// See [`apply_to_tid`] for why applying it to `SCHED_FIFO`/`SCHED_RR` breaks
+/// the per-TID sweep.
+fn reset_on_fork_flag(policy: SchedPolicy) -> u64 {
+    match policy {
+        SchedPolicy::Fifo | SchedPolicy::Rr | SchedPolicy::Other => 0,
+    }
+}
+
 fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
     match tier.policy {
         SchedPolicy::Fifo | SchedPolicy::Rr => {
-            let sched_param = libc::sched_param {
-                sched_priority: tier.priority,
+            // NOTE: `SCHED_FLAG_RESET_ON_FORK` is deliberately NOT set here.
+            //
+            // It is tempting — it stops a forked child from inheriting real
+            // time — but it is incompatible with this module's per-TID sweep,
+            // and measurably so: with the flag set,
+            // `per_tid_sched_fifo_launch_privileged_only` fails with a
+            // `control_node` thread at policy 0.
+            //
+            // The kernel resets scheduling in `sched_fork()`, which runs for
+            // **thread** creation as well as process creation — a
+            // `clone(CLONE_THREAD)` goes through the same path. So the flag
+            // does not merely disarm `fork(2)`; it also stops every thread
+            // created *after* the sweep from inheriting the policy via glibc's
+            // default `PTHREAD_INHERIT_SCHED`. Since a ROS node keeps spawning
+            // DDS threads for hundreds of milliseconds after exec, that leaves
+            // an arbitrary subset of a node's threads at `SCHED_OTHER` — which
+            // is precisely the failure the per-TID sweep exists to prevent.
+            //
+            // The one policy that genuinely requires the flag is
+            // `SCHED_DEADLINE`, whose threads cannot `fork(2)` at all without
+            // it (`EAGAIN`). It belongs there and nowhere else, so it is set
+            // per-policy rather than uniformly for "RT".
+            let mut flags = reset_on_fork_flag(tier.policy);
+            let mut size = SCHED_ATTR_SIZE_VER0;
+            let mut util_min = 0;
+            let mut util_max = 0;
+
+            if let Some(uclamp) = &tier.uclamp {
+                flags |= (libc::SCHED_FLAG_UTIL_CLAMP_MIN | libc::SCHED_FLAG_UTIL_CLAMP_MAX) as u64;
+                size = SCHED_ATTR_SIZE_VER1;
+                util_min = uclamp.min;
+                util_max = uclamp.max;
+            }
+
+            let attr = SchedAttr {
+                size,
+                sched_policy: tier.policy.as_libc() as u32,
+                sched_flags: flags,
+                sched_priority: tier.priority as u32,
+                sched_util_min: util_min,
+                sched_util_max: util_max,
+                ..Default::default()
             };
 
-            // SAFETY: sched_param is a plain-old-data struct with a single
-            // `sched_priority` field we've fully initialized; tid is passed
-            // by value.
-            let ret = unsafe {
-                libc::sched_setscheduler(tid as libc::pid_t, tier.policy.as_libc(), &sched_param)
-            };
-
+            // SAFETY: `attr` is fully initialized and its `size` field is
+            // never larger than the struct itself.
+            let ret = unsafe { sched_setattr(tid as libc::pid_t, &attr, 0) };
             if ret == -1 {
-                return Err(map_errno(tid, "sched_setscheduler", tier.priority));
+                return Err(map_setattr_errno(tid, tier.uclamp.is_some(), tier.priority));
             }
         }
         SchedPolicy::Other => {
+            // Deliberately no `sched_setattr` call. `SCHED_OTHER` threads
+            // already are `SCHED_OTHER` at nice 0, so issuing the syscall
+            // would change nothing while adding a failure mode — and would
+            // *reset* a nice value somebody else set. When the platform-file
+            // vocabulary can author `nice`, this branch grows a real call.
             if tier.priority != 0 {
                 tracing::debug!(
                     tid,
@@ -204,26 +524,33 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
                     "priority ignored for SCHED_OTHER"
                 );
             }
+            if tier.uclamp.is_some() {
+                tracing::debug!(tid, "uclamp ignored for SCHED_OTHER (no policy call yet)");
+            }
         }
     }
 
-    if let Some(cpu) = tier.core {
-        // SAFETY: cpu_set_t is a plain fixed-size bitmask type; CPU_ZERO/
-        // CPU_SET operate on a valid `&mut` reference to it.
-        unsafe {
-            let mut set: libc::cpu_set_t = std::mem::zeroed();
-            libc::CPU_ZERO(&mut set);
-            libc::CPU_SET(cpu as usize, &mut set);
+    if let Some(cpus) = &tier.cpus {
+        let Some(set) = cpus.to_cpu_set_t() else {
+            return Err(SchedApplyError::InvalidCpuSet {
+                pid: tid,
+                cpus: cpus.to_string(),
+                reason: format!("CPU index >= CPU_SETSIZE ({})", libc::CPU_SETSIZE),
+            });
+        };
 
-            let ret = libc::sched_setaffinity(
+        // SAFETY: `set` is a fully initialized cpu_set_t built by
+        // `to_cpu_set_t`, which bounds-checked every index.
+        let ret = unsafe {
+            libc::sched_setaffinity(
                 tid as libc::pid_t,
                 std::mem::size_of::<libc::cpu_set_t>(),
                 &set,
-            );
+            )
+        };
 
-            if ret == -1 {
-                return Err(map_affinity_errno(tid));
-            }
+        if ret == -1 {
+            return Err(map_affinity_errno(tid));
         }
     }
 
@@ -251,6 +578,29 @@ pub fn apply_tier(pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
         return Err(SchedApplyError::InvalidPriority {
             pid,
             priority: tier.priority,
+        });
+    }
+
+    // An empty CpuSet is `Some` but names no CPU. `sched_setaffinity` with an
+    // empty mask fails EINVAL deep in the sweep; rejecting it here keeps the
+    // error at the level where the caller can say which node is misconfigured.
+    if let Some(cpus) = &tier.cpus
+        && cpus.is_empty()
+    {
+        return Err(SchedApplyError::InvalidCpuSet {
+            pid,
+            cpus: String::new(),
+            reason: "CPU set is empty".to_string(),
+        });
+    }
+
+    if let Some(uclamp) = &tier.uclamp
+        && (uclamp.min > uclamp.max || uclamp.max > UCLAMP_MAX)
+    {
+        return Err(SchedApplyError::InvalidUclamp {
+            pid,
+            min: uclamp.min,
+            max: uclamp.max,
         });
     }
 
@@ -315,11 +665,12 @@ mod tests {
     use super::*;
     use std::process::Command;
 
-    fn other_tier(core: Option<u32>) -> AppliedTier {
+    fn other_tier(cpus: Option<CpuSet>) -> AppliedTier {
         AppliedTier {
             policy: SchedPolicy::Other,
             priority: 0,
-            core,
+            cpus,
+            uclamp: None,
             tier_name: "test".to_string(),
         }
     }
@@ -328,9 +679,19 @@ mod tests {
         AppliedTier {
             policy: SchedPolicy::Fifo,
             priority,
-            core: None,
+            cpus: None,
+            uclamp: None,
             tier_name: "test".to_string(),
         }
+    }
+
+    /// Read back what the kernel actually applied, rather than what we asked
+    /// for. `None` if `sched_getattr` is unavailable or the target is gone.
+    fn read_attr(pid: u32) -> Option<SchedAttr> {
+        let mut attr = SchedAttr::default();
+        // SAFETY: `attr` is a valid writable SchedAttr of exactly VER1 bytes.
+        let ret = unsafe { sched_getattr(pid as libc::pid_t, &mut attr, SCHED_ATTR_SIZE_VER1, 0) };
+        (ret == 0).then_some(attr)
     }
 
     /// Spawn a throwaway `sleep` child, run `f` with its PID, then kill+wait
@@ -426,10 +787,171 @@ mod tests {
     #[test]
     fn other_policy_applies_affinity_only() {
         with_sleep_child(|pid| {
-            let tier = other_tier(Some(0));
+            let tier = other_tier(Some(CpuSet::single(0)));
             let result = apply_tier(pid, &tier);
             assert_eq!(result, Ok(()));
         });
+    }
+
+    #[test]
+    fn sched_attr_matches_the_kernel_abi() {
+        // Field order and widths are ABI, so a reordering or a type change
+        // would silently corrupt every call. VER0 is the original layout
+        // (through sched_period); VER1 adds the two uclamp fields.
+        assert_eq!(
+            std::mem::size_of::<SchedAttr>(),
+            SCHED_ATTR_SIZE_VER1 as usize,
+            "SchedAttr must be exactly SCHED_ATTR_SIZE_VER1 bytes"
+        );
+        assert_eq!(SCHED_ATTR_SIZE_VER1 - SCHED_ATTR_SIZE_VER0, 8);
+        assert_eq!(std::mem::align_of::<SchedAttr>(), 8);
+
+        let a = SchedAttr::default();
+        let base = &a as *const _ as usize;
+        let off = |p: *const u8| p as usize - base;
+        assert_eq!(off(&a.size as *const _ as *const u8), 0);
+        assert_eq!(off(&a.sched_policy as *const _ as *const u8), 4);
+        assert_eq!(off(&a.sched_flags as *const _ as *const u8), 8);
+        assert_eq!(off(&a.sched_nice as *const _ as *const u8), 16);
+        assert_eq!(off(&a.sched_priority as *const _ as *const u8), 20);
+        assert_eq!(off(&a.sched_runtime as *const _ as *const u8), 24);
+        assert_eq!(off(&a.sched_deadline as *const _ as *const u8), 32);
+        assert_eq!(off(&a.sched_period as *const _ as *const u8), 40);
+        assert_eq!(off(&a.sched_util_min as *const _ as *const u8), 48);
+        assert_eq!(off(&a.sched_util_max as *const _ as *const u8), 52);
+    }
+
+    #[test]
+    fn sched_getattr_reads_our_own_policy() {
+        // Proves the raw syscall plumbing works at all, without needing any
+        // privilege: a test binary is SCHED_OTHER, so that is what comes back.
+        let attr = read_attr(std::process::id())
+            .expect("sched_getattr must work on ourselves (Linux 3.14+)");
+        assert_eq!(attr.sched_policy, libc::SCHED_OTHER as u32);
+        assert!(kernel_sched_support().setattr);
+    }
+
+    #[test]
+    fn fifo_apply_must_not_set_reset_on_fork() {
+        // Regression lock. Setting RESET_ON_FORK on SCHED_FIFO looks like
+        // hygiene and silently breaks the per-TID sweep: the kernel resets
+        // scheduling in `sched_fork()`, which runs for thread creation too, so
+        // every thread spawned after the sweep lands on SCHED_OTHER instead of
+        // inheriting the policy. That was measured, not theorised — it fails
+        // `per_tid_sched_fifo_launch_privileged_only` with a control_node
+        // thread at policy 0.
+        //
+        // The unit test asserts the flag's absence directly so the cause is
+        // visible here rather than only as a puzzling integration failure.
+        if !has_sched_privilege() {
+            eprintln!("skipping fifo_apply_must_not_set_reset_on_fork: needs CAP_SYS_NICE/root");
+            return;
+        }
+        with_sleep_child(|pid| {
+            apply_tier(pid, &fifo_tier(10)).expect("privileged apply should succeed");
+            let attr = read_attr(pid).expect("sched_getattr on a live child");
+            assert_eq!(attr.sched_policy, libc::SCHED_FIFO as u32);
+            assert_eq!(attr.sched_priority, 10);
+            assert_eq!(
+                attr.sched_flags & libc::SCHED_FLAG_RESET_ON_FORK as u64,
+                0,
+                "RESET_ON_FORK must NOT be set on SCHED_FIFO — it defeats \
+                 PTHREAD_INHERIT_SCHED for threads created after the sweep. \
+                 Got flags {:#x}",
+                attr.sched_flags
+            );
+        });
+
+        assert_eq!(
+            reset_on_fork_flag(SchedPolicy::Fifo),
+            0,
+            "no policy this layer can express requires RESET_ON_FORK yet"
+        );
+        assert_eq!(reset_on_fork_flag(SchedPolicy::Rr), 0);
+        assert_eq!(reset_on_fork_flag(SchedPolicy::Other), 0);
+    }
+
+    #[test]
+    fn cpuset_applies_every_cpu_it_names() {
+        // The old `core: Option<u32>` could express exactly one CPU. Assert
+        // the set form actually reaches the kernel as a multi-CPU mask.
+        if num_cpus_online() < 2 {
+            eprintln!("skipping cpuset_applies_every_cpu_it_names: needs >= 2 CPUs");
+            return;
+        }
+        with_sleep_child(|pid| {
+            let tier = other_tier(Some(CpuSet::new([0, 1])));
+            apply_tier(pid, &tier).expect("affinity apply should succeed");
+
+            // SAFETY: zeroed cpu_set_t is valid; sched_getaffinity fills it.
+            let mut set: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+            let ret = unsafe {
+                libc::sched_getaffinity(
+                    pid as libc::pid_t,
+                    std::mem::size_of::<libc::cpu_set_t>(),
+                    &mut set,
+                )
+            };
+            assert_eq!(ret, 0);
+            assert!(unsafe { libc::CPU_ISSET(0, &set) }, "cpu 0 must be set");
+            assert!(unsafe { libc::CPU_ISSET(1, &set) }, "cpu 1 must be set");
+            assert!(
+                !unsafe { libc::CPU_ISSET(2, &set) } || num_cpus_online() < 3,
+                "cpu 2 must not be set"
+            );
+        });
+    }
+
+    fn num_cpus_online() -> usize {
+        // SAFETY: sysconf takes a name and cannot fail destructively; a
+        // negative return just means "unknown", handled below.
+        let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
+        if n < 1 { 1 } else { n as usize }
+    }
+
+    #[test]
+    fn empty_cpuset_is_rejected_before_any_syscall() {
+        let bogus_pid = u32::MAX;
+        let mut tier = other_tier(Some(CpuSet::new([])));
+        tier.policy = SchedPolicy::Other;
+        let err = apply_tier(bogus_pid, &tier).unwrap_err();
+        assert!(
+            matches!(err, SchedApplyError::InvalidCpuSet { .. }),
+            "expected InvalidCpuSet, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn out_of_range_uclamp_is_rejected_before_any_syscall() {
+        let bogus_pid = u32::MAX;
+        let mut tier = fifo_tier(10);
+        tier.uclamp = Some(Uclamp {
+            min: 0,
+            max: UCLAMP_MAX + 1,
+        });
+        assert_eq!(
+            apply_tier(bogus_pid, &tier).unwrap_err(),
+            SchedApplyError::InvalidUclamp {
+                pid: bogus_pid,
+                min: 0,
+                max: UCLAMP_MAX + 1,
+            }
+        );
+
+        let mut tier = fifo_tier(10);
+        tier.uclamp = Some(Uclamp { min: 800, max: 100 });
+        assert!(matches!(
+            apply_tier(bogus_pid, &tier).unwrap_err(),
+            SchedApplyError::InvalidUclamp { .. }
+        ));
+    }
+
+    #[test]
+    fn cpuset_is_sorted_and_deduplicated() {
+        assert_eq!(CpuSet::new([3, 1, 3, 0]).cpus(), &[0, 1, 3]);
+        assert_eq!(CpuSet::single(7).cpus(), &[7]);
+        assert_eq!(CpuSet::new([2, 0]).to_string(), "0,2");
+        assert!(CpuSet::new([]).is_empty());
     }
 
     #[test]
@@ -448,7 +970,8 @@ mod tests {
             let tier = AppliedTier {
                 policy: SchedPolicy::Other,
                 priority: 0,
-                core: Some(1023),
+                cpus: Some(CpuSet::single(1023)),
+                uclamp: None,
                 tier_name: "test".to_string(),
             };
 
@@ -469,6 +992,7 @@ mod tests {
                         "affinity failure must never be reported as InvalidPriority, got {err:?}"
                     );
                 }
+                other => panic!("unexpected affinity error: {other:?}"),
             }
         });
     }

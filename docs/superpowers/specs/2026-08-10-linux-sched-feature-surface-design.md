@@ -196,18 +196,53 @@ container process once per composable node, and `--container-mode isolated` is
 the **default**. A container holding a reservation without reset-on-fork could
 not load a single component.
 
-**This makes `SCHED_FLAG_RESET_ON_FORK` load-bearing, not hygiene.** It is set
-unconditionally for every RT policy, and the two effects compose exactly the way
-we want: the fork succeeds, the forked `component_node` starts at
-`SCHED_OTHER`/nice 0 rather than inheriting the container's reservation, and
-play_launch then applies that composable's *own* tier to the child PID. Any
-future change that makes reset-on-fork conditional breaks isolated containers,
-so it carries a test that fails if the flag is ever dropped for a policy that
-can fork.
+**This makes `SCHED_FLAG_RESET_ON_FORK` load-bearing, not hygiene** — for
+`SCHED_DEADLINE`. The two effects compose the way we want there: the fork
+succeeds, the forked `component_node` starts at `SCHED_OTHER`/nice 0 rather
+than inheriting the container's reservation, and play_launch then applies that
+composable's *own* tier to the child PID.
+
+An earlier draft of this section said the flag is *"set unconditionally for
+every RT policy"*. **That is wrong, and W1 measured it** — see F12.
 
 Separately: a container that only loads and forks is a supervisor, not a
 periodic task, and should never derive a reservation of its own. See open
 question 4.
+
+### F12 — `RESET_ON_FORK` on `SCHED_FIFO` silently defeats the per-TID sweep
+
+Found by implementing W1: setting the flag uniformly for RT made
+`per_tid_sched_fifo_launch_privileged_only` fail with a `control_node` thread
+at policy 0. Removing it made the test pass again — causality established by
+flipping it, not by argument.
+
+The kernel resets scheduling in `sched_fork()`, which runs for **thread**
+creation as well as process creation: `clone(CLONE_THREAD)` takes the same
+path. So the flag does not merely disarm `fork(2)` — it stops every thread
+created *after* the sweep from inheriting the policy through glibc's default
+`PTHREAD_INHERIT_SCHED`.
+
+That directly contradicts the strategy `sched.rs` is built on. The module walks
+`/proc/<pid>/task/` precisely because "a ROS node/composable can go from 1
+thread to ~11 threads within half a second of exec", and it relies on threads
+created after the walk inheriting the policy. With `RESET_ON_FORK` set, an
+arbitrary subset of a node's threads stays at `SCHED_OTHER` — the exact failure
+the sweep exists to prevent, reintroduced by a flag that reads as a safety
+improvement.
+
+**Rule.** `RESET_ON_FORK` is set only for policies the kernel refuses to fork
+from without it — `SCHED_DEADLINE`, and nothing else. It lives in one
+`reset_on_fork_flag(policy)` function so the rule has a single home with its
+reason attached, and a unit test asserts its absence on `SCHED_FIFO` so a
+future "hygiene" change fails in the unit suite rather than as a puzzling
+integration failure.
+
+**Consequence for W7.** A reserved node's leader *will* carry the flag, so
+threads it creates after the sweep land on `SCHED_OTHER` rather than joining
+their siblings at `SCHED_FIFO`. For a reservation that is acceptable — only the
+leader is reserved by design (F2) — but it must be stated rather than
+discovered, and the sibling-FIFO claim holds only for threads that exist at
+apply time.
 
 ### F5 — uclamp for RT tasks is a ceiling, not a boost
 

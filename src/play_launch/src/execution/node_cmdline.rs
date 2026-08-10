@@ -181,12 +181,11 @@ fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
             .replace(": True", ": true")
             .replace(": False", ": false")
             .replace(": None", ": null");
-        if let Ok(mut docs) = yaml_rust2::YamlLoader::load_from_str(&yamlish) {
-            if docs.len() == 1 {
-                if let doc @ Yaml::Hash(_) = docs.remove(0) {
-                    return doc;
-                }
-            }
+        if let Ok(mut docs) = yaml_rust2::YamlLoader::load_from_str(&yamlish)
+            && docs.len() == 1
+            && let doc @ Yaml::Hash(_) = docs.remove(0)
+        {
+            return doc;
         }
     }
 

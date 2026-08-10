@@ -398,7 +398,8 @@ pub async fn apply_sched(
     // node would be noise that buries the RT lines.
     if result.is_ok() {
         let core = tier
-            .core
+            .cpus
+            .as_ref()
             .map(|c| c.to_string())
             .unwrap_or_else(|| "-".to_string());
         match tier.policy {
@@ -534,7 +535,8 @@ mod tests {
         AppliedTier {
             policy: play_launch::sched::SchedPolicy::Fifo,
             priority,
-            core: None,
+            cpus: None,
+            uclamp: None,
             tier_name: "test".to_string(),
         }
     }

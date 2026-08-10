@@ -587,3 +587,88 @@ pub fn wait_for_processes(play_log_dir: &Path, expected: usize, timeout: std::ti
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// RT scheduling privilege
+// ---------------------------------------------------------------------------
+
+/// Path to the RT helper that actually performs the scheduling syscalls.
+pub fn rt_helper_bin() -> PathBuf {
+    repo_root().join("install/play_launch/lib/play_launch/play_launch_rt_helper")
+}
+
+/// Does `cap_sys_nice` sit in a file's permitted capability set?
+///
+/// Reads the `security.capability` xattr directly rather than shelling out to
+/// `getcap(8)`, which is not installed everywhere. Layout (`struct
+/// vfs_cap_data`, revision 2): `magic_etc` u32, then `permitted`/`inheritable`
+/// u32 pairs for the low and high capability words, all little-endian.
+/// `CAP_SYS_NICE` is 23, so it lives in bit 23 of the low permitted word at
+/// offset 4.
+fn file_has_cap_sys_nice(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    const CAP_SYS_NICE: u32 = 23;
+    let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let name = c"security.capability";
+
+    let mut buf = [0u8; 64];
+    // SAFETY: both pointers are valid NUL-terminated C strings; `buf` is a
+    // valid writable buffer of the length passed.
+    let len = unsafe {
+        libc::getxattr(
+            c_path.as_ptr(),
+            name.as_ptr(),
+            buf.as_mut_ptr() as *mut libc::c_void,
+            buf.len(),
+        )
+    };
+    if len < 8 {
+        return false;
+    }
+
+    let permitted_low = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+    permitted_low & (1 << CAP_SYS_NICE) != 0
+}
+
+/// Can RT scheduling actually be applied on this host?
+///
+/// Three ways it can be true, and the test process's own capability set is
+/// only one of them:
+///
+/// 1. running as root;
+/// 2. the test process itself holds `CAP_SYS_NICE`;
+/// 3. **the installed `play_launch_rt_helper` carries the file capability** —
+///    which is the normal, documented state after `just setcap`.
+///
+/// Case 3 is the one that matters and the one a `/proc/self/status` check
+/// misses entirely: play_launch delegates every scheduling syscall to the
+/// helper, so it is the helper's capability that decides whether
+/// `--sched-apply strict` aborts. A guard that inspects only the test
+/// process concludes "unprivileged" on a correctly set-up machine, and then
+/// asserts an abort that will never come — which is a hang, not a skip.
+pub fn host_can_apply_rt_sched() -> bool {
+    // SAFETY: geteuid() takes no arguments and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        return true;
+    }
+
+    if file_has_cap_sys_nice(&rt_helper_bin()) {
+        return true;
+    }
+
+    const CAP_SYS_NICE: u64 = 23;
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return false;
+    };
+    for line in status.lines() {
+        if let Some(hex) = line.strip_prefix("CapEff:")
+            && let Ok(mask) = u64::from_str_radix(hex.trim(), 16)
+        {
+            return (mask & (1 << CAP_SYS_NICE)) != 0;
+        }
+    }
+    false
+}
