@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+indexmap = { version = "2", features = ["serde"] }
 ros-launch-manifest-sched = { path = "../sched" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"

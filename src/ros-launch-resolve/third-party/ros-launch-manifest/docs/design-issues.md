@@ -315,16 +315,12 @@ intra-process / SHM / network subscribers on the same topic. The
 subscriber properties table includes `max_transport_ms`. The topic
 field description notes overridability.
 
-### Code (pending)
+### Code — done
 
-- `types/src/types.rs`: add `max_transport_ms: Option<f64>` to
-  `EndpointProps`.
-- `types/src/parse.rs`: extend endpoint parsing.
-- `src/play_launch/src/ros/manifest_graph.rs::critical_path()`:
-  per-(pred, node) edge weight lookup. Helper to resolve effective
-  transport given topic + sub endpoint.
-- Tests: per-sink critical-path with mixed transports
-  (`manifest_parallel_pipeline` extended with override).
+- `types/src/types.rs`: `EndpointProps.max_transport_ms` (sub only).
+- `types/src/parse.rs`: endpoint parsing extended.
+- `ros-launch-resolve` `resolve/src/ros/manifest_graph.rs::critical_path()`:
+  per-(pred, node) edge weight lookup with the per-sub override.
 
 ---
 
@@ -399,13 +395,13 @@ some valid configuration.
 `docs/launch-manifest.md` §Quality of Service documents the format,
 override semantics, match rule, and example diagnostic.
 
-### Code (pending)
+### Code — done
 
-- `types/src/types.rs`: add `qos: Option<QosDecl>` to `EndpointProps`.
-- `types/src/parse.rs`: extend endpoint parsing to read `qos:`.
-- `check/src/rules/`: new `qos-match` rule. Effective-QoS resolver.
-- Tests: pub/sub combinations of (`reliable`/`best_effort`,
-  `volatile`/`transient_local`) plus inherited-vs-overridden cases.
+- `types/src/types.rs`: `EndpointProps.qos: Option<QosDecl>`, with
+  `QosDecl::effective(topic, endpoint)` field-level overlay.
+- `types/src/parse.rs`: endpoint `qos:` parsing.
+- `check/src/rules/qos_match.rs`: `qos-match` rule (structural checks +
+  reliability/durability pub-sub compatibility).
 
 ---
 

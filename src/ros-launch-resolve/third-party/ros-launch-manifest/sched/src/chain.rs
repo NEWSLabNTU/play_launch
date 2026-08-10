@@ -218,10 +218,46 @@ pub enum MapWarning {
     /// consumes its entire declared budget or more — scheduling cannot fix
     /// this (period/architecture change required). The chain is excluded
     /// from priority shaping; its members keep their local-fact priorities.
+    /// The chain was judged FEASIBLE, but one or more of its timer boundaries
+    /// carries no WCET (`exec_ms`), so the sampling cost was computed with
+    /// those hops counted as ZERO execution time.
+    ///
+    /// This is not a scheduling problem — it is an evidence problem. Absent is
+    /// not zero: the verdict is optimistic by an unknown amount, and reporting
+    /// it as a plain `feasible` would claim headroom nobody measured. nano-ros
+    /// issue 0259 (the feasibility check assumes `B_i = 0` and `C_i = 0`
+    /// wherever a WCET is missing) is the standing analysis; this warning makes
+    /// the assumption visible at the point it is made rather than leaving it in
+    /// a doc comment.
+    ChainFeasibleWithoutWcet {
+        chain: String,
+        /// `node/path` of each boundary counted as zero.
+        boundaries_without_wcet: Vec<String>,
+    },
     ChainInfeasible {
         chain: String,
         sampling_cost_ms: f64,
         budget_ms: f64,
+    },
+    /// Two or more nodes ended at the same real-time priority — band
+    /// compression collapses adjacent ranks, so this is a state the mapper
+    /// itself produces — and `SCHED_RR` could not be derived to time-slice
+    /// between them.
+    ///
+    /// Under `SCHED_FIFO` a tie means one node can starve the others; `SCHED_RR`
+    /// would rotate them. But Linux's RR slice is a **global** sysctl, and at
+    /// its 100 ms default a slice can be as long as a tied node's entire
+    /// period, at which point RR degenerates to FIFO while *looking* like it
+    /// fixed starvation. Deriving it there would be a cosmetic change presented
+    /// as a real one, so it is declined and reported instead.
+    ///
+    /// `rr_timeslice_us: None` means the platform file did not state the
+    /// host's slice — unknown, not "assume the default".
+    UnmitigatedPriorityTie {
+        priority: i64,
+        nodes: Vec<String>,
+        rr_timeslice_us: Option<u64>,
+        shortest_period_us: Option<u64>,
     },
     /// The platform's `rt_priority_band` is narrower than the number of
     /// distinct priority classes that remain after every *legal* collapse

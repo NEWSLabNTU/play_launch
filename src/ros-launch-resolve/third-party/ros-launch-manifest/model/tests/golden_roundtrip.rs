@@ -43,11 +43,6 @@ fn meta_carries_binding_and_provenance() {
     assert_eq!(m.inputs[0].path, "perception.yaml");
     assert_eq!(m.resolver.unwrap().tool, "play_launch");
     assert_eq!(
-        m.record.as_ref().unwrap().path,
-        "perception.record.json",
-        "the bound spawn-info companion"
-    );
-    assert_eq!(
         m.diagnostics.len(),
         1,
         "warnings embed; errors refuse emission"

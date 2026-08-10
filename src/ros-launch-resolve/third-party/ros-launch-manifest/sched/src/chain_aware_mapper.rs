@@ -104,24 +104,40 @@ struct ChainFeasibility {
     sampling_cost_ms: f64,
     controllable_ms: f64,
     feasible: bool,
+    /// `node/path` of every boundary whose WCET was ABSENT and therefore
+    /// counted as zero. A verdict computed with these is optimistic by an
+    /// unknown amount; the caller reports it rather than presenting a bare
+    /// `feasible` (nano-ros issue 0259).
+    boundaries_without_wcet: Vec<String>,
 }
 
 fn chain_feasibility(chain: &ResolvedChain) -> ChainFeasibility {
-    let sampling_cost_ms: f64 = chain
-        .elements
-        .iter()
-        .filter_map(|e| match e {
-            ChainElement::Boundary {
-                period_ms, exec_ms, ..
-            } => Some(period_ms + exec_ms.unwrap_or(0.0)),
-            ChainElement::Segment { .. } => None,
-        })
-        .sum();
+    // `exec_ms.unwrap_or(0.0)` is still how an absent WCET is COUNTED — there is
+    // nothing better to count — but the absence is now recorded instead of
+    // vanishing into the sum. Absent is not zero; a verdict that cannot tell
+    // them apart reports headroom nobody measured.
+    let mut boundaries_without_wcet = Vec::new();
+    let mut sampling_cost_ms = 0.0f64;
+    for e in &chain.elements {
+        if let ChainElement::Boundary {
+            node,
+            path,
+            period_ms,
+            exec_ms,
+        } = e
+        {
+            if exec_ms.is_none() {
+                boundaries_without_wcet.push(format!("{node}/{path}"));
+            }
+            sampling_cost_ms += period_ms + exec_ms.unwrap_or(0.0);
+        }
+    }
     let controllable_ms = chain.max_latency_ms - sampling_cost_ms;
     ChainFeasibility {
         sampling_cost_ms,
         controllable_ms,
         feasible: controllable_ms > 0.0,
+        boundaries_without_wcet,
     }
 }
 
@@ -393,6 +409,14 @@ pub fn chain_aware_rank(input: &MapperInput) -> RankedPlan {
     for chain in &input.chains {
         let feas = chain_feasibility(chain);
         if feas.feasible {
+            // Feasible ON THE EVIDENCE AVAILABLE. Say so when some of that
+            // evidence was missing, at the point the assumption is made.
+            if !feas.boundaries_without_wcet.is_empty() {
+                warnings.push(MapWarning::ChainFeasibleWithoutWcet {
+                    chain: chain.name.clone(),
+                    boundaries_without_wcet: feas.boundaries_without_wcet.clone(),
+                });
+            }
             candidates.push((chain, feas));
         } else {
             warnings.push(MapWarning::ChainInfeasible {
@@ -448,6 +472,82 @@ fn chain_aware_map(
 /// [`ResolvedTierTable`]. play_launch's Linux apply layer consumes this;
 /// nano-ros does NOT — it writes its own RTOS realizer over the same
 /// [`RankedPlan`] ([`chain_aware_rank`]).
+/// Decide which tied nodes get `SCHED_RR` instead of `SCHED_FIFO`.
+///
+/// A tie is two or more nodes at the same final priority. Under `SCHED_FIFO`
+/// the first to run holds the CPU until it blocks; `SCHED_RR` rotates between
+/// them. So a tie is exactly the case RR exists for.
+///
+/// The catch is that Linux's RR slice is a **global sysctl**
+/// (`/proc/sys/kernel/sched_rr_timeslice_ms`), not a per-task value —
+/// `TierPlatformSpec::time_slice_us` cannot express it — and its default is
+/// **100 ms**. Two tied 10 Hz nodes would get a slice as long as their whole
+/// period, so RR would behave exactly like FIFO while appearing to have solved
+/// starvation. Deriving it unconditionally would be a cosmetic change dressed
+/// as a real one.
+///
+/// The rule is therefore conditional: derive `Rr` only when the host's actual
+/// slice is shorter than the shortest period among the tied nodes. Otherwise
+/// keep `Fifo` and warn, naming both numbers. An absent `rr_timeslice_us` is
+/// "unknown", never "assume the default".
+fn rr_policy_for_ties(
+    node_priority: &BTreeMap<String, i64>,
+    input: &MapperInput,
+    rr_slice_us: Option<u64>,
+) -> (BTreeSet<String>, Vec<MapWarning>) {
+    let mut by_priority: BTreeMap<i64, Vec<String>> = BTreeMap::new();
+    for (node, prio) in node_priority {
+        by_priority.entry(*prio).or_default().push(node.clone());
+    }
+
+    let mut rr_nodes = BTreeSet::new();
+    let mut warnings = Vec::new();
+
+    for (priority, nodes) in by_priority {
+        if nodes.len() < 2 {
+            continue;
+        }
+
+        let shortest_period_us = nodes
+            .iter()
+            .filter_map(|n| shortest_node_budget_us(input, n))
+            .min();
+
+        let slice_is_useful = match (rr_slice_us, shortest_period_us) {
+            (Some(slice), Some(period)) => slice < period,
+            _ => false,
+        };
+
+        if slice_is_useful {
+            rr_nodes.extend(nodes);
+        } else {
+            warnings.push(MapWarning::UnmitigatedPriorityTie {
+                priority,
+                nodes,
+                rr_timeslice_us: rr_slice_us,
+                shortest_period_us,
+            });
+        }
+    }
+
+    (rr_nodes, warnings)
+}
+
+/// The shortest time budget any of a node's paths carries, in microseconds —
+/// a timer's period or an input path's declared latency budget. `None` when
+/// the node carries no usable timing fact at all.
+fn shortest_node_budget_us(input: &MapperInput, node: &str) -> Option<u64> {
+    input
+        .nodes
+        .iter()
+        .find(|n| n.name == node)?
+        .paths
+        .iter()
+        .filter_map(path_budget_ms)
+        .map(|ms| (ms * 1000.0).round() as u64)
+        .min()
+}
+
 fn realize_posix(
     ranked: &RankedPlan,
     input: &MapperInput,
@@ -490,15 +590,43 @@ fn realize_posix(
         });
     }
 
+    // Step 6b: pick the RT policy per node. Band compression *creates* ties
+    // (it collapses adjacent ranks, and clamps into `band.min` when the band
+    // is too narrow), and under SCHED_FIFO a tie means one node can starve
+    // the others. SCHED_RR would time-slice between them — but only if the
+    // host's slice is short enough to matter. See `rr_policy_for_ties`.
+    let rr_slice_us = match facts {
+        crate::PlatformResources::Posix(p) => p.rr_timeslice_us,
+        crate::PlatformResources::Raw(_) => None,
+    };
+    let (rr_nodes, tie_warnings) = rr_policy_for_ties(&node_priority, input, rr_slice_us);
+    warnings.extend(tie_warnings);
+
     let mut tiers: Vec<ResolvedTier> = node_priority
         .iter()
-        .map(|(name, prio)| ResolvedTier {
-            name: name.clone(),
-            priority: *prio,
-            sched_class: Some("SCHED_FIFO".to_string()),
-            class: Some("real_time".to_string()),
-            members: vec![name.clone()],
-            ..Default::default()
+        .map(|(name, prio)| {
+            let sched = if rr_nodes.contains(name.as_str()) {
+                crate::posix::PosixSched::Rr {
+                    priority: *prio as i32,
+                }
+            } else {
+                crate::posix::PosixSched::Fifo {
+                    priority: *prio as i32,
+                }
+            };
+            ResolvedTier {
+                name: name.clone(),
+                priority: *prio,
+                sched_class: Some(sched.kind().as_str().to_string()),
+                posix: Some(crate::posix::PosixPlacement {
+                    sched,
+                    affinity: crate::posix::PosixAffinity::Inherit,
+                    uclamp: None,
+                }),
+                class: Some("real_time".to_string()),
+                members: vec![name.clone()],
+                ..Default::default()
+            }
         })
         .collect();
 
@@ -669,6 +797,7 @@ mod tests {
         PlatformFacts::Posix(PosixResources {
             rt_priority_band: Some(PriorityBand { min, max }),
             isolated_cpus: vec![],
+            rr_timeslice_us: None,
         })
     }
 
@@ -724,6 +853,107 @@ mod tests {
             inputs: vec![],
             outputs: vec![],
         }
+    }
+
+    /// Two nodes at 10 Hz (100 ms period), which is the case the default
+    /// 100 ms RR slice cannot help.
+    fn two_tied_nodes() -> MapperInput {
+        MapperInput {
+            nodes: vec![
+                node("/a", None, vec![timer_path("p", 10.0)]),
+                node("/b", None, vec![timer_path("p", 10.0)]),
+            ],
+            legacy: None,
+            chains: Vec::new(),
+        }
+    }
+
+    fn tied_priorities() -> BTreeMap<String, i64> {
+        BTreeMap::from([("/a".to_string(), 30), ("/b".to_string(), 30)])
+    }
+
+    #[test]
+    fn rr_is_derived_only_when_the_slice_is_shorter_than_the_period() {
+        // 1 ms slice against a 100 ms period: rotating actually rotates.
+        let (rr, warns) = rr_policy_for_ties(&tied_priorities(), &two_tied_nodes(), Some(1_000));
+        assert_eq!(rr.len(), 2, "both tied nodes should get SCHED_RR");
+        assert!(warns.is_empty(), "no tie left unmitigated: {warns:?}");
+    }
+
+    #[test]
+    fn a_slice_as_long_as_the_period_derives_fifo_and_warns() {
+        // Linux's DEFAULT slice is 100 ms and the nodes run at 10 Hz, so a
+        // slice covers the whole period: SCHED_RR would behave exactly like
+        // SCHED_FIFO while looking like it fixed starvation.
+        let (rr, warns) = rr_policy_for_ties(&tied_priorities(), &two_tied_nodes(), Some(100_000));
+        assert!(
+            rr.is_empty(),
+            "RR must not be derived when it changes nothing"
+        );
+        assert_eq!(warns.len(), 1);
+        let MapWarning::UnmitigatedPriorityTie {
+            priority,
+            nodes,
+            rr_timeslice_us,
+            shortest_period_us,
+        } = &warns[0]
+        else {
+            panic!("expected UnmitigatedPriorityTie, got {:?}", warns[0]);
+        };
+        assert_eq!(*priority, 30);
+        assert_eq!(nodes, &vec!["/a".to_string(), "/b".to_string()]);
+        // Both numbers reported, so the reader can see WHY it declined.
+        assert_eq!(*rr_timeslice_us, Some(100_000));
+        assert_eq!(*shortest_period_us, Some(100_000));
+    }
+
+    #[test]
+    fn an_unknown_slice_never_assumes_the_default() {
+        // `rr_timeslice_us` absent means the platform file did not say. That
+        // is unknown, not 100 ms, and guessing either way would be inventing
+        // a number.
+        let (rr, warns) = rr_policy_for_ties(&tied_priorities(), &two_tied_nodes(), None);
+        assert!(rr.is_empty());
+        assert_eq!(warns.len(), 1);
+        let MapWarning::UnmitigatedPriorityTie {
+            rr_timeslice_us, ..
+        } = &warns[0]
+        else {
+            panic!("expected UnmitigatedPriorityTie");
+        };
+        assert_eq!(*rr_timeslice_us, None);
+    }
+
+    #[test]
+    fn distinct_priorities_are_not_ties() {
+        let prios = BTreeMap::from([("/a".to_string(), 30), ("/b".to_string(), 31)]);
+        let (rr, warns) = rr_policy_for_ties(&prios, &two_tied_nodes(), Some(1_000));
+        assert!(rr.is_empty(), "no tie, so nothing to time-slice");
+        assert!(warns.is_empty());
+    }
+
+    #[test]
+    fn a_tie_with_no_timing_fact_cannot_be_judged_and_warns() {
+        // Nothing to compare the slice against, so RR is declined rather than
+        // guessed at.
+        let input = MapperInput {
+            nodes: vec![
+                node("/a", None, vec![once_path("p")]),
+                node("/b", None, vec![once_path("p")]),
+            ],
+            legacy: None,
+            chains: Vec::new(),
+        };
+        let (rr, warns) = rr_policy_for_ties(&tied_priorities(), &input, Some(1_000));
+        assert!(rr.is_empty());
+        assert_eq!(warns.len(), 1);
+        let MapWarning::UnmitigatedPriorityTie {
+            shortest_period_us, ..
+        } = &warns[0]
+        else {
+            panic!("expected UnmitigatedPriorityTie");
+        };
+        assert_eq!(*shortest_period_us, None);
     }
 
     fn node(name: &str, criticality: Option<Criticality>, paths: Vec<MapperPath>) -> MapperNode {
@@ -846,9 +1076,37 @@ mod tests {
         // Feasibility: sampling_cost = 20 + 100 = 120ms; controllable = 30ms > 0
         // => feasible, no ChainInfeasible warning.
         assert!(
-            diag.warnings.is_empty(),
+            !diag
+                .warnings
+                .iter()
+                .any(|w| matches!(w, MapWarning::ChainInfeasible { .. })),
             "chain is feasible: {:?}",
             diag.warnings
+        );
+        // ...but feasible ON INCOMPLETE EVIDENCE. The design doc's worked
+        // example declares periods and deadlines, never WCETs, so both of its
+        // boundaries were counted as zero execution time. That is worth pinning
+        // rather than hiding: the canonical example is itself an instance of
+        // the optimism nano-ros issue 0259 describes, and the 30 ms of
+        // "controllable" slack above is an upper bound, not a measurement.
+        let assumed: Vec<_> = diag
+            .warnings
+            .iter()
+            .filter_map(|w| match w {
+                MapWarning::ChainFeasibleWithoutWcet {
+                    boundaries_without_wcet,
+                    ..
+                } => Some(boundaries_without_wcet.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            assumed,
+            vec![vec![
+                "/ekf/p_ekf".to_string(),
+                "/planning/p_planning".to_string()
+            ]],
+            "the worked example carries no WCETs; the verdict must say so"
         );
 
         // Pinned-exact per the design doc's worked example table.
@@ -970,6 +1228,95 @@ mod tests {
         assert!(
             shared_prio > lo_sink_prio,
             "/shared must keep its high-chain rank (max over paths), not its low-chain rank"
+        );
+    }
+
+    /// Helper twin of `boundary` that CARRIES a measured WCET.
+    fn boundary_with_wcet(node: &str, path: &str, period_ms: f64, exec_ms: f64) -> ChainElement {
+        ChainElement::Boundary {
+            node: node.to_string(),
+            path: path.to_string(),
+            period_ms,
+            exec_ms: Some(exec_ms),
+        }
+    }
+
+    /// nano-ros issue 0259 — a chain judged feasible while a boundary carries
+    /// NO WCET says so. The sum still counts the missing hop as zero (there is
+    /// nothing better to count), but "absent" and "zero" stop being the same
+    /// answer: the verdict is optimistic by an unknown amount and reports it.
+    #[test]
+    fn feasible_chain_reports_boundaries_counted_as_zero() {
+        let mapper = ChainAwareMapper;
+        // budget 100ms against one 20ms-period boundary: comfortably feasible
+        // ON THE EVIDENCE — but the boundary's execution time is unmeasured.
+        let chain = ResolvedChain {
+            name: "optimistic".to_string(),
+            criticality: Criticality::High,
+            max_latency_ms: 100.0,
+            semantics: ChainSemantics::Reaction,
+            elements: vec![boundary("/ekf", "p_ekf", 20.0)],
+        };
+        let input = MapperInput {
+            nodes: vec![node(
+                "/ekf",
+                Some(Criticality::High),
+                vec![timer_path("p_ekf", 50.0)],
+            )],
+            legacy: None,
+            chains: vec![chain],
+        };
+        let facts = posix_facts(10, 40);
+        let (_plan, diag) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
+
+        let reported: Vec<_> = diag
+            .warnings
+            .iter()
+            .filter_map(|w| match w {
+                MapWarning::ChainFeasibleWithoutWcet {
+                    chain,
+                    boundaries_without_wcet,
+                } => Some((chain.clone(), boundaries_without_wcet.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            reported,
+            vec![("optimistic".to_string(), vec!["/ekf/p_ekf".to_string()])],
+            "a feasible verdict computed with an absent WCET must say which hop it assumed away"
+        );
+    }
+
+    /// The converse, so the warning cannot degrade into noise: once the WCET is
+    /// supplied, the verdict rests on measured evidence and stays silent.
+    #[test]
+    fn feasible_chain_with_measured_wcet_is_silent() {
+        let mapper = ChainAwareMapper;
+        let chain = ResolvedChain {
+            name: "measured".to_string(),
+            criticality: Criticality::High,
+            max_latency_ms: 100.0,
+            semantics: ChainSemantics::Reaction,
+            elements: vec![boundary_with_wcet("/ekf", "p_ekf", 20.0, 3.0)],
+        };
+        let input = MapperInput {
+            nodes: vec![node(
+                "/ekf",
+                Some(Criticality::High),
+                vec![timer_path("p_ekf", 50.0)],
+            )],
+            legacy: None,
+            chains: vec![chain],
+        };
+        let facts = posix_facts(10, 40);
+        let (_plan, diag) = mapper.map_with_diagnostics(&input, &facts).expect("maps");
+        assert!(
+            !diag
+                .warnings
+                .iter()
+                .any(|w| matches!(w, MapWarning::ChainFeasibleWithoutWcet { .. })),
+            "a WCET was supplied — nothing was assumed away: {:?}",
+            diag.warnings
         );
     }
 

@@ -294,26 +294,33 @@ periodic node) is checked independently.
 ### Drop Budgets
 
 Drops are declared as `max_drop_rate` (a fraction, 0-1) on **topics**
-(transport drops) and **scope paths** (E2E drops). Node paths do not
-have drop fields — if a node internally drops messages, the effect is
-reflected in a lower `pub.min_rate_hz` on its output.
+(transport drops) and **scope paths** (E2E drops). By convention, node
+paths carry latency only — if a node internally drops messages, model
+the effect as a lower `pub.min_rate_hz` on its output. (The shared path
+schema does accept a `drop:` spec on node paths; it is range-validated
+like any other, but plays no role in composition.)
 
-**Static checking** validates local consistency only:
+**Static checking** (`drop-sanity`) validates local consistency only:
 
-- Values in range: $0 \leq d \leq 1$, `max_consecutive` positive integer
-- Scope drop rate sanity: scope `max_drop_rate` must not be tighter than
-  any individual topic's `max_drop_rate` on the path (part > whole)
+- Values in range: $0 \leq d \leq 1$, `n \leq w` in `"N / W"` counts,
+  `max_consecutive` a positive integer
 - Rate-drop compatibility: a topic's effective delivery rate must meet
   subscriber demand:
 
 $$f_{\text{topic}} \cdot (1 - d_{\text{topic}}) \geq f_{\min}(\text{sub})$$
 
-**Runtime monitoring** handles composition and consecutive checks —
-these depend on actual transport conditions (burstiness, congestion)
-that cannot be proven statically. The runtime monitor observes actual
-drop patterns and checks `max_drop_rate` and `max_consecutive` against
-observed values. See [Burstiness](#burstiness) for detection metrics
-and Appendix A for the underlying theory.
+Cross-scope, two scopes declaring the same topic must agree on its drop
+budget (`consistency`). A scope-vs-topic tightness check (scope
+`max_drop_rate` must not be tighter than a topic's on its path — part >
+whole) is part of the design but not currently implemented.
+
+**Runtime monitoring** handles composition — it depends on actual
+transport conditions (burstiness, congestion) that cannot be proven
+statically. The runtime rule engine checks the observed delivery ratio
+against `max_drop_rate`; `max_consecutive` checking and burstiness
+detection are designed but not yet implemented. See
+[Burstiness](#burstiness) for the detection metrics and Appendix A for
+the underlying theory.
 
 ### Composition Summary
 
@@ -329,6 +336,22 @@ and Appendix A for the underlying theory.
 The checker verifies that declared budgets are consistent across the
 scope tree. Two separate checks apply to latency, drop, and age — each
 with property-specific composition math but the same structural rules.
+
+*As implemented:* Check 1 corresponds to the cross-scope
+`budget-overflow` rule and Check 2 to the `scope-budget` rule, each a
+narrower slice of the theory below. `budget-overflow` compares
+**scope-path budgets only**: a child scope's path against an ancestor
+scope's path with matching input/output endpoints — node
+`max_latency_ms` is not compared against scope budgets by any current
+rule. For Check 2, the single-manifest checker (`check/` crate) runs a
+conservative flat sum over the manifest's declared node-path latencies
+plus declared topic transport (inline includes included, external
+includes skipped); the consumer's cross-scope layer
+(`ros-launch-resolve`) replaces it with a topology-aware critical path
+over the merged tree. The residual INFO reporting described below is
+design, not yet emitted. See
+[contract-verification.md](contract-verification.md) for the full rule
+inventory and where each rule runs.
 
 For precise measurement point definitions, see
 [Latency and Data Freshness](launch-manifest.md#latency-and-data-freshness) in the manifest spec.
@@ -505,16 +528,49 @@ every `rcl_take` and compares to current time. If
 `now - stamp > max_age_ms`, a violation is flagged.
 
 **Static checking** does not trace the full causal chain (which would
-require every upstream node to have a latency budget). Instead, the
-checker verifies local consistency: if a subscriber has `max_age_ms`
-and the scope path feeding it has `max_latency_ms`, the checker can
-verify that the age budget is feasible given the known latency budget.
+require every upstream node to have a latency budget). A local
+feasibility check — subscriber `max_age_ms` vs the `max_latency_ms` of
+the scope path feeding it — is possible in principle but not currently
+implemented; today `max_age_ms` is checked at runtime only.
 
 **For multi-input nodes:** the age at a subscriber depends on the
 correlation mode. With `correlation: timestamp`, age reflects the
 oldest input. With `correlation: latest`, age follows the primary
 (first listed) input only. See
 [Parallel composition](#parallel-fork-join) for the formulas.
+
+## Cross-Scope Chains and Sampling Cost
+
+Scope paths compose budgets *within* one scope subtree. **Chains**
+(Vocabulary v2, `chains:` in the manifest format) name an end-to-end
+cause-effect sequence that crosses scope boundaries: an alternating list
+of `{scope, path}` segments joined by `via:` topics, with one E2E
+`max_latency_ms` and a semantics tag (`reaction` or `age`).
+
+A chain's segments divide into two kinds, following the periodic
+composition rule above:
+
+- **Causal segments** — runs of input-triggered paths. A message flows
+  through them; their latency contributions add as in series
+  composition.
+- **Boundaries** — timer-triggered paths. Each boundary $i$ contributes
+  a worst-case **sampling cost** of one full period plus its own
+  processing: $P_i + C_i$ (where $C_i$ is the boundary's execution
+  time when declared, else 0).
+
+The chain's **controllable time** is what remains of the budget after
+sampling costs, i.e. the portion scheduling can actually influence:
+
+$$L_{\text{controllable}} = L_{\text{budget}} - \sum_{i \in \text{boundaries}} (P_i + C_i)$$
+
+If $L_{\text{controllable}} \leq 0$ the chain is **structurally
+infeasible**: no priority assignment can meet the budget, because the
+sampling delays alone exceed it. The static checker reports this
+(`chain-sampling-feasibility`, alongside `chain-link` segment resolution
+and `chain-budget` sum checks — all cross-scope rules), and the
+`chain_aware` scheduling mapper excludes infeasible chains from
+priority shaping with a warning. The same chain facts drive
+priority derivation — see [scheduling.md](scheduling.md).
 
 ## Burstiness
 
@@ -523,10 +579,15 @@ model). In practice, DDS transport drops are often **bursty** — network
 congestion, scheduling jitter, or queue overflow cause drops to cluster.
 When drops are bursty, the declared `max_drop_rate` and `max_consecutive`
 thresholds may be violated more often than the Bernoulli model predicts.
-The runtime monitor detects this gap.
 
-The runtime monitor detects burstiness via two lightweight metrics
-(~5 ns/message overhead):
+*Implementation status:* the runtime rule engine (play_launch
+`--enforce-rules`, fed by the Phase 29 interception layer) checks
+`max_drop_rate` (as a delivery-rate ratio), `min_rate_hz`, `max_age_ms`,
+and path `max_latency_ms` against observed traffic, plus runtime QoS
+compatibility, consistency, graph deviation, and DDS
+deadline/liveliness/message-lost events. `max_consecutive` and the
+burstiness *detection* metrics below are the designed extension — not
+yet implemented — for diagnosing why drop thresholds trip:
 
 - **Lag-1 autocorrelation** ($\rho_1$) — measures whether a drop
   predicts the next drop. $\rho_1 \approx 0$: independent. $\rho_1 > 0.05$
@@ -542,9 +603,11 @@ for the detailed metric formulas.
 ## Appendix A: Drop Composition Theory
 
 The formulas below describe the theoretical relationships between
-per-topic drop rates and chain-level behavior. These are used by the
-**runtime monitor** for analysis and alerting, not by the static
-checker (which only validates local consistency).
+per-topic drop rates and chain-level behavior. They are the design
+basis for **runtime** drop analysis and alerting (not yet implemented —
+the current runtime engine checks the observed delivery ratio only) and
+are not used by the static checker, which only validates local
+consistency.
 
 ### A.1 Delivery Rate Composition
 
@@ -667,8 +730,13 @@ requirements, you need initial values for `max_latency_ms`, `min_rate_hz`,
 and `max_drop_rate`. Capture mode bootstraps these from runtime
 measurements.
 
-Capture mode (`--save-manifest-dir`) derives contracts from observed
-traces:
+*Implementation status:* capture mode is designed but not implemented —
+there is currently no CLI flag for it. The interception layer already
+records the required per-topic traces (`frontier_summary.json`,
+`stats_summary.json`); the derivation below is the planned tooling on
+top of them.
+
+Capture mode derives contracts from observed traces:
 
 $$\hat{G}_L = \max(\text{observed latencies}) \times \alpha$$
 $$\hat{A}_R = \min(\text{observed inter-arrivals}) / \alpha$$

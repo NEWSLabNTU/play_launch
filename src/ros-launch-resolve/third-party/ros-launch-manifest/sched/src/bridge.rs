@@ -30,6 +30,9 @@ use crate::{
 pub fn parse_legacy_toml(input: &str) -> Result<PlatformFile, SchedError> {
     let sched = parse_system_sched(input)?;
     Ok(PlatformFile {
+        // The legacy v1 schema has no way to say `reservations: required`, and
+        // no way to author a budget, so a legacy file can never derive one.
+        reservations: crate::platform::ReservationMode::Off,
         target: "posix".to_string(),
         mapper: "manual".to_string(),
         resources: PlatformResources::Posix(PosixResources::default()),

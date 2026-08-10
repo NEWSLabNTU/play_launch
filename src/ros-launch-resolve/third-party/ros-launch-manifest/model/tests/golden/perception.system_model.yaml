@@ -10,9 +10,6 @@ meta:
       sha256: 3f786850e387550fdab836ed7e6dc881de23001b1a2d4e4df1e69cbbd1a1d2f3
     - path: system.toml
       sha256: 89e6c98d92887913cadf06b2adb97f26cde4849b3d1b6a4e6f8c3f2a1b0c9d8e
-  record:
-    path: perception.record.json
-    sha256: 1f2e3d4c5b6a79880716253443526170f8e9dacb0badc0de1234567890abcdef
   resolver:
     tool: play_launch
     version: 0.9.0

@@ -43,6 +43,10 @@ pub enum PlatformError {
          `posix`: {reason}"
     )]
     InvalidPriorityBand { min: i64, max: i64, reason: String },
+    #[error("overrides.{node}: {reason}")]
+    InvalidOverride { node: String, reason: String },
+    #[error("`reservations` must be `off` or `required`, got {value:?}")]
+    UnknownReservationMode { value: String },
 }
 
 /// `posix` (Linux RT) platform facts — `resources:` for `target: posix`.
@@ -58,6 +62,21 @@ pub struct PosixResources {
     /// play_launch/nano-ros placement policy, not enforced by this crate).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub isolated_cpus: Vec<u32>,
+    /// The host's `SCHED_RR` time slice, in microseconds.
+    ///
+    /// A platform *fact*, which is why it lives here: on Linux the slice is a
+    /// global sysctl (`/proc/sys/kernel/sched_rr_timeslice_ms`, default
+    /// **100 ms**), not a per-task value, so `TierPlatformSpec::time_slice_us`
+    /// cannot express it. The mapper needs it to decide whether `SCHED_RR` is
+    /// worth deriving at all: at 100 ms, two tied 10 Hz nodes get a slice as
+    /// long as their entire period, so RR degenerates to FIFO while looking
+    /// like it solved starvation.
+    ///
+    /// Absent means "unknown" — the mapper then declines to derive RR rather
+    /// than assuming the default, since assuming is how a cosmetic change gets
+    /// presented as a real one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rr_timeslice_us: Option<u64>,
 }
 
 /// An inclusive RT priority band, e.g. `{ min: 10, max: 40 }`.
@@ -105,15 +124,53 @@ impl PriorityBand {
 }
 
 /// `posix` override entry — `overrides.<node>` for `target: posix`.
+///
+/// An override always beats a derived value. Validation is at parse time
+/// ([`validate_posix_override`]) so a malformed override is a schema error
+/// naming the node, not an `EINVAL` from a syscall after spawn.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PosixOverride {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<i64>,
+    /// Single-CPU pin. Kept as a one-element alias for [`Self::cpus`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub core: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sched_class: Option<String>,
+    /// CPU mask. Mutually exclusive with `core`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cpus: Vec<u32>,
+    /// CFS nice value, `-20..=19`. Only meaningful for `SCHED_OTHER` and
+    /// `SCHED_BATCH`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nice: Option<i32>,
+    /// Utilization-clamp floor, `0..=1024`.
+    ///
+    /// A **no-op on RT policies**: they default to `1024`/`1024` and already
+    /// request the maximum performance point under `schedutil`. Setting it on
+    /// `SCHED_FIFO`/`RR` is accepted and warned about, because silently doing
+    /// nothing is worse than saying so. The system-wide equivalent is
+    /// `sched_util_clamp_min_rt_default`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uclamp_min: Option<u32>,
+    /// Utilization-clamp ceiling, `0..=1024`. The useful RT knob: it lets an
+    /// RT thread run *below* the maximum performance point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uclamp_max: Option<u32>,
+    /// Declared execution cost, in microseconds.
+    ///
+    /// The field `TierDef::budget_us` has always meant "execution-time budget
+    /// — EDF/sporadic", but only the deprecated v1 TOML bridge could populate
+    /// it, so on every v2 path it was `None` and the derivation substituted a
+    /// path's *deadline* for its cost. This is what makes cost authorable, and
+    /// it is the only legitimate source for a `SCHED_DEADLINE` reservation's
+    /// runtime.
+    ///
+    /// Not a proven WCET — there is no static analysis here. It is a declared
+    /// high-percentile observed cost, used *as* an upper bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_us: Option<u64>,
 }
 
 /// The parsed `resources:` block, typed for known targets and raw otherwise.
@@ -138,12 +195,37 @@ pub enum PlatformOverrideEntry {
     Raw(serde_yaml_ng::Value),
 }
 
+/// Whether the mapper may derive `SCHED_DEADLINE` reservations.
+///
+/// Opt-in, and deliberately not a member of `resources:`. `resources:` holds
+/// platform *facts* — what the machine has; `mapper:` holds *policy* — what to
+/// do with them. Whether to reserve is a policy choice, so it sits beside
+/// `mapper:` rather than among the facts.
+///
+/// The opt-in exists because reservations are all-or-nothing within a band: a
+/// node with a reservation preempts every fixed-priority thread regardless of
+/// priority, so a band containing both loses the ordering the mapper computed.
+/// Without an explicit switch, adding a single `budget_us` would turn that
+/// rule into a hard error the author did not ask for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReservationMode {
+    /// Budgets are parsed, carried and shown, but never select a policy.
+    #[default]
+    Off,
+    /// Every node in the RT band that carries a timing fact must also carry a
+    /// budget, or resolution fails naming the ones that do not.
+    Required,
+}
+
 /// A parsed platform file — either authored directly as v2 YAML, or
 /// produced by the legacy TOML bridge ([`crate::bridge::parse_legacy_toml`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlatformFile {
     pub target: String,
     pub mapper: String,
+    /// Whether reservations may be derived. See [`ReservationMode`].
+    pub reservations: ReservationMode,
     pub resources: PlatformResources,
     /// Explicit per-node pins, keyed by node selector (same selector
     /// vocabulary as `[[assign]]`'s `nodes`: full FQN or bare name).
@@ -164,6 +246,8 @@ struct RawPlatformFile {
     target: String,
     mapper: String,
     #[serde(default)]
+    reservations: ReservationMode,
+    #[serde(default)]
     resources: serde_yaml_ng::Value,
     #[serde(default)]
     overrides: serde_yaml_ng::Value,
@@ -171,6 +255,103 @@ struct RawPlatformFile {
 
 fn is_posix(target: &str) -> bool {
     matches!(target, "posix" | "native")
+}
+
+/// Reject override combinations Linux cannot execute, at parse time.
+///
+/// Every rule here was previously unenforced, so a malformed override reached
+/// the syscall layer and came back as an `EINVAL` with no node name attached.
+/// Failing at parse means the message can name the file, the node and the
+/// field.
+pub fn validate_posix_override(node: &str, ov: &PosixOverride) -> Result<(), PlatformError> {
+    use crate::posix::{PosixPolicyKind, UCLAMP_MAX};
+
+    let bad = |reason: String| PlatformError::InvalidOverride {
+        node: node.to_string(),
+        reason,
+    };
+
+    // Fails closed: an unrecognized class used to become SCHED_OTHER in
+    // silence, so `SCHED_FIF0` dropped a node out of real-time.
+    let kind = match ov.sched_class.as_deref() {
+        Some(sc) => Some(PosixPolicyKind::parse(sc).map_err(|e| bad(e.to_string()))?),
+        None => None,
+    };
+
+    if let Some(kind) = kind {
+        // A priority on a CFS policy, or a nice value on an RT one, is not a
+        // harmless extra field — it is a statement about scheduling that the
+        // kernel cannot honour, and it is how `SCHED_OTHER 10` reached
+        // system_model.yaml once already.
+        if ov.priority.is_some() && !matches!(kind, PosixPolicyKind::Fifo | PosixPolicyKind::Rr) {
+            return Err(bad(format!(
+                "`priority` is only meaningful for SCHED_FIFO/SCHED_RR, not {}",
+                kind.as_str()
+            )));
+        }
+        if ov.nice.is_some() && !matches!(kind, PosixPolicyKind::Other | PosixPolicyKind::Batch) {
+            return Err(bad(format!(
+                "`nice` is only meaningful for SCHED_OTHER/SCHED_BATCH, not {}",
+                kind.as_str()
+            )));
+        }
+        if matches!(kind, PosixPolicyKind::Deadline) && (ov.core.is_some() || !ov.cpus.is_empty()) {
+            return Err(bad(
+                "SCHED_DEADLINE cannot take a CPU pin: a deadline thread's affinity may not \
+                 be narrower than the root domain it was created on (sched_setattr returns \
+                 EPERM). Use an exclusive cpuset partition."
+                    .to_string(),
+            ));
+        }
+    }
+
+    if let Some(p) = ov.priority
+        && !(POSIX_RT_PRIORITY_MIN..=POSIX_RT_PRIORITY_MAX).contains(&p)
+    {
+        return Err(bad(format!(
+            "`priority` {p} is outside the POSIX real-time range \
+             {POSIX_RT_PRIORITY_MIN}..={POSIX_RT_PRIORITY_MAX}"
+        )));
+    }
+
+    if let Some(n) = ov.nice
+        && !(-20..=19).contains(&n)
+    {
+        return Err(bad(format!("`nice` {n} is outside -20..=19")));
+    }
+
+    if ov.core.is_some() && !ov.cpus.is_empty() {
+        return Err(bad(
+            "`core` and `cpus` are mutually exclusive (`core` is the single-CPU alias)".to_string(),
+        ));
+    }
+
+    for (field, v) in [("uclamp_min", ov.uclamp_min), ("uclamp_max", ov.uclamp_max)] {
+        if let Some(v) = v
+            && v > UCLAMP_MAX
+        {
+            return Err(bad(format!(
+                "`{field}` {v} is outside 0..={UCLAMP_MAX} (the kernel's scale is not a percentage)"
+            )));
+        }
+    }
+    if let (Some(min), Some(max)) = (ov.uclamp_min, ov.uclamp_max)
+        && min > max
+    {
+        return Err(bad(format!(
+            "`uclamp_min` {min} exceeds `uclamp_max` {max}"
+        )));
+    }
+
+    if ov.budget_us == Some(0) {
+        return Err(bad(
+            "`budget_us` 0 is not a cost — omit the field to say the cost is unknown. \
+             Absent and zero are different answers."
+                .to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 /// Parse a v2 platform file from a YAML string.
@@ -217,6 +398,7 @@ pub fn parse_platform_file_yaml(input: &str) -> Result<PlatformFile, PlatformErr
                         target: raw.target.clone(),
                         reason: format!("overrides.{key}: {e}"),
                     })?;
+                validate_posix_override(key, &posix)?;
                 PlatformOverrideEntry::Posix(posix)
             } else {
                 PlatformOverrideEntry::Raw(value)
@@ -233,6 +415,7 @@ pub fn parse_platform_file_yaml(input: &str) -> Result<PlatformFile, PlatformErr
     Ok(PlatformFile {
         target: raw.target,
         mapper: raw.mapper,
+        reservations: raw.reservations,
         resources,
         overrides,
         legacy: None,
@@ -288,6 +471,118 @@ overrides:
         assert_eq!(ov.priority, Some(20));
         assert_eq!(ov.core, Some(0));
         assert!(file.legacy.is_none());
+    }
+
+    #[test]
+    fn override_vocabulary_parses() {
+        let src = r#"
+target: posix
+mapper: chain_aware
+reservations: required
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+  isolated_cpus: [2, 3]
+  rr_timeslice_us: 100000
+overrides:
+  obstacle_detector:
+    budget_us: 8000
+    uclamp_max: 800
+  telemetry_logger:
+    sched_class: SCHED_BATCH
+    nice: 10
+    uclamp_min: 256
+  planner:
+    cpus: [4, 5]
+"#;
+        let file = parse_platform_file_yaml(src).expect("must parse");
+        assert_eq!(file.reservations, ReservationMode::Required);
+        let PlatformResources::Posix(res) = &file.resources else {
+            panic!("expected posix resources");
+        };
+        assert_eq!(res.rr_timeslice_us, Some(100_000));
+
+        let PlatformOverrideEntry::Posix(det) = file.overrides.get("obstacle_detector").unwrap()
+        else {
+            panic!("posix override");
+        };
+        assert_eq!(det.budget_us, Some(8000));
+        assert_eq!(det.uclamp_max, Some(800));
+
+        let PlatformOverrideEntry::Posix(log) = file.overrides.get("telemetry_logger").unwrap()
+        else {
+            panic!("posix override");
+        };
+        assert_eq!(log.sched_class.as_deref(), Some("SCHED_BATCH"));
+        assert_eq!(log.nice, Some(10));
+
+        let PlatformOverrideEntry::Posix(pl) = file.overrides.get("planner").unwrap() else {
+            panic!("posix override");
+        };
+        assert_eq!(pl.cpus, vec![4, 5]);
+    }
+
+    #[test]
+    fn reservations_defaults_to_off() {
+        let file = parse_platform_file_yaml("target: posix\nmapper: chain_aware\n").unwrap();
+        assert_eq!(file.reservations, ReservationMode::Off);
+    }
+
+    /// Parse a one-override file and return the error text, so each rejection
+    /// below reads as the YAML that causes it.
+    fn override_err(body: &str) -> String {
+        let src = format!("target: posix\nmapper: chain_aware\noverrides:\n  n:\n{body}");
+        parse_platform_file_yaml(&src)
+            .expect_err("expected this override to be rejected")
+            .to_string()
+    }
+
+    #[test]
+    fn unknown_sched_class_is_an_error_not_a_silent_sched_other() {
+        // The whole point of failing closed: this used to become SCHED_OTHER
+        // and drop the node out of real-time with no diagnostic at all.
+        let e = override_err("    sched_class: SCHED_FIF0\n");
+        assert!(e.contains("SCHED_FIF0"), "{e}");
+        assert!(
+            e.contains("SCHED_FIFO"),
+            "should list the legal values: {e}"
+        );
+    }
+
+    #[test]
+    fn priority_and_nice_must_match_the_policy() {
+        let e = override_err("    sched_class: SCHED_OTHER\n    priority: 20\n");
+        assert!(e.contains("priority"), "{e}");
+        assert!(e.contains("SCHED_OTHER"), "{e}");
+
+        let e = override_err("    sched_class: SCHED_FIFO\n    nice: 5\n");
+        assert!(e.contains("nice"), "{e}");
+        assert!(e.contains("SCHED_FIFO"), "{e}");
+    }
+
+    #[test]
+    fn deadline_override_cannot_pin_cpus() {
+        let e = override_err("    sched_class: SCHED_DEADLINE\n    core: 2\n");
+        assert!(e.contains("EPERM") || e.contains("cpuset"), "{e}");
+    }
+
+    #[test]
+    fn out_of_range_values_are_rejected() {
+        assert!(override_err("    sched_class: SCHED_FIFO\n    priority: 0\n").contains("1..=99"));
+        assert!(override_err("    sched_class: SCHED_BATCH\n    nice: 20\n").contains("-20..=19"));
+        assert!(override_err("    uclamp_min: 2000\n").contains("0..=1024"));
+        assert!(override_err("    uclamp_min: 900\n    uclamp_max: 100\n").contains("exceeds"));
+    }
+
+    #[test]
+    fn core_and_cpus_are_mutually_exclusive() {
+        let e = override_err("    core: 1\n    cpus: [2, 3]\n");
+        assert!(e.contains("mutually exclusive"), "{e}");
+    }
+
+    #[test]
+    fn zero_budget_is_rejected_because_absent_and_zero_differ() {
+        let e = override_err("    budget_us: 0\n");
+        assert!(e.contains("Absent and zero"), "{e}");
     }
 
     #[test]

@@ -1,479 +1,183 @@
-# Contract Verification Implementation
+# Contract Verification — Implementation
 
-Practical tooling for verifying manifest contracts. See
-`docs/design/contract-theory.md` for the formal foundations.
+How manifest contracts are verified, as implemented by the `types/` and
+`check/` crates in this workspace. For the manifest format see
+[launch-manifest.md](launch-manifest.md); for the formal foundations see
+[contract-theory.md](contract-theory.md).
 
-## Architecture
+> **Scope note.** This document describes the *per-manifest* checker that
+> lives in this repository. Cross-file checks (chain link resolution,
+> cross-scope QoS reconciliation, the topology-aware critical-path budget
+> check) run in the consumer's merge layer (`ros-launch-resolve`, invoked
+> by `play_launch check`) because they need the merged launch tree. See
+> [Division of Labor](#division-of-labor-with-the-consumer).
 
-```
-YAML files ──→ parse with spans ──→ typed AST ──→ generate constraints ──→ check ──→ diagnostics
-                (yaml-rust2)        (ManifestAst)    (rules)              (solve)   (codespan-reporting)
-```
-
-### Design goals
-
-1. **Span tracking**: errors trace back to the offending YAML source location
-2. **Extensibility**: each constraint rule is an independent module
-3. **Readability**: constraints can be rendered in formal mathematical notation
-
-## Parsing with Source Spans
-
-`serde_yaml_ng` loses source locations during deserialization. Use
-`yaml-rust2` which provides `MarkedYaml` — each YAML node carries
-`Marker { line, col }`.
-
-A thin manual deserialization layer (~200-300 lines) builds a typed
-AST with spans attached:
-
-```rust
-/// A value paired with its source location.
-struct Spanned<T> {
-    value: T,
-    file_id: FileId,
-    span: Range<usize>,      // byte offsets into the source file
-}
-
-/// Typed manifest AST with full span information.
-struct ManifestAst {
-    version: Spanned<u32>,
-    topics: Vec<Spanned<TopicDecl>>,
-    nodes: Vec<Spanned<NodeDecl>>,
-    includes: Vec<Spanned<IncludeDecl>>,
-    imports: Vec<Spanned<GroupDecl>>,
-    exports: Vec<Spanned<GroupDecl>>,
-    io: Option<Spanned<IoContract>>,
-}
-```
-
-`yaml-rust2`'s `Marker` gives line/col. Convert to byte offsets via
-a `line_starts: Vec<usize>` table built by scanning the source for
-newlines (~20 lines of code).
-
-### Why not Serde?
-
-Serde's data model has no concept of source locations — by the time
-a struct is populated, span information is gone. Some workarounds
-exist (custom `Deserialize` impls with span wrappers) but they are
-fragile and not well-supported for YAML. The manual approach gives
-full control and reliable spans.
-
-## Constraint Types
-
-Each constraint carries its formal expression, source span, and
-severity:
-
-```rust
-/// A formal constraint extracted from the manifest.
-struct Constraint {
-    kind: ConstraintKind,
-    span: SpanInfo,
-    severity: Severity,
-}
-
-enum Severity { Error, Warning, Info }
-
-/// Source location for diagnostic output.
-struct SpanInfo {
-    file_id: FileId,
-    byte_range: Range<usize>,
-    /// Human-readable YAML path, e.g. "topics.pointcloud.qos.reliability"
-    path: String,
-}
-```
-
-### Constraint kinds
-
-```rust
-enum ConstraintKind {
-    /// $\text{QoS}(p) \succeq \text{QoS}(s)$ for all (pub, sub) on a topic
-    QosCompatibility {
-        topic: String,
-        publisher: EntityRef,
-        subscriber: EntityRef,
-        field: String,        // "reliability", "durability"
-    },
-
-    /// $\exists p \in \text{Publishers}(t)$
-    TopicHasPublisher { topic: String },
-
-    /// $\text{scope.latency\_ms} \geq \text{critical\_path}(\text{internal\_graph})$
-    ScopeBudgetValidity {
-        scope: String,
-        declared_ms: f64,
-        critical_path_ms: f64,
-    },
-
-    /// $N \geq \text{rate\_hz}$ where $N$ is the trigger period
-    RateFeasibility {
-        topic: String,
-        required_hz: f64,
-        publisher_trigger: String,
-    },
-
-    /// Publisher and subscriber agree on message type
-    TypeConsistency {
-        topic: String,
-        pub_type: String,
-        sub_type: String,
-    },
-
-    /// Node endpoint is wired by a topic
-    EndpointWired {
-        node: String,
-        endpoint: String,
-    },
-
-    /// Import is wired by parent scope
-    ImportResolved {
-        scope: String,
-        import_name: String,
-    },
-}
-```
-
-## Rule System
-
-Each validation rule is an independent module implementing a trait.
-This follows the clippy/linter pattern — flat rules, not visitors.
-
-```rust
-/// A validation rule that checks one aspect of the manifest.
-trait ValidationRule: Send + Sync {
-    /// Unique identifier (e.g., "E001", "qos-compatibility")
-    fn id(&self) -> &str;
-
-    /// Human-readable description
-    fn description(&self) -> &str;
-
-    /// Default severity
-    fn default_severity(&self) -> Severity;
-
-    /// Check the manifest and emit constraints into the context.
-    fn check(&self, manifest: &ManifestAst, ctx: &mut CheckContext);
-}
-
-/// Accumulates constraints from all rules.
-struct CheckContext {
-    constraints: Vec<Constraint>,
-    files: SimpleFiles<String, String>,  // codespan-reporting file store
-}
-
-impl CheckContext {
-    fn emit(&mut self, kind: ConstraintKind, span: SpanInfo, severity: Severity) {
-        self.constraints.push(Constraint { kind, span, severity });
-    }
-}
-```
-
-### Rule registry
-
-```rust
-fn default_rules() -> Vec<Box<dyn ValidationRule>> {
-    vec![
-        Box::new(QosCompatibilityRule),
-        Box::new(TopicWiringRule),
-        Box::new(ScopeBudgetRule),
-        Box::new(RateFeasibilityRule),
-        Box::new(TypeConsistencyRule),
-        Box::new(ImportResolutionRule),
-        // easy to add new rules — just append here
-    ]
-}
-
-fn run_checks(manifest: &ManifestAst, ctx: &mut CheckContext) {
-    for rule in default_rules() {
-        rule.check(manifest, ctx);
-    }
-}
-```
-
-### Example rule implementation
-
-```rust
-/// E001: QoS compatibility between publisher and subscriber
-struct QosCompatibilityRule;
-
-impl ValidationRule for QosCompatibilityRule {
-    fn id(&self) -> &str { "E001" }
-    fn description(&self) -> &str {
-        "Publisher QoS must satisfy subscriber QoS requirements"
-    }
-    fn default_severity(&self) -> Severity { Severity::Error }
-
-    fn check(&self, manifest: &ManifestAst, ctx: &mut CheckContext) {
-        for topic in &manifest.topics {
-            let t = &topic.value;
-            for pub_ref in &t.publishers {
-                for sub_ref in &t.subscribers {
-                    // Check reliability: pub ≥ sub
-                    if let (Some(pub_qos), Some(sub_qos)) = (&t.pub_qos, &t.sub_qos) {
-                        if pub_qos.reliability < sub_qos.reliability {
-                            ctx.emit(
-                                ConstraintKind::QosCompatibility {
-                                    topic: t.name.clone(),
-                                    publisher: pub_ref.clone(),
-                                    subscriber: sub_ref.clone(),
-                                    field: "reliability".into(),
-                                },
-                                topic.span(),
-                                self.default_severity(),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-```
-
-## Diagnostic Output
-
-### Terminal diagnostics: `codespan-reporting`
-
-Best fit for multi-file YAML diagnostics. Each unsatisfied constraint
-becomes a `Diagnostic` with labeled source spans:
-
-```rust
-fn constraint_to_diagnostic(c: &Constraint) -> codespan_reporting::diagnostic::Diagnostic<FileId> {
-    use codespan_reporting::diagnostic::{Diagnostic, Label};
-
-    match &c.kind {
-        ConstraintKind::QosCompatibility { topic, publisher, subscriber, field } => {
-            Diagnostic::error()
-                .with_code("E001")
-                .with_message(format!("QoS incompatibility on topic '{}'", topic))
-                .with_labels(vec![
-                    Label::primary(c.span.file_id, c.span.byte_range.clone())
-                        .with_message(format!("publisher declares {}", field)),
-                    // secondary label on subscriber's span
-                ])
-                .with_notes(vec![
-                    format!("publisher {} must be ≥ subscriber {}", field, field),
-                ])
-        }
-        // ... other kinds
-    }
-}
-```
-
-Example output:
+## Pipeline
 
 ```
-error[E001]: QoS incompatibility on topic 'pointcloud'
-  ┌─ manifests/sensing/sensing.launch.yaml:12:5
+YAML file ──→ parse with spans ──→ Manifest AST ──→ build DataflowGraph ──→ run rules ──→ Diagnostics ──→ emit
+              (types/, yaml-rust2)  (types::Manifest)  (check/src/graph.rs)   (check/src/rules/)            (terminal | codespan)
+```
+
+1. **Parse** (`types/src/parse.rs`) — a hand-rolled deserializer over
+   plain `yaml-rust2` values (Serde is used for *serialization* only).
+   Spans come from a second pass: `SpanIndex::build` re-scans the source
+   with the event parser's `Marker`s and produces a YAML-path → byte-range
+   index (`types/src/span.rs`) that diagnostics resolve against.
+   Entry points: `parse_manifest`, `parse_manifest_str`, and the
+   `*_with_spans` variants returning
+   `ParseResult { manifest, source, spans }`.
+2. **Filter & substitute** (`types/src/`) — `evaluate_condition` /
+   `filter_manifest` apply `if:`/`unless:` conditions for a given arg
+   assignment; `resolve_args` / `substitute_manifest` perform `$(var)`
+   substitution.
+3. **Graph** (`check/src/graph.rs`) — a `petgraph::DiGraph<GraphNode,
+   GraphEdge>` over manifest nodes and include scopes, with edges from
+   topic publisher → subscriber. Subscribers tagged `state: true` are
+   skipped — that is how declared feedback loops break the causal cycle
+   check.
+4. **Rules** (`check/src/rules/`) — each rule is an independent module
+   implementing:
+
+   ```rust
+   pub trait ValidationRule: Send + Sync {
+       fn id(&self) -> &str;
+       fn check(&self, manifest: &Manifest, graph: &DataflowGraph, ctx: &mut CheckContext);
+   }
+   ```
+
+   `run_checks` / `run_checks_with_spans` (`check/src/check.rs`) build the
+   graph, then run `rules::default_rules()` in registration order.
+5. **Diagnostics** — rules emit into `CheckContext` (`emit` / `error` /
+   `warning`), producing:
+
+   ```rust
+   pub struct Diagnostic {
+       pub rule_id: String,
+       pub severity: Severity,        // Info | Warning | Error
+       pub message: String,
+       pub path: String,              // YAML path, e.g. "topics.pointcloud.qos"
+       pub span: Option<Range<usize>>, // resolved from SpanIndex when available
+   }
+   ```
+
+## Why manual parsing (not Serde deserialize)
+
+Serde's data model has no concept of source locations — by the time a
+struct is populated, span information is gone. The manual `yaml-rust2`
+layer keeps a `SpanIndex` from YAML path to byte range, so any rule can
+point a diagnostic at the exact offending line, including in multi-file
+output.
+
+## Rule Registry
+
+20 rules, in registration order (`check/src/rules/mod.rs`). Severity is
+what the rule emits; several rules emit at more than one severity.
+
+| # | Rule | Severity | What it catches |
+|---|------|----------|-----------------|
+| 1 | `endpoint-unique` | Error | Duplicate endpoint name across a node's pub/sub/srv/cli |
+| 2 | `wiring` | Warning | Path input/output endpoint not wired by any topic |
+| 3 | `qos-compat` | Error | Invalid QoS value token (`reliability`, `durability`, `history`, `liveliness`) at topic or endpoint level |
+| 4 | `qos-match` | Error / Warning | Structural: `depth: 0` (E), `keep_all` with depth (W), `best_effort` + `transient_local` (W). DDS pub/sub compatibility on `reliability` and `durability` (E) — offered ≥ requested, checked only when both sides specify (no implicit ROS defaults) |
+| 5 | `rate-hierarchy` | Error | `pub.min_rate_hz < topic.rate_hz`; `topic.rate_hz < sub.min_rate_hz` |
+| 6 | `scope-budget` | Warning | Flat conservative sum: scope `max_latency_ms` < Σ node latencies + declared topic transport. Per-manifest fallback — the topology-aware critical path is play_launch's cross-scope diagnostic |
+| 7 | `causal-dag` | Error | Cycle in the causal dataflow graph (`state: true` on feedback endpoints breaks it) |
+| 8 | `drop-sanity` | Error | Effective delivery rate < subscriber demand; `max_drop_rate` outside [0,1]; `n > w` in `"N / W"`; `max_consecutive == 0` |
+| 9 | `service-wiring` | Warning | Service client with no matching server |
+| 10 | `service-type` | Error / Warning | Service without `type` (E); server/client ref not declared on its node (W) |
+| 11 | `dangling-entity` | Warning / Error | Topic with 0 pubs or 0 subs (W); service/action with 0 servers (E) |
+| 12 | `satisfiability` | Warning / Error | **Z3-backed.** Node unreachable under all valid arg assignments (W); some valid arg assignment produces a dangling entity (E). Skips topics whose subscribers are all state-only |
+| 13 | `consistency` | — | Placeholder, currently a no-op (cross-scope agreement runs in play_launch) |
+| 14 | `state-consistency` | Warning | Likely-missing `state: true` on a subscriber that is neither state-tagged nor referenced by any path trigger (two noise-gated heuristics) |
+| 15 | `explicit-trigger` | Info | Path has no explicit `trigger:` — migration lint toward the Vocabulary v2 taxonomy |
+| 16 | `inherited-rate` | Warning | Non-`input` explicit trigger combined with a stale legacy `input:` list |
+| 17 | `once-durability` | Warning | `once`-triggered path publishes to a topic whose effective durability is not `transient_local` |
+| 18 | `sync-feasibility` | Warning | `sync.max_interval_ms` / `sync.timeout_ms` shorter than the slowest declared input period |
+| 19 | `queue-drain-rate` | Warning | Timer path `rate_hz` lower than the summed input rates of its `buffer: queue` subscriptions |
+| 20 | `chain-shape` | Error | Cyclic chain (same `{scope, path}` twice); adjacent path segments with no `via:` between them |
+
+Shared helper: `rules/endpoint_topic.rs` resolves `node/endpoint`
+references to their declaring topic (used by `once-durability`,
+`sync-feasibility`, `queue-drain-rate`).
+
+### Z3 and satisfiability
+
+Args declared with `type: bool` or `choices:` define a finite
+configuration space. The `satisfiability` rule encodes `if:`/`unless:`
+conditions as SMT formulas (crate `z3`) and asks, per entity: *is there a
+valid arg assignment under which this topic/service ends up with zero
+publishers/servers?* Errors carry the witness assignment:
+`"topic 'pose' has 0 publishers when pose_source=gnss"`.
+
+Z3 is used only inside this rule — there is no SMT-LIB file output.
+
+## Emitters
+
+`check/src/emit/` has exactly two backends:
+
+- **`terminal`** — plain stderr lines:
+  `"{severity}[{rule_id}]: {message} (at {path})"` plus an
+  error/warning count summary.
+- **`diagnostic`** — `codespan-reporting` rendering with `rule_id` as the
+  diagnostic code and the span as a primary label; falls back to an
+  `at {path}` note when the manifest was parsed without spans.
+
+Example codespan output:
+
+```
+error[qos-match]: incompatible reliability on topic 'pointcloud': pub best_effort < sub reliable
+  ┌─ manifests/sensing/sensing.launch.contract.yaml:12:5
   │
 12│     reliability: best_effort
-  │     ^^^^^^^^^^^^^^^^^^^^^^^^ publisher declares best_effort
-  │
-  ┌─ manifests/perception/lidar.launch.yaml:8:5
-  │
- 8│     reliability: reliable
-  │     ^^^^^^^^^^^^^^^^^^^^ subscriber requires reliable
-  │
-  = note: publisher reliability must be ≥ subscriber reliability
+  │     ^^^^^^^^^^^^^^^^^^^^^^^^ topics.pointcloud.qos.reliability
 ```
 
-### Formal notation: `FormalEmitter`
+## Division of Labor with the Consumer
 
-For academic-readable output and documentation:
+The checker in this repo is deliberately **single-manifest**. Checks that
+need the merged launch tree run in the consumer's cross-scope layer —
+the `ros-launch-resolve` resolve crate, which `play_launch check`
+invokes. Cross-scope rule ids, emitted from
+`resolve/src/ros/manifest_loader.rs` and `chain_checks.rs`:
 
-```rust
-impl fmt::Display for ConstraintKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::QosCompatibility { topic, publisher, subscriber, field } =>
-                write!(f, "QoS({}, {}).{} ≥ QoS({}, {}).{}",
-                    publisher, topic, field, subscriber, topic, field),
+| Rule | What it checks |
+|------|----------------|
+| `consistency` | Topic/QoS/rate declarations agree across the scopes that declare the same topic (the local `consistency` rule is a placeholder for exactly this reason) |
+| `budget-overflow` | Cross-scope path budgets: a child scope's path budget must not exceed a matched ancestor path's budget (theory doc "Check 1") |
+| `scope-budget` | Topology-aware critical path over the merged dataflow DAG, including per-sink `max_transport_ms` overrides (the local flat-sum rule is the standalone fallback) |
+| `rate-hierarchy`, `qos-match`, `dangling-entity` | Cross-scope variants of the local rules, run after merge |
+| `chain-link` | Every chain `{scope, path}` segment resolves; `via:` topics exist, are produced by the preceding segment and consumed by the following one |
+| `chain-budget` | Chain `max_latency_ms` vs the sum of its event-segment budgets plus boundary sampling costs (each timer boundary contributes period + exec, not its declared budget) |
+| `chain-sampling-feasibility` | Chain budget minus boundary sampling cost must leave positive controllable time (mirrors the `chain_aware` mapper's feasibility rule) |
 
-            Self::ScopeBudgetValidity { scope, declared_ms, critical_path_ms } =>
-                write!(f, "scope({}).max_latency_ms = {} ≥ critical_path = {}",
-                    scope, declared_ms, critical_path_ms),
+Runtime monitors (rate, age, drop, burstiness) live in play_launch's
+interception layer (Phase 29), fed by `rcl_publish`/`rcl_take` events.
 
-            Self::TopicHasPublisher { topic } =>
-                write!(f, "∃p ∈ Publishers : topic(p) = {}", topic),
+Invocation:
 
-            Self::RateFeasibility { topic, required_hz, .. } =>
-                write!(f, "rate(publisher({})) ≥ {} Hz", topic, required_hz),
+```bash
+# Check the manifests of a launch tree (merged, cross-file checks included)
+play_launch check <pkg> <launch_file>
 
-            Self::TypeConsistency { topic, pub_type, sub_type } =>
-                write!(f, "type(pub, {}) = {} ≡ type(sub, {}) = {}",
-                    topic, pub_type, topic, sub_type),
-            // ...
-        }
-    }
-}
+# Filter to one rule, JSON output
+play_launch check --rule qos-match --format json <pkg> <launch_file>
+
+# Scheduling plan check with per-node provenance
+play_launch check --sched <platform.yaml> --explain <pkg> <launch_file>
 ```
 
-Example output:
+## Crate Choices (as shipped)
 
-```
-[E001] QoS(lidar_driver, pointcloud).reliability ≥ QoS(cropbox_filter, pointcloud).reliability  ✗
-[E002] scope(perception).max_latency_ms = 85 ≥ critical_path = 70  ✓
-[E003] ∃p ∈ Publishers : topic(p) = tracked_objects  ✓
-[E004] rate(publisher(pointcloud)) = 10 Hz ≥ 10 Hz  ✓
-```
+| Concern | Crate | Notes |
+|---------|-------|-------|
+| YAML parsing with spans | `yaml-rust2` | `MarkedYaml` gives line/col per node; converted to byte offsets |
+| Diagnostic rendering | `codespan-reporting` | Multi-file, FileId-based |
+| Graph analysis | `petgraph` | Dataflow DAG, cycle detection |
+| Satisfiability | `z3` | Finite arg-space checking in the `satisfiability` rule |
 
-### SMT-LIB output (optional)
-
-For formal methods researchers or future Z3 integration:
-
-```smt2
-; E001: QoS compatibility
-(assert (>= (qos-reliability "lidar_driver" "pointcloud")
-            (qos-reliability "cropbox_filter" "pointcloud")))
-
-; E002: Scope budget
-(assert (>= 85.0 (+ (max 50.0 30.0) 20.0)))
-
-; E003: Topic existence
-(assert (> (count-publishers "tracked_objects") 0))
-```
-
-## File Structure
-
-```
-src/manifest/
-  parse/
-    mod.rs
-    yaml_ast.rs              # yaml-rust2 → ManifestAst with Spanned<T>
-    span.rs                  # Marker(line,col) → byte offset
-  constraint/
-    mod.rs
-    types.rs                 # Constraint, ConstraintKind, SpanInfo, Severity
-    check.rs                 # CheckContext, run_checks()
-    emit/
-      mod.rs
-      diagnostic.rs          # → codespan-reporting terminal output
-      formal.rs              # → Unicode mathematical notation
-      smtlib.rs              # → SMT-LIB2 (optional)
-  rules/
-    mod.rs                   # ValidationRule trait, default_rules()
-    qos_compatibility.rs     # E001
-    topic_wiring.rs          # E002
-    scope_budget.rs          # E003
-    rate_feasibility.rs      # E004
-    type_consistency.rs      # E005
-    import_resolution.rs     # E006
-```
-
-## Crate Choices
-
-| Concern                 | Crate                 | Why                                                 |
-|-------------------------|-----------------------|-----------------------------------------------------|
-| YAML parsing with spans | `yaml-rust2`          | `MarkedYaml` gives line/col per node                |
-| Diagnostic rendering    | `codespan-reporting`  | Multi-file, FileId-based, stable, used by naga/Deno |
-| Error types             | `thiserror`           | Already in our deps                                 |
-| Graph analysis          | `petgraph`            | Critical path, cycle detection                      |
-| SMT interaction (opt.)  | `rsmt2` or `easy-smt` | Pipe SMT-LIB2 to Z3 subprocess                      |
-
-## Tiered Implementation
-
-### Tier 1: Graph algorithms (implement now)
-
-| Check                       | Algorithm                               | Complexity |
-|-----------------------------|-----------------------------------------|------------|
-| Critical path (E2E latency) | Topo sort + DP longest path             | $O(V+E)$   |
-| Scope budget validity       | Tree walk: children max/sum ≤ parent    | $O(V)$     |
-| Cycle detection             | `is_cyclic_directed()` / `tarjan_scc()` | $O(V+E)$   |
-| Unreachable nodes           | `has_path_connecting()`                 | $O(V+E)$   |
-| QoS compatibility           | Direct comparison per topic             | $O(E)$     |
-| Type consistency            | String equality per topic               | $O(E)$     |
-| Import/export completeness  | Set difference                          | $O(V)$     |
-| Rate feasibility            | Arithmetic per topic                    | $O(E)$     |
-
-This covers ~95% of contract checking with zero new dependencies
-beyond `petgraph` (likely already in the dependency tree).
-
-### Tier 2: Runtime monitors (add with audit feature)
-
-Hand-rolled monitors for each contract field:
-
-```rust
-struct LatencyMonitor {
-    bound_ms: f64,
-    violations: u64,
-    total: u64,
-}
-
-impl LatencyMonitor {
-    fn check(&mut self, take_time: f64, pub_time: f64) -> bool {
-        self.total += 1;
-        if pub_time - take_time > self.bound_ms {
-            self.violations += 1;
-            return false;
-        }
-        true
-    }
-}
-```
-
-Each monitor maps to a contract field:
-
-| Contract field                           | Monitor                               |
-|------------------------------------------|---------------------------------------|
-| `paths.*.max_latency_ms`                 | `LatencyMonitor`                      |
-| `paths.*.min_latency_ms`                 | `LatencyAnomalyMonitor`               |
-| `paths.*.max_age_ms`                     | `AgeMonitor` (static or header.stamp) |
-| topic `rate_hz` / endpoint `min_rate_hz` | `RateMonitor`                         |
-| endpoint `jitter_ms`                     | `JitterMonitor`                       |
-| `paths.*.drop` / topic `drop`            | `DropMonitor` (sliding window)                             |
-| burstiness (always-on)                   | `BurstinessMonitor` (autocorrelation, dispersion, max run) |
-
-Data source: Phase 29 RCL interception events via SPSC ring buffer.
-
-Alternative: `rtlola-interpreter` (pure Rust, stream-based runtime
-verification) for complex cross-topic correlations. Start with
-hand-rolled monitors; migrate if needed.
-
-### Tier 3: Constraint solvers (add if needed)
-
-**`z3` crate** — encode timing constraints as SMT formulas:
-
-```rust
-// "Is there a consistent assignment satisfying all scope budgets?"
-let solver = z3::Solver::new(&ctx);
-for scope in scopes {
-    let sum = Real::add(&ctx, &node_latencies);
-    solver.assert(&sum.le(&budget));
-}
-match solver.check() {
-    SatResult::Sat => { /* feasible */ }
-    SatResult::Unsat => { /* conflicting constraints */ }
-}
-```
-
-**`good_lp`** — linear programming for budget optimization:
-"distribute 170ms E2E budget optimally across pipeline stages."
-
-### Not recommended
-
-- **UPPAAL**: external binary, academic license, XML format
-- **SPIN**: wrong abstraction (protocol verification, not timing)
-- **TLA+**: no Rust integration, not suited for quantitative timing
-
-## Implementation Path
-
-```
-Phase 31 (now):      yaml-rust2 + petgraph + codespan-reporting
-                     Parse with spans, graph checks, terminal diagnostics
-                     New deps: yaml-rust2, codespan-reporting
-
-Phase 31 (audit):    Hand-rolled monitors + interception events
-                     Runtime checking of rate, deadline, latency, drops
-                     Zero new deps
-
-Future (if needed):  z3 for constraint satisfiability
-                     good_lp for budget optimization
-                     rtlola for complex runtime specs
-```
-
-## References
-
-- Convent et al., "RTLola Specification Language" (ATVA 2019)
-- `yaml-rust2` — https://docs.rs/yaml-rust2
-- `codespan-reporting` — https://docs.rs/codespan-reporting
-- `petgraph` — https://docs.rs/petgraph
-- `z3` — https://docs.rs/z3
-- `good_lp` — https://docs.rs/good_lp
-- `rsmt2` — https://docs.rs/rsmt2
+Ideas from earlier drafts of this document that were **not** built: a
+`Constraint`/`ConstraintKind` intermediate representation, a formal-notation
+emitter, SMT-LIB output, `good_lp` budget optimization, and RTLola
+monitors. The rule → `Diagnostic` path proved sufficient; revisit only
+with a concrete need.

@@ -28,6 +28,22 @@ pub fn band_violations(plan: &SchedPlan, band: &PriorityBand) -> Vec<BandViolati
     plan.tiers
         .iter()
         .filter(|t| t.name != DEFAULT_TIER)
+        // A `SCHED_DEADLINE` tier has NO priority — deadline threads preempt
+        // every fixed-priority thread regardless of RT priority, which is why
+        // the kernel gives them a reservation instead of a number. Its
+        // `priority` field is therefore absent, not zero, and comparing it
+        // against the RT band would flag a violation that does not exist.
+        //
+        // This is the same defect class as the `SCHED_OTHER` tier that was
+        // once "clamped" into the RT band and printed as `SCHED_OTHER 10` — a
+        // state Linux cannot represent, and fatal under strict mode. Skipping
+        // is the fix in both cases: check only tiers that have a priority to
+        // check.
+        .filter(|t| {
+            t.posix
+                .as_ref()
+                .is_none_or(|p| p.sched.priority().is_some())
+        })
         .filter(|t| !band.contains(t.priority))
         .map(|t| BandViolation {
             tier: t.name.clone(),
@@ -245,6 +261,7 @@ mod tests {
         let facts = PlatformResources::Posix(PosixResources {
             rt_priority_band: Some(PriorityBand { min: 10, max: 40 }),
             isolated_cpus: vec![],
+            rr_timeslice_us: None,
         });
         let plan = mapper.map(&input, &facts).expect("maps");
         assert!(rate_priority_contradictions(&input, &plan).is_empty());

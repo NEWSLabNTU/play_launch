@@ -16,6 +16,12 @@ the topics and services that wire them, and optional timing contracts.
 Where a launch file says *what to run*, the manifest says *what communicates
 and at what quality*.
 
+**Terminology:** "manifest" is the document; "contract file" is the file
+that carries it on disk (`<stem>.contract.yaml`, matching the launch
+file's stem). The two are used interchangeably — CLI surfaces
+(`--contracts`, `--no-provider-contracts`) say "contract", the format
+model says "manifest". They are one artifact, not two.
+
 **How to read this document:**
 
 - **[Manifest Elements](#manifest-elements)** — the building blocks: scope, node, topic, path, etc.
@@ -251,8 +257,10 @@ The **launch tree provides context** to the manifest:
 - **Parent-child relationships**: from `<include>` tags — used for
   scope-tree budget checks
 
-This context is captured in the **scope table** (already produced by
-the parser as part of `record.json`). The checker receives the scope
+This context is captured in the **scope table** (produced by the launch
+parser; carried in the SystemModel's `structure.scopes` — the
+`record.json` artifact that originally carried it is retired). The
+checker receives the scope
 table and applies it: substitute args, resolve relative names, filter
 conditions. The manifest itself is inert.
 
@@ -875,7 +883,7 @@ keys are resolved by the checker using the scope's namespace from the
 launch tree. Each scope only references its own nodes in endpoint lists.
 
 ```yaml
-# tier4_perception_launch/tracking.yaml
+# tier4_perception_launch/tracking.contract.yaml
 # scope ns (from launch tree): /perception/object_recognition/tracking
 version: 1
 
@@ -897,7 +905,7 @@ topics:
 ```
 
 ```yaml
-# tier4_perception_launch/prediction.yaml
+# tier4_perception_launch/prediction.contract.yaml
 # scope ns (from launch tree): /perception/object_recognition/prediction
 version: 1
 
@@ -931,15 +939,15 @@ topics:
 ```
 
 ```yaml
-# tier4_perception_launch/perception.yaml
+# tier4_perception_launch/perception.contract.yaml
 # scope ns (from launch tree): /perception/object_recognition
 version: 1
 
 includes:
   tracking:
-    manifest: tier4_perception_launch/tracking.yaml
+    manifest: tier4_perception_launch/tracking.contract.yaml
   prediction:
-    manifest: tier4_perception_launch/prediction.yaml
+    manifest: tier4_perception_launch/prediction.contract.yaml
 
 paths:
   main:
@@ -968,7 +976,7 @@ A control scope with one always-present controller and an optional
 validator gated by a boolean launch arg:
 
 ```yaml
-# tier4_control_launch/control.yaml
+# tier4_control_launch/control.contract.yaml
 # scope ns (from launch tree): /control
 version: 1
 
@@ -1174,6 +1182,7 @@ Endpoints can be a list (`pub: [a, b]`) or a map with properties.
 |---------------|-----------------------------------------------|------------|
 | `lifecycle`   | True if ROS 2 lifecycle (managed) node — contracts are runtime-gated on Active state | `false` — regular node |
 | `if` / `unless` | Condition                                   | Always included |
+| `criticality` | Scheduling-mapper hint: `high` \| `medium` \| `low`. Advisory, not schema-enforced — unrecognized values are ignored, never a parse error. Used by the `chain_aware` mapper for chain ordering and criticality bucketing (see [scheduling.md](scheduling.md)) | No criticality — node buckets below all criticality-tagged nodes |
 
 **Subscriber properties:**
 
@@ -1304,13 +1313,20 @@ Child scopes. The name is the ROS namespace.
 ```yaml
 includes:
   tracking:
-    manifest: tier4_perception_launch/tracking.yaml
+    manifest: tier4_perception_launch/tracking.contract.yaml
   prediction:
-    manifest: tier4_perception_launch/prediction.yaml
+    manifest: tier4_perception_launch/prediction.contract.yaml
   system_monitor:
     if: $(var launch_system_monitor)
-    manifest: autoware_system_monitor/system_monitor.yaml
+    manifest: autoware_system_monitor/system_monitor.contract.yaml
 ```
+
+The `manifest:` value is **informational** — child contract files are
+not loaded through it. The launch tree's own `<include>` structure
+determines the child scopes, and each child's contract file is resolved
+per launch file through the overlay/provider channels (see
+[Directory Structure](#directory-structure)). The include entry exists
+to carry per-child conditions and to name the scope for budget checks.
 
 Inline includes (for `<group>` blocks) embed the manifest structure
 directly instead of referencing a file:
@@ -1334,7 +1350,7 @@ Named causal relations with timing constraints. Declared on nodes and
 scopes. See [Latency and Data Freshness](#latency-and-data-freshness) for definitions.
 
 ```yaml
-# Node-level path (latency only — drops are on topics, not node paths)
+# Node-level path (by convention latency only — declare drops on topics/scope paths)
 nodes:
   centerpoint:
     sub: [pointcloud]
@@ -1467,7 +1483,8 @@ declaration in any ancestor suffices.
 ## Vocabulary v2
 
 *Phase 44.1. All fields below are additive and optional — existing
-contracts (75+ Autoware files, rt_workspace) parse unmodified. See
+contracts (75+ Autoware files, rt_workspace) parse unmodified. See the
+play_launch repo's
 `docs/superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md`
 for the full design rationale; this section is the field reference.*
 
@@ -1610,11 +1627,12 @@ rule a boundary could only ever be the *first* element of a chain
 (nothing precedes it to fail the "consumed by" check); with it, a
 boundary may appear anywhere in the chain, including interior positions
 (`S1 B1 S2 B2 S3`-shaped chains, matching the chain-aware mapper's own
-worked example). See the [chain-aware mapper
-design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md#boundary-consumption-rule-implementation-note-2026-07-17)
-for the full rationale; implemented in `chain_checks::resolve_segment`
-(`src/play_launch/src/ros/chain_checks.rs`, `play_launch`'s cross-scope
-layer — not this crate).
+worked example). See the play_launch repo's
+`docs/superpowers/specs/2026-07-17-chain-aware-mapper-design.md`
+(§boundary consumption rule) for the full rationale; implemented in
+`chain_checks::resolve_segment` (`ros-launch-resolve`
+`resolve/src/ros/chain_checks.rs`, the consumer's cross-scope layer —
+not this crate).
 
 **Chain rule severities** (see [Static Validation](#static-validation)
 for the full table): `chain-shape` (cyclic chains, missing `via:`
@@ -1632,10 +1650,16 @@ block `check`, but is loud in its output and excludes the chain from
 
 ## Static Validation
 
-The table below lists 25 rules — the rules registered in this crate's
-`default_rules()`, plus 3 cross-scope Vocabulary v2 chain rules (marked
-`*`) that require the merged `ManifestIndex` and live in `play_launch`
-(`src/play_launch/src/ros/chain_checks.rs`) rather than this crate:
+The table below lists the 20 rules registered in this crate's
+`default_rules()`, plus the cross-scope rules (marked `*`) that require
+the merged `ManifestIndex` and live in the consumer's merge layer —
+`ros-launch-resolve` (`resolve/src/ros/manifest_loader.rs` and
+`chain_checks.rs` in that repo), invoked by `play_launch check`. Some
+rule ids exist on **both** sides: `consistency` (the in-crate rule is a
+placeholder no-op; the real cross-scope agreement check runs in the
+consumer), `scope-budget` (in-crate: conservative flat sum; consumer:
+topology-aware critical path), and `rate-hierarchy`, `qos-match`,
+`dangling-entity` (re-run after cross-scope merge):
 
 | Rule                | What it catches                                                    | Severity      |
 |---------------------|--------------------------------------------------------------------|---------------|
@@ -1644,16 +1668,15 @@ The table below lists 25 rules — the rules registered in this crate's
 | `qos-compat`        | Invalid QoS values                                                 | Error         |
 | `qos-match`         | Publisher and subscriber QoS incompatible per DDS offered ≥ requested rule | Error |
 | `rate-hierarchy`    | Publisher rate < topic rate < subscriber rate                       | Error         |
-| `rate-chain`        | Output rate unachievable from upstream                              | Warning       |
-| `budget-overflow`   | Descendant budget exceeds ancestor budget (part > whole)           | Error         |
+| `budget-overflow`\* | Descendant path budget exceeds a matched ancestor path budget (part > whole) | Error |
 | `scope-budget`      | Sum of children exceeds scope budget                               | Warning       |
 | `causal-dag`        | Cycles in the dataflow graph (`state:` breaks cycles)              | Error         |
-| `drop-sanity`       | Scope max_drop_rate < topic max_drop_rate on its path; effective delivery rate < sub.min_rate_hz; values out of range | Error |
+| `drop-sanity`       | Effective delivery rate < sub.min_rate_hz; drop values out of range (`n > w`, `max_consecutive: 0`) | Error |
 | `service-wiring`    | Service client with no matching server across tree                 | Warning       |
 | `service-type`      | Service with no type; server/client not on node                    | Error/Warning |
 | `dangling-entity`   | Topic with 0 publishers across tree; service/action with 0 servers | Error/Warning |
 | `satisfiability`    | Arg combination produces dangling entities; unreachable nodes      | Error/Warning |
-| `consistency`       | Same resolved topic/service has conflicting `type:`, `rate_hz:`, or topic-level `qos:` across scopes | Error |
+| `consistency`\*     | Same resolved topic/service has conflicting `type:`, `rate_hz:`, or topic-level `qos:` across scopes | Error |
 | `state-consistency` | Node has ≥2 sibling subs tagged `state: true` and *exactly one* other sub is neither tagged `state:` nor referenced as a path `input` — likely a missed `state:` tag | Warning |
 | `explicit-trigger` (Phase 44.1/44.2) | Path has no explicit `trigger:` — authoring-hygiene nudge toward the four-way taxonomy, fires regardless of legacy `input:` derivation | Info |
 | `inherited-rate` (44.1/44.2) | A path has a non-`Input` explicit `trigger:` (`timer`/`once`/`spontaneous`) alongside a stale, now-ignored legacy `input:` list | Warning |
@@ -1665,20 +1688,21 @@ The table below lists 25 rules — the rules registered in this crate's
 | `chain-budget`\* (44.2) | Chain's declared segment-latency sum + sampling cost exceeds its `max_latency_ms` budget | Warning |
 | `chain-sampling-feasibility`\* (44.2/44.3) | Chain's sampling cost (clock boundaries alone) already meets or exceeds its budget — structurally infeasible, no scheduling assignment can fix it | Warning |
 
-\* Cross-scope rule, implemented in `play_launch` (not this crate's
-`default_rules()`) — requires the merged `ManifestIndex` to resolve
-`via:` links and segment identities across manifest files.
+\* Cross-scope rule, implemented in `ros-launch-resolve`'s merge layer
+(not this crate's `default_rules()`) — requires the merged
+`ManifestIndex` to resolve names, budgets, `via:` links, and segment
+identities across manifest files.
 
 **Drop checking** is split between static and runtime:
-- **Static (`drop-sanity`)**: validates values are in range, scope drop
-  rate is not tighter than any individual topic's drop rate on the path,
-  and effective delivery rate meets subscriber demand
+- **Static (`drop-sanity`)**: validates values are in range and that
+  effective delivery rate meets subscriber demand
   (`rate_hz × (1 - max_drop_rate) >= sub.min_rate_hz`). No chain
   composition — drop rates depend on runtime conditions.
-- **Runtime monitoring**: observes actual drop patterns, detects
-  burstiness (autocorrelation, dispersion index), and checks
-  `max_consecutive` against observed longest runs. See
-  [Burstiness](contract-theory.md#burstiness) for the detection metrics.
+- **Runtime monitoring**: checks the observed delivery ratio against
+  `max_drop_rate`. Burstiness detection (autocorrelation, dispersion
+  index) and `max_consecutive` checking are designed extensions — see
+  [Burstiness](contract-theory.md#burstiness) for the metrics and
+  implementation status.
 
 **Satisfiability checking**: when args have `type: bool` or `choices:`,
 the checker uses Z3 to verify no valid arg combination produces a
@@ -1723,8 +1747,9 @@ error[consistency]: topic '/localization/kinematic_state' type mismatch:
   'geometry_msgs/msg/PoseStamped' in control.yaml
   --> localization.yaml:10:5, control.yaml:18:5
 
-error[drop-sanity]: scope 'perception' max_drop_rate (0.02) is tighter than
-  topic '/perception/pointcloud' max_drop_rate (0.05) on its path
+error[drop-sanity]: topic '/perception/pointcloud' effective delivery rate
+  (9.5 Hz = 10 Hz × (1 - 0.05)) below subscriber 'tracker/input'
+  min_rate_hz (10)
   --> perception.yaml:15:5
 
 error[qos-match]: incompatible QoS on topic '/sensor/pointcloud' field
@@ -1742,12 +1767,11 @@ warning[satisfiability]: when pose_source='gnss', topic 'ndt_pose' has
 - **AUTOSAR Timing Extensions** (R22-11): event chains, age/reaction constraints
 - **CARET**: cause-effect chain latency measurement for ROS 2
 - **ROS 2 message_filters**: ApproximateTimeSynchronizer algorithm
-- Contract theory foundations: `docs/contract-theory.md`
+- Contract theory foundations: [contract-theory.md](contract-theory.md)
 
 ## Non-Goals
 
 - Discovery beyond the provider sidecar / overlay channels (e.g. scanning
   `AMENT_PREFIX_PATH` for contracts outside those two layouts)
 - Blocking enforcement via RCL interception (future)
-- User-defined chains — scope hierarchy IS the chain structure
 - Semantic component extraction — manifests are user-authored

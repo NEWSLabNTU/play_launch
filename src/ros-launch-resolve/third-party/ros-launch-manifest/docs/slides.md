@@ -153,20 +153,23 @@ Parent wires children: `child_name/group_name` in topics and services.
 
 # Verification Rules
 
-**14 static checks** at authoring time, before any code runs:
+**20 single-manifest checks** + cross-scope checks in the consumer,
+all at authoring time, before any code runs:
 
 | Rule | What it catches | Severity |
 |------|----------------|----------|
 | `rate-hierarchy` | pub rate < topic rate < sub rate | Error |
-| `budget-overflow` | Node 20ms inside scope 10ms (part > whole) | Error |
-| `scope-budget` | Sum of children > scope budget | Warning |
-| `drop-rate` | Scope drop < composed topics; effective rate < sub demand | Error |
+| `budget-overflow`* | Child path budget > ancestor path budget (part > whole) | Error |
+| `scope-budget` | Sum of children > scope budget (cross-scope: critical path) | Warning |
+| `drop-sanity` | Values out of range; effective rate < sub demand | Error |
 | `causal-dag` | Feedback cycle (state: true breaks it) | Error |
-| `satisfiability` | Arg combo produces dangling entities (Z3) | Error |
-| `dangling-entity` | Topic with 0 publishers after filtering | Warning |
+| `satisfiability` | Arg combo produces dangling entities (Z3) | Error/Warning |
+| `dangling-entity` | Topic with 0 publishers after filtering | Warning/Error |
 
-Plus: `endpoint-unique`, `wiring`, `qos-compat`, `rate-chain`,
-`drop-consecutive`, `service-wiring`, `service-type`
+Plus: `endpoint-unique`, `wiring`, `qos-compat`, `qos-match`,
+`service-wiring`, `service-type`, `consistency`*, `state-consistency`,
+trigger/sync/queue lints, `chain-shape` / `chain-link`* /
+`chain-budget`* (\* = cross-scope, in the consumer's merge layer)
 
 ---
 
@@ -228,24 +231,31 @@ Example: `pose_source: gnss` but no `gnss_node` declared →
 
 # Status
 
-**Manifest crate**: 186 tests, 14 validation rules, Z3 satisfiability
-**Autoware contracts**: 68 manifests covering the full planning_simulator tree
+**Checker**: 20 single-manifest rules (incl. Z3 satisfiability) +
+9 cross-scope rules in the consumer (`consistency`, `budget-overflow`,
+critical-path `scope-budget`, `chain-link`, `chain-budget`, …)
+**Runtime**: rate/age/latency/drop enforcement via RCL interception
+(`--enforce-rules`)
+**Scheduling**: 4 mappers (`manual`, `rate_monotonic`,
+`deadline_monotonic`, `chain_aware`) deriving per-node RT priorities
+from these contracts
+**Autoware contracts**: 76 contract files covering the full
+planning_simulator tree
 
-| Category | Count |
-|----------|-------|
-| Leaf manifests (with nodes) | 36 |
-| Intermediate manifests (orchestration) | 32 |
-| Validation rules | 14 |
-| Design docs | launch-manifest.md + contract-theory.md |
-
-Open items: `budget-overflow` implementation, runtime monitoring
-integration, per-rule CLI filter (`--rule`)
+Open items: burstiness detection metrics, capture mode
+(contract bootstrapping from traces)
 
 ---
 
 # Links
 
-- **Manifest spec**: `src/ros-launch-manifest/docs/launch-manifest.md`
-- **Contract theory**: `src/ros-launch-manifest/docs/contract-theory.md`
-- **Autoware contracts**: `~/repos/autoware-contract/`
-- **Design issues**: `src/ros-launch-manifest/docs/design-issues.md`
+(paths relative to the `ros-launch-manifest` repo root)
+
+- **Docs index**: `docs/README.md`
+- **Manifest spec**: `docs/launch-manifest.md`
+- **Contract theory**: `docs/contract-theory.md`
+- **Checker implementation**: `docs/contract-verification.md`
+- **Scheduling**: `docs/scheduling.md`
+- **Design issues**: `docs/design-issues.md`
+- **Autoware contracts**: the `autoware-contract` repository
+  (76 contract files for the planning_simulator tree)

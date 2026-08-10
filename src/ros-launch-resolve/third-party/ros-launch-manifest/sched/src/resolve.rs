@@ -38,6 +38,12 @@ pub enum SchedError {
     UnknownTier { tier: String },
     #[error("tier `{tier}` has no [tiers.{tier}.{target}] sub-table for the resolve target")]
     MissingPlatformSpec { tier: String, target: String },
+    #[error("tier `{tier}`: {source}")]
+    Posix {
+        tier: String,
+        #[source]
+        source: crate::posix::PosixError,
+    },
 }
 
 /// Normalize a namespace/scope path: ensure a single leading slash, no trailing.
@@ -165,6 +171,15 @@ pub struct ResolvedTier {
     pub deadline_us: Option<u64>,
     pub deadline_policy: Option<String>,
     pub spin_period_us: Option<u64>,
+    /// Typed `posix` placement (Phase 60).
+    ///
+    /// Additive beside the `sched_class`/`priority`/`core` trio above, which
+    /// stays readable-but-deprecated for one release. When present this is
+    /// authoritative: it is the only form that can express `SCHED_DEADLINE`,
+    /// a multi-CPU mask, a cpuset partition, or a uclamp range, and it cannot
+    /// represent the illegal combinations the trio could (a priority on
+    /// `SCHED_OTHER`, an affinity mask on `SCHED_DEADLINE`).
+    pub posix: Option<crate::posix::PosixPlacement>,
     /// Member node names, sorted.
     pub members: Vec<String>,
 }
@@ -227,8 +242,23 @@ pub fn resolve(
                 tier: name.clone(),
                 target: target.to_string(),
             })?;
+        // Lower the stringly-typed trio into the typed placement. Only the
+        // `posix` target has one — every other target keeps its own
+        // vocabulary, which this crate does not interpret.
+        let posix = if matches!(target, "posix" | "native") {
+            Some(
+                posix_placement_from_spec(spec).map_err(|source| SchedError::Posix {
+                    tier: name.clone(),
+                    source,
+                })?,
+            )
+        } else {
+            None
+        };
+
         out.push(ResolvedTier {
             name,
+            posix,
             priority: spec.priority,
             stack_bytes: spec.stack_bytes,
             core: spec.core,
@@ -247,6 +277,56 @@ pub fn resolve(
     // Highest priority first; ties by name for determinism.
     out.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.name.cmp(&b.name)));
     Ok(ResolvedTierTable { tiers: out })
+}
+
+/// Lower a `[tiers.<name>.posix]` sub-table into the typed placement.
+///
+/// This is where the v1/legacy path stops failing open: an unrecognized
+/// `sched_class` used to become `SCHED_OTHER` silently, so `SCHED_FIF0`
+/// dropped a node out of real-time with no diagnostic. It is now an error
+/// naming the six legal values.
+///
+/// An absent `sched_class` still means `SCHED_OTHER` — that is a real default,
+/// not a parse failure, and it is what an unmatched node has always gotten.
+fn posix_placement_from_spec(
+    spec: &crate::types::TierPlatformSpec,
+) -> Result<crate::posix::PosixPlacement, crate::posix::PosixError> {
+    use crate::posix::{PosixAffinity, PosixPolicyKind, PosixSched};
+
+    let kind = match spec.sched_class.as_deref() {
+        Some(s) => PosixPolicyKind::parse(s)?,
+        None => PosixPolicyKind::Other,
+    };
+
+    // `priority` is `i64` to admit RTOS negative cooperative priorities, so it
+    // is narrowed here rather than at the schema. Out-of-range values are
+    // caught by `PosixPlacement::validate`, which reports the real bound.
+    let priority = spec.priority.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+
+    let sched = match kind {
+        PosixPolicyKind::Fifo => PosixSched::Fifo { priority },
+        PosixPolicyKind::Rr => PosixSched::Rr { priority },
+        PosixPolicyKind::Idle => PosixSched::Idle,
+        PosixPolicyKind::Batch => PosixSched::Batch { nice: 0 },
+        PosixPolicyKind::Other => PosixSched::Other { nice: 0 },
+        PosixPolicyKind::Deadline => {
+            // v1 cannot author a reservation: it has no per-tier runtime, and
+            // substituting one would invent a number. Deriving SCHED_DEADLINE
+            // is the v2 mapper's job.
+            return Err(crate::posix::PosixError::UnknownSchedClass {
+                value: "SCHED_DEADLINE (not authorable in the v1 tier schema \
+                        — use a v2 platform file with a declared budget)"
+                    .to_string(),
+            });
+        }
+    };
+
+    let affinity = match spec.core {
+        Some(cpu) => PosixAffinity::Cpus { cpus: vec![cpu] },
+        None => PosixAffinity::Inherit,
+    };
+
+    crate::posix::PosixPlacement::new(sched, affinity)
 }
 
 #[cfg(test)]

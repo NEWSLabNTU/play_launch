@@ -6,6 +6,11 @@ description = "Static contract checker for launch manifests: wiring, QoS, rate, 
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Exposes `fixture_dir()` for dependent crates' tests. Off by default: it is
+# test-support surface, not part of the checker's API.
+testdata = []
+
 [dependencies]
 ros-launch-manifest-types = { path = "../types" }
 petgraph = "0.8"

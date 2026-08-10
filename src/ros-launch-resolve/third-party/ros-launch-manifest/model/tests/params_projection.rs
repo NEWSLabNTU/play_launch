@@ -85,11 +85,11 @@ fn rcl_style_wildcard_sections_match() {
 
     let deep = n.resolved_params("/sensing/lidar/driver");
     assert_eq!(deep.get("from_subtree"), Some(&ParamValue::Int(1)));
-    assert!(deep.get("must_not_apply").is_none(), "{deep:?}");
+    assert!(!deep.contains_key("must_not_apply"), "{deep:?}");
 
     let one = n.resolved_params("/ctrl/planner");
     assert_eq!(one.get("from_single_seg"), Some(&ParamValue::Int(2)));
-    assert!(one.get("from_subtree").is_none(), "{one:?}");
+    assert!(!one.contains_key("from_subtree"), "{one:?}");
 
     // `**` also matches zero segments: /sensing itself.
     let zero = n.resolved_params("/sensing");
@@ -97,7 +97,7 @@ fn rcl_style_wildcard_sections_match() {
 
     // A single-segment wildcard must NOT span two segments.
     let too_deep = n.resolved_params("/a/b/planner");
-    assert!(too_deep.get("from_single_seg").is_none(), "{too_deep:?}");
+    assert!(!too_deep.contains_key("from_single_seg"), "{too_deep:?}");
 }
 
 // ---------------------------------------------------------------------------
