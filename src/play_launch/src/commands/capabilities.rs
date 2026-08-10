@@ -240,12 +240,39 @@ pub fn handle_verify() -> eyre::Result<()> {
 
     all_ok &= verify_cap(find_io_helper_path(), "cap_sys_ptrace", "I/O monitoring");
     all_ok &= verify_cap(find_rt_helper_path(), "cap_sys_nice", "RT scheduling");
+    report_reservation_readiness();
 
     if !all_ok {
         std::process::exit(1);
     }
 
     Ok(())
+}
+
+/// Report whether this process could host `SCHED_DEADLINE` reservations.
+///
+/// Deliberately does NOT affect the exit status. A missing cpuset partition is
+/// not a broken installation — it is the normal state of every host that has
+/// not been provisioned for reservations, and fixed-priority RT works fine
+/// without it. Failing `verify` over it would tell almost every user their
+/// setup is wrong when it is not.
+fn report_reservation_readiness() {
+    use crate::execution::cpuset::{ReservationReadiness, reservation_readiness};
+
+    match reservation_readiness() {
+        ReservationReadiness::Ready { cgroup, cpus } => {
+            let list: Vec<String> = cpus.iter().map(|c| c.to_string()).collect();
+            println!(
+                "✓ SCHED_DEADLINE reservations available: cpuset partition {} owns CPU(s) {}",
+                cgroup.display(),
+                list.join(",")
+            );
+        }
+        ReservationReadiness::NotReady { reason } => {
+            println!("· SCHED_DEADLINE reservations unavailable (SCHED_FIFO is unaffected)");
+            println!("  {reason}");
+        }
+    }
 }
 
 /// Verify `label` (e.g. "RT scheduling") carries `cap` on the resolved helper

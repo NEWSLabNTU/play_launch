@@ -1,4 +1,5 @@
 pub mod context;
+pub mod cpuset;
 pub mod node_cmdline;
 pub mod rt_helper_client;
 pub mod sched_apply;
