@@ -260,6 +260,13 @@ pub enum SchedPolicy {
     Fifo,
     Rr,
     Other,
+    /// `SCHED_BATCH` — CFS without the interactivity bonus, so it preempts
+    /// less. Reachable only by an explicit override today.
+    Batch,
+    /// `SCHED_IDLE` — runs only when nothing else wants the CPU. Override-only,
+    /// and never derived: it is near-total starvation under load, which is the
+    /// wrong default for anything whose criticality has not been established.
+    Idle,
 }
 
 impl SchedPolicy {
@@ -268,6 +275,8 @@ impl SchedPolicy {
         match s {
             Some("SCHED_FIFO") => SchedPolicy::Fifo,
             Some("SCHED_RR") => SchedPolicy::Rr,
+            Some("SCHED_BATCH") => SchedPolicy::Batch,
+            Some("SCHED_IDLE") => SchedPolicy::Idle,
             _ => SchedPolicy::Other,
         }
     }
@@ -277,6 +286,8 @@ impl SchedPolicy {
             SchedPolicy::Fifo => libc::SCHED_FIFO,
             SchedPolicy::Rr => libc::SCHED_RR,
             SchedPolicy::Other => libc::SCHED_OTHER,
+            SchedPolicy::Batch => libc::SCHED_BATCH,
+            SchedPolicy::Idle => libc::SCHED_IDLE,
         }
     }
 }
@@ -285,8 +296,11 @@ impl SchedPolicy {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppliedTier {
     pub policy: SchedPolicy,
-    /// RT priority for Fifo/Rr; ignored for Other.
+    /// RT priority for Fifo/Rr; ignored for the CFS policies.
     pub priority: i32,
+    /// CFS nice value for Other/Batch; ignored for Fifo/Rr/Idle (Idle has no
+    /// nice of its own — the kernel forces it to the weakest weight).
+    pub nice: i32,
     /// CPUs to pin to; `None` leaves affinity untouched.
     pub cpus: Option<CpuSet>,
     /// Utilization clamp; `None` leaves it at the policy default. Carried
@@ -453,7 +467,11 @@ fn map_affinity_errno(pid: u32) -> SchedApplyError {
 /// the per-TID sweep.
 fn reset_on_fork_flag(policy: SchedPolicy) -> u64 {
     match policy {
-        SchedPolicy::Fifo | SchedPolicy::Rr | SchedPolicy::Other => 0,
+        SchedPolicy::Fifo
+        | SchedPolicy::Rr
+        | SchedPolicy::Other
+        | SchedPolicy::Batch
+        | SchedPolicy::Idle => 0,
     }
 }
 
@@ -511,25 +529,68 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
                 return Err(map_setattr_errno(tid, tier.uclamp.is_some(), tier.priority));
             }
         }
-        SchedPolicy::Other => {
-            // Deliberately no `sched_setattr` call. `SCHED_OTHER` threads
-            // already are `SCHED_OTHER` at nice 0, so issuing the syscall
-            // would change nothing while adding a failure mode — and would
-            // *reset* a nice value somebody else set. When the platform-file
-            // vocabulary can author `nice`, this branch grows a real call.
-            if tier.priority != 0 {
-                tracing::debug!(
-                    tid,
-                    priority = tier.priority,
-                    "priority ignored for SCHED_OTHER"
-                );
+        SchedPolicy::Other | SchedPolicy::Batch | SchedPolicy::Idle => {
+            // `SCHED_OTHER` at nice 0 with no uclamp is what every thread
+            // already has, so issuing the syscall would change nothing while
+            // adding a failure mode — and would *reset* a nice value somebody
+            // else set. Skip it, exactly as before the override vocabulary
+            // existed.
+            let is_no_op = matches!(tier.policy, SchedPolicy::Other)
+                && tier.nice == 0
+                && tier.uclamp.is_none();
+            if is_no_op {
+                if tier.priority != 0 {
+                    tracing::debug!(
+                        tid,
+                        priority = tier.priority,
+                        "priority ignored for SCHED_OTHER"
+                    );
+                }
+                return affinity_only(tid, tier);
             }
-            if tier.uclamp.is_some() {
-                tracing::debug!(tid, "uclamp ignored for SCHED_OTHER (no policy call yet)");
+
+            let mut flags = 0u64;
+            let mut size = SCHED_ATTR_SIZE_VER0;
+            let mut util_min = 0;
+            let mut util_max = 0;
+            if let Some(uclamp) = &tier.uclamp {
+                flags |= (libc::SCHED_FLAG_UTIL_CLAMP_MIN | libc::SCHED_FLAG_UTIL_CLAMP_MAX) as u64;
+                size = SCHED_ATTR_SIZE_VER1;
+                util_min = uclamp.min;
+                util_max = uclamp.max;
+            }
+
+            let attr = SchedAttr {
+                size,
+                sched_policy: tier.policy.as_libc() as u32,
+                sched_flags: flags,
+                // `SCHED_IDLE` has no nice of its own — the kernel pins it to
+                // the weakest weight — so it is sent as 0 rather than
+                // whatever an override happened to carry.
+                sched_nice: if matches!(tier.policy, SchedPolicy::Idle) {
+                    0
+                } else {
+                    tier.nice
+                },
+                sched_util_min: util_min,
+                sched_util_max: util_max,
+                ..Default::default()
+            };
+
+            // SAFETY: `attr` is fully initialized and its `size` field is
+            // never larger than the struct itself.
+            let ret = unsafe { sched_setattr(tid as libc::pid_t, &attr, 0) };
+            if ret == -1 {
+                return Err(map_setattr_errno(tid, tier.uclamp.is_some(), tier.priority));
             }
         }
     }
 
+    affinity_only(tid, tier)
+}
+
+/// Apply just the CPU affinity part of a tier to one TID.
+fn affinity_only(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
     if let Some(cpus) = &tier.cpus {
         let Some(set) = cpus.to_cpu_set_t() else {
             return Err(SchedApplyError::InvalidCpuSet {
@@ -669,6 +730,7 @@ mod tests {
         AppliedTier {
             policy: SchedPolicy::Other,
             priority: 0,
+            nice: 0,
             cpus,
             uclamp: None,
             tier_name: "test".to_string(),
@@ -679,6 +741,7 @@ mod tests {
         AppliedTier {
             policy: SchedPolicy::Fifo,
             priority,
+            nice: 0,
             cpus: None,
             uclamp: None,
             tier_name: "test".to_string(),
@@ -790,6 +853,45 @@ mod tests {
             let tier = other_tier(Some(CpuSet::single(0)));
             let result = apply_tier(pid, &tier);
             assert_eq!(result, Ok(()));
+        });
+    }
+
+    #[test]
+    fn sched_other_at_nice_zero_still_issues_no_policy_syscall() {
+        // The no-op guard: an unmodified best-effort node must not have its
+        // scheduling touched, or we would reset a nice value somebody else
+        // set and add a failure mode for no gain.
+        with_sleep_child(|pid| {
+            let before = read_attr(pid).expect("getattr");
+            let tier = other_tier(None);
+            apply_tier(pid, &tier).expect("no-op apply should succeed");
+            let after = read_attr(pid).expect("getattr");
+            assert_eq!(before.sched_policy, after.sched_policy);
+            assert_eq!(before.sched_nice, after.sched_nice);
+        });
+    }
+
+    #[test]
+    fn batch_and_nice_reach_the_kernel() {
+        // Lowering a node to SCHED_BATCH IS a change the user asked for, so
+        // unlike the no-op case it must actually issue the syscall.
+        if !has_sched_privilege() {
+            eprintln!("skipping batch_and_nice_reach_the_kernel: needs CAP_SYS_NICE/root");
+            return;
+        }
+        with_sleep_child(|pid| {
+            let tier = AppliedTier {
+                policy: SchedPolicy::Batch,
+                priority: 0,
+                nice: 7,
+                cpus: None,
+                uclamp: None,
+                tier_name: "test".to_string(),
+            };
+            apply_tier(pid, &tier).expect("batch apply should succeed");
+            let attr = read_attr(pid).expect("getattr");
+            assert_eq!(attr.sched_policy, libc::SCHED_BATCH as u32);
+            assert_eq!(attr.sched_nice, 7);
         });
     }
 
@@ -970,6 +1072,7 @@ mod tests {
             let tier = AppliedTier {
                 policy: SchedPolicy::Other,
                 priority: 0,
+                nice: 0,
                 cpus: Some(CpuSet::single(1023)),
                 uclamp: None,
                 tier_name: "test".to_string(),

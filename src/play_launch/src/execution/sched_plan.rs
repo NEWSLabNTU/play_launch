@@ -23,7 +23,7 @@ use ros_launch_manifest_sched::DEFAULT_TIER;
 
 use crate::{
     cli::options::ContainerMode,
-    execution::sched_apply::{AppliedTier, CpuSet, SchedApplyMode, SchedPolicy},
+    execution::sched_apply::{AppliedTier, CpuSet, SchedApplyMode, SchedPolicy, Uclamp},
 };
 use ros_launch_resolve::ros::{
     launch_dump::LaunchDump,
@@ -47,6 +47,60 @@ pub struct SchedPlan {
     /// layer carries bindings, not chain structure — a known gap, not this
     /// wave's scope; see that method's doc comment).
     pub chain_member_nodes: BTreeSet<String>,
+}
+
+/// Lower a resolved tier into the apply layer's [`AppliedTier`].
+///
+/// Prefers the typed `posix` placement when the tier carries one, because it
+/// is the only form that can express a nice value, a multi-CPU mask or a
+/// uclamp range. Falls back to the deprecated `sched_class`/`priority`/`core`
+/// trio otherwise, so a tier resolved by an older path still applies exactly
+/// as it did before.
+fn applied_from_tier(
+    tier: &ros_launch_manifest_sched::ResolvedTier,
+    policy: SchedPolicy,
+    priority: i32,
+) -> AppliedTier {
+    use ros_launch_manifest_sched::{PosixAffinity, PosixSched};
+
+    let Some(placement) = &tier.posix else {
+        return AppliedTier {
+            policy,
+            priority,
+            nice: 0,
+            cpus: tier.core.map(CpuSet::single),
+            uclamp: None,
+            tier_name: tier.name.clone(),
+        };
+    };
+
+    let (policy, priority, nice) = match placement.sched {
+        PosixSched::Fifo { priority } => (SchedPolicy::Fifo, priority, 0),
+        PosixSched::Rr { priority } => (SchedPolicy::Rr, priority, 0),
+        PosixSched::Other { nice } => (SchedPolicy::Other, 0, nice),
+        PosixSched::Batch { nice } => (SchedPolicy::Batch, 0, nice),
+        PosixSched::Idle => (SchedPolicy::Idle, 0, 0),
+        // Reservations are not derived yet, and a partially-built one would be
+        // worse than none: fall back to the tier's fixed priority rather than
+        // inventing runtime/deadline/period.
+        PosixSched::Deadline { .. } => (policy, priority, 0),
+    };
+
+    let cpus = match &placement.affinity {
+        PosixAffinity::Cpus { cpus } => Some(CpuSet::new(cpus.iter().copied())),
+        // A cpuset partition is joined by cgroup membership, never by
+        // sched_setaffinity — that is the whole reason the two are distinct.
+        PosixAffinity::Cpuset { .. } | PosixAffinity::Inherit => tier.core.map(CpuSet::single),
+    };
+
+    AppliedTier {
+        policy,
+        priority,
+        nice,
+        cpus,
+        uclamp: placement.uclamp.map(|(min, max)| Uclamp { min, max }),
+        tier_name: tier.name.clone(),
+    }
 }
 
 impl SchedPlan {
@@ -138,17 +192,7 @@ impl SchedPlan {
                 eyre::bail!("tier '{}': core {c} >= available CPUs ({ncpu})", tier.name);
             }
 
-            let applied = AppliedTier {
-                policy,
-                priority,
-                // The manifest schema still expresses placement as a single
-                // `core`; the apply layer takes a set. Widening the schema
-                // side is the typed-`posix:`-block wave, so this lowers the
-                // one-CPU case for now.
-                cpus: tier.core.map(CpuSet::single),
-                uclamp: None,
-                tier_name: tier.name.clone(),
-            };
+            let applied = applied_from_tier(tier, policy, priority);
 
             for fqn in &tier.members {
                 by_fqn.insert(fqn.clone(), applied.clone());
@@ -231,6 +275,7 @@ impl SchedPlan {
                 AppliedTier {
                     policy,
                     priority: spec.priority as i32,
+                    nice: 0,
                     cpus: spec.core.map(CpuSet::single),
                     uclamp: None,
                     tier_name: tier_name.clone(),

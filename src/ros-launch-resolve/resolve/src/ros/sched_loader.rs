@@ -483,6 +483,7 @@ fn apply_overrides(
             } else if tier.class.is_none() {
                 tier.class = Some("real_time".to_string());
             }
+            rebuild_posix_placement(tier, posix, selector, warnings);
             if let Some(member) = tier.members.first() {
                 overridden.insert(member.clone(), selector.clone());
             }
@@ -530,6 +531,98 @@ fn apply_overrides(
         // duplicate-print bug where this fired here AND at every print
         // site that loops `derived.warnings`).
         warnings.push(msg);
+    }
+}
+
+/// Re-derive a tier's typed `posix` placement after an override has been
+/// applied, folding in the fields the stringly-typed trio cannot express:
+/// `nice`, a multi-CPU `cpus` mask, and `uclamp`.
+///
+/// Called after `priority`/`core`/`sched_class` have already been merged, so
+/// the tier's own fields are the source of truth for policy and priority and
+/// this only adds what they cannot carry.
+fn rebuild_posix_placement(
+    tier: &mut ResolvedTier,
+    ov: &ros_launch_manifest_sched::PosixOverride,
+    selector: &str,
+    warnings: &mut Vec<String>,
+) {
+    use ros_launch_manifest_sched::{PosixAffinity, PosixPlacement, PosixPolicyKind, PosixSched};
+
+    let kind = match tier.sched_class.as_deref() {
+        Some(sc) => match PosixPolicyKind::parse(sc) {
+            Ok(k) => k,
+            // Unparseable classes are rejected at parse time; if one reaches
+            // here the typed placement is simply left alone rather than
+            // guessed at.
+            Err(_) => return,
+        },
+        None => PosixPolicyKind::Other,
+    };
+
+    let priority = tier.priority.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    let nice = ov.nice.unwrap_or(0);
+
+    let sched = match kind {
+        PosixPolicyKind::Fifo => PosixSched::Fifo { priority },
+        PosixPolicyKind::Rr => PosixSched::Rr { priority },
+        PosixPolicyKind::Other => PosixSched::Other { nice },
+        PosixPolicyKind::Batch => PosixSched::Batch { nice },
+        PosixPolicyKind::Idle => PosixSched::Idle,
+        PosixPolicyKind::Deadline => {
+            // A reservation needs a runtime, a deadline and a period. An
+            // override can name the policy but cannot conjure those numbers,
+            // and inventing them is exactly what this phase removed elsewhere.
+            warnings.push(format!(
+                "scheduling: override for `{selector}` names SCHED_DEADLINE, but a reservation \
+                 needs a declared `budget_us` and `reservations: required` — a policy name alone \
+                 cannot produce runtime/deadline/period, so the placement is left as derived"
+            ));
+            return;
+        }
+    };
+
+    // uclamp_min on an RT policy does nothing: RT tasks default to 1024/1024
+    // and already request the maximum performance point under schedutil. Say
+    // so rather than accepting a knob that silently has no effect.
+    if ov.uclamp_min.is_some() && sched.is_real_time() {
+        warnings.push(format!(
+            "scheduling: override for `{selector}` sets `uclamp_min` on {}, where it is a no-op \
+             — real-time tasks already default to 1024 and request the maximum performance \
+             point. Use `uclamp_max` to run an RT task below it, or the system-wide \
+             `sched_util_clamp_min_rt_default`.",
+            kind.as_str()
+        ));
+    }
+
+    let affinity = if !ov.cpus.is_empty() {
+        PosixAffinity::Cpus {
+            cpus: ov.cpus.clone(),
+        }
+    } else if let Some(c) = tier.core {
+        PosixAffinity::Cpus { cpus: vec![c] }
+    } else {
+        PosixAffinity::Inherit
+    };
+
+    let mut placement = PosixPlacement {
+        sched,
+        affinity,
+        uclamp: None,
+    };
+    if ov.uclamp_min.is_some() || ov.uclamp_max.is_some() {
+        placement.uclamp = Some((
+            ov.uclamp_min.unwrap_or(0),
+            ov.uclamp_max
+                .unwrap_or(ros_launch_manifest_sched::UCLAMP_MAX),
+        ));
+    }
+
+    match placement.validate() {
+        Ok(()) => tier.posix = Some(placement),
+        Err(e) => warnings.push(format!(
+            "scheduling: override for `{selector}` produced an invalid posix placement: {e}"
+        )),
     }
 }
 
@@ -2516,6 +2609,101 @@ nodes = ["fast_node"]
                 .expect("default tier");
             assert_eq!(default_tier.members, vec!["/slow_node".to_string()]);
         });
+    }
+
+    // ── Phase 60: the posix override vocabulary ──
+
+    /// Build a one-node plan and apply a single override to it, returning the
+    /// resulting tier and any warnings.
+    fn apply_one_override(
+        derived_class: Option<&str>,
+        derived_priority: i64,
+        yaml_body: &str,
+    ) -> (ResolvedTier, Vec<String>) {
+        let mut table = ResolvedTierTable {
+            tiers: vec![ResolvedTier {
+                name: "/n".to_string(),
+                priority: derived_priority,
+                sched_class: derived_class.map(str::to_string),
+                class: Some("real_time".to_string()),
+                members: vec!["/n".to_string()],
+                ..Default::default()
+            }],
+        };
+        let src = format!("target: posix\nmapper: manual\noverrides:\n  /n:\n{yaml_body}");
+        let file =
+            ros_launch_manifest_sched::parse_platform_file_yaml(&src).expect("override must parse");
+        let mut warnings = Vec::new();
+        let mut overridden = BTreeMap::new();
+        apply_overrides(&mut table, &file.overrides, &mut warnings, &mut overridden);
+        (table.tiers.remove(0), warnings)
+    }
+
+    #[test]
+    fn a_batch_override_reaches_the_typed_placement_with_its_nice_value() {
+        let (tier, warnings) = apply_one_override(
+            Some("SCHED_FIFO"),
+            40,
+            "    sched_class: SCHED_BATCH\n    nice: 10\n",
+        );
+        assert_eq!(
+            tier.posix.as_ref().map(|p| p.sched),
+            Some(ros_launch_manifest_sched::PosixSched::Batch { nice: 10 })
+        );
+        // Demoted out of RT, so the contradictory `class: real_time` label
+        // must be gone too.
+        assert_eq!(tier.class, None);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn a_cpus_override_produces_a_multi_cpu_mask() {
+        let (tier, warnings) = apply_one_override(Some("SCHED_FIFO"), 40, "    cpus: [2, 3]\n");
+        assert_eq!(
+            tier.posix.as_ref().map(|p| p.affinity.clone()),
+            Some(ros_launch_manifest_sched::PosixAffinity::Cpus { cpus: vec![2, 3] })
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn uclamp_min_on_an_rt_policy_warns_that_it_does_nothing() {
+        let (tier, warnings) = apply_one_override(Some("SCHED_FIFO"), 40, "    uclamp_min: 512\n");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("no-op"), "{}", warnings[0]);
+        assert!(
+            warnings[0].contains("sched_util_clamp_min_rt_default"),
+            "the warning should name the system-wide alternative: {}",
+            warnings[0]
+        );
+        // Still applied — warned about, not silently dropped.
+        assert_eq!(
+            tier.posix.as_ref().and_then(|p| p.uclamp),
+            Some((512, 1024))
+        );
+    }
+
+    #[test]
+    fn uclamp_min_on_a_best_effort_policy_is_silent() {
+        let (_, warnings) = apply_one_override(
+            Some("SCHED_FIFO"),
+            40,
+            "    sched_class: SCHED_OTHER\n    uclamp_min: 512\n",
+        );
+        assert!(
+            warnings.is_empty(),
+            "meaningful on CFS, so no warning: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn a_deadline_override_without_a_budget_is_refused_with_a_reason() {
+        let (tier, warnings) =
+            apply_one_override(Some("SCHED_FIFO"), 40, "    sched_class: SCHED_DEADLINE\n");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("budget_us"), "{}", warnings[0]);
+        // Left as derived rather than half-built from invented numbers.
+        assert!(tier.posix.is_none() || tier.posix.as_ref().unwrap().sched.priority().is_some());
     }
 
     // ── Phase 44.4: chain_aware pipeline wiring ──

@@ -369,6 +369,8 @@ fn policy_name(policy: SchedPolicy) -> &'static str {
         SchedPolicy::Fifo => "SCHED_FIFO",
         SchedPolicy::Rr => "SCHED_RR",
         SchedPolicy::Other => "SCHED_OTHER",
+        SchedPolicy::Batch => "SCHED_BATCH",
+        SchedPolicy::Idle => "SCHED_IDLE",
     }
 }
 
@@ -410,6 +412,23 @@ pub async fn apply_sched(
                 tier.priority,
                 core,
                 tier.tier_name
+            ),
+            // Best-effort placement stays `debug!`: SCHED_OTHER at nice 0 is
+            // what every process already gets, so logging it per node would
+            // bury the RT lines. A deliberate demotion (BATCH/IDLE, or a
+            // non-zero nice) IS a change the user asked for and cannot
+            // otherwise see, so that is `info!`.
+            SchedPolicy::Batch | SchedPolicy::Idle => info!(
+                "sched: pid {} -> {} nice {} cpu {} (tier '{}')",
+                pid,
+                policy_name(tier.policy),
+                tier.nice,
+                core,
+                tier.tier_name
+            ),
+            SchedPolicy::Other if tier.nice != 0 => info!(
+                "sched: pid {} -> SCHED_OTHER nice {} cpu {} (tier '{}')",
+                pid, tier.nice, core, tier.tier_name
             ),
             SchedPolicy::Other => debug!(
                 "sched: pid {} -> SCHED_OTHER cpu {} (tier '{}')",
@@ -535,6 +554,7 @@ mod tests {
         AppliedTier {
             policy: play_launch::sched::SchedPolicy::Fifo,
             priority,
+            nice: 0,
             cpus: None,
             uclamp: None,
             tier_name: "test".to_string(),

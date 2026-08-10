@@ -58,6 +58,7 @@ mod tests {
             tier: AppliedTier {
                 policy: SchedPolicy::Fifo,
                 priority: 42,
+                nice: 0,
                 cpus: Some(CpuSet::new([2, 3])),
                 uclamp: Some(Uclamp { min: 0, max: 1024 }),
                 tier_name: "rt-critical".to_string(),
