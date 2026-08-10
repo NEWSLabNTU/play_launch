@@ -44,7 +44,8 @@ node, and one composable filter) with the launch file, contract, and
 platform files committed:
 
 ```bash
-just build && just setcap        # grant the helper its capability (re-run after EVERY build)
+just build                       # reapplies helper capabilities itself when it can
+just setcap                      # ...otherwise grant them: re-run after EVERY build
 cd tests/fixtures/rt_workspace
 just build                       # colcon build of the rt_demo package
 just check                       # validate contracts + scheduling, several ways
@@ -529,7 +530,24 @@ play_launch_rt_helper  (ROS-free, holds CAP_SYS_NICE only)
   helper (and `cap_sys_ptrace+ep` to the I/O-monitoring helper). File
   capabilities do not change the user — the helper runs as *you*, with exactly
   one extra permission. **Capabilities live on the file inode: re-run
-  `just setcap` after every rebuild.**
+  `just setcap` after every rebuild.** colcon *copies* the helpers into
+  `install/` rather than hardlinking them, so every build produces a fresh
+  inode with an empty capability set — there is no build that preserves them.
+  `just build` reapplies them for you when it can do so without a prompt (see
+  below), and tells you to run `just setcap` when it cannot.
+- **Developer shortcut.** When rootful Docker is available, `just setcap` uses
+  a throwaway container instead of `sudo`, so the edit-build-test loop needs no
+  password. This works because Docker's default capability bounding set already
+  contains `CAP_SETFCAP`, granting a file capability requires only
+  `CAP_SETFCAP` (not the capability being granted), and the bind-mounted
+  directory means the `security.capability` xattr is written to the same inode
+  the host sees. It falls back to `sudo` when Docker is absent, and
+  *deliberately refuses* rootless Docker: inside a user namespace the
+  capability xattr is namespaced (revision 3, carrying a rootid) and honored
+  only within that namespace, so `getcap` would look correct while host
+  processes still got `EPERM`. Note that this is convenience via privilege you
+  already hold — membership of the `docker` group is root-equivalent — so it is
+  a developer convenience, not the install procedure.
 - The main `play_launch` binary must **never** be capability-granted: a file
   capability triggers secure-execution mode (`AT_SECURE`), the loader ignores
   `LD_LIBRARY_PATH`, and the binary can no longer find its ROS libraries.

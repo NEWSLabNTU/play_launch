@@ -69,6 +69,18 @@ build:
     echo ""
     echo "Build complete:"
     ls -lh dist/*.whl
+    # colcon COPIES the helpers into install/, and a fresh inode has an empty
+    # capability set — so every build drops them. Reapply automatically when it
+    # costs nothing (rootful Docker: no prompt); otherwise just say so, because
+    # a sudo password prompt at the end of a build is exactly what this avoids.
+    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
+       && ! docker info --format '{{ "{{" }}.SecurityOptions{{ "}}" }}' 2>/dev/null | grep -q rootless; then
+        echo ""
+        just setcap
+    else
+        echo ""
+        echo "Helper capabilities were dropped by the build — run 'just setcap'."
+    fi
 
 # C++ only (msgs + container)
 build-cpp:
@@ -112,8 +124,20 @@ run *ARGS:
     source install/setup.bash
     ros2 run play_launch play_launch {{ARGS}}
 
-# Apply CAP_SYS_PTRACE to the I/O helper and CAP_SYS_NICE to the RT helper
-# (requires sudo). One capability per helper — never pooled onto one binary.
+# Apply CAP_SYS_PTRACE to the I/O helper and CAP_SYS_NICE to the RT helper.
+# One capability per helper — never pooled onto one binary.
+#
+# Every colcon build COPIES the helpers into `install/` (differing inodes,
+# nlink 1), and a fresh inode has an empty capability set, so this must run
+# after every build. It therefore prefers a throwaway container over `sudo`:
+# Docker's DEFAULT bounding set already holds CAP_SETFCAP, granting a file
+# capability needs only CAP_SETFCAP (not the capability being granted), and the
+# bind mount means the xattr lands on the host inode. Non-interactive, no host
+# policy change. Falls back to `sudo` when Docker is unusable.
+#
+# This is a DEVELOPER convenience. The user-facing install procedure is still
+# `sudo setcap` typed by the user.
+#
 # NOTE: the main play_launch binary is deliberately NOT capped — a file capability
 # puts it in secure-execution mode (AT_SECURE), which makes the loader ignore
 # LD_LIBRARY_PATH, and it needs LD_LIBRARY_PATH to find its ~22 ROS libraries.
@@ -122,9 +146,10 @@ run *ARGS:
 setcap:
     #!/bin/bash
     set -e
-    main=install/play_launch/lib/play_launch/play_launch
-    io_helper=install/play_launch/lib/play_launch/play_launch_io_helper
-    rt_helper=install/play_launch/lib/play_launch/play_launch_rt_helper
+    dir=install/play_launch/lib/play_launch
+    main=$dir/play_launch
+    io_helper=$dir/play_launch_io_helper
+    rt_helper=$dir/play_launch_rt_helper
 
     if [ ! -f "$io_helper" ]; then
         echo "Error: play_launch_io_helper not found. Run 'just build' first."
@@ -135,21 +160,56 @@ setcap:
         exit 1
     fi
 
-    # Self-heal: a capability on the main binary is ALWAYS wrong (AT_SECURE would
-    # make the loader ignore LD_LIBRARY_PATH and it could not find its ROS libs).
-    if [ -f "$main" ] && [ -n "$(getcap "$main" 2>/dev/null)" ]; then
-        echo "! main binary has file capabilities — removing (they break ROS lib loading)"
-        sudo setcap -r "$main"
-        echo "  removed."
+    # Decide the mechanism. Rootless Docker is REJECTED, not fallen back on
+    # quietly for the wrong reason: inside a user namespace `security.capability`
+    # is namespaced (it carries a rootid) and is honored only within that
+    # namespace, so `getcap` on the host would show the capability and host
+    # processes would still get EPERM. A silent wrong answer is worse than sudo.
+    use_docker=0
+    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+        if docker info --format '{{ "{{" }}.SecurityOptions{{ "}}" }}' 2>/dev/null | grep -q rootless; then
+            echo "! rootless Docker detected — file capabilities set inside a user"
+            echo "  namespace are not valid to host processes. Using sudo instead."
+        else
+            use_docker=1
+        fi
     fi
 
-    sudo setcap cap_sys_ptrace+ep "$io_helper"
-    getcap "$io_helper"
-    echo "✓ I/O helper ready (reapply after rebuild)"
+    if [ "$use_docker" = "1" ]; then
+        # Built on demand, then cached. Depends only on ubuntu:22.04 — NOT on
+        # the CI builder image, which would make this break whenever that image
+        # was edited but not yet rebuilt.
+        if ! docker image inspect play-launch-setcap:local >/dev/null 2>&1; then
+            echo "Building the setcap helper image (one time)..."
+            docker build -q -f docker/setcap.Dockerfile -t play-launch-setcap:local . >/dev/null
+        fi
+        # Mount ONLY the helper directory: this runs as root inside the
+        # container, so the smaller the bind mount the better.
+        docker run --rm -v "$PWD/$dir:/w" play-launch-setcap:local sh -c '
+            set -e
+            [ -n "$(getcap /w/play_launch 2>/dev/null)" ] && setcap -r /w/play_launch || true
+            setcap cap_sys_ptrace+ep /w/play_launch_io_helper
+            setcap cap_sys_nice+ep   /w/play_launch_rt_helper
+        '
+        via="docker (no sudo)"
+    else
+        # Self-heal: a capability on the main binary is ALWAYS wrong (AT_SECURE
+        # would make the loader ignore LD_LIBRARY_PATH and it could not find its
+        # ROS libs).
+        if [ -f "$main" ] && [ -n "$(getcap "$main" 2>/dev/null)" ]; then
+            echo "! main binary has file capabilities — removing (they break ROS lib loading)"
+            sudo setcap -r "$main"
+            echo "  removed."
+        fi
+        sudo setcap cap_sys_ptrace+ep "$io_helper"
+        sudo setcap cap_sys_nice+ep "$rt_helper"
+        via="sudo"
+    fi
 
-    sudo setcap cap_sys_nice+ep "$rt_helper"
+    getcap "$io_helper"
+    echo "✓ I/O helper ready (reapply after rebuild) [$via]"
     getcap "$rt_helper"
-    echo "✓ RT helper ready (reapply after rebuild)"
+    echo "✓ RT helper ready (reapply after rebuild) [$via]"
 
     echo
     echo "RT scheduling (--sched) now works WITHOUT root — no sudo/setuid needed"
