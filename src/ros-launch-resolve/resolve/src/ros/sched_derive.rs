@@ -27,6 +27,8 @@
 //! (`name`/`scope` only) — built-in mappers already default fact-less nodes
 //! to the non-RT default tier, so this is not a special case here.
 
+use std::collections::BTreeMap;
+
 use ros_launch_manifest_check::Severity;
 use ros_launch_manifest_sched::{
     ChainElement, ChainSemantics, Criticality, EffectiveTrigger, MapperInput, MapperNode,
@@ -49,12 +51,15 @@ pub fn mapper_input_from_dump(
     dump: &LaunchDump,
     index: Option<&ManifestIndex>,
     legacy: Option<SystemSched>,
+    budgets: &BTreeMap<String, u64>,
 ) -> MapperInput {
     let nodes = scheduled_records_from_dump(dump)
         .iter()
         .map(|r| build_mapper_node(r, index))
         .collect();
-    let chains = index.map(resolve_chains).unwrap_or_default();
+    let chains = index
+        .map(|i| resolve_chains(i, budgets))
+        .unwrap_or_default();
     MapperInput {
         nodes,
         legacy,
@@ -164,7 +169,10 @@ fn convert_semantics(s: ros_launch_manifest_types::ChainSemantics) -> ChainSeman
 ///   processes, not scope aggregates), which a whole-scope aggregate path
 ///   cannot provide. Not a `chain-link` failure (the checker accepts scope
 ///   aggregates as valid hops); a documented sched-extraction limitation.
-pub(crate) fn resolve_chains(index: &ManifestIndex) -> Vec<ResolvedChain> {
+pub(crate) fn resolve_chains(
+    index: &ManifestIndex,
+    budgets: &BTreeMap<String, u64>,
+) -> Vec<ResolvedChain> {
     let (pub_map, sub_map) = build_pub_sub_maps(index);
 
     index
@@ -179,7 +187,8 @@ pub(crate) fn resolve_chains(index: &ManifestIndex) -> Vec<ResolvedChain> {
                 );
                 return None;
             }
-            let resolved_chain = build_resolved_chain(index, &pub_map, &sub_map, chain_name, chain);
+            let resolved_chain =
+                build_resolved_chain(index, &pub_map, &sub_map, chain_name, chain, budgets);
             if resolved_chain.is_none() {
                 tracing::debug!(
                     "sched: chain '{chain_name}' excluded from mapper input — a path segment \
@@ -224,6 +233,7 @@ fn build_resolved_chain(
     sub_map: &std::collections::HashMap<String, String>,
     chain_name: &str,
     chain: &ros_launch_manifest_types::ChainDecl,
+    budgets: &BTreeMap<String, u64>,
 ) -> Option<ResolvedChain> {
     let mut elements: Vec<ChainElement> = Vec::new();
     let mut criticality: Option<Criticality> = None;
@@ -247,11 +257,28 @@ fn build_resolved_chain(
 
         match resolved.trigger {
             ros_launch_manifest_types::EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => {
+                // `exec_ms` is a COST. It used to be filled with
+                // `resolved.max_latency_ms`, which is the path's declared
+                // *deadline* — the conflation that made response-time
+                // analysis, reservation sizing and feasibility all
+                // unreachable, because no true execution time existed
+                // anywhere in the model.
+                //
+                // The only legitimate source is a declared budget from the
+                // platform file. Absent one, the cost is ABSENT — which the
+                // `chain-sampling-feasibility` diagnostic already reports as
+                // "feasible ON INCOMPLETE EVIDENCE". Substituting the deadline
+                // made that verdict silently optimistic instead.
+                //
+                // Budgets are per-node, so a node appearing on two chains
+                // contributes the same cost to both. Per-(node, path) cost is
+                // the open question a `costs:` section would answer.
+                let exec_ms = budgets.get(&node_fqn).map(|us| *us as f64 / 1000.0);
                 elements.push(ChainElement::Boundary {
                     node: node_fqn,
                     path: path.clone(),
                     period_ms: 1000.0 / rate_hz,
-                    exec_ms: resolved.max_latency_ms,
+                    exec_ms,
                 });
             }
             _ => push_segment_node(&mut elements, node_fqn, path.clone()),
@@ -456,7 +483,7 @@ mod tests {
     #[test]
     fn no_index_gives_bare_records() {
         let dump = dump_with_two_nodes();
-        let input = mapper_input_from_dump(&dump, None, None);
+        let input = mapper_input_from_dump(&dump, None, None, &BTreeMap::new());
         assert_eq!(input.nodes.len(), 2);
         for n in &input.nodes {
             assert_eq!(n.rate_hz, None);
@@ -514,7 +541,7 @@ mod tests {
             },
         );
 
-        let input = mapper_input_from_dump(&dump, Some(&index), None);
+        let input = mapper_input_from_dump(&dump, Some(&index), None, &BTreeMap::new());
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
         // topic-level rate_hz (100) beats the endpoint-level min_rate_hz (30).
         assert_eq!(talker.rate_hz, Some(100.0));
@@ -556,7 +583,7 @@ mod tests {
             .manifests
             .insert(0, empty_resolved_manifest(0, manifest));
         // No topics declared at all — only the endpoint-level fact exists.
-        let input = mapper_input_from_dump(&dump, Some(&index), None);
+        let input = mapper_input_from_dump(&dump, Some(&index), None, &BTreeMap::new());
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
         assert_eq!(talker.rate_hz, Some(30.0));
     }
@@ -585,7 +612,7 @@ mod tests {
             scope_id: 0,
         });
 
-        let input = mapper_input_from_dump(&dump, Some(&index), None);
+        let input = mapper_input_from_dump(&dump, Some(&index), None, &BTreeMap::new());
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
         assert_eq!(talker.path_budget_ms, Some(10.0));
         assert_eq!(talker.deadline_us, Some(10_000));
@@ -625,7 +652,7 @@ mod tests {
             .manifests
             .insert(0, empty_resolved_manifest(0, manifest));
 
-        let input = mapper_input_from_dump(&dump, Some(&index), None);
+        let input = mapper_input_from_dump(&dump, Some(&index), None, &BTreeMap::new());
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
         assert_eq!(talker.criticality, Some(Criticality::High));
 
@@ -666,7 +693,7 @@ mod tests {
             scope_id: 0,
         });
 
-        let input = mapper_input_from_dump(&dump, Some(&index), None);
+        let input = mapper_input_from_dump(&dump, Some(&index), None, &BTreeMap::new());
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
         assert_eq!(talker.paths.len(), 2);
 
@@ -764,7 +791,7 @@ mod tests {
     #[test]
     fn resolve_chains_includes_the_clean_chain_with_segment_elements() {
         let index = overlay_index(&make_chain_dump());
-        let chains = resolve_chains(&index);
+        let chains = resolve_chains(&index, &BTreeMap::new());
         let ok = chains
             .iter()
             .find(|c| c.name == "ok_chain")
@@ -798,7 +825,7 @@ mod tests {
     #[test]
     fn resolve_chains_excludes_chains_with_chain_link_errors() {
         let index = overlay_index(&make_chain_dump());
-        let chains = resolve_chains(&index);
+        let chains = resolve_chains(&index, &BTreeMap::new());
         for broken in [
             "broken_via_chain",
             "via_not_output_chain",
@@ -820,14 +847,17 @@ mod tests {
         // must still reach the mapper (which has its own feasibility step
         // and emits `MapWarning::ChainInfeasible` for the infeasible one).
         let index = overlay_index(&make_chain_dump());
-        let chains = resolve_chains(&index);
+        let chains = resolve_chains(&index, &BTreeMap::new());
         assert!(chains.iter().any(|c| c.name == "budget_blown_chain"));
         assert!(chains.iter().any(|c| c.name == "sampling_infeasible_chain"));
     }
 
-    #[test]
-    fn build_resolved_chain_classifies_timer_as_boundary_and_criticality_is_max_of_members() {
-        // Hand-built index: a two-node chain where one path is a Timer
+    /// Hand-built index: a two-node chain where one path is a Timer
+    /// (Boundary) and the other Input (Segment), with distinct node
+    /// criticalities. `/talker/tick` declares `max_latency_ms: 2.0` and NO
+    /// budget, which is what lets the cost tests below tell a declared
+    /// deadline apart from a declared cost.
+    fn chain_index_for_cost_tests() -> ManifestIndex {
         // (Boundary) and the other is Input (Segment), with distinct node
         // criticalities — asserts both the Boundary/Segment split and the
         // "criticality = max over member nodes" rule.
@@ -916,7 +946,60 @@ mod tests {
             },
         );
 
-        let chains = resolve_chains(&index);
+        index
+    }
+
+    /// A declared budget — and only a declared budget — becomes a cost.
+    #[test]
+    fn a_declared_budget_becomes_the_boundary_cost() {
+        let index = chain_index_for_cost_tests();
+        let budgets = BTreeMap::from([("/talker".to_string(), 3_500u64)]);
+        let chains = resolve_chains(&index, &budgets);
+        let chain = chains
+            .iter()
+            .find(|c| c.name == "mixed_chain")
+            .expect("mixed_chain should resolve");
+        match &chain.elements[0] {
+            ChainElement::Boundary { exec_ms, .. } => {
+                // 3500us declared -> 3.5ms cost. Note the unit change: the
+                // platform file speaks microseconds, the chain math
+                // milliseconds.
+                assert_eq!(*exec_ms, Some(3.5));
+            }
+            other => panic!("expected a Boundary, got {other:?}"),
+        }
+    }
+
+    /// Regression guard for the conflation this wave removed: a path's
+    /// declared latency must NEVER reappear as its execution cost.
+    ///
+    /// The two differ by construction here — `max_latency_ms` is 2.0 and no
+    /// budget is declared — so any future change that reaches for the deadline
+    /// again fails loudly instead of silently making every feasibility verdict
+    /// optimistic.
+    #[test]
+    fn a_declared_deadline_is_never_used_as_a_cost() {
+        let index = chain_index_for_cost_tests();
+        let chains = resolve_chains(&index, &BTreeMap::new());
+        let chain = chains
+            .iter()
+            .find(|c| c.name == "mixed_chain")
+            .expect("mixed_chain should resolve");
+        for element in &chain.elements {
+            if let ChainElement::Boundary { exec_ms, node, .. } = element {
+                assert_eq!(
+                    *exec_ms, None,
+                    "{node}: cost must be absent without a declared budget, never the deadline"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn build_resolved_chain_classifies_timer_as_boundary_and_criticality_is_max_of_members() {
+        let index = chain_index_for_cost_tests();
+
+        let chains = resolve_chains(&index, &BTreeMap::new());
         let chain = chains
             .iter()
             .find(|c| c.name == "mixed_chain")
@@ -932,7 +1015,12 @@ mod tests {
                 assert_eq!(node, "/talker");
                 assert_eq!(path, "tick");
                 assert_eq!(*period_ms, 20.0); // 1000 / 50 Hz
-                assert_eq!(*exec_ms, Some(2.0));
+                // No declared budget, so the cost is ABSENT. This assertion
+                // used to read `Some(2.0)` — the path's `max_latency_ms`,
+                // i.e. its DEADLINE, standing in for its cost. Absent and
+                // zero and "the deadline" are three different answers, and
+                // only the first is true here.
+                assert_eq!(*exec_ms, None);
             }
             other => panic!("expected a Boundary, got {other:?}"),
         }

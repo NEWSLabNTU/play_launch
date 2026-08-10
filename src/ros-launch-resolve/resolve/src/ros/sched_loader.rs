@@ -384,11 +384,26 @@ fn flatten_to_one_tier_per_node(table: &ResolvedTierTable) -> ResolvedTierTable 
 /// `sched_priority == 0`. Any other value is not merely ignored — the syscall
 /// rejects it with `EINVAL` — so a tier carrying both a non-RT class and a
 /// non-zero priority describes a state the kernel cannot be in.
+///
+/// Delegates to the manifest crate's typed policy rather than matching string
+/// literals here. Two reasons: the set of non-RT classes is a property of the
+/// policy, not of this function, so a second copy would drift; and
+/// `PosixPolicyKind::parse` fails closed, whereas the literal match silently
+/// answered "no, it is real-time" for anything it did not recognise — so a
+/// typo'd class read as RT here and as `SCHED_OTHER` in the apply layer, which
+/// is two different wrong answers to the same question.
+///
+/// An unparseable class is reported as non-RT (the conservative answer: it
+/// suppresses the `class: real_time` claim rather than asserting one about a
+/// value nobody can interpret). The parse error itself is raised where the
+/// override is read, not swallowed here.
 fn is_explicitly_non_rt(sched_class: Option<&str>) -> bool {
-    matches!(
-        sched_class,
-        Some("SCHED_OTHER") | Some("SCHED_BATCH") | Some("SCHED_IDLE")
-    )
+    match sched_class {
+        None => false,
+        Some(sc) => ros_launch_manifest_sched::PosixPolicyKind::parse(sc)
+            .map(|kind| !kind.is_real_time())
+            .unwrap_or(true),
+    }
 }
 
 fn apply_overrides(
@@ -619,7 +634,12 @@ pub fn derive_sched_plan(
         )
     })?;
 
-    let input = mapper_input_from_dump(dump, index, file.legacy.clone());
+    // Declared execution costs, keyed by node selector, from the platform
+    // file's `posix` overrides. This is the ONLY legitimate source for a cost:
+    // before it existed, chain resolution substituted a path's declared
+    // deadline, which made every feasibility verdict silently optimistic.
+    let budgets = posix_budgets(&file);
+    let input = mapper_input_from_dump(dump, index, file.legacy.clone(), &budgets);
 
     // Every node referenced by a resolved `chains:` declaration (44.4) —
     // independent of the selected mapper (only `chain_aware` acts on
@@ -866,11 +886,72 @@ pub fn derive_sched_plan(
     })
 }
 
+/// Collect declared `budget_us` values from a platform file's `posix`
+/// overrides, keyed by the override's node selector.
+///
+/// Selectors may be a full FQN or a bare node name; both are inserted so a
+/// chain element can match either way, mirroring how `[[assign]].nodes`
+/// selectors have always resolved.
+fn posix_budgets(
+    file: &ros_launch_manifest_sched::PlatformFile,
+) -> std::collections::BTreeMap<String, u64> {
+    let mut out = std::collections::BTreeMap::new();
+    for (selector, entry) in &file.overrides {
+        let ros_launch_manifest_sched::PlatformOverrideEntry::Posix(ov) = entry else {
+            continue;
+        };
+        let Some(budget_us) = ov.budget_us else {
+            continue;
+        };
+        out.insert(selector.clone(), budget_us);
+        if !selector.starts_with('/') {
+            out.insert(format!("/{selector}"), budget_us);
+        } else if let Some(bare) = selector.rsplit('/').next()
+            && !bare.is_empty()
+        {
+            out.insert(bare.to_string(), budget_us);
+        }
+    }
+    out
+}
+
 /// Human-readable rendering of a [`MapWarning`] (Phase 44.3's chain-aware
 /// mapper diagnostics), matching the style of this pipeline's other
 /// `"scheduling: ..."` warnings.
 fn describe_map_warning(w: &MapWarning) -> String {
     match w {
+        MapWarning::UnmitigatedPriorityTie {
+            priority,
+            nodes,
+            rr_timeslice_us,
+            shortest_period_us,
+        } => {
+            // Band compression creates ties, so this is a state the mapper
+            // itself produces. Say why RR was declined rather than leaving the
+            // reader to assume it was never considered.
+            let reason = match (rr_timeslice_us, shortest_period_us) {
+                (Some(slice), Some(period)) => format!(
+                    "the host's SCHED_RR slice ({:.1}ms) is not shorter than their shortest \
+                     period ({:.1}ms), so round-robin would rotate at most once per period and \
+                     behave exactly like SCHED_FIFO",
+                    *slice as f64 / 1000.0,
+                    *period as f64 / 1000.0
+                ),
+                (None, _) => "the platform file does not declare `resources.rr_timeslice_us`, \
+                              so the host's slice is unknown — it is not assumed to be the \
+                              100ms default"
+                    .to_string(),
+                (Some(_), None) => "none of them carries a timing fact to compare the slice \
+                                    against"
+                    .to_string(),
+            };
+            format!(
+                "scheduling: {} share RT priority {priority} and SCHED_RR was not derived to \
+                 time-slice between them, because {reason}. Under SCHED_FIFO whichever runs \
+                 first holds the CPU until it blocks.",
+                nodes.join(", ")
+            )
+        }
         MapWarning::ChainInfeasible {
             chain,
             sampling_cost_ms,
@@ -2448,7 +2529,20 @@ nodes = ["fast_node"]
                 derive_sched_plan(&dump, Some(&index), path, "posix", SchedApplyMode::Warn)
                     .expect("derive");
             assert_eq!(derived.mapper, "chain_aware");
-            assert!(derived.warnings.is_empty(), "{:?}", derived.warnings);
+            // This used to assert NO warnings, and passed for the wrong
+            // reason: chain resolution substituted the path's declared
+            // `max_latency_ms` for its execution cost, so the feasibility
+            // check thought it had a WCET and reported clean. With the
+            // substitution removed, the fixture declares no budget, the cost
+            // is genuinely absent, and the honest verdict is "feasible ON
+            // INCOMPLETE EVIDENCE".
+            assert_eq!(derived.warnings.len(), 1, "{:?}", derived.warnings);
+            assert!(
+                derived.warnings[0].contains("INCOMPLETE EVIDENCE")
+                    && derived.warnings[0].contains("/fast_node/tick"),
+                "expected the missing-WCET warning naming the boundary, got: {:?}",
+                derived.warnings
+            );
             assert_eq!(
                 derived.chain_member_nodes,
                 std::collections::BTreeSet::from([

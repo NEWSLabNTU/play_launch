@@ -2260,7 +2260,12 @@ mod tests {
         // FQN a `ScheduledRecord` (built from the launch dump) carries —
         // this is what actually routes a derived/chain priority to the
         // real process.
-        let input = crate::ros::sched_derive::mapper_input_from_dump(&dump, Some(&index), None);
+        let input = crate::ros::sched_derive::mapper_input_from_dump(
+            &dump,
+            Some(&index),
+            None,
+            &std::collections::BTreeMap::new(),
+        );
         let node = input
             .nodes
             .iter()
@@ -2354,7 +2359,12 @@ mod tests {
 
         // The scheduling extraction pipeline agrees: chain/derived facts
         // route to the real process, not a phantom no process answers to.
-        let input = crate::ros::sched_derive::mapper_input_from_dump(&dump, Some(&index), None);
+        let input = crate::ros::sched_derive::mapper_input_from_dump(
+            &dump,
+            Some(&index),
+            None,
+            &std::collections::BTreeMap::new(),
+        );
         let node = input
             .nodes
             .iter()

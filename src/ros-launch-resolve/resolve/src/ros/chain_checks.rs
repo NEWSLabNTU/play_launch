@@ -811,7 +811,8 @@ mod tests {
         // this chain is well-formed and decomposes to [Segment, Boundary].
         let mut index = boundary_via_index(true);
         check_chains(&mut index);
-        let chains = crate::ros::sched_derive::resolve_chains(&index);
+        let chains =
+            crate::ros::sched_derive::resolve_chains(&index, &std::collections::BTreeMap::new());
         let chain = chains
             .iter()
             .find(|c| c.name == "sbs_chain")
