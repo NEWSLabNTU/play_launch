@@ -340,6 +340,49 @@ cgroup apply"*.
 An unprivileged session is *supposed* to be unable to carve exclusive CPUs out
 of the machine.
 
+### F11b — measured: the partition IS constructible, but only at the top level
+
+A follow-up probe took the question further, since "unreachable" was a claim
+about the *user's* tree and not about the machine. Five configurations, same
+host:
+
+| # | configuration | partition readback | `SCHED_DEADLINE` |
+|---|---|---|---|
+| A | container, default caps + `--cap-add=SYS_NICE` | cgroupfs is `ro` — impossible | **OK** (unpinned, root domain 0-31) |
+| B | A + `--cpuset-cpus=31` | n/a | **EPERM** — affinity < root domain |
+| C | `--privileged --cgroupns=private` | `root invalid` | OK, but only because the partition never took effect |
+| D | `--privileged --cgroupns=host`, container's own scope as root | `root invalid`; parent `cpuset.cpus.exclusive.effective` empty | EPERM |
+| E | `--privileged --cgroupns=host`, **top-level** cgroup | **`root`** | **OK**, affinity 31 |
+
+D and E differ only in the parent. `system.slice` has a blank `cpuset.cpus`, so
+its `cpuset.cpus.exclusive.effective` stays empty and no descendant can claim
+exclusivity; the true cgroup root implicitly holds every CPU, so a top-level
+child can. Everything torn down clean — no leftover cgroup, root
+`cpus.effective` back to `0-31`.
+
+**Two conclusions, and they pull in opposite directions.**
+
+1. **The slice must be top-level** — `/sys/fs/cgroup/play_launch.slice`, parent
+   = true root. F11a's proposed remedy (nest it inside the user's delegated
+   subtree so the common ancestor is writable) is *wrong*: nested under a
+   systemd-managed slice the partition is always `root invalid`.
+2. **Which resurrects the migration problem F11a identified.** A top-level slice
+   has the cgroup root as its common ancestor with `session-N.scope`, so
+   play_launch still cannot move itself or its children in. Being *started*
+   inside the partition is the only way in — by a container, a systemd unit, or
+   a privileged launcher. Never by migration.
+
+**Revised decision.** The product path keeps its hard error, with the message
+corrected: the operator provisions a **top-level** slice and play_launch must be
+**launched inside it**, not migrate into it. The evidence path becomes concrete
+rather than aspirational — configuration E is exactly the demo environment, so
+W8's DEADLINE arm runs in a privileged container that creates a top-level
+partition and starts the demo inside it. That is a measured, reproducible
+recipe, not a hoped-for one.
+
+Probe scripts: `tmp/cgroup_probe{,2,3}.sh` (gitignored; results recorded here
+because the scripts are not the artifact, the table is).
+
 **Decision — split the product path from the evidence path.**
 
 - **Product.** The rule stands unchanged: `reservations: required` with no
@@ -531,34 +574,43 @@ directory; the provisioning verb also cleans up leftovers from a crash.
 out of band, checked at launch:
 
 ```
-once, as root — see F11a for why an unprivileged session cannot do this:
+once, as root — the slice MUST be top-level (F11b: nested under a
+systemd-managed slice it is always `root invalid`):
     play_launch setup --cpuset          # `setcap` becomes a hidden alias  [#7]
-      SLICE=/sys/fs/cgroup/play_launch.slice
-      preflight: cgroup v2 unified? cpuset in the parent's subtree_control?
-                 exclusive CPUs reachable by the partition root?
+      SLICE=/sys/fs/cgroup/play_launch.slice      # parent = the true root
+      preflight: cgroup v2 unified? cpuset in the root's subtree_control?
       mkdir  $SLICE
       enable cpuset in $SLICE/cgroup.subtree_control
       chown  $USER  $SLICE  and its cgroup.procs / cgroup.subtree_control
-                            / cpuset.cpus / cpuset.cpus.partition
+                            / cpuset.cpus / cpuset.cpus.exclusive
+                            / cpuset.cpus.partition
 
-at launch, unprivileged:
-      move play_launch itself into $SLICE/main         <- required
-      mkdir $SLICE/rt-<runid>; write cpus; partition = root
-      verify cpuset.cpus.partition reads back `root`, not `root invalid`
-      move DEADLINE nodes in; teardown on shutdown
+at launch — play_launch is STARTED inside $SLICE, never migrates into it:
+      mkdir $SLICE/rt-<runid>
+      write cpuset.cpus and cpuset.cpus.exclusive
+      write cpuset.cpus.partition = root
+      VERIFY it reads back `root`, not `root invalid`      <- load-bearing
+      move DEADLINE nodes from $SLICE/main to $SLICE/rt-<runid>
+      teardown on shutdown: partition = member, rmdir
 ```
 
-play_launch must place **itself** under the slice, or moving a spawned child into
-a sibling cgroup violates cgroup v2's common-ancestor rule: once both source and
-destination sit inside the slice, the common ancestor is the slice itself and the
-user has write on it. Children inherit `$SLICE/main` and DEADLINE nodes migrate
-to `$SLICE/rt-<runid>`.
+**There is no "move play_launch in" step, because there cannot be.** A top-level
+slice's common ancestor with `session-N.scope` is the cgroup root, which no
+unprivileged writer can use — and F11b shows the slice has to be top-level, so
+the nested-under-`user.slice` workaround F11a proposed does not exist. play_launch
+must therefore be *launched* inside the slice: by a container, a systemd unit, or
+a privileged launcher. Once it is in, moving a spawned node from `$SLICE/main` to
+`$SLICE/rt-<runid>` is legal, since the common ancestor is then the slice itself.
 
-The move of play_launch *into* `$SLICE/main` is the one step that cannot be
-unprivileged (F11a), which is why the launch path for `reservations: required`
-either runs privileged or is started already inside the slice. The verb
-preflights each precondition and names the failing one rather than attempting
-writes and surfacing `EACCES`.
+**The readback verification is load-bearing, not defensive.** Probe C wrote
+`partition = root`, got `root invalid`, and `SCHED_DEADLINE` then *succeeded* —
+because the invalid partition never took effect and the task kept the full root
+domain. A partition that silently fails open produces a system that looks
+reserved and is not, which is precisely the class of defect this phase exists to
+remove.
+
+The verb preflights each precondition and names the failing one rather than
+attempting writes and surfacing `EACCES`.
 
 **The RT helper does not grow.** cgroup writes are ordinary file permissions,
 not capabilities; after provisioning the user already holds them. `CAP_SYS_NICE`
@@ -768,6 +820,17 @@ are not rediscovered:
   intended behaviour, and it means the entire usability of the feature rests on
   the preflight diagnostic naming the right missing precondition. A vague error
   here is indistinguishable from a broken feature.
+- **`reservations: required` implies a changed launch procedure, not just a
+  changed config.** F11b removes the possibility of migrating into the
+  partition, so enabling reservations means play_launch must be *started* inside
+  it — under a container, a systemd unit, or a privileged launcher. That is a
+  bigger ask of an integrator than editing a platform file, and the docs must
+  present it as such rather than as one more YAML key.
+- **An invalid partition fails open.** Writing `partition = root` can succeed and
+  read back `root invalid`, after which `SCHED_DEADLINE` still works — on the
+  full root domain, unreserved. Measured in probe C. Every path that builds a
+  partition must verify the readback, or the system reports success while
+  delivering the configuration the partition was meant to replace.
 - **The product's most-tested path will be the one nobody ships.** The A/B arm
   runs privileged while the product path does not, so the code exercised by the
   evidence harness is not the code an integrator runs. Whatever differs between

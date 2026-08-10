@@ -85,6 +85,21 @@ rule. This is delegation containment working as designed.
 The same probe pinned two constants this phase depends on:
 `sched_rr_timeslice_ms = 100` and `sched_util_clamp_min_rt_default = 1024`.
 
+**F11b — but the partition IS constructible, at the top level only. Also
+measured.** Five configurations on the same host settled where it can live:
+`SCHED_DEADLINE` works unpinned in a plain container with `--cap-add=SYS_NICE`;
+any CPU confinement (`--cpuset-cpus`) gives `EPERM`; a partition nested under
+`system.slice` is always `root invalid`, because that slice's blank
+`cpuset.cpus` leaves its `cpuset.cpus.exclusive.effective` empty; and a
+**top-level** cgroup under the true root reads back `root` and a task inside it
+takes `SCHED_DEADLINE` with affinity 31.
+
+So the slice must be top-level — which resurrects F11a's migration problem,
+since a top-level slice's common ancestor with `session-N.scope` is the cgroup
+root. **Processes must be *started* inside the partition, never migrated into
+it**: by a container, a systemd unit, or a privileged launcher. W6 and W8 below
+are written to that shape.
+
 ---
 
 ## W1 — `sched_setattr` in the apply layer
@@ -245,11 +260,19 @@ creates `rt-<runid>` at launch, writes `cpuset.cpus`, sets
 `root invalid`** — the kernel accepts the write and reports invalidity through
 the same file.
 
-Membership moves the **process** via `cgroup.procs`, not threads: no
+**The slice is top-level, and play_launch is *started* inside it (F11b).** An
+earlier draft had play_launch migrate itself in; that cannot work. The partition
+must be a child of the true cgroup root — nested under a systemd-managed slice
+it is always `root invalid` — and a top-level slice's common ancestor with the
+login session is the cgroup root, which no unprivileged writer can use. So there
+is no migration step at all: the launcher enters the partition first and every
+spawned node inherits it. Once play_launch is inside, moving a node between
+`$SLICE/main` and `$SLICE/rt-<runid>` is legal, because the common ancestor is
+then the slice itself.
+
+Membership therefore moves the **process** via `cgroup.procs`, not threads: no
 threaded-domain complication, and F2 puts the whole node on the isolated CPUs
-anyway. play_launch must place itself under the slice first, or moving a spawned
-child into a sibling cgroup violates the common-ancestor rule; once both sides
-are inside the slice, the common ancestor is the slice itself.
+anyway.
 
 **The RT helper does not grow.** cgroup writes are file permissions, not
 capabilities. `CAP_SYS_NICE` stays exactly "may call `sched_setattr`". Widening a
@@ -363,11 +386,28 @@ either way.
 
 `rt_av_demo` gains a third arm: `off` / `fifo` / `deadline`.
 
-**The DEADLINE arm runs privileged.** F11a makes the product path unreachable
-from an unprivileged session, and a measurement harness may demand privilege the
-product does not. `just ab` already refuses rather than reports when the
-baseline meets its deadline or the helper lacks `CAP_SYS_NICE`; it gains a third
-refusal when the DEADLINE arm is asked for without the privilege it needs.
+**The DEADLINE arm runs privileged, in a container, by a measured recipe.**
+F11a makes the product path unreachable from an unprivileged session, and a
+measurement harness may demand privilege the product does not. F11b's
+configuration E *is* the recipe, verified end to end on this host:
+
+```
+docker run --rm --privileged --cgroupns=host --cap-add=SYS_NICE ...
+  mkdir  /sys/fs/cgroup/play_launch.slice        # top-level: parent = true root
+  write  cpuset.cpus = <demo cpu>
+  write  cpuset.cpus.exclusive = <demo cpu>
+  write  cpuset.cpus.partition = root            # reads back `root`, not `root invalid`
+  start  the demo inside it                      # never migrate in
+  teardown: partition = member, rmdir
+```
+
+`just ab` already refuses rather than reports when the baseline meets its
+deadline or the helper lacks `CAP_SYS_NICE`; it gains a third refusal when the
+partition does not read back `root`. That check matters more than it looks —
+configuration C produced a working-looking `SCHED_DEADLINE` purely *because* its
+partition was invalid and the task never left the full root domain. A demo that
+silently measures the unpinned case while claiming to measure the partitioned
+one is the exact failure Phase 57's logging fix existed to prevent.
 
 The claim under test is whether reservations hold the chain's deadline **while
 returning** the 26–37 % best-effort throughput `SCHED_FIFO` cost in Phase 57.
