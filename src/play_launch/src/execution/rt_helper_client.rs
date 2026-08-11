@@ -371,6 +371,7 @@ fn policy_name(policy: SchedPolicy) -> &'static str {
         SchedPolicy::Other => "SCHED_OTHER",
         SchedPolicy::Batch => "SCHED_BATCH",
         SchedPolicy::Idle => "SCHED_IDLE",
+        SchedPolicy::Deadline => "SCHED_DEADLINE",
     }
 }
 
@@ -418,6 +419,24 @@ pub async fn apply_sched(
             // bury the RT lines. A deliberate demotion (BATCH/IDLE, or a
             // non-zero nice) IS a change the user asked for and cannot
             // otherwise see, so that is `info!`.
+            // A reservation is the outcome a user most wants confirmed, and
+            // `chrt -p` is otherwise the only way to see it, so print the
+            // numbers rather than just the policy name.
+            SchedPolicy::Deadline => match &tier.reservation {
+                Some(r) => info!(
+                    "sched: pid {} -> SCHED_DEADLINE runtime {}us / deadline {}us / period {}us overrun={} (tier '{}')",
+                    pid,
+                    r.runtime_ns / 1_000,
+                    r.deadline_ns / 1_000,
+                    r.period_ns / 1_000,
+                    r.overrun,
+                    tier.tier_name
+                ),
+                None => warn!(
+                    "sched: pid {} -> SCHED_DEADLINE with no reservation parameters (tier '{}')",
+                    pid, tier.tier_name
+                ),
+            },
             SchedPolicy::Batch | SchedPolicy::Idle => info!(
                 "sched: pid {} -> {} nice {} cpu {} (tier '{}')",
                 pid,
@@ -557,6 +576,7 @@ mod tests {
             nice: 0,
             cpus: None,
             uclamp: None,
+            reservation: None,
             tier_name: "test".to_string(),
         }
     }

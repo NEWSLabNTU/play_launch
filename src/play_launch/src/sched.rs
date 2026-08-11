@@ -80,6 +80,9 @@ struct SchedAttr {
     sched_util_max: u32,
 }
 
+/// `SCHED_DEADLINE`. `libc` does not define it for linux-gnu.
+const SCHED_DEADLINE: libc::c_int = 6;
+
 /// Original layout, through `sched_period` (Linux 3.14).
 const SCHED_ATTR_SIZE_VER0: u32 = 48;
 /// Layout including `sched_util_min`/`sched_util_max` (Linux 5.3).
@@ -267,6 +270,9 @@ pub enum SchedPolicy {
     /// and never derived: it is near-total starvation under load, which is the
     /// wrong default for anything whose criticality has not been established.
     Idle,
+    /// `SCHED_DEADLINE` — a CBS reservation. Carries no priority: a deadline
+    /// thread preempts every fixed-priority thread regardless of RT priority.
+    Deadline,
 }
 
 impl SchedPolicy {
@@ -277,6 +283,7 @@ impl SchedPolicy {
             Some("SCHED_RR") => SchedPolicy::Rr,
             Some("SCHED_BATCH") => SchedPolicy::Batch,
             Some("SCHED_IDLE") => SchedPolicy::Idle,
+            Some("SCHED_DEADLINE") => SchedPolicy::Deadline,
             _ => SchedPolicy::Other,
         }
     }
@@ -288,6 +295,7 @@ impl SchedPolicy {
             SchedPolicy::Other => libc::SCHED_OTHER,
             SchedPolicy::Batch => libc::SCHED_BATCH,
             SchedPolicy::Idle => libc::SCHED_IDLE,
+            SchedPolicy::Deadline => SCHED_DEADLINE,
         }
     }
 }
@@ -308,8 +316,22 @@ pub struct AppliedTier {
     /// — the platform-file vocabulary that authors it arrives with the
     /// override surface.
     pub uclamp: Option<Uclamp>,
+    /// `SCHED_DEADLINE` reservation, in nanoseconds. `Some` only when
+    /// `policy == Deadline`.
+    pub reservation: Option<Reservation>,
     /// Diagnostics only (tier name from the resolved spec).
     pub tier_name: String,
+}
+
+/// A CBS reservation: `runtime` every `period`, to be completed within
+/// `deadline`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reservation {
+    pub runtime_ns: u64,
+    pub deadline_ns: u64,
+    pub period_ns: u64,
+    /// `SCHED_FLAG_DL_OVERRUN` — deliver `SIGXCPU` on overrun.
+    pub overrun: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -336,6 +358,31 @@ pub enum SchedApplyError {
     },
     #[error("invalid uclamp range {min}..={max} for pid {pid} (need min <= max <= 1024)")]
     InvalidUclamp { pid: u32, min: u32, max: u32 },
+    #[error("pid {pid} has policy SCHED_DEADLINE but carries no reservation parameters")]
+    MissingReservation { pid: u32 },
+    #[error(
+        "admission control rejected the reservation for pid {pid}: {arithmetic}. \
+         The kernel admits a new deadline task only while the SUM of runtime/period across \
+         the root domain stays under `sched_rt_runtime_us / sched_rt_period_us`, and that \
+         budget is shared with every SCHED_FIFO/RR thread in the same domain."
+    )]
+    AdmissionRejected {
+        pid: u32,
+        runtime_ns: u64,
+        period_ns: u64,
+        /// Pre-rendered so the raw numbers stay structured while the message
+        /// still shows the arithmetic. `f64` fields would forbid `Eq`, which
+        /// this type derives for the IPC round-trip tests.
+        arithmetic: String,
+    },
+    #[error(
+        "SCHED_DEADLINE was refused for pid {pid} with EPERM. A deadline thread's CPU \
+         affinity may not be narrower than the root domain it was created on, so this \
+         process must be STARTED inside an exclusive cpuset partition — it cannot be \
+         pinned into one, and it cannot migrate into one either. Run \
+         `play_launch verify` to see the partition state."
+    )]
+    DeadlineNeedsPartition { pid: u32 },
     #[error("{call} failed for pid {pid}: errno {errno}")]
     Syscall {
         pid: u32,
@@ -382,6 +429,75 @@ pub fn proc_start_time(pid: u32) -> Option<u64> {
     // (starttime, index 19).
     let starttime = fields.nth(19)?;
     starttime.parse::<u64>().ok()
+}
+
+/// The kernel's total deadline-bandwidth ceiling, as a fraction of one CPU.
+///
+/// Admission control admits a new reservation only while
+/// `sum(runtime/period) < M * (sched_rt_runtime_us / sched_rt_period_us)`.
+/// Read from the running kernel rather than assumed, because an integrator may
+/// have changed it and reporting the default would misstate the arithmetic.
+fn rt_bandwidth_ceiling() -> Option<f64> {
+    let runtime: f64 = std::fs::read_to_string("/proc/sys/kernel/sched_rt_runtime_us")
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let period: f64 = std::fs::read_to_string("/proc/sys/kernel/sched_rt_period_us")
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    // -1 disables throttling entirely, which means no ceiling at all.
+    if runtime < 0.0 || period <= 0.0 {
+        return None;
+    }
+    Some(runtime / period)
+}
+
+/// Map a failed `sched_setattr(SCHED_DEADLINE)`.
+///
+/// Two errnos mean something specific here and would be actively misleading if
+/// folded into the generic mapping:
+///
+/// - `EBUSY` is admission control refusing the reservation. The useful report
+///   is the arithmetic — this task's utilization against the kernel's ceiling —
+///   not "resource busy".
+/// - `EPERM` is almost always the affinity/root-domain rule rather than a
+///   missing capability, since the helper holds `CAP_SYS_NICE` by construction.
+///   Saying "need CAP_SYS_NICE" would send the reader to check something that
+///   is already true.
+fn map_deadline_errno(pid: u32, res: &Reservation, requested_uclamp: bool) -> SchedApplyError {
+    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    match errno {
+        libc::EBUSY => {
+            let utilization = if res.period_ns > 0 {
+                res.runtime_ns as f64 / res.period_ns as f64 * 100.0
+            } else {
+                f64::NAN
+            };
+            let arithmetic = match rt_bandwidth_ceiling() {
+                Some(ceiling) => format!(
+                    "this task asks for {utilization:.1}% of one CPU ({}ns runtime / {}ns                      period) against a per-CPU ceiling of {:.0}%",
+                    res.runtime_ns,
+                    res.period_ns,
+                    ceiling * 100.0
+                ),
+                None => format!(
+                    "this task asks for {utilization:.1}% of one CPU ({}ns runtime / {}ns                      period); the kernel's RT bandwidth ceiling could not be read",
+                    res.runtime_ns, res.period_ns
+                ),
+            };
+            SchedApplyError::AdmissionRejected {
+                pid,
+                runtime_ns: res.runtime_ns,
+                period_ns: res.period_ns,
+                arithmetic,
+            }
+        }
+        libc::EPERM => SchedApplyError::DeadlineNeedsPartition { pid },
+        _ => map_setattr_errno(pid, requested_uclamp, 0),
+    }
 }
 
 /// Map a failed `sched_setattr` to a [`SchedApplyError`].
@@ -472,6 +588,11 @@ fn reset_on_fork_flag(policy: SchedPolicy) -> u64 {
         | SchedPolicy::Other
         | SchedPolicy::Batch
         | SchedPolicy::Idle => 0,
+        // The one policy that genuinely needs it: the kernel refuses `fork(2)`
+        // from a SCHED_DEADLINE thread without it (`EAGAIN`), and the isolated
+        // container manager forks once per composable node under the DEFAULT
+        // container mode.
+        SchedPolicy::Deadline => libc::SCHED_FLAG_RESET_ON_FORK as u64,
     }
 }
 
@@ -528,6 +649,49 @@ fn apply_to_tid(tid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
             if ret == -1 {
                 return Err(map_setattr_errno(tid, tier.uclamp.is_some(), tier.priority));
             }
+        }
+        SchedPolicy::Deadline => {
+            let Some(res) = &tier.reservation else {
+                return Err(SchedApplyError::MissingReservation { pid: tid });
+            };
+
+            let mut flags = reset_on_fork_flag(tier.policy);
+            if res.overrun {
+                flags |= libc::SCHED_FLAG_DL_OVERRUN as u64;
+            }
+            let mut size = SCHED_ATTR_SIZE_VER0;
+            let mut util_min = 0;
+            let mut util_max = 0;
+            if let Some(uclamp) = &tier.uclamp {
+                flags |= (libc::SCHED_FLAG_UTIL_CLAMP_MIN | libc::SCHED_FLAG_UTIL_CLAMP_MAX) as u64;
+                size = SCHED_ATTR_SIZE_VER1;
+                util_min = uclamp.min;
+                util_max = uclamp.max;
+            }
+
+            let attr = SchedAttr {
+                size,
+                sched_policy: tier.policy.as_libc() as u32,
+                sched_flags: flags,
+                sched_runtime: res.runtime_ns,
+                sched_deadline: res.deadline_ns,
+                sched_period: res.period_ns,
+                sched_util_min: util_min,
+                sched_util_max: util_max,
+                ..Default::default()
+            };
+
+            // SAFETY: fully initialized attr whose `size` never exceeds the
+            // struct's real size.
+            let ret = unsafe { sched_setattr(tid as libc::pid_t, &attr, 0) };
+            if ret == -1 {
+                return Err(map_deadline_errno(tid, res, tier.uclamp.is_some()));
+            }
+            // No `sched_setaffinity` for a reservation, ever: a deadline
+            // thread's affinity may not be narrower than the root domain it
+            // was created on, so narrowing it returns EPERM. Its CPUs come
+            // from the cpuset partition the process was started in.
+            return Ok(());
         }
         SchedPolicy::Other | SchedPolicy::Batch | SchedPolicy::Idle => {
             // `SCHED_OTHER` at nice 0 with no uclamp is what every thread
@@ -674,6 +838,25 @@ pub fn apply_tier(pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
         });
     }
 
+    // F2: a reservation is per-THREAD, so sweeping it across every TID would
+    // multiply it by the thread count. A ROS node reaches ~11 threads within
+    // half a second of exec, which would turn one declared 8ms/100ms budget
+    // into 88% of a CPU at admission control — rejected outright, or granted
+    // an order of magnitude more bandwidth than was declared.
+    //
+    // So the thread-group leader gets the reservation (on a single-threaded
+    // rclcpp executor that IS the callback thread) and every sibling gets
+    // SCHED_FIFO at the priority the mapper derived, keeping DDS threads above
+    // best-effort without consuming reservation bandwidth.
+    //
+    // Stated limit: with a multi-threaded executor the reservation covers one
+    // of several executor threads and the guarantee is unsound. That is
+    // refused where it can be detected (a container's
+    // `--use_multi_threaded_executor`) and documented where it cannot.
+    if matches!(tier.policy, SchedPolicy::Deadline) {
+        return apply_reservation(pid, &tids, tier);
+    }
+
     for tid in tids {
         match apply_to_tid(tid, tier) {
             Ok(()) => {}
@@ -689,6 +872,46 @@ pub fn apply_tier(pid: u32, tier: &AppliedTier) -> Result<(), SchedApplyError> {
     }
 
     Ok(())
+}
+
+/// Apply a reservation to `pid`: the leader is reserved, siblings take
+/// `SCHED_FIFO`. See the comment in [`apply_tier`] for why.
+fn apply_reservation(pid: u32, tids: &[u32], tier: &AppliedTier) -> Result<(), SchedApplyError> {
+    // Siblings first. If admission control then rejects the reservation the
+    // node is left entirely at fixed priority — a coherent, if weaker, state —
+    // rather than with a reserved leader and best-effort DDS threads, which
+    // would be worse than either.
+    if (1..=99).contains(&tier.priority) {
+        let sibling = AppliedTier {
+            policy: SchedPolicy::Fifo,
+            reservation: None,
+            // Affinity is untouched for every thread of a reserved node: its
+            // CPUs come from the cpuset partition, and narrowing a deadline
+            // thread's mask is exactly what the kernel forbids.
+            cpus: None,
+            ..tier.clone()
+        };
+        for &tid in tids {
+            if tid == pid {
+                continue;
+            }
+            match apply_to_tid(tid, &sibling) {
+                Ok(()) => {}
+                Err(SchedApplyError::Syscall {
+                    errno: libc::ESRCH, ..
+                }) => tracing::debug!(pid, tid, "thread exited mid-sweep, skipping"),
+                Err(e) => return Err(e),
+            }
+        }
+    } else {
+        tracing::debug!(
+            pid,
+            priority = tier.priority,
+            "no derived RT priority for a reserved node's sibling threads; leaving them alone"
+        );
+    }
+
+    apply_to_tid(pid, tier)
 }
 
 /// Preflight: can this process set RT scheduling at all?
@@ -733,6 +956,7 @@ mod tests {
             nice: 0,
             cpus,
             uclamp: None,
+            reservation: None,
             tier_name: "test".to_string(),
         }
     }
@@ -744,6 +968,7 @@ mod tests {
             nice: 0,
             cpus: None,
             uclamp: None,
+            reservation: None,
             tier_name: "test".to_string(),
         }
     }
@@ -849,8 +1074,9 @@ mod tests {
 
     #[test]
     fn other_policy_applies_affinity_only() {
+        let cpu = available_cpus()[0];
         with_sleep_child(|pid| {
-            let tier = other_tier(Some(CpuSet::single(0)));
+            let tier = other_tier(Some(CpuSet::single(cpu)));
             let result = apply_tier(pid, &tier);
             assert_eq!(result, Ok(()));
         });
@@ -886,6 +1112,7 @@ mod tests {
                 nice: 7,
                 cpus: None,
                 uclamp: None,
+                reservation: None,
                 tier_name: "test".to_string(),
             };
             apply_tier(pid, &tier).expect("batch apply should succeed");
@@ -893,6 +1120,106 @@ mod tests {
             assert_eq!(attr.sched_policy, libc::SCHED_BATCH as u32);
             assert_eq!(attr.sched_nice, 7);
         });
+    }
+
+    fn deadline_tier(priority: i32) -> AppliedTier {
+        AppliedTier {
+            policy: SchedPolicy::Deadline,
+            // The siblings' FIFO priority, not the reservation's — a
+            // reservation has none.
+            priority,
+            nice: 0,
+            cpus: None,
+            uclamp: None,
+            reservation: Some(Reservation {
+                runtime_ns: 8_000_000,
+                deadline_ns: 100_000_000,
+                period_ns: 100_000_000,
+                overrun: false,
+            }),
+            tier_name: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn only_deadline_carries_reset_on_fork() {
+        // The kernel refuses fork(2) from a SCHED_DEADLINE thread without it,
+        // and the isolated container manager forks per composable node. On
+        // FIFO the same flag would defeat PTHREAD_INHERIT_SCHED for threads
+        // created after the sweep — measured, hence the asymmetry.
+        assert_ne!(reset_on_fork_flag(SchedPolicy::Deadline), 0);
+        assert_eq!(reset_on_fork_flag(SchedPolicy::Fifo), 0);
+        assert_eq!(reset_on_fork_flag(SchedPolicy::Rr), 0);
+        assert_eq!(reset_on_fork_flag(SchedPolicy::Other), 0);
+        assert_eq!(reset_on_fork_flag(SchedPolicy::Batch), 0);
+        assert_eq!(reset_on_fork_flag(SchedPolicy::Idle), 0);
+    }
+
+    #[test]
+    fn deadline_without_reservation_parameters_is_refused() {
+        with_sleep_child(|pid| {
+            let mut tier = deadline_tier(0);
+            tier.reservation = None;
+            assert_eq!(
+                apply_tier(pid, &tier),
+                Err(SchedApplyError::MissingReservation { pid })
+            );
+        });
+    }
+
+    #[test]
+    fn a_reservation_outside_a_partition_names_the_partition() {
+        // On any unprovisioned host the kernel refuses with EPERM because the
+        // affinity mask is not the whole root domain. The value of this test
+        // is the MESSAGE: "need CAP_SYS_NICE" would send the reader to check
+        // something that is already true of the helper.
+        if !has_sched_privilege() {
+            eprintln!(
+                "skipping a_reservation_outside_a_partition_names_the_partition: unprivileged"
+            );
+            return;
+        }
+        let readiness = crate::sched::kernel_sched_support();
+        assert!(readiness.setattr, "sched_setattr must exist to run this");
+
+        with_sleep_child(|pid| {
+            match apply_tier(pid, &deadline_tier(40)) {
+                Err(SchedApplyError::DeadlineNeedsPartition { .. }) => {}
+                // On a host that IS partitioned (a container running the
+                // suite), the apply legitimately succeeds.
+                Ok(()) => eprintln!("host is partitioned — reservation applied"),
+                Err(SchedApplyError::AdmissionRejected { arithmetic, .. }) => {
+                    assert!(
+                        arithmetic.contains('%'),
+                        "an admission rejection must show the arithmetic: {arithmetic}"
+                    );
+                }
+                Err(other) => {
+                    panic!("unexpected error for a reservation outside a partition: {other}")
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn admission_rejection_reports_the_arithmetic_not_just_ebusy() {
+        // Rendered from the reservation, so the reader sees what was asked for
+        // against what the kernel allows rather than "resource busy".
+        let res = Reservation {
+            runtime_ns: 8_000_000,
+            deadline_ns: 100_000_000,
+            period_ns: 100_000_000,
+            overrun: false,
+        };
+        let utilization = res.runtime_ns as f64 / res.period_ns as f64 * 100.0;
+        assert!((utilization - 8.0).abs() < 1e-9);
+        // The ceiling is read from the running kernel, never assumed.
+        if let Some(ceiling) = rt_bandwidth_ceiling() {
+            assert!(
+                ceiling > 0.0 && ceiling <= 1.0,
+                "sched_rt_runtime_us/sched_rt_period_us should be a sane fraction, got {ceiling}"
+            );
+        }
     }
 
     #[test]
@@ -977,12 +1304,14 @@ mod tests {
     fn cpuset_applies_every_cpu_it_names() {
         // The old `core: Option<u32>` could express exactly one CPU. Assert
         // the set form actually reaches the kernel as a multi-CPU mask.
-        if num_cpus_online() < 2 {
-            eprintln!("skipping cpuset_applies_every_cpu_it_names: needs >= 2 CPUs");
+        let cpus = available_cpus();
+        if cpus.len() < 2 {
+            eprintln!("skipping cpuset_applies_every_cpu_it_names: needs >= 2 usable CPUs");
             return;
         }
+        let (a, b) = (cpus[0], cpus[1]);
         with_sleep_child(|pid| {
-            let tier = other_tier(Some(CpuSet::new([0, 1])));
+            let tier = other_tier(Some(CpuSet::new([a, b])));
             apply_tier(pid, &tier).expect("affinity apply should succeed");
 
             // SAFETY: zeroed cpu_set_t is valid; sched_getaffinity fills it.
@@ -995,20 +1324,43 @@ mod tests {
                 )
             };
             assert_eq!(ret, 0);
-            assert!(unsafe { libc::CPU_ISSET(0, &set) }, "cpu 0 must be set");
-            assert!(unsafe { libc::CPU_ISSET(1, &set) }, "cpu 1 must be set");
             assert!(
-                !unsafe { libc::CPU_ISSET(2, &set) } || num_cpus_online() < 3,
-                "cpu 2 must not be set"
+                unsafe { libc::CPU_ISSET(a as usize, &set) },
+                "cpu {a} must be set"
             );
+            assert!(
+                unsafe { libc::CPU_ISSET(b as usize, &set) },
+                "cpu {b} must be set"
+            );
+            for &other in cpus.iter().skip(2) {
+                assert!(
+                    !unsafe { libc::CPU_ISSET(other as usize, &set) },
+                    "cpu {other} was not named and must not be set"
+                );
+            }
         });
     }
 
-    fn num_cpus_online() -> usize {
-        // SAFETY: sysconf takes a name and cannot fail destructively; a
-        // negative return just means "unknown", handled below.
-        let n = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
-        if n < 1 { 1 } else { n as usize }
+    /// The CPUs this process may actually run on.
+    ///
+    /// NOT `_SC_NPROCESSORS_ONLN`: inside a cpuset partition, or under
+    /// `taskset`, the online count says 32 while only two of them are usable —
+    /// and a test that pins to CPU 0 then fails for reasons that have nothing
+    /// to do with what it is testing. Both affinity tests below were written
+    /// against CPUs 0 and 1 and failed the first time they ran inside a real
+    /// partition.
+    fn available_cpus() -> Vec<u32> {
+        // SAFETY: zeroed cpu_set_t is valid; sched_getaffinity fills it.
+        let mut set: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+        let ret =
+            unsafe { libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) };
+        if ret != 0 {
+            return vec![0];
+        }
+        (0..libc::CPU_SETSIZE as usize)
+            .filter(|&c| unsafe { libc::CPU_ISSET(c, &set) })
+            .map(|c| c as u32)
+            .collect()
     }
 
     #[test]
@@ -1075,6 +1427,7 @@ mod tests {
                 nice: 0,
                 cpus: Some(CpuSet::single(1023)),
                 uclamp: None,
+                reservation: None,
                 tier_name: "test".to_string(),
             };
 

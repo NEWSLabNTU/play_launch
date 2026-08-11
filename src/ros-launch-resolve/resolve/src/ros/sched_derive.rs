@@ -227,6 +227,23 @@ fn chain_has_error_diagnostic(index: &ManifestIndex, chain_name: &str) -> bool {
 /// (`rate_hz > 0`) path segment becomes its own `Boundary` — the same
 /// boundary-vs-non-boundary split `chain_checks::check_one_chain` already
 /// uses for `sampling_cost`.
+/// Look up a declared budget by full FQN, falling back to the bare node name.
+///
+/// Override selectors may be either form — `[[assign]].nodes` has always
+/// accepted both — while a chain element carries the full FQN. Without the
+/// fallback a perfectly good `overrides: { sensor_node: { budget_us: 2000 } }`
+/// silently fails to reach the chain, and the feasibility verdict reports
+/// "no measured WCET" for a cost that was in fact declared.
+fn budget_us_for(budgets: &BTreeMap<String, u64>, node_fqn: &str) -> Option<u64> {
+    budgets.get(node_fqn).copied().or_else(|| {
+        node_fqn
+            .rsplit('/')
+            .next()
+            .filter(|bare| !bare.is_empty())
+            .and_then(|bare| budgets.get(bare).copied())
+    })
+}
+
 fn build_resolved_chain(
     index: &ManifestIndex,
     pub_map: &std::collections::HashMap<String, String>,
@@ -273,7 +290,7 @@ fn build_resolved_chain(
                 // Budgets are per-node, so a node appearing on two chains
                 // contributes the same cost to both. Per-(node, path) cost is
                 // the open question a `costs:` section would answer.
-                let exec_ms = budgets.get(&node_fqn).map(|us| *us as f64 / 1000.0);
+                let exec_ms = budget_us_for(budgets, &node_fqn).map(|us| us as f64 / 1000.0);
                 elements.push(ChainElement::Boundary {
                     node: node_fqn,
                     path: path.clone(),

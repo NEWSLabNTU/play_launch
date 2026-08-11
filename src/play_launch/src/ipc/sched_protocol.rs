@@ -61,6 +61,7 @@ mod tests {
                 nice: 0,
                 cpus: Some(CpuSet::new([2, 3])),
                 uclamp: Some(Uclamp { min: 0, max: 1024 }),
+                reservation: None,
                 tier_name: "rt-critical".to_string(),
             },
         });

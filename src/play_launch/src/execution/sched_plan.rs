@@ -23,7 +23,9 @@ use ros_launch_manifest_sched::DEFAULT_TIER;
 
 use crate::{
     cli::options::ContainerMode,
-    execution::sched_apply::{AppliedTier, CpuSet, SchedApplyMode, SchedPolicy, Uclamp},
+    execution::sched_apply::{
+        AppliedTier, CpuSet, Reservation, SchedApplyMode, SchedPolicy, Uclamp,
+    },
 };
 use ros_launch_resolve::ros::{
     launch_dump::LaunchDump,
@@ -70,20 +72,39 @@ fn applied_from_tier(
             nice: 0,
             cpus: tier.core.map(CpuSet::single),
             uclamp: None,
+            reservation: None,
             tier_name: tier.name.clone(),
         };
     };
 
-    let (policy, priority, nice) = match placement.sched {
-        PosixSched::Fifo { priority } => (SchedPolicy::Fifo, priority, 0),
-        PosixSched::Rr { priority } => (SchedPolicy::Rr, priority, 0),
-        PosixSched::Other { nice } => (SchedPolicy::Other, 0, nice),
-        PosixSched::Batch { nice } => (SchedPolicy::Batch, 0, nice),
-        PosixSched::Idle => (SchedPolicy::Idle, 0, 0),
-        // Reservations are not derived yet, and a partially-built one would be
-        // worse than none: fall back to the tier's fixed priority rather than
-        // inventing runtime/deadline/period.
-        PosixSched::Deadline { .. } => (policy, priority, 0),
+    let (policy, priority, nice, reservation) = match placement.sched {
+        PosixSched::Fifo { priority } => (SchedPolicy::Fifo, priority, 0, None),
+        PosixSched::Rr { priority } => (SchedPolicy::Rr, priority, 0, None),
+        PosixSched::Other { nice } => (SchedPolicy::Other, 0, nice, None),
+        PosixSched::Batch { nice } => (SchedPolicy::Batch, 0, nice, None),
+        PosixSched::Idle => (SchedPolicy::Idle, 0, 0, None),
+        PosixSched::Deadline {
+            runtime_ns,
+            deadline_ns,
+            period_ns,
+            overrun,
+        } => (
+            SchedPolicy::Deadline,
+            // The reservation itself has no priority — a deadline thread
+            // preempts every fixed-priority thread regardless. This carries
+            // the priority the mapper derived BEFORE the conversion, which the
+            // apply layer gives to the node's sibling threads: only the
+            // thread-group leader is reserved, and the DDS threads around it
+            // still need to sit above best-effort.
+            priority,
+            0,
+            Some(Reservation {
+                runtime_ns,
+                deadline_ns,
+                period_ns,
+                overrun,
+            }),
+        ),
     };
 
     let cpus = match &placement.affinity {
@@ -97,8 +118,11 @@ fn applied_from_tier(
         policy,
         priority,
         nice,
-        cpus,
+        // A reservation is never pinned with sched_setaffinity — its CPUs come
+        // from the cpuset partition the process was started in.
+        cpus: if reservation.is_some() { None } else { cpus },
         uclamp: placement.uclamp.map(|(min, max)| Uclamp { min, max }),
+        reservation,
         tier_name: tier.name.clone(),
     }
 }
@@ -270,14 +294,48 @@ impl SchedPlan {
             {
                 eyre::bail!("tier '{tier_name}': core {c} >= available CPUs ({ncpu})");
             }
+            // Rebuild a reservation from the portable tier head. `up` reads
+            // the model, never the platform file, so this is the only path by
+            // which runtime/deadline/period reach the apply layer — and a
+            // SCHED_DEADLINE policy without them is refused rather than
+            // silently downgraded.
+            let reservation = if matches!(policy, SchedPolicy::Deadline) {
+                let (Some(budget_us), Some(period_us)) = (tier.budget_us, tier.period_us) else {
+                    eyre::bail!(
+                        "tier '{tier_name}': sched_class SCHED_DEADLINE but the model carries no                          {} — a reservation needs runtime and period, and neither may be                          invented. Re-run `resolve` with a platform file declaring `budget_us`.",
+                        match (tier.budget_us, tier.period_us) {
+                            (None, None) => "budget_us or period_us",
+                            (None, _) => "budget_us",
+                            _ => "period_us",
+                        }
+                    );
+                };
+                Some(Reservation {
+                    runtime_ns: budget_us * 1_000,
+                    // Implicit deadline when none was decomposed.
+                    deadline_ns: tier.deadline_us.unwrap_or(period_us) * 1_000,
+                    period_ns: period_us * 1_000,
+                    overrun: tier.deadline_policy.as_deref() == Some("fault"),
+                })
+            } else {
+                None
+            };
+
             by_fqn.insert(
                 fqn.clone(),
                 AppliedTier {
                     policy,
                     priority: spec.priority as i32,
                     nice: 0,
-                    cpus: spec.core.map(CpuSet::single),
+                    // Never pin a reservation: its CPUs come from the cpuset
+                    // partition it is started in.
+                    cpus: if reservation.is_some() {
+                        None
+                    } else {
+                        spec.core.map(CpuSet::single)
+                    },
                     uclamp: None,
+                    reservation,
                     tier_name: tier_name.clone(),
                 },
             );

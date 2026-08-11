@@ -9,8 +9,8 @@
 /// (currently `SchedApplyError`, `thread_ids`) reads as unused.
 #[allow(unused_imports)]
 pub use play_launch::sched::{
-    AppliedTier, CpuSet, SchedApplyError, SchedPolicy, Uclamp, apply_tier, has_sched_privilege,
-    kernel_sched_support, thread_ids,
+    AppliedTier, CpuSet, Reservation, SchedApplyError, SchedPolicy, Uclamp, apply_tier,
+    has_sched_privilege, kernel_sched_support, thread_ids,
 };
 
 /// Re-exported from layer 2 (RFC-0060).

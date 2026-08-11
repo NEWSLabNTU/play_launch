@@ -796,6 +796,31 @@ pub fn derive_sched_plan(
         .collect();
     let mut overridden: BTreeMap<String, String> = BTreeMap::new();
     apply_overrides(&mut plan, &file.overrides, &mut warnings, &mut overridden);
+
+    // Reservations are derived AFTER overrides, so an explicit pin still wins
+    // and an operator can opt a node out by naming a fixed policy for it.
+    // Containers are exempt by construction — see `derive_reservations`.
+    let container_fqns: BTreeSet<String> = {
+        let by_id: HashMap<usize, &str> = dump
+            .scopes
+            .iter()
+            .enumerate()
+            .map(|(i, sc)| (i, sc.ns.as_str()))
+            .collect();
+        dump.container
+            .iter()
+            .filter(|c| !c.name.is_empty())
+            .map(|c| fqn_with(&by_id, Some(c.namespace.as_str()), &c.name, c.scope))
+            .collect()
+    };
+    derive_reservations(
+        &mut plan,
+        &file,
+        &input,
+        &container_fqns,
+        &budgets,
+        &mut warnings,
+    )?;
     // Chain members an override pinned below their chain-derived rank
     // (45.1b): every contradiction where this node is the fact-implied
     // "should lead" side is a mechanical, already-explained downstream
@@ -976,6 +1001,238 @@ pub fn derive_sched_plan(
         provenance,
         chain_member_nodes,
         suppressed_contradictions,
+    })
+}
+
+/// Turn fixed-priority tiers into `SCHED_DEADLINE` reservations, under
+/// `reservations: required`.
+///
+/// # Why this is all-or-nothing, and why it is scoped
+///
+/// A deadline thread preempts every fixed-priority thread regardless of RT
+/// priority — the kernel gives it a reservation instead of a number. So a band
+/// holding both loses the ordering the mapper computed, and the divergence is
+/// invisible in `system_model.yaml`. Hence: if any node in the RT band gets a
+/// reservation, all of them must.
+///
+/// The rule is scoped to nodes that carry a **timing fact**, because an
+/// inversion is only invisible between nodes that were ranked *against each
+/// other*. Two exemptions follow:
+///
+/// - **Containers.** A component container declares no rate and no deadline —
+///   it loads and forks, so it is a supervisor, not a periodic task. Reserving
+///   one would spend admission bandwidth on a process that does almost nothing
+///   steady-state. It keeps `SCHED_FIFO`. Without this exemption the phase
+///   would be unusable: `--container-mode isolated` is the DEFAULT, so nearly
+///   every real system would hit a hard error its author could not fix.
+/// - **Nodes the mapper could not rank**, for the same reason.
+///
+/// # Where the numbers come from
+///
+/// `runtime` is the declared `budget_us` and nothing else — never a deadline
+/// standing in for a cost. `period` is `1 / rate_hz`, propagated along a chain
+/// from its source when the node itself declares no rate (a chain has one
+/// triggering rate by construction, so inheriting it states a fact rather than
+/// inventing one). `deadline` is the node's declared deadline, else the period
+/// (the implicit-deadline assumption).
+fn derive_reservations(
+    plan: &mut ResolvedTierTable,
+    file: &ros_launch_manifest_sched::PlatformFile,
+    input: &ros_launch_manifest_sched::MapperInput,
+    container_fqns: &BTreeSet<String>,
+    budgets: &std::collections::BTreeMap<String, u64>,
+    warnings: &mut Vec<String>,
+) -> Result<()> {
+    use ros_launch_manifest_sched::{PosixPlacement, PosixSched, ReservationMode};
+
+    if file.reservations != ReservationMode::Required {
+        return Ok(());
+    }
+
+    let mut eligible: Vec<(usize, u64, u64, u64)> = Vec::new(); // idx, runtime, deadline, period
+    let mut missing_budget: Vec<String> = Vec::new();
+    let mut exempt_containers: Vec<String> = Vec::new();
+
+    for (idx, tier) in plan.tiers.iter().enumerate() {
+        if tier.name == ros_launch_manifest_sched::DEFAULT_TIER {
+            continue;
+        }
+        // Only fixed-priority tiers are candidates; a best-effort tier was
+        // never in the RT band to begin with.
+        let is_rt = tier
+            .posix
+            .as_ref()
+            .map(|p| p.sched.is_real_time())
+            .unwrap_or(false);
+        if !is_rt {
+            continue;
+        }
+
+        let Some(node) = tier.members.first() else {
+            continue;
+        };
+
+        if container_fqns.contains(node) {
+            exempt_containers.push(node.clone());
+            continue;
+        }
+
+        let Some(period_us) = node_period_us(input, node) else {
+            // No timing fact — outside the rule's scope entirely.
+            continue;
+        };
+
+        let Some(runtime_us) = budget_for(budgets, node) else {
+            missing_budget.push(node.clone());
+            continue;
+        };
+
+        let deadline_us = node_deadline_us(input, node).unwrap_or(period_us);
+        eligible.push((idx, runtime_us, deadline_us, period_us));
+    }
+
+    if !missing_budget.is_empty() {
+        missing_budget.sort();
+        eyre::bail!(
+            "`reservations: required` but {} node(s) in the real-time band carry a timing fact \
+             and no declared `budget_us`: {}.\n\
+             A reservation's runtime has exactly one legitimate source — a declared cost. \
+             Substituting a deadline is the conflation this pipeline removed. Either declare \
+             `budget_us` for each node above in the platform file's `overrides`, or set \
+             `reservations: off` to keep fixed priorities.\n\
+             (Mixing is refused because a SCHED_DEADLINE task preempts every SCHED_FIFO thread \
+             regardless of priority, so a band holding both silently loses the order the mapper \
+             computed.)",
+            missing_budget.len(),
+            missing_budget.join(", ")
+        );
+    }
+
+    for (idx, runtime_ns_us, deadline_ns_us, period_ns_us) in eligible {
+        let tier = &mut plan.tiers[idx];
+        // `deadline_policy` is a v1 `[tiers.<name>]` field; the v2 schema has
+        // no way to author it, so on a v2 path `overrun` is always false.
+        // Stated rather than silently assumed — wiring SIGXCPU needs a place
+        // to declare the intent first.
+        let overrun = tier.deadline_policy.as_deref() == Some("fault");
+        let sched = PosixSched::Deadline {
+            runtime_ns: runtime_ns_us * 1_000,
+            deadline_ns: deadline_ns_us * 1_000,
+            period_ns: period_ns_us * 1_000,
+            overrun,
+        };
+        let affinity = tier
+            .posix
+            .as_ref()
+            .map(|p| p.affinity.clone())
+            .unwrap_or_default();
+        // A reservation cannot carry a CPU mask — its affinity may not be
+        // narrower than its root domain. Placement comes from the cpuset
+        // partition the process was started in.
+        let affinity = match affinity {
+            ros_launch_manifest_sched::PosixAffinity::Cpus { cpus } => {
+                warnings.push(format!(
+                    "scheduling: `{}` derives a SCHED_DEADLINE reservation, so its CPU pin \
+                     ({cpus:?}) is dropped — a deadline thread's affinity may not be narrower \
+                     than the root domain it was created on (sched_setattr returns EPERM). Its \
+                     CPUs come from the cpuset partition it is launched inside.",
+                    tier.name
+                ));
+                ros_launch_manifest_sched::PosixAffinity::Inherit
+            }
+            other => other,
+        };
+        let placement = PosixPlacement {
+            sched,
+            affinity,
+            uclamp: tier.posix.as_ref().and_then(|p| p.uclamp),
+        };
+        placement.validate().map_err(|e| {
+            eyre::eyre!(
+                "`{}`: derived reservation is invalid: {e} (runtime {runtime_ns_us}us, \
+                 deadline {deadline_ns_us}us, period {period_ns_us}us)",
+                tier.name
+            )
+        })?;
+        tier.posix = Some(placement);
+        tier.sched_class = Some("SCHED_DEADLINE".to_string());
+        tier.class = Some("real_time".to_string());
+        // The portable head carries the reservation so it survives into
+        // `system_model.yaml` and back out again. `up` reads the model, not the
+        // platform file, so without these three a reserved node would resolve
+        // to a policy with no parameters — which the apply layer rightly
+        // refuses. The fields already existed for exactly this ("execution-time
+        // budget — EDF/sporadic"); nothing populated them on a v2 path.
+        tier.budget_us = Some(runtime_ns_us);
+        tier.deadline_us = Some(deadline_ns_us);
+        tier.period_us = Some(period_ns_us);
+    }
+
+    if !exempt_containers.is_empty() {
+        exempt_containers.sort();
+        warnings.push(format!(
+            "scheduling: {} kept SCHED_FIFO under `reservations: required` — a component \
+             container loads and forks rather than running periodically, so it declares no rate \
+             to build a reservation from and reserving one would spend admission bandwidth on a \
+             supervisor",
+            exempt_containers.join(", ")
+        ));
+    }
+
+    Ok(())
+}
+
+/// A node's period in microseconds: its own declared rate, else the rate of a
+/// chain it belongs to, propagated from that chain's timer boundary.
+fn node_period_us(input: &ros_launch_manifest_sched::MapperInput, node: &str) -> Option<u64> {
+    if let Some(n) = input.nodes.iter().find(|n| n.name == node)
+        && let Some(hz) = n.rate_hz
+        && hz > 0.0
+    {
+        return Some((1_000_000.0 / hz).round() as u64);
+    }
+
+    // Chain propagation: a chain has ONE triggering rate by construction, so a
+    // member that declares none inherits its source's. That is a statement of
+    // fact, not an invention — unlike substituting a deadline for a cost.
+    for chain in &input.chains {
+        let member = chain.elements.iter().any(|e| match e {
+            ros_launch_manifest_sched::ChainElement::Boundary { node: n, .. } => n == node,
+            ros_launch_manifest_sched::ChainElement::Segment {
+                nodes_in_topo_order,
+                ..
+            } => nodes_in_topo_order.iter().any(|sn| sn.node == node),
+        });
+        if !member {
+            continue;
+        }
+        if let Some(period_ms) = chain.elements.iter().find_map(|e| match e {
+            ros_launch_manifest_sched::ChainElement::Boundary { period_ms, .. } => Some(*period_ms),
+            _ => None,
+        }) {
+            return Some((period_ms * 1000.0).round() as u64);
+        }
+    }
+
+    None
+}
+
+fn node_deadline_us(input: &ros_launch_manifest_sched::MapperInput, node: &str) -> Option<u64> {
+    input
+        .nodes
+        .iter()
+        .find(|n| n.name == node)
+        .and_then(|n| n.deadline_us)
+}
+
+/// Look up a declared budget by full FQN or bare name, matching how
+/// `posix_budgets` keys them.
+fn budget_for(budgets: &std::collections::BTreeMap<String, u64>, node: &str) -> Option<u64> {
+    budgets.get(node).copied().or_else(|| {
+        node.rsplit('/')
+            .next()
+            .filter(|b| !b.is_empty())
+            .and_then(|bare| budgets.get(bare).copied())
     })
 }
 
@@ -2609,6 +2866,249 @@ nodes = ["fast_node"]
                 .expect("default tier");
             assert_eq!(default_tier.members, vec!["/slow_node".to_string()]);
         });
+    }
+
+    // ── Phase 60: SCHED_DEADLINE derivation ──
+
+    fn rt_tier(name: &str, priority: i64) -> ResolvedTier {
+        ResolvedTier {
+            name: name.to_string(),
+            priority,
+            sched_class: Some("SCHED_FIFO".to_string()),
+            class: Some("real_time".to_string()),
+            members: vec![name.to_string()],
+            posix: Some(ros_launch_manifest_sched::PosixPlacement {
+                sched: ros_launch_manifest_sched::PosixSched::Fifo {
+                    priority: priority as i32,
+                },
+                affinity: ros_launch_manifest_sched::PosixAffinity::Inherit,
+                uclamp: None,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn mapper_node(name: &str, rate_hz: Option<f64>) -> ros_launch_manifest_sched::MapperNode {
+        ros_launch_manifest_sched::MapperNode {
+            name: name.to_string(),
+            scope: "/".to_string(),
+            rate_hz,
+            ..Default::default()
+        }
+    }
+
+    fn platform(
+        reservations: ros_launch_manifest_sched::ReservationMode,
+    ) -> ros_launch_manifest_sched::PlatformFile {
+        ros_launch_manifest_sched::PlatformFile {
+            target: "posix".to_string(),
+            mapper: "chain_aware".to_string(),
+            reservations,
+            resources: ros_launch_manifest_sched::PlatformResources::default(),
+            overrides: Default::default(),
+            legacy: None,
+        }
+    }
+
+    #[test]
+    fn reservations_off_leaves_every_tier_at_fixed_priority() {
+        // Budgets are still parsed and carried; they simply do not select a
+        // policy. Adding one budget must never change scheduling on its own.
+        let mut plan = ResolvedTierTable {
+            tiers: vec![rt_tier("/a", 40)],
+        };
+        let input = ros_launch_manifest_sched::MapperInput {
+            nodes: vec![mapper_node("/a", Some(10.0))],
+            ..Default::default()
+        };
+        let budgets = BTreeMap::from([("/a".to_string(), 8_000u64)]);
+        derive_reservations(
+            &mut plan,
+            &platform(ros_launch_manifest_sched::ReservationMode::Off),
+            &input,
+            &BTreeSet::new(),
+            &budgets,
+            &mut Vec::new(),
+        )
+        .expect("off is never an error");
+        assert_eq!(plan.tiers[0].sched_class.as_deref(), Some("SCHED_FIFO"));
+    }
+
+    #[test]
+    fn a_declared_budget_and_rate_become_a_reservation() {
+        let mut plan = ResolvedTierTable {
+            tiers: vec![rt_tier("/a", 40)],
+        };
+        let input = ros_launch_manifest_sched::MapperInput {
+            nodes: vec![mapper_node("/a", Some(10.0))],
+            ..Default::default()
+        };
+        let budgets = BTreeMap::from([("/a".to_string(), 8_000u64)]);
+        derive_reservations(
+            &mut plan,
+            &platform(ros_launch_manifest_sched::ReservationMode::Required),
+            &input,
+            &BTreeSet::new(),
+            &budgets,
+            &mut Vec::new(),
+        )
+        .expect("a budget plus a rate is everything a reservation needs");
+
+        let posix = plan.tiers[0].posix.as_ref().expect("typed placement");
+        let ros_launch_manifest_sched::PosixSched::Deadline {
+            runtime_ns,
+            deadline_ns,
+            period_ns,
+            overrun,
+        } = posix.sched
+        else {
+            panic!("expected a reservation, got {:?}", posix.sched);
+        };
+        assert_eq!(runtime_ns, 8_000_000, "8000us declared cost");
+        assert_eq!(period_ns, 100_000_000, "10Hz -> 100ms");
+        // Implicit deadline: none declared, so the period stands in.
+        assert_eq!(deadline_ns, period_ns);
+        // v2 has no way to author `deadline_policy`, so SIGXCPU stays off.
+        assert!(!overrun);
+        assert_eq!(plan.tiers[0].sched_class.as_deref(), Some("SCHED_DEADLINE"));
+        // The priority the mapper derived survives — the apply layer gives it
+        // to the node's sibling threads, since only the leader is reserved.
+        assert_eq!(plan.tiers[0].priority, 40);
+    }
+
+    #[test]
+    fn a_missing_budget_is_refused_naming_every_node() {
+        // All-or-nothing: a band holding both a reservation and a fixed
+        // priority loses the order the mapper computed, invisibly.
+        let mut plan = ResolvedTierTable {
+            tiers: vec![rt_tier("/a", 40), rt_tier("/b", 30)],
+        };
+        let input = ros_launch_manifest_sched::MapperInput {
+            nodes: vec![mapper_node("/a", Some(10.0)), mapper_node("/b", Some(20.0))],
+            ..Default::default()
+        };
+        let budgets = BTreeMap::from([("/a".to_string(), 8_000u64)]);
+        let err = derive_reservations(
+            &mut plan,
+            &platform(ros_launch_manifest_sched::ReservationMode::Required),
+            &input,
+            &BTreeSet::new(),
+            &budgets,
+            &mut Vec::new(),
+        )
+        .expect_err("a partially-budgeted band must be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("/b"),
+            "must name the node without a budget: {msg}"
+        );
+        assert!(
+            !msg.contains("/a"),
+            "must not blame the budgeted node: {msg}"
+        );
+        assert!(
+            msg.contains("reservations: off"),
+            "must offer the way out: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_container_is_exempt_and_keeps_fixed_priority() {
+        // Without this, `--container-mode isolated` - the DEFAULT - would make
+        // nearly every real system a hard error its author could not fix.
+        let mut plan = ResolvedTierTable {
+            tiers: vec![rt_tier("/a", 40), rt_tier("/container", 30)],
+        };
+        let input = ros_launch_manifest_sched::MapperInput {
+            nodes: vec![
+                mapper_node("/a", Some(10.0)),
+                mapper_node("/container", Some(10.0)),
+            ],
+            ..Default::default()
+        };
+        let budgets = BTreeMap::from([("/a".to_string(), 8_000u64)]);
+        let containers = BTreeSet::from(["/container".to_string()]);
+        let mut warnings = Vec::new();
+        derive_reservations(
+            &mut plan,
+            &platform(ros_launch_manifest_sched::ReservationMode::Required),
+            &input,
+            &containers,
+            &budgets,
+            &mut warnings,
+        )
+        .expect("a container needs no budget");
+
+        let by_name = |n: &str| plan.tiers.iter().find(|t| t.name == n).unwrap();
+        assert_eq!(by_name("/a").sched_class.as_deref(), Some("SCHED_DEADLINE"));
+        assert_eq!(
+            by_name("/container").sched_class.as_deref(),
+            Some("SCHED_FIFO")
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("/container"), "{}", warnings[0]);
+        assert!(warnings[0].contains("supervisor"), "{}", warnings[0]);
+    }
+
+    #[test]
+    fn a_node_with_no_timing_fact_is_outside_the_rule() {
+        // Nothing to build a period from, so it is not a candidate and its
+        // missing budget is not a violation.
+        let mut plan = ResolvedTierTable {
+            tiers: vec![rt_tier("/a", 40)],
+        };
+        let input = ros_launch_manifest_sched::MapperInput {
+            nodes: vec![mapper_node("/a", None)],
+            ..Default::default()
+        };
+        derive_reservations(
+            &mut plan,
+            &platform(ros_launch_manifest_sched::ReservationMode::Required),
+            &input,
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &mut Vec::new(),
+        )
+        .expect("no timing fact means no reservation and no violation");
+        assert_eq!(plan.tiers[0].sched_class.as_deref(), Some("SCHED_FIFO"));
+    }
+
+    #[test]
+    fn a_reservation_drops_an_explicit_cpu_pin_and_says_so() {
+        // A deadline thread's affinity may not be narrower than its root
+        // domain, so a pin is not merely ignored - it would make the apply
+        // fail with EPERM.
+        let mut plan = ResolvedTierTable {
+            tiers: vec![ResolvedTier {
+                posix: Some(ros_launch_manifest_sched::PosixPlacement {
+                    sched: ros_launch_manifest_sched::PosixSched::Fifo { priority: 40 },
+                    affinity: ros_launch_manifest_sched::PosixAffinity::Cpus { cpus: vec![3] },
+                    uclamp: None,
+                }),
+                ..rt_tier("/a", 40)
+            }],
+        };
+        let input = ros_launch_manifest_sched::MapperInput {
+            nodes: vec![mapper_node("/a", Some(10.0))],
+            ..Default::default()
+        };
+        let budgets = BTreeMap::from([("/a".to_string(), 8_000u64)]);
+        let mut warnings = Vec::new();
+        derive_reservations(
+            &mut plan,
+            &platform(ros_launch_manifest_sched::ReservationMode::Required),
+            &input,
+            &BTreeSet::new(),
+            &budgets,
+            &mut warnings,
+        )
+        .expect("derives");
+        assert_eq!(
+            plan.tiers[0].posix.as_ref().unwrap().affinity,
+            ros_launch_manifest_sched::PosixAffinity::Inherit
+        );
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("EPERM"), "{}", warnings[0]);
     }
 
     // ── Phase 60: the posix override vocabulary ──
