@@ -1,8 +1,0 @@
-# Parent scope with E2E path budget.
-version: 1
-
-paths:
-  pipeline:
-    input: /sensor/raw
-    output: [/perception/objects]
-    max_latency_ms: 100
