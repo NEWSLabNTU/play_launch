@@ -53,7 +53,73 @@ The parser includes an optional IR layer (`--features ir` on the parser crate) t
 
 ### Scheduling Spec
 
-- **Scheduling spec** (`src/ros-launch-manifest/sched/`): portable scheduling schema shared with nano-ros. **Phase 41 v2 model (current default)**: a `<stem>.system.<target>.yaml` platform file names a `SchedMapper` (`rate_monotonic`, `deadline_monotonic`, or `manual`) that **derives** per-node priorities from launch+contract facts (rates/deadlines/`criticality`); `resources` supplies platform facts (e.g. `rt_priority_band`), `overrides` pins specific nodes (always beats derived). Platform files ship through the same provider-sidecar + user-overlay **channels** as contracts (Phase 40): `--sched <path>` explicit > overlay (`--contracts`/`$PLAY_LAUNCH_CONTRACTS`/XDG/`/etc`) > provider sidecar next to the launch file — auto-applied at `launch`/`run`/`up` when `--sched` is absent. `play_launch check --sched --explain` prints the merged plan with per-node provenance (override/derived/default); `play_launch contract eject <pkg> <file>` copies the resolved provider contract+platform file into the overlay tree for editing (both verbs also exist on the developer-only `ros-launch-resolve` binary — same `ros_launch_resolve::verbs::*` implementation, two thin CLI wrappers). **Legacy bridge**: `system.toml` (hand-written `[tiers.X.<target>]` + `[[assign]]`) still parses via `.toml`-extension dispatch to the `manual` mapper — deprecated but supported until nano-ros migrates (Phase 41.6, not yet scheduled); `--sched-apply off|warn|strict` unchanged (Phase 38: per-TID SCHED_FIFO/RR + affinity via the CAP_SYS_NICE `play_launch_rt_helper`, non-root). User guide: `docs/guide/rt-scheduling.md`; schema (v1+v2): `src/ros-launch-manifest/docs/scheduling.md`; design of record: `docs/superpowers/specs/2026-07-16-rt-config-v2-design.md`.
+- **Scheduling spec** (the `ros-launch-manifest` repo's `sched/` crate, a git dependency — see Repository Layout): portable scheduling schema shared with nano-ros. **Phase 41 v2 model (current default)**: a `<stem>.system.<target>.yaml` platform file names a `SchedMapper` (`rate_monotonic`, `deadline_monotonic`, or `manual`) that **derives** per-node priorities from launch+contract facts (rates/deadlines/`criticality`); `resources` supplies platform facts (e.g. `rt_priority_band`), `overrides` pins specific nodes (always beats derived). Platform files ship through the same provider-sidecar + user-overlay **channels** as contracts (Phase 40): `--sched <path>` explicit > overlay (`--contracts`/`$PLAY_LAUNCH_CONTRACTS`/XDG/`/etc`) > provider sidecar next to the launch file — auto-applied at `launch`/`run`/`up` when `--sched` is absent. `play_launch check --sched --explain` prints the merged plan with per-node provenance (override/derived/default); `play_launch contract eject <pkg> <file>` copies the resolved provider contract+platform file into the overlay tree for editing (both verbs also exist on the developer-only `ros-launch-resolve` binary — same `ros_launch_resolve::verbs::*` implementation, two thin CLI wrappers). **Legacy bridge**: `system.toml` (hand-written `[tiers.X.<target>]` + `[[assign]]`) still parses via `.toml`-extension dispatch to the `manual` mapper — deprecated but supported until nano-ros migrates (Phase 41.6, not yet scheduled); `--sched-apply off|warn|strict` unchanged (Phase 38: the apply sweep covers every TID, delegated to the CAP_SYS_NICE `play_launch_rt_helper` so `play_launch` itself stays unprivileged). User guide: `docs/guide/rt-scheduling.md`; schema (v1+v2): the manifest repo's `docs/scheduling.md`; design of record: `docs/superpowers/specs/2026-07-16-rt-config-v2-design.md`.
+- **Phase 60 — the full Linux policy surface.** The apply layer is
+  `sched_setattr(2)`, not `sched_setscheduler(2)`: the latter cannot express
+  `SCHED_DEADLINE`, uclamp, or any `sched_flags` value. `libc` has neither the
+  function nor `SYS_sched_setattr` on x86_64-gnu, so both, plus the 56-byte
+  `SCHED_ATTR_SIZE_VER1` layout, are declared in `src/play_launch/src/sched.rs`
+  with a unit test pinning every field offset.
+  - **Typed placement** (`PosixSched`/`PosixAffinity`/`PosixPlacement` in the
+    manifest crate's `sched/src/posix.rs`) names only the parameters each
+    policy has, so a priority on `SCHED_OTHER` or a CPU mask on
+    `SCHED_DEADLINE` is unrepresentable. Additive: `sched_class`/`priority`/
+    `core` remain for one release. An unknown `sched_class` is now an **error**
+    — it used to become `SCHED_OTHER` silently.
+  - **Override vocabulary**: `cpus`, `nice`, `uclamp_min`/`uclamp_max`,
+    `budget_us`. `reservations: off|required` sits beside `mapper:` (policy,
+    not a platform fact); `resources.rr_timeslice_us` is the host's global
+    `SCHED_RR` slice.
+  - **Cost is authorable, and a deadline is never a cost.** `budget_us` is the
+    only source for a reservation's runtime. `resolve_chains` used to fill a
+    boundary's `exec_ms` with the path's `max_latency_ms` — its *deadline* —
+    which is why no execution time existed anywhere in the model. Absent a
+    declared budget the cost is ABSENT, and the existing
+    `feasible ON INCOMPLETE EVIDENCE` diagnostic finally fires for real. A
+    regression test fails if a deadline is ever read as a cost again.
+  - **`SCHED_DEADLINE`** is derived in `ros-launch-resolve`'s `sched_loader`
+    (it needs the reservations mode, the budgets, and which nodes are
+    containers — none visible to the mapper): runtime from `budget_us`, period
+    from `1/rate_hz` propagated along a chain from its source, deadline
+    declared-else-period. All-or-nothing within the RT band, scoped to nodes
+    carrying a timing fact, **containers exempt** — `--container-mode isolated`
+    is the default, so without the exemption nearly every system would
+    hard-error. Reservation parameters ride the portable tier head
+    (`budget_us`/`deadline_us`/`period_us`) so `up`, which reads the model and
+    never the platform file, can rebuild them.
+  - **Reservations need a cpuset partition, and play_launch creates nothing.**
+    A deadline thread's affinity may not be narrower than its root domain, so
+    `taskset` cannot confine one. A partition only validates as a **top-level**
+    cgroup, and cgroup v2's common-ancestor rule means nothing can migrate
+    into one — a process must be *started* inside.
+    `src/play_launch/src/execution/cpuset.rs` is read-only: it detects the
+    partition and refuses clearly without one (`play_launch verify` reports
+    it). Provisioning is `scripts/provision_rt_cpuset.sh`, run as root.
+    **The readback is load-bearing**: writing `partition = root` can succeed
+    and read back `root invalid`, and a task there runs on the full root domain
+    with no isolation at all.
+  - **Two flags that look like hygiene and are not.**
+    `SCHED_FLAG_RESET_ON_FORK` is set **only** for `SCHED_DEADLINE` (which the
+    kernel refuses to `fork(2)` from without it). On `SCHED_FIFO` it breaks the
+    per-TID sweep, because the kernel resets scheduling in `sched_fork()`,
+    which runs for *thread* creation too — measured, and locked by a test.
+    `uclamp_min` is a **no-op on RT policies** (they already default to
+    1024/1024); `check` warns rather than silently doing nothing.
+  - **F2 — a reservation is per-thread.** Sweeping one across a ROS node's ~11
+    threads would turn an 8ms/100ms budget into 88% of a CPU at admission
+    control, so the thread-group leader is reserved and siblings take
+    `SCHED_FIFO`. Unsound for multi-threaded executors; refused where
+    detectable, documented where not.
+  - **Measured result (W8): reservations LOSE on vanilla rclcpp.** Three arms
+    on one CPU — RT off 217/1013 missed, `SCHED_FIFO` 9/1030, `SCHED_DEADLINE`
+    42/1038; best-effort cost −16% vs −5%. Reservations return most of the
+    throughput and give up most of the determinism. The "budgets too small"
+    explanation was tested and rejected (larger budgets were *worse*); the
+    cause is CBS's sporadic release model versus an `rclcpp::spin()` event
+    loop. Report:
+    `docs/reports/rt-mixed-criticality/reservations-result.md`. Not yet
+    authorable on a v2 path: `deadline_policy` (so `SCHED_FLAG_DL_OVERRUN` is
+    wired but always off). Deferred: `SCHED_FLAG_RECLAIM`.
 
 ## Installation & Usage
 
@@ -197,12 +263,26 @@ add `src/ros-launch-resolve` to `members`. `just check-layer2-isolation`
 boundary breaks: no ROS crates in the graph, no ROS shared libraries linked,
 and both launch frontends resolve with no ROS installed.
 
-**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.0`), not a
-submodule — phase-55 W2. Layer 2 now has no submodules at all. Both
-`src/play_launch/Cargo.toml` and `src/ros-launch-resolve/Cargo.toml` name the
-same tag, which is what makes cargo resolve ONE instance; naming different
-revisions would give two same-named packages from different sources, and
-`SystemModel` would become two incompatible types. Bump both together.
+**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.5`), not a
+submodule — phase-55 W2. Layer 2 now has no submodules at all. **Three**
+manifests name the tag and must move together:
+`src/play_launch/Cargo.toml`, `src/ros-launch-resolve/Cargo.toml` and
+`tests/Cargo.toml`. Naming the same tag is what makes cargo resolve ONE
+instance; different revisions would give two same-named packages from
+different sources, and `SystemModel` would become two incompatible types.
+
+`tests/` is the one that drifts unnoticed — it sat at `v0.1.0` for five tags
+because it is a separate workspace that uses the crate for one call
+(`fixture_dir()`) and drives `play_launch` as a subprocess, so no types cross
+the boundary and nothing fails to compile. The symptom is not an error but
+silent staleness. **Bump all three, and commit the lockfiles**: a clean clone
+builds from the lock, and `--locked` fails against the old revision.
+
+There is no vendored copy in-tree any more. `src/ros-launch-resolve/
+third-party/ros-launch-manifest/` was deleted (phase 60) — nothing built from
+it, it had drifted from the compiled tag, and it was consulted during design
+work as if it were authoritative. Read the real thing at the pinned tag, or in
+`~/.cargo/git/checkouts/` where cargo already keeps it.
 
 Its `tests/fixtures` are reached through
 `ros_launch_manifest_check::fixture_dir()` (the crate's `testdata` feature),
@@ -255,7 +335,48 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-08-12**: Phase 60 complete — the Linux scheduling realizer beyond
+  `SCHED_FIFO`. Details in [Scheduling Spec](#scheduling-spec); the headline is
+  that the apply layer moved to `sched_setattr(2)`, cost became authorable
+  (`budget_us`) and the deadline-as-cost conflation was deleted,
+  `SCHED_DEADLINE` is derived and applied, and **W8 measured that reservations
+  lose to fixed priority on vanilla `rclcpp`** (217 → 9 misses under
+  `SCHED_FIFO`, 217 → 42 under `SCHED_DEADLINE`) — reported rather than tuned
+  away. Reproduce with `just ab` (two arms, unprivileged) or `sudo -E just ab3`
+  (adds the deadline arm; needs root for the partition) in
+  `examples/rt_av_demo/`. Manifest crate bumped `v0.1.4` → **`v0.1.5`** across
+  all three manifests. Four times the design was wrong and measurement corrected it,
+  which is the pattern worth carrying forward:
+  `SCHED_FLAG_RESET_ON_FORK` on `SCHED_FIFO` silently breaks the per-TID sweep
+  (`sched_fork()` runs for *thread* creation); a cpuset partition validates
+  only as a **top-level** cgroup and cannot be migrated into; the model carried
+  `SCHED_DEADLINE` with no runtime or period, so `up` would have refused every
+  reservation it derived; and a declared `budget_us` failed to reach the chain
+  because cost lookup keyed by FQN while overrides key by bare name. Roadmap:
+  `docs/roadmap/phase-60-linux-sched-surface.md`. Design:
+  `docs/superpowers/specs/2026-08-10-linux-sched-feature-surface-design.md`.
+  Result: `docs/reports/rt-mixed-criticality/reservations-result.md`.
+- **2026-08-11**: `just setcap` uses a throwaway container instead of `sudo`,
+  so the edit-build-test loop needs no password. Every colcon build COPIES the
+  helpers into `install/` (differing inodes, `nlink 1`) and a capability lives
+  on the inode, so they are dropped on every build — and nothing can preserve
+  them: the kernel's `killpriv` path strips `security.capability` on write, and
+  copying it forward needs `CAP_SETFCAP`. Docker's DEFAULT bounding set already
+  holds `CAP_SETFCAP`, granting a file capability needs only that (not the
+  capability being granted), and a bind mount writes the xattr to the host
+  inode. First run builds the image (~12s), then ~0.4s. `just build` reapplies
+  automatically when it can do so without prompting. **Rootless Docker is
+  refused, not silently used**: in a user namespace the xattr is namespaced
+  (revision 3, carrying a rootid) and honored only inside it, so `getcap` would
+  read correct while host processes still got `EPERM`. This is convenience via
+  privilege you already hold — `docker` group membership is root-equivalent —
+  so it is a DEVELOPER shortcut; the user-facing install path is still
+  `sudo setcap`. Image: `docker/setcap.Dockerfile`.
 - **2026-08-06**: Phase 58 planned — deriving scheduling from contracts.
+  **Superseded in part**: W1 (make cost authorable) and W4 (reservations)
+  moved to Phase 60 and are DONE. Finding (1) is fixed (cost is authorable);
+  finding (4) was correct and is resolved by requiring a cpuset partition. W2
+  (measure cost), W3 (deadline decomposition) and W5 (synthesis) remain.
   Study: `docs/research/scheduling-derivation-prior-art.md` (options A–G:
   Audsley OPA, deadline decomposition, reservations, LET, CP synthesis,
   compositional analysis, callback granularity). Four findings from the
@@ -299,7 +420,9 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
   demotion left a stale mapper-derived priority; `class: real_time` shipped
   on best-effort tiers in `system_model.yaml`; and **application was never
   logged**, so both halves of an A/B produced byte-identical scheduling logs
-  and `chrt -p` was the only way to tell RT had applied. Note issue #0015:
+  and `chrt -p` was the only way to tell RT had applied. Note issue #0015
+  (largely defanged 2026-08-11 — `just setcap` no longer prompts and `just
+  build` reapplies for you, but the underlying inode fact is unchanged):
   any rebuild replaces `play_launch_rt_helper` and silently drops its
   capability — `just setcap` after every build.
 - **2026-07-31**: Removed `<node machine=>` — it is ROS 1 roslaunch syntax,
@@ -431,7 +554,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
   - `criticality-from-hazards.md` — deriving criticality (and reservations)
     from declared hazards instead of a `high|medium|low` label
   - `unified-system-model.md` — Phase 46: the SystemModel as the ONE complete artifact (`record.json` retired to deprecated compat)
-  - Manifest design docs moved to `src/ros-launch-manifest/docs/` (Phase 31)
+  - Manifest design docs live in the `ros-launch-manifest` repo's `docs/` (Phase 31; that repo is a git dependency, so read them at the pinned tag or in `~/.cargo/git/checkouts/`)
   - `rcl-interception.md` — RCL interception architecture + graph discovery evolution
   - `record-format.md` — record.json format: current fields + Phase 30 extensions (scopes)
   - `parser-context.md` — parser LaunchContext: scope chain, namespacing, captures
