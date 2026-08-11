@@ -100,7 +100,45 @@ ab:
     rm -rf out
     just _run off out/trace-off
     just _run on  out/trace-on
-    just _report
+    just _report off on
+
+# THE experiment, three arms: RT off, SCHED_FIFO, SCHED_DEADLINE.
+#
+# Needs ROOT, unlike `just ab`. A reservation must run inside an exclusive
+# cpuset partition — a deadline thread's affinity may not be narrower than its
+# root domain, so `taskset` cannot be the confinement and only root can create
+# the partition. That is why this is a separate recipe: `just ab` stays
+# unprivileged and unchanged.
+#
+# WARNING: creating the partition removes CPU {{ cpus }} from every other
+# cgroup on the machine for the duration of the run. On a shared host, pick a
+# CPU nobody is relying on.
+ab3:
+    #!/usr/bin/env bash
+    set -e
+    cd "{{ justfile_directory() }}"
+
+    if [ "$(id -u)" != "0" ]; then
+        echo "REFUSING: the deadline arm needs root to create an exclusive cpuset" >&2
+        echo "partition. A SCHED_DEADLINE thread's affinity may not be narrower than" >&2
+        echo "the root domain it was created on, so taskset cannot confine it and" >&2
+        echo "sched_setattr would fail with EPERM for every reserved node." >&2
+        echo "  sudo -E just ab3" >&2
+        exit 1
+    fi
+
+    helper="{{ repo }}/install/play_launch/lib/play_launch/play_launch_rt_helper"
+    if ! getcap "$helper" 2>/dev/null | grep -q cap_sys_nice && [ "$(id -u)" != "0" ]; then
+        echo "REFUSING: play_launch_rt_helper lacks cap_sys_nice." >&2
+        echo "Run 'just setcap' in {{ repo }} first." >&2
+        exit 1
+    fi
+
+    rm -rf out
+    just _run off      out/trace-off
+    just _run on       out/trace-on
+    just _run deadline out/trace-deadline
+    just _report off on deadline
 
 # Internal: one run. $1 = off|on, $2 = output dir.
 _run mode outdir:
@@ -119,19 +157,41 @@ _run mode outdir:
       trace: true
     YAML
 
-    sched="$(ros2 pkg prefix rt_av_demo)/share/rt_av_demo/launch/bringup.system.posix.yaml"
-    apply=$([ "{{ mode }}" = "on" ] && echo strict || echo off)
+    share="$(ros2 pkg prefix rt_av_demo)/share/rt_av_demo/launch"
+    case "{{ mode }}" in
+      deadline) sched="$share/bringup.system.deadline.posix.yaml"; apply=strict ;;
+      on)       sched="$share/bringup.system.posix.yaml";          apply=strict ;;
+      *)        sched="$share/bringup.system.posix.yaml";          apply=off    ;;
+    esac
 
     export PLAY_LAUNCH_INTERCEPTION_SO="{{ interception_so }}"
     export ROS_DOMAIN_ID=$(( 60 + RANDOM % 20 ))
 
     echo "=== run: RT {{ mode }} (--sched-apply $apply) ==="
-    # taskset is what ACTUALLY confines the workload; isolated_cpus in the
-    # platform file only declares the intent to the mapper.
-    timeout {{ duration }} taskset -c {{ cpus }} \
-        "{{ play_launch }}" launch rt_av_demo bringup.launch.xml \
-        --sched "$sched" --sched-apply "$apply" \
-        --config cfg.yaml --disable-web-ui {{ launch_args }} > run.log 2>&1 || true
+    if [ "{{ mode }}" = "deadline" ]; then
+        # The confinement mechanism CHANGES for this arm, and it has to.
+        # `taskset` narrows the affinity mask, and a SCHED_DEADLINE thread may
+        # not have a mask narrower than the root domain it was created on — so
+        # under taskset every sched_setattr would fail with EPERM. The cpuset
+        # partition IS the confinement here: it restricts the root domain
+        # itself, which is the only form the kernel accepts.
+        #
+        # The workload is identical and lands on the same CPU either way; only
+        # the mechanism differs. Worth stating in the report, because it is the
+        # one thing that is not held constant across the three arms.
+        timeout {{ duration }} "{{ repo }}/scripts/provision_rt_cpuset.sh" \
+            --cpus {{ cpus }} --user "${SUDO_USER:-$(id -un)}" -- \
+            "{{ play_launch }}" launch rt_av_demo bringup.launch.xml \
+            --sched "$sched" --sched-apply "$apply" \
+            --config cfg.yaml --disable-web-ui {{ launch_args }} > run.log 2>&1 || true
+    else
+        # taskset is what ACTUALLY confines the workload; isolated_cpus in the
+        # platform file only declares the intent to the mapper.
+        timeout {{ duration }} taskset -c {{ cpus }} \
+            "{{ play_launch }}" launch rt_av_demo bringup.launch.xml \
+            --sched "$sched" --sched-apply "$apply" \
+            --config cfg.yaml --disable-web-ui {{ launch_args }} > run.log 2>&1 || true
+    fi
 
     # `latest`, not a glob: play_log holds both the timestamp directory and a
     # `latest` symlink to it, so `play_log/*/` matches the same run twice and
@@ -142,15 +202,20 @@ _run mode outdir:
         echo "  WARNING: run.log mentions a privilege failure — scheduling may not have applied"
     fi
 
-# Internal: compare the two runs.
-_report:
+# Internal: compare the runs. Arms are named on the command line.
+_report *arms:
     #!/usr/bin/env bash
     set -e
     cd "{{ justfile_directory() }}"
-    python3 - {{ warmup }} <<'PY'
+    python3 - {{ warmup }} {{ arms }} <<'PY'
     import sys
 
     warmup = int(sys.argv[1])
+    arms = sys.argv[2:] or ["off", "on"]
+
+    # Display names, so the table says what the arm actually did rather than
+    # repeating the internal mode word.
+    LABEL = {"off": "RT OFF", "on": "SCHED_FIFO", "deadline": "SCHED_DEADLINE"}
 
     def samples(d):
         """Steady-state chain samples. Startup is discarded: the first seconds
@@ -172,13 +237,16 @@ _report:
             out.append((float(kv["latency_ms"]), kv["late"] == "1"))
         return out
 
-    off, on = samples("off"), samples("on")
-    for name, s in (("off", off), ("on", on)):
+    data = {}
+    for arm in arms:
+        s = samples(arm)
         if s is None:
-            sys.exit(f"no brake_controller output for the RT-{name} run — it did not launch")
+            sys.exit(f"no brake_controller output for the '{arm}' run — it did not launch. "
+                     f"Check out/trace-{arm}/run.log.")
         if len(s) < 100:
-            sys.exit(f"RT-{name} produced only {len(s)} steady-state samples after a "
+            sys.exit(f"'{arm}' produced only {len(s)} steady-state samples after a "
                      f"{warmup}-sample warmup — too few to compare. Raise `duration`.")
+        data[arm] = s
 
     def row(name, xs):
         lat = sorted(x for x, _ in xs)
@@ -186,13 +254,21 @@ _report:
         p = lambda q: lat[min(int(len(lat) * q), len(lat) - 1)]
         return (name, p(0.50), p(0.99), lat[-1], miss, len(xs))
 
-    r_off, r_on = row("RT OFF", off), row("RT ON", on)
+    rows = {arm: row(LABEL.get(arm, arm), data[arm]) for arm in arms}
+    r_off = rows[arms[0]]
     print()
     print(f"steady state only, first {warmup} samples discarded")
-    print(f"{'':8} {'p50':>9} {'p99':>9} {'max':>9} {'missed':>12}")
-    for n, p50, p99, mx, miss, tot in (r_off, r_on):
-        print(f"{n:8} {p50:8.1f}ms {p99:8.1f}ms {mx:8.1f}ms {miss:>6}/{tot:<5}")
+    print(f"{'':16} {'p50':>9} {'p99':>9} {'max':>9} {'missed':>12}")
+    for arm in arms:
+        n, p50, p99, mx, miss, tot = rows[arm]
+        print(f"{n:16} {p50:8.1f}ms {p99:8.1f}ms {mx:8.1f}ms {miss:>6}/{tot:<5}")
     print()
+    if "deadline" in arms:
+        print("NOTE: the deadline arm confines the workload with an exclusive cpuset")
+        print("partition rather than taskset, because a SCHED_DEADLINE thread's affinity")
+        print("may not be narrower than its root domain. Same CPU, same workload — but")
+        print("the confinement MECHANISM is the one thing not held constant.")
+        print()
 
     # A baseline that already meets its deadline means the workload never
     # contended, so the RT-on result proves nothing. That is inconclusive, not
@@ -222,25 +298,60 @@ _report:
             rows[x["pid"]] for x in ev if x.get("cat") == "publish"
         )
 
-    p_off, p_on = published("off"), published("on")
-    if p_off and p_on:
-        print("published messages, by criticality band:")
+    pubs = {arm: published(arm) for arm in arms}
+    base_arm = arms[0]
+    if all(pubs.get(a) for a in arms):
+        print("published messages, by criticality band (vs the baseline arm):")
+        header = "  " + f"{'band':12}" + "".join(f"{LABEL.get(a, a):>18}" for a in arms)
+        print(header)
         for band in ("/safety/", "/planning/", "/perception/", "/telemetry/", "/tools/"):
-            a = sum(v for k, v in p_off.items() if k.startswith(band))
-            b = sum(v for k, v in p_on.items() if k.startswith(band))
-            if not a:
+            base = sum(v for k, v in pubs[base_arm].items() if k.startswith(band))
+            if not base:
                 continue
-            print(f"  {band.strip('/'):12} {a:6} -> {b:6}  ({100*(b-a)/a:+.0f}%)")
+            cells = ""
+            for a in arms:
+                n = sum(v for k, v in pubs[a].items() if k.startswith(band))
+                cells += (f"{n:>10}" if a == base_arm
+                          else f"{n:>10} ({100*(n-base)/base:+.0f}%)".rjust(18))
+            print(f"  {band.strip('/'):12}{cells}")
         print()
 
-    if r_on[4] < r_off[4]:
-        print(f"RT reduced steady-state deadline misses {r_off[4]} -> {r_on[4]} "
-              f"(p99 {r_off[2]:.1f}ms -> {r_on[2]:.1f}ms).")
-    else:
-        print(f"NO IMPROVEMENT: {r_off[4]} -> {r_on[4]} misses. Either the schedule\n"
-              "did not apply (check out/trace-on/run.log for a privilege warning) or\n"
-              "the safety chain is not the priority the mapper derived — compare\n"
-              "against `just check`.")
+    improved = False
+    for arm in arms[1:]:
+        r = rows[arm]
+        if r[4] < r_off[4]:
+            improved = True
+            print(f"{r[0]} reduced steady-state deadline misses {r_off[4]} -> {r[4]} "
+                  f"(p99 {r_off[2]:.1f}ms -> {r[2]:.1f}ms).")
+        else:
+            print(f"{r[0]}: NO IMPROVEMENT, {r_off[4]} -> {r[4]} misses. Either the "
+                  f"schedule did not apply (check out/trace-{arm}/run.log for a privilege "
+                  f"warning) or the safety chain is not the priority the mapper derived — "
+                  f"compare against `just check`.")
+
+    # The claim reservations exist to test: do they hold the deadline WHILE
+    # giving best-effort back the throughput fixed priority took? Phase 57
+    # measured that cost at 26-37%. Reported either way — a reservation that
+    # keeps the chain and returns nothing is a real result, not a failure to
+    # hide.
+    if "deadline" in arms and "on" in arms and all(pubs.get(a) for a in arms):
+        def be(arm):
+            return sum(v for k, v in pubs[arm].items()
+                       if not k.startswith("/safety/"))
+        base, fifo, dl = be(arms[0]), be("on"), be("deadline")
+        if base:
+            print()
+            print(f"best-effort throughput vs the RT-off baseline: "
+                  f"SCHED_FIFO {100*(fifo-base)/base:+.0f}%, "
+                  f"SCHED_DEADLINE {100*(dl-base)/base:+.0f}%")
+            if dl > fifo:
+                print("Reservations returned some of what fixed priority cost.")
+            else:
+                print("Reservations did NOT return best-effort throughput here. Without "
+                      "SCHED_FLAG_RECLAIM a reservation idles its unused bandwidth "
+                      "rather than yielding it, which is the likely reason.")
+
+    if not improved:
         sys.exit(1)
     PY
 

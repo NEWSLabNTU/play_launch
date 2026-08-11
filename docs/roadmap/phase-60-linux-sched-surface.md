@@ -433,6 +433,38 @@ does not recover, the report says so.
 with no hand-typed values; the report states the recovery, partial recovery, or
 absence of it.
 
+### Measured, 2026-08-11 — reservations lose this one
+
+| arm | p99 | missed (60 ms) | best-effort vs baseline |
+|---|---|---|---|
+| RT OFF | 155.0 ms | 217 / 1013 | — |
+| `SCHED_FIFO` | 19.9 ms | **9 / 1030** | **−16 %** |
+| `SCHED_DEADLINE` | 148.6 ms | 42 / 1038 | **−5 %** |
+
+Reservations return most of the throughput fixed priority costs and give up
+most of the determinism. **Fixed priority remains the better trade for this
+workload**, and the phase says so rather than tuning until it wins.
+
+The obvious explanation — budgets too small, so CBS throttles — was tested and
+**rejected**: a fourth arm at the largest budgets the declared deadlines admit
+was *worse* (59 misses, 194.2 ms p99). What remains is a model mismatch the
+prior art predicts. `SCHED_DEADLINE` is CBS over a **sporadic release model**;
+an `rclcpp::spin()` loop is an event loop whose releases are message arrivals
+with no phase relationship to replenishment, so a message arriving after the
+runtime is spent waits for the next period rather than for a CPU. That is
+exactly the observed shape: p50 improves (31.6 vs 43.0 ms) while p99 barely
+moves. Getting the benefit needs per-callback release — phase 58's side-track
+G — which the apply layer cannot reach from outside the process.
+
+What the run *does* establish: admission control and the arithmetic are right
+(65 % of one CPU admitted against a 95 % ceiling); reservations genuinely bound
+the RT class's appetite (the −5 % column); and the derivation is sound end to
+end, applied verbatim as `lidar 2000/2000/20000`, `detector 8000/12000/20000`,
+`brake 3000/8000/20000` µs.
+
+Full write-up, with caveats:
+[`docs/reports/rt-mixed-criticality/reservations-result.md`](../reports/rt-mixed-criticality/reservations-result.md).
+
 ---
 
 ## Testing posture

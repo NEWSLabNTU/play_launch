@@ -1,0 +1,57 @@
+# The reservation arm of the A/B, selected by `just ab3`.
+#
+# Same workload, same CPU, same mapper as bringup.system.posix.yaml. The only
+# difference is `reservations: required`, which turns the chain's derived fixed
+# priorities into SCHED_DEADLINE reservations — so the comparison isolates the
+# policy and nothing else.
+#
+# WHY THIS FILE EXISTS SEPARATELY, rather than a flag on the other one: the
+# fifo arm must keep running unprivileged, exactly as it does today. A
+# reservation needs an exclusive cpuset partition, and that needs root. Keeping
+# them apart means `just ab` is unchanged and `just ab3` is the one that asks
+# for privilege.
+target: posix
+mapper: chain_aware
+reservations: required
+
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+
+  # Must match the partition `just ab3` creates. Under the fifo arm this is a
+  # declaration to the mapper and `taskset` does the confining; under this arm
+  # the cpuset partition IS the confinement, because a deadline thread's
+  # affinity may not be narrower than its root domain — `taskset` would make
+  # every sched_setattr fail with EPERM.
+  isolated_cpus: [2]
+
+  # This host's global SCHED_RR slice, so the mapper can judge whether RR is
+  # worth deriving for a priority tie. Read from
+  # /proc/sys/kernel/sched_rr_timeslice_ms — not assumed.
+  rr_timeslice_us: 100000
+
+overrides:
+  # THE COSTS. Unusually for this field, these are not estimates: each node
+  # busy-burns for exactly `burn_ms` (see src/*.cpp, `rt_av_demo::burn_ms`),
+  # so the declared budget IS the execution time by construction. Everywhere
+  # else a budget is a declared high-percentile observation used as an upper
+  # bound; here the workload was written to make it exact, which is what makes
+  # this a fair test of the reservation rather than of somebody's guess.
+  #
+  # Keep in step with bringup.launch.xml's <arg> defaults:
+  #   lidar_driver      burn_ms 2.0   (the arg has no override; see the node)
+  #   obstacle_detector detect_burn 8.0
+  #   brake_controller  brake_burn 3.0
+  #
+  # Total: 13 ms of runtime per 20 ms period (50 Hz) = 65% of one CPU, against
+  # the kernel's default 95% RT bandwidth ceiling. Admission control accepts
+  # that with room; raise the burns far enough and it will refuse, which is
+  # itself worth seeing.
+  lidar_driver:      { budget_us: 2000 }
+  obstacle_detector: { budget_us: 8000 }
+  brake_controller:  { budget_us: 3000 }
+
+  # Best-effort work stays explicitly out of the real-time band, exactly as in
+  # the fifo arm. Under `reservations: required` this matters more, not less:
+  # anything left in the RT band without a declared budget is a hard error.
+  map_loader: { sched_class: SCHED_OTHER }
+  telemetry_logger: { sched_class: SCHED_OTHER }
