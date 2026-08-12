@@ -203,8 +203,8 @@ fn sched_apply_warn_engages_and_launch_succeeds() {
 fn sched_apply_strict_aborts_before_spawn_when_unprivileged() {
     if host_has_sched_privilege() {
         eprintln!(
-            "host has CAP_SYS_NICE/root — --sched-apply strict would succeed, \
-             not abort; skipping strict-abort assertion"
+            "SKIP: sched_apply_strict_aborts_before_spawn_when_unprivileged: host has \
+             CAP_SYS_NICE/root, so --sched-apply strict would succeed rather than abort"
         );
         return;
     }

@@ -1,0 +1,22 @@
+# Nextest config for the parser workspace.
+#
+# The `python` test-group lived in the REPO ROOT's .config/nextest.toml until
+# 2026-08-12, naming `binary(play_launch_parser)`. When phase-55 folded the
+# parser into layer 2 it left the root workspace, and the override went two
+# ways wrong at once:
+#
+#   - it stopped applying, so 53 python tests have been running multi-threaded
+#     against global interpreter state ever since;
+#   - and because nextest ERRORS on an override whose binary matches nothing,
+#     it made `cargo nextest run` impossible from `src/play_launch` — which is
+#     why that crate's unit tests ran in no recipe at all.
+#
+# It belongs here, in the workspace where the binary actually exists.
+
+# Python tests hold global interpreter state, so they must not run in parallel.
+[test-groups.python]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = "binary(play_launch_parser) & test(/python/)"
+test-group = "python"

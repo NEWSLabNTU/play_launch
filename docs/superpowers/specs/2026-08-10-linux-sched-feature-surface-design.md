@@ -805,12 +805,19 @@ reasoning, because a decision without one gets re-litigated.
 4. **The all-or-nothing rule is scoped to nodes carrying timing facts**, and
    containers take `SCHED_FIFO` at the max of their members' priorities. See F3.
 
-5. **Respawn admission accounting is measured, not designed.** One test:
-   reserve, kill, immediately re-reserve, and see whether `EBUSY` appears —
-   i.e. whether the kernel releases a dead task's bandwidth synchronously with
-   process exit. Retry-with-backoff only if the measurement says it is needed.
-   Designing for a race that may not exist would be inventing a number, which
-   this phase's global constraint forbids.
+5. **Respawn admission accounting — measured, and the answer is no retry.**
+   The test reserves 60% of a CPU, kills and reaps the holder, and immediately
+   re-reserves 60%. Two live reservations would be 120% against a ~95%
+   ceiling, so a lazily-released one *must* produce `EBUSY`. It does not: the
+   kernel releases a dead task's bandwidth synchronously with process exit, so
+   **no retry-with-backoff is needed** and none was written.
+   `a_dead_task_releases_its_admission_bandwidth_before_a_respawn_needs_it`,
+   run inside a real cpuset partition.
+
+   Worth recording how nearly this measured nothing: the first version asked
+   for 40%, and 40+40 fits under the ceiling — it would have passed whether or
+   not the release happened. A test that cannot fail is not evidence, which is
+   this phase's own rule applied to its own test.
 
 6. **Product and evidence paths split.** See F11a — the product keeps the
    no-fallback rule; the `rt_av_demo` DEADLINE arm runs privileged.

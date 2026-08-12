@@ -463,6 +463,18 @@ test:
     echo "=== ros-launch-resolve CLI (layer 2) ==="
     (cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve)
     echo ""
+    # These two suites ran in NO recipe until 2026-08-12 — `test`/`test-all`
+    # covered the parser's unit tests and the integration crate, so ~350 unit
+    # tests across play_launch and the resolver were verified only by whoever
+    # remembered to run cargo by hand. CI runs `just test`, so they belong
+    # here rather than only in `test-all`. The crate is already built by then,
+    # so the cost is the test run, not a compile.
+    echo "=== play_launch unit tests ==="
+    (cd src/play_launch && cargo nextest run --lib --no-fail-fast --failure-output final)
+    echo ""
+    echo "=== ros-launch-resolve unit tests (layer 2) ==="
+    (cd src/ros-launch-resolve && cargo nextest run -p ros-launch-resolve --no-fail-fast --failure-output final)
+    echo ""
     echo "=== Integration tests (fast) ==="
     (cd tests && cargo nextest run -E 'not binary(autoware) & not binary(io_stress) & not binary(rt_workspace) & not test(/launch/)' --no-fail-fast --failure-output final)
 
@@ -488,13 +500,53 @@ test-all:
     # play_launch in adc33a7) — several tests drive it directly.
     (cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve)
     echo ""
+    echo "=== play_launch unit tests ==="
+    (cd src/play_launch && cargo nextest run --lib --no-fail-fast --failure-output final)
+    echo ""
+    echo "=== ros-launch-resolve unit tests (layer 2) ==="
+    (cd src/ros-launch-resolve && cargo nextest run -p ros-launch-resolve --no-fail-fast --failure-output final)
+    echo ""
     echo "=== Integration tests (all) ==="
     (cd tests && cargo nextest run --no-fail-fast --failure-output final)
     echo ""
+    just _skip-report
+
+# Internal: surface every test that skipped itself, so a guard that starts
+# always-skipping is visible rather than reported as a pass.
+#
+# Two things this got wrong before 2026-08-12, both of which hid real gates:
+#   1. it scanned ONLY the integration crate, while the privileged scheduling
+#      gates (CAP_SYS_NICE, cpuset partition) live in play_launch's unit tests
+#   2. the pattern needs `SKIP:`/`skip:`/`Skipping:`, and messages written as
+#      "skipping foo: reason" matched nothing at all
+# The lint at the end fails the recipe on form (2) rather than letting the next
+# one disappear silently.
+_skip-report:
+    #!/usr/bin/env bash
+    set -uo pipefail
     echo "=== Silently-skipped tests ==="
-    # Surface what still skipped, so a guard that starts always-skipping is
-    # visible rather than reported as a pass.
-    (cd tests && cargo nextest run --no-capture 2>&1 | grep -iE "^\s*(SKIP|Skipping|skip):" | sort | uniq -c) || echo "  none"
+    found=0
+    for suite in "src/play_launch:--lib" "src/ros-launch-resolve:-p ros-launch-resolve" "tests:"; do
+        dir="${suite%%:*}"; args="${suite#*:}"
+        out=$( (cd "$dir" && cargo nextest run $args --no-capture 2>&1) \
+               | grep -iE "^\s*(SKIP|Skipping|skip):" | sort | uniq -c) || true
+        if [ -n "$out" ]; then
+            echo "  [$dir]"; echo "$out" | sed 's/^/    /'; found=1
+        fi
+    done
+    [ "$found" = 1 ] || echo "  none"
+
+    # Anti-regression: a skip message the report cannot see is worse than no
+    # skip message, because it reads as a pass. Catch the form that does not
+    # match BEFORE it hides a gate.
+    echo ""
+    bad=$(grep -rn "eprintln!\|println!" src/play_launch/src tests/tests tests/src 2>/dev/null \
+          | grep -i "skip" | grep -viE "(SKIP|skip|Skipping):" || true)
+    if [ -n "$bad" ]; then
+        echo "ERROR: skip messages the report cannot match (use 'SKIP: <test>: <reason>'):" >&2
+        echo "$bad" | sed 's/^/  /' >&2
+        exit 1
+    fi
 
 # Run parser unit tests only
 test-unit:

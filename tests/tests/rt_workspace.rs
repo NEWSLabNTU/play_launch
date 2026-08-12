@@ -738,8 +738,8 @@ fn per_tid_sched_fifo_launch_privileged_only() {
     }
     if !host_has_sched_privilege() {
         eprintln!(
-            "SKIP: host lacks CAP_SYS_NICE/root — per-TID SCHED_FIFO/affinity \
-             assertion requires `play_launch setcap` (or root); skipping"
+            "SKIP: per_tid_sched_fifo_launch_privileged_only: host lacks CAP_SYS_NICE/root \
+             (run `play_launch setcap`, or run as root)"
         );
         return;
     }

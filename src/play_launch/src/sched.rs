@@ -1102,7 +1102,7 @@ mod tests {
         // Lowering a node to SCHED_BATCH IS a change the user asked for, so
         // unlike the no-op case it must actually issue the syscall.
         if !has_sched_privilege() {
-            eprintln!("skipping batch_and_nice_reach_the_kernel: needs CAP_SYS_NICE/root");
+            eprintln!("SKIP: batch_and_nice_reach_the_kernel: needs CAP_SYS_NICE/root");
             return;
         }
         with_sleep_child(|pid| {
@@ -1174,9 +1174,7 @@ mod tests {
         // is the MESSAGE: "need CAP_SYS_NICE" would send the reader to check
         // something that is already true of the helper.
         if !has_sched_privilege() {
-            eprintln!(
-                "skipping a_reservation_outside_a_partition_names_the_partition: unprivileged"
-            );
+            eprintln!("SKIP: a_reservation_outside_a_partition_names_the_partition: unprivileged");
             return;
         }
         let readiness = crate::sched::kernel_sched_support();
@@ -1199,6 +1197,93 @@ mod tests {
                 }
             }
         });
+    }
+
+    #[test]
+    fn a_dead_task_releases_its_admission_bandwidth_before_a_respawn_needs_it() {
+        // The actor system respawns nodes, so a reserved node's replacement
+        // asks admission control for the same bandwidth the dead one held. If
+        // the kernel released it lazily, a respawn storm would produce
+        // spurious EBUSY and the node would come back unreserved.
+        //
+        // This was recorded as "measure, don't design" — the alternative was
+        // inventing a retry-with-backoff for a race that may not exist. This
+        // is that measurement: reserve, kill, immediately re-reserve.
+        if !has_sched_privilege() {
+            eprintln!(
+                "SKIP: a_dead_task_releases_its_admission_bandwidth_before_a_respawn_needs_it: \
+                 needs CAP_SYS_NICE/root"
+            );
+            return;
+        }
+
+        // 60% of one CPU, and the number is the whole point: admission control
+        // admits while the SUM stays under ~95% of a CPU, so two live 60%
+        // reservations (120%) CANNOT both be admitted. If the dead task's
+        // bandwidth were released lazily, the second apply would fail with
+        // EBUSY and this test would catch it.
+        //
+        // An earlier version asked for 40% and was worthless: 40+40 = 80% fits
+        // under the ceiling, so it would have passed whether or not the
+        // release happened. A test that passes either way measures nothing.
+        let tier = AppliedTier {
+            policy: SchedPolicy::Deadline,
+            priority: 0,
+            nice: 0,
+            cpus: None,
+            uclamp: None,
+            reservation: Some(Reservation {
+                runtime_ns: 600_000_000,
+                deadline_ns: 1_000_000_000,
+                period_ns: 1_000_000_000,
+                overrun: false,
+            }),
+            tier_name: "respawn".to_string(),
+        };
+
+        let mut first = Command::new("sleep").arg("30").spawn().expect("spawn");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let first_pid = first.id();
+
+        match apply_tier(first_pid, &tier) {
+            Ok(()) => {}
+            Err(SchedApplyError::DeadlineNeedsPartition { .. }) => {
+                let _ = first.kill();
+                let _ = first.wait();
+                eprintln!(
+                    "SKIP: a_dead_task_releases_its_admission_bandwidth_before_a_respawn_needs_it: \
+                     not inside a cpuset partition, so no reservation can be taken"
+                );
+                return;
+            }
+            Err(e) => {
+                let _ = first.kill();
+                let _ = first.wait();
+                panic!("first reservation failed for an unexpected reason: {e}");
+            }
+        }
+
+        // Kill and REAP — a zombie still holds its bandwidth, and reaping is
+        // what the actor system does before respawning.
+        first.kill().expect("kill");
+        first.wait().expect("wait");
+
+        // No sleep: the point is whether the release is synchronous with exit.
+        let mut second = Command::new("sleep").arg("30").spawn().expect("spawn");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let second_pid = second.id();
+        let result = apply_tier(second_pid, &tier);
+        let _ = second.kill();
+        let _ = second.wait();
+
+        match result {
+            Ok(()) => {}
+            Err(SchedApplyError::AdmissionRejected { arithmetic, .. }) => panic!(
+                "a respawn was refused bandwidth its predecessor had already released — \
+                 the apply path needs a retry, and this test is the evidence: {arithmetic}"
+            ),
+            Err(e) => panic!("respawn reservation failed unexpectedly: {e}"),
+        }
     }
 
     #[test]
@@ -1273,7 +1358,7 @@ mod tests {
         // The unit test asserts the flag's absence directly so the cause is
         // visible here rather than only as a puzzling integration failure.
         if !has_sched_privilege() {
-            eprintln!("skipping fifo_apply_must_not_set_reset_on_fork: needs CAP_SYS_NICE/root");
+            eprintln!("SKIP: fifo_apply_must_not_set_reset_on_fork: needs CAP_SYS_NICE/root");
             return;
         }
         with_sleep_child(|pid| {
@@ -1306,7 +1391,7 @@ mod tests {
         // the set form actually reaches the kernel as a multi-CPU mask.
         let cpus = available_cpus();
         if cpus.len() < 2 {
-            eprintln!("skipping cpuset_applies_every_cpu_it_names: needs >= 2 usable CPUs");
+            eprintln!("SKIP: cpuset_applies_every_cpu_it_names: needs >= 2 usable CPUs");
             return;
         }
         let (a, b) = (cpus[0], cpus[1]);
@@ -1491,7 +1576,7 @@ mod tests {
             // under privilege the syscall would actually succeed instead,
             // so there's nothing meaningful to assert here.
             eprintln!(
-                "skipping per_tid_apply_reaches_every_thread_unprivileged: running with CAP_SYS_NICE/root"
+                "SKIP: per_tid_apply_reaches_every_thread_unprivileged: running with CAP_SYS_NICE/root"
             );
             return;
         }

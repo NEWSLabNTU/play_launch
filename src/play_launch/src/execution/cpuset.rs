@@ -315,7 +315,7 @@ mod tests {
     fn self_cgroup_dir_is_under_the_hierarchy_root() {
         // Skipped rather than failed on a non-cgroup2 host.
         let Some(dir) = self_cgroup_dir() else {
-            eprintln!("skipping self_cgroup_dir_is_under_the_hierarchy_root: no cgroup v2");
+            eprintln!("SKIP: self_cgroup_dir_is_under_the_hierarchy_root: no cgroup v2");
             return;
         };
         assert!(

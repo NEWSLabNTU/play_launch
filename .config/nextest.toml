@@ -7,13 +7,12 @@ path = "junit.xml"
 store-success-output = false
 store-failure-output = true
 
-# Python tests in parser crate must run single-threaded (global interpreter state)
-[test-groups.python]
-max-threads = 1
-
-[[profile.default.overrides]]
-filter = "binary(play_launch_parser) & test(/python/)"
-test-group = "python"
+# NOTE: the `python` test-group override that used to live here moved to
+# `src/ros-launch-resolve/parser/.config/nextest.toml` on 2026-08-12. The
+# parser left this workspace in phase-55, so `binary(play_launch_parser)`
+# matched nothing here — and nextest treats an override that matches no binary
+# as a hard error, which made `cargo nextest run` fail outright from
+# `src/play_launch` and left that crate's unit tests running in no recipe.
 
 [profile.ci]
 slow-timeout = { period = "30s", terminate-after = 2 }

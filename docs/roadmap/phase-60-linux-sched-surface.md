@@ -1,6 +1,14 @@
 # Phase 60 — Completing the Linux scheduling realizer
 
-**Status:** 📋 planned
+**Status:** ✅ complete (2026-08-12) — W1–W8 all landed. The measured result is
+the headline and it is not the flattering one: **reservations lose to fixed
+priority on vanilla `rclcpp`** (W8). Deliberately NOT done, each with its
+reason recorded at the relevant wave: `deadline_policy` is unauthorable on a v2
+path so `SCHED_FLAG_DL_OVERRUN` is wired but always off;
+`SCHED_FLAG_RECLAIM` (GRUB) deferred; multi-threaded executors are unsound and
+undetectable for plain nodes; cost stays per-node, not per-(node, path); and
+the best-effort *derivation* still waits on
+[`criticality-from-hazards`](../design/criticality-from-hazards.md).
 **Design of record:**
 [`docs/superpowers/specs/2026-08-10-linux-sched-feature-surface-design.md`](../superpowers/specs/2026-08-10-linux-sched-feature-surface-design.md)
 **Absorbs:** [Phase 58](./phase-58-scheduling-derivation.md) **W1** (make cost

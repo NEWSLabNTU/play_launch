@@ -212,7 +212,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   that type-checks. Split out of Phase 58 — independent work, and cheaper now
   than it will ever be again: the real corpus uses two renameable field names.
   [phase-59-timing-vocabulary.md](./phase-59-timing-vocabulary.md).
-- **Phase 60** — 📋 completing the Linux scheduling realizer. The `posix`
+- **Phase 60** — ✅ completed the Linux scheduling realizer. The `posix`
   realizer emits exactly one policy: `SCHED_FIFO` for every ranked node,
   nothing at all for the rest. `SCHED_RR` parses and is never emitted,
   `SCHED_DEADLINE` has a *"not applied in v1"* warning, and `budget_us` /
@@ -226,6 +226,12 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   without reset-on-fork, and isolated containers fork per composable; and an
   exclusive cpuset is **measurably** unreachable from an unprivileged session
   on stock Ubuntu, so the product path errors with a setup command while the
-  A/B arm runs privileged. Design:
+  A/B arm runs privileged. **Outcome:** the three-arm A/B says reservations
+  LOSE to fixed priority on vanilla `rclcpp` (217 → 9 misses under
+  `SCHED_FIFO`, 217 → 42 under `SCHED_DEADLINE`), at a best-effort cost of
+  −16% vs −5% — CBS's sporadic release model does not match an
+  `rclcpp::spin()` event loop. Reported, not tuned away.
+  Result: [docs/reports/rt-mixed-criticality/reservations-result.md](../reports/rt-mixed-criticality/reservations-result.md).
+  Design:
   [2026-08-10-linux-sched-feature-surface-design.md](../superpowers/specs/2026-08-10-linux-sched-feature-surface-design.md).
   [phase-60-linux-sched-surface.md](./phase-60-linux-sched-surface.md).
