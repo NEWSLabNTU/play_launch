@@ -453,9 +453,6 @@ test:
     source /opt/ros/{{ros_distro}}/setup.bash
     colcon build --packages-select play_launch_msgs play_launch_container --symlink-install --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
     echo ""
-    echo "=== Parser unit tests ==="
-    (cd src/ros-launch-resolve/parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
-    echo ""
     # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
     # reshape) — many fast-suite tests drive it directly via
     # `fixtures::ros_launch_resolve_cmd`, which panics (not skips) if it
@@ -463,20 +460,7 @@ test:
     echo "=== ros-launch-resolve CLI (layer 2) ==="
     (cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve)
     echo ""
-    # These two suites ran in NO recipe until 2026-08-12 — `test`/`test-all`
-    # covered the parser's unit tests and the integration crate, so ~350 unit
-    # tests across play_launch and the resolver were verified only by whoever
-    # remembered to run cargo by hand. CI runs `just test`, so they belong
-    # here rather than only in `test-all`. The crate is already built by then,
-    # so the cost is the test run, not a compile.
-    echo "=== play_launch unit tests ==="
-    (cd src/play_launch && cargo nextest run --lib --no-fail-fast --failure-output final)
-    echo ""
-    echo "=== ros-launch-resolve unit tests (layer 2) ==="
-    (cd src/ros-launch-resolve && cargo nextest run -p ros-launch-resolve --no-fail-fast --failure-output final)
-    echo ""
-    echo "=== Integration tests (fast) ==="
-    (cd tests && cargo nextest run -E 'not binary(autoware) & not binary(io_stress) & not binary(rt_workspace) & not test(/launch/)' --no-fail-fast --failure-output final)
+    just _run-suites fast
 
 # Run all tests — parser unit + all integration including Autoware (~30s)
 test-all:
@@ -485,9 +469,6 @@ test-all:
     echo "=== C++ build check ==="
     source /opt/ros/{{ros_distro}}/setup.bash
     colcon build --packages-select play_launch_msgs play_launch_container --symlink-install --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
-    echo ""
-    echo "=== Parser unit tests ==="
-    (cd src/ros-launch-resolve/parser && cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final)
     echo ""
     echo "=== Fixture workspaces (guarded tests skip silently without these) ==="
     # A test that skips still reports as PASSED, so an unbuilt fixture hides
@@ -500,53 +481,82 @@ test-all:
     # play_launch in adc33a7) — several tests drive it directly.
     (cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve)
     echo ""
-    echo "=== play_launch unit tests ==="
-    (cd src/play_launch && cargo nextest run --lib --no-fail-fast --failure-output final)
-    echo ""
-    echo "=== ros-launch-resolve unit tests (layer 2) ==="
-    (cd src/ros-launch-resolve && cargo nextest run -p ros-launch-resolve --no-fail-fast --failure-output final)
-    echo ""
-    echo "=== Integration tests (all) ==="
-    (cd tests && cargo nextest run --no-fail-fast --failure-output final)
-    echo ""
-    just _skip-report
+    just _run-suites all
 
-# Internal: surface every test that skipped itself, so a guard that starts
-# always-skipping is visible rather than reported as a pass.
+# Internal: run every test suite ONCE, and derive both the console output and
+# the skipped-test report from that single pass. `mode` is `fast` or `all`.
 #
-# Two things this got wrong before 2026-08-12, both of which hid real gates:
-#   1. it scanned ONLY the integration crate, while the privileged scheduling
-#      gates (CAP_SYS_NICE, cpuset partition) live in play_launch's unit tests
-#   2. the pattern needs `SKIP:`/`skip:`/`Skipping:`, and messages written as
-#      "skipping foo: reason" matched nothing at all
-# The lint at the end fails the recipe on form (2) rather than letting the next
-# one disappear silently.
-_skip-report:
+# Why one pass. The report needs each test's stdout, because a self-skipping
+# test is a PASS that printed a reason. The obvious way to get it,
+# `--no-capture`, forces `--test-threads 1` and would serialize the integration
+# suite; the earlier version dodged that by running every suite a SECOND time,
+# which doubled the slowest part of `test-all`. `--success-output final` gives
+# the same stdout without serializing, so the run is teed to a log the report
+# reads afterwards and filtered for the console.
+#
+# The filter exists because `--success-output` prints a harness block for
+# every passing test ("running 1 test" / "test … ok" / "test result: ok"),
+# which is ~900 blocks of nothing. Dropping exactly those lines leaves the
+# PASS/FAIL lines, the summaries, real failure output — and the SKIP messages,
+# which now appear inline where they happen instead of only in a trailing
+# report.
+_run-suites mode="fast":
     #!/usr/bin/env bash
-    set -uo pipefail
-    echo "=== Silently-skipped tests ==="
-    found=0
-    for suite in "src/play_launch:--lib" "src/ros-launch-resolve:-p ros-launch-resolve" "tests:"; do
-        dir="${suite%%:*}"; args="${suite#*:}"
-        out=$( (cd "$dir" && cargo nextest run $args --no-capture 2>&1) \
-               | grep -iE "^\s*(SKIP|Skipping|skip):" | sort | uniq -c) || true
-        if [ -n "$out" ]; then
-            echo "  [$dir]"; echo "$out" | sed 's/^/    /'; found=1
-        fi
-    done
-    [ "$found" = 1 ] || echo "  none"
+    # Deliberately no `set -e`/`set -u`: this recipe collects failures across
+    # suites and reports them together, and ROS's own setup.bash reads unbound
+    # variables, so `-u` kills it on line 8.
+    # `just` runs each recipe in its OWN shell, so the ROS environment the
+    # caller sourced is NOT inherited here. Six play_launch unit tests need it
+    # and fail without it — which is exactly how this recipe behaved the first
+    # time it ran. Source it here rather than relying on the caller.
+    source /opt/ros/{{ ros_distro }}/setup.bash
+    [ -f install/setup.bash ] && source install/setup.bash
+    log=$(mktemp -t play_launch_suites.XXXXXX)
+    trap 'rm -f "$log"' EXIT
+    failed=0
 
-    # Anti-regression: a skip message the report cannot see is worse than no
-    # skip message, because it reads as a pass. Catch the form that does not
-    # match BEFORE it hides a gate.
-    echo ""
+    run() {
+        local label="$1" dir="$2"; shift 2
+        echo "=== $label ==="
+        (cd "$dir" && cargo nextest run "$@" \
+             --no-fail-fast --failure-output final --success-output immediate) 2>&1 \
+          | tee -a "$log" \
+          | grep -avE '^[[:space:]]*(running [0-9]+ tests?|test [^[:space:]]+ \.\.\. ok|test result: ok\.)'
+        local rc=${PIPESTATUS[0]}
+        [ "$rc" = 0 ] || failed=1
+        echo ""
+    }
+
+    run "Parser unit tests" src/ros-launch-resolve/parser -p play_launch_parser
+    run "play_launch unit tests" src/play_launch --lib
+    run "ros-launch-resolve unit tests (layer 2)" src/ros-launch-resolve -p ros-launch-resolve
+    if [ "{{ mode }}" = "all" ]; then
+        run "Integration tests (all)" tests
+    else
+        run "Integration tests (fast)" tests \
+            -E 'not binary(autoware) & not binary(io_stress) & not binary(rt_workspace) & not test(/launch/)'
+    fi
+
+    # A test that skips still reports PASSED, so a guard that starts always
+    # skipping is invisible unless it is named here. 27 of 108 integration
+    # tests once skipped this way, concealing 4 real failures.
+    echo "=== Silently-skipped tests ==="
+    skips=$(grep -ahiE "^[[:space:]]*(SKIP|Skipping|skip):" "$log" | sed 's/^[[:space:]]*//' | sort | uniq -c) || true
+    if [ -n "$skips" ]; then echo "$skips" | sed 's/^/  /'; else echo "  none"; fi
+
+    # Anti-regression: a skip message the report cannot match is worse than no
+    # message, because it reads as a plain pass. Catch the wrong form here
+    # rather than after it has hidden a gate.
     bad=$(grep -rn "eprintln!\|println!" src/play_launch/src tests/tests tests/src 2>/dev/null \
-          | grep -i "skip" | grep -viE "(SKIP|skip|Skipping):" || true)
+          | grep -i "skip" | grep -viE "(SKIP|skip|Skipping):") || true
     if [ -n "$bad" ]; then
+        echo ""
         echo "ERROR: skip messages the report cannot match (use 'SKIP: <test>: <reason>'):" >&2
         echo "$bad" | sed 's/^/  /' >&2
-        exit 1
+        failed=1
     fi
+
+    exit "$failed"
 
 # Run parser unit tests only
 test-unit:
