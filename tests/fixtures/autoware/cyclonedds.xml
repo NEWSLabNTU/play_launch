@@ -8,6 +8,24 @@
       <AllowMulticast>default</AllowMulticast>
       <MaxMessageSize>65500B</MaxMessageSize>
     </General>
+    <Discovery>
+      <!-- Pinning the interface above to `lo` disables multicast, because lo is
+           not multicast-capable ("selected interface lo is not multicast-capable:
+           disabling multicast"). Cyclone then falls back to UNICAST discovery,
+           where every participant on a host+domain needs its own probe port and
+           the index is capped by this setting — default 9, i.e. ten
+           participants. Autoware under isolated container mode (the default)
+           forks one process per composable node, ~49 of them, each with its own
+           participant. Numbers 10 and up then fail participant creation, which
+           surfaces as:
+
+             failed to initialize rcl node: rcl node's rmw handle is invalid
+
+           Measured on this host: 9/32 probe participants created with the cap at
+           its default, 32/32 with it raised, 32/32 with multicast available.
+           120 covers Autoware's ~119 nodes with headroom. -->
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
+    </Discovery>
     <Internal>
       <SocketReceiveBufferSize min="10MB"/>
       <Watermarks>
