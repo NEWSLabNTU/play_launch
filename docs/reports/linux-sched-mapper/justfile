@@ -1,0 +1,19 @@
+# Explainer for the Linux scheduling mapper: how three declarations become
+# scheduling parameters on a running process. Written for a lab audience.
+#
+# Unlike the rt-mixed-criticality report next door, this one has no figures to
+# regenerate and no measured data of its own — every number it quotes is cited
+# from that report or from the phase-60 roadmap, so `build` is the whole thing.
+
+default:
+    @just --list
+
+# Compile the PDF.
+build:
+    typst compile report.typ
+    @echo "report.pdf"
+
+# Render each page to PNG, for reviewing layout without a PDF viewer.
+preview:
+    typst compile report.typ --format png --ppi 110 page-{n}.png
+    @ls page-*.png
