@@ -130,17 +130,37 @@ with `CLOCK_MONOTONIC` and correlates them by header stamp — that is exactly a
 path's cost for an input-triggered path: *take(input) → publish(output)* for
 one message. Phase 57's trace exporter already builds those flows.
 
-**Deliverable:** a verb that turns a run into a platform-file fragment —
-per-path observed cost at p50/p99/max, for the author to review and paste,
-never silently written back. Note the unit change: the trace measures in
-nanoseconds, the contract thinks in milliseconds, and the field is
-microseconds — which is one of Phase 59's motivations.
+**Design of record:**
+[`docs/superpowers/specs/2026-08-13-measured-cost-design.md`](../superpowers/specs/2026-08-13-measured-cost-design.md).
 
-**Limits to state in the output:** timer-triggered paths have no input take to
-anchor against; messages without `header.stamp` cannot be correlated (the
-`std_msgs/String` case from Phase 57); and observed cost under contention
-includes preemption, so it over-states cost unless measured on an idle system.
-That last one matters — measure on the quiet machine, apply on the busy one.
+**Deliverable:** `play_launch measure <run-dir> --model <model.yaml>` turns a
+run into a platform-file fragment on stdout — never written back.
+
+**One correction to the sketch above.** Take→publish elapsed time is *response
+time*, not execution time: it carries preemption, blocking and DDS wakeup
+latency. `budget_us` becomes a CBS **runtime**, which is CPU time, so feeding
+response time into it over-declares every reservation — and "measure on an idle
+system" is a mitigation, not a fix, because even idle that figure includes
+wakeup latency that is not the node's execution. W2 therefore measures **both**
+and keeps them apart: `cpu_ns` (new, from `CLOCK_THREAD_CPUTIME_ID` in the
+existing hooks) feeds `budget_us`; the wall-clock figure is reported beside it,
+because the gap between them *is* the preemption.
+
+`budget_us` takes the observed **maximum**, with p50/p99 as comments. Under CBS
+an overrun is throttled to the next replenishment, so a p99 budget converts the
+slowest 1% into a full-period stall — on a safety chain, precisely the
+invocations that were already slow.
+
+**Limits, each stated in the output rather than omitted** (omission would read
+as "no cost", the absent-versus-zero confusion this phase exists to kill):
+timer-triggered paths have no input take to anchor against; messages without
+`header.stamp` cannot be correlated (the `std_msgs/String` case from Phase 57);
+a declared path never exercised is reported as such; and thread CPU time misses
+work a node fans out to another thread.
+
+**Validated against ground truth:** `rt_av_demo`'s nodes busy-burn for exactly
+`burn_ms`, so the fixture is an oracle — measured cost must land near 2.0/8.0/
+3.0 ms for lidar/detector/brake.
 
 ---
 
