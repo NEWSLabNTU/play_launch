@@ -140,6 +140,81 @@ ab3:
     just _run deadline out/trace-deadline
     just _report off on deadline
 
+# Measure what the nodes actually cost, and check it against ground truth.
+#
+# This workspace is an oracle: every node busy-burns for exactly its `burn_ms`
+# parameter, so the measured cost has a known right answer. That is the point
+# of running it here rather than only on a real system — a measurement tool
+# validated against itself proves nothing.
+#
+# Deliberately UNCONFINED and with RT off: no taskset, no priorities. burn_ms
+# spins on the wall clock, so a preempted burn consumes LESS cpu than it asks
+# for; on a contended single core the measured cost would come out under the
+# declared burn and the oracle would stop being one. This is also the honest
+# advice for real systems — measure quiet, apply busy.
+measure:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/humble/setup.bash
+    source "{{ repo }}/install/setup.bash"
+    source "{{ justfile_directory() }}/install/setup.bash"
+    cd "{{ justfile_directory() }}"
+
+    rm -rf out/measure && mkdir -p out/measure && cd out/measure
+
+    cat > cfg.yaml <<'YAML'
+    interception:
+      enabled: true
+    YAML
+
+    share="$(ros2 pkg prefix rt_av_demo)/share/rt_av_demo/launch"
+    export PLAY_LAUNCH_INTERCEPTION_SO="{{ interception_so }}"
+    export ROS_DOMAIN_ID=$(( 60 + RANDOM % 20 ))
+
+    "{{ play_launch }}" resolve rt_av_demo bringup.launch.xml \
+        --sched "$share/bringup.system.posix.yaml" -o model.yaml > resolve.log 2>&1
+
+    echo "=== run: RT off, unconfined, {{ duration }}s ==="
+    timeout {{ duration }} "{{ play_launch }}" launch rt_av_demo bringup.launch.xml \
+        --sched "$share/bringup.system.posix.yaml" --sched-apply off \
+        --config cfg.yaml --disable-web-ui {{ launch_args }} > run.log 2>&1 || true
+
+    echo
+    "{{ play_launch }}" measure play_log/latest --model model.yaml | tee fragment.yaml
+    echo
+
+    # Ground truth. detect burns 8 ms, brake burns 3 ms (bringup.launch.xml).
+    # The windows are wide on the upper side because the callback does more
+    # than burn — brake_controller also formats and flushes a line of stdout —
+    # and tight on the lower side because measuring LESS than the declared burn
+    # means cpu time was lost to preemption and the number is not a cost.
+    python3 - <<'PY' fragment.yaml
+    import re, sys
+    text = open(sys.argv[1]).read()
+    expect = {"detect": (7.5, 11.0), "brake": (2.7, 6.0)}
+    seen, bad = {}, []
+    for name, (lo, hi) in expect.items():
+        m = re.search(rf"#\s+{name}: cost p50 [\d.]+ p99 [\d.]+ max ([\d.]+) ms", text)
+        if not m:
+            bad.append(f"{name}: not measured at all")
+            continue
+        v = float(m.group(1))
+        seen[name] = v
+        if not (lo <= v <= hi):
+            bad.append(f"{name}: measured {v} ms, expected {lo}-{hi} ms")
+    # The timer-triggered path must be REPORTED as unmeasurable, not omitted:
+    # an omission reads as "costs nothing".
+    if "sample: timer-triggered" not in text and "/sample: timer-triggered" not in text:
+        bad.append("lidar sample path not reported as timer-triggered")
+    print("measured:", ", ".join(f"{k}={v} ms" for k, v in sorted(seen.items())))
+    if bad:
+        print("GROUND TRUTH MISMATCH:")
+        for b in bad:
+            print("  " + b)
+        sys.exit(1)
+    print("ground truth OK — measured cost matches the declared burn")
+    PY
+
 # Internal: one run. $1 = off|on, $2 = output dir.
 _run mode outdir:
     #!/usr/bin/env bash

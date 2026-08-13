@@ -51,17 +51,38 @@ Read `CLOCK_THREAD_CPUTIME_ID` inside the two existing hooks and carry it in
 the event.
 
 ```
-struct InterceptionEvent {          // 40 -> 48 bytes
+struct InterceptionEvent {          // 40 -> 56 bytes
     kind, _pad, topic_hash,
     stamp_sec, stamp_nanosec,
     handle,
     monotonic_ns,                   // wall  -> response
     cpu_ns,                         // NEW: thread CPU -> budget
+    tid, _pad2,                     // NEW: whose counter that is
 }
 ```
 
 A private ABI between our `.so` and our consumer, shipped together, so growing
 it costs nothing external.
+
+`tid` is not bookkeeping. `cpu_ns` is a **per-thread** counter, so subtracting
+two readings only means something when both came from the same thread — and
+without the tid a take and a publish that ran on different threads would still
+subtract to a plausible-looking number. That is precisely the case where the
+declared take→publish path is not what actually happened (the take stored a
+message and a timer published it), so the pair must be rejected, not averaged
+in. Cached per thread, so it costs no syscall on the hot path.
+
+A second, independent check needs no new field: a thread cannot consume more
+CPU than the wall time it spans, so a pair with `cost > response` is thrown out
+too — **past a tolerance**, and the tolerance is not a fudge factor. For a
+fully CPU-bound callback the two deltas measure the same interval, and the
+clocks are not read at the same instant, so cost lands a few hundred
+nanoseconds over wall time. Measured on `rt_av_demo`: 43 such pairs on an 8 ms
+callback, excess 1 ns min / 60 ns median / **621 ns max**. Rejecting them would
+be actively harmful, because a CPU-bound invocation is exactly the expensive
+one — the samples discarded would be the tail the budget is taken from
+(1159 → 1202 samples once they were kept). Within 10 µs the readings are taken
+as equal; beyond it, where genuinely unrelated counters land, the pair goes.
 
 **Rejected: sampling `/proc/<pid>/stat`.** It yields total CPU over a run, so
 dividing by invocations gives a *mean* and never a distribution — and it is
@@ -159,7 +180,7 @@ node → path is the eventual answer; summing is the honest interim.
 | unit | responsibility |
 |---|---|
 | `play_launch_interception` (`.so`) | read the thread CPU clock at the two existing hooks |
-| `interception/mod.rs` | write `events.jsonl` for the run |
+| `interception/mod.rs` | write `events.jsonl` for the run (streaming, so a killed run still leaves a usable file) |
 | `interception/measure.rs` *(new)* | **pure**: events + path declarations → per-path statistics. No I/O |
 | `commands/measure.rs` *(new)* | CLI wiring and fragment rendering |
 
@@ -172,13 +193,28 @@ Unit tests cover pairing by stamp, percentile computation, multi-path
 summation, and each of the three unmeasurable classes.
 
 The end-to-end test uses ground truth. `rt_av_demo`'s nodes busy-burn for
-**exactly** `burn_ms` (`rt_av_demo::burn_ms`), so the fixture is an oracle:
+**exactly** `burn_ms` (`rt_av_demo::burn_ms`), so the fixture is an oracle —
+`just measure` in that workspace runs it and checks the output:
 
-| node | declared burn | measured `cpu` max must fall in |
+| path | declared burn | expected |
 |---|---|---|
-| `lidar_driver` | 2.0 ms | [1.8, 3.0] |
-| `obstacle_detector` | 8.0 ms | [7.5, 10.0] |
-| `brake_controller` | 3.0 ms | [2.7, 4.5] |
+| `obstacle_detector/detect` | 8.0 ms | measured max in [7.5, 11.0] |
+| `brake_controller/brake` | 3.0 ms | measured max in [2.7, 6.0] |
+| `lidar_driver/sample` | 2.0 ms | **reported as timer-triggered**, not measured |
+
+The upper bounds are loose because a callback does more than burn —
+`brake_controller` also formats and flushes a line of stdout — and the lower
+bounds are tight because measuring *less* than the declared burn means CPU time
+was lost to preemption and the number is not a cost.
+
+The third row is the important one. The lidar path is timer-triggered, so it
+has no take to measure from; the test asserts it is *named* in the output. A
+run where it silently vanished would look identical to a successful one.
+
+That run is deliberately unconfined and RT-off: `burn_ms` spins on the wall
+clock, so a preempted burn consumes less CPU than it asked for, and on a
+contended core the oracle would stop being one. Which is also the honest
+advice for real systems — measure quiet, apply busy.
 
 This validates hook → transport → correlation → statistics against numbers we
 control. A test asserting only that "a number came out" would catch nothing.
@@ -190,13 +226,29 @@ control. A test asserting only that "a number came out" would catch nothing.
 - Every message unstamped → still emits, every path marked not-measurable.
   An empty file would be indistinguishable from "no cost anywhere".
 
+## What the first real run changed
+
+Two things the design did not anticipate, both found by running it against
+`rt_av_demo` rather than against its own tests:
+
+1. **The `cost > response` check rejected good samples** — see above. Fixed
+   with a measured tolerance, not a guessed one.
+2. **`PathContract.input` was empty for every v2-vocabulary path.** The model
+   builder lowered it from the legacy `input:` field, so a path declaring
+   `trigger: { input: [scan] }` reached the model looking timer-triggered, and
+   `measure` would have reported the entire demo as unmeasurable. It now reads
+   `effective_trigger()`. The bug predates this wave and affects anything
+   reading that field.
+
 ## Risks
 
-- **The measurement may distort what it measures.**
-  `clock_gettime(CLOCK_THREAD_CPUTIME_ID)` is a real syscall, twice per
-  message, on a hot path. This has to be measured rather than assumed; if the
-  overhead is material the design is self-defeating and the mechanism needs
-  revisiting.
+- **The measurement may distort what it measures — MEASURED, and it does not.**
+  `CLOCK_THREAD_CPUTIME_ID` is not in the vDSO the way `CLOCK_MONOTONIC` is, so
+  the concern was real. On this host (`tmp/clock_overhead.c`, 2M calls):
+  **85 ns/call against 17 ns for `CLOCK_MONOTONIC`** — about +75 ns per hook,
+  twice per message, so ~150 ns added per message. At 10 000 messages a second
+  that is 0.15% of one core. Assumed-negligible would have been a guess; this
+  is not.
 - **Measured is not WCET.** One machine, one run, one workload. The output
   header says so; nothing downstream should read it as a proof.
 - **Contention inflates `response`.** `cpu` is largely immune but not perfectly
@@ -207,11 +259,13 @@ control. A test asserting only that "a number came out" would catch nothing.
 
 ## Open questions
 
-1. Should `events.jsonl` be gated behind its own config flag rather than
-   written whenever interception is enabled? It is per-message data, so a long
-   run produces a large file. Proposed: write it by default, revisit if size
-   bites; the alternative is a flag nobody remembers to set before the run they
-   wanted to measure.
+1. ~~Should `events.jsonl` be gated behind its own config flag?~~ **Resolved:
+   `interception.events`, defaulting to ON.** `trace` sets the precedent that
+   per-message artifacts are opt-in for size, and it is a good one — this is
+   ~110 bytes a message. But the value of this file is being there *after* a
+   run you then decide to measure, so a flag you had to set beforehand gets
+   discovered exactly when it is too late. A flag that defaults on keeps the
+   escape hatch for long runs on high-rate systems without the trap.
 2. Does `response` belong in the fragment at all, or only in a report? It is
    not pasteable — no field takes it. Kept as a comment because the gap between
    it and `cpu` is the most informative thing on the page.

@@ -65,7 +65,8 @@ pub enum Feature {
     play_launch resolve autoware_launch planning_simulator.launch.xml -o autoware.yaml\n  \
     play_launch up --model autoware.yaml\n  \
     play_launch check autoware_launch planning_simulator.launch.xml\n  \
-    play_launch context autoware.yaml --tree")]
+    play_launch context autoware.yaml --tree\n  \
+    play_launch measure play_log/latest --model autoware.yaml")]
 #[command(arg_required_else_help = true)]
 pub struct Options {
     #[command(subcommand)]
@@ -157,6 +158,18 @@ pub enum Command {
         play_launch plot --log-dir play_log/2025-10-28_16-17-56\n  \
         play_launch plot --metrics cpu --metrics memory")]
     Plot(PlotArgs),
+
+    /// Turn a recorded run into declared per-node costs (Phase 58 W2).
+    ///
+    /// Reads the interception layer's per-message record plus the SystemModel
+    /// the run came from, and prints a platform-file `overrides:` fragment on
+    /// stdout — the observed MAXIMUM thread-CPU time per declared path. It
+    /// never writes the platform file: what a node may consume is the
+    /// integrator's call.
+    #[command(after_help = "Examples:\n  \
+        play_launch measure play_log/2026-08-13-04-21-07 --model system_model.yaml\n  \
+        play_launch measure play_log/latest --model m.yaml >> pkg/launch/bringup.system.posix.yaml")]
+    Measure(crate::commands::measure::MeasureArgs),
 
     /// Manage contract/platform-file overlays (Phase 41.4, design §3.3)
     #[command(after_help = "Examples:\n  \

@@ -158,9 +158,23 @@ timer-triggered paths have no input take to anchor against; messages without
 a declared path never exercised is reported as such; and thread CPU time misses
 work a node fans out to another thread.
 
-**Validated against ground truth:** `rt_av_demo`'s nodes busy-burn for exactly
-`burn_ms`, so the fixture is an oracle — measured cost must land near 2.0/8.0/
-3.0 ms for lidar/detector/brake.
+**Validated against ground truth (DONE):** `rt_av_demo`'s nodes busy-burn for
+exactly `burn_ms`, so the fixture is an oracle. `just measure` in that
+workspace runs it and checks the output. Measured over a 25 s run:
+
+| path | declared burn | measured cost max | response max |
+|---|---|---|---|
+| `obstacle_detector/detect` | 8.0 ms | **8.08 ms** (n=1202) | 8.08 ms |
+| `brake_controller/brake` | 3.0 ms | **3.05 ms** (n=1201) | **40.43 ms** |
+| `lidar_driver/sample` | 2.0 ms | timer-triggered — reported, not measured | — |
+
+The brake row is the argument for measuring both quantities in one line: same
+invocation, 3.05 ms of CPU and 40.43 ms of wall clock. A design that measured
+elapsed time would have declared a 40 ms reservation for a 3 ms callback.
+
+Hot-path overhead measured rather than assumed: `CLOCK_THREAD_CPUTIME_ID`
+costs **85 ns/call against 17 ns** for `CLOCK_MONOTONIC` (not in the vDSO) —
+~150 ns per message, 0.15% of a core at 10k msg/s.
 
 ---
 

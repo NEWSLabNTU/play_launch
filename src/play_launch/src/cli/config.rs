@@ -146,6 +146,18 @@ pub struct InterceptionSettings {
     #[serde(default)]
     pub trace: bool,
 
+    /// Write the per-message record `play_launch measure` reads
+    /// (`interception/events.jsonl`). Default: on.
+    ///
+    /// Like `trace`, this is one line per publish/take rather than a summary,
+    /// so it grows with traffic (~110 bytes a message). Unlike `trace` it
+    /// defaults ON, because its whole value is being there *after* a run you
+    /// then decide to measure — a flag you had to set beforehand would be
+    /// discovered exactly when it is too late. Turn it off for long runs on
+    /// high-rate systems.
+    #[serde(default = "default_true")]
+    pub events: bool,
+
     /// SPSC ring buffer capacity per child process (default: 65536)
     #[serde(default = "default_ring_capacity")]
     pub ring_capacity: usize,
@@ -158,6 +170,7 @@ impl Default for InterceptionSettings {
             frontier: default_true(),
             stats: default_true(),
             trace: false,
+            events: default_true(),
             ring_capacity: default_ring_capacity(),
         }
     }

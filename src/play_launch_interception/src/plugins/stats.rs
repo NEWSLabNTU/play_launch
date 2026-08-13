@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::event::{EventKind, InterceptionEvent, monotonic_ns};
+use crate::event::{EventKind, InterceptionEvent, monotonic_ns, thread_cpu_ns, tid};
 use crate::plugin::{InterceptionPlugin, Stamp};
 use spsc_shm::Producer;
 
@@ -44,6 +44,9 @@ impl InterceptionPlugin for StatsPlugin {
             stamp_nanosec: (th & 0xFFFF_FFFF) as u32,
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         };
         crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
@@ -65,6 +68,9 @@ impl InterceptionPlugin for StatsPlugin {
             stamp_nanosec: (th & 0xFFFF_FFFF) as u32,
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         };
         crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
@@ -81,6 +87,13 @@ impl InterceptionPlugin for StatsPlugin {
             stamp_nanosec: nanosec,
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
+            // Phase 58 W2: the publishing thread's consumed CPU time.
+            // Differenced against the take that started this path, it is
+            // execution cost — what `budget_us` means — as opposed to
+            // `monotonic_ns`, whose difference carries preemption too.
+            cpu_ns: thread_cpu_ns(),
+            tid: tid(),
+            _pad2: [0; 4],
         };
         crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
@@ -97,6 +110,11 @@ impl InterceptionPlugin for StatsPlugin {
             stamp_nanosec: nanosec,
             handle: handle as u64,
             monotonic_ns: monotonic_ns(),
+            // Phase 58 W2: see `on_publish`. This is the "start" reading a
+            // path's cost is measured from.
+            cpu_ns: thread_cpu_ns(),
+            tid: tid(),
+            _pad2: [0; 4],
         };
         crate::drop_counter::push_or_count(&mut self.producer.lock(), &event);
     }
@@ -146,6 +164,56 @@ mod tests {
         assert_eq!(ev.stamp_sec, 5);
         assert_eq!(ev.stamp_nanosec, 100);
 
+        unsafe {
+            libc::close(shm_fd);
+            libc::close(event_fd);
+        }
+    }
+
+    #[test]
+    fn hot_path_events_carry_a_thread_cpu_reading_and_its_owner() {
+        // Phase 58 W2: cost is a CPU-time delta, so both the reading and the
+        // thread it belongs to must be on the event. A missing tid would let
+        // a consumer subtract two unrelated threads' counters.
+        let (plugin, mut consumer, shm_fd, event_fd) = setup();
+
+        plugin.on_take(0x1, 0xAA, Some(Stamp { sec: 1, nanosec: 0 }));
+        // Burn measurable CPU between the two hooks.
+        let mut acc = 0u64;
+        for i in 0..2_000_000u64 {
+            acc = acc.wrapping_add(i);
+        }
+        std::hint::black_box(acc);
+        plugin.on_publish(0x2, 0xBB, Some(Stamp { sec: 1, nanosec: 0 }));
+
+        let take = consumer.pop().expect("take event");
+        let publish = consumer.pop().expect("publish event");
+        assert!(take.cpu_ns > 0, "take carried no CPU reading");
+        assert!(
+            publish.cpu_ns > take.cpu_ns,
+            "CPU time must advance across work: {} -> {}",
+            take.cpu_ns,
+            publish.cpu_ns
+        );
+        assert_ne!(take.tid, 0);
+        assert_eq!(take.tid, publish.tid, "same thread, same tid");
+
+        unsafe {
+            libc::close(shm_fd);
+            libc::close(event_fd);
+        }
+    }
+
+    #[test]
+    fn init_events_carry_no_cpu_reading() {
+        // Init happens once, off the hot path, and has no invocation to
+        // attribute cost to — a reading there would only invite differencing
+        // it against something.
+        let (plugin, mut consumer, shm_fd, event_fd) = setup();
+        plugin.on_publisher_init(0x1, "/t", 0xAA, None, None);
+        let ev = consumer.pop().expect("init event");
+        assert_eq!(ev.cpu_ns, 0);
+        assert_eq!(ev.tid, 0);
         unsafe {
             libc::close(shm_fd);
             libc::close(event_fd);

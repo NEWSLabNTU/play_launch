@@ -135,9 +135,9 @@ play_launch up <model.yaml>         # Spawn from a resolved SystemModel (was `re
 play_launch plot                    # Analysis
 ```
 
-**Verb surface (0.9.0):** `play_launch` has eleven verbs — `launch`, `run`,
+**Verb surface (0.9.0):** `play_launch` has twelve verbs — `launch`, `run`,
 `up`, `resolve`, `dump`, `check`, `plot`, `contract`, `context`, `setcap`,
-`verify`. RFC-0060 W3 briefly moved `resolve`/`dump`/`check`/`plot`/
+`verify`, `measure` (Phase 58 W2). RFC-0060 W3 briefly moved `resolve`/`dump`/`check`/`plot`/
 `contract` off it onto `ros-launch-resolve`; that was reverted (Phase 56
 amendment, D2/D5) because it left NO `play_launch` verb able to write the
 `system_model.yaml` that `up` requires, and pointed users at a binary they
@@ -204,6 +204,12 @@ See `tests/fixtures/autoware/autoware_config.yaml` for an example config (not ex
 - `frontier: true` — enable per-topic timestamp frontier tracking
 - `stats: true` — enable per-topic message count/rate statistics
 - `ring_capacity: 65536` — SPSC ring buffer capacity per child process
+- `events: true` — write `interception/events.jsonl`, the per-message record
+  `play_launch measure` reads (Phase 58 W2). Like `trace` it is one line per
+  publish/take (~110 bytes), but unlike `trace` it defaults ON: its value is
+  being there *after* a run you then decide to measure, so an opt-in flag
+  would be discovered exactly when it is too late. Turn it off for long runs
+  on high-rate systems.
 
 When enabled, play_launch creates a shared memory ring buffer per child, injects `LD_PRELOAD` + fd env vars, and spawns a consumer tokio task that writes `frontier_summary.json` and `stats_summary.json` to `play_log/<ts>/interception/` on shutdown.
 
@@ -230,7 +236,8 @@ play_log/<timestamp>/
 ├── params_files/
 ├── interception/                   # when interception enabled
 │   ├── frontier_summary.json       # per-topic frontier state
-│   └── stats_summary.json          # per-topic pub/take counts, rates
+│   ├── stats_summary.json          # per-topic pub/take counts, rates
+│   └── events.jsonl                # per-message record read by `measure`
 ├── system_stats.csv, diagnostics.csv
 └── node/<node_name>/{metadata.json, metrics.csv, out, err, pid, status, cmdline}
 ```
@@ -335,6 +342,49 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-08-13**: Phase 58 W2 — **cost is measured, not asked for.** New verb
+  `play_launch measure <run-dir> --model <m.yaml>` turns a recorded run into a
+  platform-file `overrides:` fragment on stdout (never written back). The
+  roadmap sketch for this wave had a defect worth naming: it proposed
+  measuring take→publish *elapsed* time and calling it cost. That is RESPONSE
+  time — it carries preemption, blocking and DDS wakeup — while `budget_us`
+  becomes a CBS **runtime**, which is CPU time; and the sketch's own
+  mitigation ("measure on an idle system") does not fix it, because even idle
+  that figure includes wakeup latency. So W2 measures **both** and keeps them
+  apart: `InterceptionEvent` grew 40 → **56 bytes** with `cpu_ns`
+  (`CLOCK_THREAD_CPUTIME_ID`, read in the two hooks that already existed) and
+  `tid`. The tid is load-bearing, not bookkeeping — `cpu_ns` is per-thread, so
+  a take and publish on different threads would still subtract to a
+  plausible-looking number; such pairs are rejected, as are any where
+  `cost > response` (a thread cannot consume more CPU than the wall time it
+  spans). `budget_us` takes the observed **MAXIMUM**, p50/p99 as comments:
+  under CBS an overrun is throttled to the next replenishment, so a p99 budget
+  converts the slowest 1% of invocations into a full-period stall. Paths that
+  cannot be measured are **printed with their reason** (timer-triggered,
+  unstamped, not exercised) — omitting them would read as "costs nothing",
+  the same absent-versus-zero confusion Phase 60 removed from the chain
+  checker. Hot-path overhead was measured rather than assumed:
+  `CLOCK_THREAD_CPUTIME_ID` is not in the vDSO, but costs **85 ns/call vs
+  17 ns** for `CLOCK_MONOTONIC` — ~150 ns per message, 0.15% of a core at
+  10k msg/s. New artifact `play_log/<ts>/interception/events.jsonl` (streamed,
+  so a killed run still leaves a usable file; `interception.events` to
+  disable). Also fixed on the way: `model_builder` lowered
+  `PathContract.input` from the LEGACY `input:` field, so every path written
+  in Vocabulary v2 (`trigger: { input: [...] }`) reached the model looking
+  periodic — it now reads `effective_trigger()`. Validated against ground
+  truth: `just measure` in `examples/rt_av_demo/` (nodes busy-burn exactly
+  `burn_ms`, so the fixture is an oracle) — detect 8.0 declared → **8.08 ms**
+  measured, brake 3.0 → **3.05 ms**, lidar's timer path reported as
+  unmeasurable. Brake's *response* max on the same invocations was **40.43 ms**
+  against 3.05 ms of CPU, which is the whole argument for measuring both: a
+  design that measured elapsed time would have declared a 40 ms reservation
+  for a 3 ms callback. One correction the first real run forced: the
+  `cost > response` sanity check needs a tolerance, because on a CPU-bound
+  callback the two deltas measure the same interval and clock-read skew puts
+  cost a few hundred ns over (measured 621 ns max) — rejecting those discarded
+  the expensive tail the budget comes from. Design:
+  `docs/superpowers/specs/2026-08-13-measured-cost-design.md`. Roadmap:
+  `docs/roadmap/phase-58-scheduling-derivation.md` §W2.
 - **2026-08-12**: Phase 60 complete — the Linux scheduling realizer beyond
   `SCHED_FIFO`. Details in [Scheduling Spec](#scheduling-spec); the headline is
   that the apply layer moved to `sched_setattr(2)`, cost became authorable

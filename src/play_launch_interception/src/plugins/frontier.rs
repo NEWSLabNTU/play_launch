@@ -129,6 +129,12 @@ impl FrontierPlugin {
                     stamp_nanosec: stamp.nanosec,
                     handle: handle as u64,
                     monotonic_ns: monotonic_ns(),
+                    // Frontier events are advance notifications, not
+                    // per-message samples — cost comes from StatsPlugin's
+                    // `Publish`/`Take` (Phase 58 W2).
+                    cpu_ns: 0,
+                    tid: 0,
+                    _pad2: [0; 4],
                 };
                 crate::drop_counter::push_or_count(&mut prod.lock(), &event);
             }

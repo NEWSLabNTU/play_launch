@@ -1237,6 +1237,9 @@ mod tests {
             stamp_nanosec: 5,
             handle: 0xAAA,
             monotonic_ns: 1_000_000_000,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         };
         re.observe(&pub_event);
         // Subscriber with reliability=reliable
@@ -1248,6 +1251,9 @@ mod tests {
             stamp_nanosec: 5,
             handle: 0xBBB,
             monotonic_ns: 1_000_000_100,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         };
         re.observe(&sub_event);
         re.flush();
@@ -1293,6 +1299,9 @@ mod tests {
             stamp_nanosec: 0,
             handle: 0x1,
             monotonic_ns: 1_000_000,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         };
         re.observe(&event);
         re.flush();
@@ -1399,6 +1408,9 @@ mod tests {
                 handle: 0xA,
                 // 1 Hz — far below declared min 30 Hz
                 monotonic_ns: (i as u64) * 1_000_000_000,
+                cpu_ns: 0,
+                tid: 0,
+                _pad2: [0; 4],
             });
         }
         re.flush();
@@ -1455,6 +1467,9 @@ mod tests {
             stamp_nanosec: (wrong_hash & 0xFFFF_FFFF) as u32,
             handle: 0xAA,
             monotonic_ns: 1_000_000,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         };
         re.observe(&event);
         re.flush();
@@ -1539,6 +1554,9 @@ mod tests {
             stamp_nanosec: one_second_ago.subsec_nanos(),
             handle: 0x1,
             monotonic_ns: 1_000_000,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         };
         re.observe(&event);
         re.flush();
@@ -1575,6 +1593,9 @@ mod tests {
             stamp_nanosec: 0,
             handle: 0x1,
             monotonic_ns: 1_000_000,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         });
         re.flush();
         assert!(

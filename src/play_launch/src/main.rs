@@ -134,6 +134,9 @@ fn main() -> eyre::Result<()> {
         play_launch::cli::options::Command::Plot(args) => {
             play_launch::commands::handle_plot(args)?;
         }
+        play_launch::cli::options::Command::Measure(args) => {
+            play_launch::commands::handle_measure(args)?;
+        }
         // `contract` is a subcommand group; today `eject` is its only verb.
         play_launch::cli::options::Command::Contract(args) => match &args.subcommand {
             play_launch::cli::options::ContractSubcommand::Eject(eject) => {

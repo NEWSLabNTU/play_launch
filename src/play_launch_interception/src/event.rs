@@ -95,7 +95,7 @@ pub enum EventKind {
     FrontierPublish = 16,
 }
 
-/// A single interception event (40 bytes, `#[repr(C)]`).
+/// A single interception event (56 bytes, `#[repr(C)]`).
 ///
 /// Written by plugins in the interception `.so`, read by play_launch's
 /// `InterceptionListener` on the consumer side of the SPSC ring buffer.
@@ -116,9 +116,32 @@ pub struct InterceptionEvent {
     /// `clock_gettime(CLOCK_MONOTONIC)` in nanoseconds. Used by play_launch to
     /// compute message rates and inter-message latency.
     pub monotonic_ns: u64,
+    /// `clock_gettime(CLOCK_THREAD_CPUTIME_ID)` in nanoseconds — CPU time
+    /// consumed by the *calling thread* since it started (Phase 58 W2).
+    ///
+    /// Only `Publish` and `Take` carry a real reading; every other kind
+    /// leaves it 0. Differencing it across a path's take and publish gives
+    /// execution cost, which is what `budget_us` (a `SCHED_DEADLINE`
+    /// runtime) means — unlike `monotonic_ns`, whose difference is
+    /// *response* time and includes preemption and DDS wakeup latency.
+    ///
+    /// Blind spot worth knowing: this is per-thread, so work a node fans
+    /// out to another thread is not counted here.
+    pub cpu_ns: u64,
+    /// Kernel thread id (`gettid`) of the thread that produced this event,
+    /// or 0 for kinds that carry no CPU reading (Phase 58 W2).
+    ///
+    /// `cpu_ns` is a *per-thread* counter, so differencing two readings is
+    /// only meaningful when they came from the same thread. Without this
+    /// field a take and publish that ran on different threads would still
+    /// subtract to a plausible-looking number — silently wrong, and
+    /// exactly the case where the declared take→publish path isn't what
+    /// actually happened.
+    pub tid: u32,
+    pub _pad2: [u8; 4],
 }
 
-const _: () = assert!(size_of::<InterceptionEvent>() == 40);
+const _: () = assert!(size_of::<InterceptionEvent>() == 56);
 
 impl InterceptionEvent {
     /// Build a `QosDeclaredPub` or `QosDeclaredSub` event from a parsed
@@ -151,6 +174,9 @@ impl InterceptionEvent {
             stamp_nanosec: depth,
             handle,
             monotonic_ns: monotonic_ns(),
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
 }
@@ -180,6 +206,9 @@ impl InterceptionEvent {
             stamp_nanosec: total_count_change as u32,
             handle,
             monotonic_ns: monotonic_ns(),
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
 
@@ -207,6 +236,9 @@ impl InterceptionEvent {
             stamp_nanosec: total_count_change as u32,
             handle,
             monotonic_ns: monotonic_ns(),
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
 
@@ -232,6 +264,9 @@ impl InterceptionEvent {
             stamp_nanosec: not_alive_count as u32,
             handle,
             monotonic_ns: monotonic_ns(),
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
 
@@ -251,6 +286,9 @@ impl InterceptionEvent {
             stamp_nanosec: total_count_change.min(u32::MAX as usize) as u32,
             handle,
             monotonic_ns: monotonic_ns(),
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
 }
@@ -297,6 +335,9 @@ impl InterceptionEvent {
             stamp_nanosec,
             handle,
             monotonic_ns,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
 
@@ -350,8 +391,43 @@ impl InterceptionEvent {
             stamp_nanosec: 0,
             handle: 0,
             monotonic_ns: dropped_count,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
+}
+
+thread_local! {
+    /// `gettid` is a syscall, and this sits on the per-message hot path —
+    /// a thread's id never changes, so read it once per thread.
+    static TID: u32 = unsafe { libc::syscall(libc::SYS_gettid) as u32 };
+}
+
+/// This thread's kernel thread id, cached per thread.
+#[inline]
+pub(crate) fn tid() -> u32 {
+    TID.with(|t| *t)
+}
+
+/// Get this thread's consumed CPU time in nanoseconds
+/// (`CLOCK_THREAD_CPUTIME_ID`).
+///
+/// Phase 58 W2. Read on the hot path, twice per message, so it is one
+/// `clock_gettime` and nothing else — no allocation, no lock. On a
+/// failure the reading is 0, which the consumer treats as "no cost
+/// measurable" rather than "zero cost".
+#[inline]
+pub(crate) fn thread_cpu_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    if rc != 0 {
+        return 0;
+    }
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
 }
 
 /// Get the current monotonic clock time in nanoseconds.

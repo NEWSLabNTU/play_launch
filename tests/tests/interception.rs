@@ -240,3 +240,93 @@ interception:
         "stats_summary.json should not exist when stats is disabled"
     );
 }
+
+/// Phase 58 W2: the per-message record `play_launch measure` reads.
+///
+/// Asserts the two fields that were added for it — a per-thread CPU reading
+/// and the thread it belongs to — actually arrive populated. A `cpu_ns` of 0
+/// would still produce plausible-looking output downstream (every cost would
+/// come out as 0 rather than as an error), so the check has to be here.
+#[test]
+fn test_interception_events_jsonl_carries_cpu_time() {
+    let config = r#"
+interception:
+  enabled: true
+  frontier: true
+  stats: true
+  ring_capacity: 4096
+"#;
+
+    let work_dir = run_with_config(config, Duration::from_secs(5));
+    let play_log = work_dir.path().join("play_log/latest");
+
+    let events_path = play_log.join("interception/events.jsonl");
+    assert!(
+        wait_for_file(&events_path, Duration::from_secs(3)),
+        "events.jsonl not found at {}",
+        events_path.display()
+    );
+
+    let body = std::fs::read_to_string(&events_path).expect("failed to read events.jsonl");
+    let mut message_events = 0;
+    let mut with_cpu = 0;
+    let mut with_tid = 0;
+    let mut topic_names = 0;
+    for line in body.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            // A truncated final line is expected: the file is written
+            // streaming, so a shutdown can cut one in half.
+            continue;
+        };
+        match v["r"].as_str() {
+            Some("e") => {
+                message_events += 1;
+                if v["c"].as_u64().unwrap_or(0) > 0 {
+                    with_cpu += 1;
+                }
+                if v["tid"].as_u64().unwrap_or(0) > 0 {
+                    with_tid += 1;
+                }
+            }
+            Some("t") => topic_names += 1,
+            _ => {}
+        }
+    }
+
+    assert!(
+        message_events > 0,
+        "events.jsonl has no publish/take records:\n{body}"
+    );
+    assert_eq!(
+        with_cpu, message_events,
+        "every publish/take must carry a CLOCK_THREAD_CPUTIME_ID reading; \
+         {with_cpu}/{message_events} did"
+    );
+    assert_eq!(
+        with_tid, message_events,
+        "every publish/take must carry its producing thread; \
+         {with_tid}/{message_events} did"
+    );
+    assert!(
+        topic_names > 0,
+        "no topic-name records — every event would be unattributable"
+    );
+}
+
+/// The file is per-message data, so a run with interception off must not
+/// leave one behind.
+#[test]
+fn test_interception_disabled_writes_no_events_jsonl() {
+    let config = r#"
+interception:
+  enabled: false
+"#;
+
+    let work_dir = run_with_config(config, Duration::from_secs(3));
+    let play_log = work_dir.path().join("play_log/latest");
+    let events_path = play_log.join("interception/events.jsonl");
+    assert!(
+        !events_path.exists(),
+        "events.jsonl written despite interception being disabled"
+    );
+}

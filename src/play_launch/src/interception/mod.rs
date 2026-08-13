@@ -8,6 +8,7 @@
 //! - Aggregating frontier state and message statistics
 //! - Writing summary files on shutdown
 
+pub mod measure;
 pub mod trace;
 
 use crate::cli::config::InterceptionSettings;
@@ -87,7 +88,11 @@ pub enum EventKind {
     FrontierPublish = 16,
 }
 
-/// Interception event (40 bytes, matches play_launch_interception::event::InterceptionEvent).
+/// Interception event (56 bytes, matches play_launch_interception::event::InterceptionEvent).
+///
+/// This is a private ABI: the `.so` and this binary ship together, so the
+/// struct can grow when there is something worth carrying. It grew from 40
+/// bytes in Phase 58 W2 to add `cpu_ns` + `tid`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct InterceptionEvent {
@@ -98,9 +103,18 @@ pub struct InterceptionEvent {
     pub stamp_nanosec: u32,
     pub handle: u64,
     pub monotonic_ns: u64,
+    /// `CLOCK_THREAD_CPUTIME_ID` at the hook, nanoseconds. Nonzero only for
+    /// `Publish`/`Take`. Differenced across a path it gives execution cost —
+    /// what `budget_us` means — where a `monotonic_ns` difference would give
+    /// response time and include preemption (Phase 58 W2).
+    pub cpu_ns: u64,
+    /// Producing thread (`gettid`), 0 when no CPU reading was taken.
+    /// `cpu_ns` is per-thread, so a delta is only meaningful within one tid.
+    pub tid: u32,
+    pub _pad2: [u8; 4],
 }
 
-const _: () = assert!(size_of::<InterceptionEvent>() == 40);
+const _: () = assert!(size_of::<InterceptionEvent>() == 56);
 
 // ---------------------------------------------------------------------------
 // Per-child consumer
@@ -369,6 +383,110 @@ impl NameCatalog {
 }
 
 // ---------------------------------------------------------------------------
+// events.jsonl — the per-message record `play_launch measure` reads
+// ---------------------------------------------------------------------------
+
+/// Streams every publish and take to `interception/events.jsonl`.
+///
+/// Written streaming rather than buffered-then-dumped: this is per-message
+/// data, so a long run would otherwise hold the whole trace in memory, and a
+/// run killed mid-flight would leave nothing at all. A truncated final line is
+/// expected and the reader tolerates it.
+///
+/// Topic names arrive as multi-event chunks, so a topic's first messages are
+/// recorded before its name is known. Name records are therefore emitted as
+/// soon as each name assembles, and the reader builds its map from the whole
+/// file before resolving anything.
+struct EventLog {
+    writer: std::io::BufWriter<std::fs::File>,
+    /// Hashes whose name record has already been written.
+    named: std::collections::HashSet<u64>,
+    /// Hashes seen on a publish/take, so `finish` can flush names that
+    /// assembled after the last message on that topic.
+    seen: std::collections::HashSet<u64>,
+    records: u64,
+}
+
+impl EventLog {
+    fn create(log_dir: &Path) -> eyre::Result<Self> {
+        let dir = log_dir.join("interception");
+        std::fs::create_dir_all(&dir)?;
+        let file = std::fs::File::create(dir.join("events.jsonl"))
+            .wrap_err("creating interception/events.jsonl")?;
+        Ok(Self {
+            writer: std::io::BufWriter::new(file),
+            named: Default::default(),
+            seen: Default::default(),
+            records: 0,
+        })
+    }
+
+    fn write_record(&mut self, record: &measure::Record) {
+        use std::io::Write as _;
+        // A failed write must not take down a run that is otherwise fine —
+        // the cost of losing the measurement is a missing artifact, not a
+        // failed launch. Reported once at `finish`.
+        if let Ok(line) = serde_json::to_string(record)
+            && writeln!(self.writer, "{line}").is_ok()
+        {
+            self.records += 1;
+        }
+    }
+
+    fn observe(&mut self, node: &str, event: &InterceptionEvent, catalog: &NameCatalog) {
+        let dir = match event.kind {
+            EventKind::Publish => measure::Dir::Publish,
+            EventKind::Take => measure::Dir::Take,
+            _ => return,
+        };
+        self.seen.insert(event.topic_hash);
+        self.emit_name(event.topic_hash, catalog);
+        self.write_record(&measure::Record::Event(measure::RunEvent {
+            n: node.to_string(),
+            d: dir,
+            h: event.topic_hash,
+            s: event.stamp_sec,
+            ns: event.stamp_nanosec,
+            t: event.monotonic_ns,
+            c: event.cpu_ns,
+            tid: event.tid,
+        }));
+    }
+
+    fn emit_name(&mut self, hash: u64, catalog: &NameCatalog) {
+        if self.named.contains(&hash) {
+            return;
+        }
+        if let Some(name) = catalog.name_of(hash) {
+            let record = measure::Record::TopicName {
+                h: hash,
+                n: name.to_string(),
+            };
+            self.named.insert(hash);
+            self.write_record(&record);
+        }
+    }
+
+    fn finish(mut self, catalog: &NameCatalog, log_dir: &Path) {
+        use std::io::Write as _;
+        // Names that assembled after the last message on their topic would
+        // otherwise never be written, leaving those events unattributable.
+        for hash in self.seen.iter().copied().collect::<Vec<_>>() {
+            self.emit_name(hash, catalog);
+        }
+        if let Err(e) = self.writer.flush() {
+            warn!("Interception: events.jsonl flush failed: {e}");
+            return;
+        }
+        info!(
+            "Interception: {} message records written to {}",
+            self.records,
+            log_dir.join("interception/events.jsonl").display()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Interception task
 // ---------------------------------------------------------------------------
 
@@ -411,6 +529,20 @@ pub async fn run_interception_task(
     let mut drop_counts: HashMap<usize, u64> = HashMap::new();
     let mut total_events: u64 = 0;
     let mut tracer = config.trace.then(trace::TraceRecorder::new);
+    // Phase 58 W2. Publish/Take events come from StatsPlugin, so without
+    // `stats` there is nothing to record.
+    let mut event_log = match config.stats && config.events {
+        true => match EventLog::create(&log_dir) {
+            Ok(log) => Some(log),
+            Err(e) => {
+                warn!(
+                    "Interception: events.jsonl unavailable ({e:#}); `play_launch measure` will have nothing to read"
+                );
+                None
+            }
+        },
+        false => None,
+    };
 
     let poll_interval = tokio::time::Duration::from_millis(10);
 
@@ -440,6 +572,9 @@ pub async fn run_interception_task(
                         if let Some(t) = tracer.as_mut() {
                             t.observe(&child.node_name, &event, names.name_of(event.topic_hash));
                         }
+                        if let Some(log) = event_log.as_mut() {
+                            log.observe(&child.node_name, &event, &names);
+                        }
                         if event.kind == EventKind::RingOverflowReport {
                             drop_counts.insert(child_idx, event.monotonic_ns);
                         }
@@ -466,6 +601,9 @@ pub async fn run_interception_task(
             if let Some(t) = tracer.as_mut() {
                 t.observe(&child.node_name, &event, names.name_of(event.topic_hash));
             }
+            if let Some(log) = event_log.as_mut() {
+                log.observe(&child.node_name, &event, &names);
+            }
             if event.kind == EventKind::RingOverflowReport {
                 drop_counts.insert(child_idx, event.monotonic_ns);
             }
@@ -485,6 +623,10 @@ pub async fn run_interception_task(
             libc::close(child.shm_fd);
             libc::close(child.event_fd);
         }
+    }
+
+    if let Some(log) = event_log.take() {
+        log.finish(&names, &log_dir);
     }
 
     // Write summaries
@@ -793,6 +935,9 @@ mod tests {
             stamp_nanosec: nanosec,
             handle: 0x100,
             monotonic_ns: mono,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
 
@@ -812,6 +957,9 @@ mod tests {
             stamp_nanosec: nanosec,
             handle: 0x100,
             monotonic_ns: mono,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
 
@@ -824,6 +972,9 @@ mod tests {
             stamp_nanosec: nanosec,
             handle: 0x200,
             monotonic_ns: mono,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
 

@@ -786,12 +786,19 @@ pub fn build_system_model(
 
     for p in &index.node_paths {
         let node_fqn = resolve_node_ref(&structure.nodes, &p.node_fqn);
-        let input = p
-            .path
-            .input
-            .iter()
-            .map(|e| format!("{node_fqn}/{e}"))
-            .collect();
+        // Take the inputs from the EFFECTIVE trigger, not the legacy `input:`
+        // field. A path written in Vocabulary v2 (`trigger: { input: [scan] }`)
+        // leaves `input:` empty, and reading that field directly lowered such
+        // a path into the model as if it were periodic — erasing the only
+        // record of what causes its output. `effective_trigger` also covers
+        // the legacy form, so this is a superset of the old behaviour.
+        let input = match p.path.effective_trigger() {
+            ros_launch_manifest_types::EffectiveTrigger::Input(endpoints) => endpoints
+                .iter()
+                .map(|e| format!("{node_fqn}/{e}"))
+                .collect(),
+            _ => Vec::new(),
+        };
         let output = p
             .path
             .output
@@ -931,6 +938,94 @@ mod tests {
             ]
         });
         serde_json::from_value(json).expect("valid LaunchDump")
+    }
+
+    /// Phase 58 W2. A path written in Vocabulary v2 puts its cause in
+    /// `trigger: { input: [...] }` and leaves the legacy `input:` list empty.
+    /// The lowering used to read that empty list, so every v2 input-triggered
+    /// path reached the model looking periodic — and `PathContract.input` is
+    /// where a consumer learns what a path's cost is measured from.
+    #[test]
+    fn v2_trigger_inputs_reach_the_model() {
+        let dump = dump_with_launch_fields();
+        let mut index = ManifestIndex::default();
+        index
+            .node_paths
+            .push(crate::ros::manifest_loader::ResolvedNodePath {
+                node_fqn: "/perception/detector".to_string(),
+                path_name: "detect".to_string(),
+                path: ros_launch_manifest_types::PathDecl {
+                    trigger: Some(ros_launch_manifest_types::Trigger::Input(vec![
+                        "points".to_string(),
+                    ])),
+                    output: vec!["objects".to_string()],
+                    ..Default::default()
+                },
+                scope_id: 0,
+            });
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        let path = &model.contracts.node_paths["/perception/detector/detect"];
+        assert_eq!(path.input, vec!["/perception/detector/points".to_string()]);
+        assert_eq!(
+            path.output,
+            vec!["/perception/detector/objects".to_string()]
+        );
+    }
+
+    /// A timer-triggered path has no input, and must not acquire one.
+    #[test]
+    fn timer_trigger_lowers_to_no_inputs() {
+        let dump = dump_with_launch_fields();
+        let mut index = ManifestIndex::default();
+        index
+            .node_paths
+            .push(crate::ros::manifest_loader::ResolvedNodePath {
+                node_fqn: "/perception/detector".to_string(),
+                path_name: "sample".to_string(),
+                path: ros_launch_manifest_types::PathDecl {
+                    trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 50.0 }),
+                    output: vec!["scan".to_string()],
+                    ..Default::default()
+                },
+                scope_id: 0,
+            });
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        assert!(
+            model.contracts.node_paths["/perception/detector/sample"]
+                .input
+                .is_empty()
+        );
+    }
+
+    /// The legacy form keeps working: `effective_trigger` derives an input
+    /// trigger from a non-empty `input:` list.
+    #[test]
+    fn legacy_input_list_still_lowers() {
+        let dump = dump_with_launch_fields();
+        let mut index = ManifestIndex::default();
+        index
+            .node_paths
+            .push(crate::ros::manifest_loader::ResolvedNodePath {
+                node_fqn: "/perception/detector".to_string(),
+                path_name: "detect".to_string(),
+                path: ros_launch_manifest_types::PathDecl {
+                    input: vec!["points".to_string()],
+                    output: vec!["objects".to_string()],
+                    ..Default::default()
+                },
+                scope_id: 0,
+            });
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        assert_eq!(
+            model.contracts.node_paths["/perception/detector/detect"].input,
+            vec!["/perception/detector/points".to_string()]
+        );
     }
 
     #[test]

@@ -176,6 +176,9 @@ mod tests {
             stamp_nanosec: nsec,
             handle: 0,
             monotonic_ns: mono,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
         }
     }
 
