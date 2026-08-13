@@ -185,6 +185,56 @@ overrides:                        # explicit pins — always beat derived values
   pinned above a faster one) is always a warning, citing both the contract
   and the platform file.
 
+### 1.2.1 `budget_us` — and where the number comes from
+
+An override may declare `budget_us`, the node's execution cost per invocation.
+It is what a `SCHED_DEADLINE` reservation's runtime is built from, so it is CPU
+time, not elapsed time — and it is the one field you should never guess:
+
+```yaml
+overrides:
+  obstacle_detector: { budget_us: 8081 }
+```
+
+`play_launch measure` produces it from a run:
+
+```bash
+# 1. record a run with interception on (config: `interception: { enabled: true }`)
+play_launch launch my_pkg bringup.launch.xml --config cfg.yaml
+
+# 2. turn that run into a pasteable fragment
+play_launch measure play_log/latest --model system_model.yaml
+```
+
+```yaml
+overrides:
+  /safety/obstacle_detector:
+    # detect: cost p50 8.00 p99 8.02 max 8.08 ms   n=1202
+    #   response p50 8.01 p99 8.02 max 8.08 ms (cost + preemption + wakeup)
+    budget_us: 8081
+
+# Not measured — these carry real cost, it just wasn't observable:
+#   /safety/lidar_driver/sample: timer-triggered — no input take to measure from.
+```
+
+It prints to stdout and never edits your platform file. Three things to know
+before pasting:
+
+- **It reports two numbers.** `cost` is CPU time — what `budget_us` takes.
+  `response` is wall clock over the same interval, so the gap between them is
+  preemption and DDS wakeup. Seeing 3 ms of cost against 40 ms of response is
+  normal on a loaded machine, and declaring the 40 would waste eight times the
+  bandwidth the node actually needs.
+- **`budget_us` is the observed MAXIMUM**, not p99. Under CBS an invocation
+  that overruns its runtime is throttled until the next replenishment, so a p99
+  budget turns the slowest 1% of invocations into a full-period stall.
+- **Measure quiet, apply busy.** This is what your machine did on that run — it
+  is not a WCET, and nothing downstream treats it as proof.
+
+Paths that could not be measured are listed with the reason rather than left
+out, because a missing path reads as a path that costs nothing. Timer-triggered
+paths are the common case: they have no input take to measure from.
+
 ### 1.3 `--explain` — the merged view
 
 ```bash
@@ -295,6 +345,7 @@ play_launch launch <pkg> <file> --sched <path> [--sched-apply off|warn|strict]
 play_launch launch <pkg> <file> --check                                        # pass/fail gate
 play_launch check <pkg> <file> [--sched <path>] [--target <t>] [--explain]
 play_launch contract eject <pkg> <file> [--target <t>] [--into <dir>] [--force]
+play_launch measure <run-dir> --model <model.yaml>              # observed cost -> budget_us
 ```
 
 | `--sched-apply` | behavior |
