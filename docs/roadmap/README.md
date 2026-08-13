@@ -201,10 +201,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   apply logging. Workspace: `examples/rt_av_demo/`. Report:
   [docs/reports/rt-mixed-criticality/](../reports/rt-mixed-criticality/).
   [phase-57-rt-mixed-criticality-demo.md](./phase-57-rt-mixed-criticality-demo.md).
-- **Phase 58** — 📋 deriving scheduling from contracts. Cost is unauthorable in
-  the v2 platform schema, so `sched_derive.rs` substitutes a path's *deadline*
-  for its cost; W1 makes it authorable, then deadline decomposition (W3) and
-  `SCHED_DEADLINE` reservations (W4). Study:
+- **Phase 58** — 🚧 deriving scheduling from contracts. Cost was unauthorable in
+  the v2 platform schema, so `sched_derive.rs` substituted a path's *deadline*
+  for its cost. W1 (authorable) and W4 (reservations) shipped in Phase 60;
+  **W2 is done** — `play_launch measure` turns a run into `budget_us` from
+  `CLOCK_THREAD_CPUTIME_ID` rather than asking an integrator to invent one,
+  and reports response time beside it because the same rt_av_demo callback
+  costs 3.05 ms of CPU and 40.43 ms of wall clock. Remaining: deadline
+  decomposition (W3) and synthesis (W5). Study:
   [docs/research/scheduling-derivation-prior-art.md](../research/scheduling-derivation-prior-art.md).
   [phase-58-scheduling-derivation.md](./phase-58-scheduling-derivation.md).
 - **Phase 59** — 📋 timing vocabulary: units move onto the value

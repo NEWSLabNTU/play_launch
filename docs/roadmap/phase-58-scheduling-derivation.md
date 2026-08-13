@@ -1,6 +1,7 @@
 # Phase 58 — Deriving scheduling from contracts: cost, deadlines, reservations
 
-**Status:** 📋 planned
+**Status:** 🚧 in progress — **W2 done** (2026-08-13); W3 and W5 outstanding
+(W1 and W4 were absorbed into Phase 60 and are done, see below)
 **Study of record:** [`docs/research/scheduling-derivation-prior-art.md`](../research/scheduling-derivation-prior-art.md)
 **Predecessor:** Phase 57 (mixed-criticality RT demo) — supplies the measurement
 harness this phase's claims are checked against.
