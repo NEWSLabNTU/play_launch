@@ -372,6 +372,8 @@ async fn run_direct(
             startup: std::sync::Arc::new(
                 crate::execution::startup_governor::StartupGovernor::disabled(),
             ),
+            // One node, so there is no order to impose.
+            startup_stage: 0,
         };
 
         // Add to builder

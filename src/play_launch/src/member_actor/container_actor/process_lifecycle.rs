@@ -105,7 +105,11 @@ impl ContainerActor {
         // process. They are not exempt — a container is one of the more
         // expensive things to start, and in `isolated` mode each one goes on
         // to fork a process per composable it hosts.
-        let permit = self.config.startup.admit(&self.name).await;
+        let permit = self
+            .config
+            .startup
+            .admit(&self.name, self.config.startup_stage)
+            .await;
 
         let child = command
             .spawn()

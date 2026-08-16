@@ -31,6 +31,10 @@ pub struct ActorConfig {
     /// same millisecond. `StartupGovernor::disabled()` restores the previous
     /// spawn-immediately behaviour.
     pub startup: std::sync::Arc<crate::execution::startup_governor::StartupGovernor>,
+    /// Phase 61 W2: which startup stage this member belongs to. Stage 0 starts
+    /// immediately; a higher stage waits until every member of every lower one
+    /// is up (or gone, or the stage timed out).
+    pub startup_stage: crate::execution::startup_order::Stage,
 }
 
 /// State machine for a regular node or container

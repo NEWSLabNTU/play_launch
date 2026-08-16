@@ -142,7 +142,11 @@ impl RegularNodeActor {
         // Acquired AFTER to_exec_context (which only touches files) and
         // immediately BEFORE spawn, so a held slot always corresponds to a
         // real process rather than to bookkeeping.
-        let permit = self.config.startup.admit(&log_name).await;
+        let permit = self
+            .config
+            .startup
+            .admit(&log_name, self.config.startup_stage)
+            .await;
 
         // Re-check shutdown: admission can block, and a run cancelled while
         // this actor was queued must not start a process on its way out.

@@ -74,6 +74,49 @@ pub struct StartupSettings {
     /// CPU percent (of one core) below which a starting process is considered
     /// to have finished initialising.
     pub settle_threshold_pct: f64,
+
+    /// Phase 61 W2: groups of members that start after every earlier group has
+    /// come up. Anything not matched by a group starts first.
+    ///
+    /// Empty by default. Reordering startup is a semantic change — a system
+    /// where something waits on a driver being up early would break — so it is
+    /// opt-in. The use it exists for is putting sensor drivers last, so nothing
+    /// is published into subscribers that do not exist yet:
+    ///
+    /// ```yaml
+    /// startup:
+    ///   order:
+    ///     - name: sensor-drivers
+    ///       match: ["/sensing/**"]
+    /// ```
+    pub order: Vec<StartupOrderGroup>,
+
+    /// Derive a final group from the model's topic graph: nodes that publish
+    /// and never subscribe start last.
+    ///
+    /// Inert unless the model carries topics, which it does only when
+    /// manifests have been authored — a plain launch file resolves to zero of
+    /// them. Explicit `order` groups win over this.
+    pub defer_sources: bool,
+
+    /// How long one stage may hold up the next before it is released anyway,
+    /// with the members still missing named in the warning. A driver whose
+    /// hardware is absent never appears in the ROS graph, and must not stop the
+    /// rest of the system from starting.
+    pub stage_timeout_secs: u64,
+}
+
+/// One `startup.order` entry.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StartupOrderGroup {
+    /// Label for logs. Defaults to `stageN`.
+    #[serde(default)]
+    pub name: String,
+    /// Glob patterns matched against node FQNs (`/ns/node_name`). `**` crosses
+    /// namespace separators, so `/sensing/**` reaches a driver several levels
+    /// down.
+    #[serde(default, rename = "match")]
+    pub match_: Vec<String>,
 }
 
 impl Default for StartupSettings {
@@ -86,6 +129,9 @@ impl Default for StartupSettings {
             max_gate_wait_secs: 30,
             max_settle_secs: 15,
             settle_threshold_pct: 20.0,
+            order: Vec::new(),
+            defer_sources: false,
+            stage_timeout_secs: 30,
         }
     }
 }

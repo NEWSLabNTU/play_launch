@@ -250,6 +250,10 @@ pub struct StartupGovernor {
     limits: StartupLimits,
     sem: Arc<Semaphore>,
     load_sem: Arc<Semaphore>,
+    /// Phase 61 W2: the startup-order gate. Checked BEFORE the concurrency
+    /// semaphore, so a member of a deferred stage does not sit on a scarce
+    /// process slot while it waits for an earlier stage to come up.
+    gate: Arc<crate::execution::startup_order::StageGate>,
     ncpu: usize,
     /// Processes admitted so far, for the progress line.
     admitted: AtomicU64,
@@ -265,6 +269,7 @@ impl StartupGovernor {
         Self {
             sem: Arc::new(Semaphore::new(permits)),
             load_sem: Arc::new(Semaphore::new(load_permits)),
+            gate: Arc::new(crate::execution::startup_order::StageGate::new()),
             ncpu: std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(1),
@@ -283,12 +288,26 @@ impl StartupGovernor {
         &self.limits
     }
 
+    /// The startup-order gate, so `up` can hand it to the advancer task.
+    pub fn gate(&self) -> Arc<crate::execution::startup_order::StageGate> {
+        self.gate.clone()
+    }
+
     /// Wait until it is this member's turn to spawn.
     ///
     /// Returns a permit that must be handed to [`StartupPermit::hold_until_settled`]
     /// once the child's pid is known. Dropping it early simply releases the
     /// slot, which is the right behaviour when the spawn failed.
-    pub async fn admit(&self, who: &str) -> StartupPermit {
+    pub async fn admit(
+        &self,
+        who: &str,
+        stage: crate::execution::startup_order::Stage,
+    ) -> StartupPermit {
+        // Ordering first, and unconditionally: staging is independent of the
+        // resource gates, and a run with pacing disabled must still honour a
+        // configured start order.
+        self.gate.wait_for(stage).await;
+
         if !self.limits.is_enabled() {
             return StartupPermit::inert();
         }
@@ -600,7 +619,7 @@ mod tests {
         limits.min_available_kb = 0;
         let gov = StartupGovernor::new(limits, 0);
         for i in 0..500 {
-            let p = gov.admit(&format!("n{i}")).await;
+            let p = gov.admit(&format!("n{i}"), 0).await;
             // An inert permit's settle hold is a no-op; calling it is the
             // production path and must not panic or leak a task.
             p.hold_until_settled(std::process::id(), format!("n{i}"));
@@ -677,7 +696,7 @@ mod tests {
         // 200 admissions with no permits held would block forever if the
         // semaphore were real.
         for i in 0..200 {
-            let permit = gov.admit(&format!("node{i}")).await;
+            let permit = gov.admit(&format!("node{i}"), 0).await;
             std::mem::forget(permit);
         }
     }
@@ -696,10 +715,10 @@ mod tests {
         assert!(stuck_load.is_some());
 
         // Both process slots remain available while that load is held.
-        let a = tokio::time::timeout(Duration::from_millis(500), gov.admit("node_a"))
+        let a = tokio::time::timeout(Duration::from_millis(500), gov.admit("node_a", 0))
             .await
             .expect("a held load slot must not block a process slot");
-        let b = tokio::time::timeout(Duration::from_millis(500), gov.admit("node_b"))
+        let b = tokio::time::timeout(Duration::from_millis(500), gov.admit("node_b", 0))
             .await
             .expect("a held load slot must not block a process slot");
         drop((a, b, stuck_load));
@@ -726,11 +745,11 @@ mod tests {
         limits.max_runnable_factor = 0.0;
         let gov = Arc::new(StartupGovernor::new(limits, 0));
 
-        let a = gov.admit("a").await;
-        let b = gov.admit("b").await;
+        let a = gov.admit("a", 0).await;
+        let b = gov.admit("b", 0).await;
 
         let gov2 = gov.clone();
-        let third = tokio::spawn(async move { gov2.admit("c").await });
+        let third = tokio::spawn(async move { gov2.admit("c", 0).await });
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!third.is_finished(), "third admission should be queued");
 

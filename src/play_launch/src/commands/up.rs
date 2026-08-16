@@ -776,6 +776,35 @@ pub(crate) async fn play(
         }
     }
 
+    // Phase 61 W2: resolve the startup order before any actor is built, so
+    // each one is told its stage at construction. Keyed by model FQN, which is
+    // the one name both the model and the ROS graph agree on.
+    let stage_assignment = {
+        let groups =
+            crate::execution::startup_order::compile_groups(&runtime_config.startup.order)?;
+        let a = crate::execution::startup_order::StageAssignment::resolve(
+            &system_model,
+            &groups,
+            runtime_config.startup.defer_sources,
+        );
+        if a.is_staged() {
+            for stage in 0..a.stage_count() as u32 {
+                let n = if stage == 0 {
+                    // Stage 0 is "everything not mentioned", so it is counted
+                    // by subtraction rather than by lookup.
+                    system_model.structure.nodes.len() - a.members_of_any_later_stage()
+                } else {
+                    a.members_of(stage).len()
+                };
+                info!(
+                    "Startup order: stage {stage} '{}' — {n} member(s)",
+                    a.stage_name(stage)
+                );
+            }
+        }
+        std::sync::Arc::new(a)
+    };
+
     // Phase 61: one admission controller for the whole run, shared by every
     // actor. Built here rather than per-actor because the quantity it bounds —
     // how much of this machine is busy starting things — is global.
@@ -848,6 +877,11 @@ pub(crate) async fn play(
             sched_mode: common.sched_opts.sched_apply,
             sched_helper: sched_helper.clone(),
             startup: startup_governor.clone(),
+            startup_stage: context
+                .model_fqn
+                .as_deref()
+                .map(|fqn| stage_assignment.stage_for(fqn))
+                .unwrap_or(0),
         };
 
         builder.add_regular_node(
@@ -891,6 +925,15 @@ pub(crate) async fn play(
             sched_mode: common.sched_opts.sched_apply,
             sched_helper: sched_helper.clone(),
             startup: startup_governor.clone(),
+            // A container carries its composables with it: a composable is
+            // loaded by its container, so deferring the container defers
+            // everything inside it without needing a stage of its own.
+            startup_stage: context
+                .node_context
+                .model_fqn
+                .as_deref()
+                .map(|fqn| stage_assignment.stage_for(fqn))
+                .unwrap_or(0),
         };
 
         // Add container (oneshot receiver is ignored since composable nodes will be matched internally)
@@ -939,6 +982,24 @@ pub(crate) async fn play(
     let (member_handle, member_runner) = builder.spawn(shared_ros_node).await;
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
     debug!("All actors spawned successfully");
+
+    // Phase 61 W2: the task that opens each startup stage as the previous one
+    // comes up. Spawned after the handle exists because it reads member state;
+    // stage 0 is open from the outset, so nothing waits on this being running.
+    let _stage_task = if stage_assignment.is_staged() {
+        Some(tokio::spawn(
+            crate::execution::startup_order::run_stage_advancer(
+                startup_governor.gate(),
+                stage_assignment.clone(),
+                member_handle.clone(),
+                shared_ros_node_for_params.clone(),
+                std::time::Duration::from_secs(runtime_config.startup.stage_timeout_secs),
+                shutdown_signal.clone(),
+            ),
+        ))
+    } else {
+        None
+    };
 
     // Setup periodic statistics output task (runs every 10 seconds)
     let startup_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
