@@ -737,34 +737,40 @@ pub(crate) async fn play(
         num_composable_nodes
     );
 
-    // Phase 61: warn when `isolated` is about to cost far more than it is
-    // worth on this machine.
+    // Phase 61: report what `isolated` costs on this machine — as a fact, not
+    // as advice to turn it off.
     //
-    // `--container-mode isolated` (the default) gives every composable node
-    // its own process, so a crash cannot take down its container's siblings.
-    // The price is a process, an executor and a DDS participant per node
-    // instead of per container, and on a small machine that price dominates
-    // everything else. Measured on a 12-core AGX Orin bringing up the same
-    // 44-node / 16-container / 84-composable launch:
+    // `--container-mode isolated` (the default) fork+execs every composable
+    // into its own process. Measured on a 12-core AGX Orin bringing up a
+    // 44-node / 16-container / 84-composable launch, that is 144 processes
+    // against 60 and 10.2 of 12 cores against 3.9 during startup.
     //
-    //     isolated     144 processes   10.2 of 12 cores during startup
-    //     observable    60 processes    3.9 of 12 cores
+    // That cost is not waste: it is the documented price of fault isolation
+    // (docs/design/container-isolation.md). Only a process boundary can
+    // contain a SIGSEGV — inside a container one segfaulting composable takes
+    // down every node sharing it, 3-10 of them in Autoware — and `memory`
+    // cgroups, `oom_score_adj` and `kill(pid)` are all process-granular too,
+    // so the per-node OOM bias this phase added only works per-node under
+    // `isolated`. Dropping to `observable` also gives up intra-process
+    // zero-copy IPC, which the same document puts at ~1-5 ms per pipeline
+    // stage for LiDAR/camera paths.
     //
-    // — 2.6x the CPU to bring up the same system, with peak load1 203 against
-    // 34, for the same 77/84 composables loaded at the 90 s mark. This is a
-    // warning and not an automatic downgrade because the isolation it buys is
-    // real and only the operator knows whether they need it.
+    // So this warns about a real cost the operator may not have priced, and
+    // names the alternative together with what it forfeits. It is emphatically
+    // not an automatic downgrade: on a vehicle, trading crash containment for
+    // CPU is a safety decision that belongs to the integrator.
     if common.containers.container_mode == crate::cli::options::ContainerMode::Isolated {
         let ncpu = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
         if num_composable_nodes > ncpu * 4 {
             warn!(
-                "--container-mode isolated will start {} extra processes (one per composable \
-                 node) on a {}-core machine. Measured on a 12-core Orin this costs ~2.6x the \
-                 startup CPU of --container-mode observable, which loads the same nodes as \
-                 threads inside their containers. Use `--container-mode observable` if you do \
-                 not need per-composable crash isolation.",
+                "--container-mode isolated starts {} extra processes (one per composable \
+                 node) on a {}-core machine; measured on a 12-core Orin this costs ~2.6x the \
+                 startup CPU of --container-mode observable. That buys per-node fault \
+                 isolation, OOM accounting and restart, which observable gives up along with \
+                 intra-process zero-copy IPC — see docs/guide/edge-machines.md before \
+                 changing it.",
                 num_composable_nodes, ncpu
             );
         }

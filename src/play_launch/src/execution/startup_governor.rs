@@ -32,6 +32,12 @@
 //! 10.2** — peak load1 45 against 190, 1.4 GiB against 3.5, and it finishes
 //! FASTER (8.4 s against 10.7 s) with the same 84/84 composables loaded.
 //!
+//! That is a measurement, not a recommendation. Those processes are what fault
+//! isolation costs: only a process boundary contains a SIGSEGV, and
+//! `oom_score_adj` — including the bias this phase adds — is process-granular,
+//! so the cheaper mode also makes this module's companion protection coarser.
+//! See `docs/design/container-isolation.md`.
+//!
 //! So the concurrency limit is **off by default**. What stays on is the memory
 //! floor, which is not a throughput control at all: it costs nothing while
 //! memory is plentiful — it never blocks — and only serialises admissions once
