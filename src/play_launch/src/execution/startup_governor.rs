@@ -167,19 +167,43 @@ impl StartupLimits {
 
     /// Derive limits from the machine.
     ///
-    /// Only the memory floor is derived and only the memory floor is on: it is
-    /// a proportion of RAM rather than a constant, because 1 GiB of headroom
-    /// is generous on a 4 GiB board and negligible on a 64 GiB one, and it is
-    /// clamped so the floor cannot become absurd at either end.
+    /// Only the memory floor is derived and only the memory floor is on.
+    ///
+    /// It is an ABSOLUTE quantity, not a proportion of RAM. What the floor
+    /// guards against is one more process allocating before the next sample
+    /// notices, and a process needs what it needs regardless of how much
+    /// memory the machine happens to have: an Autoware node wanting 250 MB
+    /// wants 250 MB on a 4 GiB board and on a 64 GiB one. Measured on the golf
+    /// cart stack, the largest launch-owned process peaked at **274 MiB** and
+    /// the 99th percentile across every process on the machine was 116 MiB —
+    /// so 1 GiB is roughly four times the largest single demand observed, with
+    /// room for the CUDA/TensorRT allocations a sensor-attached run adds.
+    ///
+    /// An earlier version scaled it at 10% of RAM, clamped to
+    /// [512 MiB, 4 GiB]. That was wrong in the direction that matters: it gave
+    /// the 64 GiB box a 4 GiB cushion it did not need and the 4 GiB board
+    /// 512 MiB — less than two of the processes it was meant to protect
+    /// against, on the machine least able to absorb the miss.
+    ///
+    /// The one proportional term left is a CAP, so the floor cannot demand a
+    /// quarter of a small board and spend every startup bouncing off its own
+    /// gate. That is proportionality used to stay sane on tiny machines, not
+    /// to size the reserve.
     ///
     /// `ncpu` is still taken because a caller that DOES want a concurrency
     /// limit almost always wants it expressed in cores, and because the
     /// runnable-task ceiling is scaled by it when enabled.
     pub fn auto(ncpu: usize, mem_total_kb: u64) -> Self {
-        const MIN_FLOOR_KB: u64 = 512 * 1024; // 512 MiB
-        const MAX_FLOOR_KB: u64 = 4 * 1024 * 1024; // 4 GiB
+        /// Headroom for the next process to allocate into. Absolute — see above.
+        const FLOOR_KB: u64 = 1024 * 1024; // 1 GiB
+        /// …but never more than this share of the machine.
+        const MAX_FLOOR_FRACTION: u64 = 4;
 
-        let floor = (mem_total_kb / 10).clamp(MIN_FLOOR_KB, MAX_FLOOR_KB);
+        let floor = if mem_total_kb == 0 {
+            FLOOR_KB
+        } else {
+            FLOOR_KB.min(mem_total_kb / MAX_FLOOR_FRACTION)
+        };
 
         let _ = ncpu;
         Self {
@@ -578,19 +602,39 @@ mod tests {
     }
 
     #[test]
-    fn memory_floor_is_proportional_but_clamped() {
-        // 10% of 8 GiB = 819 MiB, inside the clamp.
-        let mid = StartupLimits::auto(4, 8 * 1024 * 1024);
-        assert_eq!(mid.min_available_kb, 8 * 1024 * 1024 / 10);
+    fn memory_floor_is_absolute_not_proportional() {
+        const GIB: u64 = 1024 * 1024;
 
-        // 10% of 1 GiB would be 102 MiB — floored at 512 MiB.
-        let tiny = StartupLimits::auto(2, 1024 * 1024);
-        assert_eq!(tiny.min_available_kb, 512 * 1024);
+        // The whole point: the reserve a starting process needs does not
+        // depend on how much memory the machine has, so the floor must be the
+        // same on a small board and a large one.
+        let small = StartupLimits::auto(4, 8 * GIB);
+        let large = StartupLimits::auto(64, 128 * GIB);
+        assert_eq!(small.min_available_kb, GIB);
+        assert_eq!(large.min_available_kb, GIB);
+        assert_eq!(
+            small.min_available_kb, large.min_available_kb,
+            "a 16x difference in RAM must not change the reserve"
+        );
+    }
 
-        // 10% of 128 GiB would be 12.8 GiB — capped at 4 GiB, or a big
-        // workstation would refuse to start anything while a build is running.
-        let huge = StartupLimits::auto(64, 128 * 1024 * 1024);
-        assert_eq!(huge.min_available_kb, 4 * 1024 * 1024);
+    #[test]
+    fn tiny_boards_cap_the_floor_rather_than_bouncing_off_it() {
+        const GIB: u64 = 1024 * 1024;
+        // 1 GiB of reserve on a 2 GiB board would block half the machine and
+        // spend every startup hitting the bypass; the cap keeps it to a
+        // quarter.
+        let tiny = StartupLimits::auto(2, 2 * GIB);
+        assert_eq!(tiny.min_available_kb, 2 * GIB / 4);
+        assert!(tiny.min_available_kb < GIB);
+    }
+
+    #[test]
+    fn unreadable_meminfo_still_yields_a_reserve() {
+        // `read_mem_total_kb()` returning None resolves to 0; a floor of 0
+        // would silently disable the one gate that ships enabled.
+        let unknown = StartupLimits::auto(4, 0);
+        assert_eq!(unknown.min_available_kb, 1024 * 1024);
     }
 
     #[test]
