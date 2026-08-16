@@ -9,27 +9,15 @@ Everything here was measured on a 12-core AGX Orin bringing up a 44-node /
 16-container / 84-composable Autoware stack. Full numbers and method:
 [phase-61-edge-startup-storm.md](../roadmap/phase-61-edge-startup-storm.md).
 
-## The short version
+## The one decision that dominates everything else
 
-```sh
-play_launch launch --container-mode observable <pkg> <launch_file>
-```
+`--container-mode isolated` is the default, and on a small machine carrying
+many composable nodes it costs more than every other setting on this page
+combined. Whether you should change it is **not** a performance question.
 
-If your launch has many composable nodes and your machine has few cores, that
-one flag is worth more than everything else on this page combined.
+### What it costs
 
-## Why
-
-`--container-mode isolated` is the default. It fork+execs every composable node
-into its own process, so a node that crashes cannot take down the siblings
-sharing its container. That is a real property and some systems need it.
-
-The price is a process, an executor and a DDS participant per composable node
-instead of per container. A launch with 16 containers and 84 composables runs
-144 processes under `isolated` and 60 under `observable`, and on a 12-core board
-the difference is not subtle:
-
-| | `isolated` | `observable` |
+| | `isolated` (default) | `observable` |
 |---|---|---|
 | processes | 144 | 60 |
 | spawn → startup complete | 10.7 s | **8.4 s** |
@@ -38,21 +26,48 @@ the difference is not subtle:
 | memory consumed during startup | 3.5 GiB | **1.4 GiB** |
 | CPU during startup | 10.2 of 12 cores | **3.9 cores** |
 
-Same 84/84 composables loaded, 2.6x less CPU, and faster. There is no
-throughput argument for `isolated` on a machine this size — what it buys is
-crash isolation and nothing else, so the question to ask is whether you need
-that, not whether you can afford it.
+### What it buys
 
-`observable` keeps play_launch's `ComponentEvent` visibility, so the web UI and
-the per-composable state tracking work exactly as before. `stock` gives up that
-too; prefer `observable` unless you specifically want the launch file's own
+`isolated` fork+execs each composable into its own process. That is the only
+way to get any of the following, because every one of them is process-granular
+in Linux — see [container-isolation.md](../design/container-isolation.md):
+
+- **Crash containment.** A SIGSEGV cannot be contained inside a process. In a
+  shared container one segfaulting composable takes down every node loaded
+  beside it — 3–10 nodes in an Autoware container, cascading from there.
+- **Per-node OOM accounting.** `oom_score_adj` is process-only, so the OOM bias
+  described below applies *per node* under `isolated` and *per container* under
+  `observable`. Under `observable`, one composable's memory makes the whole
+  container the victim.
+- **Per-node kill, restart and cgroup limits.** Also process-only.
+
+And what `observable` gives up beyond that: intra-process **zero-copy IPC**.
+The design note puts serialisation at ~1–5 ms per pipeline stage, which is
+material for LiDAR and camera paths with a latency budget.
+
+### So which?
+
+| | prefer |
+|---|---|
+| Bench, desktop, CI, bring-up, replay | `observable` — the CPU back is worth more than crash containment you are watching anyway |
+| Vehicle, or anything where a node crash must not cascade | **`isolated`** — pay the CPU |
+
+If you are on a vehicle and the cost hurts, the answer is not to give up
+isolation globally; it is to reduce what has to be isolated. play_launch does
+not yet support per-node isolation (it is all-or-nothing per run) — that is
+open work, tracked in the phase-61 roadmap.
+
+play_launch reports the cost when a launch would fork more than four processes
+per core, so the trade is visible rather than implicit:
+
+    WARN --container-mode isolated starts 84 extra processes (one per composable
+    node) on a 12-core machine; ... That buys per-node fault isolation, OOM
+    accounting and restart, which observable gives up along with intra-process
+    zero-copy IPC ...
+
+`stock` gives up play_launch's `ComponentEvent` visibility as well; prefer
+`observable` over `stock` unless you specifically need the launch file's own
 container binary.
-
-play_launch warns about this on its own when a launch would fork more than four
-processes per core:
-
-    WARN --container-mode isolated will start 84 extra processes (one per
-    composable node) on a 12-core machine. ...
 
 ## What happens if you run out of memory anyway
 
@@ -72,16 +87,29 @@ another process's score needs privilege it does not have. So it can volunteer
 its nodes, but it cannot protect your desktop directly.
 
 **Spawning pauses when free memory gets low.** Before starting each process
-play_launch checks `MemAvailable` against a floor — 10% of RAM, clamped to
-between 512 MiB and 4 GiB. Above the floor this costs nothing and never blocks.
-Below it, admissions serialise until memory recovers, and after 30 s a node is
-let through anyway with a warning naming the gate, because a launch that never
-starts is worse than one that starts under pressure.
+play_launch checks `MemAvailable` against a floor of **1 GiB**, capped at a
+quarter of RAM on machines too small for that. Above the floor this costs
+nothing and never blocks. Below it, admissions serialise until memory recovers,
+and after 30 s a node is let through anyway with a warning naming the gate,
+because a launch that never starts is worse than one that starts under pressure.
+
+The floor is deliberately **absolute rather than a share of RAM**: what it
+guards against is one more process allocating before the next sample notices,
+and a process needs what it needs regardless of how big the machine is. Measured
+on this stack, the largest launch-owned process peaked at 274 MiB and the 99th
+percentile across every process on the box was 116 MiB, so 1 GiB is about four
+times the largest single demand, with room for the CUDA/TensorRT allocations a
+sensor-attached run adds. (Scaling it at 10% of RAM, as an earlier version did,
+gave a 64 GiB box a 4 GiB cushion it did not need and a 4 GiB board 512 MiB —
+less than two of the processes it was meant to protect against, on the machine
+least able to absorb the miss.) The quarter-of-RAM cap exists only so the floor
+cannot demand half of a very small board and spend every startup bouncing off
+its own gate.
 
 ```yaml
 startup:
   min_available_mb: 2048   # explicit floor
-  # min_available_mb: ~    # default: 10% of RAM, clamped
+  # min_available_mb: ~    # default: 1 GiB, capped at RAM/4
 ```
 
 ## Pacing the startup
@@ -112,6 +140,53 @@ separate measured reason: it cannot tell "busy because we are starting things"
 from "busy because the things we started are running", and at `2 * ncpu` it made
 startup *worse* than no pacing at all.
 
+## Start order
+
+Nothing above changes *what* starts first. For however long the stack takes to
+come up, sensor drivers publish into nodes that do not exist yet, and that
+backlog — DDS history caches plus the callback queues of subscribers appearing
+part-way through — is the suspected path from "the machine is busy" to "the OOM
+killer took the desktop".
+
+Starting the drivers last bounds it: by the time anything is published, the
+things that consume it are listening.
+
+```yaml
+startup:
+  order:
+    - name: sensor-drivers
+      match:
+        - "/sensing/lidar/falcon/seyond_node"
+        - "/sensing/lidar/vlp32/velodyne_ros_wrapper_node"
+        - "/sensing/camera/**"
+        - "/sensing/imu/xsens/**"
+  stage_timeout_secs: 30
+```
+
+Anything not matched is stage 0 and starts immediately; each later group waits
+until every earlier member is up. Name the drivers rather than matching a whole
+namespace — `/sensing/**` also catches consumers like `imu_corrector` and
+`concatenate_data`, which belong in stage 0 with everything else they feed.
+
+A stage waits for members to appear in the **ROS graph**, not merely to have
+been spawned: `spawn()` returns long before a node has constructed its
+subscriptions. Members that die are counted as accounted for — a driver whose
+hardware is absent never appears, and must not hold up the rest of the system —
+and the timeout names whatever is still missing when it fires.
+
+One limitation worth knowing: for a node the launch file did not give a `name=`,
+the model keys it by its *executable* while the running node registers its own
+compiled-in name, so no graph match is possible. play_launch detects that case
+and falls back to "the process is running" for those nodes. On the golf cart
+stack that is 17 of 144.
+
+There is also `defer_sources: true`, which derives the last group from the
+model's topic graph (publishes but never subscribes → last). It is inert unless
+manifests have been authored, since a plain launch file resolves to zero topics.
+
+Ordering is **off by default**: it is a semantic change, and a system where
+something waits on a driver being up early would break.
+
 ## Composable loading
 
 `composable_node_loading.max_concurrent_load_node_spawn` (default 10) bounds how
@@ -125,11 +200,14 @@ dispatched simultaneously. Set it to `0` for the old unbounded behaviour.
 startup:
   enabled: true            # false restores pre-phase-61 spawn-immediately
   max_concurrent: ~        # ~ or 0 = unlimited (default)
-  min_available_mb: ~      # ~ = 10% of RAM, clamped to [512, 4096]
+  min_available_mb: ~      # ~ = 1 GiB absolute, capped at RAM/4
   max_runnable_factor: 0.0 # 0 = off; otherwise multiplied by core count
   max_gate_wait_secs: 30   # then admit anyway, with a warning
   max_settle_secs: 15
   settle_threshold_pct: 20.0
+  order: []                # [] = no staging (default)
+  defer_sources: false     # derive a final group from the topic graph
+  stage_timeout_secs: 30
 
 composable_node_loading:
   max_concurrent_load_node_spawn: 10   # 0 = unlimited

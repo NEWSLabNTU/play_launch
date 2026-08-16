@@ -362,14 +362,30 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
   (the default) forks a process per composable: 144 processes vs 60 under
   `observable`, **10.2 of 12 cores vs 3.9** during startup, peak load1 190 vs
   **45**, 3.5 GiB vs **1.4**, and `observable` finishes *faster* (8.4 s vs
-  10.7 s) with the same 84/84 loaded. So: both throughput gates ship **off**
+  10.7 s) with the same 84/84 loaded. **That is not a recommendation**: the cost
+  is the documented price of fault isolation
+  (`docs/design/container-isolation.md`). A SIGSEGV cannot be contained inside a
+  process — one segfaulting composable takes down every node sharing its
+  container, 3–10 in Autoware — and `oom_score_adj`, `memory` cgroups,
+  `kill(pid)` and per-node restart are all process-granular, so the cheaper mode
+  is the one that makes this phase's own OOM bias per-*container* instead of
+  per-*node*; `observable` also gives up zero-copy IPC (~1–5 ms per pipeline
+  stage). Container mode is a **safety decision, not a performance one**:
+  `observable` on a bench, `isolated` on a vehicle. The real lever for a vehicle
+  is per-node isolation granularity, which play_launch does not have (W3).
+  So: both throughput gates ship **off**
   (with the tables recorded at the fields they govern, so the defaults aren't
   re-derived); the `MemAvailable` floor ships **on** because it never blocks
   until memory is actually short; children get `oom_score_adj +300`
   (`PLAY_LAUNCH_OOM_SCORE_ADJ` to override) so the kernel picks a node over the
   desktop — play_launch can only volunteer its own children, since *lowering*
-  another process's score needs privilege it lacks; and `isolated` warns when it
-  would fork more than `4 * ncpu` processes. Two defects found on the way:
+  another process's score needs privilege it lacks; and `isolated` reports its
+  cost when it would fork more than `4 * ncpu` processes. The memory floor is
+  **absolute (1 GiB, capped at RAM/4)**, not a share of RAM: what it guards
+  against is one more process allocating before the next sample, and the largest
+  launch-owned process measured 274 MiB regardless of machine size — an earlier
+  10%-of-RAM version gave a 64 GiB box 4 GiB it did not need and a 4 GiB board
+  512 MiB, less than two of the processes it was protecting against. Two defects found on the way:
   `max_concurrent_load_node_spawn` was **dead config** (`dispatch_pending_loads`
   drained its queue ungated, so all 84 composables hit LoadNode at once) — now
   real, with `delay_load_node_millis` removed rather than resurrected; and
@@ -383,6 +399,19 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
   regression against the 0.5.1 they run. Guide:
   `docs/guide/edge-machines.md`. Roadmap:
   `docs/roadmap/phase-61-edge-startup-storm.md`.
+  **W2 — staged startup** (`execution/startup_order.rs`): `startup.order` glob
+  groups (and `defer_sources` from the topic graph) hold sensor drivers until
+  their consumers are up, so nothing publishes into subscribers that do not
+  exist yet. A stage waits for members to appear in the **ROS graph**, not for
+  `spawn()` — which returns long before subscriptions exist. Correction to W1's
+  note: the SystemModel does NOT carry the chain data to derive this for a plain
+  launch (`structure.topics` comes from manifests; the golf cart resolves to 0
+  topics), so explicit config is the working path. Surfaced a naming gap: **19
+  of 144 model FQNs never appear in the ROS graph** — a node the launch did not
+  name is keyed by its EXECUTABLE while it registers its compiled-in name
+  (`…/autoware_ekf_localizer_node` vs `…/ekf_localizer`), because play_launch
+  emits `__ns` but no `__node` remap. `node_name.is_none()` discriminates it
+  exactly; the gate falls back to process-running for those. Off by default.
 - **2026-08-13**: Phase 58 W2 — **cost is measured, not asked for.** New verb
   `play_launch measure <run-dir> --model <m.yaml>` turns a recorded run into a
   platform-file `overrides:` fragment on stdout (never written back). The
