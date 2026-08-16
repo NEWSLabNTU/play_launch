@@ -809,11 +809,29 @@ pub(crate) async fn play(
     // actor. Built here rather than per-actor because the quantity it bounds —
     // how much of this machine is busy starting things — is global.
     let startup_governor = {
-        let limits = runtime_config.startup.resolve(
-            runtime_config
-                .composable_node_loading
-                .max_concurrent_load_node_spawn,
-        );
+        // The load cap exists to protect a container that handles LoadNode ON
+        // ITS EXECUTOR, where the requests serialise and flooding one is the
+        // documented failure (`tests/fixtures/sequential_loading`: "Container
+        // serializes all LoadNode requests"). That is `stock` and
+        // `observable`.
+        //
+        // `isolated` is a different machine entirely: it answers immediately
+        // with a pre-assigned id ("Respond immediately — node is not yet
+        // spawned") and does the work on its own spawn-worker pool, so a
+        // global cap on IN-FLIGHT CALLS bounds nothing that costs anything —
+        // the calls all return in milliseconds — while still being able to
+        // hold back a container that had capacity. The real limit there is the
+        // container's own spawn admission, which is governed by resources
+        // rather than by a count.
+        let cap = match common.containers.container_mode {
+            crate::cli::options::ContainerMode::Isolated => 0, // 0 = unlimited
+            _ => {
+                runtime_config
+                    .composable_node_loading
+                    .max_concurrent_load_node_spawn
+            }
+        };
+        let limits = runtime_config.startup.resolve(cap);
         if limits.is_enabled() {
             info!(
                 "Startup pacing: {} process(es) at a time, {} concurrent composable load(s), \
@@ -824,7 +842,14 @@ pub(crate) async fn play(
                     limits.max_concurrent.to_string()
                 },
                 if limits.max_concurrent_loads == usize::MAX {
-                    "unlimited".to_string()
+                    // Says WHY, because "unlimited" on a knob the config sets
+                    // to 10 otherwise reads as the setting being ignored.
+                    match common.containers.container_mode {
+                        crate::cli::options::ContainerMode::Isolated => {
+                            "unlimited (isolated: the container paces its own spawns)".to_string()
+                        }
+                        _ => "unlimited".to_string(),
+                    }
                 } else {
                     limits.max_concurrent_loads.to_string()
                 },

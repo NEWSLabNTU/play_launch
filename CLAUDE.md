@@ -189,6 +189,25 @@ rclcpp_components::ComponentManager           (upstream)
     **the default is still 30 s**, so a stack with slow-constructing components
     must set it. Issue #0019 — and the explanation for `motion_velocity_planner`
     in #0017.
+- **Spawn admission is governed by MEMORY, not by a worker count.** The pool
+  (`PLAY_LAUNCH_SPAWN_WORKERS`, default `clamp(nproc, 4, 32)`) is sized not to
+  be the limit; `await_spawn_capacity()` holds a fork while `MemAvailable` is
+  under a floor (1 GiB, capped at RAM/4, `PLAY_LAUNCH_SPAWN_MIN_AVAIL_MB`).
+  A fixed count cannot tell a component that is slow because it is COMPUTING
+  (a TensorRT build — worth throttling) from one slow because it is WAITING
+  (costs nothing, yet held a slot). Measured: the old `kWorkerThreadCount = 4`
+  turned six 20 s constructors into two waves (t+20s x4, t+40s x2); now they
+  are one. Matters because `perception_preset:=camera_lidar_fusion` puts SIX
+  TensorRT components in one container. Admission is mutex-serialised (else
+  every worker reads the same `MemAvailable` and all fork at once) and bypasses
+  after 120 s with a warning. Design: `docs/design/composable-load-admission.md`.
+- **The global load cap is mode-aware.**
+  `composable_node_loading.max_concurrent_load_node_spawn` protects containers
+  that handle LoadNode ON THEIR EXECUTOR (`stock`, `observable` — see
+  `tests/fixtures/sequential_loading`: "Container serializes all LoadNode
+  requests"). It is DISABLED for `isolated`, which answers immediately with a
+  pre-assigned id and paces its own spawns — there a cap on in-flight calls
+  bounds nothing that costs anything.
 - **A composable is `Loaded` only when ListNodes confirms it.** The LoadNode
   response means "spawn requested" — the container pre-assigns a unique_id and
   returns before the child is ready — so a missing `ComponentEvent` is NOT
@@ -690,6 +709,9 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
     from declared hazards instead of a `high|medium|low` label
   - `unified-system-model.md` — Phase 46: the SystemModel as the ONE complete artifact (`record.json` retired to deprecated compat)
   - Manifest design docs live in the `ros-launch-manifest` repo's `docs/` (Phase 31; that repo is a git dependency, so read them at the pinned tag or in `~/.cargo/git/checkouts/`)
+  - `composable-load-admission.md` — how many composables may come up at once:
+    why the governor is memory rather than a count, and why the answer differs
+    per container mode
   - `rcl-interception.md` — RCL interception architecture + graph discovery evolution
   - `record-format.md` — record.json format: current fields + Phase 30 extensions (scopes)
   - `parser-context.md` — parser LaunchContext: scope chain, namespacing, captures
