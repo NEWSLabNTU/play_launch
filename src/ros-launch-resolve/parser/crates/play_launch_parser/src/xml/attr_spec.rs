@@ -198,6 +198,23 @@ static SPECS: &[AttrSpec] = &[
         // here, which real ROS 2 rejects (differential test finding).
         supported: &["if", "unless", "name", "default", "description"],
         known_unsupported: &[],
+        // `<choice value="…"/>` — a CHILD entity, not an attribute.
+        // `DeclareLaunchArgument.parse` reads it as
+        // `entity.get_attr('choice', data_type=List[Entity], optional=True)`
+        // (`launch/actions/declare_launch_argument.py:176`), so real ROS 2
+        // accepts it on both frontends. The YAML frontend spells a child as a
+        // key of the same mapping, which is why an empty `children` here made
+        // `choice:` look like an unknown attribute and rejected every launch
+        // file that constrains an argument — golfcart.launch.yaml among them.
+        children: &["choice"],
+    },
+    AttrSpec {
+        element: "choice",
+        // The value list itself is not enforced yet: this parser accepts a
+        // value outside the declared set where ROS 2 would reject it. That is
+        // laxness, not divergence in what parses — see docs/issues.
+        supported: &["value"],
+        known_unsupported: &[],
         children: &[],
     },
     AttrSpec {
