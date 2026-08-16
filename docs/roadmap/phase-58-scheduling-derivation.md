@@ -225,6 +225,79 @@ with `--explain` provenance; `rt_av_demo` runs A/B against `chain_aware` on the
 Phase 57 harness; the comparison reports both latency and the best-effort
 throughput cost.
 
+### Design checkpoint — 2026-08-16 (paused, nothing implemented)
+
+A design pass ran and was **stopped at the authoring vocabulary**: expressing a
+fork-join as nested `parallel:` blocks of segment lists makes the contract file
+noisy, and the verbosity is not obviously worth what it buys. Nothing was
+written; the decisions below are recorded so the next pass starts from the
+findings rather than re-deriving them.
+
+**Decisions taken (subject to revisiting along with the syntax):**
+
+1. **Branch-carrying variant, not series-only.** Fork-join becomes expressible
+   in a chain rather than restricting W3 to what a sequence can say.
+2. **Build a workload that exercises it.** A branch feature whose only inputs
+   are its own unit tests repeats finding 3 below. Plan was to extend
+   `rt_av_demo` with a radar arm joining a fusion node — unequal arms (lidar
+   2 + 8 ms vs radar 1.5 ms) so `max` and `sum` give visibly different verdicts.
+3. **One mapper, automatic policy, provenance in `--explain`:**
+   proportional-to-cost where every hop declares a cost, fair laxity otherwise,
+   with the rule that produced each deadline named in the explain output.
+4. **`max_transport_ms` moves to the platform file now**, as the roadmap says —
+   it is deployment-dependent (`--container-mode isolated` alone changes it) and
+   W3 is its first consumer.
+
+**Open question that stopped the pass.** The `parallel:` form nests segment
+lists inside a segment list:
+
+```yaml
+segments:
+  - parallel:
+      - [ { scope: /, path: lidar_sample }, { via: /safety/scan }, { scope: /, path: detect }, { via: /safety/obstacles } ]
+      - [ { scope: /, path: radar_sample }, { via: /safety/radar } ]
+  - { scope: /, path: fuse }
+```
+
+It parses, it validates, and every existing chain is unaffected — but a real
+system's chains would carry a lot of it. Worth exploring before committing:
+whether the graph can be *inferred* from what is already declared (the join's
+`trigger: { input: [...] }` names its arms' topics, so the arms may be
+derivable from the sink alone), or whether chains should name only source and
+sink and let the resolver walk the DAG between them.
+
+**Findings from the exploration, all verified against the tree at `7b9f204`:**
+
+- **A diamond is not authorable today.** `ChainDecl.segments` is a
+  `Vec<ChainSegment>`, so the "linearise a diamond and sum it" error the
+  roadmap warns about cannot currently be committed by an author.
+- **Fork-join is already in the graph, just not in chains.** `PathDecl` carries
+  `trigger: { input: [a, b] }` and `sync: { policy: exact | approximate |
+  timeout_any }`. This is why inferring the branch may be possible.
+- **Two series chains sharing a sink already give the correct feasibility
+  math** for `reaction`: each branch must fit the budget, which *is*
+  `max`-over-branches. What they cannot express is one budget spanning both
+  arms, and `age` at a junction — where staleness depends on the slower arm
+  plus the sync window (`max_interval_ms` / `timeout_ms`, 0 for `exact`). That
+  skew term is the honest argument for a branch variant, and it uses facts the
+  vocabulary already has.
+- **Nothing in the repo declares a fan-in.** No `sync:`, no multi-input
+  `trigger:`, in any fixture, example or Autoware contract. This is finding 3
+  repeating itself, and it is why decision 2 exists.
+- **`MapperPath.exec_ms` is never populated** (`sched_derive.rs::extract_paths`
+  hard-codes `None` with a comment that predates W1). `budget_us` reaches only
+  `ChainElement::Boundary::exec_ms`, so segment nodes carry no cost at all —
+  proportional decomposition needs this wired first. The slot already exists;
+  no schema change needed for it.
+- **`max_transport_ms` appears in exactly one file**, a test fixture
+  (`tests/fixtures/contract_merge/launch/perception.contract.yaml`), and in no
+  real contract.
+- **Any of this is a cross-repo change.** The mapper, the resolved chain shape
+  and the platform `transport:` key all live in `ros-launch-manifest` → new
+  tag → bump **three** manifests (`src/play_launch/Cargo.toml`,
+  `src/ros-launch-resolve/Cargo.toml`, `tests/Cargo.toml`) and commit the
+  lockfiles.
+
 ---
 
 ## W4 — Option C: reservations (`SCHED_DEADLINE`)
