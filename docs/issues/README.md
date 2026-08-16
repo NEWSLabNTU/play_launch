@@ -17,6 +17,16 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0017** — the model's node FQN is not the node's ROS name. For a `<node>` with
+no `name=`, `structure.nodes` keys by the EXECUTABLE while the node registers
+its compiled-in name (`…/autoware_ekf_localizer_node` vs `…/ekf_localizer`);
+19 of 144 FQNs on the golf cart stack never appear in `ros2 node list`.
+play_launch matches stock `launch_ros` here — it emits `__node` only when a name
+was declared, and forcing it was bug `af7c524` — so the fix is not to rename the
+nodes but to stop presenting a synthetic key as a ROS name. Full mapping,
+options and the one node that is genuinely missing for other reasons in
+`0017-*`.
+
 **#0015** — a file capability lives on the inode, so `just build` replaces
 `play_launch_rt_helper` and drops the `cap_sys_nice` that `just setcap`
 granted; the failure surfaces on the next RT run. The guide documents this,
@@ -26,6 +36,16 @@ and `rt_av_demo`'s `ab` recipe refuses rather than reporting a vacuous
 comparison. See `0015-*`.
 
 ## Resolved
+
+**#0018** — the two parsers gave un-named nodes different model keys, and the
+reference one was the unstable one: Python keys them by `launch`'s global
+console process label (`talker-1`), so inserting any node earlier renumbers
+every un-named node after it (measured: 2 of 5 identities survived), while
+Rust's per-collision ordinal survived 5 of 5. Python keeps its scheme — it is
+ported from ROS launch and reflects the original behaviour — and Rust keeps its
+stable numbering but switches `#N` to `-N` so the two share a surface form.
+`-` is as collision-proof as `#` was, since `validate_node_name` rejects both.
+See `0018-*`.
 
 **#0016** — `Startup complete: all nodes ready (nodes 12/44, containers 0/16,
 composable 0/84)` two tenths of a second into a three-minute startup, followed

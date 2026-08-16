@@ -456,18 +456,32 @@ pub fn build_system_model(
     let mut insert_node =
         |structure: &mut model::Structure, node_fqn: String, inst: model::NodeInstance| {
             // Phase-50 (issue 0001): TRUE duplicates keep BOTH instances —
-            // the later one gets an ordinal `#N` key instead of silently
+            // the later one gets an ordinal `-N` key instead of silently
             // overwriting the earlier. `structure.nodes` is the sole spawn
             // source (47.B3), so an overwrite here means a node is never
             // spawned at all. `node_record_from_instance` derives the ROS
             // name from `inst.node_name`, so the suffix never reaches the
             // actual `__node` remap — it only disambiguates the model key,
             // the log dir, and the member id.
+            //
+            // The ordinal counts collisions of THIS key, not position in the
+            // launch tree, and that is the point (issue 0018). The Python
+            // parser keys these nodes by `launch`'s console process label
+            // (`<exec>-<global process index>`), which renumbers every
+            // un-named node downstream of any insertion — measured, 2 of 5
+            // identities survived adding one unrelated node at the top of a
+            // group, against 5 of 5 here. Python keeps its scheme because it
+            // is ported from ROS launch and reflects the original behaviour;
+            // the separator matches it so the two at least look alike.
+            //
+            // `-` is safe as a discriminator for the same reason `#` was:
+            // `rclpy.validate_node_name` rejects both, so a synthetic
+            // `talker-2` can never collide with a real node named `talker-2`.
             let mut key = node_fqn.clone();
             let mut n = 1usize;
             while structure.nodes.contains_key(&key) {
                 n += 1;
-                key = format!("{node_fqn}#{n}");
+                key = format!("{node_fqn}-{n}");
             }
             if n > 1 {
                 diagnostics.push(format!(
@@ -887,6 +901,150 @@ pub fn build_system_model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue 0018 — un-named duplicates get `-N`, and the ordinal counts
+    /// collisions of the key rather than position in the launch tree.
+    ///
+    /// Three `talker`s and two `listener`s in one namespace, with a named node
+    /// interleaved so the interleaving cannot be what drives the numbering.
+    fn dump_with_unnamed_duplicates(lead: bool) -> LaunchDump {
+        let mut nodes = Vec::new();
+        if lead {
+            // An unrelated node inserted BEFORE the duplicates. Under a
+            // global positional index this shifts everything after it.
+            nodes.push(serde_json::json!({
+                "executable": "add_two_ints_server", "package": "demo_nodes_cpp",
+                "namespace": "/probe", "params_files": [], "cmd": [],
+                "exec_name": "add_two_ints_server"
+            }));
+        }
+        for (exec, name) in [
+            ("talker", None),
+            ("talker", None),
+            ("listener", Some("explicitly_named")),
+            ("talker", None),
+            ("listener", None),
+        ] {
+            let mut n = serde_json::json!({
+                "executable": exec, "package": "demo_nodes_cpp",
+                "namespace": "/probe", "params_files": [], "cmd": [],
+                "exec_name": exec
+            });
+            if let Some(nm) = name {
+                n["name"] = serde_json::json!(nm);
+            }
+            nodes.push(n);
+        }
+        serde_json::from_value(serde_json::json!({
+            "node": nodes, "container": [], "load_node": [], "lifecycle_node": [],
+            "file_data": {}, "variables": {}, "scopes": []
+        }))
+        .expect("hand-built dump")
+    }
+
+    #[test]
+    fn unnamed_duplicates_get_hyphen_ordinals() {
+        let model = build_system_model(
+            &dump_with_unnamed_duplicates(false),
+            &ManifestIndex::default(),
+            None,
+            BTreeMap::new(),
+            &BTreeSet::new(),
+            None,
+        );
+        let keys: Vec<&str> = model.structure.nodes.keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "/probe/talker",
+                "/probe/talker-2",
+                "/probe/explicitly_named",
+                "/probe/talker-3",
+                "/probe/listener",
+            ],
+            // Key ORDER is launch-traversal order (`structure.nodes` is an
+            // IndexMap for exactly this), so the named node sits where the
+            // file puts it — third — between `talker-2` and `talker-3`. The
+            // ordinal counts collisions, not position, which is why the
+            // interleaved named node does not consume a number.
+            "duplicates disambiguate with `-N`; a named node is untouched"
+        );
+    }
+
+    #[test]
+    fn an_earlier_insertion_does_not_renumber_later_nodes() {
+        // The property that decided the scheme (issue 0018). The Python parser
+        // keys these by `launch`'s global process label, so the same edit
+        // renumbers every un-named node downstream; here only the new node
+        // appears and every prior identity survives.
+        let before = build_system_model(
+            &dump_with_unnamed_duplicates(false),
+            &ManifestIndex::default(),
+            None,
+            BTreeMap::new(),
+            &BTreeSet::new(),
+            None,
+        );
+        let after = build_system_model(
+            &dump_with_unnamed_duplicates(true),
+            &ManifestIndex::default(),
+            None,
+            BTreeMap::new(),
+            &BTreeSet::new(),
+            None,
+        );
+
+        let before_keys: Vec<String> = before.structure.nodes.keys().cloned().collect();
+        let kept = before_keys
+            .iter()
+            .filter(|k| after.structure.nodes.contains_key(*k))
+            .count();
+        assert_eq!(
+            kept,
+            before_keys.len(),
+            "every identity must survive an unrelated insertion; kept {kept}/{} \nbefore: {before_keys:?}\nafter:  {:?}",
+            before_keys.len(),
+            after.structure.nodes.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            after
+                .structure
+                .nodes
+                .contains_key("/probe/add_two_ints_server")
+        );
+    }
+
+    /// `-` discriminates safely for the same reason `#` did: neither is a legal
+    /// ROS node name character, so a synthetic `talker-2` cannot be confused
+    /// with a node the launch file explicitly named `talker-2`.
+    #[test]
+    fn an_explicit_name_cannot_collide_with_a_synthetic_ordinal() {
+        // Not expressible as a real launch file — `rclpy.validate_node_name`
+        // rejects `talker-2` — but a hand-built dump can still assert that the
+        // builder keeps both rather than overwriting either.
+        let dump: LaunchDump = serde_json::from_value(serde_json::json!({
+            "node": [
+                {"executable": "talker", "package": "demo_nodes_cpp", "namespace": "/probe",
+                 "params_files": [], "cmd": [], "exec_name": "talker"},
+                {"executable": "talker", "package": "demo_nodes_cpp", "namespace": "/probe",
+                 "params_files": [], "cmd": [], "exec_name": "talker"},
+                {"executable": "other", "package": "demo_nodes_cpp", "name": "talker-2",
+                 "namespace": "/probe", "params_files": [], "cmd": [], "exec_name": "other"}
+            ],
+            "container": [], "load_node": [], "lifecycle_node": [],
+            "file_data": {}, "variables": {}, "scopes": []
+        }))
+        .expect("hand-built dump");
+        let model = build_system_model(
+            &dump,
+            &ManifestIndex::default(),
+            None,
+            BTreeMap::new(),
+            &BTreeSet::new(),
+            None,
+        );
+        assert_eq!(model.structure.nodes.len(), 3, "no instance may be dropped");
+    }
 
     /// Phase 46.2 — a node, a container, and a composable node each carrying
     /// remaps/env, plus respawn/ros_args on the process-having records
