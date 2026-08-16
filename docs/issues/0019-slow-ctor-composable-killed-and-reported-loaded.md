@@ -138,11 +138,13 @@ the measurement this issue lacked: Autoware's traffic light classifier takes
 **~33 s to build its TensorRT engine from ONNX cold, and ~45 s of construction
 even with the engine cached**.
 
-**The default deliberately stays 30 s** — "so nothing changes for anyone not
-asking for it". Note the consequence, since it follows from that same
-measurement: a stack with the traffic light classifier still loses that node on
-every launch unless the variable is set. The parent repo's submodule pointer is
-bumped to `480f5fc` here, which is what makes the knob exist at all.
+That default was 30 s at first, on the reasoning that nothing should change
+for anyone not asking. Its own measurement then argued against it: at ~45 s
+cached, any stack with that classifier still loses the node on every launch.
+**The deadline was subsequently removed** — the wait is bounded by liveness
+instead, and the variable now only bounds a node that wedges. See
+`docs/design/composable-load-admission.md`; there is no fixed number that is
+right on every platform, which is the whole point.
 
 **B — a composable is `Loaded` only when ListNodes confirms it.**
 `check_loading_timeouts` promoted on the LoadNode response alone once

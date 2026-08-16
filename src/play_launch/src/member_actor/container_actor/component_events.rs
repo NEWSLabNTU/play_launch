@@ -10,7 +10,8 @@ use crate::member_actor::{
     events::{StateEvent, emit},
     model::{ActorConfig, BlockReason, ComposableState},
 };
-use tracing::{debug, error, warn};
+use std::time::Instant;
+use tracing::{debug, error, info, warn};
 
 /// Verify that `event.pid` still refers to the process that was actually
 /// spawned, guarding against PID-reuse TOCTOU between the LOADED publish and
@@ -450,6 +451,64 @@ impl ComposableSupervisor {
     /// container's executor too busy to answer — is the normal state while a
     /// composable is being constructed, and is exactly the case that must NOT
     /// be read as loaded.
+    /// Say what a still-loading composable is doing, so a long constructor is
+    /// legible instead of indistinguishable from a hang.
+    ///
+    /// This is the whole reason a fixed ready timeout looked defensible: with
+    /// nothing reporting, "1 pending" reads the same at 5 seconds and at 5
+    /// minutes, so a deadline felt like the only way to find out. The container
+    /// waits while the child is ALIVE and fails the moment it dies, which means
+    /// "still Loading" already carries the liveness claim — the elapsed time is
+    /// the only part missing, and this supervisor has it.
+    ///
+    /// Rate-limited per container rather than per composable: a launch with 84
+    /// of them would otherwise print a wall of near-identical lines.
+    pub(super) fn report_construction_progress(&mut self) {
+        const REPORT_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+        let now = Instant::now();
+        if let Some(last) = self.last_progress_report
+            && now.duration_since(last) < REPORT_EVERY
+        {
+            return;
+        }
+
+        let mut longest: Option<(&str, std::time::Duration)> = None;
+        let mut pending = 0usize;
+        for (name, entry) in &self.composable_nodes {
+            if let ComposableState::Loading { started_at } = &entry.state {
+                pending += 1;
+                let elapsed = started_at.elapsed();
+                if longest.is_none_or(|(_, d)| elapsed > d) {
+                    longest = Some((name.as_str(), elapsed));
+                }
+            }
+        }
+
+        // Nothing pending: reset so the next slow load reports immediately
+        // rather than waiting out a stale interval.
+        let Some((name, elapsed)) = longest else {
+            self.last_progress_report = None;
+            return;
+        };
+
+        // Only worth saying once it has been a while — below that the load is
+        // simply in flight and the startup line already covers it.
+        if elapsed < REPORT_EVERY {
+            return;
+        }
+
+        self.last_progress_report = Some(now);
+        info!(
+            "{}: {} composable(s) still constructing; longest '{}' at {}s \
+             (the container waits while the child is alive)",
+            self.name(),
+            pending,
+            name,
+            elapsed.as_secs()
+        );
+    }
+
     pub(super) async fn check_loading_timeouts(&mut self, clients: &ContainerClients) {
         use super::ros_client::VerifyOutcome;
 

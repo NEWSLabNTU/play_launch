@@ -179,16 +179,20 @@ rclcpp_components::ComponentManager           (upstream)
   - Parameters: `request->parameters` serialized to temp YAML (`/**:` wildcard namespace), passed via `--params-file`
   - `extra_arguments`: only `use_intra_process_comms` is extracted and forwarded as `--use-intra-process-comms`
   - Ready pipe protocol: child writes `"OK name\n"` or `"ERR msg\n"`. The wait
-    covers the node's CONSTRUCTOR — the child reports only after
-    `create_node_instance()` returns — and a first-run TensorRT engine build
-    runs for tens of seconds to minutes inside it. Measured: Autoware's traffic
-    light classifier is ~33 s cold, ~45 s even with the engine cached. The
-    former hardcoded 30 s SIGKILLed such children partway, discarded the build
-    (the `.engine` is written last) and recurred every launch. Now
-    `PLAY_LAUNCH_COMPONENT_READY_TIMEOUT_MS` (1..3600000 ms) raises it;
-    **the default is still 30 s**, so a stack with slow-constructing components
-    must set it. Issue #0019 — and the explanation for `motion_velocity_planner`
-    in #0017.
+    covers the node's CONSTRUCTOR, so it is bounded by **LIVENESS, not time**:
+    poll in 1 s slices, `waitpid(WNOHANG)` each slice, give up the moment the
+    child dies. There is no right fixed number — a first-run TensorRT engine
+    build takes however long that board's GPU takes (~33 s cold, ~45 s even
+    cached, measured on one Orin) — and a wrong one SIGKILLs a node partway
+    through normal work, discards it (the `.engine` is written last) and repeats
+    every launch. `PLAY_LAUNCH_COMPONENT_READY_TIMEOUT_MS` (0 = default = no
+    deadline) exists only to bound a node that WEDGES rather than works.
+    Safe only because the wait now REPORTS: the container logs
+    `constructing for Ns (pid N, alive)` every 15 s, and play_launch logs
+    `N composable(s) still constructing; longest '…' at Ns` per container every
+    30 s. No new message type was needed — the container waits *while alive*, so
+    "still Loading" already carries the liveness claim. Issue #0019, and the
+    explanation for `motion_velocity_planner` in #0017.
 - **Spawn admission is governed by MEMORY, not by a worker count.** The pool
   (`PLAY_LAUNCH_SPAWN_WORKERS`, default `clamp(nproc, 4, 32)`) is sized not to
   be the limit; `await_spawn_capacity()` holds a fork while `MemAvailable` is

@@ -79,6 +79,9 @@ pub(super) struct ComposableSupervisor {
     /// Phase 61: shared startup admission control, consulted before each
     /// LoadNode call so composable loading is bounded across all containers.
     startup: std::sync::Arc<crate::execution::startup_governor::StartupGovernor>,
+    /// When construction progress was last reported for this container, so a
+    /// launch with dozens of composables does not print a wall of them.
+    pub(super) last_progress_report: Option<Instant>,
 }
 
 impl ComposableSupervisor {
@@ -99,6 +102,7 @@ impl ComposableSupervisor {
             current_unload: None,
             timings,
             startup,
+            last_progress_report: None,
         }
     }
 

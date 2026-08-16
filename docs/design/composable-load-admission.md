@@ -124,41 +124,67 @@ for the same RAM the memory gate is watching. Expect the gate to engage on a
 real perception bring-up — that is it working, not failing. The change removes
 an arbitrary limit; it does not manufacture hardware.
 
-**The 30 s ready timeout still applies** (`PLAY_LAUNCH_COMPONENT_READY_TIMEOUT_MS`,
-default 30 s by deliberate choice — issue #0019). Loading six components
-concurrently does not help if each is killed at 30 s; the measured ~45 s of
-cached construction is already past it. Anyone enabling perception must raise
-it.
+## The ready wait: liveness, not time
 
-**Nothing distinguishes "constructing" from "wedged" to an observer.** A
-composable mid-build sits in `Loading` and surfaces as `N pending`, which looks
-identical at 5 s and at 5 minutes. The container knows better — it holds a
-`pidfd` and can see the child is alive — but does not report it.
+There is no number that is right on every platform. The wait covers the node's
+CONSTRUCTOR, and a first-run TensorRT engine build takes however long that
+board's GPU takes — ~33 s cold and ~45 s even cached, on one machine. A fixed
+default is a guess about hardware we do not have, and when it is wrong it does
+not degrade gracefully: it SIGKILLs a node partway through work that is
+proceeding normally, discards it (the `.engine` is written last), and does the
+same on every relaunch.
+
+So the deadline is gone. The wait is bounded by **liveness** — poll in 1 s
+slices, `waitpid(WNOHANG)` each slice, give up the moment the child dies —
+and `PLAY_LAUNCH_COMPONENT_READY_TIMEOUT_MS` remains only to bound a node that
+wedges rather than works (`0`, the default, means no deadline).
+
+That is only safe because the wait now *reports*, which is what made a fixed
+timeout look defensible in the first place: with nothing saying anything, a
+five-minute constructor and a hang are the same observation.
+
+    container:   Component '…' constructing for 15s (pid 3876405, alive)
+                 Component '…' constructing for 30s (pid 3876405, alive)
+                 Component '…' finished constructing after 45s
+    play_launch: 1 composable(s) still constructing; longest '…/slow_one' at 30s
+
+The two layers report different things on purpose. The container knows the
+child is alive (it holds the pid); play_launch knows how long the load has been
+outstanding and how many are in that state. Neither needed a new message type:
+since the container waits *while alive* and fails the moment the child dies,
+"still Loading" already carries the liveness claim, and the supervisor already
+had `started_at`. Per-container rate limiting keeps a launch with 84
+composables from printing a wall of near-identical lines.
+
+Failure messages now name which of the two happened —
+`component_node exited during construction` versus still constructing when an
+operator-set deadline expired — because merging them as "timeout or crash" is
+what sent the first investigation of #0019 down the wrong path.
 
 ## Open questions
 
-1. **Report construction progress.** The information exists (child alive,
-   elapsed); there is no channel for it. A `ComponentEvent` variant, or a field
-   the existing ListNodes verify could read, would make a 10-minute engine build
-   legible instead of indistinguishable from a hang. This is the most valuable
-   remaining piece, and it pairs with the 30 s default: an operator who sees
-   "constructing 28 s" knows to raise the timeout.
-2. **Should the ready timeout default change?** It stays 30 s so nothing
-   changes for anyone not asking, but the same commit's measurement (~45 s
-   cached) means any perception stack fails on it. A liveness-based wait — keep
-   waiting while the child is alive, fail the moment it dies — was implemented
-   and discarded in favour of the explicit default; worth revisiting now that
-   the failure is at least reported honestly.
-3. **Is memory the only scarce resource worth gating on?** CPU was measured
+1. **Is memory the only scarce resource worth gating on?** CPU was measured
    *not* to pay as a startup gate (phase 61: a runnable-task ceiling made things
    worse, because it cannot tell "busy starting" from "busy running"). GPU /
    unified memory on Tegra is not measured at all, and is plausibly the binding
    constraint for concurrent TensorRT builds.
-4. **Two independent memory gates now watch the same number** — play_launch's
+2. **Two independent memory gates now watch the same number** — play_launch's
    process floor and the container's spawn floor. Both are "wait while short"
    so they compose safely, but neither knows about the other, and on a tight
    machine they can each be waiting for headroom the other is about to consume.
-5. **`observable` still serialises on its executor**, so a slow constructor
+3. **`observable` still serialises on its executor**, so a slow constructor
    there blocks every other load in that container. Nothing here changes that;
    it is inherent to loading into a running executor, and it is one more reason
    `isolated` is the default.
+4. **Progress is logged, not modelled.** The web UI and `HealthSummary` still
+   see a bare `MemberState::Loading` with no elapsed time, because carrying it
+   there means changing a ts-rs-exported type and the frontend that reads it.
+   An operator watching the console is served; one watching the web UI is not.
+5. **Nothing bounds a genuinely wedged constructor by default.** That is the
+   deliberate trade for removing the deadline — a node deadlocked in its
+   constructor now waits forever unless someone sets
+   `PLAY_LAUNCH_COMPONENT_READY_TIMEOUT_MS`. It is at least visible now
+   ("constructing for 900s, alive"), where before it was
+   indistinguishable from a slow one. Whether "visible forever" is the right
+   default, or whether play_launch's own `load_total_budget_secs` should
+   eventually unload it, is unsettled.
