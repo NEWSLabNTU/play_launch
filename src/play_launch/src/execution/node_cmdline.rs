@@ -816,10 +816,21 @@ impl NodeCommandLine {
 
             // Set parent death signal to prevent orphan processes
             // When play_launch dies (even with SIGKILL), kernel sends SIGKILL to all children
+            //
+            // Phase 61 adds a second thing to the same hook: raise the child's
+            // OOM badness so that if the machine does run out of memory, the
+            // kernel kills a node rather than whatever else the operator was
+            // running. The report that prompted this had the OOM killer take
+            // the user's GNOME session while a launch was starting — the
+            // desktop was simply the largest thing on the box, and nothing
+            // told the kernel that the 144 processes which had just appeared
+            // were the ones that could be sacrificed.
             unsafe {
                 command.pre_exec(|| {
                     nix::sys::prctl::set_pdeathsig(nix::sys::signal::Signal::SIGKILL)
-                        .map_err(std::io::Error::other)
+                        .map_err(std::io::Error::other)?;
+                    bias_oom_score();
+                    Ok(())
                 });
             }
         }
@@ -839,6 +850,92 @@ impl NodeCommandLine {
         .collect()
     }
 }
+
+/// Default OOM badness bias applied to every spawned node.
+///
+/// `oom_score_adj` runs from -1000 (never kill) to +1000 (kill first) and is
+/// ADDED to the kernel's memory-proportional score, which is itself on a 0-1000
+/// scale. +300 is therefore a strong preference without being an execution
+/// order: a node still has to be using real memory to be chosen, but between a
+/// node and a same-sized desktop process the node loses. Kept below +1000 so
+/// that a genuinely runaway process elsewhere on the machine is still the
+/// kernel's first choice.
+///
+/// Raising `oom_score_adj` needs no privilege; only lowering it does. That
+/// asymmetry is why this is safe to do unconditionally and why the reverse —
+/// protecting the desktop by lowering ITS score — is not something play_launch
+/// could do even if it wanted to.
+const DEFAULT_OOM_SCORE_ADJ: i32 = 300;
+
+/// Environment variable overriding [`DEFAULT_OOM_SCORE_ADJ`]. Set it to `0` to
+/// restore the pre-Phase-61 behaviour of leaving children at the kernel default.
+const OOM_SCORE_ADJ_ENV: &str = "PLAY_LAUNCH_OOM_SCORE_ADJ";
+
+/// Make this process a preferred OOM victim. Called from `pre_exec`, i.e.
+/// between fork and exec in the CHILD.
+///
+/// Everything here is async-signal-safe by construction: one `open`, one
+/// `write`, one `close`, no allocation. A failure is swallowed rather than
+/// propagated — refusing to start a node because a hint could not be written
+/// would trade a real capability for a preference.
+#[cfg(unix)]
+fn bias_oom_score() {
+    // `std::env::var` allocates, which is not something to do between fork and
+    // exec. Read it once in the parent instead; `OnceLock` is initialised on
+    // the first `to_command` call, long before any fork.
+    static ADJ: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    let adj = *ADJ.get_or_init(|| {
+        std::env::var(OOM_SCORE_ADJ_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<i32>().ok())
+            .map(|v| v.clamp(-1000, 1000))
+            .unwrap_or(DEFAULT_OOM_SCORE_ADJ)
+    });
+
+    if adj == 0 {
+        return;
+    }
+
+    // Format into a fixed stack buffer — no allocator between fork and exec.
+    let mut buf = [0u8; 8];
+    let mut len = 0;
+    let negative = adj < 0;
+    let mut n = adj.unsigned_abs();
+    let mut digits = [0u8; 4];
+    let mut ndigits = 0;
+    loop {
+        digits[ndigits] = b'0' + (n % 10) as u8;
+        ndigits += 1;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    if negative {
+        buf[len] = b'-';
+        len += 1;
+    }
+    while ndigits > 0 {
+        ndigits -= 1;
+        buf[len] = digits[ndigits];
+        len += 1;
+    }
+
+    unsafe {
+        let fd = libc::open(
+            c"/proc/self/oom_score_adj".as_ptr(),
+            libc::O_WRONLY | libc::O_CLOEXEC,
+        );
+        if fd < 0 {
+            return;
+        }
+        libc::write(fd, buf.as_ptr() as *const libc::c_void, len);
+        libc::close(fd);
+    }
+}
+
+#[cfg(not(unix))]
+fn bias_oom_score() {}
 
 #[cfg(test)]
 mod tests {
