@@ -154,6 +154,27 @@ fn test_autoware_process_count_rust() {
 
 #[test]
 fn test_autoware_smoke_test() {
+    // This one actually LAUNCHES Autoware, so it needs the sample map on disk:
+    // `map_projection_loader` throws `No map projector info files found` and
+    // exits, and the health report counts that as a node exit. Without the
+    // guard the test reports FAIL for a missing prerequisite, which reads as a
+    // code defect and is not one — the same class as the `shape_estimation`
+    // (TensorRT) and `rviz2` (X display) exits already ignored below, except
+    // those nodes at least start.
+    //
+    // Skipping rather than adding it to `ignored_exits`: ignoring it there
+    // would also swallow a genuine map-loading regression on a machine that
+    // HAS the map. `test-all`'s skip reporter surfaces this line, so an
+    // always-skipping guard stays visible instead of passing quietly.
+    let map_path = fixtures::autoware_map_path();
+    if !std::path::Path::new(&map_path).exists() {
+        eprintln!(
+            "SKIP: test_autoware_smoke_test: map not found at {map_path} \
+             (set MAP_PATH, or fetch the Autoware sample map)"
+        );
+        return;
+    }
+
     // 1. Resolve to get expected process count (Phase 47.B6: model, not
     // record.json).
     let (model, _resolve_tmp) = resolve_autoware("rust");
