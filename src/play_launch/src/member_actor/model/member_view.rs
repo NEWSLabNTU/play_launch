@@ -158,9 +158,91 @@ pub struct HealthSummary {
     pub noisy: usize,
 }
 
+impl HealthSummary {
+    /// Whether every member has reached a settled state — running, stopped,
+    /// failed, or (for a composable) loaded or failed.
+    ///
+    /// Phase 61 replaced `composable_pending == 0` as the completion test.
+    /// That test was true at t=0 and stayed true until the first container
+    /// came up, because a composable whose container has not started yet is
+    /// `Blocked`, which counts as neither pending nor loaded nor failed. It
+    /// only ever worked by a race: every container used to spawn within the
+    /// first 100 ms, so the first completion check already saw pending loads.
+    /// Once startup was paced, containers began queueing behind the
+    /// concurrency limit, the race started losing every time, and play_launch
+    /// announced "Startup complete: all nodes ready (nodes 12/44, containers
+    /// 0/16, composable 0/84)" two tenths of a second into a three-minute
+    /// startup — then stopped reporting progress, because the progress task
+    /// exits on completion.
+    pub fn startup_complete(&self) -> bool {
+        let nodes_settled =
+            self.nodes_running + self.nodes_stopped + self.nodes_failed >= self.nodes_total;
+        let containers_settled =
+            self.containers_running + self.containers_stopped + self.containers_failed
+                >= self.containers_total;
+        let composables_settled =
+            self.composable_loaded + self.composable_failed >= self.composable_total;
+
+        nodes_settled && containers_settled && composables_settled
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression guard for issue #0016. The old test was
+    /// `composable_pending == 0`, which every one of these cases satisfies —
+    /// including the two that are plainly not complete.
+    #[test]
+    fn startup_is_not_complete_before_anything_has_started() {
+        // The exact shape that printed "Startup complete: all nodes ready
+        // (nodes 12/44, containers 0/16, composable 0/84)": no container has
+        // spawned, so every composable is Blocked and counts as neither
+        // pending nor loaded nor failed.
+        let just_started = HealthSummary {
+            nodes_running: 12,
+            nodes_total: 44,
+            containers_total: 16,
+            composable_total: 84,
+            ..Default::default()
+        };
+        assert_eq!(just_started.composable_pending, 0);
+        assert!(!just_started.startup_complete());
+
+        // Containers up, composables still blocked or queued.
+        let midway = HealthSummary {
+            nodes_running: 44,
+            nodes_total: 44,
+            containers_running: 16,
+            containers_total: 16,
+            composable_loaded: 40,
+            composable_total: 84,
+            ..Default::default()
+        };
+        assert!(!midway.startup_complete());
+
+        // Everything settled — a failure is settled too, or a launch with one
+        // dead node would never report completion at all.
+        let done = HealthSummary {
+            nodes_running: 43,
+            nodes_failed: 1,
+            nodes_total: 44,
+            containers_running: 16,
+            containers_total: 16,
+            composable_loaded: 84,
+            composable_total: 84,
+            ..Default::default()
+        };
+        assert!(done.startup_complete());
+    }
+
+    #[test]
+    fn empty_launch_is_immediately_complete() {
+        // Nothing to wait for. `>=` rather than `==` throughout keeps this
+        // from depending on the zero case being special-cased.
+        assert!(HealthSummary::default().startup_complete());
+    }
 
     #[test]
     fn from_node_state() {

@@ -27,6 +27,16 @@ comparison. See `0015-*`.
 
 ## Resolved
 
+**#0016** — `Startup complete: all nodes ready (nodes 12/44, containers 0/16,
+composable 0/84)` two tenths of a second into a three-minute startup, followed
+by no progress at all. The completion test asked "is nothing in flight?"
+(`composable_pending == 0`) when it meant "is everything done?", and those
+differ exactly at t=0 — a composable whose container has not started is
+`Blocked`, counting as neither pending nor loaded nor failed. It survived on a
+race (every container used to spawn within 100 ms) that phase-61's spawn gate
+made it lose every time; any slow container reproduces it. Fixed by
+`HealthSummary::startup_complete()`. See `0016-*`.
+
 **#0014** — `test_isolated_external_subscriber` hard-coded `ROS_DOMAIN_ID=199`
 while every other test gets a unique domain per invocation, so a stale
 `ros2-daemon` failed it — and both diagnostic `ros2` calls piped stderr to

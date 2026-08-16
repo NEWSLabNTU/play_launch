@@ -463,7 +463,7 @@ pub(crate) async fn print_periodic_statistics(
             _ = progress_interval.tick() => {
                 // Print progress update every 10 seconds
                 let health = member_handle.get_health_summary().await;
-                let startup_complete = health.composable_pending == 0;
+                let startup_complete = health.startup_complete();
 
                 if !startup_complete {
                     info!(
@@ -482,7 +482,7 @@ pub(crate) async fn print_periodic_statistics(
             _ = completion_check.tick() => {
                 // Check frequently for completion (every 100ms)
                 let health = member_handle.get_health_summary().await;
-                let startup_complete = health.composable_pending == 0;
+                let startup_complete = health.startup_complete();
 
                 if startup_complete {
                     // Print completion message immediately
