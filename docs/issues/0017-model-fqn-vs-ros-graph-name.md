@@ -69,8 +69,10 @@ all of them with no `name=` in the launch file.
   'nebula::drivers::connections::SocketError' what(): Cannot assign requested
   address`. Expected on a bench with no LiDAR.
 
-- **`motion_velocity_planner`** — a separate defect, and the reason this issue
-  is not purely cosmetic. play_launch reports `composable 84/84 loaded`; the
+- **`motion_velocity_planner`** — a separate defect, since resolved as #0019:
+  its constructor ran past the isolated container's then-hardcoded 30 s ready
+  timeout, so the container SIGKILLed it and play_launch counted the LoadNode
+  response as success anyway. Original observation kept below. play_launch reports `composable 84/84 loaded`; the
   container logs `Spawned isolated child PID ... Component ... loaded as ...`;
   the child's own stderr shows it alive until `signal_handler(SIGINT/SIGTERM)`
   at shutdown — and yet no such node exists in the ROS graph, at 40 s or at

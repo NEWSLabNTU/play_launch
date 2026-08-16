@@ -373,7 +373,7 @@ impl ContainerActor {
                 }
 
                 _ = loading_timeout_interval.tick() => {
-                    self.supervisor.check_loading_timeouts().await;
+                    self.supervisor.check_loading_timeouts(&self.clients).await;
                     self.supervisor.rescue_lost_loads(&self.clients).await;
                 }
 

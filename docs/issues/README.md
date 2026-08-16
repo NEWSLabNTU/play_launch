@@ -37,6 +37,19 @@ comparison. See `0015-*`.
 
 ## Resolved
 
+**#0019** — a composable whose CONSTRUCTOR ran past 30 s was SIGKILLed by the
+isolated container mid-construction, and play_launch reported it as loaded
+anyway. Both halves mattered: first-run TensorRT engine builds live in that
+constructor (measured: Autoware's traffic light classifier ~33 s cold, ~45 s
+even cached), and the `.engine` is written last, so the kill discarded the work
+and recurred every launch. Meanwhile a LoadNode response means only "spawn
+requested" under `isolated`, so `Startup complete: all nodes ready` was printed
+over a dead node — which is what `84/84 loaded` meant on the golf cart, and the
+explanation for #0017's unresolved `motion_velocity_planner`. Timeout made
+raisable in the container submodule (`PLAY_LAUNCH_COMPONENT_READY_TIMEOUT_MS`,
+default still 30 s); promotion to `Loaded` now requires ListNodes confirmation.
+See `0019-*`.
+
 **#0018** — the two parsers gave un-named nodes different model keys, and the
 reference one was the unstable one: Python keys them by `launch`'s global
 console process label (`talker-1`), so inserting any node earlier renumbers

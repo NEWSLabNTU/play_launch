@@ -178,8 +178,23 @@ rclcpp_components::ComponentManager           (upstream)
 - **CloneIsolatedComponentManager**: fork()+exec() of `component_node` binary per composable node
   - Parameters: `request->parameters` serialized to temp YAML (`/**:` wildcard namespace), passed via `--params-file`
   - `extra_arguments`: only `use_intra_process_comms` is extracted and forwarded as `--use-intra-process-comms`
-  - Ready pipe protocol: child writes `"OK name\n"` or `"ERR msg\n"`, 30s timeout
-  - YAML type preservation: double values always include decimal point (`0.0` not `0`) to prevent integer_array/double_array mismatch
+  - Ready pipe protocol: child writes `"OK name\n"` or `"ERR msg\n"`. The wait
+    covers the node's CONSTRUCTOR — the child reports only after
+    `create_node_instance()` returns — and a first-run TensorRT engine build
+    runs for tens of seconds to minutes inside it. Measured: Autoware's traffic
+    light classifier is ~33 s cold, ~45 s even with the engine cached. The
+    former hardcoded 30 s SIGKILLed such children partway, discarded the build
+    (the `.engine` is written last) and recurred every launch. Now
+    `PLAY_LAUNCH_COMPONENT_READY_TIMEOUT_MS` (1..3600000 ms) raises it;
+    **the default is still 30 s**, so a stack with slow-constructing components
+    must set it. Issue #0019 — and the explanation for `motion_velocity_planner`
+    in #0017.
+- **A composable is `Loaded` only when ListNodes confirms it.** The LoadNode
+  response means "spawn requested" — the container pre-assigns a unique_id and
+  returns before the child is ready — so a missing `ComponentEvent` is NOT
+  evidence of success. `Unavailable` (container executor too busy to answer) is
+  the normal state *while* a composable constructs and must never be read as
+  loaded; that is what reported a killed node as `84/84 loaded` (#0019).
 - **Two binaries**: `component_container [--use_multi_threaded_executor] [--isolated]` and `component_node` (standalone single-node loader)
 - **Design docs**: `docs/design/container-isolation.md`, `docs/archive/clone-vm-container-design.md`
 - **Roadmap**: `docs/roadmap/phase-19-isolated_container.md`

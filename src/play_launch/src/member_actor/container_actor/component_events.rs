@@ -5,7 +5,7 @@
 //! to track composable node lifecycle (LOADED, LOAD_FAILED, UNLOADED, CRASHED).
 //! Also handles loading timeout fallback for DDS event loss scenarios.
 
-use super::supervisor::ComposableSupervisor;
+use super::{ros_client::ContainerClients, supervisor::ComposableSupervisor};
 use crate::member_actor::{
     events::{StateEvent, emit},
     model::{ActorConfig, BlockReason, ComposableState},
@@ -432,46 +432,102 @@ impl ComposableSupervisor {
         }
     }
 
-    /// Check for composable nodes stuck in Loading state and promote them to
-    /// Loaded if the LoadNode service succeeded more than 10 seconds ago.
-    /// This handles DDS event loss where ComponentEvent LOADED never arrives.
-    pub(super) async fn check_loading_timeouts(&mut self) {
-        let mut promoted = Vec::new();
-        for (name, entry) in &self.composable_nodes {
-            if let ComposableState::Loading { started_at } = &entry.state {
-                // Only promote if LoadNode succeeded (we have a unique_id)
-                // and the timeout has elapsed
-                if let Some(uid) = entry.unique_id
-                    && started_at.elapsed() > self.timings.loading_event_timeout
+    /// Promote composables stuck in `Loading` to `Loaded` when the
+    /// `ComponentEvent` was lost — but only once ListNodes CONFIRMS the node
+    /// is there.
+    ///
+    /// Issue 0019: this used to promote on the LoadNode response alone, after
+    /// `loading_event_timeout` (10s). Under `--container-mode isolated` that
+    /// response means only "spawn requested" — the container pre-assigns a
+    /// unique_id and returns before the child is ready — so a node whose
+    /// constructor was still running, or which the container later gave up on
+    /// and killed, was reported as loaded anyway. That is how a 45s constructor
+    /// produced `Startup complete: all nodes ready (composable 2/2)` at t+10s
+    /// with one of the two dead, and how `motion_velocity_planner` counted
+    /// toward `84/84 loaded` while absent from the ROS graph.
+    ///
+    /// A missing event is not evidence of success. `Unavailable` — the
+    /// container's executor too busy to answer — is the normal state while a
+    /// composable is being constructed, and is exactly the case that must NOT
+    /// be read as loaded.
+    pub(super) async fn check_loading_timeouts(&mut self, clients: &ContainerClients) {
+        use super::ros_client::VerifyOutcome;
+
+        let candidates: Vec<(String, u64, String)> = self
+            .composable_nodes
+            .iter()
+            .filter_map(|(name, entry)| match &entry.state {
+                ComposableState::Loading { started_at }
+                    if entry.unique_id.is_some()
+                        && started_at.elapsed() > self.timings.loading_event_timeout =>
                 {
-                    promoted.push((name.clone(), uid));
+                    let ns = entry.metadata.namespace.trim_end_matches('/');
+                    Some((
+                        name.clone(),
+                        entry.unique_id.unwrap(),
+                        format!("{}/{}", ns, entry.metadata.node_name),
+                    ))
                 }
-            }
-        }
+                _ => None,
+            })
+            .collect();
 
-        for (name, unique_id) in promoted {
-            warn!(
-                "{}: ComponentEvent LOADED not received for '{}' (unique_id: {}) \
-                 after {}s -- falling back to service response",
-                self.name(),
-                name,
-                unique_id,
-                self.timings.loading_event_timeout.as_secs()
-            );
-
-            if let Some(entry) = self.composable_nodes.get_mut(&name) {
-                entry.state = ComposableState::Loaded { unique_id };
-                entry.load_started_at = None;
-
-                emit(
-                    self.state_tx(),
-                    StateEvent::LoadSucceeded {
-                        name: name.clone(),
-                        full_node_name: String::new(),
-                        unique_id,
-                    },
-                )
-                .await;
+        for (name, unique_id, expected_full_name) in candidates {
+            let container_name = self.name().to_string();
+            match super::ros_client::verify_component_loaded(
+                &container_name,
+                &clients.list_client,
+                &expected_full_name,
+            )
+            .await
+            {
+                VerifyOutcome::Present(confirmed_id) => {
+                    warn!(
+                        "{}: ComponentEvent LOADED not received for '{}' after {}s; \
+                         ListNodes confirms it is loaded (unique_id: {})",
+                        container_name,
+                        name,
+                        self.timings.loading_event_timeout.as_secs(),
+                        confirmed_id
+                    );
+                    if let Some(entry) = self.composable_nodes.get_mut(&name) {
+                        entry.unique_id = Some(confirmed_id);
+                        entry.state = ComposableState::Loaded {
+                            unique_id: confirmed_id,
+                        };
+                        entry.load_started_at = None;
+                        emit(
+                            self.state_tx(),
+                            StateEvent::LoadSucceeded {
+                                name: name.clone(),
+                                full_node_name: expected_full_name.clone(),
+                                unique_id: confirmed_id,
+                            },
+                        )
+                        .await;
+                    }
+                }
+                VerifyOutcome::Absent => {
+                    // The container answered and does not have it. Leave it
+                    // Loading rather than failing it here: `rescue_lost_loads`
+                    // owns the give-up decision at `total_budget` and will
+                    // re-dispatch. Saying so is the point — this used to be
+                    // silently counted as a success.
+                    debug!(
+                        "{}: '{}' (unique_id: {}) not present per ListNodes — still loading, \
+                         not promoting",
+                        container_name, name, unique_id
+                    );
+                }
+                VerifyOutcome::Unavailable => {
+                    // The usual case for a long constructor: the container's
+                    // executor cannot answer while it is building. Waiting is
+                    // correct; assuming success is not.
+                    debug!(
+                        "{}: '{}' still Loading and the container is busy — leaving it alone",
+                        container_name, name
+                    );
+                }
             }
         }
     }

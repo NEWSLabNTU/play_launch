@@ -174,8 +174,7 @@ impl ComposableSupervisor {
     /// rather than being every composable in the launch at once.
     pub(super) fn dispatch_pending_loads(&mut self, clients: &ContainerClients) {
         while let Some(request) = self.pending_loads.pop_front() {
-            let start_time = std::time::Instant::now();
-            let queue_wait_ms = start_time.duration_since(request.request_time).as_millis() as u64;
+            let queue_wait_ms = request.request_time.elapsed().as_millis() as u64;
 
             debug!(
                 "{}: Dispatching load for {} (queue wait: {}ms)",
@@ -213,6 +212,18 @@ impl ComposableSupervisor {
                 // is dropped when this task ends, which is exactly when the
                 // load finished, failed, or gave up.
                 let _slot = startup.admit_load(&composable_name).await;
+
+                // The budget clock starts HERE, after the slot is held, not at
+                // dispatch. `timings.total_budget` is measured from
+                // `start_time` (`ros_client.rs`), so taking it before
+                // `admit_load` charged time spent QUEUED against the time
+                // allowed for the load itself — a node that waited out its
+                // budget behind other loads would have been failed before its
+                // LoadNode call was ever made. Harmless before phase 61, when
+                // every load was dispatched immediately and there was no
+                // queue; a real hazard now that there is one, and worst
+                // exactly where loads are slowest.
+                let start_time = std::time::Instant::now();
 
                 let result = ros_client::call_load_node_service(
                     container_name,
