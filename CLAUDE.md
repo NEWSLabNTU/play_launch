@@ -342,6 +342,47 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 
 ## Key Recent Changes
 
+- **2026-08-16**: Phase 61 W1 — **the edge startup storm, and the fix that
+  wasn't.** A 144-process Autoware launch on a 12-core AGX Orin put **484 tasks
+  in the runnable queue at load1 203** and held ~10 of 12 cores for 49 s; on the
+  reporter's vehicle the OOM killer took their GNOME session. Reproduced on
+  bench hardware (same 64 GiB Orin), with one honest gap: the *memory* storm
+  needs sensors to reproduce, so the link from CPU storm to OOM (starved nodes,
+  DDS/callback queues absorbing sensor backlog) is the one inference rather than
+  a measurement.
+  The obvious fix was implemented and **measured wrong**: pacing spawns to one
+  per core doubled a 10.6 s startup for a ~10% cut in peak runnable tasks,
+  because a wide launch costs what it costs by having those processes *exist*,
+  not by starting them together — serialising just stretches the same CPU. An
+  earlier variant was worse than nothing: a `2 * ncpu` runnable-task ceiling
+  cannot tell "busy starting things" from "busy running the things we started",
+  so already-running nodes held the gate shut until its 30 s bypass fired each
+  time (startup unfinished at 190 s, peak load1 **217 vs the unpaced 183**).
+  What actually moves it is the **process count**. `--container-mode isolated`
+  (the default) forks a process per composable: 144 processes vs 60 under
+  `observable`, **10.2 of 12 cores vs 3.9** during startup, peak load1 190 vs
+  **45**, 3.5 GiB vs **1.4**, and `observable` finishes *faster* (8.4 s vs
+  10.7 s) with the same 84/84 loaded. So: both throughput gates ship **off**
+  (with the tables recorded at the fields they govern, so the defaults aren't
+  re-derived); the `MemAvailable` floor ships **on** because it never blocks
+  until memory is actually short; children get `oom_score_adj +300`
+  (`PLAY_LAUNCH_OOM_SCORE_ADJ` to override) so the kernel picks a node over the
+  desktop — play_launch can only volunteer its own children, since *lowering*
+  another process's score needs privilege it lacks; and `isolated` warns when it
+  would fork more than `4 * ncpu` processes. Two defects found on the way:
+  `max_concurrent_load_node_spawn` was **dead config** (`dispatch_pending_loads`
+  drained its queue ungated, so all 84 composables hit LoadNode at once) — now
+  real, with `delay_load_node_millis` removed rather than resurrected; and
+  `Startup complete` fired **before anything had started** (issue #0016 — the
+  test asked "is nothing in flight?" when it meant "is everything done?", true
+  at t=0, and the progress task exits on completion so it also silenced every
+  message that would have corrected it). Separately, 0.9.0 **could not parse the
+  reporter's launch file at all**: `<choice>` is a child entity of `<arg>` in
+  real ROS 2 (`declare_launch_argument.py:176`), but `attr_spec.rs` gave `arg`
+  no children, so the YAML frontend read it as an unknown attribute — a
+  regression against the 0.5.1 they run. Guide:
+  `docs/guide/edge-machines.md`. Roadmap:
+  `docs/roadmap/phase-61-edge-startup-storm.md`.
 - **2026-08-13**: Phase 58 W2 — **cost is measured, not asked for.** New verb
   `play_launch measure <run-dir> --model <m.yaml>` turns a recorded run into a
   platform-file `overrides:` fragment on stdout (never written back). The
@@ -619,6 +660,7 @@ Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concur
 - **Launch Manifest**: `docs/roadmap/phase-31-launch_manifest.md` — manifest crate, parser/executor integration, audit
 - **Migration Guide**: `docs/guide/parser-migration.md` — Rust parser migration (v0.6.0+)
 - **Multi-host Guide**: `docs/guide/multi-host.md` — running one launch file's nodes across multiple hosts (ROS 2 has no `<node machine=>`)
+- **Edge Machines Guide**: `docs/guide/edge-machines.md` — what to change on a Jetson-class board, and why `--container-mode observable` is worth more than everything else combined
 
 ## Parser Parity Status
 

@@ -239,3 +239,21 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   Design:
   [2026-08-10-linux-sched-feature-surface-design.md](../superpowers/specs/2026-08-10-linux-sched-feature-surface-design.md).
   [phase-60-linux-sched-surface.md](./phase-60-linux-sched-surface.md).
+- **Phase 61** — ✅ W1: the edge startup storm. A 144-process Autoware launch
+  on a 12-core AGX Orin put **484 tasks in the runnable queue at load1 203**
+  and held ~10 of 12 cores for 49 s; on the vehicle the OOM killer took the
+  operator's GNOME. Measured, and the obvious fix measured wrong: pacing the
+  spawns doubled a 10.6 s startup for a 10% cut in peak runnable tasks,
+  because the cost of a wide launch is the processes *existing*, not their
+  starting together. What moves it is the process count — `--container-mode
+  observable` brings the same system up on **3.9 cores instead of 10.2**,
+  peak load1 45 vs 190, 1.4 GiB vs 3.5, and finishes *faster* (8.4 s vs
+  10.7 s). So both throughput gates ship off, the `MemAvailable` floor ships
+  on (it never blocks until memory is actually short), children get
+  `oom_score_adj +300` so the kernel picks a node over the desktop, and
+  `isolated` mode warns when it would fork more than `4 * ncpu` processes.
+  Two defects found on the way: `max_concurrent_load_node_spawn` was dead
+  config, and `Startup complete` fired before anything had started
+  (issue #0016). Also unblocked the reporter's project: 0.9.0 could not parse
+  `<arg><choice>` at all.
+  [phase-61-edge-startup-storm.md](./phase-61-edge-startup-storm.md).
