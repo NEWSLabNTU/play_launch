@@ -43,8 +43,11 @@ console process label (`talker-1`), so inserting any node earlier renumbers
 every un-named node after it (measured: 2 of 5 identities survived), while
 Rust's per-collision ordinal survived 5 of 5. Python keeps its scheme — it is
 ported from ROS launch and reflects the original behaviour — and Rust keeps its
-stable numbering but switches `#N` to `-N` so the two share a surface form.
-`-` is as collision-proof as `#` was, since `validate_node_name` rejects both.
+stable numbering but switches `#N` to `-N`, numbering un-named nodes from `-1`
+so the suffix marks a key as executable-derived rather than authored. `-` is as
+collision-proof as `#` was, since `validate_node_name` rejects both. Stability
+is enforced by three tests: same-input determinism, unrelated-insertion
+invariance, and an explicit assertion of the one case that DOES shift.
 See `0018-*`.
 
 **#0016** — `Startup complete: all nodes ready (nodes 12/44, containers 0/16,

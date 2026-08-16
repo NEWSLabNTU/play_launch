@@ -30,11 +30,11 @@ Same launch file, two parsers, different keys:
 
 | rust (before) | rust (after) | python |
 |---|---|---|
-| `/probe/talker` | `/probe/talker` | `/probe/talker-1` |
+| `/probe/talker` | `/probe/talker-1` | `/probe/talker-1` |
 | `/probe/talker#2` | `/probe/talker-2` | `/probe/talker-2` |
 | `/probe/explicitly_named` | `/probe/explicitly_named` | `/probe/explicitly_named` |
 | `/probe/talker#3` | `/probe/talker-3` | `/probe/talker-4` |
-| `/probe/listener` | `/probe/listener` | `/probe/listener-5` |
+| `/probe/listener` | `/probe/listener-1` | `/probe/listener-5` |
 
 Neither is the node's ROS name (#0017). Both are synthetic keys, and they are
 different synthetic keys.
@@ -91,7 +91,45 @@ closer.
 
 **Rust keeps its stable per-key ordinal and adopts the hyphen**, so the two at
 least share a surface form. `model_builder.rs`'s `insert_node` now produces
-`/probe/talker`, `/probe/talker-2`, `/probe/talker-3` instead of `#2`/`#3`.
+`/probe/talker-1`, `/probe/talker-2`, `/probe/talker-3` instead of
+`talker`/`#2`/`#3`.
+
+An un-named node is numbered **from `-1` even when it is the only one**. The
+suffix is what marks a key as executable-derived rather than authored — exactly
+the set whose key is not the node's ROS name (#0017) — so the form says so
+instead of leaving `/probe/talker` looking like a name somebody chose. A node
+the launch file DID name keeps its bare key.
+
+## What makes the names stable
+
+Three separate properties, each enforced by a test rather than observed:
+
+**1. The same input always gives the same keys.** This is structural, not luck.
+`dump.node` / `dump.container` / `dump.load_node` are `Vec`s in parser order,
+`index.topics` is a `BTreeMap`, and `structure.nodes` is an order-preserving
+`IndexMap` (manifest issue 0382). Nothing in the insertion path iterates a
+`HashMap` — whose order Rust randomises per process, which would shuffle every
+ordinal between runs of the same file. `the_same_dump_always_produces_the_same_keys`
+builds the same dump nine times and compares; it fails if someone reintroduces a
+`HashMap` there or adds a parallel pass over the records. Confirmed end to end
+as well: three consecutive resolves of the golf cart stack are byte-identical.
+
+**2. An unrelated edit does not renumber anything.** The ordinal counts
+collisions of *this* key, so nodes with a different executable or namespace are
+invisible to it — as is an interleaved *named* node, which is why the probe's
+`explicitly_named` does not consume a number the way it does under Python's
+global process index. `an_earlier_insertion_does_not_renumber_later_nodes`
+inserts a node at the top and asserts every prior identity survives.
+
+**3. Adding a duplicate of the SAME key does shift the ones after it.** No
+positional ordinal can avoid this, and pretending otherwise would be the
+dangerous part, so it is asserted rather than left to be discovered:
+`inserting_a_same_key_duplicate_does_shift_later_ordinals`. The remedy available
+to an author is `name=`, which takes the node out of the numbered set entirely.
+
+So "stable whenever the launch file is not changed" is guaranteed by (1);
+"stable when the launch file is changed elsewhere" by (2); and (3) is the
+documented boundary.
 
 `-` is as safe a discriminator as `#` was: `rclpy.validate_node_name` rejects
 both (`node name must not contain characters other than alphanumeric`), so a
@@ -116,10 +154,15 @@ the decision.
 
 ### Blast radius
 
-None on the corpus this came from: the golf cart model contains zero duplicate
-keys, and its resolved `system_model.yaml` is **byte-identical** before and
-after the change. The separator only ever appears on a launch file that puts two
-un-named nodes of the same executable in one namespace.
+**17 of the golf cart's 144 keys change** — every un-named node gains `-1`
+(`/sensing/lidar/falcon/seyond_node` → `…/seyond_node-1`, and so on). That is
+the same 17 identified in #0017, which is not a coincidence: they are precisely
+the nodes whose key was never their ROS name. Node count is unchanged and the
+stack still brings up cleanly.
+
+Anything that referenced those keys by hand has to move with them: a platform
+file's `overrides:`, a manifest's endpoint or path keys, `play_launch context
+--node <FQN>`, and per-node log directories. Nothing in-tree did.
 
 Unaffected by design: the phase-50 **member id** (`kind:/ns/name#N`,
 `member_id.rs`) is a different identifier used in REST paths and the web UI, and

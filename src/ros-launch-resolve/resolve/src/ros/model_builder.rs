@@ -477,8 +477,22 @@ pub fn build_system_model(
             // `-` is safe as a discriminator for the same reason `#` was:
             // `rclpy.validate_node_name` rejects both, so a synthetic
             // `talker-2` can never collide with a real node named `talker-2`.
-            let mut key = node_fqn.clone();
+            //
+            // An UN-NAMED node is always numbered, from `-1`, even when it is
+            // the only one: `/probe/talker-1`. The suffix marks the key as
+            // executable-derived rather than authored, which is precisely the
+            // set whose key is not the node's ROS name (issue 0017) — so the
+            // form now says so instead of leaving `/probe/talker` looking like
+            // a name somebody chose. A node the launch file DID name keeps its
+            // bare key and is only ever suffixed if something else already
+            // claimed it.
+            let unnamed = inst.node_name.is_none();
             let mut n = 1usize;
+            let mut key = if unnamed {
+                format!("{node_fqn}-1")
+            } else {
+                node_fqn.clone()
+            };
             while structure.nodes.contains_key(&key) {
                 n += 1;
                 key = format!("{node_fqn}-{n}");
@@ -902,6 +916,93 @@ pub fn build_system_model(
 mod tests {
     use super::*;
 
+    /// Issue 0018 — the same dump must produce the same keys, every time.
+    ///
+    /// This is the property everything else rests on, and it is structural
+    /// rather than lucky: `dump.node`/`container`/`load_node` are `Vec`s in
+    /// parser order and `structure.nodes` is an order-preserving `IndexMap`,
+    /// so nothing in the insertion path iterates a `HashMap` — whose iteration
+    /// order Rust randomises per process, which would make every ordinal
+    /// unstable run to run. This test fails if someone reintroduces one, or
+    /// adds a parallel pass over the records.
+    #[test]
+    fn the_same_dump_always_produces_the_same_keys() {
+        let dump = dump_with_unnamed_duplicates(false);
+        let first: Vec<String> = build_system_model(
+            &dump,
+            &ManifestIndex::default(),
+            None,
+            BTreeMap::new(),
+            &BTreeSet::new(),
+            None,
+        )
+        .structure
+        .nodes
+        .keys()
+        .cloned()
+        .collect();
+
+        for round in 0..8 {
+            let again: Vec<String> = build_system_model(
+                &dump,
+                &ManifestIndex::default(),
+                None,
+                BTreeMap::new(),
+                &BTreeSet::new(),
+                None,
+            )
+            .structure
+            .nodes
+            .keys()
+            .cloned()
+            .collect();
+            assert_eq!(again, first, "keys differed on round {round}");
+        }
+    }
+
+    /// The limit of the scheme, asserted so it is a known property rather than
+    /// a surprise: inserting a duplicate of the SAME key does renumber the
+    /// ones after it. No positional ordinal can avoid that; the fix available
+    /// to an author is `name=`.
+    #[test]
+    fn inserting_a_same_key_duplicate_does_shift_later_ordinals() {
+        let base = build_system_model(
+            &dump_with_unnamed_duplicates(false),
+            &ManifestIndex::default(),
+            None,
+            BTreeMap::new(),
+            &BTreeSet::new(),
+            None,
+        );
+
+        // Prepend a fourth talker in the same namespace.
+        let mut dump = dump_with_unnamed_duplicates(false);
+        let extra = dump.node[0].clone();
+        dump.node.insert(0, extra);
+        let shifted = build_system_model(
+            &dump,
+            &ManifestIndex::default(),
+            None,
+            BTreeMap::new(),
+            &BTreeSet::new(),
+            None,
+        );
+
+        assert_eq!(
+            base.structure.nodes.len() + 1,
+            shifted.structure.nodes.len()
+        );
+        assert!(shifted.structure.nodes.contains_key("/probe/talker-4"));
+        // The named node and other executables are untouched either way.
+        assert!(
+            shifted
+                .structure
+                .nodes
+                .contains_key("/probe/explicitly_named")
+        );
+        assert!(shifted.structure.nodes.contains_key("/probe/listener-1"));
+    }
+
     /// Issue 0018 — un-named duplicates get `-N`, and the ordinal counts
     /// collisions of the key rather than position in the launch tree.
     ///
@@ -956,18 +1057,18 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                "/probe/talker",
+                "/probe/talker-1",
                 "/probe/talker-2",
                 "/probe/explicitly_named",
                 "/probe/talker-3",
-                "/probe/listener",
+                "/probe/listener-1",
             ],
             // Key ORDER is launch-traversal order (`structure.nodes` is an
             // IndexMap for exactly this), so the named node sits where the
             // file puts it — third — between `talker-2` and `talker-3`. The
             // ordinal counts collisions, not position, which is why the
             // interleaved named node does not consume a number.
-            "duplicates disambiguate with `-N`; a named node is untouched"
+            "un-named nodes are numbered from -1; a named node keeps its bare key"
         );
     }
 
@@ -1010,7 +1111,7 @@ mod tests {
             after
                 .structure
                 .nodes
-                .contains_key("/probe/add_two_ints_server")
+                .contains_key("/probe/add_two_ints_server-1")
         );
     }
 
@@ -1339,8 +1440,9 @@ mod tests {
             model
                 .structure
                 .nodes
-                .contains_key("/perception/detector_node"),
-            "name=None node must be keyed by exec_name, got keys: {:?}",
+                .contains_key("/perception/detector_node-1"),
+            "name=None node is keyed by exec_name plus the `-1` ordinal that marks \
+             the key as executable-derived (issue 0018), got keys: {:?}",
             model.structure.nodes.keys().collect::<Vec<_>>()
         );
     }
@@ -1355,7 +1457,7 @@ mod tests {
         let model =
             build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
-        let node = &model.structure.nodes["/perception/detector_node"];
+        let node = &model.structure.nodes["/perception/detector_node-1"];
         assert_eq!(
             node.params_files,
             vec!["/**:\n  ros__parameters:\n    voxel_size: 0.2\n".to_string()]
@@ -1374,7 +1476,7 @@ mod tests {
         let model =
             build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
-        let node = &model.structure.nodes["/perception/detector_node"];
+        let node = &model.structure.nodes["/perception/detector_node-1"];
         assert_eq!(
             node.params.get("max_range"),
             Some(&model::ParamValue::Float(50.0)),
@@ -1396,7 +1498,7 @@ mod tests {
         let model =
             build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
-        let node = &model.structure.nodes["/perception/detector_node"];
+        let node = &model.structure.nodes["/perception/detector_node-1"];
         assert_eq!(
             node.args,
             vec![
@@ -1418,7 +1520,9 @@ mod tests {
         let model =
             build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
-        let node = &model.structure.nodes["/unknown"];
+        // A raw `<executable>` has no name either, so it is numbered like any
+        // other un-named entry.
+        let node = &model.structure.nodes["/unknown-1"];
         assert!(node.pkg.is_none());
         assert_eq!(
             node.raw_cmd,
@@ -1457,7 +1561,7 @@ mod tests {
 
         // name=None regular node → node_name None.
         assert_eq!(
-            model.structure.nodes["/perception/detector_node"].node_name,
+            model.structure.nodes["/perception/detector_node-1"].node_name,
             None
         );
         // composable → node_name Some (ComposableNodeRecord.node_name is
