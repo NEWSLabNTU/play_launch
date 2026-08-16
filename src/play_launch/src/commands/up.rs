@@ -737,6 +737,73 @@ pub(crate) async fn play(
         num_composable_nodes
     );
 
+    // Phase 61: warn when `isolated` is about to cost far more than it is
+    // worth on this machine.
+    //
+    // `--container-mode isolated` (the default) gives every composable node
+    // its own process, so a crash cannot take down its container's siblings.
+    // The price is a process, an executor and a DDS participant per node
+    // instead of per container, and on a small machine that price dominates
+    // everything else. Measured on a 12-core AGX Orin bringing up the same
+    // 44-node / 16-container / 84-composable launch:
+    //
+    //     isolated     144 processes   10.2 of 12 cores during startup
+    //     observable    60 processes    3.9 of 12 cores
+    //
+    // — 2.6x the CPU to bring up the same system, with peak load1 203 against
+    // 34, for the same 77/84 composables loaded at the 90 s mark. This is a
+    // warning and not an automatic downgrade because the isolation it buys is
+    // real and only the operator knows whether they need it.
+    if common.containers.container_mode == crate::cli::options::ContainerMode::Isolated {
+        let ncpu = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        if num_composable_nodes > ncpu * 4 {
+            warn!(
+                "--container-mode isolated will start {} extra processes (one per composable \
+                 node) on a {}-core machine. Measured on a 12-core Orin this costs ~2.6x the \
+                 startup CPU of --container-mode observable, which loads the same nodes as \
+                 threads inside their containers. Use `--container-mode observable` if you do \
+                 not need per-composable crash isolation.",
+                num_composable_nodes, ncpu
+            );
+        }
+    }
+
+    // Phase 61: one admission controller for the whole run, shared by every
+    // actor. Built here rather than per-actor because the quantity it bounds —
+    // how much of this machine is busy starting things — is global.
+    let startup_governor = {
+        let limits = runtime_config.startup.resolve(
+            runtime_config
+                .composable_node_loading
+                .max_concurrent_load_node_spawn,
+        );
+        if limits.is_enabled() {
+            info!(
+                "Startup pacing: {} process(es) at a time, {} concurrent composable load(s), \
+                 memory floor {} MiB",
+                if limits.max_concurrent == usize::MAX {
+                    "unlimited".to_string()
+                } else {
+                    limits.max_concurrent.to_string()
+                },
+                if limits.max_concurrent_loads == usize::MAX {
+                    "unlimited".to_string()
+                } else {
+                    limits.max_concurrent_loads.to_string()
+                },
+                limits.min_available_kb / 1024,
+            );
+        } else {
+            info!("Startup pacing: disabled — every process spawns immediately");
+        }
+        std::sync::Arc::new(crate::execution::startup_governor::StartupGovernor::new(
+            limits,
+            (num_pure_nodes + num_containers) as u64,
+        ))
+    };
+
     // Add regular nodes to builder
     debug!("Adding {} regular nodes", num_pure_nodes);
     for context in pure_node_contexts {
@@ -774,6 +841,7 @@ pub(crate) async fn play(
             }),
             sched_mode: common.sched_opts.sched_apply,
             sched_helper: sched_helper.clone(),
+            startup: startup_governor.clone(),
         };
 
         builder.add_regular_node(
@@ -816,6 +884,7 @@ pub(crate) async fn play(
             }),
             sched_mode: common.sched_opts.sched_apply,
             sched_helper: sched_helper.clone(),
+            startup: startup_governor.clone(),
         };
 
         // Add container (oneshot receiver is ignored since composable nodes will be matched internally)

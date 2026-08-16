@@ -367,6 +367,11 @@ async fn run_direct(
             }),
             sched_mode: common.sched_opts.sched_apply,
             sched_helper: sched_helper.clone(),
+            // `run` starts a single node, so there is nothing to pace and no
+            // point paying for a gate that can never contend.
+            startup: std::sync::Arc::new(
+                crate::execution::startup_governor::StartupGovernor::disabled(),
+            ),
         };
 
         // Add to builder

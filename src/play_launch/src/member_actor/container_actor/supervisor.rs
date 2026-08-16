@@ -76,6 +76,9 @@ pub(super) struct ComposableSupervisor {
     pub(super) current_unload: Option<CurrentUnload>,
     /// Tunable LoadNode-path timings (phase-52.2)
     pub(super) timings: LoadTimings,
+    /// Phase 61: shared startup admission control, consulted before each
+    /// LoadNode call so composable loading is bounded across all containers.
+    startup: std::sync::Arc<crate::execution::startup_governor::StartupGovernor>,
 }
 
 impl ComposableSupervisor {
@@ -83,6 +86,7 @@ impl ComposableSupervisor {
         container_name: String,
         state_tx: mpsc::Sender<StateEvent>,
         timings: LoadTimings,
+        startup: std::sync::Arc<crate::execution::startup_governor::StartupGovernor>,
     ) -> Self {
         let (load_completion_tx, load_completion_rx) = mpsc::unbounded_channel();
         Self {
@@ -94,6 +98,7 @@ impl ComposableSupervisor {
             load_completion_rx,
             current_unload: None,
             timings,
+            startup,
         }
     }
 
@@ -159,9 +164,14 @@ impl ComposableSupervisor {
         }
     }
 
-    /// Dispatch ALL pending loads concurrently (no serialization gate).
-    /// Each load is spawned as an independent tokio task that sends its
-    /// result back via the load_completion channel.
+    /// Dispatch ALL pending loads concurrently. Each load is spawned as an
+    /// independent tokio task that sends its result back via the
+    /// load_completion channel.
+    ///
+    /// Phase 61: the tasks are dispatched immediately but each one waits for a
+    /// slot from the shared `StartupGovernor` before calling LoadNode, so the
+    /// number of loads actually in flight is bounded across every container
+    /// rather than being every composable in the launch at once.
     pub(super) fn dispatch_pending_loads(&mut self, clients: &ContainerClients) {
         while let Some(request) = self.pending_loads.pop_front() {
             let start_time = std::time::Instant::now();
@@ -192,7 +202,18 @@ impl ComposableSupervisor {
                 request_time: request.request_time,
             };
 
+            let startup = self.startup.clone();
+
             tokio::spawn(async move {
+                // Phase 61: hold a load slot for the duration of the call.
+                // Every container dispatches its whole queue here, so without
+                // a shared gate a 16-container launch puts all 84 of its
+                // composables into LoadNode simultaneously — and in
+                // `isolated` mode each of those forks a process. The permit
+                // is dropped when this task ends, which is exactly when the
+                // load finished, failed, or gave up.
+                let _slot = startup.admit_load(&composable_name).await;
+
                 let result = ros_client::call_load_node_service(
                     container_name,
                     load_client,

@@ -133,10 +133,33 @@ impl RegularNodeActor {
         let output_dir = exec.output_dir.clone();
         let mut command = exec.command;
 
+        // Phase 61: wait for a startup slot. Without this every actor reaches
+        // this line at once — measured on a 12-core Orin, a 144-process launch
+        // put 442 tasks in the runnable queue and load1 at 203, so every node
+        // initialised forty times slower than it needed to and the rest of the
+        // machine was starved with it.
+        //
+        // Acquired AFTER to_exec_context (which only touches files) and
+        // immediately BEFORE spawn, so a held slot always corresponds to a
+        // real process rather than to bookkeeping.
+        let permit = self.config.startup.admit(&log_name).await;
+
+        // Re-check shutdown: admission can block, and a run cancelled while
+        // this actor was queued must not start a process on its way out.
+        if *self.shutdown_rx.borrow() {
+            debug!("[{}] Shutdown while awaiting startup slot", self.name);
+            drop(permit);
+            self.transition_to_stopped(None).await?;
+            return Ok(());
+        }
+
         // Spawn the process
         let child = match command.spawn() {
             Ok(child) => child,
             Err(err) => {
+                // `permit` is a local, so both early returns below drop it and
+                // hand the slot straight to the next queued node — a failed
+                // spawn must not cost the launch a settle window.
                 error!("[{}] Unable to start: {}", log_name, err);
                 error!("Check {}", output_dir.display());
 
@@ -157,6 +180,12 @@ impl RegularNodeActor {
         };
 
         let pid = child.id().expect("Child process should have PID");
+
+        // Hold the startup slot until this child has finished initialising,
+        // not until spawn() returned — spawn() returns in microseconds, so
+        // releasing here would admit every remaining node at once and the
+        // governor would gate nothing at all.
+        permit.hold_until_settled(pid, log_name.clone());
 
         // Register PID for monitoring
         if let Some(ref registry) = self.process_registry {

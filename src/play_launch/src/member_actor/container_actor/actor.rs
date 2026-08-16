@@ -85,7 +85,12 @@ impl ContainerActor {
         load_control_rx: mpsc::Receiver<ContainerControlEvent>,
     ) -> Self {
         let (container_state_tx, _container_state_rx) = watch::channel(ContainerState::Pending);
-        let supervisor = ComposableSupervisor::new(name.clone(), state_tx.clone(), params.timings);
+        let supervisor = ComposableSupervisor::new(
+            name.clone(),
+            state_tx.clone(),
+            params.timings,
+            params.config.startup.clone(),
+        );
 
         Self {
             name,

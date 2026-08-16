@@ -26,9 +26,113 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub interception: InterceptionSettings,
 
+    /// Startup admission control (phase-61)
+    #[serde(default)]
+    pub startup: StartupSettings,
+
     /// Per-process configurations
     #[serde(default)]
     pub processes: Vec<ProcessConfig>,
+}
+
+/// Phase 61: how fast play_launch is allowed to start processes.
+///
+/// Every field defaults to "derive it from this machine", so the common case
+/// needs no configuration and a workstation is effectively unthrottled — the
+/// concurrency limit is the core count, which only binds when the launch is
+/// wider than the machine.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct StartupSettings {
+    /// Master switch. `false` restores the pre-phase-61 behaviour of spawning
+    /// every process the instant its actor starts.
+    pub enabled: bool,
+
+    /// Maximum processes starting at once. `None` (the default, written as an
+    /// absent key or `~`) means one per CPU.
+    pub max_concurrent: Option<usize>,
+
+    /// Refuse to start another process while `MemAvailable` is below this many
+    /// MiB. `None` means 10% of RAM, clamped to [512 MiB, 4 GiB].
+    pub min_available_mb: Option<u64>,
+
+    /// Refuse to start another process while runnable tasks exceed this
+    /// multiple of the core count. `0` (the default) disables the gate —
+    /// `StartupLimits::max_runnable_factor` records why it is off rather than
+    /// set to something plausible.
+    pub max_runnable_factor: f64,
+
+    /// How long the memory/runnable gates may hold one admission before it is
+    /// let through anyway with a warning. A launch that never starts is worse
+    /// than one that starts under pressure.
+    pub max_gate_wait_secs: u64,
+
+    /// Longest a single process may hold its startup slot, in seconds. Caps
+    /// the CPU-decay wait for a node that legitimately never goes idle.
+    pub max_settle_secs: u64,
+
+    /// CPU percent (of one core) below which a starting process is considered
+    /// to have finished initialising.
+    pub settle_threshold_pct: f64,
+}
+
+impl Default for StartupSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_concurrent: None,
+            min_available_mb: None,
+            max_runnable_factor: 0.0,
+            max_gate_wait_secs: 30,
+            max_settle_secs: 15,
+            settle_threshold_pct: 20.0,
+        }
+    }
+}
+
+impl StartupSettings {
+    /// Resolve to concrete limits for this machine.
+    ///
+    /// `max_concurrent_loads` comes from the composable-loading section rather
+    /// than from here: it is the same quantity
+    /// `composable_node_loading.max_concurrent_load_node_spawn` has always
+    /// named, and giving it a second name in a second section would be a way
+    /// for the two to disagree.
+    pub fn resolve(
+        &self,
+        max_concurrent_loads: usize,
+    ) -> crate::execution::startup_governor::StartupLimits {
+        use crate::execution::startup_governor::{StartupLimits, read_mem_total_kb};
+
+        if !self.enabled {
+            return StartupLimits::unlimited();
+        }
+
+        let ncpu = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let mem_total_kb = read_mem_total_kb().unwrap_or(0);
+
+        let mut limits = StartupLimits::auto(ncpu, mem_total_kb);
+        if let Some(n) = self.max_concurrent {
+            // 0 would mean "start nothing"; read it as "no limit" instead,
+            // which is the only interpretation that is not a deadlock.
+            limits.max_concurrent = if n == 0 { usize::MAX } else { n };
+        }
+        if let Some(mb) = self.min_available_mb {
+            limits.min_available_kb = mb.saturating_mul(1024);
+        }
+        limits.max_runnable_factor = self.max_runnable_factor;
+        limits.max_gate_wait = std::time::Duration::from_secs(self.max_gate_wait_secs);
+        limits.max_settle = std::time::Duration::from_secs(self.max_settle_secs);
+        limits.settle_threshold_pct = self.settle_threshold_pct;
+        limits.max_concurrent_loads = if max_concurrent_loads == 0 {
+            usize::MAX
+        } else {
+            max_concurrent_loads
+        };
+        limits
+    }
 }
 
 /// Global monitoring settings
@@ -191,11 +295,6 @@ fn default_ring_capacity() -> usize {
 /// not idempotent).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ComposableNodeLoadingSettings {
-    /// Delay before loading composable nodes (milliseconds)
-    #[serde(default = "default_delay_load_node_millis")]
-    #[allow(dead_code)]
-    pub delay_load_node_millis: u64,
-
     /// Timeout for the FIRST LoadNode service call per composable (milliseconds)
     #[serde(default = "default_load_node_timeout_millis")]
     pub load_node_timeout_millis: u64,
@@ -204,9 +303,16 @@ pub struct ComposableNodeLoadingSettings {
     #[serde(default = "default_load_node_attempts")]
     pub load_node_attempts: usize,
 
-    /// Maximum concurrent composable node loading operations
+    /// Maximum concurrent composable node loading operations, counted across
+    /// ALL containers.
+    ///
+    /// Phase 61 made this real. Between its introduction and then it was dead
+    /// config: `dispatch_pending_loads` drained its queue and spawned a task
+    /// per request with no gate, so a launch with 84 composables across 16
+    /// containers put all 84 into LoadNode at once — and under
+    /// `--container-mode isolated` each of those forks a process. `0` means
+    /// unlimited, i.e. the old behaviour.
     #[serde(default = "default_max_concurrent_load_node_spawn")]
-    #[allow(dead_code)]
     pub max_concurrent_load_node_spawn: usize,
 
     /// Timeout for retry LoadNode calls (milliseconds) — longer than the
@@ -239,7 +345,6 @@ pub struct ComposableNodeLoadingSettings {
 impl Default for ComposableNodeLoadingSettings {
     fn default() -> Self {
         Self {
-            delay_load_node_millis: default_delay_load_node_millis(),
             load_node_timeout_millis: default_load_node_timeout_millis(),
             load_node_attempts: default_load_node_attempts(),
             max_concurrent_load_node_spawn: default_max_concurrent_load_node_spawn(),
@@ -252,9 +357,6 @@ impl Default for ComposableNodeLoadingSettings {
     }
 }
 
-fn default_delay_load_node_millis() -> u64 {
-    2000
-}
 fn default_load_node_timeout_millis() -> u64 {
     30000
 }
@@ -363,6 +465,10 @@ pub struct ResolvedRuntimeConfig {
     pub container_readiness: ContainerReadinessSettings,
     pub diagnostics: DiagnosticsSettings,
     pub interception: InterceptionSettings,
+    /// Phase 61: startup admission control, carried through unchanged — its
+    /// machine-dependent resolution happens at `StartupSettings::resolve`,
+    /// where the core count and RAM are read, not here.
+    pub startup: StartupSettings,
 }
 
 /// Resolved monitoring configuration
@@ -489,6 +595,7 @@ pub fn load_runtime_config(
         container_readiness: config.container_readiness,
         diagnostics: config.diagnostics,
         interception: config.interception,
+        startup: config.startup,
     })
 }
 
@@ -505,7 +612,6 @@ mod tests {
         assert!(config.processes.is_empty());
 
         // Test composable node loading defaults
-        assert_eq!(config.composable_node_loading.delay_load_node_millis, 2000);
         assert_eq!(
             config.composable_node_loading.load_node_timeout_millis,
             30000

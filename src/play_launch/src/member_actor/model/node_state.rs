@@ -26,6 +26,11 @@ pub struct ActorConfig {
     /// `apply_tier` (only works as root) — see
     /// `execution::rt_helper_client::apply_sched`.
     pub sched_helper: Option<crate::execution::rt_helper_client::SchedHelper>,
+    /// Phase 61: shared startup admission control. Every actor asks this
+    /// before spawning, so a wide launch does not start every process in the
+    /// same millisecond. `StartupGovernor::disabled()` restores the previous
+    /// spawn-immediately behaviour.
+    pub startup: std::sync::Arc<crate::execution::startup_governor::StartupGovernor>,
 }
 
 /// State machine for a regular node or container

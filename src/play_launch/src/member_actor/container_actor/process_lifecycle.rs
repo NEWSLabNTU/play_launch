@@ -101,9 +101,21 @@ impl ContainerActor {
             command, exec_context.output_dir
         );
 
+        // Phase 61: containers queue for a startup slot like any other
+        // process. They are not exempt — a container is one of the more
+        // expensive things to start, and in `isolated` mode each one goes on
+        // to fork a process per composable it hosts.
+        let permit = self.config.startup.admit(&self.name).await;
+
         let child = command
             .spawn()
             .context("Failed to spawn container process")?;
+
+        // On the error path above, `permit` drops and the slot is returned
+        // immediately, which is what a failed spawn deserves.
+        if let Some(pid) = child.id() {
+            permit.hold_until_settled(pid, self.name.clone());
+        }
 
         Ok(child)
     }
