@@ -17,6 +17,13 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0020** — `--parser python` cannot round-trip any launch with a container:
+the dump emits container entries carrying only `name`/`namespace` while
+`NodeContainerRecord` requires `executable`, so the record it just wrote fails
+to load. Matters beyond a broken flag — it is the fallback the Rust parser's
+own errors recommend, and the reference side for parser parity, so
+`just compare-dumps` cannot run on a real corpus. See `0020-*`.
+
 **#0017** — the model's node FQN is not the node's ROS name. For a `<node>` with
 no `name=`, `structure.nodes` keys by the EXECUTABLE while the node registers
 its compiled-in name (`…/autoware_ekf_localizer_node` vs `…/ekf_localizer`);
