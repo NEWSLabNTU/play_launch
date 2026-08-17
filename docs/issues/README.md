@@ -17,14 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0021** — the Rust parser (the DEFAULT) gives a composable node the
-CONTAINER's namespace where ROS 2 gives it the launch context's, so every
-composable in a container that declares its own `namespace=` gets a doubled
-segment: `/system/system_monitor/system_monitor/cpu_monitor` against ROS 2's
-`/system/system_monitor/cpu_monitor`. 8 nodes in the golf cart stack. Confirmed
-against stock `ros2 launch`, not just against the Python parser. Silent — the
-model is self-consistent and merely describes a different system. See `0021-*`.
-
 **#0017** — the model's node FQN is not the node's ROS name. For a `<node>` with
 no `name=`, `structure.nodes` keys by the EXECUTABLE while the node registers
 its compiled-in name (`…/autoware_ekf_localizer_node` vs `…/ekf_localizer`);
@@ -44,6 +36,15 @@ and `rt_av_demo`'s `ab` recipe refuses rather than reporting a vacuous
 comparison. See `0015-*`.
 
 ## Resolved
+
+**#0021** — the Rust parser (the DEFAULT) gave a composable node the
+CONTAINER's namespace where ROS 2 gives it the launch context's, doubling a
+segment for every composable in a container declaring its own `namespace=`
+(8 nodes in the golf cart stack). Not just a mislabel: play_launch sends that
+namespace in the LoadNode request, so the nodes RAN at the wrong name — which
+is why no graph check caught it, and only stock `ros2 launch` disagreed. Fixed
+in `actions/container.rs`, with a fixture whose expectations are read off real
+ROS 2. Golf cart parity went 137/145 to **145/145 PASS**. See `0021-*`.
 
 **#0020** — `--parser python` died on any launch with a container
 (`missing field `executable``) — not a defect in this tree, but a STALE pip

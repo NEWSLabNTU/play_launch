@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<!-- Issue #0021 — a container's `namespace=` names the container PROCESS and
+     is never pushed onto the launch context, so it does not reach the
+     composable nodes loaded into it.
+
+     Every expectation below was read off stock `ros2 launch`, not derived:
+
+       relative case, container at namespace="probe" inside /outer/probe
+         ros2 node list:
+           /outer/probe/child_one
+           /outer/probe/probe/probe_container
+
+       absolute case, container at namespace="/test" at the root context
+         launch log:
+           Loaded node '/abs_child' in container '/test/abs_container'
+
+     Before the fix the parser read the container's resolved namespace, giving
+     /outer/probe/probe/child_one and /test/abs_child. The container's own name
+     was right either way, so entity counts matched and only an FQN-level
+     comparison exposed it — which is how 8 nodes in a 145-node Autoware stack
+     carried doubled namespaces unnoticed.
+-->
+<launch>
+  <!-- Relative container namespace, nested under pushed namespaces. -->
+  <group>
+    <push-ros-namespace namespace="outer"/>
+    <group>
+      <push-ros-namespace namespace="probe"/>
+      <node_container pkg="rclcpp_components" exec="component_container"
+                      name="probe_container" namespace="probe">
+        <composable_node pkg="probe_pkg" plugin="ProbePlugin" name="child_one"/>
+        <!-- An explicit namespace still resolves against the CONTEXT, so this
+             one lands at /outer/probe/explicit/child_two — the container's
+             `probe` plays no part here either. -->
+        <composable_node pkg="probe_pkg" plugin="ProbePlugin" name="child_two"
+                         namespace="explicit"/>
+      </node_container>
+    </group>
+  </group>
+
+  <!-- Absolute container namespace at the root context. -->
+  <node_container pkg="rclcpp_components" exec="component_container"
+                  name="abs_container" namespace="/test">
+    <composable_node pkg="probe_pkg" plugin="ProbePlugin" name="abs_child"/>
+  </node_container>
+</launch>

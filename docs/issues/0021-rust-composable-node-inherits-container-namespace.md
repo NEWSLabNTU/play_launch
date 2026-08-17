@@ -1,7 +1,7 @@
 ---
 id: 21
 title: "The Rust parser gives a composable node the CONTAINER's namespace; ROS 2 gives it the launch context's"
-status: open
+status: resolved
 type: correctness
 severity: high
 ---
@@ -69,24 +69,55 @@ nothing is visibly wrong, which is every other container in this stack.
 - The **default** parser produces wrong node names, silently. Nothing errors;
   the model is internally consistent and merely describes a different system
   than the one that will run.
-- Anything joining model identity to the live ROS graph — the startup gate,
-  the web UI, contract and scheduling application keyed by FQN — misses these
-  8 nodes. This is very likely a subset of #0017's 19 unmatched nodes, and
-  unlike the rest of that issue it has a definite cause.
 - A per-node scheduling override or contract written against the true name
-  would silently apply to nothing.
+  silently applies to nothing.
+- **Not** a subset of #0017's 19 unmatched nodes, which was the first guess and
+  is wrong — see below. It is worse than that: nothing was unmatched, because
+  the running system was moved to agree with the model.
 
-## Reproducing
+## It changed the running system, not just the artifact
 
-    ros2 launch tmp/nsprobe/nsprobe.launch.xml     # then: ros2 node list
-    ros-launch-resolve resolve --parser rust -o /tmp/m.yaml tmp/nsprobe/nsprobe.launch.xml
+Worth stating plainly, because "the model has a wrong label" and "the node
+comes up in the wrong namespace" are very different severities.
 
-## Fix sketch
+`LoadNodeRecord.namespace` is what play_launch puts in the LoadNode request,
+so the composable really did come up at the doubled name. The evidence is
+#0017's own measurement: on a live golf cart run it compared all 144 model
+FQNs against `ros2 node list` and found exactly 19 unmatched — 17 renamed
+un-named nodes and 2 genuinely absent. None of the 8 `system_monitor`
+composables were among them. Their doubled FQNs matched the graph because the
+graph had the doubled names too.
 
-A composable node with no `namespace=` should take the launch-context
-namespace, not the container's resolved namespace. An explicit `namespace=`
-on the composable node keeps resolving against the context as it does now.
+So under play_launch those nodes ran at
+`/system/system_monitor/system_monitor/cpu_monitor` while `ros2 launch` puts
+them at `/system/system_monitor/cpu_monitor` — a different topology, with
+every relative topic, parameter and remapping shifted with them. Anything
+outside the container addressing them by name found nothing. This is also why
+no graph-based check could catch it: the model and the runtime were wrong
+together, and only stock ROS 2 disagreed.
 
-Wanted with it: the probe promoted out of `tmp/` into a fixture, so the case
-is covered by the differential test rather than by a comparison someone
-happens to run.
+## Fix
+
+`actions/container.rs` — a composable node with no `namespace=` now takes
+`context.current_namespace()`. An explicit `namespace=` keeps resolving
+against the context, as before, and `container_namespace` is still used for
+`target_container_name`, which is genuinely the container's own name.
+
+`tests/fixtures/launch/test_container_namespace_scope.launch.xml` covers both
+shapes (relative under pushed namespaces, absolute at root) with the
+expectations read off stock `ros2 launch` rather than derived.
+
+One existing expectation had to change:
+`test_load_composable_node` asserted `/test` for a composable in a container
+declared `namespace="/test"` at the root context. Real ROS 2 says `/`
+(`Loaded node '/abs_child' in container '/test/abs_container'`), so the test
+had encoded the bug.
+
+## Verified
+
+- Parser suite: 470 tests, plus IR and the resolve crate — clean.
+- End-to-end under play_launch, same probe as the ground-truth run:
+  `/outer/probe/child_one` and `/outer/probe/probe/probe_container`, identical
+  to stock `ros2 launch`.
+- **Golf cart stack, cross-parser: 145/145 nodes equivalent, PASS** — up from
+  137/145. First clean parity result on a real corpus.

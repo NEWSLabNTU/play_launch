@@ -461,7 +461,27 @@ impl ComposableNodeAction {
                 }
             }
         } else {
-            container_namespace.to_string()
+            // Issue #0021 — the LAUNCH CONTEXT namespace, NOT the container's.
+            //
+            // A container's `namespace=` attribute names the container
+            // PROCESS; it is not pushed onto the context, so it never reaches
+            // the composable nodes loaded into it. Verified against stock
+            // `ros2 launch` with a container at `namespace="probe"` inside
+            // `/outer/probe`:
+            //
+            //     /outer/probe/child_one              <- composable node
+            //     /outer/probe/probe/probe_container  <- the container itself
+            //
+            // Reading `container_namespace` here doubled the segment for
+            // every composable in such a container, and did so silently: the
+            // container's own name stayed right, so entity counts matched and
+            // only an FQN comparison showed it. Where a container declares no
+            // namespace of its own the two values are equal, which is why
+            // nearly every launch file hid this.
+            //
+            // `container_namespace` is still correct for `target_container_name`
+            // below — that one IS the container's own name.
+            context.current_namespace()
         };
 
         log::debug!(

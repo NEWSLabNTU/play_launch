@@ -994,7 +994,16 @@ fn test_load_composable_node() {
         initial_node["target_container_name"].as_str().unwrap(),
         "/test/my_container"
     );
-    assert_eq!(initial_node["namespace"].as_str().unwrap(), "/test");
+    // Issue #0021 — the LAUNCH CONTEXT namespace (root here), NOT the
+    // container's `namespace="/test"`. This assertion said "/test" until the
+    // behaviour was checked against stock ROS 2, which reports:
+    //
+    //     Loaded node '/abs_child' in container '/test/abs_container'
+    //
+    // for exactly this shape. A container's namespace names the container
+    // process; it is never pushed onto the context, so it does not reach the
+    // composable nodes loaded into it.
+    assert_eq!(initial_node["namespace"].as_str().unwrap(), "/");
     assert_eq!(initial_node["package"].as_str().unwrap(), "initial_pkg");
 
     // Check dynamic_node_1 (loaded via load_composable_node)
@@ -1419,4 +1428,71 @@ fn test_node_machine_attr_rejected() {
         msg.contains("Unexpected attribute(s) found in `node`") && msg.contains("'machine'"),
         "{msg}"
     );
+}
+
+/// Issue #0021 — a container's `namespace=` must not reach the composable
+/// nodes loaded into it.
+///
+/// Ground truth is stock `ros2 launch`, recorded in the fixture's header
+/// comment: it reports `/outer/probe/child_one` for a container declared at
+/// `namespace="probe"` inside `/outer/probe`, and
+/// `Loaded node '/abs_child' in container '/test/abs_container'` for a
+/// container declared at an absolute `namespace="/test"` at the root.
+///
+/// The parser used to give a composable node the container's already-resolved
+/// namespace, doubling the segment. What made it survive: the container's own
+/// FQN stayed correct, so entity counts matched between parsers and only an
+/// FQN-level comparison could show it.
+#[test]
+fn test_container_namespace_does_not_reach_composable_nodes() {
+    let fixture = get_fixture_path("test_container_namespace_scope.launch.xml");
+    let record = parse_launch_file(&fixture, HashMap::new()).expect("fixture should parse");
+    let json = serde_json::to_value(&record).unwrap();
+
+    let fqn = |n: &serde_json::Value| {
+        let ns = n["namespace"].as_str().unwrap_or("");
+        let name = n["node_name"].as_str().unwrap_or("");
+        if ns == "/" {
+            format!("/{name}")
+        } else {
+            format!("{ns}/{name}")
+        }
+    };
+    let load_nodes = json["load_node"].as_array().unwrap();
+    let of = |name: &str| -> String {
+        load_nodes
+            .iter()
+            .find(|n| n["node_name"].as_str() == Some(name))
+            .map(fqn)
+            .unwrap_or_else(|| panic!("no composable node named {name}"))
+    };
+
+    // The container's `namespace="probe"` plays no part: the context is
+    // /outer/probe, and that is where the node lands.
+    assert_eq!(of("child_one"), "/outer/probe/child_one");
+    // An explicit namespace resolves against the CONTEXT, not the container.
+    assert_eq!(of("child_two"), "/outer/probe/explicit/child_two");
+    // Absolute container namespace, root context.
+    assert_eq!(of("abs_child"), "/abs_child");
+
+    // The containers themselves DO take their own namespace — that half was
+    // always right, and is what hid the bug.
+    let containers = json["container"].as_array().unwrap();
+    let container_fqn = |name: &str| -> String {
+        let c = containers
+            .iter()
+            .find(|c| c["name"].as_str() == Some(name))
+            .unwrap_or_else(|| panic!("no container named {name}"));
+        let ns = c["namespace"].as_str().unwrap_or("");
+        if ns == "/" {
+            format!("/{name}")
+        } else {
+            format!("{ns}/{name}")
+        }
+    };
+    assert_eq!(
+        container_fqn("probe_container"),
+        "/outer/probe/probe/probe_container"
+    );
+    assert_eq!(container_fqn("abs_container"), "/test/abs_container");
 }

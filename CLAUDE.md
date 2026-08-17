@@ -24,6 +24,16 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch executions for pe
 ### Parser Architecture
 
 The parser evaluates conditions during parsing and processes only the selected path. Key rules:
+- **A container's `namespace=` does NOT reach its composable nodes** (#0021).
+  It names the container PROCESS and is never pushed onto the context, so a
+  `<composable_node>` with no namespace of its own takes
+  `context.current_namespace()`. Reading the container's resolved namespace
+  instead doubled a segment for every composable in such a container
+  (`/system/system_monitor/system_monitor/cpu_monitor`), and did so in the
+  RUNNING system, not just the model — `LoadNodeRecord.namespace` is what goes
+  into the LoadNode request, so a graph check could not see it and only stock
+  `ros2 launch` disagreed. Fixture:
+  `tests/fixtures/launch/test_container_namespace_scope.launch.xml`.
 - **Conditional substitutions** (IfElse, Equals, etc.): call `perform()` to evaluate → "true"/"false"
 - **LaunchConfiguration substitutions**: call `__str__()` to preserve as `$(var name)` for replay-time
 - **Float parameters**: always include decimal point (`0.0` not `0`) for ROS type preservation
