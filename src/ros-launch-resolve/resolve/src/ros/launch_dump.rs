@@ -236,6 +236,77 @@ pub fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
     Ok(launch_dump)
 }
 
+/// The oldest `play_launch.dump` record shape this binary can read.
+///
+/// Kept in step with `DUMP_FORMAT_VERSION` in
+/// `python/play_launch/dump/__init__.py`, which documents what each version
+/// means.
+pub const MIN_DUMP_FORMAT_VERSION: u32 = 2;
+
+/// Issue #0020 — refuse a stale `play_launch` Python install at IMPORT time,
+/// before it parses anything.
+///
+/// `ensure_python_scope_paths` below already catches one stale-install
+/// symptom, but only after the record has been read back — and the most
+/// common symptom kills the read itself. A pre-Phase-40.1 install emits
+/// container records carrying just `name` and `namespace`, so
+/// `--parser python` on any launch with a container dies at
+///
+/// ```text
+/// missing field `executable` at line 6 column 9
+/// ```
+///
+/// which names neither the cause nor anything the operator can act on. The
+/// scope-path guard is unreachable from there, and `--parser python` is
+/// exactly what the Rust parser's own error messages tell people to fall back
+/// to.
+///
+/// So ask the module what it is as soon as it is imported. A version too old
+/// — or absent entirely, which is how every pre-#0020 install answers — is
+/// refused with the offending `__file__`, because knowing the remediation
+/// without knowing WHICH of several installs shadowed the source is half an
+/// answer. This cannot regress into a silent pass: an install that does not
+/// define the constant fails the same as one that defines it too low.
+pub fn ensure_python_dump_version(dump_module: &pyo3::Bound<'_, pyo3::PyAny>) -> eyre::Result<()> {
+    use pyo3::prelude::PyAnyMethods;
+
+    let path = dump_module
+        .getattr("__file__")
+        .ok()
+        .and_then(|f| f.extract::<String>().ok())
+        .unwrap_or_else(|| "<unknown location>".to_string());
+
+    let found: Option<u32> = dump_module
+        .getattr("DUMP_FORMAT_VERSION")
+        .ok()
+        .and_then(|v| v.extract().ok());
+
+    match found {
+        Some(v) if v >= MIN_DUMP_FORMAT_VERSION => Ok(()),
+        other => {
+            let describe = match other {
+                Some(v) => format!("version {v}"),
+                None => "no version marker, so it predates the check".to_string(),
+            };
+            eyre::bail!(
+                "The `play_launch` Python package being imported is too old for this \
+                 binary: it reports {describe}, and version {MIN_DUMP_FORMAT_VERSION} \
+                 or newer is required.\n  \
+                 imported from: {path}\n\
+                 This is a stale install shadowing the current source on PYTHONPATH. \
+                 Left to run, it emits container records without `executable` (so \
+                 `--parser python` fails with \"missing field executable\") and \
+                 file scopes without `ScopeOrigin.path` (so contract/sched sidecar \
+                 resolution silently finds nothing).\n\
+                 Fix: prepend the current source's `python/` dir to PYTHONPATH \
+                 (`export PYTHONPATH=<repo>/python:$PYTHONPATH`), or reinstall the \
+                 current wheel (`pip install --force-reinstall --no-deps \
+                 dist/play_launch-*.whl`)."
+            )
+        }
+    }
+}
+
 /// Phase 46.5 — fail loud on a stale pre-Phase-40.1 `play_launch` Python
 /// install. Such an install silently omits `ScopeOrigin.path`, which
 /// disables the provider-sidecar contract + platform-file channels with NO
@@ -280,6 +351,55 @@ pub fn ensure_python_scope_paths(dump: &LaunchDump) -> eyre::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #0020 — the version gate, over the three answers a module can
+    /// give.
+    ///
+    /// The absent case is the one worth a test: every install that predates
+    /// the marker answers that way, so if `getattr` failing were ever treated
+    /// as "assume current", the guard would pass on exactly the installs it
+    /// exists to reject and nothing would look broken until a parse died on a
+    /// serde error again.
+    #[test]
+    fn dump_version_gate_refuses_old_and_unmarked() {
+        use pyo3::types::PyModule;
+
+        // A distinct module name per call: `from_code` registers in
+        // `sys.modules`, so reusing one name silently hands back the FIRST
+        // module and every later case tests the first case again.
+        let mut seq = 0;
+        let mut build = |body: &str| -> eyre::Result<()> {
+            seq += 1;
+            let name = format!("fake_dump_{seq}");
+            pyo3::Python::attach(|py| {
+                let m = PyModule::from_code(
+                    py,
+                    &std::ffi::CString::new(body).unwrap(),
+                    &std::ffi::CString::new(format!("{name}.py")).unwrap(),
+                    &std::ffi::CString::new(name.clone()).unwrap(),
+                )
+                .expect("build fake module");
+                ensure_python_dump_version(m.as_any())
+            })
+        };
+
+        assert!(build(&format!("DUMP_FORMAT_VERSION = {MIN_DUMP_FORMAT_VERSION}")).is_ok());
+        assert!(
+            build(&format!(
+                "DUMP_FORMAT_VERSION = {}",
+                MIN_DUMP_FORMAT_VERSION + 1
+            ))
+            .is_ok()
+        );
+
+        let too_old = build("DUMP_FORMAT_VERSION = 1").unwrap_err().to_string();
+        assert!(too_old.contains("version 1"), "{too_old}");
+
+        let unmarked = build("X = 0").unwrap_err().to_string();
+        assert!(unmarked.contains("predates the check"), "{unmarked}");
+        // The remediation is useless without naming which install answered.
+        assert!(unmarked.contains("imported from:"), "{unmarked}");
+    }
 
     /// Old records (pre-Phase-40) have no `path` key in `ScopeOrigin`.
     /// `#[serde(default)]` must keep these deserializable, with `path()`

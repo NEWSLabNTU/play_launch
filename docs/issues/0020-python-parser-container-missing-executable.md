@@ -1,87 +1,123 @@
 ---
 id: 20
-title: "The Python parser emits containers without `executable`, so its record fails to load"
-status: open
+title: "A stale `play_launch` Python install breaks `--parser python` with an unrecognisable error"
+status: resolved
 type: correctness
 severity: high
 ---
 
-# 0020 — `--parser python` cannot round-trip a real Autoware stack
+# 0020 — `--parser python` failed on a real Autoware stack
 
 **Repo:** `play_launch`
-**Affects:** `python_dump/visitor/*` (the dump side),
-`ros/launch_dump.rs` `NodeContainerRecord` (the load side)
+**Affects:** `python/play_launch/dump/__init__.py`,
+`ros-launch-resolve/resolve/src/python/python_bridge.rs`,
+`ros-launch-resolve/resolve/src/ros/launch_dump.rs`
 
 ## Symptom
 
-    $ play_launch resolve --parser python golfcart_launch golfcart.launch.yaml …
+    $ ros-launch-resolve resolve --parser python golfcart_launch golfcart.launch.yaml …
     Error: loading Python-parsed record /tmp/play_launch-parse-…record.json
     Caused by:
         0: missing field `executable` at line 6 column 9
 
-The record the Python parser just wrote cannot be read back by the Rust side.
-
-## Cause
-
-Container entries in the emitted record carry only a name and a namespace:
+The record the Python parser had just written could not be read back. The
+offending entries carried only a name and a namespace:
 
 ```json
-{
-    "container": [
-        {
-            "name": "pointcloud_container",
-            "namespace": "/"
-        },
+{ "container": [ { "name": "pointcloud_container", "namespace": "/" }, … ] }
 ```
 
-`NodeContainerRecord` requires `executable`. So the dump and the loader
-disagree about the shape of a container, and every launch containing one fails
-— which on an Autoware stack is every launch.
+## What it actually was
 
-## Why it matters more than a broken flag
+**Not a defect in this source tree.** `python/play_launch/dump/visitor/
+composable_node_container.py` builds a full container record — executable,
+package, cmd, params, scope. The package being IMPORTED was a different one:
 
-`--parser python` is not a side path:
+    imported from: /home/aeon/.local/lib/python3.10/site-packages/play_launch/dump/__init__.py
+    fields: ['name', 'namespace']
 
-- It is the **compatibility fallback** the Rust parser's own error messages
-  recommend: *"re-run the same command with `--parser python` (slower, maximum
-  compatibility)"*. That advice currently leads nowhere on any stack with a
-  composable container.
-- It is the **reference for parser parity**. `just compare-dumps` and
-  `scripts/compare_models.py` compare the two parsers; parity cannot be checked
-  on a real corpus while one side cannot complete. Issue #0018's cross-parser
-  key divergence had to be demonstrated on a synthetic five-node fixture for
-  exactly this reason.
-- CLAUDE.md's standing rule is *"when Rust and Python parser behaviours differ,
-  Python's behaviour is always correct"*. That rule is unenforceable where
-  Python cannot run.
+A stale pip install, shadowing the worktree on `sys.path`. The fixture gate
+never caught it because `tests/fixtures/*/justfile` prepends `$REPO_ROOT/
+python` to `PYTHONPATH` for exactly this reason — so `just compare-dumps`
+passed while any invocation without that line failed.
+
+The first diagnosis in this file — "the dump side and the loader disagree about
+the shape of a container" — was wrong in a specific and instructive way. Two
+container-record definitions exist in the tree, and the stale one
+(`src/ros-launch-resolve/parser/src/python_dump/launch_dump.py`, an unused
+vendored fork carrying `name`/`namespace` only) matched the broken output
+exactly. Matching the symptom is not the same as being the code that ran.
+
+## The real defect: the failure was unrecognisable
+
+A stale install shadowing the current source is the most common way
+`--parser python` breaks, and every symptom of it surfaces somewhere that
+cannot name the cause:
+
+- **Container records without `executable`** — a serde error naming a line and
+  column in a temporary file, on a path where nothing suggests looking at
+  `sys.path`.
+- **File scopes without `ScopeOrigin.path`** — no error at all. Contract and
+  platform-file sidecar resolution silently finds nothing, and the degraded
+  model scores as PASS.
+
+The second already had a guard, `ensure_python_scope_paths` (Phase 46.5). It
+could not fire here: it runs on the loaded dump, and the stale install kills
+the load itself. A guard placed after the thing it is meant to explain only
+covers the symptoms that let execution reach it.
+
+## Fix
+
+Ask the module what it is, at import, before it parses anything.
+
+`play_launch.dump` now exports `DUMP_FORMAT_VERSION` (currently `2`);
+`ensure_python_dump_version` reads it through PyO3 in `python_bridge.rs`
+immediately after the import and refuses anything older, **or absent** — which
+is how every pre-existing install answers, so the check cannot degrade into a
+silent pass. The message names the offending `__file__`:
+
+    Error: The `play_launch` Python package being imported is too old for this
+    binary: it reports no version marker, so it predates the check, and version
+    2 or newer is required.
+      imported from: /home/aeon/.local/lib/python3.10/site-packages/play_launch/dump/__init__.py
+    This is a stale install shadowing the current source on PYTHONPATH. …
+    Fix: prepend the current source's `python/` dir to PYTHONPATH …
+
+Naming the file is the part that matters. The pre-existing guard already gave
+the remediation; what it never gave was WHICH of several installs was in the
+way, and on a machine with a pip install, a colcon `install/` tree and a
+worktree, that is the whole question.
+
+Bump `DUMP_FORMAT_VERSION` and `MIN_DUMP_FORMAT_VERSION` together whenever the
+record shape gains a field the Rust side requires.
+
+## Verified
+
+With the stale install on the path — refused at import, before parsing.
+With `python/` prepended — `container_events` resolves, and the golf cart
+stack resolves to **145 nodes** under `--parser python`.
+
+## What it unblocked, and what that found immediately
+
+Parser parity had only ever been checkable on the fixtures whose justfiles
+carried the `PYTHONPATH` line. Running `scripts/compare_models.py` across both
+parsers on the golf cart stack — 145 nodes, the first real-corpus parity run —
+gives 137/137 matched nodes functionally equivalent and **8 nodes whose FQNs
+disagree**:
+
+    Rust:   /system/system_monitor/system_monitor/cpu_monitor
+    Python: /system/system_monitor/cpu_monitor
+
+`system_monitor` appears twice on the Rust side, for every composable node in
+`autoware_system_monitor`'s container — the one container in the stack with an
+explicit `namespace=` attribute. Python is authoritative, so the Rust parser
+(the DEFAULT) is wrong here. Filed separately as #0021.
 
 ## Not the same as the failure it was mistaken for
 
-Earlier in the same investigation `--parser python` failed on this stack with
-`KeyError: ''`, and that was reported here as a play_launch bug more than once.
-It was not: the cause was `gnss_receiver` defaulting to `""` in the launch file
-and reaching a dict lookup in the sensor kit, which broke **stock `ros2 launch`
-too** (27 nodes up, then `Caught exception in launch: ''`). With that fixed in
-the launch file, the Python parser gets further and lands on THIS defect, which
-is genuinely ours.
-
-Worth keeping the distinction: one error message hid two unrelated faults, and
-the first was assumed to be the second.
-
-## Reproducing
-
-Any launch with a `<node_container>`; the golf cart stack is one.
-
-    play_launch resolve --parser python golfcart_launch golfcart.launch.yaml \
-        host:=master rviz:=false imu_source:=xsens camera_model:=gscam -o /tmp/m.yaml
-
-The temporary record is left on disk when loading fails, so the offending JSON
-can be inspected directly.
-
-## Open question
-
-Which side is wrong. Either the visitor should emit the container's executable
-(it knows it — `component_container`, `component_container_mt`, or an override),
-or `executable` should be optional on `NodeContainerRecord` and defaulted at
-use. The first looks right: a container with no executable is not something the
-spawn path can act on, so accepting it would move the failure later.
+Before this, `--parser python` failed on the same stack with `KeyError: ''`,
+reported here as a play_launch bug more than once. It was not: `gnss_receiver`
+defaulted to `""` in the launch file and reached a dict lookup in the sensor
+kit, which broke stock `ros2 launch` too. Three distinct faults surfaced
+through one command in sequence — a launch-file bug, a stale install, and a
+parser bug — and each was assumed to be the previous one.

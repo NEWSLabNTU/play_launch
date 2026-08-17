@@ -14,6 +14,28 @@ from ros2launch.api import MultipleLaunchFilesError, get_share_file_path_from_pa
 
 from .inspector import LaunchInspector
 
+# The record shape this package emits. The Rust side reads it through PyO3
+# immediately after importing this module and refuses to run an install older
+# than it requires (`ros/launch_dump.rs::MIN_DUMP_FORMAT_VERSION`).
+#
+# Why a version rather than letting the parse fail: a stale install shadowing
+# the current source on PYTHONPATH is the single most common way `--parser
+# python` breaks, and every symptom of it is unrecognisable at the point it
+# surfaces. Version 1 emitted container records carrying only `name` and
+# `namespace`, so the Rust loader reported `missing field 'executable' at line
+# 6 column 9` — true, and useless. An older install still omits
+# `ScopeOrigin.path`, which produces no error at all, just a silently degraded
+# model (see `ensure_python_scope_paths`).
+#
+# Bump this whenever the record shape gains a field the Rust side requires,
+# and raise the Rust minimum in the same commit.
+#
+#   1 — pre-Phase-40.1: no `ScopeOrigin.path`; container records lacked
+#       `executable`/`package`/`cmd`. Implied by the constant's ABSENCE, since
+#       no such install defines it.
+#   2 — current: full container records, scope paths.
+DUMP_FORMAT_VERSION = 2
+
 
 def main() -> int:
     """Entry point for dump_launch command."""

@@ -92,6 +92,10 @@ pub fn run_dump_launch(
                 .import("play_launch.dump")
                 .wrap_err("Failed to import play_launch.dump module")?;
 
+            // Refuse a stale install BEFORE parsing. See
+            // `ros::launch_dump::ensure_python_dump_version`.
+            crate::ros::launch_dump::ensure_python_dump_version(&dump_module)?;
+
             let main_fn = dump_module
                 .getattr("main")
                 .wrap_err("Failed to get main function from dump module")?;

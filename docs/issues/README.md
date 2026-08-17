@@ -17,12 +17,13 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0020** — `--parser python` cannot round-trip any launch with a container:
-the dump emits container entries carrying only `name`/`namespace` while
-`NodeContainerRecord` requires `executable`, so the record it just wrote fails
-to load. Matters beyond a broken flag — it is the fallback the Rust parser's
-own errors recommend, and the reference side for parser parity, so
-`just compare-dumps` cannot run on a real corpus. See `0020-*`.
+**#0021** — the Rust parser (the DEFAULT) gives a composable node the
+CONTAINER's namespace where ROS 2 gives it the launch context's, so every
+composable in a container that declares its own `namespace=` gets a doubled
+segment: `/system/system_monitor/system_monitor/cpu_monitor` against ROS 2's
+`/system/system_monitor/cpu_monitor`. 8 nodes in the golf cart stack. Confirmed
+against stock `ros2 launch`, not just against the Python parser. Silent — the
+model is self-consistent and merely describes a different system. See `0021-*`.
 
 **#0017** — the model's node FQN is not the node's ROS name. For a `<node>` with
 no `name=`, `structure.nodes` keys by the EXECUTABLE while the node registers
@@ -43,6 +44,14 @@ and `rt_av_demo`'s `ab` recipe refuses rather than reporting a vacuous
 comparison. See `0015-*`.
 
 ## Resolved
+
+**#0020** — `--parser python` died on any launch with a container
+(`missing field `executable``) — not a defect in this tree, but a STALE pip
+install shadowing the worktree on `sys.path`. Fixed by asking the module its
+`DUMP_FORMAT_VERSION` at import, before it parses anything, and naming the
+offending `__file__`: the pre-existing scope-path guard ran on the loaded dump,
+which the stale install never produced. Unblocked the first real-corpus parity
+run, which found #0021. See `0020-*`.
 
 **#0019** — a composable whose CONSTRUCTOR ran past 30 s was SIGKILLed by the
 isolated container mid-construction, and play_launch reported it as loaded
