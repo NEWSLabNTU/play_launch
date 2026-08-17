@@ -14,65 +14,101 @@ use crate::error::SubstitutionError;
 pub(crate) fn evaluate_expression(expr: &str) -> Result<String, SubstitutionError> {
     let expr = expr.trim();
 
-    // Handle outer quote wrapping from XML attribute patterns:
-    //   $(eval &quot;...&quot;)  → outer "..." from XML &quot; escaping
-    //   $(eval '...')         → outer '...' used in XML attributes
+    // Mirror what launch's frontend does, in the order it does it.
     //
-    // Strip only if the opening quote's matching close is the LAST character.
-    // This distinguishes wrapper quotes from Python string literals:
-    //   "'a' == 'b'"  → first " matches last " (no " in between) → strip
-    //   "'[..] ' + '""]'"  → first ' has matching ' after ']' (not last) → don't strip...
-    //   Actually we need: first quote's matching close = last char.
+    // `$(eval '...')` in an XML attribute is a QUOTED TEMPLATE: the grammar
+    // (launch/frontend/grammar.lark, rule `single_quoted_template`) consumes
+    // the outer quotes as delimiters, and `\'` inside is an escaped literal
+    // quote which `replace_escaped_characters` — `re.sub(r'\\(.)', r'\1')` —
+    // later turns back into `'`.
     //
-    // For double quotes: strip if inner content has no unescaped double quotes.
-    // For single quotes: strip if inner content has no unescaped single quotes
-    //   AND the expression doesn't look like Python single-quoted strings
-    //   (e.g., 'foo' + 'bar' starts with ' but is not a wrapper).
+    // So the delimiter decision must be made ESCAPE-AWARE, and unescaping must
+    // happen after it. Doing them the other way round is what broke
     //
-    // Handle outer quote wrapping from XML $(eval) patterns:
-    //   $(eval &quot;...&quot;)  → outer "..." wrapping inner '...' Python expressions
-    //   $(eval '&quot;...&quot;') → outer '...' wrapping inner "..." Python expressions
+    //     if="$(eval '\'$(var pose_source)\' == \'aruco\'')"
     //
-    // Strip outer quotes when the inner content uses the OTHER quote type.
-    // Don't strip when inner uses the SAME quote (e.g., 'foo' + 'bar' or "" + "").
-    let expr = if expr.len() >= 2 {
-        let first = expr.as_bytes()[0];
-        let last = expr.as_bytes()[expr.len() - 1];
-        let other_quote = if first == b'"' { b'\'' } else { b'"' };
-
-        if (first == b'"' || first == b'\'') && first == last {
-            let inner = &expr[1..expr.len() - 1];
-            let inner_trimmed = inner.trim();
-
-            if inner_trimmed.is_empty() {
-                // Empty quotes like '' or "" — don't strip
-                expr
-            } else if inner_trimmed.as_bytes()[0] == other_quote {
-                // Inner starts with the other quote type → outer is a wrapper
-                // e.g., "'a' == 'b'" or '"api"=="api"'
-                inner
-            } else if !inner.contains(first as char) {
-                // Inner has no instances of the same quote → safe to strip
-                inner
-            } else if first == b'"' {
-                // Outer " with inner " → ambiguous. Try unstripped first.
-                match python_eval_fallback(expr) {
-                    Ok(result) => return Ok(result),
-                    Err(_) => inner,
-                }
-            } else {
-                // Outer ' with inner ' → Python string expressions like 'a' + 'b'
-                // Don't strip — these are Python string literals, not XML wrappers.
-                expr
-            }
-        } else {
-            expr
-        }
+    // a form real `ros2 launch` accepts (measured, both branches): the
+    // heuristic saw the escaped inner quotes as real ones, declined to strip
+    // the outer pair, and unescaping then produced `''ndt' == 'aruco''` —
+    // a Python SyntaxError.
+    let expr = if outer_quotes_are_delimiters(expr) {
+        &expr[1..expr.len() - 1]
     } else {
         expr
     };
+    let expr = unescape(expr);
 
-    python_eval_fallback(expr)
+    python_eval_fallback(expr.trim())
+}
+
+/// Undo the frontend's escaping: a backslash escapes whatever follows it.
+///
+/// Matches launch's `replace_escaped_characters`, which is
+/// `re.sub(r'\\(.)', r'\1', data)` — deliberately general rather than
+/// `\'`-only, because that is what the reference implementation does to every
+/// text fragment it builds.
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            // A trailing lone backslash has nothing to escape; keep it.
+            match chars.next() {
+                Some(next) => out.push(next),
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Whether the outer quote pair delimit a template rather than being part of a
+/// Python string literal.
+///
+/// True when the expression opens with a quote, closes with an UNESCAPED quote
+/// of the same kind, and contains no unescaped quote of that kind in between —
+/// which is exactly when the frontend grammar would have treated them as
+/// delimiters.
+///
+/// Counter-examples this must reject:
+///   `'foo' + 'bar'`  — opens and closes with `'`, but the inner quotes are
+///                      unescaped, so these are Python string literals.
+///   `''`             — nothing between them; stripping yields an empty
+///                      expression, which `eval` rejects.
+fn outer_quotes_are_delimiters(expr: &str) -> bool {
+    let bytes = expr.as_bytes();
+    if bytes.len() < 2 {
+        return false;
+    }
+    let quote = bytes[0];
+    if quote != b'"' && quote != b'\'' {
+        return false;
+    }
+
+    let inner = &expr[1..expr.len() - 1];
+    if inner.trim().is_empty() {
+        return false;
+    }
+
+    // Walk the inner text tracking escapes. The closing quote must be
+    // unescaped, and no unescaped quote of the same kind may appear before it.
+    let mut escaped = false;
+    for &b in inner.as_bytes() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if b == b'\\' {
+            escaped = true;
+        } else if b == quote {
+            return false;
+        }
+    }
+    // A trailing backslash would escape the closing quote, so it is not a
+    // delimiter at all.
+    !escaped && bytes[bytes.len() - 1] == quote
 }
 
 /// Replace standalone ROS-style boolean literals (true/false) with Python-style (True/False).
@@ -140,9 +176,8 @@ fn replace_ros_booleans(expr: &str) -> String {
 fn python_eval_fallback(expr: &str) -> Result<String, SubstitutionError> {
     use pyo3::{prelude::*, types::PyDict};
 
-    // Unescape XML-style backslash-quotes (\' → ') that come from launch file
-    // attribute values like value="[\'ndt\',\'yabloc\']"
-    let expr = expr.replace("\\'", "'");
+    // Unescaping happens in `evaluate_expression`, before the delimiter
+    // decision that depends on it.
 
     // Convert ROS-style boolean literals to Python-style before eval.
     // ROS uses lowercase true/false, Python uses True/False.
@@ -234,4 +269,85 @@ fn python_eval_fallback(expr: &str) -> Result<String, SubstitutionError> {
 
         Ok(normalized)
     })
+}
+
+#[cfg(test)]
+mod escape_tests {
+    use super::*;
+
+    /// The form that broke the golf cart's main launch file. The BOOLEAN VALUES
+    /// were measured against real `ros2 launch` first, both branches of each
+    /// comparison, so these pin conformance rather than our preference. The
+    /// lowercase spelling is ours: `$(eval)` results feeding `if=`/`unless=`
+    /// are normalized to "true"/"false" (see CLAUDE.md).
+    #[test]
+    fn escaped_quotes_inside_a_quoted_template_are_content() {
+        assert_eq!(
+            evaluate_expression(r"'\'ndt\' == \'aruco\''").unwrap(),
+            "false"
+        );
+        assert_eq!(
+            evaluate_expression(r"'\'aruco\' == \'aruco\''").unwrap(),
+            "true"
+        );
+        // The `not in [...]` variant from the same file.
+        assert_eq!(
+            evaluate_expression(r"'\'ndt\' not in [\'cuda_ndt\', \'aruco\']'").unwrap(),
+            "true"
+        );
+        assert_eq!(
+            evaluate_expression(r"'\'aruco\' not in [\'cuda_ndt\', \'aruco\']'").unwrap(),
+            "false"
+        );
+    }
+
+    /// The `&quot;`-wrapped form used elsewhere in the same repository. It
+    /// worked before and must keep working.
+    #[test]
+    fn double_quoted_template_still_unwraps() {
+        assert_eq!(evaluate_expression("\"'ndt' == 'cuda_ndt'\"").unwrap(), "false");
+        assert_eq!(
+            evaluate_expression("\"'cuda_ndt' == 'cuda_ndt'\"").unwrap(),
+            "true"
+        );
+    }
+
+    /// Outer quotes that are NOT delimiters: a Python expression that merely
+    /// begins and ends with a string literal. Stripping here would corrupt it.
+    #[test]
+    fn python_string_literals_are_not_treated_as_delimiters() {
+        assert_eq!(evaluate_expression("'foo' + 'bar'").unwrap(), "foobar");
+        assert_eq!(evaluate_expression("'a' == 'a'").unwrap(), "true");
+    }
+
+    #[test]
+    fn empty_and_degenerate_inputs_do_not_panic() {
+        // `''` must not be stripped to nothing — eval('') is a SyntaxError.
+        assert_eq!(evaluate_expression("''").unwrap(), "");
+        assert!(evaluate_expression("").is_err());
+    }
+
+    #[test]
+    fn unescape_matches_the_reference_rule() {
+        // launch: re.sub(r'\\(.)', r'\1') — a backslash escapes ANY character.
+        assert_eq!(unescape(r"\'a\'"), "'a'");
+        assert_eq!(unescape(r"a\\b"), r"a\b");
+        assert_eq!(unescape(r"no escapes"), "no escapes");
+        // A lone trailing backslash has nothing to escape and is kept.
+        assert_eq!(unescape(r"trailing\"), r"trailing\");
+    }
+
+    #[test]
+    fn delimiter_detection_is_escape_aware() {
+        assert!(outer_quotes_are_delimiters(r"'\'a\' == \'b\''"));
+        assert!(outer_quotes_are_delimiters("\"'a' == 'b'\""));
+        // Unescaped inner quotes of the same kind => Python literals.
+        assert!(!outer_quotes_are_delimiters("'foo' + 'bar'"));
+        // Nothing to unwrap.
+        assert!(!outer_quotes_are_delimiters("''"));
+        assert!(!outer_quotes_are_delimiters("1 + 2"));
+        // A trailing backslash escapes the closing quote, so the pair is not
+        // balanced and must not be treated as delimiters.
+        assert!(!outer_quotes_are_delimiters(r"'a\'"));
+    }
 }
