@@ -64,6 +64,17 @@ build:
     (cd src/ros-launch-resolve && cargo build --release --bin ros-launch-resolve)
     # See build-wheel: setuptools' build/lib staging is never pruned.
     rm -rf build/lib build/bdist.*
+    # The interception .so was verified present by `build-interception` above.
+    # Check it again here: on the v0.9.0 release build it existed at that point
+    # and was gone by the time bundle_wheel.sh looked, ~86s later, with only a
+    # cargo build in another workspace in between. If that recurs, this says so
+    # at the point of loss instead of blaming the build that did succeed.
+    so="src/play_launch_interception/target/release/libplay_launch_interception.so"
+    if [ ! -f "$so" ]; then
+        echo "ERROR: $so was built earlier in this recipe and has since disappeared." >&2
+        echo "       Nothing between those two points should remove it." >&2
+        exit 1
+    fi
     scripts/bundle_wheel.sh
     uv build --wheel
     echo ""
@@ -102,7 +113,20 @@ build-interception:
     set -e
     (cd src/spsc_shm && cargo build --release)
     (cd src/play_launch_interception && cargo build --release --features {{ros_distro}})
-    echo "Built: src/play_launch_interception/target/release/libplay_launch_interception.so"
+    # Verify, do not assert. This line used to be a bare `echo "Built: <path>"`
+    # — a hardcoded string that printed whether or not the file existed. The
+    # v0.9.0 release build printed it at 06:01:04 and then bundle_wheel.sh
+    # failed at 06:02:30 with "not found" for that exact path, and the echo is
+    # why the log could not distinguish "cargo never emitted it" from "it was
+    # emitted and then disappeared".
+    so="src/play_launch_interception/target/release/libplay_launch_interception.so"
+    if [ ! -f "$so" ]; then
+        echo "ERROR: cargo reported success but did not produce $so" >&2
+        echo "Contents of the target dir:" >&2
+        ls -la src/play_launch_interception/target/release/ 2>&1 | sed 's/^/  /' >&2
+        exit 1
+    fi
+    echo "Built: $so ($(stat -c %s "$so") bytes)"
 
 # Bundle colcon artifacts + build wheel (no colcon rebuild)
 build-wheel:
