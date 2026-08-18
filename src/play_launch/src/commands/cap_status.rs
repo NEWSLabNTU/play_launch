@@ -197,7 +197,12 @@ pub fn explain(status: &CapStatus, path: &Path, cap: Cap) -> Vec<String> {
     match status {
         CapStatus::Present => Vec::new(),
         CapStatus::NeverGranted => vec![
-            format!("{} lacks {} — {}.", path.display(), cap.name(), cap.consequence()),
+            format!(
+                "{} lacks {} — {}.",
+                path.display(),
+                cap.name(),
+                cap.consequence()
+            ),
             fix,
         ],
         CapStatus::BinaryChanged { granted } => vec![
@@ -270,7 +275,10 @@ mod tests {
         // Says the behaviour is correct, so the user does not go looking for
         // a bug in setcap.
         assert!(rebuilt.contains("by design"), "{rebuilt}");
-        assert!(rebuilt.contains("expected after every rebuild"), "{rebuilt}");
+        assert!(
+            rebuilt.contains("expected after every rebuild"),
+            "{rebuilt}"
+        );
     }
 
     /// Unknown must not masquerade as absent: "cannot check" and "not there"

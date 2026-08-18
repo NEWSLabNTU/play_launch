@@ -54,7 +54,11 @@ install-deps:
     # by `just install-deps` failed at the last step of `just build` with
     # `uv: command not found` — after the whole colcon and cargo build had
     # already run.
-    pip install uv 'wheel>=0.40'
+    # ruff is `just check`'s Python linter, uv is `just build`'s wheel
+    # frontend. Both were used by CI and by these recipes while install-deps
+    # provided neither, so a machine set up only by install-deps failed partway
+    # through a build or a check with `command not found`.
+    pip install uv 'wheel>=0.40' ruff
 
     source /opt/ros/{{ros_distro}}/setup.bash
     rosdep update

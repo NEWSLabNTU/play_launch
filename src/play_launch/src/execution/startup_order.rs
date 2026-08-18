@@ -44,8 +44,10 @@
 //! prevent the rest of the system from starting; when it fires, the members
 //! still missing are named.
 
-use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
+};
 
 use glob::Pattern;
 use ros_launch_manifest_model::SystemModel;

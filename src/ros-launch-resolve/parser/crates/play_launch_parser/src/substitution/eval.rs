@@ -182,7 +182,7 @@ fn python_eval_fallback(expr: &str) -> Result<String, SubstitutionError> {
     // Convert ROS-style boolean literals to Python-style before eval.
     // ROS uses lowercase true/false, Python uses True/False.
     // Only replace standalone words (not inside quotes).
-    let expr = replace_ros_booleans(&expr);
+    let expr = replace_ros_booleans(expr);
     let expr = expr.as_str();
 
     // Trim whitespace — Python's compile('eval') rejects leading spaces
@@ -305,7 +305,10 @@ mod escape_tests {
     /// worked before and must keep working.
     #[test]
     fn double_quoted_template_still_unwraps() {
-        assert_eq!(evaluate_expression("\"'ndt' == 'cuda_ndt'\"").unwrap(), "false");
+        assert_eq!(
+            evaluate_expression("\"'ndt' == 'cuda_ndt'\"").unwrap(),
+            "false"
+        );
         assert_eq!(
             evaluate_expression("\"'cuda_ndt' == 'cuda_ndt'\"").unwrap(),
             "true"

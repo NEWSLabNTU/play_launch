@@ -84,7 +84,7 @@ impl RunEvent {
     /// it. `None` when the message carried no `header.stamp` (stamp 0), which
     /// cannot be correlated with anything.
     pub fn stamp_key(&self) -> Option<u64> {
-        ((self.s != 0) || (self.ns != 0)).then(|| ((self.s as u32 as u64) << 32) | self.ns as u64)
+        ((self.s != 0) || (self.ns != 0)).then_some(((self.s as u32 as u64) << 32) | self.ns as u64)
     }
 }
 
