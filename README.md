@@ -4,6 +4,9 @@ Resolve, run, and analyze ROS 2 launch executions with resource monitoring and i
 
 [![Watch the demo](assets/demo.png)](assets/demo.mp4)
 
+Upgrading? [CHANGELOG.md](CHANGELOG.md) lists the breaking changes — 0.9.0 has
+several, and a few of them change behaviour rather than erroring.
+
 ## Installation
 
 Requires Ubuntu 22.04+ with ROS 2 (Humble or Jazzy), Python 3.10+, and:
