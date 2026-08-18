@@ -481,7 +481,29 @@ test-all:
     # play_launch in adc33a7) — several tests drive it directly.
     (cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve)
     echo ""
-    just _run-suites all
+    # Collect the parity result rather than aborting on it (`set -e` is on),
+    # so a parity failure does not hide the test suites behind it — and vice
+    # versa. Both are reported, and either one fails the recipe.
+    parity=0
+    ptlog=$(mktemp -t play_launch_parity.XXXXXX)
+    just test-parity 2>&1 | tee "$ptlog"
+    parity=${PIPESTATUS[0]}
+    echo ""
+    suites=0
+    just _run-suites all || suites=$?
+    # Parity runs FIRST, so its skips have scrolled past by the time the
+    # skipped-test report prints. Repeat them there — a gate that quietly
+    # stopped running is the failure this whole recipe is guarding against,
+    # and it must not be visible only in scrollback.
+    if grep -qE "^[[:space:]]*SKIP: parity" "$ptlog"; then
+        grep -E "^[[:space:]]*SKIP: parity" "$ptlog" | sed 's/^[[:space:]]*/        1 /'
+    fi
+    rm -f "$ptlog"
+    if [ "$parity" -ne 0 ]; then
+        echo ""
+        echo "Cross-parser parity FAILED — see the 'parity/' section above." >&2
+    fi
+    exit $(( parity != 0 || suites != 0 ))
 
 # Internal: run every test suite ONCE, and derive both the console output and
 # the skipped-test report from that single pass. `mode` is `fast` or `all`.
@@ -564,6 +586,93 @@ test-unit:
     set -e
     cd src/ros-launch-resolve/parser
     cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final
+
+# Cross-parser parity gates: does the Rust parser produce the same SystemModel
+# as the Python one, on real launch trees?
+#
+# Why this is a recipe and not a comment in four fixture justfiles. The gates
+# existed and ran only when somebody remembered. In that state one of them
+# found #0021 — the Rust parser gave a composable node the CONTAINER's
+# namespace where ROS 2 gives it the launch context's, doubling a segment for
+# 8 nodes on a real Autoware stack — a defect that had changed the RUNNING
+# topology (the model and the live graph were wrong together, so no graph
+# check could see it) and had survived every automated check in the repo.
+#
+# A gate nobody runs is a gate that rots, so `test-all` runs them.
+#
+# Each fixture is guarded by its OWN precondition and reports `SKIP:` in the
+# form the skipped-test report matches, because an Autoware-less machine must
+# produce a visible skip rather than a red gate — and a gate that silently
+# stops running is exactly what this recipe exists to prevent.
+test-parity:
+    #!/usr/bin/env bash
+    # No `set -e`: gates are collected and reported together.
+    set -u
+    REPO_ROOT="$(pwd)"
+    failed=0
+    ran=0
+
+    if [ ! -f "$REPO_ROOT/install/setup.bash" ]; then
+        echo "  SKIP: parity: install/setup.bash missing — run 'just build' first"
+        exit 0
+    fi
+    if [ ! -x "$REPO_ROOT/src/ros-launch-resolve/target/release/ros-launch-resolve" ] \
+       && [ ! -x "$REPO_ROOT/src/ros-launch-resolve/target/debug/ros-launch-resolve" ]; then
+        echo "  SKIP: parity: ros-launch-resolve not built — cargo build --bin ros-launch-resolve"
+        exit 0
+    fi
+
+    gate() {
+        local name="$1" dir="$2"
+        ran=$((ran + 1))
+        echo "--- parity/$name"
+        if (cd "$dir" && just compare-dumps) > "/tmp/parity_$name.log" 2>&1; then
+            grep -E "^  (Result|  total)" "/tmp/parity_$name.log" | sed 's/^/  /' || true
+        else
+            echo "  FAILED — full output:"
+            sed 's/^/    /' "/tmp/parity_$name.log"
+            failed=1
+        fi
+        # The recipes leave their two models behind; they are build output.
+        rm -f "$dir/model_rust.yaml" "$dir/model_python.yaml"
+    }
+
+    echo "=== Cross-parser parity (SystemModel: Rust vs Python) ==="
+
+    gate simple_test      tests/fixtures/simple_test
+    gate container_events tests/fixtures/container_events
+
+    if [ -d tests/fixtures/rt_workspace/install ]; then
+        gate rt_workspace tests/fixtures/rt_workspace
+    else
+        echo "  SKIP: parity/rt_workspace: fixture not built (cd tests/fixtures/rt_workspace && just build)"
+    fi
+
+    # Autoware is the only corpus large enough to have exposed #0021, and the
+    # least likely to be present. Its own `check-autoware` exits 1 when the
+    # environment is absent, which would read as a parity failure — so the
+    # precondition is checked HERE and reported as a skip.
+    autoware_reason=""
+    if [ ! -f tests/fixtures/autoware/activate_autoware.sh ]; then
+        autoware_reason="activate_autoware.sh not present"
+    elif ! (cd tests/fixtures/autoware && just check-autoware) >/dev/null 2>&1; then
+        autoware_reason="Autoware environment not activatable (see activate_autoware.sh)"
+    elif [ ! -d "${MAP_PATH:-$HOME/autoware_map/sample-map-planning}" ]; then
+        autoware_reason="map not found at ${MAP_PATH:-$HOME/autoware_map/sample-map-planning}"
+    fi
+    if [ -n "$autoware_reason" ]; then
+        echo "  SKIP: parity/autoware: $autoware_reason"
+    else
+        gate autoware tests/fixtures/autoware
+    fi
+
+    echo ""
+    if [ "$failed" -ne 0 ]; then
+        echo "Parity: FAILED ($ran gate(s) ran)" >&2
+    else
+        echo "Parity: ok ($ran gate(s) ran)"
+    fi
+    exit "$failed"
 
 # Run all integration tests (simple + Autoware)
 test-integration:

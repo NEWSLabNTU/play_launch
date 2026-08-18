@@ -375,7 +375,8 @@ shows up as harmless `[[patch.unused]]` churn in
 
 ```bash
 just test              # Parser unit (371) + scope (9) + fast integration (6), ~3s
-just test-all          # Parser unit (371) + scope (9) + all integration (42), ~70s
+just test-all          # Everything: unit + all integration + cross-parser parity
+just test-parity       # Cross-parser parity gates alone (Rust vs Python SystemModel)
 just test-unit         # Parser unit tests only
 just test-integration  # All integration tests (simple + Autoware)
 cargo test -p play_launch_parser --features ir  # IR tests (42 tests, not included in default)
@@ -387,7 +388,15 @@ Two crates: parser unit tests (`src/play_launch_parser/`) and integration tests 
 
 **DDS isolation**: `play_launch_cmd()` in `tests/src/fixtures.rs` assigns a unique `ROS_DOMAIN_ID` per invocation (PID + counter) so concurrent nextest processes don't cross-talk over DDS.
 
-Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading,rt_workspace}/` — 4 of them (`autoware`, `simple_test`, `container_events`, `rt_workspace`) have a `just compare-dumps` recipe (model-based parser parity, self-contained — resolves both parsers itself; Phase 47.B5 removed the `dump-rust`/`dump-python`/`dump-both`/`compare-dumps-record` record.json-based recipes). `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
+Test workspaces: `tests/fixtures/{autoware,simple_test,sequential_loading,concurrent_loading,container_events,parallel_loading,rt_workspace}/` — 4 of them (`autoware`, `simple_test`, `container_events`, `rt_workspace`) have a `just compare-dumps` recipe (model-based parser parity, self-contained — resolves both parsers itself; Phase 47.B5 removed the `dump-rust`/`dump-python`/`dump-both`/`compare-dumps-record` record.json-based recipes). **`just test-all` runs the parity gates** (`just test-parity`), because a gate
+nobody runs is a gate that rots: in that state one of them found #0021 — the
+Rust parser gave a composable node the CONTAINER's namespace where ROS 2 gives
+it the launch context's — a defect that had changed the RUNNING topology of a
+144-node stack and had survived every automated check in the repo. Each fixture
+is guarded separately and reports `SKIP: parity/<name>: <reason>` (repeated in
+the final skipped-test report, since parity runs first and would otherwise
+scroll past), so an Autoware-less machine gets a visible skip rather than a red
+gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
 
