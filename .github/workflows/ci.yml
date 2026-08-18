@@ -46,7 +46,9 @@ jobs:
         submodules: recursive
 
     - name: Ensure build tools
-      run: pip3 install 'colcon-cargo-ros2>=0.4.0'
+      run: |
+        pip3 install 'colcon-cargo-ros2==0.5.1'
+        python3 -c "import importlib.metadata as m; print('colcon-cargo-ros2', m.version('colcon-cargo-ros2'))"
 
     - name: Build workspace
       run: |

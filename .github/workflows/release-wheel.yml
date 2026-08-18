@@ -96,7 +96,11 @@ jobs:
             source ~/.cargo/env
 
             # Install Python build tools
-            pip3 install 'colcon-cargo-ros2>=0.4.0' build 'wheel>=0.40' uv
+            pip3 install 'colcon-cargo-ros2==0.5.1' build 'wheel>=0.40' uv
+            # State the toolchain rather than assume it. This pin used to be
+            # >=0.4.0, so CI silently tracked whatever PyPI served that day and
+            # could differ from any developer machine with no commit to show it.
+            python3 -c \"import importlib.metadata as m; print('colcon-cargo-ros2', m.version('colcon-cargo-ros2'))\"
 
             # Install just
             curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
