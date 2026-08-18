@@ -62,6 +62,24 @@ jobs:
         source install/setup.bash
         just test
 
+    # The cross-parser parity gates. `just test-all` runs them, but CI runs
+    # `just test` (the fast suite), so until now nothing ran them
+    # automatically — they only ever ran when someone remembered. In that
+    # state one of them found #0021: the Rust parser gave a composable node
+    # the CONTAINER's namespace where ROS 2 gives it the launch context's,
+    # which had changed the RUNNING topology of a 144-node stack and survived
+    # every automated check in this repo.
+    #
+    # Run separately from `just test` rather than by switching CI to
+    # `test-all`, because the parity gates cost seconds while the full
+    # integration suite costs minutes, and the Autoware gate self-skips here
+    # (no Autoware install on the runner) with a visible SKIP line.
+    - name: Cross-parser parity gates
+      run: |
+        source /opt/ros/humble/setup.bash
+        source install/setup.bash
+        just test-parity
+
     - name: Set up Node.js
       # `just check` runs the web UI lint + typecheck. Pinned via setup-node
       # rather than apt: Ubuntu 22.04 ships Node 12, on which the modern

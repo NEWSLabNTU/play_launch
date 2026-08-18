@@ -43,6 +43,13 @@ install-deps:
 
     # Install colcon-cargo-ros2
     pip install 'colcon-cargo-ros2==0.5.1'
+    # `just build` ends in `uv build --wheel`, so uv is a build
+    # dependency, not an optional convenience. It was missing here while
+    # both CI workflows install it explicitly, so a machine set up purely
+    # by `just install-deps` failed at the last step of `just build` with
+    # `uv: command not found` — after the whole colcon and cargo build had
+    # already run.
+    pip install uv 'wheel>=0.40'
 
     source /opt/ros/{{ros_distro}}/setup.bash
     rosdep update
@@ -425,6 +432,15 @@ clean:
     rm -rf build install log dist target
     rm -rf tests/target
     rm -rf src/ros-launch-resolve/parser/target src/ros-launch-resolve/parser/build src/ros-launch-resolve/parser/install src/ros-launch-resolve/parser/log
+    # The standalone crates — separate cargo workspaces outside colcon, so
+    # nothing above touches them. Missing them made `clean` a partial clean
+    # that could not reproduce a from-scratch build, which is precisely the
+    # state that hid the v0.9.0 release failure: locally the interception .so
+    # was always already present in the crate's own target/ from an earlier
+    # standalone build, while a fresh container had only colcon's redirected
+    # target dir and nothing in the canonical path.
+    rm -rf src/ros-launch-resolve/target
+    rm -rf src/play_launch_interception/target src/spsc_shm/target
     rm -rf .cargo/config.toml
     rm -rf play_log tmp *.egg-info
     scripts/bundle_wheel.sh --clean
