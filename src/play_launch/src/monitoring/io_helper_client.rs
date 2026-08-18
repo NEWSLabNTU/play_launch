@@ -318,33 +318,19 @@ pub(crate) fn find_helper_binary() -> Result<PathBuf> {
 
 /// Check if helper binary has required capabilities
 fn check_helper_capabilities(path: &Path) -> Result<()> {
-    let output = std::process::Command::new("getcap").arg(path).output();
-
-    match output {
-        Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if !stdout.contains("cap_sys_ptrace") {
-                warn!("Helper binary does not have CAP_SYS_PTRACE capability set.");
-                warn!("I/O monitoring for privileged processes will not work.");
-                warn!(
-                    "Run: play_launch setcap (grants cap_sys_ptrace+ep to {:?})",
-                    path
-                );
-            } else {
-                debug!("Helper has CAP_SYS_PTRACE: {}", stdout.trim());
-            }
-            Ok(())
-        }
-        Ok(_) | Err(_) => {
-            // getcap not available or failed - just warn
-            warn!("Could not verify capabilities on helper binary.");
-            warn!(
-                "Make sure CAP_SYS_PTRACE is set: run `play_launch setcap` (grants cap_sys_ptrace+ep to {:?})",
-                path
-            );
-            Ok(())
-        }
+    // Issue #0015 — say WHY it is missing. The three previous messages here
+    // could not tell a fresh install from an install whose helper had been
+    // rebuilt since `setcap` ran, and told both that they had not run it.
+    use crate::commands::cap_status::{Cap, diagnose, explain};
+    let status = diagnose(path, Cap::SysPtrace);
+    if status.is_present() {
+        debug!("Helper has CAP_SYS_PTRACE: {}", path.display());
+        return Ok(());
     }
+    for line in explain(&status, path, Cap::SysPtrace) {
+        warn!("{line}");
+    }
+    Ok(())
 }
 
 /// Create an anonymous pipe

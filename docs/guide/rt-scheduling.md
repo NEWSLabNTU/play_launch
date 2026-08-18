@@ -44,8 +44,8 @@ node, and one composable filter) with the launch file, contract, and
 platform files committed:
 
 ```bash
-just build                       # reapplies helper capabilities itself when it can
-just setcap                      # ...otherwise grant them: re-run after EVERY build
+just build                       # dev loop: reapplies helper capabilities itself when it can
+play_launch setcap               # ...otherwise grant them: re-run after EVERY build
 cd tests/fixtures/rt_workspace
 just build                       # colcon build of the rt_demo package
 just check                       # validate contracts + scheduling, several ways
@@ -577,16 +577,35 @@ play_launch_rt_helper  (ROS-free, holds CAP_SYS_NICE only)
     → sched_setscheduler / sched_setaffinity on every thread of that pid
 ```
 
-- `just setcap` (or `play_launch setcap`) grants `cap_sys_nice+ep` to the
-  helper (and `cap_sys_ptrace+ep` to the I/O-monitoring helper). File
-  capabilities do not change the user — the helper runs as *you*, with exactly
-  one extra permission. **Capabilities live on the file inode: re-run
-  `just setcap` after every rebuild.** colcon *copies* the helpers into
-  `install/` rather than hardlinking them, so every build produces a fresh
-  inode with an empty capability set — there is no build that preserves them.
-  `just build` reapplies them for you when it can do so without a prompt (see
-  below), and tells you to run `just setcap` when it cannot.
-- **Developer shortcut.** When rootful Docker is available, `just setcap` uses
+- `play_launch setcap` grants `cap_sys_nice+ep` to the helper (and
+  `cap_sys_ptrace+ep` to the I/O-monitoring helper). This is the supported
+  path, and the only one available from a `pip install` — the `just` recipe
+  below needs a source checkout. File capabilities do not change the user —
+  the helper runs as *you*, with exactly one extra permission.
+- **Re-run it after every rebuild or upgrade.** A file capability is bound to
+  the exact CONTENTS of a binary, so replacing the binary drops it. That is the
+  kernel being correct rather than a limitation to work around: carrying a
+  capability across a content change would grant privilege to code nobody
+  vetted. colcon *copies* the helpers into `install/` rather than hardlinking
+  them, so every build produces a fresh inode with an empty capability set —
+  there is no build that preserves them, and none should.
+- **play_launch tells you which case you are in** (issue #0015). `setcap`
+  records the path and content hash it granted, so a later run distinguishes
+  "never granted" from "granted, and the binary has been replaced since":
+
+      scheduling: no privilege to apply.
+        …/play_launch_rt_helper lacks cap_sys_nice — real-time scheduling cannot be applied.
+        It WAS granted (2026-08-18 09:00:00), but the binary has been replaced since — a
+        rebuild, upgrade or reinstall. A file capability is bound to the exact file contents
+        and cannot survive that, by design: …
+        This is expected after every rebuild; run `play_launch setcap` to grant …
+
+  Before this both cases printed the same sentence, which told a user who had
+  just run `setcap` that they had not.
+- **Developer shortcut — not for deployments.** `just setcap` requires a source
+  checkout and is a convenience for the edit-build-test loop, not a supported
+  install step; use `play_launch setcap` anywhere else. When rootful Docker is
+  available, `just setcap` uses
   a throwaway container instead of `sudo`, so the edit-build-test loop needs no
   password. This works because Docker's default capability bounding set already
   contains `CAP_SETFCAP`, granting a file capability requires only
@@ -700,9 +719,10 @@ here changes existing behavior.
 
 | symptom | cause | fix |
 |---|---|---|
-| warn: `no privilege to apply ... cap_sys_nice` | helper not capability-granted | `just setcap` |
-| worked yesterday, EPERM today | rebuild replaced the binaries — caps are per-inode | `just setcap` again |
-| `error while loading shared libraries: lib...rosidl...` | someone ran `setcap` on the **main** binary (`AT_SECURE` drops `LD_LIBRARY_PATH`) | `just setcap` (it strips it) |
+| warn: `no privilege to apply ... cap_sys_nice` | helper not capability-granted | `play_launch setcap` — the message names which case you are in |
+| `It WAS granted (...), but the binary has been replaced since` | rebuild/upgrade replaced the binary; a capability is bound to file CONTENTS | `play_launch setcap` again — expected after every rebuild |
+| `the binary is UNCHANGED, so something removed it` | `setcap -r`, a filesystem without xattr support, or a copy over the same path | `play_launch setcap`; if it keeps happening, check the mount options |
+| `error while loading shared libraries: lib...rosidl...` | someone ran `setcap` on the **main** binary (`AT_SECURE` drops `LD_LIBRARY_PATH`) | `play_launch setcap` (it strips it) |
 | `mapper 'X' requires resources.rt_priority_band` | platform file's `resources` doesn't declare a band, or `target` isn't `posix` | add `rt_priority_band` to `resources`; non-`posix` targets aren't derivable by play_launch's built-in mappers today (nano-ros's job) |
 | ``platform file ... targets `zephyr`, but --target requested `posix` `` | wrong file resolved for the target, or wrong `--target` passed | check `--target`, or that the right per-target file is on disk |
 | warning: `priority N outside band [min, max], clamping to ...` | derived or overridden priority exceeds the platform file's band | widen `rt_priority_band`, or fix the override |
@@ -713,7 +733,7 @@ here changes existing behavior.
 | composable skipped: `pid no longer matches its start_time` | the composable died right after loading; its PID may have been recycled | benign — nothing to schedule |
 | `chrt -p <pid>` shows `SCHED_OTHER` but the node "should" be RT | `chrt -p` reads only the main thread — or the node is in the default tier (no fact, no override) | check all TIDs; check contract facts / overrides coverage |
 | EPERM with caps correct, inside a container/slice | cgroup `rt_runtime = 0` gate (`CONFIG_RT_GROUP_SCHED`) | provision RT bandwidth for the cgroup |
-| strict run aborts at startup | that's strict working: no privilege or bad spec = no launch | `just setcap`, or use `warn` |
+| strict run aborts at startup | that's strict working: no privilege or bad spec = no launch | `play_launch setcap`, or use `warn` |
 
 ## 6. Related documents
 

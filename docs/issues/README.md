@@ -17,15 +17,18 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0015** — a file capability lives on the inode, so `just build` replaces
-`play_launch_rt_helper` and drops the `cap_sys_nice` that `just setcap`
-granted; the failure surfaces on the next RT run. The guide documents this,
-so the gap is timing rather than knowledge: nothing says it at the moment of
-loss. Friction, not a correctness hole — `--sched-apply strict` errors clearly
-and `rt_av_demo`'s `ab` recipe refuses rather than reporting a vacuous
-comparison. See `0015-*`.
+*(none)*
 
 ## Resolved
+
+**#0015** — a rebuild drops the helpers' file capabilities, and every message
+blamed the user for not running `setcap`. The loss is correct (a capability is
+bound to a binary's CONTENTS; carrying it across a change would grant privilege
+to unvetted code) and was kept. What was wrong was the reporting: `setcap` now
+records path+hash+time, and the runtime distinguishes never-granted, rebuilt,
+revoked, and unknown. Docs now lead with `play_launch setcap`, with the Docker
+recipe marked a developer shortcut — a test fails if any runtime message
+recommends it. See `0015-*`.
 
 **#0017** — the model's node FQN is not the node's ROS name for any `<node>`
 the launch file did not name; 17 of 145 on the golf cart stack, joined against

@@ -1,5 +1,6 @@
 //! Command handlers
 
+pub mod cap_status;
 pub mod capabilities;
 pub mod check;
 pub(crate) mod common;

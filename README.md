@@ -290,8 +290,19 @@ scheduling capability (requires sudo). After this, RT scheduling (`--sched`) wor
 **without root**:
 
 ```bash
-just setcap
+play_launch setcap
 ```
+
+**Re-run it after every rebuild or upgrade.** A file capability is bound to the
+exact contents of a binary, so replacing that binary drops it — deliberately,
+since carrying privilege across a change would grant it to code nobody vetted.
+play_launch says so when it happens, naming the grant it is replacing rather
+than telling you to run a command you already ran.
+
+(A `just setcap` recipe also exists. It is a DEVELOPER convenience that avoids
+the password prompt via a throwaway container, it needs a source checkout, and
+it does not work under rootless Docker. `play_launch setcap` is the supported
+path.)
 
 ### Run
 

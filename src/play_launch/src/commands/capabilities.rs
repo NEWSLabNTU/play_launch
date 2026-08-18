@@ -81,6 +81,46 @@ pub fn rt_helper_has_cap_sys_nice() -> bool {
     stdout.contains("cap_sys_nice=ep") || stdout.contains("cap_sys_nice+ep")
 }
 
+/// Why RT scheduling cannot be applied, or `None` if it can.
+///
+/// Issue #0015 — both the `run` and `up` preflights used to print one fixed
+/// sentence ("no privilege to apply; run `play_launch setcap`") for every
+/// cause. The most common cause on a developer machine is that `setcap` WAS
+/// run and the helper has since been rebuilt, and that sentence tells such a
+/// user they did not do the thing they did do. `cap_status` distinguishes the
+/// cases; this composes the message so `run` and `up` cannot drift apart.
+///
+/// Root is checked first and reported as privileged: a root run applies
+/// directly and never touches the helper, so a missing capability there is
+/// not a fault to report.
+pub fn rt_privilege_report() -> Option<String> {
+    if crate::execution::sched_apply::has_sched_privilege() {
+        return None;
+    }
+    let Ok(rt_helper) = find_rt_helper_path() else {
+        return Some(
+            "scheduling: the RT helper (play_launch_rt_helper) could not be found, so \
+             scheduling cannot be applied unprivileged. Reinstall play_launch, or run as root."
+                .to_string(),
+        );
+    };
+    let status = crate::commands::cap_status::diagnose(
+        &rt_helper,
+        crate::commands::cap_status::Cap::SysNice,
+    );
+    if status.is_present() {
+        return None;
+    }
+    let mut lines = vec!["scheduling: no privilege to apply.".to_string()];
+    lines.extend(crate::commands::cap_status::explain(
+        &status,
+        &rt_helper,
+        crate::commands::cap_status::Cap::SysNice,
+    ));
+    lines.push("Alternatively run as root.".to_string());
+    Some(lines.join("\n  "))
+}
+
 // ---------------------------------------------------------------------------
 // WHY THE MAIN `play_launch` BINARY MUST NEVER BE GIVEN FILE CAPABILITIES
 //
@@ -200,6 +240,10 @@ fn grant_cap(path: &std::path::Path, cap: &str, label: &str) -> eyre::Result<()>
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if stdout.contains(cap) {
+        // Record WHAT was capped (issue #0015). A later run compares the
+        // binary's hash against this, so "you never ran setcap" and "you ran
+        // it and then rebuilt" stop producing the same message.
+        crate::commands::cap_status::record_grant(path);
         println!("✓ {label} ready: {}", stdout.trim());
         Ok(())
     } else {

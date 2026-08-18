@@ -283,16 +283,16 @@ async fn run_direct(
             // independent of whether the helper process starts: a helper
             // that spawns fine but lacks CAP_SYS_NICE is useless (every
             // apply would EPERM). So check first, then spawn.
-            let privileged = crate::execution::sched_apply::has_sched_privilege()
-                || crate::commands::capabilities::rt_helper_has_cap_sys_nice();
-            if !privileged {
-                let msg = "scheduling: no privilege to apply; run `play_launch setcap` (grants cap_sys_nice to play_launch_rt_helper) or run as root";
+            // Issue #0015 — one report, naming WHY the capability is absent.
+            // "never granted" and "granted, then the helper was rebuilt" are
+            // different situations and used to print the same sentence.
+            if let Some(msg) = crate::commands::capabilities::rt_privilege_report() {
                 if common.sched_opts.sched_apply
                     == crate::execution::sched_apply::SchedApplyMode::Strict
                 {
                     eyre::bail!("{msg}");
                 }
-                tracing::warn!("{msg}; scheduling will not be applied");
+                tracing::warn!("{msg}\n  Scheduling will NOT be applied.");
             }
 
             match crate::execution::rt_helper_client::SchedHelper::spawn().await {
