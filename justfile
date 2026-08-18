@@ -113,20 +113,38 @@ build-interception:
     set -e
     (cd src/spsc_shm && cargo build --release)
     (cd src/play_launch_interception && cargo build --release --features {{ros_distro}})
-    # Verify, do not assert. This line used to be a bare `echo "Built: <path>"`
-    # — a hardcoded string that printed whether or not the file existed. The
-    # v0.9.0 release build printed it at 06:01:04 and then bundle_wheel.sh
-    # failed at 06:02:30 with "not found" for that exact path, and the echo is
-    # why the log could not distinguish "cargo never emitted it" from "it was
-    # emitted and then disappeared".
-    so="src/play_launch_interception/target/release/libplay_launch_interception.so"
-    if [ ! -f "$so" ]; then
-        echo "ERROR: cargo reported success but did not produce $so" >&2
-        echo "Contents of the target dir:" >&2
-        ls -la src/play_launch_interception/target/release/ 2>&1 | sed 's/^/  /' >&2
+    # ASK cargo where it put the artifact; do not assume.
+    #
+    # This used to be a bare `echo "Built: <hardcoded path>"`, which printed
+    # whether or not anything existed. Replacing it with a check on that same
+    # hardcoded path then showed the real problem in the v0.9.0 release build:
+    # cargo compiled the crate and reported `Finished release`, while
+    # `src/play_launch_interception/target/release/` did not exist at all.
+    # The artifacts were going somewhere else — a `CARGO_TARGET_DIR` or a
+    # `build.target-dir` in a `.cargo/config.toml` cargo picked up on its way
+    # up the tree, neither of which this repo controls in a build container.
+    #
+    # `cargo metadata` reports the target directory in effect, so the path is
+    # discovered rather than guessed. When it is not the canonical location,
+    # the artifact is copied there, because bundle_wheel.sh and the
+    # integration tests both look for it by that path.
+    canonical="src/play_launch_interception/target/release/libplay_launch_interception.so"
+    target_dir=$(cd src/play_launch_interception \
+        && cargo metadata --format-version 1 --no-deps 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
+    built="${target_dir}/release/libplay_launch_interception.so"
+    if [ ! -f "$built" ]; then
+        echo "ERROR: cargo reported success but produced no cdylib." >&2
+        echo "       cargo says its target directory is: ${target_dir:-<unknown>}" >&2
+        ls -la "${target_dir}/release/" 2>&1 | sed 's/^/  /' >&2
         exit 1
     fi
-    echo "Built: $so ($(stat -c %s "$so") bytes)"
+    if [ "$built" != "$canonical" ] && [ ! "$built" -ef "$canonical" ]; then
+        echo "note: cargo built into $target_dir, not the canonical tree; copying"
+        mkdir -p "$(dirname "$canonical")"
+        cp -f "$built" "$canonical"
+    fi
+    echo "Built: $canonical ($(stat -c %s "$canonical") bytes)"
 
 # Bundle colcon artifacts + build wheel (no colcon rebuild)
 build-wheel:
