@@ -332,7 +332,14 @@ because it is a separate workspace that uses the crate for one call
 (`fixture_dir()`) and drives `play_launch` as a subprocess, so no types cross
 the boundary and nothing fails to compile. The symptom is not an error but
 silent staleness. **Bump all three, and commit the lockfiles**: a clean clone
-builds from the lock, and `--locked` fails against the old revision.
+builds from the lock, and `--locked` fails against the old revision. Use
+`just bump-manifest <tag>` — it validates the tag on the remote BEFORE editing
+anything, rewrites all three manifests, refreshes all three lockfiles (the ROOT
+one via `just build-rust`, since bare cargo cannot resolve the colcon-generated
+ROS message crates), and then VERIFIES that each lock names exactly one
+revision and that it is the requested one. It deliberately does not commit, and
+it names the two kinds of ambient lockfile churn (`[[patch.unused]]`, ROS
+message crate versions) that a bump picks up but does not own.
 
 There is no vendored copy in-tree any more. `src/ros-launch-resolve/
 third-party/ros-launch-manifest/` was deleted (phase 60) — nothing built from

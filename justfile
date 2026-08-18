@@ -587,6 +587,132 @@ test-unit:
     cd src/ros-launch-resolve/parser
     cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final
 
+# Bump the pinned `ros-launch-manifest` tag everywhere it is named.
+#
+#     just bump-manifest v0.1.7
+#
+# THREE manifests name the tag and must move together: `src/play_launch`,
+# `src/ros-launch-resolve` and `tests`. Naming the same tag is what makes cargo
+# resolve ONE instance of the crate; two revisions would give two same-named
+# packages from different sources, and `SystemModel` would become two
+# incompatible types.
+#
+# `tests/` is the one that drifts unnoticed — it sat at v0.1.0 for five tags,
+# because it uses the crate for one call (`fixture_dir()`) and drives
+# play_launch as a subprocess, so no types cross the boundary and nothing fails
+# to compile. The symptom is silent staleness, not an error. That is the whole
+# reason this is a recipe instead of three edits.
+#
+# The lockfiles are updated and MUST be committed: a clean clone builds from
+# the lock, and `--locked` fails against the old revision.
+#
+# Deliberately does not commit. Review the diff first — this changes what every
+# consumer compiles against.
+bump-manifest tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    REPO="https://github.com/NEWSLabNTU/ros-launch-manifest.git"
+    NEW="{{ tag }}"
+
+    # Validate BEFORE editing anything. A bad tag caught here is a no-op; caught
+    # after the manifests are rewritten it leaves the tree in the split state
+    # this recipe exists to prevent.
+    if ! git ls-remote --exit-code --tags "$REPO" "refs/tags/$NEW" >/dev/null 2>&1; then
+        echo "ERROR: $REPO has no tag '$NEW'." >&2
+        echo "Available:" >&2
+        git ls-remote --tags "$REPO" \
+          | sed -n 's#.*refs/tags/\(v[^^]*\)$#  \1#p' | sort -V | tail -5 >&2
+        exit 1
+    fi
+
+    manifests=(src/play_launch/Cargo.toml src/ros-launch-resolve/Cargo.toml tests/Cargo.toml)
+    # `|| true`: with `set -e` a non-matching grep would abort here, before
+    # anything is printed — which is exactly how the first version of this
+    # recipe failed, silently and with no output at all.
+    old=$( (grep -h 'ros-launch-manifest\.git' "${manifests[@]}" || true) \
+          | grep -o 'tag = "[^"]*"' | sed 's/tag = "//; s/"//' \
+          | sort -u | paste -sd, - || true)
+    echo "ros-launch-manifest: ${old:-<none>} -> $NEW"
+    if [ "$old" = "$NEW" ]; then
+        echo "(already at $NEW — re-resolving anyway, so a half-applied bump is repaired)"
+    fi
+
+    for m in "${manifests[@]}"; do
+        # Only rewrite the tag on lines that name THIS repo, so an unrelated
+        # git dependency pinned to a same-named tag is left alone.
+        sed -i -E '/ros-launch-manifest\.git/ s/tag = "[^"]*"/tag = "'"$NEW"'"/g' "$m"
+        echo "  manifest: $m"
+    done
+
+    # Layer 2 and the test workspace resolve standalone.
+    #
+    # One package at a time, each tolerated to fail: `tests` depends only on
+    # `-check`, so naming all four aborts the whole call. The first version of
+    # this recipe fell back to a bare `cargo update` on that failure, which
+    # upgraded the ENTIRE dependency graph — 130 lines of unrelated crates for
+    # a one-line tag bump. A pin bump must move the pin and nothing else, so
+    # there is deliberately no global fallback: if a targeted update does not
+    # take, the verification below fails and says so.
+    for ws in src/ros-launch-resolve tests; do
+        echo "  lock: $ws"
+        for pkg in ros-launch-manifest-model ros-launch-manifest-types \
+                   ros-launch-manifest-sched ros-launch-manifest-check; do
+            (cd "$ws" && cargo update --quiet "$pkg" 2>/dev/null) || true
+        done
+    done
+
+    # The ROOT workspace CANNOT be resolved by bare cargo: its ROS message
+    # crates (`composition_interfaces` and friends) are generated into
+    # `build/<pkg>/rosidl_cargo/` and reached through a source replacement
+    # colcon supplies at build time. `cargo update` here fails with
+    # "no matching package named `composition_interfaces`". So the root lock is
+    # refreshed through the sanctioned build, which resolves in the right
+    # environment.
+    echo "  lock: . (via colcon — the only resolver that sees the ROS crates)"
+    just build-rust >/dev/null
+
+    # The invariant, checked rather than assumed: exactly ONE revision, and it
+    # is the requested one. This is the failure mode the recipe exists for, so
+    # it is verified even when every preceding step reported success.
+    echo ""
+    bad=0
+    for lock in Cargo.lock src/ros-launch-resolve/Cargo.lock tests/Cargo.lock; do
+        revs=$(grep -o 'ros-launch-manifest\.git?tag=[^#"]*' "$lock" | sed 's/.*tag=//' | sort -u)
+        count=$(printf '%s\n' "$revs" | grep -c . || true)
+        if [ "$revs" = "$NEW" ]; then
+            echo "  ok   $lock -> $NEW"
+        elif [ "$count" -gt 1 ]; then
+            echo "  SPLIT $lock names $count revisions: $(echo $revs | tr '\n' ' ')" >&2
+            bad=1
+        else
+            echo "  STALE $lock -> ${revs:-<none>} (wanted $NEW)" >&2
+            bad=1
+        fi
+    done
+    if [ "$bad" -ne 0 ]; then
+        echo "" >&2
+        echo "Lockfiles disagree. Do NOT commit this state: two revisions of the same" >&2
+        echo "crate become two same-named packages, and SystemModel becomes two" >&2
+        echo "incompatible types." >&2
+        exit 1
+    fi
+
+    echo ""
+    echo "Changed:"
+    git diff --stat -- '*Cargo.toml' '*Cargo.lock' | sed 's/^/  /'
+    echo ""
+    echo "Review before committing — a lockfile here also picks up churn that has"
+    echo "NOTHING to do with the bump, and it looks identical in a diff:"
+    echo "  * [[patch.unused]] blocks — layer 2 and tests/ inherit this repo's"
+    echo "    colcon-generated .cargo/config.toml (cargo's config walk ignores"
+    echo "    workspace boundaries). Discard those hunks."
+    echo "  * ROS message crate versions (std_msgs, diagnostic_msgs, ...) — these"
+    echo "    track the ROS install on THIS machine, not the manifest tag."
+    echo ""
+    echo "Commit the manifests AND the lockfiles together:"
+    echo "  git add -- '*Cargo.toml' '*Cargo.lock' && git commit"
+    echo "(A clean clone builds from the lock, and --locked fails against the old revision.)"
+
 # Cross-parser parity gates: does the Rust parser produce the same SystemModel
 # as the Python one, on real launch trees?
 #
