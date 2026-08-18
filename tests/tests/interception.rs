@@ -54,8 +54,17 @@ fn wait_for_file(path: &Path, timeout: Duration) -> bool {
 /// Launch pure_nodes, let it run for `run_duration`, then drop to trigger
 /// graceful shutdown. Returns the play_log directory.
 fn run_with_config(config_yaml: &str, run_duration: Duration) -> tempfile::TempDir {
+    run_launch_with_config("launch/pure_nodes.launch.xml", config_yaml, run_duration)
+}
+
+/// As `run_with_config`, for a caller that needs a different launch file.
+fn run_launch_with_config(
+    launch_rel: &str,
+    config_yaml: &str,
+    run_duration: Duration,
+) -> tempfile::TempDir {
     let env = fixtures::install_env();
-    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
+    let launch = fixtures::test_workspace_path("simple_test").join(launch_rel);
 
     let work_dir = tempfile::TempDir::new().expect("failed to create work dir");
 
@@ -328,5 +337,78 @@ interception:
     assert!(
         !events_path.exists(),
         "events.jsonl written despite interception being disabled"
+    );
+}
+
+/// Issue #0017 — the identity file reports the name a node ACTUALLY
+/// registers, which for a node the launch file did not name is not its model
+/// key.
+///
+/// The model keys an un-named `<node>` by its executable (plus the #0018
+/// ordinal), while the process registers its compiled-in name. play_launch
+/// cannot know the second from the launch file and must not impose the first
+/// — forcing `-r __node:=` renames the node away from its own default, which
+/// was bug `af7c524`. So the name is read from inside the process, where it
+/// is simply available: the interceptor's publisher/subscription hooks
+/// already hold the `rcl_node_t*`.
+///
+/// Asserted on the DIFFERENCE between the two nodes. A test that only checked
+/// the un-named one would pass just as well if every key were reported wrong.
+#[test]
+fn test_interception_reports_real_node_names() {
+    let work_dir = run_launch_with_config(
+        "launch/unnamed_node.launch.xml",
+        "interception:\n  enabled: true\n  stats: true\n",
+        Duration::from_secs(5),
+    );
+
+    let identity = work_dir
+        .path()
+        .join("play_log/latest/interception/node_identity.tsv");
+    assert!(
+        identity.is_file(),
+        "node_identity.tsv should be written when interception is enabled"
+    );
+
+    let text = std::fs::read_to_string(&identity).expect("read node_identity.tsv");
+    let rows: Vec<(String, String)> = text
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            let member = f.next()?.to_string();
+            let _pid = f.next()?;
+            let fqn = f.next()?.to_string();
+            Some((member, fqn))
+        })
+        .collect();
+    assert!(!rows.is_empty(), "no identity rows in {text:?}");
+
+    // The named node: model key and ROS name are the same, and that is what
+    // makes it safe to join against the graph.
+    let named = rows
+        .iter()
+        .find(|(_, fqn)| fqn == "/identity_test/listener")
+        .unwrap_or_else(|| panic!("no row for the named node in {rows:?}"));
+    assert_eq!(
+        named.0, named.1,
+        "a node the launch file named must key by its ROS name"
+    );
+
+    // The un-named node: the key is executable-derived and is NOT the ROS
+    // name. This is the whole issue.
+    let unnamed = rows
+        .iter()
+        .find(|(_, fqn)| fqn == "/identity_test/talker")
+        .unwrap_or_else(|| panic!("no row for the un-named node in {rows:?}"));
+    assert_ne!(
+        unnamed.0, unnamed.1,
+        "an un-named node's model key is executable-derived, so it must NOT \
+         equal its ROS name — if these are equal the fixture stopped \
+         exercising the case"
+    );
+    assert!(
+        unnamed.0.contains("talker"),
+        "the model key should be executable-derived: {}",
+        unnamed.0
     );
 }

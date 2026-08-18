@@ -1,7 +1,7 @@
 ---
 id: 17
 title: "Model FQN and ROS graph name disagree for any node the launch file did not name"
-status: open
+status: resolved
 type: correctness
 severity: medium
 ---
@@ -82,6 +82,85 @@ all of them with no `name=` in the launch file.
   service response after 10 s. A process that is alive with rclcpp initialised
   but has no node in the graph is worth its own investigation; **`84/84 loaded`
   is currently optimistic**.
+
+
+## Fix
+
+Two halves, matching the two things that were wrong: the mismatch was never
+STATED, and the real name was never KNOWN.
+
+### 1. Stated — one home for the rule, and a diagnostic in the artifact
+
+`ros_launch_resolve::ros::graph_identity` is now the single place that answers
+"is this key a ROS name?" (`is_ros_graph_name`, `ros_graph_name`,
+`non_graph_names`), with the reasoning and the `af7c524` history beside it.
+Phase 61's stage gate was the first consumer and had the test inline; it now
+calls the shared function, so the next graph-joining consumer finds the rule
+instead of rediscovering it.
+
+`build_checked_model` embeds a diagnostic in every model it produces:
+
+    identity: 17 of 145 node key(s) are derived from the executable because the
+    launch file declared no `name=`, so they are NOT the names those nodes
+    register in the ROS graph and must not be matched against `ros2 node list`
+    (/sensing/lidar/falcon/seyond_node-1, /system/service_log_checker_node-1, …)
+
+It rides in `meta.diagnostics`, so it reaches the ARTIFACT rather than only
+whichever terminal ran `resolve`. One line rather than one per node.
+
+**17** — the same count this issue measured against the live graph, and it
+excludes both nodes that were absent for unrelated reasons. The discriminator
+and the observation agree exactly.
+
+### 2. Known — the interceptor reports the real name
+
+`libplay_launch_interception.so` now writes
+`play_log/<ts>/interception/node_identity.tsv`:
+
+    /probe/explicitly_named	881643	/probe/explicitly_named
+    /probe/talker-1	        881644	/probe/talker
+
+`model key<TAB>pid<TAB>real FQN`. The name is read from the `rcl_node_t*` that
+`rcl_publisher_init` / `rcl_subscription_init` already receive — the hooks
+already call `rcl_node_get_name`/`rcl_node_get_namespace` on it to expand
+relative topics — so this is authoritative, not inferred, and costs a hash-set
+lookup per init call and nothing on the hot path.
+
+Three things that shaped it:
+
+- **Not the ring buffer.** `InterceptionEvent` is a fixed 56-byte record that
+  carries topics as FNV-1a hashes, which works only because the consumer
+  already knows the topic names and can hash them to compare. That is exactly
+  what does not hold here: play_launch does not know the name, so a hash it
+  cannot invert reports nothing. Hence a file, `O_APPEND`, one line per write.
+- **The model key travels with it.** Joining by PID alone breaks for a
+  container process hosting several nodes, so play_launch passes the key it
+  spawned the process under (`PLAY_LAUNCH_INTERCEPTION_MEMBER`).
+- **Not gated on plugins**, and de-duplicated per FQN rather than per process,
+  because one process can host many nodes and each creates many publishers.
+
+Limits, unchanged from the analysis above: interception is off by default, and
+a node that creates neither a publisher nor a subscription is never seen.
+Hooking `rcl_node_init` directly would make it earlier and unconditional, and
+is the obvious next step if such a node turns up.
+
+### What was deliberately NOT done
+
+The model key was not changed, and no `-r __node:=` was emitted. That inverts
+which of the two names is authoritative and is bug `af7c524`. The remaining
+piece is one line of documentation in `ros-launch-manifest`, whose
+`structure.nodes` doc comment still reads "Node FQN (`/ns/node_name`) →
+instance" — a cross-repo change with a tag bump across three manifests, and
+the misreading it invites is now contradicted by a diagnostic in every model
+that has the problem.
+
+## Verified
+
+- `identity:` diagnostic fires on the golf cart stack, reporting 17 of 145.
+- `test_interception_reports_real_node_names` asserts the DIFFERENCE between a
+  named and an un-named node in one launch — a test that checked only the
+  un-named one would pass equally if every key were reported wrong.
+- Interception suite 8/8; `just test` 85 passed.
 
 ## Why it matters
 

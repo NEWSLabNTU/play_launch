@@ -7,6 +7,7 @@
 pub mod causal_dag_global;
 pub mod causal_graph;
 pub mod chain_checks;
+pub mod graph_identity;
 pub mod launch_dump;
 pub mod manifest_graph;
 pub mod manifest_loader;

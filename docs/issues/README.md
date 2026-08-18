@@ -17,16 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0017** — the model's node FQN is not the node's ROS name. For a `<node>` with
-no `name=`, `structure.nodes` keys by the EXECUTABLE while the node registers
-its compiled-in name (`…/autoware_ekf_localizer_node` vs `…/ekf_localizer`);
-19 of 144 FQNs on the golf cart stack never appear in `ros2 node list`.
-play_launch matches stock `launch_ros` here — it emits `__node` only when a name
-was declared, and forcing it was bug `af7c524` — so the fix is not to rename the
-nodes but to stop presenting a synthetic key as a ROS name. Full mapping,
-options and the one node that is genuinely missing for other reasons in
-`0017-*`.
-
 **#0015** — a file capability lives on the inode, so `just build` replaces
 `play_launch_rt_helper` and drops the `cap_sys_nice` that `just setcap`
 granted; the failure surfaces on the next RT run. The guide documents this,
@@ -36,6 +26,15 @@ and `rt_av_demo`'s `ab` recipe refuses rather than reporting a vacuous
 comparison. See `0015-*`.
 
 ## Resolved
+
+**#0017** — the model's node FQN is not the node's ROS name for any `<node>`
+the launch file did not name; 17 of 145 on the golf cart stack, joined against
+`ros2 node list` and silently missing. Fixed without renaming anything (forcing
+`-r __node:=` is bug `af7c524`): the rule now lives once in
+`ros::graph_identity`, every model carries a `meta.diagnostics` line naming the
+count and examples, and the REAL name is captured authoritatively by the
+interceptor into `interception/node_identity.tsv` — read from the `rcl_node_t*`
+the publish/subscribe hooks already hold. See `0017-*`.
 
 **#0021** — the Rust parser (the DEFAULT) gave a composable node the
 CONTAINER's namespace where ROS 2 gives it the launch context's, doubling a

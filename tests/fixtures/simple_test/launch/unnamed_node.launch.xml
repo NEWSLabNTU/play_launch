@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!-- Issue #0017 — one node the launch file names and one it does not.
+
+     `talker` carries no `name=`, so the model keys it by the executable with
+     the #0018 ordinal (`/identity_test/talker-1`) while the process registers
+     its compiled-in `talker`. `listener` is named, so its model key and its
+     ROS name agree. Both cases in one launch, because the interesting claim
+     is the DIFFERENCE — a check that only looked at the un-named node could
+     pass while reporting every node's key as wrong.
+-->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" namespace="/identity_test" output="screen"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener" namespace="/identity_test" output="screen"/>
+</launch>

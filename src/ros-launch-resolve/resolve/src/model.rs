@@ -203,6 +203,51 @@ pub fn build_checked_model(
         }
     }
 
+    // Issue #0017 — say that some keys are not ROS names.
+    //
+    // `structure.nodes` reads as `/ns/node_name` → instance, so a consumer
+    // joins it against `ros2 node list`. For a `<node>` the launch file did
+    // not name, the key is built from the EXECUTABLE and the running node
+    // registers its compiled-in name instead, so the join silently misses —
+    // 17 of 144 on one Autoware stack, with no error anywhere, because
+    // nothing downstream looks at the live system.
+    //
+    // This is a diagnostic rather than a rename: play_launch reproduces stock
+    // `launch_ros`, which emits `-r __node:=` only for a declared name, and
+    // forcing it was bug `af7c524`. The model key is the synthetic one, and
+    // the fix is to stop presenting it as a ROS name — not to move the
+    // running system to agree with it.
+    //
+    // It rides in `meta.diagnostics` so it reaches the ARTIFACT, not just
+    // whichever terminal ran `resolve`. One entry, not one per node: on a
+    // stack like the above it would otherwise be 17 lines of the same fact.
+    {
+        let unnamed = crate::ros::graph_identity::non_graph_names(&model);
+        if !unnamed.is_empty() {
+            const SHOWN: usize = 5;
+            let sample = unnamed
+                .iter()
+                .take(SHOWN)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = unnamed.len().saturating_sub(SHOWN);
+            let tail = if more > 0 {
+                format!(", and {more} more")
+            } else {
+                String::new()
+            };
+            model.meta.diagnostics.push(format!(
+                "identity: {} of {} node key(s) are derived from the executable because the \
+                 launch file declared no `name=`, so they are NOT the names those nodes \
+                 register in the ROS graph and must not be matched against `ros2 node list` \
+                 ({sample}{tail})",
+                unnamed.len(),
+                model.structure.nodes.len(),
+            ));
+        }
+    }
+
     // R1-P1 — integrator system config fills the execution layer
     // (deploy/transports/bridges/features). Fail-loud on unplaced nodes;
     // lenient diagnostics embed like checker warnings.

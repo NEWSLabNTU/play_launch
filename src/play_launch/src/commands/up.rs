@@ -546,6 +546,19 @@ pub(crate) async fn play(
         match crate::interception::find_interception_so() {
             Some(so_path) => {
                 info!("Interception enabled (so: {})", so_path.display());
+                // Issue #0017 — where children report the node names they
+                // actually register. One file per run, appended concurrently
+                // under O_APPEND.
+                let identity_path = {
+                    let dir = log_dir.join("interception");
+                    match fs::create_dir_all(&dir) {
+                        Ok(()) => Some(dir.join("node_identity.tsv")),
+                        Err(e) => {
+                            warn!("Could not create interception dir for node identity: {e}");
+                            None
+                        }
+                    }
+                };
                 // Inject LD_PRELOAD + fd env vars into each pure node
                 for ctx in &mut pure_node_contexts {
                     let node_name = interception_node_name(
@@ -559,6 +572,7 @@ pub(crate) async fn play(
                         &so_path,
                         &runtime_config.interception,
                         allowlist_file.as_deref(),
+                        identity_path.as_deref(),
                     ) {
                         Ok(consumer) => interception_consumers.push(consumer),
                         Err(e) => warn!("Interception setup failed for node: {:#}", e),
@@ -577,6 +591,7 @@ pub(crate) async fn play(
                         &so_path,
                         &runtime_config.interception,
                         allowlist_file.as_deref(),
+                        identity_path.as_deref(),
                     ) {
                         Ok(consumer) => interception_consumers.push(consumer),
                         Err(e) => warn!("Interception setup failed for container: {:#}", e),

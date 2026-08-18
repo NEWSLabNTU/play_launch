@@ -189,11 +189,16 @@ impl StageAssignment {
             names.pop();
         }
 
+        // Issue #0017 — the rule for "is this key a ROS name?" lives in
+        // `ros_launch_resolve::ros::graph_identity`, not here. This gate was
+        // the first consumer to need it and had the test inline; every later
+        // graph-joining consumer would otherwise have to rediscover it, which
+        // is what the issue calls the workaround rather than the fix.
         let graph_checkable = model
             .structure
             .nodes
             .iter()
-            .filter(|(_, n)| n.node_name.is_some())
+            .filter(|(_, n)| ros_launch_resolve::ros::graph_identity::is_ros_graph_name(n))
             .map(|(fqn, _)| fqn.clone())
             .collect();
 

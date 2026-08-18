@@ -32,6 +32,7 @@ mod allowlist;
 mod drop_counter;
 mod event;
 mod introspection;
+mod node_identity;
 mod plugin;
 mod plugin_dispatch;
 mod plugins;
@@ -118,8 +119,7 @@ static RUNTIME: OnceLock<Option<Runtime>> = OnceLock::new();
 unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
     let publisher_init = unsafe { libc::dlsym(source, c"rcl_publisher_init".as_ptr()) };
     let publish = unsafe { libc::dlsym(source, c"rcl_publish".as_ptr()) };
-    let subscription_init =
-        unsafe { libc::dlsym(source, c"rcl_subscription_init".as_ptr()) };
+    let subscription_init = unsafe { libc::dlsym(source, c"rcl_subscription_init".as_ptr()) };
     let take = unsafe { libc::dlsym(source, c"rcl_take".as_ptr()) };
 
     if publisher_init.is_null()
@@ -132,10 +132,8 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
 
     // Optional node accessors — may be missing in non-ROS processes
     // (in that case topic-name expansion silently skips).
-    let node_get_name =
-        unsafe { libc::dlsym(source, c"rcl_node_get_name".as_ptr()) };
-    let node_get_namespace =
-        unsafe { libc::dlsym(source, c"rcl_node_get_namespace".as_ptr()) };
+    let node_get_name = unsafe { libc::dlsym(source, c"rcl_node_get_name".as_ptr()) };
+    let node_get_namespace = unsafe { libc::dlsym(source, c"rcl_node_get_namespace".as_ptr()) };
     let node_get_name = if node_get_name.is_null() {
         None
     } else {
@@ -153,37 +151,51 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
     // `{namespace}` topic substitution. All five must be resolved
     // together; otherwise we fall back to the hand-rolled expansion.
     let expand = unsafe { libc::dlsym(source, c"rcl_expand_topic_name".as_ptr()) };
-    let default_subs = unsafe {
-        libc::dlsym(source, c"rcl_get_default_topic_name_substitutions".as_ptr())
-    };
+    let default_subs =
+        unsafe { libc::dlsym(source, c"rcl_get_default_topic_name_substitutions".as_ptr()) };
     let alloc = unsafe { libc::dlsym(source, c"rcutils_get_default_allocator".as_ptr()) };
     let map_init = unsafe { libc::dlsym(source, c"rcutils_string_map_init".as_ptr()) };
     let map_fini = unsafe { libc::dlsym(source, c"rcutils_string_map_fini".as_ptr()) };
-    let (expand_topic_name, get_default_topic_name_substitutions, get_default_allocator, string_map_init, string_map_fini) =
-        if expand.is_null() || default_subs.is_null() || alloc.is_null() || map_init.is_null() || map_fini.is_null() {
-            (None, None, None, None, None)
-        } else {
-            unsafe {
-                (
-                    Some(std::mem::transmute::<*mut c_void, FnRclExpandTopicName>(expand)),
-                    Some(std::mem::transmute::<
-                        *mut c_void,
-                        FnRclGetDefaultTopicNameSubstitutions,
-                    >(default_subs)),
-                    Some(std::mem::transmute::<
-                        *mut c_void,
-                        FnRcutilsGetDefaultAllocator,
-                    >(alloc)),
-                    Some(std::mem::transmute::<*mut c_void, FnRcutilsStringMapInit>(map_init)),
-                    Some(std::mem::transmute::<*mut c_void, FnRcutilsStringMapFini>(map_fini)),
-                )
-            }
-        };
+    let (
+        expand_topic_name,
+        get_default_topic_name_substitutions,
+        get_default_allocator,
+        string_map_init,
+        string_map_fini,
+    ) = if expand.is_null()
+        || default_subs.is_null()
+        || alloc.is_null()
+        || map_init.is_null()
+        || map_fini.is_null()
+    {
+        (None, None, None, None, None)
+    } else {
+        unsafe {
+            (
+                Some(std::mem::transmute::<*mut c_void, FnRclExpandTopicName>(
+                    expand,
+                )),
+                Some(std::mem::transmute::<
+                    *mut c_void,
+                    FnRclGetDefaultTopicNameSubstitutions,
+                >(default_subs)),
+                Some(std::mem::transmute::<
+                    *mut c_void,
+                    FnRcutilsGetDefaultAllocator,
+                >(alloc)),
+                Some(std::mem::transmute::<*mut c_void, FnRcutilsStringMapInit>(
+                    map_init,
+                )),
+                Some(std::mem::transmute::<*mut c_void, FnRcutilsStringMapFini>(
+                    map_fini,
+                )),
+            )
+        }
+    };
 
     // Optional remap support.
     let node_opts = unsafe { libc::dlsym(source, c"rcl_node_get_options".as_ptr()) };
-    let global_args =
-        unsafe { libc::dlsym(source, c"rcl_get_global_arguments".as_ptr()) };
+    let global_args = unsafe { libc::dlsym(source, c"rcl_get_global_arguments".as_ptr()) };
     let remap = unsafe { libc::dlsym(source, c"rcl_remap_topic_name".as_ptr()) };
     let (node_get_options, get_global_arguments, remap_topic_name) =
         if node_opts.is_null() || global_args.is_null() || remap.is_null() {
@@ -191,9 +203,15 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         } else {
             unsafe {
                 (
-                    Some(std::mem::transmute::<*mut c_void, FnRclNodeGetOptions>(node_opts)),
-                    Some(std::mem::transmute::<*mut c_void, FnRclGetGlobalArguments>(global_args)),
-                    Some(std::mem::transmute::<*mut c_void, FnRclRemapTopicName>(remap)),
+                    Some(std::mem::transmute::<*mut c_void, FnRclNodeGetOptions>(
+                        node_opts,
+                    )),
+                    Some(std::mem::transmute::<*mut c_void, FnRclGetGlobalArguments>(
+                        global_args,
+                    )),
+                    Some(std::mem::transmute::<*mut c_void, FnRclRemapTopicName>(
+                        remap,
+                    )),
                 )
             }
         };
@@ -242,12 +260,35 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
 /// substitution) we fall through to the hand-rolled fallback so a
 /// malformed name doesn't kill the interceptor — the caller's own
 /// `rcl_publisher_init` will surface the same validation error.
+/// Record the node's real FQN once per process+node (issue #0017).
+///
+/// Reads the same two rcl accessors `expand_topic_name` already uses. Kept
+/// separate from that function because it must run for ABSOLUTE topic names
+/// too, and `expand_topic_name` returns early on those — a node that only ever
+/// publishes absolute topics would otherwise never be reported.
+fn record_node_identity(originals: &Originals, node: *const rcl_node_t) {
+    let (Some(get_name), Some(get_ns)) = (originals.node_get_name, originals.node_get_namespace)
+    else {
+        return;
+    };
+    if node.is_null() {
+        return;
+    }
+    let name_ptr = unsafe { get_name(node) };
+    let ns_ptr = unsafe { get_ns(node) };
+    if name_ptr.is_null() || ns_ptr.is_null() {
+        return;
+    }
+    let name = unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy();
+    let ns = unsafe { CStr::from_ptr(ns_ptr) }.to_string_lossy();
+    node_identity::observe(name.as_ref(), ns.as_ref());
+}
+
 fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str) -> String {
     if topic.starts_with('/') {
         return topic.to_string();
     }
-    let (Some(get_name), Some(get_ns)) =
-        (originals.node_get_name, originals.node_get_namespace)
+    let (Some(get_name), Some(get_ns)) = (originals.node_get_name, originals.node_get_namespace)
     else {
         return topic.to_string();
     };
@@ -263,9 +304,7 @@ fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str
     let ns = unsafe { CStr::from_ptr(ns_ptr) }.to_string_lossy();
 
     // Strategy 2: full rcl expansion + remap if all helpers present.
-    if let Some(expanded) =
-        try_rcl_expand(originals, topic, name.as_ref(), ns.as_ref())
-    {
+    if let Some(expanded) = try_rcl_expand(originals, topic, name.as_ref(), ns.as_ref()) {
         // Apply launch-time `--remap` rules if available, otherwise
         // fall back to the bare expansion.
         return try_rcl_remap(originals, node, &expanded, name.as_ref(), ns.as_ref())
@@ -496,8 +535,7 @@ fn try_resolve_rmw_originals() -> Option<RmwOriginals> {
 /// dlopen'd handle).
 unsafe fn resolve_rmw_from(source: *mut c_void) -> Option<RmwOriginals> {
     let create_publisher = unsafe { libc::dlsym(source, c"rmw_create_publisher".as_ptr()) };
-    let create_subscription =
-        unsafe { libc::dlsym(source, c"rmw_create_subscription".as_ptr()) };
+    let create_subscription = unsafe { libc::dlsym(source, c"rmw_create_subscription".as_ptr()) };
     let publish = unsafe { libc::dlsym(source, c"rmw_publish".as_ptr()) };
     let take_with_info = unsafe { libc::dlsym(source, c"rmw_take_with_info".as_ptr()) };
 
@@ -511,8 +549,7 @@ unsafe fn resolve_rmw_from(source: *mut c_void) -> Option<RmwOriginals> {
 
     // Optional DDS event symbols — may not be present in older RMW
     // implementations. Hooks degrade to pass-through when missing.
-    let publisher_event_init =
-        unsafe { libc::dlsym(source, c"rmw_publisher_event_init".as_ptr()) };
+    let publisher_event_init = unsafe { libc::dlsym(source, c"rmw_publisher_event_init".as_ptr()) };
     let subscription_event_init =
         unsafe { libc::dlsym(source, c"rmw_subscription_event_init".as_ptr()) };
     let take_event = unsafe { libc::dlsym(source, c"rmw_take_event".as_ptr()) };
@@ -528,9 +565,7 @@ unsafe fn resolve_rmw_from(source: *mut c_void) -> Option<RmwOriginals> {
         None
     } else {
         Some(unsafe {
-            std::mem::transmute::<*mut c_void, FnRmwSubscriptionEventInit>(
-                subscription_event_init,
-            )
+            std::mem::transmute::<*mut c_void, FnRmwSubscriptionEventInit>(subscription_event_init)
         })
     };
     let take_event = if take_event.is_null() {
@@ -636,10 +671,7 @@ fn runtime() -> Option<&'static Runtime> {
                 );
             }
 
-            Some(Runtime {
-                originals,
-                plugins,
-            })
+            Some(Runtime { originals, plugins })
         })
         .as_ref()
 }
@@ -681,8 +713,16 @@ pub unsafe extern "C" fn rcl_publisher_init(
         }
     }
 
-    let ret =
-        unsafe { (rt.originals.publisher_init)(publisher, node, type_support, topic_name, options) };
+    let ret = unsafe {
+        (rt.originals.publisher_init)(publisher, node, type_support, topic_name, options)
+    };
+
+    // Issue #0017 — the node's real name, which the model cannot know for a
+    // node the launch file did not name. Not gated on plugins: the identity
+    // sink is its own opt-in, and a run with no plugins still wants it.
+    if ret == 0 {
+        record_node_identity(&rt.originals, node);
+    }
 
     if ret == 0 && !rt.plugins.is_empty() {
         let raw_topic = unsafe { CStr::from_ptr(topic_name) }
@@ -695,7 +735,9 @@ pub unsafe extern "C" fn rcl_publisher_init(
         let topic = expand_topic_name(&rt.originals, node, &raw_topic);
         let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
         let type_identity = unsafe { introspection::find_type_identity(type_support) };
-        let type_hash = type_identity.as_deref().map(|id| registry::fnv1a(id.as_bytes()));
+        let type_hash = type_identity
+            .as_deref()
+            .map(|id| registry::fnv1a(id.as_bytes()));
 
         // Register in the shared registry (used for hot-path lookups).
         registry::register_publisher(publisher as usize, &topic, stamp_offset);
@@ -735,9 +777,8 @@ pub unsafe extern "C" fn rcl_publish(
     if !rt.plugins.is_empty() {
         // Try stamp-aware lookup first; fall back to full lookup for no-stamp messages.
         let dispatch_info = if let Some(info) = registry::lookup_publisher(publisher as usize) {
-            let stamp_ptr = unsafe {
-                (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime
-            };
+            let stamp_ptr =
+                unsafe { (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime };
             let stamp = unsafe { &*stamp_ptr };
             Some((
                 info.topic_hash,
@@ -748,17 +789,11 @@ pub unsafe extern "C" fn rcl_publish(
             ))
         } else {
             // No stamp_offset — still dispatch with stamp=None for StatsPlugin.
-            registry::lookup_publisher_full(publisher as usize)
-                .map(|(hash, _)| (hash, None))
+            registry::lookup_publisher_full(publisher as usize).map(|(hash, _)| (hash, None))
         };
 
         if let Some((topic_hash, stamp)) = dispatch_info {
-            plugin_dispatch::dispatch_publish(
-                &rt.plugins,
-                publisher as usize,
-                topic_hash,
-                stamp,
-            );
+            plugin_dispatch::dispatch_publish(&rt.plugins, publisher as usize, topic_hash, stamp);
         }
     }
 
@@ -797,6 +832,12 @@ pub unsafe extern "C" fn rcl_subscription_init(
         (rt.originals.subscription_init)(subscription, node, type_support, topic_name, options)
     };
 
+    // Issue #0017 — see the same call in `rcl_publisher_init`. A node that
+    // only subscribes is reported here.
+    if ret == 0 {
+        record_node_identity(&rt.originals, node);
+    }
+
     if ret == 0 && !rt.plugins.is_empty() {
         let raw_topic = unsafe { CStr::from_ptr(topic_name) }
             .to_string_lossy()
@@ -804,7 +845,9 @@ pub unsafe extern "C" fn rcl_subscription_init(
         let topic = expand_topic_name(&rt.originals, node, &raw_topic);
         let stamp_offset = unsafe { introspection::find_stamp_offset(type_support) };
         let type_identity = unsafe { introspection::find_type_identity(type_support) };
-        let type_hash = type_identity.as_deref().map(|id| registry::fnv1a(id.as_bytes()));
+        let type_hash = type_identity
+            .as_deref()
+            .map(|id| registry::fnv1a(id.as_bytes()));
 
         // Register in the shared registry.
         registry::register_subscription(subscription as usize, &topic, stamp_offset);
@@ -845,10 +888,10 @@ pub unsafe extern "C" fn rcl_take(
     let ret = unsafe { (rt.originals.take)(subscription, ros_message, message_info, allocation) };
 
     if ret == 0 && !rt.plugins.is_empty() {
-        let dispatch_info = if let Some(info) = registry::lookup_subscription(subscription as usize) {
-            let stamp_ptr = unsafe {
-                (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime
-            };
+        let dispatch_info = if let Some(info) = registry::lookup_subscription(subscription as usize)
+        {
+            let stamp_ptr =
+                unsafe { (ros_message as *const u8).add(info.stamp_offset) as *const BuiltinTime };
             let stamp = unsafe { &*stamp_ptr };
             Some((
                 info.topic_hash,
@@ -858,17 +901,11 @@ pub unsafe extern "C" fn rcl_take(
                 }),
             ))
         } else {
-            registry::lookup_subscription_full(subscription as usize)
-                .map(|(hash, _)| (hash, None))
+            registry::lookup_subscription_full(subscription as usize).map(|(hash, _)| (hash, None))
         };
 
         if let Some((topic_hash, stamp)) = dispatch_info {
-            plugin_dispatch::dispatch_take(
-                &rt.plugins,
-                subscription as usize,
-                topic_hash,
-                stamp,
-            );
+            plugin_dispatch::dispatch_take(&rt.plugins, subscription as usize, topic_hash, stamp);
         }
     }
 
@@ -939,9 +976,8 @@ pub unsafe extern "C" fn rmw_create_publisher(
         return std::ptr::null_mut();
     };
 
-    let ret = unsafe {
-        (rmw.create_publisher)(node, type_support, topic_name, qos_profile, options)
-    };
+    let ret =
+        unsafe { (rmw.create_publisher)(node, type_support, topic_name, qos_profile, options) };
 
     if !ret.is_null() && !rt.plugins.is_empty() {
         let topic = unsafe { CStr::from_ptr(topic_name) }
@@ -983,9 +1019,8 @@ pub unsafe extern "C" fn rmw_create_subscription(
         return std::ptr::null_mut();
     };
 
-    let ret = unsafe {
-        (rmw.create_subscription)(node, type_support, topic_name, qos_profile, options)
-    };
+    let ret =
+        unsafe { (rmw.create_subscription)(node, type_support, topic_name, qos_profile, options) };
 
     if !ret.is_null() && !rt.plugins.is_empty() {
         let topic = unsafe { CStr::from_ptr(topic_name) }
@@ -1074,9 +1109,8 @@ pub unsafe extern "C" fn rmw_take_with_info(
         return 1;
     };
 
-    let ret = unsafe {
-        (rmw.take_with_info)(subscription, ros_message, taken, message_info, allocation)
-    };
+    let ret =
+        unsafe { (rmw.take_with_info)(subscription, ros_message, taken, message_info, allocation) };
 
     if ret == 0 && !rt.plugins.is_empty() {
         let was_taken = if !taken.is_null() {
@@ -1218,9 +1252,7 @@ pub unsafe extern "C" fn rmw_take_event(
     // Resolve topic_hash from rmw entity registry.
     let topic_hash = match binding.side {
         registry::EventSide::Publisher => registry::lookup_rmw_publisher(binding.entity_ptr),
-        registry::EventSide::Subscription => {
-            registry::lookup_rmw_subscription(binding.entity_ptr)
-        }
+        registry::EventSide::Subscription => registry::lookup_rmw_subscription(binding.entity_ptr),
     };
     let Some(topic_hash) = topic_hash else {
         return ret;

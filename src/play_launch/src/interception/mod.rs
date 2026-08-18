@@ -194,6 +194,7 @@ pub fn setup_child_interception(
     so_path: &Path,
     config: &InterceptionSettings,
     allowlist_path: Option<&Path>,
+    identity_path: Option<&Path>,
 ) -> eyre::Result<ChildConsumer> {
     let (shm_fd, event_fd) =
         spsc_shm::create::<InterceptionEvent>(config.ring_capacity).wrap_err("spsc_shm::create")?;
@@ -218,6 +219,21 @@ pub fn setup_child_interception(
         "PLAY_LAUNCH_INTERCEPTION_EVENT_FD".to_string(),
         event_fd.to_string(),
     );
+
+    // Issue #0017 — let the child report the node name it actually registers.
+    // The model key is passed alongside because that is the half play_launch
+    // owns: joining by PID alone breaks for a container process hosting
+    // several nodes.
+    if let Some(path) = identity_path {
+        env.insert(
+            "PLAY_LAUNCH_INTERCEPTION_IDENTITY_FILE".to_string(),
+            path.display().to_string(),
+        );
+        env.insert(
+            "PLAY_LAUNCH_INTERCEPTION_MEMBER".to_string(),
+            node_name.to_string(),
+        );
+    }
 
     // Phase 36.7: when blocking is enabled, inject the allowlist path
     // and the block flag. Children's `rcl_publisher_init` /
