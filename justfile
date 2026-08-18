@@ -68,7 +68,7 @@ build:
     # and it's a standalone cargo workspace outside colcon, so `colcon build`
     # above never touches it. Release, to match colcon_flags'
     # `--cargo-args --release` for play_launch itself.
-    (cd src/ros-launch-resolve && cargo build --release --bin ros-launch-resolve)
+    just _build-resolve-cli release
     # See build-wheel: setuptools' build/lib staging is never pruned.
     rm -rf build/lib build/bdist.*
     # The interception .so was verified present by `build-interception` above.
@@ -516,7 +516,7 @@ test:
     # `fixtures::ros_launch_resolve_cmd`, which panics (not skips) if it
     # isn't built, so it has to be here rather than only in `test-all`.
     echo "=== ros-launch-resolve CLI (layer 2) ==="
-    (cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve)
+    just _build-resolve-cli debug
     echo ""
     just _run-suites fast
 
@@ -537,7 +537,7 @@ test-all:
     (cd tests/fixtures/io_stress && just build)
     # The relocated CLI (`dump`, `contract eject`, `plot` moved out of
     # play_launch in adc33a7) — several tests drive it directly.
-    (cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve)
+    just _build-resolve-cli debug
     echo ""
     # Collect the parity result rather than aborting on it (`set -e` is on),
     # so a parity failure does not hide the test suites behind it — and vice
@@ -770,6 +770,45 @@ bump-manifest tag:
     echo "Commit the manifests AND the lockfiles together:"
     echo "  git add -- '*Cargo.toml' '*Cargo.lock' && git commit"
     echo "(A clean clone builds from the lock, and --locked fails against the old revision.)"
+
+# Build the layer-2 developer CLI and put it where everything looks for it.
+#
+# `cargo build` alone is not enough. colcon-cargo-ros2 redirects cargo's target
+# directory (`build/.cargo_target/<bucket>`), and which crates land in which
+# bucket differs between a developer checkout and a CI container — locally the
+# bucket is `src_play_launch` and this binary still lands canonically, while in
+# the CI container the bucket is `workspace` and it does not. That is why
+# `just test` has failed in CI since 2026-08-11 with
+#
+#     ros-launch-resolve binary not found (.../target/{release,debug}/ros-launch-resolve)
+#
+# while passing on every developer machine. Same root cause as the interception
+# .so (308f9b4): ask cargo where it actually wrote, then normalise.
+_build-resolve-cli profile="release":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd src/ros-launch-resolve
+    if [ "{{ profile }}" = "release" ]; then
+        cargo build --release --bin ros-launch-resolve
+        sub=release
+    else
+        cargo build --bin ros-launch-resolve
+        sub=debug
+    fi
+    target_dir=$(cargo metadata --format-version 1 --no-deps 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
+    built="${target_dir}/${sub}/ros-launch-resolve"
+    canonical="target/${sub}/ros-launch-resolve"
+    if [ ! -f "$built" ]; then
+        echo "ERROR: cargo reported success but produced no ros-launch-resolve binary." >&2
+        echo "       cargo says its target directory is: ${target_dir:-<unknown>}" >&2
+        exit 1
+    fi
+    if [ "$built" != "$(pwd)/$canonical" ] && [ ! "$built" -ef "$canonical" ]; then
+        echo "note: cargo built ros-launch-resolve into $target_dir; copying to $canonical"
+        mkdir -p "$(dirname "$canonical")"
+        cp -f "$built" "$canonical"
+    fi
 
 # Cross-parser parity gates: does the Rust parser produce the same SystemModel
 # as the Python one, on real launch trees?
