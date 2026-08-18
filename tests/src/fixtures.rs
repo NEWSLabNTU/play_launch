@@ -328,25 +328,22 @@ pub fn play_launch_cmd(env: &HashMap<String, String>) -> Command {
 /// there (see `just test-all`, `just check-layer2-isolation`). Prefers
 /// `release`, falls back to `debug`.
 ///
-/// Panics if not found: unlike the RT-workspace/manifest-check test files'
-/// own `Option`-returning lookups (which treat an unbuilt binary as a
-/// legitimate "optional fixture not built yet" skip), every caller of this
-/// function drives tests that ran unconditionally before Task 6 — silently
-/// skipping them would be exactly the vacuous-pass trap Task 5 found eleven
-/// instances of for `check`.
+/// The binary that owns the resolve/check/plot verbs.
+///
+/// This is `play_launch`. Layer 2 (`ros-launch-resolve`) is a LIBRARY in this
+/// repo — a path dependency of the play_launch crate, built by the single
+/// colcon build — and its standalone CLI exists for nano-ros, which builds it
+/// from the nested workspace itself. Driving that second binary from these
+/// tests is what forced a manual `cargo build --bin ros-launch-resolve` into
+/// `just build`, and it is why CI failed for a week: colcon-cargo-ros2
+/// redirects cargo's target directory, the bucket differs between a developer
+/// checkout and the CI container, and the binary stopped landing where this
+/// function looked.
+///
+/// Kept under the old name so call sites read unchanged; every verb it is
+/// used for (`resolve`, `check`, `plot`) is on play_launch.
 pub fn ros_launch_resolve_bin() -> PathBuf {
-    let root = repo_root().join("src/ros-launch-resolve/target");
-    ["release", "debug"]
-        .iter()
-        .map(|p| root.join(p).join("ros-launch-resolve"))
-        .find(|c| c.is_file())
-        .unwrap_or_else(|| {
-            panic!(
-                "ros-launch-resolve binary not found ({}/{{release,debug}}/ros-launch-resolve). \
-                 Run `cd src/ros-launch-resolve && cargo build --bin ros-launch-resolve` first.",
-                root.display()
-            )
-        })
+    play_launch_bin()
 }
 
 /// Build a `Command` for the `ros-launch-resolve` binary with the given

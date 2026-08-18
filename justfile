@@ -2,19 +2,24 @@
 ros_distro := if `lsb_release -rs 2>/dev/null || echo "22.04"` == "24.04" { "jazzy" } else { "humble" }
 colcon_flags := "--symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release"
 
-# ros-launch-resolve binary (layer 2 CLI) — the developer/integration binary
-# that resolves launch trees with no ROS runtime. Same verbs as play_launch's
-# resolve/dump/check/plot/contract, same `ros_launch_resolve::verbs::*`
-# implementation; used by the tooling below so parity checks don't need ROS.
-# Not part of the colcon install/ tree — it builds under plain cargo, no ROS —
-# so it lives in its own workspace's target/. Release preferred, falls back
-# to debug (mirrors tests/src/fixtures.rs::ros_launch_resolve_bin()).
+# The binary that owns resolve/dump/check/plot/contract: play_launch itself.
+#
+# Layer 2 (`ros-launch-resolve`) is a LIBRARY here — a path dependency of the
+# play_launch crate, built by the one colcon build. Its standalone CLI exists
+# for nano-ros, which builds it from the nested workspace on its own side, and
+# is deliberately not built or shipped by this repo: only the two privileged
+# helpers (play_launch_io_helper, play_launch_rt_helper) are separate binaries.
+#
+# Driving that second binary from this repo's tooling is what forced a manual
+# `cargo build --bin ros-launch-resolve` into `just build`, and it is why CI
+# failed for a week — colcon-cargo-ros2 redirects cargo's target directory and
+# the bucket differs between a developer checkout and the CI container, so the
+# binary stopped landing where the lookups expected.
 resolve_bin := `
-    for p in src/ros-launch-resolve/target/release/ros-launch-resolve \
-             src/ros-launch-resolve/target/debug/ros-launch-resolve; do
-        [ -f "$p" ] && { echo "$p"; exit 0; }
+    for p in install/play_launch/lib/play_launch/play_launch; do
+        [ -x "$p" ] && { echo "$p"; exit 0; }
     done
-    echo "src/ros-launch-resolve/target/debug/ros-launch-resolve"
+    echo play_launch
 `
 
 # Show available recipes
@@ -68,7 +73,6 @@ build:
     # and it's a standalone cargo workspace outside colcon, so `colcon build`
     # above never touches it. Release, to match colcon_flags'
     # `--cargo-args --release` for play_launch itself.
-    just _build-resolve-cli release
     # See build-wheel: setuptools' build/lib staging is never pruned.
     rm -rf build/lib build/bdist.*
     # The interception .so was verified present by `build-interception` above.
@@ -511,13 +515,6 @@ test:
     source /opt/ros/{{ros_distro}}/setup.bash
     colcon build --packages-select play_launch_msgs play_launch_container --symlink-install --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
     echo ""
-    # `resolve` moved off play_launch onto the layer-2 CLI (Task 6, CLI verb
-    # reshape) — many fast-suite tests drive it directly via
-    # `fixtures::ros_launch_resolve_cmd`, which panics (not skips) if it
-    # isn't built, so it has to be here rather than only in `test-all`.
-    echo "=== ros-launch-resolve CLI (layer 2) ==="
-    just _build-resolve-cli debug
-    echo ""
     just _run-suites fast
 
 # Run all tests — parser unit + all integration including Autoware (~30s)
@@ -535,9 +532,6 @@ test-all:
     # `test-all` means what it says. Each is ~6s.
     (cd tests/fixtures/rt_workspace && just build)
     (cd tests/fixtures/io_stress && just build)
-    # The relocated CLI (`dump`, `contract eject`, `plot` moved out of
-    # play_launch in adc33a7) — several tests drive it directly.
-    just _build-resolve-cli debug
     echo ""
     # Collect the parity result rather than aborting on it (`set -e` is on),
     # so a parity failure does not hide the test suites behind it — and vice
@@ -771,45 +765,6 @@ bump-manifest tag:
     echo "  git add -- '*Cargo.toml' '*Cargo.lock' && git commit"
     echo "(A clean clone builds from the lock, and --locked fails against the old revision.)"
 
-# Build the layer-2 developer CLI and put it where everything looks for it.
-#
-# `cargo build` alone is not enough. colcon-cargo-ros2 redirects cargo's target
-# directory (`build/.cargo_target/<bucket>`), and which crates land in which
-# bucket differs between a developer checkout and a CI container — locally the
-# bucket is `src_play_launch` and this binary still lands canonically, while in
-# the CI container the bucket is `workspace` and it does not. That is why
-# `just test` has failed in CI since 2026-08-11 with
-#
-#     ros-launch-resolve binary not found (.../target/{release,debug}/ros-launch-resolve)
-#
-# while passing on every developer machine. Same root cause as the interception
-# .so (308f9b4): ask cargo where it actually wrote, then normalise.
-_build-resolve-cli profile="release":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd src/ros-launch-resolve
-    if [ "{{ profile }}" = "release" ]; then
-        cargo build --release --bin ros-launch-resolve
-        sub=release
-    else
-        cargo build --bin ros-launch-resolve
-        sub=debug
-    fi
-    target_dir=$(cargo metadata --format-version 1 --no-deps 2>/dev/null \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
-    built="${target_dir}/${sub}/ros-launch-resolve"
-    canonical="target/${sub}/ros-launch-resolve"
-    if [ ! -f "$built" ]; then
-        echo "ERROR: cargo reported success but produced no ros-launch-resolve binary." >&2
-        echo "       cargo says its target directory is: ${target_dir:-<unknown>}" >&2
-        exit 1
-    fi
-    if [ "$built" != "$(pwd)/$canonical" ] && [ ! "$built" -ef "$canonical" ]; then
-        echo "note: cargo built ros-launch-resolve into $target_dir; copying to $canonical"
-        mkdir -p "$(dirname "$canonical")"
-        cp -f "$built" "$canonical"
-    fi
-
 # Cross-parser parity gates: does the Rust parser produce the same SystemModel
 # as the Python one, on real launch trees?
 #
@@ -837,11 +792,6 @@ test-parity:
 
     if [ ! -f "$REPO_ROOT/install/setup.bash" ]; then
         echo "  SKIP: parity: install/setup.bash missing — run 'just build' first"
-        exit 0
-    fi
-    if [ ! -x "$REPO_ROOT/src/ros-launch-resolve/target/release/ros-launch-resolve" ] \
-       && [ ! -x "$REPO_ROOT/src/ros-launch-resolve/target/debug/ros-launch-resolve" ]; then
-        echo "  SKIP: parity: ros-launch-resolve not built — cargo build --bin ros-launch-resolve"
         exit 0
     fi
 

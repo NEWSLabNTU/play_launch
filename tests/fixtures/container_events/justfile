@@ -8,12 +8,20 @@ ros_distro := env_var_or_default('ROS_DISTRO', 'humble')
 # part of the colcon install/ tree — it builds under plain cargo, no ROS —
 # so it lives in its own workspace's target/. Release preferred, falls back
 # to debug (mirrors tests/src/fixtures.rs::ros_launch_resolve_bin()).
+# The binary that owns resolve/check/plot: play_launch itself.
+#
+# Layer 2 (ros-launch-resolve) is a LIBRARY in this repo, a path dependency of
+# the play_launch crate built by the one colcon build. Its standalone CLI is
+# for nano-ros, which builds it from the nested workspace on its own side; only
+# the two privileged helpers are separate binaries here. Driving a second
+# binary from this repo's tooling is what forced a manual cargo step into
+# "just build" and what broke CI for a week when colcon's target-dir redirect
+# moved it out from under the lookups.
 resolve_bin := `
-    for p in ../../../src/ros-launch-resolve/target/release/ros-launch-resolve \
-             ../../../src/ros-launch-resolve/target/debug/ros-launch-resolve; do
-        [ -f "$p" ] && { echo "$p"; exit 0; }
+    for p in ../../../install/play_launch/lib/play_launch/play_launch; do
+        [ -x "$p" ] && { echo "$p"; exit 0; }
     done
-    echo "../../../src/ros-launch-resolve/target/debug/ros-launch-resolve"
+    echo play_launch
 `
 
 # Show help

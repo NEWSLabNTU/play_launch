@@ -916,15 +916,25 @@ fn apply_reservation(pid: u32, tids: &[u32], tier: &AppliedTier) -> Result<(), S
 
 /// Preflight: can this process set RT scheduling at all?
 ///
-/// `true` if running as root (`euid == 0`), or if `CAP_SYS_NICE` is present
-/// in the effective capability set (`/proc/self/status` `CapEff:` line, bit
-/// 23). Any read/parse failure is treated as "no privilege".
+/// `true` iff `CAP_SYS_NICE` is present in the effective capability set
+/// (`/proc/self/status` `CapEff:` line, bit 23). Any read/parse failure is
+/// treated as "no privilege".
+///
+/// **`euid == 0` is deliberately NOT a shortcut.** It used to be, and it is
+/// wrong in a container: Docker's default bounding set drops `CAP_SYS_NICE`,
+/// so a root process there passes a uid test and then gets `EPERM` from
+/// `sched_setattr(2)` anyway. That is not hypothetical — it is why
+/// `privileged_self_apply_roundtrip` and `fifo_apply_must_not_set_reset_on_fork`
+/// failed in CI (`apply_tier should succeed when privileged: PermissionDenied`)
+/// while skipping cleanly on an unprivileged developer machine.
+///
+/// It also mattered at runtime, not only in tests: this function decides
+/// whether play_launch applies scheduling DIRECTLY rather than delegating to
+/// `play_launch_rt_helper`, so container-root would take the direct path and
+/// then EPERM once per node instead of using the helper that can actually do
+/// it. A real root shell has `CAP_SYS_NICE` in `CapEff`, so nothing changes
+/// there.
 pub fn has_sched_privilege() -> bool {
-    // SAFETY: geteuid() takes no arguments and cannot fail.
-    if unsafe { libc::geteuid() } == 0 {
-        return true;
-    }
-
     const CAP_SYS_NICE: u64 = 23;
 
     let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
