@@ -1,0 +1,14 @@
+# Concurrency arm — tests a gate that ships OFF.
+#
+# max_concurrent defaults to usize::MAX because phase 61 measured one-per-core
+# pacing to DOUBLE a 10.6s startup for a ~10% cut in peak runnable tasks. This
+# arm re-runs that measurement on this box. A result matching the recorded one
+# confirms the default; a contradicting result is worth more than the default.
+startup:
+  enabled: true
+  max_concurrent: 12          # = nproc on an AGX Orin
+  max_settle_secs: 15
+  settle_threshold_pct: 20.0
+
+interception:
+  enabled: false

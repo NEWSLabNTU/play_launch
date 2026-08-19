@@ -1,0 +1,14 @@
+# Runnable-task ceiling arm — the gate phase 61 measured as WORSE THAN NOTHING
+# (peak load1 217 with the ceiling vs 183 without), because it cannot tell
+# "busy starting things" from "busy running the things we started", so
+# already-running nodes hold the gate shut until the bypass fires.
+#
+# Included so that claim is reproducible rather than folklore. If this arm is
+# not worse on this box, the recorded reasoning needs revisiting.
+startup:
+  enabled: true
+  max_runnable_factor: 2.0
+  max_gate_wait_secs: 30
+
+interception:
+  enabled: false

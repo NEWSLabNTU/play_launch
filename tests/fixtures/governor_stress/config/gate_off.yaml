@@ -1,0 +1,13 @@
+# Baseline arm: governor disabled entirely.
+#
+# `enabled: false` restores pre-phase-61 behaviour — every process spawns the
+# instant its actor starts. Without this arm the other numbers are unanchored:
+# "startup took 40s with the gate on" says nothing until you know what it took
+# with the gate off on the same box, same launch, same minute.
+startup:
+  enabled: false
+
+# Interception off: this measures startup, and the per-message hooks are noise
+# here (~150ns/msg, irrelevant to admission, but they add a consumer task).
+interception:
+  enabled: false

@@ -1,0 +1,111 @@
+<?xml version="1.0"?>
+<!-- Settle detection: 32 nodes that each burn CPU during construction, then
+     go idle. On a 12-core Orin that is ~2.7x oversubscription.
+
+     What this arm is for: max_concurrent ships OFF (usize::MAX) because
+     phase 61 measured pacing to cost more than it saved, so with the shipped
+     config this should show NO gating — 32 processes starting at once. That
+     is the expected result, not a failure. Turning it on in
+     config/concurrency_on.yaml is what makes the comparison mean something:
+     if paced startup is slower here too, the shipped default is confirmed on
+     this box rather than inherited from a measurement made elsewhere.
+-->
+<launch>
+  <arg name="burn_ms" default="8000"/>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_00" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_01" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_02" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_03" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_04" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_05" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_06" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_07" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_08" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_09" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_10" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_11" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_12" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_13" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_14" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_15" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_16" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_17" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_18" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_19" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_20" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_21" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_22" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_23" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_24" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_25" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_26" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_27" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_28" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_29" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_30" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+  <node pkg="governor_stress" exec="cpu_burn" name="burn_31" namespace="/stress" output="screen">
+    <param name="burn_ms" value="$(var burn_ms)"/>
+  </node>
+</launch>

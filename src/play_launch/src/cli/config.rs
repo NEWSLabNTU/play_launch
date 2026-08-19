@@ -49,11 +49,19 @@ pub struct StartupSettings {
     pub enabled: bool,
 
     /// Maximum processes starting at once. `None` (the default, written as an
-    /// absent key or `~`) means one per CPU.
+    /// absent key or `~`) means UNLIMITED — the gate is off, because pacing to
+    /// one-per-core was measured to double a 10.6 s startup for a ~10% cut in
+    /// peak runnable tasks. See `StartupLimits::auto`, which records the
+    /// numbers at the field.
     pub max_concurrent: Option<usize>,
 
     /// Refuse to start another process while `MemAvailable` is below this many
-    /// MiB. `None` means 10% of RAM, clamped to [512 MiB, 4 GiB].
+    /// MiB. `None` means an ABSOLUTE 1 GiB, capped at a quarter of RAM — not a
+    /// percentage: 10% would give a 64 GiB box 4 GiB it does not need and a
+    /// 4 GiB board 512 MiB, less than two of the processes it is protecting
+    /// against. What the floor guards is one more process allocating before
+    /// the next sample, and the largest launch-owned process measured 274 MiB
+    /// regardless of machine size. See `StartupLimits::auto`.
     pub min_available_mb: Option<u64>,
 
     /// Refuse to start another process while runnable tasks exceed this

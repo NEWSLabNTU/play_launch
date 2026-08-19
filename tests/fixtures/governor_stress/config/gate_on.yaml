@@ -1,0 +1,20 @@
+# Memory-floor arm.
+#
+# min_available_mb is raised well above the shipped 1 GiB so the gate BINDS on
+# a 64 GB box without having to exhaust it. Set this from the box's actual
+# MemAvailable at rest, not from a guess: pick a value a few GiB BELOW what
+# `free -m` reports available, so the first hogs are admitted and later ones
+# queue. If you set it above current MemAvailable, every admission blocks
+# immediately and all you measure is max_gate_wait_secs.
+#
+# On a 64 GB Orin with ~58 GiB available at rest and 24x1 GiB of demand,
+# 40000 puts the boundary around the 18th hog.
+startup:
+  enabled: true
+  min_available_mb: 40000
+  # Left at defaults deliberately — this arm isolates the memory gate. Turning
+  # on concurrency here too would confound which gate produced the pacing.
+  max_gate_wait_secs: 30
+
+interception:
+  enabled: false

@@ -178,10 +178,16 @@ one that would let a vehicle keep containment and lose the storm.
   gates, each with a bypass so a launch can never fail to start:
   - concurrency limit — **off by default**, see above;
   - runnable-task ceiling — **off by default**, see above;
-  - `MemAvailable` floor — **on**, 10% of RAM clamped to [512 MiB, 4 GiB]. Not
-    a throughput control: it never blocks while memory is plentiful and only
-    serialises admissions once memory falls through the floor, which is the
-    condition that ended with a dead desktop.
+  - `MemAvailable` floor — **on**, an ABSOLUTE 1 GiB capped at a quarter of
+    RAM. Not a throughput control: it never blocks while memory is plentiful
+    and only serialises admissions once memory falls through the floor, which
+    is the condition that ended with a dead desktop. (This said "10% of RAM
+    clamped to [512 MiB, 4 GiB]" until W3 — the percentage scheme was replaced
+    during W1 because 10% gives a 64 GiB box 4 GiB it does not need and a 4 GiB
+    board 512 MiB, less than two of the processes it is protecting against.
+    The code changed and three descriptions of it did not: here,
+    `cli/config.rs`'s `min_available_mb` doc, and the same field in layer 2's
+    duplicate config struct.)
   - a separate semaphore for composable loads, because a load slot is held
     until LoadNode returns (minutes, under the existing retry budgets) and
     sharing one semaphore would let a stuck container stall every plain node.
@@ -281,3 +287,108 @@ consumers are genuinely in the graph rather than merely spawned. On the vehicle
 that is 14 s of LiDAR frames not published into nothing.
 
 Confirming the benefit is the same open vehicle run as W1's.
+
+## W3 — measuring the memory floor
+
+W1 shipped the `MemAvailable` floor as the one gate that stays on, on the
+argument that it "never blocks until memory is actually short". That argument
+was never tested against a launch. W3 tests it, on the same 12-core / 61.4 GiB
+AGX Orin.
+
+Fixture: `tests/fixtures/governor_stress/`. Two nodes — `mem_hog`, which makes
+a configurable amount of memory *resident* (touched, not merely allocated: a
+`malloc` of 1 GiB barely moves `MemAvailable`, so a hog that only allocates
+leaves the gate it is testing permanently open), and `cpu_burn`, which burns
+CPU **in its constructor**, where admission can see it.
+
+### The result: the gate does not fire on a self-inflicted storm
+
+24 nodes, 1 GiB resident each. Three arms, and the first three rows are the
+point:
+
+| arm | floor | spawn spread | gate fired |
+|---|---|---|---|
+| `gate_off` | — | 0.69 s | n/a |
+| `gate_on` | 40000 MiB | 0.70 s | **no** |
+| `gate_auto` | 50177 MiB (available − 6 GiB) | 0.32 s | **no** |
+| `gate_auto` + 10 GiB preload | 50029 MiB (**above** available) | held 30 s | **yes, all 24** |
+
+The hogs worked: `MemAvailable` fell 55.0 → 30.6 GiB, well through every floor
+tried. The gate still admitted everything.
+
+**Because admission is far faster than allocation.** All 24 processes were
+admitted in **0.32–0.70 s**; each took **1421 ms on average** to become
+resident. Every admission happened before any allocation landed. The gate
+behaved exactly as written — it read a `MemAvailable` that had not moved yet.
+
+### The mechanism itself is sound
+
+With pressure that *pre-existed* the launch — an external 10 GiB hog, floor set
+above the resulting `MemAvailable` — the gate held **all 24 admissions** for the
+full `max_gate_wait_secs`, then bypassed, naming the condition and the fix:
+
+```text
+startup: admitting NODE 'hog_13' despite MemAvailable 45996 MiB below floor
+50029 MiB — waited 30s (raise the limit or lower the load; see startup config)
+```
+
+So the floor is not broken. Its protection is narrower than W1 claimed.
+
+### What this means for the vehicle
+
+**The floor protects against pre-existing pressure, not against pressure the
+launch creates.** The incident this phase exists for is the second kind: 144
+processes, all started by one launch, collectively exhausting the box. For the
+floor to help there, admission has to span long enough that earlier nodes'
+allocations register before later nodes are admitted — plausible with 144 real
+nodes over ~10 s, where here 24 trivial binaries were admitted in under a
+second. **Not demonstrated either way**, and it is the thing to measure on the
+real stack rather than argue about.
+
+Second, smaller: after the bypass, every held admission releases **at once**.
+The protection is "delay the storm by up to `max_gate_wait_secs`", not
+"stagger it". A gate that released admissions gradually as memory recovered
+would be a different and probably better design; that is a proposal, not a
+measurement.
+
+### On the test being wrong first
+
+The first three arms are recorded above rather than deleted because the null
+result is the finding, and because the mistake is worth keeping: the fixture
+*asserted* a condition (memory would be short during admission) instead of
+*arranging* for it. The same shape as the `Built: <path>` echo in the release
+build — a check that reports success without establishing the thing it claims.
+What settled it was making the pressure pre-exist, which is one line of setup
+and turns a null into a demonstration.
+
+### Safety, since this is a fixture that can brick a board
+
+Five independent guards, each verified firing rather than assumed:
+
+1. **In-node reserve** — `mem_hog` stops short of `safety_reserve_mb` (8 GiB
+   default), re-read every 1 MiB chunk. Verified: asked for 200 GiB against a
+   50 GiB reserve, stopped at 6384 MiB and said why.
+2. **In-node deadline** — `max_lifetime_secs` releases and exits an orphan.
+   Verified at 8 s.
+3. **cgroup `MemoryMax`** — a `systemd-run --user --scope` at half of RAM with
+   swap disabled. The only guard the kernel enforces *at allocation time*; the
+   other four poll a number that can move faster than they sample. Verified by
+   disabling guard 1 under a 512M cap: the kernel killed the process, the host
+   was untouched. The harness **refuses to run** if this is unavailable.
+4. **External OOM guard** — `scripts/edge-storm/oom_guard.sh` on the process
+   group at a 6 GiB floor, outside play_launch so it cannot alter what is
+   measured.
+5. **`timeout` + EXIT trap + `just abort`** — bounded wall clock, group killed
+   however the recipe ends. Verified with `RUN_TIMEOUT=25`.
+
+Across every run the box never fell below 30.6 GiB free, no hog reached its
+reserve, and memory returned to 54.9 GiB with no survivors.
+
+### Open
+
+- **Does the floor bind on a real 144-node launch?** The one question W3 could
+  not answer with synthetic nodes.
+- **Gradual release after the bypass**, instead of releasing every held
+  admission simultaneously.
+- The `preload` arm exists only as a hand-run sequence; making it a recipe
+  would make the working case reproducible.

@@ -1,0 +1,236 @@
+# Governor stress runs. Each recipe is ONE arm; comparisons need at least two.
+
+ros_distro := env_var_or_default('ROS_DISTRO', 'humble')
+
+# Wall-clock ceiling per arm. Every launch here should finish far inside this;
+# if one does not, that is the result, and the run ends rather than lingering.
+RUN_TIMEOUT := env_var_or_default('RUN_TIMEOUT', '240')
+repo := `cd ../../.. && pwd`
+
+default:
+    @just --list
+
+build:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+# What the box looks like before anything runs. Record it: min_available_mb in
+# config/gate_on.yaml must be chosen from THIS, not from a guess.
+baseline:
+    #!/usr/bin/env bash
+    echo "nproc:        $(nproc)"
+    echo "MemTotal:     $(awk '/MemTotal/{printf "%.1f GiB", $2/1048576}' /proc/meminfo)"
+    echo "MemAvailable: $(awk '/MemAvailable/{printf "%.1f GiB", $2/1048576}' /proc/meminfo)"
+    echo "load1:        $(awk '{print $1}' /proc/loadavg)"
+    echo ""
+    echo "Shipped floor on this box: $(awk '/MemTotal/{t=$2} END{f=1048576; c=t/4; printf "%.0f MiB", (f<c?f:c)/1024}' /proc/meminfo)"
+    echo "Set gate_on.yaml min_available_mb a few GiB BELOW MemAvailable above."
+
+# One arm. `just arm mem_wave gate_on` etc.
+#
+# FIVE independent guards, because any one of them can be the one that fails:
+#
+#   1. In-node reserve      — mem_hog stops short of safety_reserve_mb (8 GiB).
+#                             Holds even if a hog is started by hand.
+#   2. In-node deadline     — max_lifetime_secs (180s) releases and exits an
+#                             orphan that nothing else reaped.
+#   3. cgroup MemoryMax     — a systemd scope the KERNEL enforces. The only
+#                             guard that survives a bug in the other four; the
+#                             worst case becomes "the scope is OOM-killed",
+#                             not "the desktop is".
+#   4. oom_guard.sh         — kills the process group at a floor, external to
+#                             play_launch so it cannot change what is measured.
+#   5. timeout + EXIT trap  — bounded wall clock, and the group dies with the
+#                             recipe however it ends (Ctrl-C included).
+#
+# The scope is the important one. Guards 1, 2 and 4 are all userspace watching
+# a number that can move faster than they poll; only the cgroup limit is
+# enforced at allocation time.
+arm launch config:
+    #!/usr/bin/env bash
+    # No `set -u` around the ROS setup: /opt/ros/*/setup.bash reads unbound
+    # variables and dies under it. The root justfile's _run-suites documents
+    # the same trap.
+    set -eo pipefail
+    source /opt/ros/{{ros_distro}}/setup.bash
+    source {{repo}}/install/setup.bash
+    source install/setup.bash
+    export PATH="{{repo}}/install/play_launch/lib/play_launch:$PATH"
+
+    out="runs/{{launch}}-{{config}}"
+    mkdir -p "$out"
+
+    total_kb=$(awk '/MemTotal/{print $2}' /proc/meminfo)
+    # Cap the whole run at half of RAM. The arms demand ~24 GiB of 61 GiB, so
+    # this never binds in a healthy run — it exists for the unhealthy one.
+    cap_mb=$(( total_kb / 1024 / 2 ))
+    # Trip the external guard while 6 GiB is still free: enough headroom for a
+    # desktop session to survive and for this shell to run the kill.
+    floor_kb=$(( 6 * 1024 * 1024 ))
+    run_timeout={{RUN_TIMEOUT}}
+
+    echo "=== arm {{launch}} / {{config}} ==="
+    echo "  guards: cgroup MemoryMax=${cap_mb}M, oom floor=$((floor_kb/1024))M, timeout=${run_timeout}s"
+
+    ( while true; do
+        echo "$(date +%s.%N) $(awk '/MemAvailable/{print $2}' /proc/meminfo) $(awk -F'[/ ]' '{print $4}' /proc/loadavg)"
+        sleep 0.25
+      done ) > "$out/mem_runnable.tsv" &
+    watcher=$!
+
+    # setsid: the run gets its own process group, so the guard and the trap can
+    # kill EVERYTHING it spawned — including forked component_node children —
+    # with one signal, rather than chasing pids.
+    # Guard 3, wired rather than merely described: a user scope with a kernel
+    # -enforced MemoryMax. Verified available on this box (cgroup v2, memory
+    # controller delegated); if it is ever not, the run is REFUSED rather than
+    # quietly proceeding with one fewer guard than the comment claims.
+    if ! systemd-run --user --scope -p MemoryMax=64M -q /bin/true >/dev/null 2>&1; then
+        echo "REFUSING TO RUN: systemd-run --user --scope with MemoryMax is unavailable." >&2
+        echo "  That is the only guard the kernel enforces at allocation time." >&2
+        echo "  Re-run with GOVERNOR_STRESS_NO_CGROUP=1 to proceed without it, knowingly." >&2
+        [ "${GOVERNOR_STRESS_NO_CGROUP:-0}" = "1" ] || exit 1
+        scope=()
+    else
+        scope=(systemd-run --user --scope --quiet
+               -p MemoryMax="${cap_mb}M" -p MemorySwapMax=0
+               --unit "govstress-{{launch}}-{{config}}-$$")
+    fi
+
+    setsid bash -c '
+        exec "$@"
+    ' _ "${scope[@]}" timeout --signal=TERM --kill-after=20 "$run_timeout" \
+        play_launch launch \
+          --disable-web-ui \
+          --config "config/{{config}}.yaml" \
+          --log-dir "$out/play_log" \
+          "launch/{{launch}}.launch.xml" > "$out/console.log" 2>&1 &
+    run_pid=$!
+    pgid=$(ps -o pgid= -p "$run_pid" | tr -d ' ')
+    echo "$pgid" > "$out/pgid"
+
+    cleanup() {
+        kill "$watcher" 2>/dev/null || true
+        kill "$guard_pid" 2>/dev/null || true
+        if [ -n "${pgid:-}" ]; then
+            kill -TERM "-$pgid" 2>/dev/null || true
+            sleep 3
+            kill -9 "-$pgid" 2>/dev/null || true
+        fi
+        rm -f "$out/pgid"
+    }
+    trap cleanup EXIT INT TERM
+
+    {{repo}}/scripts/edge-storm/oom_guard.sh "$pgid" "$floor_kb" "$out/oom_guard.log" &
+    guard_pid=$!
+
+    wait "$run_pid" && rc=0 || rc=$?
+    echo "  launch exit: $rc$([ $rc -eq 124 ] && echo ' (TIMEOUT — guard 5 fired)')"
+    if [ -s "$out/oom_guard.log" ]; then
+        echo "  !! OOM GUARD TRIPPED — see $out/oom_guard.log"
+        cat "$out/oom_guard.log" | sed 's/^/     /'
+    fi
+    short=$(grep -c 'STOPPING SHORT' "$out/console.log" 2>/dev/null || true)
+    echo "  hogs that stopped short of their target: ${short:-0}"
+    echo "  wrote $out/"
+    # A timeout or a tripped guard is a RESULT, not a harness error — record it
+    # and exit 0 so a comparison run continues to its other arms.
+    exit 0
+
+# Kill switch. Run from another shell if a run misbehaves; safe to run anytime.
+abort:
+    #!/usr/bin/env bash
+    for f in runs/*/pgid; do
+      [ -f "$f" ] || continue
+      pgid=$(cat "$f")
+      echo "killing pgid $pgid (from $f)"
+      kill -TERM "-$pgid" 2>/dev/null || true
+      sleep 2
+      kill -9 "-$pgid" 2>/dev/null || true
+      rm -f "$f"
+    done
+    # Belt and braces: anything left carrying our node names.
+    pkill -9 -f 'mem_hog|cpu_burn' 2>/dev/null || true
+    echo "done"
+
+# Write config/gate_auto.yaml with a floor derived from THIS MOMENT's
+# MemAvailable, then run the arm against it.
+#
+# Why this exists: a hardcoded floor cannot bind. The first ab-mem run set
+# min_available_mb: 40000 against 55 GiB available and paced nothing, because
+# all 24 processes were ADMITTED in 0.70s while each took 1421ms to become
+# resident — every admission happened before any allocation landed. The gate
+# was working exactly as written; the test could not reach it.
+#
+# The floor has to sit just below where memory will be a fraction of a second
+# into the spawn window, not below where it ends up. `headroom_mb` is that
+# distance: small enough that the falling curve crosses it mid-admission,
+# large enough that the first few nodes still get in.
+arm-auto launch headroom_mb="6144":
+    #!/usr/bin/env bash
+    set -eo pipefail
+    avail_mb=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
+    floor=$(( avail_mb - {{headroom_mb}} ))
+    if [ "$floor" -lt 8192 ]; then
+        echo "REFUSING: computed floor ${floor} MiB is too low to be safe." >&2
+        exit 1
+    fi
+    # printf, not a heredoc: a heredoc terminator has to sit at column 0, and
+    # `just` reads an unindented line as the end of the recipe.
+    printf '%s\n' \
+      "# GENERATED by 'just arm-auto' — regenerated every run, do not edit." \
+      "# MemAvailable at generation: ${avail_mb} MiB, headroom {{headroom_mb}} MiB." \
+      "startup:" \
+      "  enabled: true" \
+      "  min_available_mb: ${floor}" \
+      "  max_gate_wait_secs: 30" \
+      "interception:" \
+      "  enabled: false" \
+      > config/gate_auto.yaml
+    echo "  computed floor: ${floor} MiB (MemAvailable ${avail_mb} - headroom {{headroom_mb}})"
+    just arm {{launch}} gate_auto
+
+# The comparison that matters for the memory gate.
+ab-mem: (arm "mem_wave" "gate_off") (arm "mem_wave" "gate_on")
+    @echo "Compare: just report mem_wave-gate_off mem_wave-gate_on"
+
+# Re-check the two defaults that ship OFF because they measured badly.
+ab-cpu: (arm "cpu_wave" "gate_off") (arm "cpu_wave" "concurrency_on") (arm "cpu_wave" "runnable_on")
+    @echo "Compare: just report cpu_wave-gate_off cpu_wave-concurrency_on cpu_wave-runnable_on"
+
+report +arms:
+    #!/usr/bin/env bash
+    set -e
+    for a in {{arms}}; do
+      d="runs/$a"
+      [ -d "$d" ] || { echo "$a: MISSING"; continue; }
+      # Startup span: first spawn to the completion line play_launch prints.
+      first=$(grep -m1 -oE '^[0-9-]+T[0-9:.]+' "$d/play_log/latest/"*.log 2>/dev/null | head -1)
+      done_line=$(grep -m1 'Startup complete' "$d/console.log" 2>/dev/null || echo "(never reported complete)")
+      minmem=$(awk 'NR>1{if(min==""||$2<min)min=$2} END{printf "%.1f", min/1048576}' "$d/mem_runnable.tsv")
+      maxrun=$(awk 'NR>1{if($3>m)m=$3} END{print m+0}' "$d/mem_runnable.tsv")
+      gated=$(grep -c 'waiting for memory\|gate' "$d/console.log" 2>/dev/null || echo 0)
+      echo "$a"
+      echo "  min MemAvailable: ${minmem} GiB"
+      echo "  peak runnable:    ${maxrun}"
+      echo "  gate mentions:    ${gated}"
+      echo "  $done_line"
+    done
+
+# Children must be likelier OOM victims than the desktop. Read it from /proc
+# rather than trusting that the pre_exec ran.
+check-oom-bias:
+    #!/usr/bin/env bash
+    echo "pid  oom_score_adj  cmd"
+    for p in $(pgrep -f 'mem_hog|cpu_burn|component_node' 2>/dev/null); do
+      printf "%-7s %-14s %s\n" "$p" "$(cat /proc/$p/oom_score_adj 2>/dev/null)" \
+        "$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-60)"
+    done
+    echo ""
+    echo "Expect +300 (PLAY_LAUNCH_OOM_SCORE_ADJ overrides). play_launch itself"
+    echo "should NOT be biased — it can only volunteer its own children."
+
+clean:
+    rm -rf runs build install log

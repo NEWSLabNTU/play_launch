@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>governor_stress</name>
+  <version>0.1.0</version>
+  <description>
+    Stress fixture for play_launch's startup governor: nodes that occupy a
+    known amount of RAM or a known amount of CPU during construction, so the
+    memory floor and the settle detection can be observed rather than assumed.
+  </description>
+  <maintainer email="jerry73204@gmail.com">aeon</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

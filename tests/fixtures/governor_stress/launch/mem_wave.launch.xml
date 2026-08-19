@@ -1,0 +1,113 @@
+<?xml version="1.0"?>
+<!-- Memory gate: 24 plain nodes, each making 1 GiB resident.
+     Peak demand ~24 GiB, well under a 64 GB Orin, so the box is never at
+     real risk — the gate is made to bind by RAISING the floor in
+     config/gate_on.yaml rather than by exhausting the machine.
+
+     Why not exhaust it instead: on 64 GB the shipped floor is 1 GiB, so a
+     genuine test of the default would need ~63 GiB resident, which risks the
+     OOM killer taking something that matters and makes the run unrepeatable.
+     Raising the floor tests the same code path with the same arithmetic.
+     Run BOTH arms (gate_off / gate_on) or the numbers mean nothing. -->
+<launch>
+  <arg name="count" default="24"/>
+  <arg name="alloc_mb" default="1024"/>
+  <arg name="hold_secs" default="120"/>
+
+  <node pkg="governor_stress" exec="mem_hog" name="hog_00" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_01" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_02" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_03" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_04" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_05" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_06" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_07" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_08" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_09" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_10" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_11" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_12" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_13" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_14" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_15" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_16" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_17" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_18" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_19" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_20" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_21" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_22" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+  <node pkg="governor_stress" exec="mem_hog" name="hog_23" namespace="/stress" output="screen">
+    <param name="alloc_mb" value="$(var alloc_mb)"/>
+    <param name="hold_secs" value="$(var hold_secs)"/>
+  </node>
+</launch>

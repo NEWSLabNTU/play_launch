@@ -1,0 +1,85 @@
+<?xml version="1.0"?>
+<!-- Container-side spawn admission: 16 composables with slow constructors in
+     one container.
+
+     Under --container-mode isolated (the default) each becomes a forked
+     component_node process, admission is governed by MemAvailable inside the
+     container, and the pool is clamp(nproc, 4, 32) so it is deliberately NOT
+     the limit. Under --container-mode observable they are threads in one
+     process and the global load cap applies instead. Running both is the only
+     way to see that the two modes are governed differently on purpose.
+
+     SlowLoader is reused rather than reinvented: it already sleeps
+     load_delay_ms in its constructor, which is the property under test.
+-->
+<launch>
+  <arg name="load_delay_ms" default="20000"/>
+
+  <node_container pkg="rclcpp_components" exec="component_container_mt"
+                  name="stress_container" namespace="/stress" output="screen">
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_00">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_01">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_02">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_03">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_04">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_05">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_06">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_07">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_08">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_09">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_10">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_11">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_12">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_13">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_14">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+    <composable_node pkg="play_launch_container"
+                     plugin="play_launch_container::SlowLoader" name="slow_15">
+      <param name="load_delay_ms" value="$(var load_delay_ms)"/>
+    </composable_node>
+  </node_container>
+</launch>

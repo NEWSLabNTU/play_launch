@@ -62,3 +62,10 @@ node_modules/
 
 # Nextest JUnit output
 junit.xml
+
+# governor_stress fixture: generated config and run artifacts
+tests/fixtures/governor_stress/config/gate_auto.yaml
+tests/fixtures/governor_stress/runs/
+tests/fixtures/governor_stress/build/
+tests/fixtures/governor_stress/install/
+tests/fixtures/governor_stress/log/
