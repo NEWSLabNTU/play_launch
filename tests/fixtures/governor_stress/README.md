@@ -46,3 +46,19 @@ To see the gate work, the pressure has to PRE-EXIST the launch:
 
 `arm-auto` computes the floor from live `MemAvailable`; a negative headroom puts
 it above, which is what makes the gate bind.
+
+## What `ab-cpu` shows, and what it cannot
+
+Both gates that ship OFF do pace when enabled: `max_concurrent` costs 3.0x
+startup for 39% off peak runnable, `max_runnable_factor` 2.0x for 30%.
+
+Two caveats before quoting those numbers:
+
+- **This fixture flatters the gates.** `cpu_burn` is pure CPU, so holding it
+  back is maximally effective. A real node spends much of its startup blocked
+  on discovery and I/O, where the delay costs full price and saves nothing.
+  W1 measured ~10% on Autoware; treat 30-39% as an upper bound.
+- **It cannot reproduce the runnable-ceiling pathology** W1 found (that the
+  ceiling is *worse* than no gate, because it cannot tell "busy starting" from
+  "busy running"). These burners settle after 8 s and go idle, so the gate
+  never gets stuck. That needs a sustained-load node.

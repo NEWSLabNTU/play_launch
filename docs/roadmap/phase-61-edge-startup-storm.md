@@ -288,12 +288,16 @@ that is 14 s of LiDAR frames not published into nothing.
 
 Confirming the benefit is the same open vehicle run as W1's.
 
-## W3 — measuring the memory floor
+## W3 — measuring the governor
 
-W1 shipped the `MemAvailable` floor as the one gate that stays on, on the
-argument that it "never blocks until memory is actually short". That argument
-was never tested against a launch. W3 tests it, on the same 12-core / 61.4 GiB
-AGX Orin.
+W1 shipped three gates — a `MemAvailable` floor ON, a concurrency limit and a
+runnable-task ceiling both OFF — and the floor's justification was that it
+"never blocks until memory is actually short". None of it was tested against a
+launch. W3 tests all three, on the same 12-core / 61.4 GiB AGX Orin.
+
+Short version: **the two gates that ship off both work and both cost what W1
+said they cost. The one that ships on did not fire at all** on the storm this
+phase exists for.
 
 Fixture: `tests/fixtures/governor_stress/`. Two nodes — `mem_hog`, which makes
 a configurable amount of memory *resident* (touched, not merely allocated: a
@@ -384,6 +388,48 @@ Five independent guards, each verified firing rather than assumed:
 Across every run the box never fell below 30.6 GiB free, no hog reached its
 reserve, and memory returned to 54.9 GiB with no survivors.
 
+### The CPU gates: both work, both cost what W1 said they cost
+
+The two gates that ship OFF were re-measured on the same box. 32 `cpu_burn`
+nodes, each burning 8 s in its constructor then idling — ~2.7x oversubscription
+on 12 cores.
+
+| arm | spawn spread | all settled | peak runnable | bypasses |
+|---|---|---|---|---|
+| `gate_off` | 0.66 s | **8.66 s** | 82 | 0 |
+| `concurrency_on` (12 = nproc) | 17.76 s | **25.76 s** | 50 | 0 |
+| `runnable_on` (2x ncpu) | 9.40 s | **17.40 s** | 57 | 0 |
+
+`max_concurrent` costs **3.0x startup** for 39% off peak runnable;
+`max_runnable_factor` costs **2.0x** for 30%. No bypass fired in either arm, so
+both paced by real admission control rather than by hitting their escape hatch.
+
+The cost direction reproduces W1 and is the measurement behind both defaults.
+
+### Two caveats that matter more than the table
+
+**This fixture flatters the gates.** W1 measured ~10% off peak runnable on
+Autoware; these arms show 30-39%. `cpu_burn` is pure CPU with nothing else, so
+holding it back is maximally effective. A real node spends much of its startup
+blocked on discovery, parameter loading and I/O, where delaying it saves
+nothing and costs the full delay. Read 30-39% as an upper bound that a real
+stack will not reach — not as a contradiction of W1's 10%.
+
+**The `runnable_on` pathology did NOT reproduce, and its absence is explained.**
+W1 measured the runnable ceiling as *worse than nothing* — peak load1 217 with
+it against 183 without — because it cannot tell "busy starting things" from
+"busy running the things we started", so already-running nodes held the gate
+shut until the bypass fired each time. Here it is simply the cheaper of the two
+gates. The difference is the workload: these burners settle after 8 s and go
+idle, so the runnable count falls back on its own and the ceiling never gets
+stuck. **Reproducing the pathology needs nodes that stay busy after startup**,
+which `cpu_burn` deliberately is not.
+
+So these arms confirm the gates function and confirm their cost. They can
+neither confirm nor refute W1's finding that the runnable ceiling is actively
+harmful — that needs a sustained-load variant of the fixture, or the real
+stack.
+
 ### Open
 
 - **Does the floor bind on a real 144-node launch?** The one question W3 could
@@ -392,3 +438,6 @@ reserve, and memory returned to 54.9 GiB with no survivors.
   admission simultaneously.
 - The `preload` arm exists only as a hand-run sequence; making it a recipe
   would make the working case reproducible.
+- **A sustained-load variant of `cpu_burn`** — one that stays busy after
+  construction — is what would let the runnable-ceiling pathology be
+  reproduced or refuted on the bench instead of only on a vehicle.
