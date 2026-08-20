@@ -177,6 +177,54 @@ should not carry either.
 That work belongs to the vehicle side. Its counterpart phase is
 `docs/roadmaps/4-diagnostics-observability.md` in the golf cart repo.
 
+## Measurement note (2026-08-21): the zero-WARNING/STALE framing
+
+Added by a second pass, not by the author of the sections above. The W1 fixes
+are not in question — a dead `Vec`, a debounce colliding exactly with 10 Hz,
+staleness never derived, and a 5 s poll are defects on their own merits, and
+the debounce fix is visibly working (below). What this note questions is the
+inference drawn from the corpus.
+
+The golf cart stack was run on the bench Orin, isolated on its own
+`ROS_DOMAIN_ID`, `host:=master rviz:=false`, 150 s, twice — once with a
+play_launch binary built BEFORE the W1 commits and once after:
+
+| | rows | names | OK | ERROR | WARNING | STALE |
+|---|---|---|---|---|---|---|
+| pre-W1 binary | 102,221 | 50 | 34,641 | 64,414 | **2,694** | **472** |
+| post-W1 binary | 134,099 | 151 | 104,488 | 27,573 | **1,962** | **76** |
+
+**The unfixed monitor recorded 2,694 WARNING and 472 STALE.** So "not one of
+them was WARNING or STALE" is not what a monitor looks like when it cannot
+represent the states in between — the same code, unfixed, represents both in
+volume on the same stack. The vehicle log already in this tree
+(`2026-08-17_11-18-23`, 572,425 rows, 181 names) also predates the fixes and
+contains 6,448 WARNING and 1,116 STALE.
+
+Three runs disagree with the corpus. The likeliest explanation is that
+something about that particular four-hour run differs — configuration, which
+nodes were launched, or the vehicle state — not that the monitor was incapable.
+Worth settling before W2 and W3 lean on it, because both sets of acceptance
+criteria are written against that corpus and the framing motivates the phase.
+
+### What the same measurement does confirm
+
+Distinct diagnostic names went **50 -> 151** across the fix. The rarest of the
+110 new names are `net_monitor` leaves appearing 2, 3, 5 and 13 times in the
+whole run — precisely the short-lived transitions a 100 ms debounce against a
+10 Hz publisher would swallow. That is the W1 debounce fix paying off, measured
+end to end, and it is a better argument for the fix than the corpus was.
+
+### Caveats on these numbers
+
+- 150 s of startup, against a four-hour steady-state corpus. Startup is where
+  transitions cluster, so WARNING/STALE counts are not comparable in magnitude
+   — only their presence or absence is.
+- Bench, no sensors: the `vehicle_interface/*` leaves that self-declare STALE
+  on the vehicle have no hardware to talk to here.
+- Run-to-run variance on a 145-process startup is large; the OK/ERROR split
+  moved substantially between two runs of the same config.
+
 ## Verification without a vehicle
 
 `play_log/2026-08-18_14-42-44/diagnostics.csv` replays the real thing: 405,480

@@ -507,6 +507,44 @@ intermediate count honest at 12/16; and `Startup complete` printed only after
 all 16 were ListNodes-confirmed, not on the LoadNode responses that would have
 claimed 16/16 immediately.
 
+### The real launch: the floor is ~50x away from binding
+
+W3 could not answer whether the memory floor binds on a real 144-node launch,
+because synthetic nodes are admitted faster than they allocate. The golf cart
+stack answers it directly. Run on the bench Orin, isolated on its own
+`ROS_DOMAIN_ID`, 150 s, `host:=master rviz:=false`:
+
+| | |
+|---|---|
+| processes | **145** (61 nodes + 84 composables) |
+| MemAvailable | 52.8 -> **49.4 GiB** |
+| memory consumed | **3.3 GiB** |
+| peak runnable tasks | **200** |
+| peak load1 | **72** |
+
+The default floor is 1 GiB. The stack's worst moment leaves **49.4 GiB free** —
+roughly fifty times the threshold. The floor cannot bind on this launch, and no
+plausible tightening of it would help: to make 1 GiB meaningful here the
+machine would have to be running something else that consumed 48 GiB first,
+which is the pre-existing-pressure case W3 already showed it handles.
+
+So the gate that ships ON is the one that cannot fire on the workload this
+phase exists for, while the storm is unambiguously CPU — 200 runnable tasks and
+load1 72 on 12 cores — and both CPU gates ship OFF, each for a measured reason.
+That is not a contradiction to resolve by flipping a default: W3 measured what
+those gates cost, and the sustained-load arm confirmed the runnable ceiling is
+actively harmful. It is a statement that **the admission controller as built
+does not address this workload**, and that the lever which did move it in W1
+was the process count itself (`--container-mode observable`: 144 processes to
+60, 10.2 cores to 3.9).
+
+Caveat, and it is the important one: this is a bench with no sensors. Memory
+is where the original incident ended, and 3.3 GiB without sensors says nothing
+about the case that produced the OOM. What it does establish is that the
+LAUNCH ITSELF is not what exhausts memory — 145 processes cost 3.3 GiB — so
+whatever consumed 64 GiB on the vehicle came from data in flight, not from the
+processes existing. That narrows the open question rather than closing it.
+
 ### Gradual release: implemented, measured, and left OFF
 
 W3 found that the floor delays the storm rather than staggering it — every
@@ -561,8 +599,13 @@ load.
 
 ### Open
 
-- **Does the floor bind on a real 144-node launch?** The one question W3 could
-  not answer with synthetic nodes.
+- ~~**Does the floor bind on a real 144-node launch?**~~ — answered, and the
+  answer is no. See below.
+- **The sensor variable.** Everything measured so far is on a bench with no
+  sensors attached. The incident had LiDAR and cameras publishing, and that is
+  precisely the input that is missing: 3.3 GiB with no sensors says nothing
+  about what DDS history caches and callback backlogs do when the drivers are
+  live. This is the remaining half of W1's inference and it needs the vehicle.
 - ~~Gradual release after the bypass~~ — done as `bypass_stagger_ms`, measured,
   and left OFF: it spreads the CPU burst but does not move the memory
   low-water mark. See above.
