@@ -131,6 +131,18 @@ pub struct NodeSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional = nullable))]
     pub node_name: Option<String>,
+    /// Worst diagnostic level attributed to this member (phase 62 W2).
+    ///
+    /// `None` means NO diagnostic was attributed — not that the member is
+    /// healthy. The UI must render those differently: a node nobody publishes
+    /// diagnostics for and a node publishing OK are different states, and
+    /// showing both green is the mistake this field exists to avoid.
+    ///
+    /// Derived from the registry's AGED view, so a member whose publishers
+    /// went silent badges stale rather than keeping its last green.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub diagnostic_level: Option<String>,
     /// Unix timestamp (seconds) when stderr was last modified
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional = nullable, type = "number"))]
@@ -193,6 +205,9 @@ impl NodeSummary {
             is_container: member.is_container,
             exec_name: member.exec_name.clone(),
             node_name: member.node_name.clone(),
+            // Filled by the handler, which has the registry; a summary built
+            // from a member alone cannot know its diagnostics.
+            diagnostic_level: None,
             stderr_last_modified: member.stderr_last_modified,
             stderr_size: member.stderr_size,
             stderr_preview: member.stderr_preview.clone(),

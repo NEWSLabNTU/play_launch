@@ -1,3 +1,4 @@
+pub mod attribution;
 pub mod diagnostic_data;
 pub mod diagnostic_monitor;
 pub mod storage;

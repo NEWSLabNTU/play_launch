@@ -85,6 +85,21 @@ fn resolve_container<'a>(
     lookup.get(&normalized).or_else(|| lookup.get(target))
 }
 
+/// Diagnostics that could not be attributed to any spawned member.
+///
+/// Phase 62 W2. Never empty on a real stack — a hardware bridge publishes
+/// sub-checks (`vehicle_interface/can_tx`) that name no node, and issue 0017's
+/// un-named nodes land here too whenever interception is off and the identity
+/// map is unavailable.
+pub async fn list_unmatched_diagnostics(
+    State(state): State<Arc<WebState>>,
+) -> Json<Vec<crate::diagnostics::DiagnosticStatus>> {
+    let nodes = state.member_handle.list_members().await;
+    let attributor = crate::diagnostics::attribution::Attributor::new(nodes.iter().map(|n| &n.id));
+    let (_badges, unmatched) = state.diagnostic_registry.badges(&attributor);
+    Json(unmatched)
+}
+
 /// List all nodes - returns JSON
 pub async fn list_nodes(
     State(state): State<Arc<WebState>>,
@@ -94,10 +109,18 @@ pub async fn list_nodes(
 
     let container_lookup = build_container_lookup(&nodes);
 
+    // Phase 62 W2 — diagnostics badges. Built once per request from the
+    // registry's aged view, so every card in a response agrees with every
+    // other and with the diagnostics table.
+    let attributor = crate::diagnostics::attribution::Attributor::new(nodes.iter().map(|n| &n.id));
+    let (badges, _unmatched) = state.diagnostic_registry.badges(&attributor);
+
     let node_summaries: Vec<_> = nodes
         .iter()
         .map(|member| {
             let mut summary = super::web_types::NodeSummary::from_member_summary(member);
+            summary.diagnostic_level =
+                badges.get(&member.id).map(|l| l.as_str().to_string());
             // Populate container_name for composable nodes
             if summary.node_type == super::web_types::NodeType::ComposableNode
                 && let Some(ref target) = summary.target_container

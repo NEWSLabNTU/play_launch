@@ -16,6 +16,18 @@ id: string, name: string, node_type: NodeType, status: UnifiedStatus, pid: numbe
  */
 container_id?: string | null, is_container: boolean, exec_name?: string | null, node_name?: string | null, 
 /**
+ * Worst diagnostic level attributed to this member (phase 62 W2).
+ *
+ * `None` means NO diagnostic was attributed — not that the member is
+ * healthy. The UI must render those differently: a node nobody publishes
+ * diagnostics for and a node publishing OK are different states, and
+ * showing both green is the mistake this field exists to avoid.
+ *
+ * Derived from the registry's AGED view, so a member whose publishers
+ * went silent badges stale rather than keeping its last green.
+ */
+diagnostic_level?: string | null, 
+/**
  * Unix timestamp (seconds) when stderr was last modified
  */
 stderr_last_modified?: number, 

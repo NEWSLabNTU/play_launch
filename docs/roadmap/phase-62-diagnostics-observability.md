@@ -1,8 +1,8 @@
 # Phase 62: diagnostics observability
 
 Status: **W1 done** (four registry and transport defects fixed, `a7c2da7`,
-`adee4f6`, `adf6516`). W2 (node-card badges) and W3 (transition strip) not
-started.
+`adee4f6`, `adf6516`). **W2 done** (node-card badges). W3 (transition strip)
+not started.
 
 ## The report
 
@@ -110,7 +110,7 @@ but it is not in the default launch and emits `/diagnostics_array` anyway.
 The default now names `/diagnostics` alone. `diagnostics.topics` still takes a
 list for anyone who does run an aggregator.
 
-## W2: diagnostics on the node cards
+## W2: diagnostics on the node cards — DONE
 
 play_launch knows every node it spawned. It has a `/diagnostics` feed keyed by
 `hardware_id/name`. It does not join them, so the diagnostics table is a separate

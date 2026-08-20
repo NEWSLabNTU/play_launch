@@ -35,6 +35,21 @@ impl DiagnosticLevel {
         }
     }
 
+    /// Ordering for "worst level", which is NOT the numeric wire value.
+    ///
+    /// `diagnostic_msgs` numbers STALE as 3, above ERROR at 2, but a stale
+    /// diagnostic is not worse news than a failing one: ERROR is a fault the
+    /// system reported, STALE is the absence of a report. Ranking STALE above
+    /// ERROR would let a silent publisher mask a live fault on the same node.
+    pub fn severity(&self) -> u8 {
+        match self {
+            DiagnosticLevel::Ok => 0,
+            DiagnosticLevel::Stale => 1,
+            DiagnosticLevel::Warning => 2,
+            DiagnosticLevel::Error => 3,
+        }
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             DiagnosticLevel::Ok => "OK",
@@ -165,6 +180,39 @@ impl DiagnosticRegistry {
     }
 
     /// Get diagnostic counts by level, aged.
+    /// Worst level per attributed member, for the node-card badges
+    /// (phase 62 W2), plus the diagnostics that matched no member.
+    ///
+    /// Derived from `list_all`, which is the AGED view: staleness is applied
+    /// on read, so a member whose diagnostics went silent badges stale rather
+    /// than keeping the green it last published. That equivalence is the point
+    /// — a badge computed from a different view than the table could disagree
+    /// with it, and the table is what an operator checks second.
+    pub fn badges(
+        &self,
+        attributor: &crate::diagnostics::attribution::Attributor,
+    ) -> (std::collections::HashMap<String, DiagnosticLevel>, Vec<DiagnosticStatus>) {
+        let mut worst: std::collections::HashMap<String, DiagnosticLevel> =
+            std::collections::HashMap::new();
+        let mut unmatched = Vec::new();
+        for status in self.list_all() {
+            match attributor.attribute(&status.name) {
+                (Some(member), _) => {
+                    worst
+                        .entry(member.to_string())
+                        .and_modify(|l| {
+                            if status.level.severity() > l.severity() {
+                                *l = status.level;
+                            }
+                        })
+                        .or_insert(status.level);
+                }
+                (None, _) => unmatched.push(status),
+            }
+        }
+        (worst, unmatched)
+    }
+
     pub fn get_counts(&self) -> DiagnosticCounts {
         let now = SystemTime::now();
         let mut counts = DiagnosticCounts::default();
@@ -191,6 +239,56 @@ impl Default for DiagnosticRegistry {
 
 #[cfg(test)]
 mod tests {
+
+    /// STALE must not outrank ERROR, despite being the higher wire value.
+    ///
+    /// The failure this pins: a node with a live ERROR and a silent publisher
+    /// badging "stale" and hiding the fault. `diagnostic_msgs` numbers STALE 3
+    /// and ERROR 2, so the obvious `max()` on the wire value is wrong.
+    #[test]
+    fn error_outranks_stale_in_the_badge() {
+        use crate::diagnostics::attribution::Attributor;
+        let reg = DiagnosticRegistry::new(None);
+        for (name, level) in [
+            ("talker: heartbeat", DiagnosticLevel::Stale),
+            ("talker: link", DiagnosticLevel::Error),
+        ] {
+            reg.update(DiagnosticStatus {
+                hardware_id: "hw".into(),
+                name: name.into(),
+                level,
+                message: String::new(),
+                values: Default::default(),
+                timestamp: std::time::SystemTime::now(),
+            });
+        }
+        let a = Attributor::new(["/ns/talker"]);
+        let (worst, unmatched) = reg.badges(&a);
+        assert_eq!(worst.get("/ns/talker"), Some(&DiagnosticLevel::Error));
+        assert!(unmatched.is_empty());
+    }
+
+    /// A diagnostic naming no member lands in the unmatched bucket rather than
+    /// being dropped or attached to something plausible.
+    #[test]
+    fn unmatched_diagnostics_are_returned_not_discarded() {
+        use crate::diagnostics::attribution::Attributor;
+        let reg = DiagnosticRegistry::new(None);
+        reg.update(DiagnosticStatus {
+            hardware_id: "hw".into(),
+            name: "vehicle_interface/can_tx".into(),
+            level: DiagnosticLevel::Error,
+            message: String::new(),
+            values: Default::default(),
+            timestamp: std::time::SystemTime::now(),
+        });
+        let a = Attributor::new(["/ns/talker"]);
+        let (worst, unmatched) = reg.badges(&a);
+        assert!(worst.is_empty(), "must not guess a member");
+        assert_eq!(unmatched.len(), 1);
+        assert_eq!(unmatched[0].name, "vehicle_interface/can_tx");
+    }
+
     use super::*;
 
     fn status(name: &str, level: DiagnosticLevel, timestamp: SystemTime) -> DiagnosticStatus {

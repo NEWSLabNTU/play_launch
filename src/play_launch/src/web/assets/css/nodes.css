@@ -482,3 +482,35 @@ button:hover:not(:disabled) {
     background: var(--border-color, #d1d5db);
     margin: 0 4px;
 }
+
+/* Diagnostics badge on the node card (phase 62 W2).
+ *
+ * Absent when no diagnostic was attributed — a node nobody publishes
+ * diagnostics for is not the same as one publishing OK, and this must not
+ * render the first as the second.
+ *
+ * `stale` is deliberately grey rather than a warning colour: it means the
+ * report stopped arriving, which is an absence of information, not a fault the
+ * system declared. Colouring it like ERROR would let a quiet publisher shout
+ * louder than a real fault on another node. */
+.diag-badge {
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+}
+
+.diag-badge-ok { background: #dcfce7; color: #15803d; }
+.diag-badge-warn,
+.diag-badge-warning { background: #fef3c7; color: #b45309; }
+.diag-badge-error { background: #fee2e2; color: #b91c1c; }
+.diag-badge-stale { background: #e5e7eb; color: #4b5563; }
+
+[data-theme="dark"] .diag-badge-ok { background: #14532d; color: #86efac; }
+[data-theme="dark"] .diag-badge-warn,
+[data-theme="dark"] .diag-badge-warning { background: #78350f; color: #fcd34d; }
+[data-theme="dark"] .diag-badge-error { background: #7f1d1d; color: #fca5a5; }
+[data-theme="dark"] .diag-badge-stale { background: #374151; color: #d1d5db; }

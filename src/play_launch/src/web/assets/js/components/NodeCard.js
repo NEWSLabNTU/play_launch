@@ -207,6 +207,29 @@ function ComposableButton({ id, statusStr, pendingAction, setPendingAction }) {
 }
 
 /** NodeCard component. */
+/** Worst diagnostic level attributed to this node (phase 62 W2).
+ *
+ * Renders NOTHING when no diagnostic was attributed. That is deliberate: a
+ * node nobody publishes diagnostics for and a node publishing OK are different
+ * states, and a green dot on the first would be an invention. Absence of a
+ * badge means absence of information.
+ *
+ * The level comes from the registry's aged view, so a node whose publishers
+ * went silent shows `stale` rather than keeping the green it last published.
+ */
+function DiagnosticBadge({ level }) {
+    if (!level) return null;
+    const l = String(level).toLowerCase();
+    const title = {
+        ok: 'Diagnostics OK',
+        warn: 'Diagnostics reporting WARNING',
+        warning: 'Diagnostics reporting WARNING',
+        error: 'Diagnostics reporting ERROR',
+        stale: 'Diagnostics stale — no update within the staleness window',
+    }[l] || `Diagnostics: ${level}`;
+    return html`<span class="diag-badge diag-badge-${l}" title=${title}>${l}</span>`;
+}
+
 export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
     // Phase-50: id is THE key (API routes, selection, topic counts);
     // name is display-only. Every /api/nodes/:key path takes the id —
@@ -247,6 +270,7 @@ export function NodeCard({ node, isChild, onFilterNamespace, onViewNode }) {
                     <span class="node-name">${name}</span>
                     ${ordinal && html`<span class="node-ordinal" title="Duplicate name — canonical id ${id}">${ordinal}</span>`}
                     ${node.pid != null && html`<span class="node-pid">PID ${node.pid}</span>`}
+                    <${DiagnosticBadge} level=${node.diagnostic_level} />
                     <${StderrIcon} node=${node} />
                 </div>
                 <div class="node-meta">

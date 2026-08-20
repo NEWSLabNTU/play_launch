@@ -187,6 +187,15 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
         .route("/api/nodes/restart-all", post(handlers::restart_all))
         // Diagnostics endpoints
         .route("/api/diagnostics/list", get(handlers::list_diagnostics))
+        // Phase 62 W2 — the diagnostics that matched no spawned member. The
+        // acceptance criteria require this be visible rather than silently
+        // dropped: on the measured corpus it holds five hardware-bridge
+        // sub-checks, and a UI that showed only the attributed ones would
+        // imply those had gone away.
+        .route(
+            "/api/diagnostics/unmatched",
+            get(handlers::list_unmatched_diagnostics),
+        )
         .route(
             "/api/diagnostics/counts",
             get(handlers::get_diagnostic_counts),
