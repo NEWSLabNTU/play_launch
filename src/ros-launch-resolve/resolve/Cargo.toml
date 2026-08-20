@@ -11,6 +11,15 @@ license.workspace = true
 repository.workspace = true
 description = "Resolve a ROS 2 launch tree into a checked SystemModel"
 
+[features]
+# Forwarded to the checker (rlm v0.1.8). Default ON: `play_launch resolve`
+# and this crate's own consumers keep the full 21-rule battery, z3 included.
+# A distribution that wants no z3/bindgen host deps opts out with
+# `default-features = false` and gets the checker's own Info diagnostic in
+# every model's meta.diagnostics instead of a silent gap.
+default = ["smt"]
+smt = ["ros-launch-manifest-check/smt"]
+
 [dependencies]
 # issue 0382 — `structure.nodes` is an order-preserving map.
 indexmap = { version = "2", features = ["serde"] }
