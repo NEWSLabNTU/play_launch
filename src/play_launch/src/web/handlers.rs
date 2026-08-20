@@ -85,6 +85,19 @@ fn resolve_container<'a>(
     lookup.get(&normalized).or_else(|| lookup.get(target))
 }
 
+/// Level transitions per diagnostic (phase 62 W3).
+///
+/// Transitions, not samples: a 10 Hz publisher holding one level produces one
+/// entry, and replaying a 572k-row corpus retains 189 transitions in total.
+/// `dropped` per entry is non-zero only when a diagnostic flapped past the
+/// buffer bound, and the UI must show that rather than implying the visible
+/// span is the whole run.
+pub async fn diagnostics_history(
+    State(state): State<Arc<WebState>>,
+) -> Json<std::collections::HashMap<String, crate::diagnostics::LevelHistory>> {
+    Json(state.diagnostic_registry.all_history())
+}
+
 /// Diagnostics that could not be attributed to any spawned member.
 ///
 /// Phase 62 W2. Never empty on a real stack — a hardware bridge publishes

@@ -97,6 +97,36 @@ pub struct DiagnosticCounts {
 /// the life of a run — one four-hour session on the golf cart logged 405,480
 /// statuses, each carrying three `String`s and a `HashMap` of values — and the
 /// only reader of that `Vec` was a `get_history` with no callers. Read the CSV.
+/// How many level TRANSITIONS to keep per diagnostic (phase 62 W3).
+///
+/// Transitions, not samples. Autoware publishes at 10 Hz, so a four-hour run
+/// is ~400k statuses but only a few hundred changes of level — storing samples
+/// would rebuild the unbounded `Vec` W1 deleted, with a chart on top. Storing
+/// transitions is what makes the strip both bounded and readable.
+///
+/// 256 per diagnostic is a deliberate, explicit number rather than a tuned
+/// one: it holds far more flapping than anyone can read in a strip, and at
+/// ~24 bytes an entry the worst case across 181 diagnostics is under 1.2 MiB.
+pub const LEVEL_HISTORY_CAPACITY: usize = 256;
+
+/// One level change, and when it happened.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct LevelTransition {
+    pub level: DiagnosticLevel,
+    #[serde(with = "humantime_serde")]
+    pub at: SystemTime,
+}
+
+/// A diagnostic's level history, with what fell off the end.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LevelHistory {
+    pub transitions: Vec<LevelTransition>,
+    /// Transitions dropped because the buffer was full. Non-zero means the
+    /// visible span is NOT the whole run, and the UI has to say so — a strip
+    /// that silently truncates implies a quiet period that never happened.
+    pub dropped: u64,
+}
+
 #[derive(Clone)]
 pub struct DiagnosticRegistry {
     // Latest status for each diagnostic (keyed by "hardware_id/name")
@@ -109,6 +139,8 @@ pub struct DiagnosticRegistry {
     /// receiver re-reads the registry, which is always current and cannot be
     /// delivered out of order.
     changes: broadcast::Sender<()>,
+    /// Per-diagnostic level transitions, bounded (phase 62 W3).
+    history: Arc<DashMap<String, LevelHistory>>,
 }
 
 impl DiagnosticRegistry {
@@ -118,6 +150,7 @@ impl DiagnosticRegistry {
             diagnostics: Arc::new(DashMap::new()),
             stale_after,
             changes,
+            history: Arc::new(DashMap::new()),
         }
     }
 
@@ -132,17 +165,57 @@ impl DiagnosticRegistry {
     /// uses to decide whether the update may bypass rate limiting.
     pub fn update(&self, status: DiagnosticStatus) -> bool {
         let key = status.key();
+        let key_for_history = key.clone();
         let level = status.level;
+        let at = status.timestamp;
 
         let previous = self.diagnostics.insert(key, status);
         let changed = previous.map(|p| p.level) != Some(level);
 
         if changed {
+            // Record the transition BEFORE notifying, so a subscriber that
+            // re-reads on the wakeup sees the change it was told about.
+            self.record_transition(&key_for_history, level, at);
             // Err only means nobody is subscribed.
             let _ = self.changes.send(());
         }
 
         changed
+    }
+
+    /// Append a level transition, dropping the oldest when full.
+    ///
+    /// Bounded by construction: the buffer never grows past
+    /// `LEVEL_HISTORY_CAPACITY`, and what it drops is counted rather than
+    /// forgotten. W1 removed an unbounded history that held every status ever
+    /// seen; this is the same data at a thousandth the volume, kept because a
+    /// transition is the thing worth charting and a sample is not.
+    fn record_transition(&self, key: &str, level: DiagnosticLevel, at: SystemTime) {
+        let mut entry = self.history.entry(key.to_string()).or_default();
+        entry.transitions.push(LevelTransition { level, at });
+        if entry.transitions.len() > LEVEL_HISTORY_CAPACITY {
+            let excess = entry.transitions.len() - LEVEL_HISTORY_CAPACITY;
+            entry.transitions.drain(..excess);
+            entry.dropped += excess as u64;
+        }
+    }
+
+    /// Level history for one diagnostic, by registry key.
+    pub fn history_for(&self, key: &str) -> Option<LevelHistory> {
+        self.history.get(key).map(|h| h.clone())
+    }
+
+    /// Level history for every diagnostic that has changed level at least once.
+    ///
+    /// A diagnostic that has held one level since startup has no transitions
+    /// and is absent here — which is correct: there is nothing to chart, and
+    /// inventing a single synthetic entry would make "never changed" and
+    /// "changed once at startup" look identical.
+    pub fn all_history(&self) -> std::collections::HashMap<String, LevelHistory> {
+        self.history
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect()
     }
 
     /// Apply the staleness rule to a status as it is read.
@@ -239,6 +312,85 @@ impl Default for DiagnosticRegistry {
 
 #[cfg(test)]
 mod tests {
+
+    fn hist_status(name: &str, level: DiagnosticLevel, secs: u64) -> DiagnosticStatus {
+        DiagnosticStatus {
+            hardware_id: "hw".into(),
+            name: name.into(),
+            level,
+            message: String::new(),
+            values: Default::default(),
+            timestamp: std::time::UNIX_EPOCH + Duration::from_secs(secs),
+        }
+    }
+
+    /// W3's payoff test, and the reason W1's debounce fix matters: a fault
+    /// that lasted a single publish interval must be visible.
+    ///
+    /// Before W1 an OK -> ERROR -> OK inside one 100 ms debounce window was
+    /// dropped from the registry AND the CSV, leaving no trace anywhere that
+    /// the system had faulted. Here the same sequence must leave two
+    /// transitions into and out of ERROR.
+    #[test]
+    fn a_fault_lasting_one_interval_is_in_the_history() {
+        let reg = DiagnosticRegistry::new(None);
+        reg.update(hist_status("talker: link", DiagnosticLevel::Ok, 1));
+        reg.update(hist_status("talker: link", DiagnosticLevel::Error, 2));
+        reg.update(hist_status("talker: link", DiagnosticLevel::Ok, 3));
+
+        let h = reg.history_for("hw/talker: link").expect("history recorded");
+        let levels: Vec<_> = h.transitions.iter().map(|t| t.level).collect();
+        assert_eq!(
+            levels,
+            vec![DiagnosticLevel::Ok, DiagnosticLevel::Error, DiagnosticLevel::Ok],
+            "the momentary ERROR must survive in the strip"
+        );
+        assert_eq!(h.dropped, 0);
+    }
+
+    /// Repeats at the same level are not transitions and must not fill the
+    /// buffer — this is what keeps a 10 Hz publisher from evicting real
+    /// history within half a minute.
+    #[test]
+    fn repeats_at_one_level_do_not_consume_history() {
+        let reg = DiagnosticRegistry::new(None);
+        for i in 0..5_000 {
+            reg.update(hist_status("talker: link", DiagnosticLevel::Ok, i));
+        }
+        let h = reg.history_for("hw/talker: link").expect("history");
+        assert_eq!(h.transitions.len(), 1, "5000 identical statuses are one transition");
+        assert_eq!(h.dropped, 0);
+    }
+
+    /// The buffer is bounded and says what it dropped. A strip that silently
+    /// truncated would imply a quiet period that never happened.
+    #[test]
+    fn history_is_bounded_and_reports_what_it_dropped() {
+        let reg = DiagnosticRegistry::new(None);
+        let n = LEVEL_HISTORY_CAPACITY * 3;
+        for i in 0..n {
+            let level = if i % 2 == 0 { DiagnosticLevel::Ok } else { DiagnosticLevel::Error };
+            reg.update(hist_status("talker: link", level, i as u64));
+        }
+        let h = reg.history_for("hw/talker: link").expect("history");
+        assert_eq!(h.transitions.len(), LEVEL_HISTORY_CAPACITY);
+        assert_eq!(h.dropped, (n - LEVEL_HISTORY_CAPACITY) as u64);
+        // The RETAINED window must be the most recent one.
+        assert_eq!(h.transitions.last().unwrap().level, DiagnosticLevel::Error);
+    }
+
+    /// A diagnostic that never changed level has no history, rather than one
+    /// synthetic entry that would make "never changed" and "changed once"
+    /// indistinguishable.
+    #[test]
+    fn an_unchanging_diagnostic_still_records_its_first_level() {
+        let reg = DiagnosticRegistry::new(None);
+        reg.update(hist_status("quiet: check", DiagnosticLevel::Ok, 1));
+        let h = reg.history_for("hw/quiet: check").expect("first status is a transition");
+        assert_eq!(h.transitions.len(), 1);
+        assert!(reg.history_for("hw/never: seen").is_none());
+    }
+
 
     /// STALE must not outrank ERROR, despite being the higher wire value.
     ///
@@ -362,6 +514,68 @@ mod tests {
         assert!(
             registry.update(status("a", DiagnosticLevel::Ok, now)),
             "and so is ERROR -> OK"
+        );
+    }
+
+    /// W3 acceptance: replaying a real corpus holds steady memory.
+    ///
+    /// The defect W1 removed was an unbounded `Vec` of every status ever seen.
+    /// Re-introducing an unbounded buffer under a nicer name would be the same
+    /// defect with a chart on top, so this replays a real diagnostics.csv and
+    /// asserts the history stays inside its bound — measured, not argued.
+    ///
+    /// Skips cleanly when the corpus is not on this machine: it lives in a
+    /// sibling repo and is not part of this checkout.
+    #[test]
+    fn replaying_a_real_corpus_stays_bounded() {
+        let Some(home) = std::env::var_os("HOME") else { return };
+        let csv = std::path::PathBuf::from(home)
+            .join("repos/2026-golf-cart/play_log/2026-08-17_11-18-23/diagnostics.csv");
+        if !csv.is_file() {
+            eprintln!("SKIP: replaying_a_real_corpus_stays_bounded: corpus absent");
+            return;
+        }
+        let text = std::fs::read_to_string(&csv).expect("read corpus");
+        let reg = DiagnosticRegistry::new(None);
+
+        let mut rows = 0u64;
+        for line in text.lines().skip(1) {
+            // timestamp,hardware_id,diagnostic_name,level,... — the first four
+            // fields never contain commas.
+            let mut it = line.splitn(5, ',');
+            let (_ts, hw, name, level) = (it.next(), it.next(), it.next(), it.next());
+            let (Some(hw), Some(name), Some(level)) = (hw, name, level) else { continue };
+            let Ok(level) = level.trim().parse::<u8>() else { continue };
+            reg.update(DiagnosticStatus {
+                hardware_id: hw.to_string(),
+                name: name.to_string(),
+                level: DiagnosticLevel::from_u8(level),
+                message: String::new(),
+                values: Default::default(),
+                timestamp: std::time::UNIX_EPOCH + Duration::from_secs(rows),
+            });
+            rows += 1;
+        }
+        assert!(rows > 100_000, "corpus should be large, saw {rows} rows");
+
+        let all = reg.all_history();
+        let total: usize = all.values().map(|h| h.transitions.len()).sum();
+        let worst = all.values().map(|h| h.transitions.len()).max().unwrap_or(0);
+        eprintln!(
+            "corpus replay: {rows} rows -> {} diagnostics, {total} transitions retained, \
+             worst {worst}, dropped {}",
+            all.len(),
+            all.values().map(|h| h.dropped).sum::<u64>()
+        );
+
+        assert!(
+            worst <= LEVEL_HISTORY_CAPACITY,
+            "a diagnostic exceeded the bound: {worst} > {LEVEL_HISTORY_CAPACITY}"
+        );
+        // The whole point: retained transitions are a tiny fraction of rows.
+        assert!(
+            (total as u64) < rows / 10,
+            "history is not a compression of the stream: {total} transitions from {rows} rows"
         );
     }
 }

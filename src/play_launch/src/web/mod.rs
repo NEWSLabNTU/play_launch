@@ -202,6 +202,11 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
         )
         // SSE endpoint for the diagnostics table. `list` and `counts` remain
         // for one-shot callers (scripts, curl); the web UI uses this.
+        // Phase 62 W3 — per-diagnostic level transitions for the strip.
+        .route(
+            "/api/diagnostics/history",
+            get(handlers::diagnostics_history),
+        )
         .route("/api/diagnostics/stream", get(sse::stream_diagnostics))
         // SSE endpoints for log streaming
         .route("/api/nodes/:name/logs/stdout", get(sse::stream_stdout))

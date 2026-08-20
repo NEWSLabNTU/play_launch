@@ -68,6 +68,53 @@ function DiagValues({ values }) {
     `;
 }
 
+/** Level-over-time strip for one diagnostic (phase 62 W3).
+ *
+ * Answers "was it flapping, or did it fail once" — which neither the table nor
+ * the CSV answers without a spreadsheet.
+ *
+ * Segments are proportional to time spent at each level, so a fault lasting a
+ * single publish interval is a sliver rather than an equal share. It is still
+ * drawn: a minimum width keeps a 100 ms ERROR visible beside an hour of OK,
+ * because "briefly failed" and "never failed" must not look alike. That
+ * momentary fault surviving at all is the W1 debounce fix's payoff.
+ *
+ * When `dropped` is non-zero the buffer truncated and the strip says so — a
+ * silently truncated strip implies a quiet period that never happened.
+ */
+function LevelStrip({ history }) {
+    if (!history || !history.transitions || history.transitions.length === 0) {
+        return html`<span class="strip-empty" title="No level change recorded">-</span>`;
+    }
+    const t = history.transitions;
+    const start = new Date(t[0].at).getTime();
+    const end = Date.now();
+    const span = Math.max(end - start, 1);
+    const segs = t.map((tr, i) => {
+        const from = new Date(tr.at).getTime();
+        const to = i + 1 < t.length ? new Date(t[i + 1].at).getTime() : end;
+        return {
+            level: String(tr.level).toLowerCase(),
+            pct: Math.max(((to - from) / span) * 100, 0.8),
+            at: tr.at,
+        };
+    });
+    const note = `${t.length} transition(s)` + (history.dropped ? `, ${history.dropped} dropped` : '');
+    return html`
+        <div class="level-strip" title=${note}>
+            ${segs.map((sg, i) => html`
+                <span key=${i} class=${'level-seg level-seg-' + sg.level}
+                      style=${{ width: sg.pct + '%' }}
+                      title=${sg.level.toUpperCase() + ' from ' + sg.at}></span>
+            `)}
+            ${history.dropped > 0 && html`
+                <span class="strip-truncated"
+                      title=${history.dropped + ' earlier transition(s) fell outside the buffer - this is not the whole run'}>+${history.dropped}</span>
+            `}
+        </div>
+    `;
+}
+
 export function DiagnosticsView() {
     const [sortCol, setSortCol] = useState('level');
     const [sortDir, setSortDir] = useState('desc');
@@ -102,6 +149,25 @@ export function DiagnosticsView() {
         es.onerror = () => console.debug('[diagnostics] stream interrupted, reconnecting');
 
         return () => es.close();
+    }, [view]);
+
+    // Level history for the strips. Polled at 2 s rather than streamed: it
+    // changes only when a level changes, the stream already fires then, and a
+    // second SSE channel for a few hundred transitions would be more moving
+    // parts than the thing is worth.
+    const [history, setHistory] = useState({});
+    useEffect(() => {
+        if (view !== 'diagnostics') return;
+        let live = true;
+        const pull = async () => {
+            try {
+                const r = await fetch('/api/diagnostics/history');
+                if (live && r.ok) setHistory(await r.json());
+            } catch (err) { /* transient; the next tick retries */ }
+        };
+        pull();
+        const id = setInterval(pull, 2000);
+        return () => { live = false; clearInterval(id); };
     }, [view]);
 
     const toggleSort = useCallback((col) => {
@@ -172,6 +238,7 @@ export function DiagnosticsView() {
                         <th class=${sortClass('hardware_id')} onClick=${() => toggleSort('hardware_id')}>Hardware ID</th>
                         <th class=${sortClass('name')} onClick=${() => toggleSort('name')}>Name</th>
                         <th class=${sortClass('level')} onClick=${() => toggleSort('level')}>Level</th>
+                        <th title="Level over time — was it flapping, or did it fail once">History</th>
                         <th>Message</th>
                         <th>Values</th>
                         <th class=${sortClass('timestamp')} onClick=${() => toggleSort('timestamp')}>Last Seen</th>
@@ -179,13 +246,14 @@ export function DiagnosticsView() {
                 </thead>
                 <tbody>
                     ${sorted.length === 0 && html`
-                        <tr><td colspan="6" class="no-diagnostics">No diagnostics available</td></tr>
+                        <tr><td colspan="7" class="no-diagnostics">No diagnostics available</td></tr>
                     `}
                     ${sorted.map(diag => html`
                         <tr key=${diag.hardware_id + '/' + diag.name}>
                             <td>${diag.hardware_id}</td>
                             <td>${diag.name}</td>
                             <td><span class="diag-level diag-level-${diag.level.toLowerCase()}">${diag.level}</span></td>
+                            <td><${LevelStrip} history=${history[`${diag.hardware_id}/${diag.name}`]} /></td>
                             <td>${diag.message || ''}</td>
                             <td class="diag-values"><${DiagValues} values=${diag.values} /></td>
                             <td class="diag-timestamp">${formatRelativeTime(diag.timestamp)}</td>

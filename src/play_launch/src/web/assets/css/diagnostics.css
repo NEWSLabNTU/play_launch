@@ -204,3 +204,36 @@
     overflow: hidden;
 }
 
+
+/* Level-over-time strip (phase 62 W3).
+ *
+ * Segment widths are proportional to time at each level, with a floor so a
+ * fault lasting one publish interval stays visible next to hours of OK.
+ * "Briefly failed" and "never failed" must not render alike — that momentary
+ * fault surviving the debounce is what W1 fixed. */
+.level-strip {
+    display: flex;
+    align-items: center;
+    height: 12px;
+    min-width: 120px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: var(--surface-2, #f3f4f6);
+}
+
+.level-seg { height: 100%; display: inline-block; }
+.level-seg-ok { background: #22c55e; }
+.level-seg-warn,
+.level-seg-warning { background: #f59e0b; }
+.level-seg-error { background: #ef4444; }
+.level-seg-stale { background: #9ca3af; }
+
+.strip-empty { color: var(--text-3, #9ca3af); }
+
+/* Truncation is stated, never implied. */
+.strip-truncated {
+    margin-left: 4px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: var(--text-3, #6b7280);
+}

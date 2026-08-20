@@ -1,8 +1,8 @@
 # Phase 62: diagnostics observability
 
 Status: **W1 done** (four registry and transport defects fixed, `a7c2da7`,
-`adee4f6`, `adf6516`). **W2 done** (node-card badges). W3 (transition strip)
-not started.
+`adee4f6`, `adf6516`). **W2 done** (node-card badges) and **W3 done**
+(level-over-time strip).
 
 ## The report
 
@@ -216,7 +216,7 @@ require, and confirm it will not be empty.
   default is deliberately loose. A badge that flips grey because of an untuned
   threshold is worse than no badge.
 
-## W3: level transitions over time
+## W3: level transitions over time — DONE
 
 The registry now sees transitions instead of swallowing them, which makes a
 history worth keeping for the first time.
@@ -236,6 +236,49 @@ Acceptance:
 - replaying the 405,480-row corpus through it holds steady memory
 - a fault that lasted one publish interval is visible in the strip. This is the
   W1 debounce fix's payoff and the test that proves it end to end
+
+### W3 as built
+
+Transitions, not samples — which is what makes the buffer both bounded and
+readable. Autoware publishes at 10 Hz, so a four-hour run is ~400k statuses but
+only a few hundred changes of level; storing samples would rebuild the
+unbounded `Vec` W1 deleted with a chart on top.
+
+Measured by replaying the vehicle corpus through the registry:
+
+    572,424 rows -> 182 diagnostics, 189 transitions retained, worst 4, dropped 0
+
+`LEVEL_HISTORY_CAPACITY` is 256 per diagnostic — an explicit number, and one the
+real corpus never approaches (worst case 4). At ~24 bytes an entry the
+worst case across 181 diagnostics is under 1.2 MiB. That replay is a test, so
+"holds steady memory" is asserted rather than argued, and it skips cleanly when
+the corpus is not on the machine.
+
+Note the corpus predates the W1 debounce fix, so its transition count is a
+LOWER bound: the fix is what lets a momentary fault be recorded at all. The
+headroom between 4 and 256 absorbs that comfortably.
+
+Acceptance, against the criteria above:
+
+- **capacity-bounded, truncation visible** — `dropped` is carried per
+  diagnostic and the strip renders `+N` with a tooltip saying the visible span
+  is not the whole run.
+- **the corpus replays with steady memory** — the numbers above, as a test.
+- **a fault lasting one publish interval is visible** —
+  `a_fault_lasting_one_interval_is_in_the_history` drives OK -> ERROR -> OK and
+  asserts all three survive. In the strip a minimum segment width keeps that
+  sliver visible beside hours of OK, because "briefly failed" and "never
+  failed" must not look alike. This is the W1 debounce fix's payoff, tested end
+  to end.
+
+One design note worth keeping: repeats at the same level are not transitions
+(`repeats_at_one_level_do_not_consume_history` drives 5,000 identical statuses
+and asserts one entry). Without that, a 10 Hz publisher would evict a
+diagnostic's real history within half a minute.
+
+`/api/diagnostics/history` serves the whole map; the view polls it at 2 s
+rather than opening a second SSE channel, since it only changes when a level
+changes and the existing stream already fires then.
 
 ## Scope boundary
 
