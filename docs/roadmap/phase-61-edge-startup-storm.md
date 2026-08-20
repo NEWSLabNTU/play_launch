@@ -296,7 +296,8 @@ runnable-task ceiling both OFF — and the floor's justification was that it
 launch. W3 tests all three, on the same 12-core / 61.4 GiB AGX Orin.
 
 Short version: **the two gates that ship off both work and both cost what W1
-said they cost. The one that ships on did not fire at all** on the storm this
+said they cost — and the runnable ceiling is confirmed actively harmful, not
+merely costly. The one that ships on did not fire at all** on the storm this
 phase exists for. The container's own admission, measured separately, paces
 exactly as designed in both modes.
 
@@ -426,10 +427,43 @@ idle, so the runnable count falls back on its own and the ceiling never gets
 stuck. **Reproducing the pathology needs nodes that stay busy after startup**,
 which `cpu_burn` deliberately is not.
 
-So these arms confirm the gates function and confirm their cost. They can
-neither confirm nor refute W1's finding that the runnable ceiling is actively
-harmful — that needs a sustained-load variant of the fixture, or the real
-stack.
+So these arms confirm the gates function and confirm their cost. They cannot
+settle W1's finding that the runnable ceiling is actively harmful — that needs
+nodes which stay busy. **The sustained-load arm below settles it: W1 was
+right.**
+
+### Sustained load: W1's runnable-ceiling finding is confirmed
+
+`cpu_burn` gained a duty cycle (`sustain_duty_pct`), so a node keeps burning
+after construction instead of idling — "busy running the things we started",
+the state W1 said the ceiling cannot distinguish from "busy starting". 32 nodes
+on 12 cores:
+
+| arm | duty | spawn spread | peak runnable | bypasses |
+|---|---|---|---|---|
+| `gate_off` | 50% | 0.69 s | **69** | 0 |
+| `runnable_on` | 50% | 4.97 s | **77** | 0 |
+| `runnable_on` | 90% | **30.66 s** | 76 | **5** |
+
+At 50% duty the ceiling costs 7x the spawn time and produces a **higher** peak
+runnable count than not gating at all — 77 against 69. At 90% it costs **44x**
+(30.66 s against 0.69 s), stalls admissions all the way to the 30 s bypass on
+five of them, and *still* ends up worse than `gate_off`.
+
+That is W1's result reproduced on the bench: peak load1 217 with the ceiling
+against 183 without. The mechanism is the one W1 named — a gate that reads
+total runnable tasks cannot tell the load it is trying to pace from the load it
+already admitted, so once the system is genuinely busy it blocks new
+admissions, drags startup out, and keeps everything runnable for longer.
+
+W3's first pass could not see this and said so rather than guessing. What was
+missing was not more measurement but the right workload: nodes that stop being
+busy let the runnable count fall on its own, and the gate never gets stuck. The
+disagreement between W1 and W3 was a workload difference, and naming it was
+what made it testable.
+
+`max_runnable_factor` staying at `0.0` is now measured twice, on two machines,
+under the conditions it was designed for.
 
 ### The container arm: the two modes are governed differently, measurably
 
@@ -494,8 +528,7 @@ load.
   not answer with synthetic nodes.
 - **Gradual release after the bypass**, instead of releasing every held
   admission simultaneously.
-- The `preload` arm exists only as a hand-run sequence; making it a recipe
-  would make the working case reproducible.
-- **A sustained-load variant of `cpu_burn`** — one that stays busy after
-  construction — is what would let the runnable-ceiling pathology be
-  reproduced or refuted on the bench instead of only on a vehicle.
+- ~~`preload` as a recipe~~ — done: `just ab-mem-preload`, which holds memory
+  outside play_launch, waits for it to be resident, then launches against a
+  floor above what remains. Verified: 24 of 24 admissions held to the bypass.
+- ~~sustained-load `cpu_burn`~~ — done, and it confirmed W1. See above.

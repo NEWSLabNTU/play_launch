@@ -61,4 +61,22 @@ Two caveats before quoting those numbers:
 - **It cannot reproduce the runnable-ceiling pathology** W1 found (that the
   ceiling is *worse* than no gate, because it cannot tell "busy starting" from
   "busy running"). These burners settle after 8 s and go idle, so the gate
-  never gets stuck. That needs a sustained-load node.
+  never gets stuck.
+
+`cpu_sustained.launch.xml` is the arm that does reproduce it — the same nodes
+with `sustain_duty_pct` keeping them busy afterwards:
+
+    just arm cpu_sustained gate_off
+    just arm cpu_sustained runnable_on
+
+At 50% duty the ceiling costs 7x the spawn time for a HIGHER peak runnable
+count than no gate (77 vs 69); at 90% it costs 44x and stalls five admissions
+to the bypass. That is W1's finding, reproduced.
+
+## Seeing the memory gate actually fire
+
+    just ab-mem-preload          # holds 10 GiB outside play_launch first
+
+This is the only configuration in which the floor fires, for the reason above:
+it can only see pressure that already exists. Expect all 24 admissions held to
+the bypass.

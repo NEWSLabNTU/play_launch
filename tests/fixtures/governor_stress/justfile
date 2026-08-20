@@ -192,6 +192,60 @@ arm-auto launch headroom_mb="6144":
     echo "  computed floor: ${floor} MiB (MemAvailable ${avail_mb} - headroom {{headroom_mb}})"
     just arm {{launch}} gate_auto
 
+# The ONLY configuration in which the memory floor actually fires.
+#
+# W3 established that the floor cannot gate on pressure the launch itself
+# creates: 24 processes are admitted in well under a second while each takes
+# ~1421ms to become resident, so every admission happens before any allocation
+# lands. The floor only sees pressure that ALREADY EXISTS.
+#
+# So this holds `preload_mb` outside play_launch, waits for it to be resident,
+# and only then launches — with a floor above what remains. Kept as a recipe
+# because a result that can only be reproduced by hand is one nobody will
+# reproduce.
+ab-mem-preload preload_mb="10240":
+    #!/usr/bin/env bash
+    set -eo pipefail
+    source /opt/ros/{{ros_distro}}/setup.bash
+    source install/setup.bash
+
+    avail_before=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
+    echo "=== preload: holding {{preload_mb}} MiB outside play_launch"
+    echo "    MemAvailable before: ${avail_before} MiB"
+
+    # Its own process group so the trap can take it and anything it spawned.
+    setsid ros2 run governor_stress mem_hog --ros-args \
+        -p alloc_mb:={{preload_mb}} -p hold_secs:=600 \
+        -p max_lifetime_secs:=620 -p safety_reserve_mb:=8192 \
+        > runs/preload.log 2>&1 &
+    pre_pid=$!
+    pre_pgid=$(ps -o pgid= -p "$pre_pid" | tr -d ' ')
+    cleanup() {
+        kill -TERM "-$pre_pgid" 2>/dev/null || true
+        sleep 2
+        kill -9 "-$pre_pgid" 2>/dev/null || true
+    }
+    trap cleanup EXIT INT TERM
+
+    for i in $(seq 1 90); do
+        grep -q "resident after" runs/preload.log 2>/dev/null && break
+        sleep 1
+    done
+    if ! grep -q "resident after" runs/preload.log 2>/dev/null; then
+        echo "preload never became resident — see runs/preload.log" >&2
+        exit 1
+    fi
+    avail=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
+    echo "    MemAvailable after preload: ${avail} MiB (consumed $((avail_before - avail)) MiB)"
+
+    # Negative headroom puts the floor ABOVE what is available, which is what
+    # makes the gate bind from the first admission.
+    just arm-auto mem_wave -4000
+
+    echo ""
+    held=$(grep -c 'despite MemAvailable' runs/mem_wave-gate_auto/console.log 2>/dev/null || true)
+    echo "  admissions held until the bypass: ${held:-0} (0 would mean the gate did not fire)"
+
 # The comparison that matters for the memory gate.
 ab-mem: (arm "mem_wave" "gate_off") (arm "mem_wave" "gate_on")
     @echo "Compare: just report mem_wave-gate_off mem_wave-gate_on"
