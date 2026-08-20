@@ -254,9 +254,21 @@ pub struct DiagnosticsSettings {
     #[serde(default)]
     pub filter_hardware_ids: Vec<String>,
 
-    /// Debounce period in milliseconds (minimum time between logging same diagnostic)
+    /// Debounce period in milliseconds (minimum time between logging the same
+    /// diagnostic at the same level). Level transitions ignore it.
     #[serde(default = "default_debounce_ms")]
     pub debounce_ms: u64,
+
+    /// How long a diagnostic may go without an update before it is reported
+    /// STALE. `0` disables ageing.
+    ///
+    /// Needed because a publisher that dies stops publishing rather than
+    /// announcing level 3 — without a rule here, its last status reads OK for
+    /// the rest of the run. The threshold must exceed the slowest publisher's
+    /// period, and real systems mix 100 Hz sensors with 0.1 Hz housekeeping
+    /// checks, so the default is deliberately loose. Tighten it per deployment.
+    #[serde(default = "default_stale_after_ms")]
+    pub stale_after_ms: u64,
 
     /// Store diagnostics per-node (future feature)
     #[serde(default = "default_true")]
@@ -276,6 +288,7 @@ impl Default for DiagnosticsSettings {
             topics: default_diagnostics_topics(),
             filter_hardware_ids: Vec::new(),
             debounce_ms: default_debounce_ms(),
+            stale_after_ms: default_stale_after_ms(),
             store_per_node: default_true(),
             store_system_wide: default_true(),
         }
@@ -288,6 +301,10 @@ fn default_diagnostics_topics() -> Vec<String> {
 
 fn default_debounce_ms() -> u64 {
     100
+}
+
+fn default_stale_after_ms() -> u64 {
+    30_000
 }
 
 /// RCL interception settings — LD_PRELOAD-based message introspection.

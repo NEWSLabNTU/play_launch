@@ -73,8 +73,11 @@ pub async fn run_diagnostic_task(
         config.topics.len()
     );
 
-    // Debounce mechanism: track last write time per diagnostic key
+    // Rate limiting: track last write time per diagnostic key, and the level
+    // last recorded for it. Level transitions bypass the debounce entirely —
+    // see the comment at the check below.
     let mut last_write_times: HashMap<String, SystemTime> = HashMap::new();
+    let mut last_levels: HashMap<String, DiagnosticLevel> = HashMap::new();
     let debounce_duration = Duration::from_millis(config.debounce_ms);
 
     // Process messages until shutdown
@@ -97,25 +100,43 @@ pub async fn run_diagnostic_task(
                         timestamp: SystemTime::now(),
                     };
 
+                    // Apply filter if configured. Before the debounce, so a
+                    // filtered-out diagnostic costs nothing and cannot leave
+                    // bookkeeping behind for a key that is never recorded.
+                    if !config.filter_hardware_ids.is_empty()
+                        && !config.filter_hardware_ids.contains(&diagnostic_status.hardware_id)
+                    {
+                        continue;
+                    }
+
                     let key = diagnostic_status.key();
 
-                    // Check debounce
-                    let should_write = if let Some(&last_time) = last_write_times.get(&key) {
-                        diagnostic_status.timestamp.duration_since(last_time).unwrap_or(Duration::ZERO) >= debounce_duration
-                    } else {
-                        true // First time seeing this diagnostic
+                    // A level transition is never rate limited.
+                    //
+                    // The debounce exists to stop a chatty publisher filling
+                    // the CSV with identical rows, and for that it is right.
+                    // Applied to transitions it destroys the only rows that
+                    // matter: Autoware publishes diagnostics at 10 Hz, which is
+                    // exactly the 100 ms default, so a leaf going OK -> ERROR
+                    // -> OK inside one window vanished from both the registry
+                    // and the CSV. A fault that clears before the next window
+                    // is precisely the one worth catching.
+                    let level_changed = last_levels.get(&key) != Some(&diagnostic_status.level);
+                    let debounce_elapsed = match last_write_times.get(&key) {
+                        Some(&last_time) => {
+                            diagnostic_status
+                                .timestamp
+                                .duration_since(last_time)
+                                .unwrap_or(Duration::ZERO)
+                                >= debounce_duration
+                        }
+                        // First time seeing this diagnostic
+                        None => true,
                     };
 
-                    if should_write {
-                        // Apply filter if configured
-                        if !config.filter_hardware_ids.is_empty()
-                            && !config.filter_hardware_ids.contains(&diagnostic_status.hardware_id)
-                        {
-                            continue;
-                        }
-
+                    if level_changed || debounce_elapsed {
                         // Update registry
-                        registry.update(diagnostic_status.clone()).await;
+                        registry.update(diagnostic_status.clone());
 
                         // Write to CSV
                         if let Err(e) = csv_writer.write_diagnostic(&diagnostic_status).await {
@@ -123,7 +144,8 @@ pub async fn run_diagnostic_task(
                         }
 
                         // Update last write time
-                        last_write_times.insert(key, diagnostic_status.timestamp);
+                        last_write_times.insert(key.clone(), diagnostic_status.timestamp);
+                        last_levels.insert(key, diagnostic_status.level);
 
                         debug!(
                             "Logged diagnostic: {}/{} [{}]",

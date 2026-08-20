@@ -416,7 +416,12 @@ pub(crate) async fn play(
 
     // Initialize diagnostic monitoring if enabled
     debug!("Initializing diagnostic monitoring...");
-    let diagnostic_registry = Arc::new(crate::diagnostics::DiagnosticRegistry::new());
+    let diagnostic_registry = Arc::new(crate::diagnostics::DiagnosticRegistry::new(
+        match runtime_config.diagnostics.stale_after_ms {
+            0 => None,
+            ms => Some(std::time::Duration::from_millis(ms)),
+        },
+    ));
     let _diagnostic_task = if runtime_config.diagnostics.enabled && shared_ros_node.is_some() {
         if is_verbose() {
             info!(

@@ -137,8 +137,9 @@ async fn run_direct(
     fs::create_dir(&node_log_dir)?;
     info!("Created node log directory");
 
-    // Create diagnostic registry (empty - diagnostic monitoring not supported in 'run' mode)
-    let diagnostic_registry = Arc::new(crate::diagnostics::DiagnosticRegistry::new());
+    // Create diagnostic registry (empty - diagnostic monitoring not supported
+    // in 'run' mode, so nothing is ever stored and the staleness limit is moot)
+    let diagnostic_registry = Arc::new(crate::diagnostics::DiagnosticRegistry::new(None));
 
     // Initialize NVML for GPU monitoring
     let nvml = match nvml_wrapper::Nvml::init() {
