@@ -191,6 +191,9 @@ pub fn create_router(state: Arc<WebState>, bind_addr: &str, port: u16) -> Router
             "/api/diagnostics/counts",
             get(handlers::get_diagnostic_counts),
         )
+        // SSE endpoint for the diagnostics table. `list` and `counts` remain
+        // for one-shot callers (scripts, curl); the web UI uses this.
+        .route("/api/diagnostics/stream", get(sse::stream_diagnostics))
         // SSE endpoints for log streaming
         .route("/api/nodes/:name/logs/stdout", get(sse::stream_stdout))
         .route("/api/nodes/:name/logs/stderr", get(sse::stream_stderr))

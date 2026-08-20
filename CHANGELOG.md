@@ -6,6 +6,38 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## Unreleased
+
+### Diagnostics
+
+Five fixes, all found by asking why a four-hour vehicle run produced 405,480
+diagnostic statuses of which not one was WARNING or STALE.
+
+**A silent publisher now reads STALE.** Level 3 only ever arrives from a
+publisher alive enough to declare it, so a crashed node used to leave its last
+status in the registry reading OK for the rest of the run.
+`diagnostics.stale_after_ms` (default 30 s, `0` disables) ages an entry that
+stops updating. The default is deliberately loose because real systems mix
+100 Hz sensors with 0.1 Hz housekeeping checks; tighten it per deployment.
+
+**Level transitions are no longer rate limited.** The 100 ms debounce is exactly
+Autoware's 10 Hz publish interval, so a diagnostic going OK -> ERROR -> OK
+inside one window was dropped from both the registry and `diagnostics.csv`. The
+debounce still suppresses a publisher repeating itself at the same level.
+
+**The registry no longer retains history.** Every accepted status was pushed
+onto a `Vec` read by nothing — `get_history` had no callers. `diagnostics.csv`
+is the durable record and always was.
+
+**The diagnostics view streams instead of polling.** New SSE endpoint
+`/api/diagnostics/stream` pushes on every level change and once a second
+otherwise; the table could previously sit five seconds behind the system.
+`/api/diagnostics/{list,counts}` remain for one-shot callers.
+
+**`/diagnostics_agg` is no longer subscribed by default.** It exists only if the
+classic `diagnostic_aggregator` is deliberately launched, and Autoware does not
+ship that package at all. `diagnostics.topics` still takes a list.
+
 ## 0.9.0 — 2026-08-18
 
 The largest release so far: 863 commits since 0.8.2 (2026-04-09). The theme is

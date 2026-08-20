@@ -77,20 +77,31 @@ export function DiagnosticsView() {
     const view = currentView.value;
     const diags = diagnostics.value;
 
-    // Fetch diagnostics when view is active
+    // Stream diagnostics while the view is active.
+    //
+    // This was a 5 s poll, which put an ERROR on screen up to five seconds
+    // after the system raised it. The server pushes on every level change and
+    // once a second otherwise — the tick is what surfaces a publisher that has
+    // gone silent, since silence raises no change event.
     useEffect(() => {
         if (view !== 'diagnostics') return;
 
-        function fetchDiags() {
-            fetch('/api/diagnostics/list')
-                .then(r => r.json())
-                .then(data => { diagnostics.value = data; })
-                .catch(err => console.error('Error fetching diagnostics:', err));
-        }
+        const es = new EventSource('/api/diagnostics/stream');
 
-        fetchDiags();
-        const interval = setInterval(fetchDiags, 5000);
-        return () => clearInterval(interval);
+        es.onmessage = (e) => {
+            if (e.data === 'keep-alive') return;
+            try {
+                const payload = JSON.parse(e.data);
+                diagnostics.value = payload.diagnostics || [];
+            } catch (err) {
+                console.error('Error parsing diagnostics event:', err);
+            }
+        };
+
+        // EventSource reconnects on its own; log once rather than per retry.
+        es.onerror = () => console.debug('[diagnostics] stream interrupted, reconnecting');
+
+        return () => es.close();
     }, [view]);
 
     const toggleSort = useCallback((col) => {

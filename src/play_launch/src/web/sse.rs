@@ -403,6 +403,71 @@ pub async fn stream_system_metrics(State(state): State<Arc<WebState>>) -> Respon
     Sse::new(stream).into_response()
 }
 
+/// How often the diagnostics stream re-sends a snapshot in the absence of any
+/// level change. See [`stream_diagnostics`].
+const DIAGNOSTICS_TICK: Duration = Duration::from_secs(1);
+
+/// Stream the full diagnostics table via SSE.
+///
+/// Push rather than poll: the view used to `setInterval(fetch, 5000)`, so an
+/// ERROR could sit five seconds behind the system that raised it.
+///
+/// Each event is the whole table plus its counts, not a delta. The table is
+/// tens of entries and the client re-renders all of it anyway, so a delta
+/// protocol would buy nothing and add a resync path to get wrong.
+///
+/// Two things wake the stream, and both are needed:
+///
+/// - the registry's change notification, which fires the instant a diagnostic
+///   changes level. This is the latency that matters.
+/// - a 1 Hz tick, because staleness is evaluated when the table is read. A
+///   publisher going silent produces no notification by construction — silence
+///   is the signal — so without the tick a stale diagnostic would keep reading
+///   OK until something unrelated changed.
+pub async fn stream_diagnostics(State(state): State<Arc<WebState>>) -> Response {
+    debug!("New SSE client connected for diagnostics");
+
+    let registry = state.diagnostic_registry.clone();
+    let mut changes = registry.subscribe();
+
+    let stream = async_stream::stream! {
+        let mut tick = tokio::time::interval(DIAGNOSTICS_TICK);
+
+        loop {
+            let payload = serde_json::json!({
+                "diagnostics": registry.list_all(),
+                "counts": registry.get_counts(),
+            });
+
+            match serde_json::to_string(&payload) {
+                Ok(json) => yield Ok::<_, Infallible>(Event::default().data(json)),
+                Err(e) => error!("Failed to serialize diagnostics snapshot: {}", e),
+            }
+
+            tokio::select! {
+                // Lagged means several changes landed while we were busy. The
+                // next snapshot already reflects all of them, so it is not an
+                // error condition — only Closed ends the stream.
+                result = changes.recv() => {
+                    if matches!(result, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
+                        break;
+                    }
+                }
+                _ = tick.tick() => {}
+            }
+        }
+        debug!("SSE diagnostics stream ended");
+    };
+
+    Sse::new(stream)
+        .keep_alive(
+            axum::response::sse::KeepAlive::new()
+                .interval(SSE_KEEPALIVE_INTERVAL)
+                .text("keep-alive"),
+        )
+        .into_response()
+}
+
 /// Number of initial CSV lines to send for node metrics (2min of history at 2s interval)
 const INITIAL_METRICS_LINES: usize = 60;
 
