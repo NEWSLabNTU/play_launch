@@ -295,8 +295,17 @@ impl Default for DiagnosticsSettings {
     }
 }
 
+/// `/diagnostics` only.
+///
+/// `/diagnostics_agg` used to be listed beside it and is a dead subscription on
+/// most systems: it only exists if the classic `diagnostic_aggregator` node is
+/// deliberately launched, and nothing launches it by default. Autoware, the
+/// heaviest diagnostics user, does not ship that package at all — it aggregates
+/// with `autoware_diagnostic_graph_aggregator`, which publishes its own message
+/// types on `/diagnostics_graph/{struct,status}` rather than a `DiagnosticArray`.
+/// `topics` stays configurable for anyone who does run an aggregator.
 fn default_diagnostics_topics() -> Vec<String> {
-    vec!["/diagnostics".to_string(), "/diagnostics_agg".to_string()]
+    vec!["/diagnostics".to_string()]
 }
 
 fn default_debounce_ms() -> u64 {

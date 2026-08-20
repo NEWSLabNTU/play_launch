@@ -91,7 +91,7 @@ either way, since the model is the only thing `up` spawns from.
 
 All features enabled by default:
 - **Resource monitoring**: CPU, memory, I/O, GPU (2s interval)
-- **Diagnostic monitoring**: `/diagnostics` and `/diagnostics_agg` topics
+- **Diagnostic monitoring**: the `/diagnostics` topic (add more via `diagnostics.topics`)
 - **Web UI**: Interactive management at `http://127.0.0.1:8080`
 - **Container isolation**: Composable nodes run in isolated processes via fork+exec (default)
 
