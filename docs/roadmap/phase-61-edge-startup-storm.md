@@ -297,7 +297,8 @@ launch. W3 tests all three, on the same 12-core / 61.4 GiB AGX Orin.
 
 Short version: **the two gates that ship off both work and both cost what W1
 said they cost. The one that ships on did not fire at all** on the storm this
-phase exists for.
+phase exists for. The container's own admission, measured separately, paces
+exactly as designed in both modes.
 
 Fixture: `tests/fixtures/governor_stress/`. Two nodes — `mem_hog`, which makes
 a configurable amount of memory *resident* (touched, not merely allocated: a
@@ -429,6 +430,63 @@ So these arms confirm the gates function and confirm their cost. They can
 neither confirm nor refute W1's finding that the runnable ceiling is actively
 harmful — that needs a sustained-load variant of the fixture, or the real
 stack.
+
+### The container arm: the two modes are governed differently, measurably
+
+16 composables, each sleeping 20 s in its constructor, in one container.
+
+| mode | loads | span | pacing |
+|---|---|---|---|
+| `isolated` (default) | 16/16 | **20.5 s** | 12 at t+0.0 s, 4 at t+20.4 s |
+| `observable` | 6/16 in 150 s | — | one per **20.0 s**, exactly serial |
+
+`isolated` forks a `component_node` per composable and paces them with its own
+spawn-worker pool: **12 = `clamp(nproc, 4, 32)`** on a 12-core box, so 16
+components fall into two waves and the whole set is up in the time of two
+constructors. `observable` loads them on the container's executor, and the
+measured interval is 20.0 s — the constructor duration, to the tenth. At that
+rate the set would take 320 s.
+
+This is the sequential-loading behaviour `tests/fixtures/sequential_loading`
+asserts as intended, now with a number against it, and it is why the global
+load cap is enforced for `stock`/`observable` and disabled for `isolated`:
+in the serial modes an in-flight cap bounds something real, and in `isolated`
+it would bound calls that return in milliseconds.
+
+One nuance worth recording against the design note. `composable-load-admission.md`
+says the spawn pool is "sized out of the way" so it is not the limit — here it
+*was* the limit, because 16 components exceed a 12-worker pool on a 12-core
+board. Memory never came near gating (53 GiB free throughout). "Out of the way"
+holds for pools versus machine size, not for a component count above `nproc`.
+
+Two W1/#0019 fixes are visible in the same run, doing what they were written to
+do:
+
+```text
+container:   4 composable(s) still constructing; longest 'composable:/slow_06' at 30s
+play_launch: composable 12/16 loaded (4 pending)
+play_launch: Startup complete: all nodes ready (composable 16/16)
+```
+
+Progress reported during a long construction rather than silence; the
+intermediate count honest at 12/16; and `Startup complete` printed only after
+all 16 were ListNodes-confirmed, not on the LoadNode responses that would have
+claimed 16/16 immediately.
+
+### A fixture bug the parser caught
+
+`container_wave.launch.xml` failed to parse on its first run:
+
+```text
+XML parsing error: comment at 2:1 contains '--'
+```
+
+The fixture was wrong, not the parser — an XML comment may not contain `--`,
+and the comment described `--container-mode`. Recorded because the reflex on
+seeing a parser reject your file is to suspect the parser, and here the right
+move was to check the XML spec and fix the fixture. All three launch files are
+now validated with a real XML parser rather than by whether they happened to
+load.
 
 ### Open
 

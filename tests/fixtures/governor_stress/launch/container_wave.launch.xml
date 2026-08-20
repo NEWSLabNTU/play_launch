@@ -2,10 +2,10 @@
 <!-- Container-side spawn admission: 16 composables with slow constructors in
      one container.
 
-     Under --container-mode isolated (the default) each becomes a forked
+     Under container-mode isolated (the default) each becomes a forked
      component_node process, admission is governed by MemAvailable inside the
      container, and the pool is clamp(nproc, 4, 32) so it is deliberately NOT
-     the limit. Under --container-mode observable they are threads in one
+     the limit. Under container-mode observable they are threads in one
      process and the global load cap applies instead. Running both is the only
      way to see that the two modes are governed differently on purpose.
 
