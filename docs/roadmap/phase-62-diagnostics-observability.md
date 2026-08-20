@@ -141,6 +141,81 @@ Open question: whether the match should be exact-prefix only, or whether a
 configurable mapping is warranted. Answer it against the 69 names in the corpus
 before writing code.
 
+**Answered** (2026-08-21) — see "The join, measured" below. Exact-prefix only;
+no mapping file. `hardware_id` turns out to contribute nothing.
+
+### The join, measured
+
+`scripts/diag_join_analysis.py` in the play_launch repo answers the open
+question above against real runs. Two corpora: the vehicle log
+`2026-08-17_11-18-23` (181 names, 85 nodes + 101 composables) and a 150 s bench
+run of the same stack (151 names).
+
+| | vehicle | bench |
+|---|---|---|
+| attributable by name alone | **173/181 (96%)** | **143/151 (95%)** |
+| `hardware_id` distinct values | 31 | 18 |
+| rows where `hardware_id` is empty or the hostname | 59% | 71% |
+| unmatched names `hardware_id` could rescue | **0** | **0** |
+
+Vehicle breakdown: 161 composable exact, 10 node exact, 2 composable via path
+leaf, 8 unmatched.
+
+**Three conclusions, each removing work rather than adding it.**
+
+**`hardware_id` is dead weight for the join.** Most rows carry the hostname
+(`ubuntu`) or nothing; only 14 of 31 values name a spawned member, and every
+one of those was already matched by the name. It rescues **zero** unmatched
+names in either corpus. Keep it in the registry key for uniqueness; do not
+join on it, and do not build a mapping file for it.
+
+**The composable case is not the hard part.** The proposal above worried about
+composables; they are 161 of 173 matches and they match EXACTLY. The
+path-style `/adapi/node/*` names resolve on their last segment — two of them,
+needing no more than a `rsplit('/')`.
+
+So the rule is: split on `:`, take the last path segment, match against member
+names with the issue-0018 `-N` ordinal stripped. No configuration.
+
+**The unmatched are two known problems, not join problems.** Of the 8:
+
+| diagnostic name | play_launch spawned |
+|---|---|
+| `gyro_odometer: …` | `autoware_gyro_odometer_node-1` |
+| `gyro_bias_scale_validator: …` | `gyro_bias_estimator_node-1` |
+| `service_log_checker: …` | `service_log_checker_node-1` |
+
+That is **issue 0017** exactly — a `<node>` the launch file did not name is
+keyed by its EXECUTABLE while the process registers its compiled-in name. It is
+the same defect the phase-61 stage gate hit, now surfacing in a second
+consumer, which is what that issue predicted would keep happening.
+
+play_launch already records the answer: `interception/node_identity.tsv` maps
+model key -> pid -> real ROS name, captured from the `rcl_node_t*` the
+interception hooks hold. Joining through it when interception is enabled closes
+these three, taking the attribution to ~98%.
+
+The remaining five are `vehicle_interface/{can_tx,frame_brk,frame_eps,frame_mtr,system}`
+— sub-checks of a hardware bridge rather than nodes. A `vehicle_interface`
+member does exist, so a leaf-of-path rule would attach them to it; whether that
+is right or misleading is a judgement for whoever owns the vehicle side. They
+are the concrete content of the unmatched bucket the acceptance criteria
+require, and confirm it will not be empty.
+
+### Consequences for the W2 acceptance criteria
+
+- "an unmatched bucket exists and is visible" — holds, and now has known
+  occupants
+- "a composable node's diagnostics attribute to something an operator can act
+  on, decided by measurement" — measured: composables match exactly and
+  attribute to themselves. No container-vs-composable decision is needed for
+  161 of 173 cases.
+- "the badge derives from the same aged view as the table" — still right, and
+  now known to be sensitive: STALE counts moved 472 -> 76 across the W1 fix on
+  one config, so the badge's grey state depends on `stale_after_ms`, whose
+  default is deliberately loose. A badge that flips grey because of an untuned
+  threshold is worse than no badge.
+
 ## W3: level transitions over time
 
 The registry now sees transitions instead of swallowing them, which makes a
