@@ -139,6 +139,22 @@ pub struct StartupLimits {
     /// before it is let through anyway.
     pub max_gate_wait: Duration,
 
+    /// Minimum spacing between BYPASSES once `max_gate_wait` has expired.
+    /// `Duration::ZERO` (the default) releases every held admission at once.
+    ///
+    /// Why this knob exists. The gate holds admissions while memory is short
+    /// and then, at the deadline, lets them all through — and because they all
+    /// began waiting at nearly the same instant, they all reach that deadline
+    /// at nearly the same instant too. Measured in W3: 24 admissions held, 24
+    /// released together. The result is that the floor DELAYS the storm rather
+    /// than staggering it, which is not what "admission control" implies.
+    ///
+    /// Spacing the bypasses turns the delay into a trickle. It cannot make the
+    /// launch cheaper — the same processes still start — but it stops them
+    /// starting in one burst after the machine has already been declared
+    /// short of memory, which is the worst possible moment for a burst.
+    pub bypass_stagger: Duration,
+
     /// Maximum composable-node loads in flight across ALL containers.
     ///
     /// Separate from `max_concurrent` because the two have different release
@@ -167,6 +183,7 @@ impl StartupLimits {
             settle_poll: Duration::from_millis(200),
             max_settle: Duration::ZERO,
             max_gate_wait: Duration::ZERO,
+            bypass_stagger: Duration::ZERO,
             max_concurrent_loads: usize::MAX,
         }
     }
@@ -224,6 +241,8 @@ impl StartupLimits {
             settle_poll: Duration::from_millis(250),
             max_settle: Duration::from_secs(15),
             max_gate_wait: Duration::from_secs(30),
+            // Off until measured; see the field docs.
+            bypass_stagger: Duration::ZERO,
             // Overwritten from `composable_node_loading
             // .max_concurrent_load_node_spawn` by the caller; this is the
             // same default that field already carried.
@@ -257,6 +276,12 @@ pub struct StartupGovernor {
     ncpu: usize,
     /// Processes admitted so far, for the progress line.
     admitted: AtomicU64,
+    /// When the last bypass was granted, so bypasses can be spaced. A mutex
+    /// rather than an atomic because the wait has to happen while HOLDING the
+    /// decision — otherwise every waiter reads the same "last bypass was long
+    /// ago", all conclude they may go now, and the stagger admits everyone at
+    /// once. The same shape as the container's spawn-admission mutex.
+    last_bypass: Arc<tokio::sync::Mutex<Option<Instant>>>,
     /// How many members will ask for admission, so the log can say "12/144"
     /// rather than a bare count. Zero when unknown.
     expected: u64,
@@ -275,6 +300,7 @@ impl StartupGovernor {
                 .unwrap_or(1),
             limits,
             admitted: AtomicU64::new(0),
+            last_bypass: Arc::new(tokio::sync::Mutex::new(None)),
             expected,
         }
     }
@@ -399,10 +425,17 @@ impl StartupGovernor {
                 // Admitting anyway is deliberate: a launch that never starts
                 // is a worse failure than one that starts under pressure, and
                 // silently waiting forever would look like a hang.
+                //
+                // But not all at once, if a stagger is configured: every
+                // waiter started at nearly the same time, so every waiter
+                // reaches this line at nearly the same time, and releasing
+                // them together recreates in one burst exactly the load the
+                // gate spent `max_gate_wait` avoiding.
+                self.stagger_bypass().await;
                 warn!(
                     "startup: admitting {who} despite {reason} — waited {:.0}s \
                      (raise the limit or lower the load; see startup config)",
-                    self.limits.max_gate_wait.as_secs_f64()
+                    since.elapsed().as_secs_f64()
                 );
                 return;
             }
@@ -413,6 +446,27 @@ impl StartupGovernor {
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
+    }
+
+    /// Space this bypass at least `bypass_stagger` after the previous one.
+    ///
+    /// The lock is held across the sleep on purpose. Releasing it first would
+    /// let every waiter read the same stale "last bypass" timestamp, all
+    /// decide they may proceed, and all proceed — which is the behaviour this
+    /// is here to prevent. Serialising costs nothing when the stagger is zero
+    /// (the default), because the function returns before taking the lock.
+    async fn stagger_bypass(&self) {
+        if self.limits.bypass_stagger.is_zero() {
+            return;
+        }
+        let mut last = self.last_bypass.lock().await;
+        if let Some(prev) = *last {
+            let since = prev.elapsed();
+            if since < self.limits.bypass_stagger {
+                tokio::time::sleep(self.limits.bypass_stagger - since).await;
+            }
+        }
+        *last = Some(Instant::now());
     }
 
     /// Which gate, if any, currently forbids an admission.
@@ -587,6 +641,54 @@ fn clock_ticks_per_sec() -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    /// The bypass stagger must SERIALISE, not merely delay.
+    ///
+    /// The failure this pins: read the timestamp, decide, then sleep — every
+    /// waiter reads the same stale value, all conclude enough time has passed,
+    /// and all bypass together, which is the behaviour the stagger exists to
+    /// remove. Holding the lock across the sleep is what makes the Nth
+    /// bypass land N intervals in.
+    #[tokio::test]
+    async fn bypass_stagger_serialises_rather_than_delaying() {
+        let mut limits = StartupLimits::unlimited();
+        // A floor nothing can satisfy, so every admission reaches the bypass.
+        limits.min_available_kb = u64::MAX;
+        limits.max_gate_wait = Duration::from_millis(50);
+        limits.bypass_stagger = Duration::from_millis(80);
+        let gov = Arc::new(StartupGovernor::new(limits, 0));
+
+        let start = Instant::now();
+        let mut set = tokio::task::JoinSet::new();
+        for i in 0..4 {
+            let g = gov.clone();
+            set.spawn(async move {
+                g.wait_for_resources(&format!("n{i}"), Instant::now()).await;
+                Instant::now()
+            });
+        }
+        let mut done: Vec<Duration> = Vec::new();
+        while let Some(r) = set.join_next().await {
+            done.push(r.unwrap() - start);
+        }
+        done.sort();
+
+        // First bypasses at the gate deadline; each later one at least one
+        // stagger interval after the previous.
+        for w in done.as_slice().windows(2) {
+            assert!(
+                w[1] - w[0] >= Duration::from_millis(60),
+                "bypasses {:?} and {:?} were not staggered: {:?}",
+                w[0], w[1], done
+            );
+        }
+        // And the whole set must take longer than releasing together would.
+        assert!(
+            done[3] >= Duration::from_millis(200),
+            "4 staggered bypasses finished too fast to have been serialised: {done:?}"
+        );
+    }
+
     use super::*;
 
     #[test]

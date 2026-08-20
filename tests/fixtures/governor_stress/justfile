@@ -186,6 +186,7 @@ arm-auto launch headroom_mb="6144":
       "  enabled: true" \
       "  min_available_mb: ${floor}" \
       "  max_gate_wait_secs: 30" \
+      "  bypass_stagger_ms: ${STAGGER_MS:-0}" \
       "interception:" \
       "  enabled: false" \
       > config/gate_auto.yaml

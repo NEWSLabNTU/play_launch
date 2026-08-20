@@ -507,6 +507,43 @@ intermediate count honest at 12/16; and `Startup complete` printed only after
 all 16 were ListNodes-confirmed, not on the LoadNode responses that would have
 claimed 16/16 immediately.
 
+### Gradual release: implemented, measured, and left OFF
+
+W3 found that the floor delays the storm rather than staggering it — every
+waiter starts at nearly the same instant, so every waiter reaches the
+`max_gate_wait` deadline at nearly the same instant, and 24 held admissions
+were released together. `bypass_stagger_ms` spaces them instead.
+
+Measured on the preload scenario, where the bypass actually fires:
+
+| | spread | median gap | min MemAvailable | peak runnable |
+|---|---|---|---|---|
+| `bypass_stagger_ms: 0` | 0.84 s | 11 ms | 20.9 GiB | 57 |
+| `bypass_stagger_ms: 500` | 11.53 s | **496 ms** | **20.9 GiB** | **44** |
+
+It does exactly what it says — a 496 ms median gap against a 500 ms setting —
+and it spreads the CPU burst: peak runnable falls 57 to 44.
+
+**It does not improve the memory outcome at all.** The low-water mark is 20.9
+GiB either way, because the same 24 processes still allocate the same 24 GiB;
+staggering changes when, not whether. It would only help memory if the pressure
+were transient — if something reclaimed memory between releases — and in this
+fixture nothing does, because the hogs hold.
+
+So it ships **off**, on the same rule as the other two gates: a knob that costs
+11.5 s of startup and moves the number the gate exists to protect by zero is
+not a default. It is worth having for the case the fixture cannot create —
+a system where memory does recover during startup, which is plausible on a real
+stack where nodes finish initialising and free their setup allocations — and
+the honest position is that this has not been observed, only reasoned about.
+
+The implementation detail that matters, and the mistake it avoids: the stagger
+holds its lock ACROSS the sleep. Reading the last-bypass timestamp, deciding,
+then sleeping would let every waiter read the same stale value, all conclude
+enough time had passed, and all bypass together — reproducing the exact
+behaviour being fixed. `bypass_stagger_serialises_rather_than_delaying` pins
+it, and asserts the total exceeds what simultaneous release would take.
+
 ### A fixture bug the parser caught
 
 `container_wave.launch.xml` failed to parse on its first run:
@@ -526,8 +563,9 @@ load.
 
 - **Does the floor bind on a real 144-node launch?** The one question W3 could
   not answer with synthetic nodes.
-- **Gradual release after the bypass**, instead of releasing every held
-  admission simultaneously.
+- ~~Gradual release after the bypass~~ — done as `bypass_stagger_ms`, measured,
+  and left OFF: it spreads the CPU burst but does not move the memory
+  low-water mark. See above.
 - ~~`preload` as a recipe~~ — done: `just ab-mem-preload`, which holds memory
   outside play_launch, waits for it to be resident, then launches against a
   floor above what remains. Verified: 24 of 24 admissions held to the bypass.

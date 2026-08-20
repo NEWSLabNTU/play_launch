@@ -75,6 +75,16 @@ pub struct StartupSettings {
     /// than one that starts under pressure.
     pub max_gate_wait_secs: u64,
 
+    /// Minimum milliseconds between bypasses once `max_gate_wait_secs` has
+    /// expired. `0` (the default) releases every held admission at once.
+    ///
+    /// Waiters all start at nearly the same instant, so they all reach the
+    /// deadline at nearly the same instant: W3 measured 24 held and 24
+    /// released together. Without a stagger the floor DELAYS the storm rather
+    /// than spreading it, and delivers it at the moment memory was already
+    /// declared short.
+    pub bypass_stagger_ms: u64,
+
     /// Longest a single process may hold its startup slot, in seconds. Caps
     /// the CPU-decay wait for a node that legitimately never goes idle.
     pub max_settle_secs: u64,
@@ -135,6 +145,7 @@ impl Default for StartupSettings {
             min_available_mb: None,
             max_runnable_factor: 0.0,
             max_gate_wait_secs: 30,
+            bypass_stagger_ms: 0,
             max_settle_secs: 15,
             settle_threshold_pct: 20.0,
             order: Vec::new(),
@@ -178,6 +189,7 @@ impl StartupSettings {
         }
         limits.max_runnable_factor = self.max_runnable_factor;
         limits.max_gate_wait = std::time::Duration::from_secs(self.max_gate_wait_secs);
+        limits.bypass_stagger = std::time::Duration::from_millis(self.bypass_stagger_ms);
         limits.max_settle = std::time::Duration::from_secs(self.max_settle_secs);
         limits.settle_threshold_pct = self.settle_threshold_pct;
         limits.max_concurrent_loads = if max_concurrent_loads == 0 {
