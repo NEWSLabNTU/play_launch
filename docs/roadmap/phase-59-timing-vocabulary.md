@@ -1,6 +1,8 @@
 # Phase 59 — Timing vocabulary: units move onto the value
 
-**Status:** 📋 planned
+**Status:** 📋 decided; execution is
+[Phase 63](./phase-63-duration-type-campaign.md), whose W1 (the `Duration`
+type and the deprecated-name alias) is built
 **Split from:** [Phase 58](./phase-58-scheduling-derivation.md), which surfaced
 the problem but does not depend on the fix.
 **Scope:** `ros-launch-manifest` schema + every contract and platform file.
