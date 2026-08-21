@@ -304,6 +304,7 @@ fn ir_to_node_action(kind: &ActionKind) -> NodeAction {
             remaps,
             env,
             args,
+            ros_args,
             respawn,
             respawn_delay,
         } => NodeAction {
@@ -323,6 +324,7 @@ fn ir_to_node_action(kind: &ActionKind) -> NodeAction {
             remappings: remaps_to_action(remaps),
             environment: env_decls_to_pairs(env),
             args: args.as_ref().map(|a| a.parts.clone()),
+            ros_args: ros_args.as_ref().map(|a| a.parts.clone()),
             output: None,
             respawn: respawn.as_ref().map(|r| r.parts.clone()),
             respawn_delay: respawn_delay.as_ref().map(|r| r.parts.clone()),
@@ -362,6 +364,7 @@ fn ir_to_container_action(
             name,
             namespace,
             args,
+            ros_args,
             nodes,
         } => ContainerAction {
             package: package.parts.clone(),
@@ -369,6 +372,7 @@ fn ir_to_container_action(
             name: name.parts.clone(),
             namespace: namespace.as_ref().map(|n| n.parts.clone()),
             args: args.as_ref().map(|a| a.parts.clone()),
+            ros_args: ros_args.as_ref().map(|a| a.parts.clone()),
             composable_nodes: nodes
                 .iter()
                 .map(|n| composable_decl_to_action(n, context))

@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<!-- Issue #9: `ros_args=` on both a `<node>` and a `<node_container>`.
+
+     `ros_args` is NOT `args`. It lands inside its own ros-args block, so a
+     log-level option reaches rcl instead of being handed to the node's own
+     argv. Autoware's `tier4_autoware_api_launch` uses exactly the container
+     form to silence an INFO-spammy rtc_controller; before this was
+     implemented the attribute was accepted, warned about, and dropped.
+
+     Both attributes appear together on `plain` because the interesting claim
+     is that they stay APART. A fix that appended ros_args to args would place
+     the log-level option before the ros-args delimiter, where rcl never sees
+     it, and every count-based assertion would still pass.
+-->
+<launch>
+  <arg name="level" default="warn"/>
+
+  <node pkg="demo_nodes_cpp" exec="talker" name="plain"
+        args="--extra one"
+        ros_args="--log-level plain:=$(var level)"/>
+
+  <node_container pkg="rclcpp_components" exec="component_container" name="container" namespace=""
+        ros_args="--log-level container:=warn">
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="inner"/>
+  </node_container>
+</launch>

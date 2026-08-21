@@ -22,6 +22,11 @@ pub struct NodeCapture {
     pub param_sources: Vec<crate::record::types::ParamSource>,
     pub remappings: Vec<(String, String)>,
     pub arguments: Vec<String>,
+    /// `Node(ros_arguments=[...])` — issue #9. Its own `--ros-args` block,
+    /// distinct from [`Self::arguments`]. The Python-launch half of the same
+    /// gap: `<node ros_args=…>` at least printed a warning, while this was
+    /// swallowed into the mock `Node`'s `**_kwargs` with no diagnostic at all.
+    pub ros_arguments: Vec<String>,
     pub env_vars: Vec<(String, String)>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
@@ -35,6 +40,11 @@ pub struct ContainerCapture {
     pub package: Option<String>,
     pub executable: Option<String>,
     pub cmd: Vec<String>,
+    /// `ComposableNodeContainer(ros_arguments=[...])` — issue #9. Only
+    /// consulted when [`Self::cmd`] is empty (the bridge builds the command
+    /// itself); a capture that arrived with a ready-made `cmd` already has
+    /// them in it.
+    pub ros_arguments: Vec<String>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
 }

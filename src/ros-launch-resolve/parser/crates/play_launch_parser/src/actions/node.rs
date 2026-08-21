@@ -66,6 +66,11 @@ pub struct NodeAction {
     pub remappings: Vec<Remapping>,
     pub environment: Vec<(String, String)>,
     pub args: Option<Vec<Substitution>>,
+    /// `<node ros_args=…>` — issue #9. Distinct from [`Self::args`]: these
+    /// land in their own `--ros-args` block, which is the only way an
+    /// `rcl`-level option such as `--log-level <logger>:=warn` is seen by the
+    /// ROS layer rather than handed to the node's own `argv`.
+    pub ros_args: Option<Vec<Substitution>>,
     pub output: Option<String>,
     pub respawn: Option<Vec<Substitution>>,
     pub respawn_delay: Option<Vec<Substitution>>,
@@ -155,6 +160,13 @@ impl NodeAction {
             .map(|s| parse_substitutions(&s))
             .transpose()?;
 
+        // Parse ros_args attribute (arguments inside their own --ros-args
+        // block) — issue #9.
+        let ros_args = entity
+            .optional_attr_str("ros_args")?
+            .map(|s| parse_substitutions(&s))
+            .transpose()?;
+
         Ok(Self {
             package,
             executable,
@@ -166,6 +178,7 @@ impl NodeAction {
             remappings,
             environment,
             args,
+            ros_args,
             output: entity.optional_attr("output")?,
             respawn: entity
                 .optional_attr_str("respawn")?
@@ -235,15 +248,17 @@ impl NodeAction {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        // Resolve args attribute (command-line arguments before --ros-args)
-        let arguments = if let Some(ref args_subs) = self.args {
-            let resolved = resolve_substitutions(args_subs, context)
-                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-            // Split by whitespace to get individual arguments (matches Python behavior)
-            resolved.split_whitespace().map(|s| s.to_string()).collect()
-        } else {
-            Vec::new()
+        // Resolve args (before --ros-args) and ros_args (its own block,
+        // issue #9).
+        let resolve_args = |subs: &Option<Vec<Substitution>>| -> Result<Vec<String>> {
+            subs.as_deref()
+                .map(|s| crate::record::generator::resolve_arg_list(s, context))
+                .transpose()
+                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))
+                .map(|o| o.flatten().unwrap_or_default())
         };
+        let arguments = resolve_args(&self.args)?;
+        let ros_arguments = resolve_args(&self.ros_args)?;
 
         // phase-54 (issue 0007) — resolve the ORDERED source list. One element
         // per `<param>` in document order; kind carries no precedence.
@@ -280,6 +295,7 @@ impl NodeAction {
             param_sources,
             remappings,
             arguments,
+            ros_arguments,
             env_vars: self.environment.clone(),
             scope_id: None,
         })

@@ -141,6 +141,9 @@ impl ExecutableAction {
             param_sources: Vec::new(),
             remappings: Vec::new(),
             arguments,
+            // A raw `<executable>` is not a ROS node: it has no `--ros-args`
+            // block to put anything in.
+            ros_arguments: Vec::new(),
             env_vars: self.environment.clone(),
             scope_id: None,
         })

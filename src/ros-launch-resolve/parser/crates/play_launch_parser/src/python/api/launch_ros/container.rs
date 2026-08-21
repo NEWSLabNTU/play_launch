@@ -31,6 +31,7 @@ pub struct ComposableNodeContainer {
     #[allow(dead_code)] // Keep for API compatibility but not used in container record
     executable: String,
     composable_nodes: Vec<Py<ComposableNode>>,
+    ros_arguments: Vec<String>,
 }
 
 #[pymethods]
@@ -43,6 +44,7 @@ impl ComposableNodeContainer {
         package,
         executable,
         composable_node_descriptions=None,
+        ros_arguments=None,
         condition=None,
         **_kwargs
     ))]
@@ -54,6 +56,7 @@ impl ComposableNodeContainer {
         package: Py<PyAny>,
         executable: Py<PyAny>,
         composable_node_descriptions: Option<Vec<Py<ComposableNode>>>,
+        ros_arguments: Option<Vec<Py<PyAny>>>,
         condition: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
@@ -109,6 +112,14 @@ impl ComposableNodeContainer {
             package: package_str,
             executable: executable_str,
             composable_nodes: composable_nodes.clone(),
+            // Issue #9 — used to fall into `**_kwargs` and vanish. Autoware's
+            // `default_adapi.launch.py` sets
+            // `ros_arguments=["--log-level", "adapi.container:=WARN"]` here.
+            ros_arguments: ros_arguments
+                .unwrap_or_default()
+                .iter()
+                .map(|obj| Self::pyobject_to_string(py, obj))
+                .collect::<PyResult<Vec<String>>>()?,
         };
 
         // Evaluate condition (if present) and only capture if true
@@ -257,6 +268,7 @@ impl ComposableNodeContainer {
             package: Some(container.package.clone()),
             executable: Some(container.executable.clone()),
             cmd: Vec::new(), // Will be generated in to_record()
+            ros_arguments: container.ros_arguments.clone(),
             scope_id: None,
         };
 

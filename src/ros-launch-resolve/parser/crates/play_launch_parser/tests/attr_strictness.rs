@@ -13,6 +13,10 @@ fn node_spec_lists_the_ros2_supported_attributes() {
         "name",
         "namespace",
         "args",
+        // Issue #9 — implemented, so it moved out of `known_unsupported`.
+        // Its own `--ros-args` block; the container case is what Autoware
+        // uses to silence an INFO-spammy API container.
+        "ros_args",
         "output",
         "respawn",
         "respawn_delay",
@@ -30,14 +34,7 @@ fn node_spec_lists_the_ros2_supported_attributes() {
 #[test]
 fn node_spec_marks_unimplemented_ros2_attributes_as_known() {
     let spec = spec_for("node").expect("node has a spec");
-    for attr in [
-        "exec_name",
-        "ros_args",
-        "launch-prefix",
-        "cwd",
-        "emulate_tty",
-        "shell",
-    ] {
+    for attr in ["exec_name", "launch-prefix", "cwd", "emulate_tty", "shell"] {
         assert!(
             spec.known_unsupported.contains(&attr),
             "`{attr}` is valid ROS 2 and must warn, not error; \

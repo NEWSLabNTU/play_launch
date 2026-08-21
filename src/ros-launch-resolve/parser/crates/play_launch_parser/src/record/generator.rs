@@ -5,7 +5,7 @@ use crate::{
     error::GenerationError,
     params::load_and_resolve_param_file,
     record::types::NodeRecord,
-    substitution::{LaunchContext, resolve_substitutions},
+    substitution::{LaunchContext, Substitution, resolve_substitutions},
 };
 use std::path::Path;
 
@@ -25,11 +25,34 @@ pub fn resolve_exec_path(package: &str, executable: &str) -> String {
         .unwrap_or_else(|| format!("/opt/ros/humble/lib/{}/{}", package, executable))
 }
 
+/// Resolve a CLI-argument attribute (`args=` / `ros_args=`) to a token list.
+///
+/// `None` for an absent attribute AND for one that resolves to nothing, so a
+/// `ros_args="$(var extra)"` with `extra` empty is indistinguishable from no
+/// attribute at all — which is what the record's `Option` means and what the
+/// Python dumper produces.
+///
+/// Splitting on whitespace is not `shlex`: ROS 2 tokenizes through
+/// `ExecuteProcess._parse_cmdline`, which honours quoting. This has been the
+/// behaviour for `args=` since it was implemented, and `ros_args=` inherits it
+/// rather than introducing a second, different approximation. Every real use
+/// found in Autoware 1.5.0 (`--log-level <logger>:=warn`) is whitespace-clean.
+pub fn resolve_arg_list(
+    subs: &[Substitution],
+    context: &LaunchContext,
+) -> Result<Option<Vec<String>>, crate::error::SubstitutionError> {
+    let resolved = resolve_substitutions(subs, context)?;
+    let list: Vec<String> = resolved.split_whitespace().map(|s| s.to_string()).collect();
+    Ok((!list.is_empty()).then_some(list))
+}
+
 /// Build a ROS 2 command line from already-resolved values.
 ///
 /// Canonical parameter order (matches Python parser):
 /// 1. exec_path
 /// 2. args (before --ros-args)
+/// 2. (cont.) `--ros-args` + ros_args, when the launch file set
+///    `ros_args=` (issue #9)
 /// 3. --ros-args
 /// 4. -r __node:=name (if present)
 /// 5. -r __ns:=ns (if non-empty and not "/")
@@ -47,12 +70,28 @@ pub fn build_ros_command(
     params_files: &[String],
     remaps: &[(String, String)],
     args: &[String],
+    ros_args: &[String],
 ) -> Vec<String> {
     let mut cmd = vec![exec_path.to_string()];
 
     // 2. Custom arguments (before --ros-args)
     for arg in args {
         cmd.push(arg.clone());
+    }
+
+    // 2b. The launch file's own `ros_args=`, in their own block (issue #9).
+    //
+    // `launch_ros` emits `['--ros-args'] + ros_arguments` and then opens the
+    // framework's block with a second, adjacent `--ros-args`
+    // (`Node.__init__`, `node.py:206-209`) — no closing `--` between them.
+    // Reproduced exactly, because this `cmd` is what the cross-parser parity
+    // gate compares against the Python dumper, which copies `node.cmd`
+    // verbatim.
+    if !ros_args.is_empty() {
+        cmd.push("--ros-args".to_string());
+        for arg in ros_args {
+            cmd.push(arg.clone());
+        }
     }
 
     // 3. ROS args delimiter
@@ -323,18 +362,21 @@ impl CommandGenerator {
         let global_params_for_sources = global_params.clone();
 
         // Resolve args attribute (command-line arguments before --ros-args)
-        let args: Option<Vec<String>> = if let Some(ref args_subs) = node.args {
-            let resolved = resolve_substitutions(args_subs, context)?;
-            let arg_list: Vec<String> =
-                resolved.split_whitespace().map(|s| s.to_string()).collect();
-            if arg_list.is_empty() {
-                None
-            } else {
-                Some(arg_list)
-            }
-        } else {
-            None
-        };
+        let args: Option<Vec<String>> = node
+            .args
+            .as_deref()
+            .map(|subs| resolve_arg_list(subs, context))
+            .transpose()?
+            .flatten();
+
+        // Resolve ros_args attribute (arguments in their own --ros-args
+        // block) — issue #9.
+        let ros_args: Option<Vec<String>> = node
+            .ros_args
+            .as_deref()
+            .map(|subs| resolve_arg_list(subs, context))
+            .transpose()?
+            .flatten();
 
         // Build command using already-resolved values (matching Python parser behavior)
         let cmd = Self::build_node_command(
@@ -347,6 +389,7 @@ impl CommandGenerator {
             &global_params,
             &params_file_paths,
             &args,
+            &ros_args,
         )?;
 
         Ok(NodeRecord {
@@ -409,7 +452,7 @@ impl CommandGenerator {
                     })
                 })
                 .transpose()?,
-            ros_args: None,
+            ros_args,
             scope: None,
         })
     }
@@ -435,12 +478,14 @@ impl CommandGenerator {
         global_params: &Option<Vec<(String, String)>>,
         params_file_paths: &[String],
         args: &Option<Vec<String>>,
+        ros_args: &Option<Vec<String>>,
     ) -> Result<Vec<String>, GenerationError> {
         let exec_path = resolve_exec_path(package, executable);
         let empty_gp = Vec::new();
         let gp = global_params.as_deref().unwrap_or(&empty_gp);
         let empty_args = Vec::new();
         let arg_list = args.as_deref().unwrap_or(&empty_args);
+        let ros_arg_list = ros_args.as_deref().unwrap_or(&empty_args);
 
         Ok(build_ros_command(
             &exec_path,
@@ -451,6 +496,7 @@ impl CommandGenerator {
             params_file_paths,
             remaps,
             arg_list,
+            ros_arg_list,
         ))
     }
 
@@ -564,6 +610,7 @@ mod tests {
             remappings: vec![],
             environment: vec![],
             args: None,
+            ros_args: None,
             output: None,
             respawn: None,
             respawn_delay: None,
@@ -597,6 +644,7 @@ mod tests {
             remappings: vec![],
             environment: vec![],
             args: None,
+            ros_args: None,
             output: None,
             respawn: None,
             respawn_delay: None,
@@ -625,6 +673,7 @@ mod tests {
             }],
             environment: vec![],
             args: None,
+            ros_args: None,
             output: None,
             respawn: None,
             respawn_delay: None,

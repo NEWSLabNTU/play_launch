@@ -22,6 +22,11 @@ pub struct ContainerAction {
     pub package: Vec<Substitution>,
     pub executable: Vec<Substitution>,
     pub args: Option<Vec<Substitution>>,
+    /// `<node_container ros_args=…>` — issue #9. Its own `--ros-args` block,
+    /// which is how Autoware suppresses an INFO-spammy container
+    /// (`--log-level <container>:=warn`). Survives a `--container-mode`
+    /// override untouched: that rewrites `args`, never this.
+    pub ros_args: Option<Vec<Substitution>>,
     pub composable_nodes: Vec<ComposableNodeAction>,
 }
 
@@ -104,6 +109,13 @@ impl ContainerAction {
         );
         let args = args_raw.map(|s| parse_substitutions(&s)).transpose()?;
 
+        // Parse ros_args attribute (arguments in their own --ros-args block)
+        // — issue #9.
+        let ros_args = entity
+            .optional_attr_str("ros_args")?
+            .map(|s| parse_substitutions(&s))
+            .transpose()?;
+
         // Parse composable_node children
         let mut composable_nodes = Vec::new();
         for child in entity.children() {
@@ -142,6 +154,7 @@ impl ContainerAction {
             package,
             executable,
             args,
+            ros_args,
             composable_nodes,
         })
     }
@@ -169,23 +182,21 @@ impl ContainerAction {
             Some(namespace.as_str())
         };
 
-        // Resolve args attribute (command-line arguments before --ros-args)
-        let arguments: Option<Vec<String>> = if let Some(ref args_subs) = self.args {
-            let resolved = resolve_substitutions(args_subs, context)
-                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-            let arg_list: Vec<String> =
-                resolved.split_whitespace().map(|s| s.to_string()).collect();
-            if arg_list.is_empty() {
-                None
-            } else {
-                Some(arg_list)
-            }
-        } else {
-            None
+        // Resolve args (before --ros-args) and ros_args (its own block,
+        // issue #9).
+        let resolve_args = |subs: &Option<Vec<Substitution>>| -> Result<Option<Vec<String>>> {
+            subs.as_deref()
+                .map(|s| crate::record::generator::resolve_arg_list(s, context))
+                .transpose()
+                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))
+                .map(|o| o.flatten())
         };
+        let arguments = resolve_args(&self.args)?;
+        let ros_arguments = resolve_args(&self.ros_args)?;
 
         let empty_args = Vec::new();
         let arg_list = arguments.as_deref().unwrap_or(&empty_args);
+        let ros_arg_list = ros_arguments.as_deref().unwrap_or(&empty_args);
 
         let cmd = build_ros_command(
             &exec_path,
@@ -196,6 +207,7 @@ impl ContainerAction {
             &[],
             &[],
             arg_list,
+            ros_arg_list,
         );
 
         let global_params = if gp.is_empty() { None } else { Some(gp) };
@@ -216,7 +228,7 @@ impl ContainerAction {
             remaps: Vec::new(),
             respawn: None,
             respawn_delay: None,
-            ros_args: None,
+            ros_args: ros_arguments,
             scope: None,
         })
     }
@@ -257,23 +269,21 @@ impl ContainerAction {
             Some(namespace.as_str())
         };
 
-        // Resolve args attribute (command-line arguments before --ros-args)
-        let arguments: Option<Vec<String>> = if let Some(ref args_subs) = self.args {
-            let resolved = resolve_substitutions(args_subs, context)
-                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
-            let arg_list: Vec<String> =
-                resolved.split_whitespace().map(|s| s.to_string()).collect();
-            if arg_list.is_empty() {
-                None
-            } else {
-                Some(arg_list)
-            }
-        } else {
-            None
+        // Resolve args (before --ros-args) and ros_args (its own block,
+        // issue #9).
+        let resolve_args = |subs: &Option<Vec<Substitution>>| -> Result<Option<Vec<String>>> {
+            subs.as_deref()
+                .map(|s| crate::record::generator::resolve_arg_list(s, context))
+                .transpose()
+                .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))
+                .map(|o| o.flatten())
         };
+        let arguments = resolve_args(&self.args)?;
+        let ros_arguments = resolve_args(&self.ros_args)?;
 
         let empty_args = Vec::new();
         let arg_list = arguments.as_deref().unwrap_or(&empty_args);
+        let ros_arg_list = ros_arguments.as_deref().unwrap_or(&empty_args);
 
         let cmd = build_ros_command(
             &exec_path,
@@ -284,6 +294,7 @@ impl ContainerAction {
             &[],
             &[],
             arg_list,
+            ros_arg_list,
         );
 
         Ok(NodeRecord {
@@ -302,7 +313,7 @@ impl ContainerAction {
             remaps: Vec::new(),
             respawn: None,
             respawn_delay: None,
-            ros_args: None,
+            ros_args: ros_arguments,
             scope: None,
         })
     }

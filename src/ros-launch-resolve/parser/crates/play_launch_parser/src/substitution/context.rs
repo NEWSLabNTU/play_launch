@@ -1011,6 +1011,7 @@ mod tests {
             param_sources: Vec::new(),
             remappings: Vec::new(),
             arguments: Vec::new(),
+            ros_arguments: Vec::new(),
             env_vars: Vec::new(),
             scope_id: None,
         };
@@ -1034,6 +1035,7 @@ mod tests {
             param_sources: Vec::new(),
             remappings: Vec::new(),
             arguments: Vec::new(),
+            ros_arguments: Vec::new(),
             env_vars: Vec::new(),
             scope_id: None,
         });
@@ -1048,6 +1050,7 @@ mod tests {
             param_sources: Vec::new(),
             remappings: Vec::new(),
             arguments: Vec::new(),
+            ros_arguments: Vec::new(),
             env_vars: Vec::new(),
             scope_id: None,
         });
@@ -1065,6 +1068,7 @@ mod tests {
             package: Some("rclcpp_components".to_string()),
             executable: Some("component_container".to_string()),
             cmd: Vec::new(),
+            ros_arguments: Vec::new(),
             scope_id: None,
         });
 
@@ -1123,6 +1127,7 @@ mod tests {
             param_sources: Vec::new(),
             remappings: Vec::new(),
             arguments: Vec::new(),
+            ros_arguments: Vec::new(),
             env_vars: Vec::new(),
             scope_id: None,
         });

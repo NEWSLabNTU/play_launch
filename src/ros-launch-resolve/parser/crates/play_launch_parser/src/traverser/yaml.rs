@@ -388,6 +388,9 @@ impl LaunchTraverser {
         }
 
         let args = yaml_str(map, "args").map(parse_substitutions).transpose()?;
+        let ros_args = yaml_str(map, "ros_args")
+            .map(parse_substitutions)
+            .transpose()?;
         let output = yaml_str(map, "output").map(|s| s.to_string());
         let respawn = yaml_str(map, "respawn")
             .map(parse_substitutions)
@@ -407,6 +410,7 @@ impl LaunchTraverser {
             remappings,
             environment: Vec::new(),
             args,
+            ros_args,
             output,
             respawn,
             respawn_delay,
@@ -621,6 +625,9 @@ impl LaunchTraverser {
             .map(parse_substitutions)
             .transpose()?;
         let args = yaml_str(map, "args").map(parse_substitutions).transpose()?;
+        let ros_args = yaml_str(map, "ros_args")
+            .map(parse_substitutions)
+            .transpose()?;
 
         // Parse composable_node children
         let composable_nodes = parse_yaml_composable_nodes(map, "composable_node", &self.context)?;
@@ -631,6 +638,7 @@ impl LaunchTraverser {
             package,
             executable,
             args,
+            ros_args,
             composable_nodes,
         };
 

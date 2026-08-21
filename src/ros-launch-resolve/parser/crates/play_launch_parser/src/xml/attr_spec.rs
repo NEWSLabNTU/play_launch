@@ -63,13 +63,16 @@ const NODE_SUPPORTED: &[&str] = &[
     "name",
     "namespace",
     "args",
+    // Issue #9. Distinct from `args`: these land AFTER `--ros-args`, in their
+    // own block, which is what makes `--log-level <logger>:=warn` reach rcl
+    // instead of the node's own argv.
+    "ros_args",
     "output",
     "respawn",
     "respawn_delay",
 ];
 const NODE_KNOWN_UNSUPPORTED: &[&str] = &[
     "exec_name",
-    "ros_args",
     "launch-prefix",
     "cwd",
     "emulate_tty",

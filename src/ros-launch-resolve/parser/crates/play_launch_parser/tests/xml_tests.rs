@@ -1556,3 +1556,101 @@ fn a_composable_condition_follows_its_launch_argument() {
         "enable:=true must include it: {names:?}"
     );
 }
+
+/// Issue #9 — `ros_args=` reaches the record as its own field AND its own
+/// `--ros-args` block on the command line.
+///
+/// The attribute was accepted, warned about and discarded, so Autoware's
+/// `--log-level <container>:=warn` never took effect and the container ran at
+/// the default level. Everything downstream of the parser (`LaunchDump`, the
+/// SystemModel's `NodeInstance.ros_args`, `node_cmdline.rs`) already carried
+/// and emitted it — the parser was the only producer writing `None`.
+#[test]
+fn ros_args_is_carried_separately_from_args() {
+    let fixture = get_fixture_path("test_ros_args.launch.xml");
+    let record = parse_launch_file(&fixture, HashMap::new()).expect("fixture should parse");
+    let json = serde_json::to_value(&record).unwrap();
+
+    let node = json["node"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["name"] == "plain")
+        .expect("the plain node is in the record");
+
+    // The two attributes stay apart. `args` keeps its own tokens, and the
+    // `$(var level)` in `ros_args` is resolved like any other substitution.
+    let strings = |v: &serde_json::Value| -> Vec<String> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(strings(&node["args"]), ["--extra", "one"]);
+    assert_eq!(strings(&node["ros_args"]), ["--log-level", "plain:=warn"]);
+
+    // And on the command line: `args` before the first `--ros-args`,
+    // `ros_args` after it, in a block the framework's own `--ros-args` then
+    // follows — the shape `launch_ros` produces (`node.py:206-209`).
+    let cmd: Vec<&str> = node["cmd"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    let first = cmd
+        .iter()
+        .position(|c| *c == "--ros-args")
+        .expect("cmd opens a --ros-args block");
+    let extra = cmd.iter().position(|c| *c == "--extra").unwrap();
+    let level = cmd.iter().position(|c| *c == "--log-level").unwrap();
+    assert!(extra < first, "plain args precede --ros-args: {cmd:?}");
+    assert!(
+        level > first,
+        "ros_args must land INSIDE a --ros-args block, or rcl never sees \
+         them and they reach the node's argv instead: {cmd:?}"
+    );
+    assert_eq!(
+        cmd[level + 1],
+        "plain:=warn",
+        "the log-level value follows its flag: {cmd:?}"
+    );
+    assert_eq!(
+        cmd[level + 2],
+        "--ros-args",
+        "the framework's block opens right after, as launch_ros does: {cmd:?}"
+    );
+}
+
+/// The container half of issue #9 — the case actually reported, from
+/// `tier4_autoware_api_launch/launch/autoware_api.launch.xml`.
+///
+/// Asserted separately because containers are built by a different code path
+/// (`ContainerAction::to_container_record`) than plain nodes, and only the
+/// container form appears in shipped Autoware XML.
+#[test]
+fn a_container_carries_its_ros_args() {
+    let fixture = get_fixture_path("test_ros_args.launch.xml");
+    let record = parse_launch_file(&fixture, HashMap::new()).expect("fixture should parse");
+    let json = serde_json::to_value(&record).unwrap();
+
+    let container = &json["container"].as_array().unwrap()[0];
+    let ros_args: Vec<&str> = container["ros_args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap())
+        .collect();
+    assert_eq!(ros_args, ["--log-level", "container:=warn"]);
+
+    let cmd: Vec<&str> = container["cmd"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    let first = cmd.iter().position(|c| *c == "--ros-args").unwrap();
+    let level = cmd.iter().position(|c| *c == "--log-level").unwrap();
+    assert!(level > first, "{cmd:?}");
+}

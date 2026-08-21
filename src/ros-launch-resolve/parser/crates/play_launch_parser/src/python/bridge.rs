@@ -64,7 +64,7 @@ impl NodeCapture {
             remaps: self.remappings.clone(),
             respawn: None,
             respawn_delay: None,
-            ros_args: None, // Python parser doesn't populate ros_args
+            ros_args: (!self.ros_arguments.is_empty()).then(|| self.ros_arguments.clone()),
             scope: None,
         })
     }
@@ -133,6 +133,7 @@ impl NodeCapture {
             &self.params_files,
             &self.remappings,
             &self.arguments,
+            &self.ros_arguments,
         )
     }
 }
@@ -177,6 +178,7 @@ impl ContainerCapture {
                 &[],
                 &[],
                 &[],
+                &self.ros_arguments,
             )
         } else {
             self.cmd.clone()
@@ -198,7 +200,7 @@ impl ContainerCapture {
             remaps: Vec::new(),
             respawn: Some(false),
             respawn_delay: None,
-            ros_args: None,
+            ros_args: (!self.ros_arguments.is_empty()).then(|| self.ros_arguments.clone()),
             scope: None,
         })
     }

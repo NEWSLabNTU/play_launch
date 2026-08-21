@@ -37,6 +37,7 @@ pub struct Node {
     parameters: Vec<Py<PyAny>>,
     remappings: Vec<Py<PyAny>>,
     arguments: Vec<String>,
+    ros_arguments: Vec<String>,
     env_vars: Vec<(String, String)>,
     #[allow(dead_code)] // Used for condition evaluation, not stored in captures
     condition: Option<Py<PyAny>>,
@@ -54,6 +55,7 @@ impl Node {
         parameters=None,
         remappings=None,
         arguments=None,
+        ros_arguments=None,
         env=None,
         condition=None,
         **_kwargs
@@ -68,6 +70,7 @@ impl Node {
         parameters: Option<Vec<Py<PyAny>>>,
         remappings: Option<Vec<Py<PyAny>>>,
         arguments: Option<Vec<Py<PyAny>>>,
+        ros_arguments: Option<Vec<Py<PyAny>>>,
         env: Option<Vec<(String, String)>>,
         condition: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, PyDict>>,
@@ -98,13 +101,19 @@ impl Node {
             .transpose()?;
 
         // Convert arguments from Vec<Py<PyAny>> to Vec<String>
-        let arguments_vec = if let Some(args) = arguments {
-            args.iter()
-                .map(|obj| Self::pyobject_to_string(py, obj))
-                .collect::<Result<Vec<String>, _>>()?
-        } else {
-            Vec::new()
+        let to_strings = |list: Option<Vec<Py<PyAny>>>| -> PyResult<Vec<String>> {
+            list.map(|items| {
+                items
+                    .iter()
+                    .map(|obj| Self::pyobject_to_string(py, obj))
+                    .collect::<Result<Vec<String>, _>>()
+            })
+            .transpose()
+            .map(Option::unwrap_or_default)
         };
+        let arguments_vec = to_strings(arguments)?;
+        // Issue #9 — `ros_arguments` used to fall into `**_kwargs` and vanish.
+        let ros_arguments_vec = to_strings(ros_arguments)?;
 
         log::debug!("Node::new: name={:?}, namespace={:?}", name, namespace);
 
@@ -116,6 +125,7 @@ impl Node {
             parameters: parameters.unwrap_or_default(),
             remappings: remappings.unwrap_or_default(),
             arguments: arguments_vec,
+            ros_arguments: ros_arguments_vec,
             env_vars: env.unwrap_or_default(),
             condition: condition.clone(),
         };
@@ -249,6 +259,7 @@ impl Node {
             param_sources: Vec::new(),
             remappings,
             arguments: node.arguments.clone(),
+            ros_arguments: node.ros_arguments.clone(),
             env_vars: node.env_vars.clone(),
             scope_id: None,
         };

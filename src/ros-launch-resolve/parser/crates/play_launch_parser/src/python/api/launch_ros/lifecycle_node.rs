@@ -30,6 +30,7 @@ pub struct LifecycleNode {
     parameters: Vec<Py<PyAny>>,
     remappings: Vec<Py<PyAny>>,
     arguments: Vec<Py<PyAny>>,
+    ros_arguments: Vec<Py<PyAny>>,
     #[allow(dead_code)] // Keep for API compatibility
     output: String,
 }
@@ -46,6 +47,7 @@ impl LifecycleNode {
         parameters=None,
         remappings=None,
         arguments=None,
+        ros_arguments=None,
         output=None,
         **_kwargs
     ))]
@@ -59,6 +61,7 @@ impl LifecycleNode {
         parameters: Option<Vec<Py<PyAny>>>,
         remappings: Option<Vec<Py<PyAny>>>,
         arguments: Option<Vec<Py<PyAny>>>,
+        ros_arguments: Option<Vec<Py<PyAny>>>,
         output: Option<String>,
         _kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
@@ -82,6 +85,7 @@ impl LifecycleNode {
             parameters: parameters.unwrap_or_default(),
             remappings: remappings.unwrap_or_default(),
             arguments: arguments.unwrap_or_default(),
+            ros_arguments: ros_arguments.unwrap_or_default(),
             output: output.unwrap_or_else(|| "screen".to_string()),
         };
 
@@ -145,7 +149,9 @@ impl LifecycleNode {
         let parsed_remaps = self.parse_remappings(py)?;
 
         // Parse arguments
-        let parsed_args = self.parse_arguments(py)?;
+        let parsed_args = self.parse_arguments(py, &self.arguments)?;
+        // Issue #9 — its own `--ros-args` block, not part of `arguments`.
+        let parsed_ros_args = self.parse_arguments(py, &self.ros_arguments)?;
 
         // Get current ROS namespace and combine with node's namespace
         let ros_namespace = get_current_ros_namespace();
@@ -194,6 +200,7 @@ impl LifecycleNode {
             param_sources: Vec::new(),
             remappings: parsed_remaps,
             arguments: parsed_args,
+            ros_arguments: parsed_ros_args,
             env_vars: Vec::new(),
             scope_id: None,
         };
@@ -310,10 +317,10 @@ impl LifecycleNode {
     }
 
     /// Parse Python arguments (similar to Node)
-    fn parse_arguments(&self, py: Python) -> PyResult<Vec<String>> {
+    fn parse_arguments(&self, py: Python, source: &[Py<PyAny>]) -> PyResult<Vec<String>> {
         let mut parsed_args = Vec::new();
 
-        for arg_obj in &self.arguments {
+        for arg_obj in source {
             if let Ok(arg_str) = arg_obj.extract::<String>(py) {
                 parsed_args.push(arg_str);
             }

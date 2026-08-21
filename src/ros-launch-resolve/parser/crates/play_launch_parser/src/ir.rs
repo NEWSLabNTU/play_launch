@@ -145,6 +145,10 @@ pub enum ActionKind {
         remaps: Vec<RemapDecl>,
         env: Vec<EnvDecl>,
         args: Option<Expr>,
+        /// `ros_args=` — its own `--ros-args` block (issue #9), kept apart
+        /// from `args` because the two land in different places on the
+        /// command line.
+        ros_args: Option<Expr>,
         respawn: Option<Expr>,
         respawn_delay: Option<Expr>,
     },
@@ -164,6 +168,8 @@ pub enum ActionKind {
         name: Expr,
         namespace: Option<Expr>,
         args: Option<Expr>,
+        /// See `SpawnNode::ros_args` (issue #9).
+        ros_args: Option<Expr>,
         nodes: Vec<ComposableNodeDecl>,
     },
 

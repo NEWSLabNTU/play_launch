@@ -65,6 +65,7 @@ impl From<NodeAction> for ActionKind {
                 })
                 .collect(),
             args: node.args.map(Expr::new),
+            ros_args: node.ros_args.map(Expr::new),
             respawn: node.respawn.map(Expr::new),
             respawn_delay: node.respawn_delay.map(Expr::new),
         }
@@ -99,6 +100,7 @@ impl From<ContainerAction> for ActionKind {
             name: Expr::new(c.name),
             namespace: c.namespace.map(Expr::new),
             args: c.args.map(Expr::new),
+            ros_args: c.ros_args.map(Expr::new),
             nodes: c.composable_nodes.into_iter().map(Into::into).collect(),
         }
     }
