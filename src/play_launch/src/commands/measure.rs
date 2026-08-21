@@ -195,7 +195,11 @@ fn render(results: &[PathResult], run: &Run, events_path: &Path, model_path: &Pa
                  \x20   # period. Conservative; split it if you know better.\n",
             );
         }
-        body.push_str(&format!("    budget_us: {budget_us}\n"));
+        // Phase 59: emit the canonical spelling. `measure` writes a fragment
+        // an integrator pastes into a platform file, so emitting the
+        // deprecated name would keep seeding new files with the form the
+        // deprecation lint then flags.
+        body.push_str(&format!("    budget: {budget_us}us\n"));
     }
 
     if measured_any {
@@ -336,7 +340,7 @@ mod tests {
     fn fragment_is_pasteable_yaml_under_overrides() {
         let out = render_of(&[measured("/detector", "detect", 9_100_000)]);
         assert!(out.contains("overrides:\n  /detector:\n"), "{out}");
-        assert!(out.contains("budget_us: 9100"), "{out}");
+        assert!(out.contains("budget: 9100us"), "{out}");
         // The pasteable part must parse as YAML on its own.
         let yaml_only: String = out
             .lines()
@@ -344,9 +348,12 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let v: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml_only).unwrap();
+        // Canonical spelling: the value is a duration string now, not a bare
+        // number, which is the phase-59 point — a reader cannot mistake its
+        // unit.
         assert_eq!(
-            v["overrides"]["/detector"]["budget_us"].as_u64(),
-            Some(9_100)
+            v["overrides"]["/detector"]["budget"].as_str(),
+            Some("9100us")
         );
     }
 
@@ -402,7 +409,7 @@ mod tests {
             measured("/n", "a", 3_000_000),
             measured("/n", "b", 4_500_000),
         ]);
-        assert!(out.contains("budget_us: 7500"), "{out}");
+        assert!(out.contains("budget: 7500us"), "{out}");
         assert!(out.contains("SUM of the per-path maxima"), "{out}");
     }
 

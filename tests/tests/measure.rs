@@ -126,7 +126,7 @@ fn measure_emits_a_budget_from_a_recorded_run() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("budget_us: 9000"),
+        stdout.contains("budget: 9000us"),
         "expected the maximum (9 ms) as the budget:\n{stdout}"
     );
     assert!(stdout.contains("/detector:"), "{stdout}");
@@ -151,9 +151,9 @@ fn a_path_with_no_traffic_is_reported_not_omitted() {
         stdout.contains("/detector/detect: declared, but no matching traffic"),
         "{stdout}"
     );
-    // The header explains what budget_us means, so look for an emitted
-    // FIELD, not the word.
-    assert!(!stdout.contains("budget_us:"), "{stdout}");
+    // The header explains what a budget means, so look for an emitted FIELD,
+    // not the word. Phase 59 spelling: `budget: <n>us`.
+    assert!(!stdout.contains("    budget: "), "{stdout}");
     assert!(!stdout.contains("overrides:"), "{stdout}");
 }
 
@@ -199,7 +199,9 @@ fn the_fragment_parses_as_yaml_and_can_be_appended_to_a_platform_file() {
     let parsed: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&stdout).expect("measure output must be valid YAML");
     assert_eq!(
-        parsed["overrides"]["/detector"]["budget_us"].as_u64(),
-        Some(5_000)
+        // Canonical spelling: a duration string, not a bare number — the
+        // unit is no longer carried by the field name.
+        parsed["overrides"]["/detector"]["budget"].as_str(),
+        Some("5000us")
     );
 }

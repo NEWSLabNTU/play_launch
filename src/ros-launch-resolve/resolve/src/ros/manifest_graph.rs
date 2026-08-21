@@ -38,7 +38,7 @@ impl GlobalNode {
     pub fn max_latency_ms(&self) -> f64 {
         self.paths
             .values()
-            .filter_map(|p| p.max_latency_ms)
+            .filter_map(|p| p.max_latency.map(|d| d.as_millis_f64()))
             .fold(0.0_f64, f64::max)
     }
 }
@@ -158,7 +158,7 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
                 // Prefer the sub endpoint's value; fall back to the topic
                 // default; otherwise the edge contributes 0.
                 let max_transport_ms = sub_props
-                    .and_then(|p| p.max_transport_ms)
+                    .and_then(|p| p.max_transport.map(|d| d.as_millis_f64()))
                     .or(topic.max_transport_ms);
 
                 let edge = GlobalEdge {

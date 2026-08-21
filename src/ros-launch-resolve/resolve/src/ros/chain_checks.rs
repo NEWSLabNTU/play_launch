@@ -237,7 +237,7 @@ fn check_one_chain(
 
     let total = declared_sum + sampling_cost;
 
-    if sampling_cost >= chain.max_latency_ms {
+    if sampling_cost >= chain.max_latency.as_millis_f64() {
         index.merge_diagnostics.push(Diagnostic {
             rule_id: "chain-sampling-feasibility".to_string(),
             severity: Severity::Warning,
@@ -246,13 +246,13 @@ fn check_one_chain(
                  boundaries alone) already meets or exceeds the chain budget \
                  ({}ms) — structurally infeasible, no scheduling assignment can fix this \
                  (period/architecture change required). Per-boundary breakdown: [{}]",
-                chain.max_latency_ms,
+                chain.max_latency.as_millis_f64(),
                 boundary_breakdown.join("; ")
             ),
             path: format!("chains.{chain_name}"),
             span: None,
         });
-    } else if total > chain.max_latency_ms {
+    } else if total > chain.max_latency.as_millis_f64() {
         index.merge_diagnostics.push(Diagnostic {
             rule_id: "chain-budget".to_string(),
             severity: Severity::Warning,
@@ -260,7 +260,7 @@ fn check_one_chain(
                 "chain '{chain_name}' total ({total:.2}ms = {declared_sum:.2}ms declared \
                  event-segment latency + {sampling_cost:.2}ms sampling_cost) exceeds the \
                  chain budget ({}ms). Per-boundary breakdown: [{}]",
-                chain.max_latency_ms,
+                chain.max_latency.as_millis_f64(),
                 boundary_breakdown.join("; ")
             ),
             path: format!("chains.{chain_name}"),
@@ -341,7 +341,7 @@ pub(crate) fn resolve_segment(
         return Some(ResolvedSegment {
             label: format!("{}.{}", np.node_fqn, path_name),
             trigger,
-            max_latency_ms: np.path.max_latency_ms,
+            max_latency_ms: np.path.max_latency.map(|d| d.as_millis_f64()),
             input_topics,
             output_topics,
             node_fqn: Some(np.node_fqn.clone()),
@@ -357,7 +357,7 @@ pub(crate) fn resolve_segment(
         return Some(ResolvedSegment {
             label: format!("scope[{scope}].{path_name}"),
             trigger: sp.path.effective_trigger(),
-            max_latency_ms: sp.path.max_latency_ms,
+            max_latency_ms: sp.path.max_latency.map(|d| d.as_millis_f64()),
             input_topics: sp.input_topics.clone(),
             output_topics: sp.output_topics.clone(),
             node_fqn: None,
@@ -690,7 +690,7 @@ mod tests {
             "sbs_chain".to_string(),
             ChainDecl {
                 semantics: ros_launch_manifest_types::ChainSemantics::Reaction,
-                max_latency_ms: 200.0,
+                max_latency: ros_launch_manifest_types::duration::Duration::from_millis_f64(200.0),
                 segments: vec![
                     ChainSegment::Path {
                         scope: "/".to_string(),

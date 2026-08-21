@@ -94,7 +94,7 @@ impl ContractView {
                     }
                 }
                 for (ep, props) in &node.subscribers {
-                    if let Some(max) = props.max_age_ms {
+                    if let Some(max) = props.max_age.map(|d| d.as_millis_f64()) {
                         view.sub_max_age.insert(format!("{node_fqn}/{ep}"), max);
                     }
                 }
@@ -106,7 +106,7 @@ impl ContractView {
                 name: sp.path_name.clone(),
                 input_topics: sp.input_topics.clone(),
                 output_topics: sp.output_topics.clone(),
-                max_latency_ms: sp.path.max_latency_ms,
+                max_latency_ms: sp.path.max_latency.map(|d| d.as_millis_f64()),
             });
         }
         view
@@ -205,7 +205,7 @@ mod tests {
         sub_node.subscribers.insert(
             "points".to_string(),
             ros_launch_manifest_types::EndpointProps {
-                max_age_ms: Some(50.0),
+                max_age: Some(ros_launch_manifest_types::duration::Duration::from_millis_f64(50.0)),
                 ..Default::default()
             },
         );

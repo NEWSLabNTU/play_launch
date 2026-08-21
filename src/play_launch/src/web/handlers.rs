@@ -132,8 +132,7 @@ pub async fn list_nodes(
         .iter()
         .map(|member| {
             let mut summary = super::web_types::NodeSummary::from_member_summary(member);
-            summary.diagnostic_level =
-                badges.get(&member.id).map(|l| l.as_str().to_string());
+            summary.diagnostic_level = badges.get(&member.id).map(|l| l.as_str().to_string());
             // Populate container_name for composable nodes
             if summary.node_type == super::web_types::NodeType::ComposableNode
                 && let Some(ref target) = summary.target_container

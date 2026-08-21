@@ -155,13 +155,13 @@ fn resolve_endpoint_ref(nodes: &IndexMap<String, model::NodeInstance>, ep_ref: &
 }
 
 fn pub_contract(p: &EndpointProps) -> Option<model::PubContract> {
-    if p.min_rate_hz.is_none() && p.max_rate_hz.is_none() && p.jitter_ms.is_none() {
+    if p.min_rate_hz.is_none() && p.max_rate_hz.is_none() && p.jitter.is_none() {
         return None;
     }
     Some(model::PubContract {
         min_rate_hz: p.min_rate_hz,
         max_rate_hz: p.max_rate_hz,
-        jitter_ms: p.jitter_ms,
+        jitter_ms: p.jitter.map(|d| d.as_millis_f64()),
         // R1-M5 — manifest-side per-endpoint QoS lands here when the
         // loader surfaces it (P-item); None until then.
         qos: None,
@@ -173,7 +173,7 @@ fn sub_contract(p: &EndpointProps) -> Option<model::SubContract> {
     let required = p.required.unwrap_or(false);
     if p.min_rate_hz.is_none()
         && p.max_rate_hz.is_none()
-        && p.max_age_ms.is_none()
+        && p.max_age.is_none()
         && !state
         && !required
     {
@@ -182,7 +182,7 @@ fn sub_contract(p: &EndpointProps) -> Option<model::SubContract> {
     Some(model::SubContract {
         min_rate_hz: p.min_rate_hz,
         max_rate_hz: p.max_rate_hz,
-        max_age_ms: p.max_age_ms,
+        max_age_ms: p.max_age.map(|d| d.as_millis_f64()),
         state,
         required,
         qos: None,
@@ -202,7 +202,7 @@ fn qos_contract(q: &QosDecl) -> model::Qos {
         durability: q.durability.clone(),
         history: q.history.clone(),
         depth: q.depth,
-        lifespan_ms: q.lifespan_ms,
+        lifespan_ms: q.lifespan.map(|d| d.as_millis_f64() as u64),
         liveliness: q.liveliness.clone(),
     }
 }
@@ -223,9 +223,9 @@ fn path_contract(
     model::PathContract {
         input,
         output,
-        max_latency_ms: decl.max_latency_ms,
+        max_latency_ms: decl.max_latency.map(|d| d.as_millis_f64()),
         correlation: correlation(decl.correlation.as_deref()),
-        tolerance_ms: decl.tolerance_ms,
+        tolerance_ms: decl.tolerance.map(|d| d.as_millis_f64()),
         drop: decl.drop.as_ref().map(drop_contract),
     }
 }
@@ -271,21 +271,31 @@ fn synthesize_tiers(derived: &DerivedSchedPlan) -> BTreeMap<String, TierDef> {
             core: t.core,
             sched_class: t.sched_class.clone(),
             preempt_threshold: t.preempt_threshold,
-            deadline_us: None,
+            deadline: None,
             // rlm 6a8e287 — per-platform sporadic overrides; the legacy
             // derived-tier lowering has only tier-level budget/period (set
             // on TierDef below), no sub-table split.
-            budget_us: None,
-            period_us: None,
-            time_slice_us: None,
+            budget: None,
+            period: None,
+            time_slice: None,
         };
         let mut def = TierDef {
             class: t.class.clone(),
-            deadline_us: t.deadline_us,
-            period_us: t.period_us,
-            budget_us: t.budget_us,
+            // `t` is play_launch's own tier view, which still speaks
+            // microseconds; the manifest's TierDef now carries durations.
+            deadline: t
+                .deadline_us
+                .map(|us| ros_launch_manifest_types::duration::Duration::from_micros(us as i64)),
+            period: t
+                .period_us
+                .map(|us| ros_launch_manifest_types::duration::Duration::from_micros(us as i64)),
+            budget: t
+                .budget_us
+                .map(|us| ros_launch_manifest_types::duration::Duration::from_micros(us as i64)),
             deadline_policy: t.deadline_policy.clone(),
-            spin_period_us: t.spin_period_us,
+            spin_period: t
+                .spin_period_us
+                .map(|us| ros_launch_manifest_types::duration::Duration::from_micros(us as i64)),
             ..Default::default()
         };
         match derived.target.as_str() {
@@ -800,7 +810,7 @@ pub fn build_system_model(
                 }
             }
             for (ep, props) in &decl.srv {
-                if let Some(ms) = props.max_response_ms {
+                if let Some(ms) = props.max_response.map(|d| d.as_millis_f64()) {
                     contracts.srv_endpoints.insert(
                         format!("{node_fqn}/{ep}"),
                         model::SrvContract {

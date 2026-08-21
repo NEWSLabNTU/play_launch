@@ -255,9 +255,9 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
                 state,
                 required,
                 min_rate_hz: props.and_then(|p| p.min_rate_hz),
-                max_age_ms: props.and_then(|p| p.max_age_ms),
+                max_age_ms: props.and_then(|p| p.max_age.map(|d| d.as_millis_f64())),
                 max_transport_ms: props
-                    .and_then(|p| p.max_transport_ms)
+                    .and_then(|p| p.max_transport.map(|d| d.as_millis_f64()))
                     .or(topic.max_transport_ms),
             });
         }
@@ -275,8 +275,8 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             path_name: p.path_name.clone(),
             input: p.path.input.clone(),
             output: p.path.output.clone(),
-            max_latency_ms: p.path.max_latency_ms,
-            tolerance_ms: p.path.tolerance_ms,
+            max_latency_ms: p.path.max_latency.map(|d| d.as_millis_f64()),
+            tolerance_ms: p.path.tolerance.map(|d| d.as_millis_f64()),
             correlation: p.path.correlation.clone(),
             scope_id: p.scope_id,
             cross_node: false,
@@ -294,8 +294,8 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             path_name: p.path_name.clone(),
             input_topics: p.input_topics.clone(),
             output_topics: p.output_topics.clone(),
-            max_latency_ms: p.path.max_latency_ms,
-            tolerance_ms: p.path.tolerance_ms,
+            max_latency_ms: p.path.max_latency.map(|d| d.as_millis_f64()),
+            tolerance_ms: p.path.tolerance.map(|d| d.as_millis_f64()),
             correlation: p.path.correlation.clone(),
             cross_node: true,
         })

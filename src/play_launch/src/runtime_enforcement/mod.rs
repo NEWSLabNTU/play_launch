@@ -1491,7 +1491,7 @@ mod tests {
         let mut nodes = std::collections::BTreeMap::new();
         let mut sub_node = NodeDecl::default();
         let sub_props = ros_launch_manifest_types::EndpointProps {
-            max_age_ms: Some(10.0),
+            max_age: Some(ros_launch_manifest_types::duration::Duration::from_millis_f64(10.0)),
             ..Default::default()
         };
         sub_node.subscribers.insert("in".to_string(), sub_props);

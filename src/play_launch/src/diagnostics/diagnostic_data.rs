@@ -264,7 +264,10 @@ impl DiagnosticRegistry {
     pub fn badges(
         &self,
         attributor: &crate::diagnostics::attribution::Attributor,
-    ) -> (std::collections::HashMap<String, DiagnosticLevel>, Vec<DiagnosticStatus>) {
+    ) -> (
+        std::collections::HashMap<String, DiagnosticLevel>,
+        Vec<DiagnosticStatus>,
+    ) {
         let mut worst: std::collections::HashMap<String, DiagnosticLevel> =
             std::collections::HashMap::new();
         let mut unmatched = Vec::new();
@@ -338,11 +341,17 @@ mod tests {
         reg.update(hist_status("talker: link", DiagnosticLevel::Error, 2));
         reg.update(hist_status("talker: link", DiagnosticLevel::Ok, 3));
 
-        let h = reg.history_for("hw/talker: link").expect("history recorded");
+        let h = reg
+            .history_for("hw/talker: link")
+            .expect("history recorded");
         let levels: Vec<_> = h.transitions.iter().map(|t| t.level).collect();
         assert_eq!(
             levels,
-            vec![DiagnosticLevel::Ok, DiagnosticLevel::Error, DiagnosticLevel::Ok],
+            vec![
+                DiagnosticLevel::Ok,
+                DiagnosticLevel::Error,
+                DiagnosticLevel::Ok
+            ],
             "the momentary ERROR must survive in the strip"
         );
         assert_eq!(h.dropped, 0);
@@ -358,7 +367,11 @@ mod tests {
             reg.update(hist_status("talker: link", DiagnosticLevel::Ok, i));
         }
         let h = reg.history_for("hw/talker: link").expect("history");
-        assert_eq!(h.transitions.len(), 1, "5000 identical statuses are one transition");
+        assert_eq!(
+            h.transitions.len(),
+            1,
+            "5000 identical statuses are one transition"
+        );
         assert_eq!(h.dropped, 0);
     }
 
@@ -369,7 +382,11 @@ mod tests {
         let reg = DiagnosticRegistry::new(None);
         let n = LEVEL_HISTORY_CAPACITY * 3;
         for i in 0..n {
-            let level = if i % 2 == 0 { DiagnosticLevel::Ok } else { DiagnosticLevel::Error };
+            let level = if i % 2 == 0 {
+                DiagnosticLevel::Ok
+            } else {
+                DiagnosticLevel::Error
+            };
             reg.update(hist_status("talker: link", level, i as u64));
         }
         let h = reg.history_for("hw/talker: link").expect("history");
@@ -386,11 +403,12 @@ mod tests {
     fn an_unchanging_diagnostic_still_records_its_first_level() {
         let reg = DiagnosticRegistry::new(None);
         reg.update(hist_status("quiet: check", DiagnosticLevel::Ok, 1));
-        let h = reg.history_for("hw/quiet: check").expect("first status is a transition");
+        let h = reg
+            .history_for("hw/quiet: check")
+            .expect("first status is a transition");
         assert_eq!(h.transitions.len(), 1);
         assert!(reg.history_for("hw/never: seen").is_none());
     }
-
 
     /// STALE must not outrank ERROR, despite being the higher wire value.
     ///
@@ -528,7 +546,9 @@ mod tests {
     /// sibling repo and is not part of this checkout.
     #[test]
     fn replaying_a_real_corpus_stays_bounded() {
-        let Some(home) = std::env::var_os("HOME") else { return };
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
         let csv = std::path::PathBuf::from(home)
             .join("repos/2026-golf-cart/play_log/2026-08-17_11-18-23/diagnostics.csv");
         if !csv.is_file() {
@@ -544,8 +564,12 @@ mod tests {
             // fields never contain commas.
             let mut it = line.splitn(5, ',');
             let (_ts, hw, name, level) = (it.next(), it.next(), it.next(), it.next());
-            let (Some(hw), Some(name), Some(level)) = (hw, name, level) else { continue };
-            let Ok(level) = level.trim().parse::<u8>() else { continue };
+            let (Some(hw), Some(name), Some(level)) = (hw, name, level) else {
+                continue;
+            };
+            let Ok(level) = level.trim().parse::<u8>() else {
+                continue;
+            };
             reg.update(DiagnosticStatus {
                 hardware_id: hw.to_string(),
                 name: name.to_string(),

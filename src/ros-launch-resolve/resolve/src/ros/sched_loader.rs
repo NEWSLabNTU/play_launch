@@ -2346,7 +2346,9 @@ mod tests {
                 // placement, so this fixture doesn't also (correctly, but
                 // distractingly for this test's purpose) trip that
                 // unrelated warning.
-                max_latency_ms: Some(20.0),
+                max_latency: Some(
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(20.0),
+                ),
                 ..Default::default()
             },
             scope_id: 0,
@@ -2356,7 +2358,9 @@ mod tests {
             path_name: "react".to_string(),
             path: PathDecl {
                 trigger: Some(Trigger::Input(vec!["react_in".to_string()])),
-                max_latency_ms: Some(1.0),
+                max_latency: Some(
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(1.0),
+                ),
                 ..Default::default()
             },
             scope_id: 0,
@@ -2389,7 +2393,7 @@ mod tests {
             "sensing_chain".to_string(),
             ChainDecl {
                 semantics: ChainSemantics::Reaction,
-                max_latency_ms: 100.0,
+                max_latency: ros_launch_manifest_types::duration::Duration::from_millis_f64(100.0),
                 segments: vec![
                     ChainSegment::Path {
                         scope: "/".to_string(),
@@ -3322,7 +3326,9 @@ nodes = ["fast_node"]
                 name.to_string(),
                 ChainDecl {
                     semantics: ChainSemantics::Reaction,
-                    max_latency_ms: 1000.0,
+                    max_latency: ros_launch_manifest_types::duration::Duration::from_millis_f64(
+                        1000.0,
+                    ),
                     // A single-element chain is valid (first == last == a
                     // Path segment); no `via` needed since there's nothing
                     // to connect.

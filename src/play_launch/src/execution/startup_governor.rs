@@ -679,7 +679,9 @@ mod tests {
             assert!(
                 w[1] - w[0] >= Duration::from_millis(60),
                 "bypasses {:?} and {:?} were not staggered: {:?}",
-                w[0], w[1], done
+                w[0],
+                w[1],
+                done
             );
         }
         // And the whole set must take longer than releasing together would.

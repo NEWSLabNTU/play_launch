@@ -690,7 +690,7 @@ fn check_scope_path_critical_path(
     let scope_paths = index.scope_paths.clone();
 
     for scope_path in &scope_paths {
-        let Some(declared) = scope_path.path.max_latency_ms else {
+        let Some(declared) = scope_path.path.max_latency.map(|d| d.as_millis_f64()) else {
             continue;
         };
 
@@ -1043,7 +1043,7 @@ fn check_path_budget_overflow(index: &mut ManifestIndex) {
     // For each pair (child, ancestor) of paths with matching (input, output),
     // verify child budget ≤ ancestor budget.
     for child in &paths {
-        let Some(child_lat) = child.path.max_latency_ms else {
+        let Some(child_lat) = child.path.max_latency.map(|d| d.as_millis_f64()) else {
             continue;
         };
         let Some(ancestors) = ancestors_of.get(&child.scope_id) else {
@@ -1053,7 +1053,7 @@ fn check_path_budget_overflow(index: &mut ManifestIndex) {
             if !ancestors.contains(&ancestor.scope_id) {
                 continue;
             }
-            let Some(ancestor_lat) = ancestor.path.max_latency_ms else {
+            let Some(ancestor_lat) = ancestor.path.max_latency.map(|d| d.as_millis_f64()) else {
                 continue;
             };
             if !path_endpoints_match(child, ancestor) {
@@ -1251,7 +1251,7 @@ fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestI
                     publishers,
                     subscribers,
                     rate_hz: topic_decl.rate_hz,
-                    max_transport_ms: topic_decl.max_transport_ms,
+                    max_transport_ms: topic_decl.max_transport.map(|d| d.as_millis_f64()),
                     drop: topic_decl.drop.clone(),
                     scope_ids: vec![scope.id],
                 },
@@ -1314,7 +1314,10 @@ fn merge_topic(
     }
 
     // Validate max_transport_ms agreement
-    if let (Some(a), Some(b)) = (existing.max_transport_ms, decl.max_transport_ms) {
+    if let (Some(a), Some(b)) = (
+        existing.max_transport_ms,
+        decl.max_transport.map(|d| d.as_millis_f64()),
+    ) {
         if (a - b).abs() > f64::EPSILON {
             diagnostics.push(Diagnostic {
                 rule_id: "consistency".to_string(),
@@ -1333,7 +1336,7 @@ fn merge_topic(
             });
         }
     } else if existing.max_transport_ms.is_none() {
-        existing.max_transport_ms = decl.max_transport_ms;
+        existing.max_transport_ms = decl.max_transport.map(|d| d.as_millis_f64());
     }
 
     // Validate QoS agreement
@@ -1412,7 +1415,7 @@ fn qos_matches(
         && a.durability == b.durability
         && a.depth == b.depth
         && a.history == b.history
-        && a.lifespan_ms == b.lifespan_ms
+        && a.lifespan.map(|d| d.as_millis_f64()) == b.lifespan.map(|d| d.as_millis_f64())
         && a.liveliness == b.liveliness
 }
 
@@ -2234,7 +2237,10 @@ mod tests {
             .find(|p| p.path_name == "main")
             .expect("cropbox.main path resolved");
         assert_eq!(main_path.node_fqn, real_fqn);
-        assert_eq!(main_path.path.max_latency_ms, Some(5.0));
+        assert_eq!(
+            main_path.path.max_latency.map(|d| d.as_millis_f64()),
+            Some(5.0)
+        );
 
         // The pub/sub endpoint refs on the merged topics reconcile the same
         // way — `cropbox/raw_points`/`cropbox/cropped_points` must key on
@@ -2518,7 +2524,10 @@ mod tests {
             .collect();
         assert_eq!(ndt_paths.len(), 1);
         assert_eq!(ndt_paths[0].path_name, "main");
-        assert_eq!(ndt_paths[0].path.max_latency_ms, Some(30.0));
+        assert_eq!(
+            ndt_paths[0].path.max_latency.map(|d| d.as_millis_f64()),
+            Some(30.0)
+        );
 
         // EKF has 2 paths
         let ekf_paths: Vec<_> = index

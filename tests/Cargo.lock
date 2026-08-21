@@ -377,7 +377,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "ros-launch-manifest-check"
 version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.8#1a53088da13f7ccb5deb057fea86d426d23c70e1"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.9#c1afba7832920d0635b1aabe5aed85391546f3e5"
 dependencies = [
  "codespan-reporting",
  "petgraph",
@@ -389,7 +389,7 @@ dependencies = [
 [[package]]
 name = "ros-launch-manifest-types"
 version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.8#1a53088da13f7ccb5deb057fea86d426d23c70e1"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.9#c1afba7832920d0635b1aabe5aed85391546f3e5"
 dependencies = [
  "serde",
  "serde_json",

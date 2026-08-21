@@ -300,21 +300,26 @@ impl SchedPlan {
             // SCHED_DEADLINE policy without them is refused rather than
             // silently downgraded.
             let reservation = if matches!(policy, SchedPolicy::Deadline) {
-                let (Some(budget_us), Some(period_us)) = (tier.budget_us, tier.period_us) else {
+                let (Some(budget), Some(period)) = (tier.budget, tier.period) else {
                     eyre::bail!(
-                        "tier '{tier_name}': sched_class SCHED_DEADLINE but the model carries no                          {} — a reservation needs runtime and period, and neither may be                          invented. Re-run `resolve` with a platform file declaring `budget_us`.",
-                        match (tier.budget_us, tier.period_us) {
-                            (None, None) => "budget_us or period_us",
-                            (None, _) => "budget_us",
-                            _ => "period_us",
+                        "tier '{tier_name}': sched_class SCHED_DEADLINE but the model carries no {}",
+                        match (tier.budget, tier.period) {
+                            (None, None) => "budget or period",
+                            (None, _) => "budget",
+                            _ => "period",
                         }
                     );
                 };
                 Some(Reservation {
-                    runtime_ns: budget_us * 1_000,
+                    // `as_nanos()` directly: the duration already knows its
+                    // unit, so the `* 1_000` this replaced is one fewer place
+                    // a factor of a thousand can go missing — which is the
+                    // entire argument of phase 59, applied to the code that
+                    // hands numbers to sched_setattr(2).
+                    runtime_ns: budget.as_nanos() as u64,
                     // Implicit deadline when none was decomposed.
-                    deadline_ns: tier.deadline_us.unwrap_or(period_us) * 1_000,
-                    period_ns: period_us * 1_000,
+                    deadline_ns: tier.deadline.unwrap_or(period).as_nanos() as u64,
+                    period_ns: period.as_nanos() as u64,
                     overrun: tier.deadline_policy.as_deref() == Some("fault"),
                 })
             } else {
@@ -754,10 +759,10 @@ mod model_tests {
                 core: Some(0),
                 sched_class: Some("SCHED_FIFO".to_string()),
                 preempt_threshold: None,
-                deadline_us: None,
-                budget_us: None,
-                period_us: None,
-                time_slice_us: None,
+                deadline: None,
+                budget: None,
+                period: None,
+                time_slice: None,
             });
         }
         m.execution.tiers.insert("ctrl".to_string(), tier);

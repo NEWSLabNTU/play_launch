@@ -115,7 +115,7 @@ fn extract_paths(record: &ScheduledRecord, index: &ManifestIndex) -> Vec<MapperP
             MapperPath {
                 name: p.path_name.clone(),
                 effective_trigger: convert_trigger(effective),
-                max_latency_ms: p.path.max_latency_ms,
+                max_latency_ms: p.path.max_latency.map(|d| d.as_millis_f64()),
                 // budget (WCET) — the current contract vocabulary declares
                 // no per-path execution-time fact, so this stays None until a
                 // future vocab addition (the shared schema carries the slot).
@@ -315,7 +315,7 @@ fn build_resolved_chain(
         // (matches `Criticality`'s own "advisory hint, absent = no signal"
         // convention elsewhere in this module).
         criticality: criticality.unwrap_or(Criticality::Low),
-        max_latency_ms: chain.max_latency_ms,
+        max_latency_ms: chain.max_latency.as_millis_f64(),
         semantics: convert_semantics(chain.semantics),
         elements,
     })
@@ -428,7 +428,7 @@ fn extract_path_facts(
         .node_paths
         .iter()
         .filter(|p| p.node_fqn == record.fqn)
-        .filter_map(|p| p.path.max_latency_ms)
+        .filter_map(|p| p.path.max_latency.map(|d| d.as_millis_f64()))
         .fold(None, |acc: Option<f64>, v| {
             Some(acc.map_or(v, |a: f64| a.min(v)))
         });
@@ -614,7 +614,9 @@ mod tests {
             node_fqn: "/talker".to_string(),
             path_name: "loose".to_string(),
             path: PathDecl {
-                max_latency_ms: Some(50.0),
+                max_latency: Some(
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(50.0),
+                ),
                 ..Default::default()
             },
             scope_id: 0,
@@ -623,7 +625,9 @@ mod tests {
             node_fqn: "/talker".to_string(),
             path_name: "tight".to_string(),
             path: PathDecl {
-                max_latency_ms: Some(10.0),
+                max_latency: Some(
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(10.0),
+                ),
                 ..Default::default()
             },
             scope_id: 0,
@@ -695,7 +699,9 @@ mod tests {
                     "in_ep".to_string(),
                 ])),
                 output: vec!["out_ep".to_string()],
-                max_latency_ms: Some(12.5),
+                max_latency: Some(
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(12.5),
+                ),
                 ..Default::default()
             },
             scope_id: 0,
@@ -898,7 +904,7 @@ mod tests {
             "mixed_chain".to_string(),
             ros_launch_manifest_types::ChainDecl {
                 semantics: ros_launch_manifest_types::ChainSemantics::Reaction,
-                max_latency_ms: 100.0,
+                max_latency: ros_launch_manifest_types::duration::Duration::from_millis_f64(100.0),
                 segments: vec![
                     ChainSegment::Path {
                         scope: "/".to_string(),
@@ -931,7 +937,9 @@ mod tests {
             path: PathDecl {
                 trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 50.0 }),
                 output: vec!["chatter".to_string()],
-                max_latency_ms: Some(2.0),
+                max_latency: Some(
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(2.0),
+                ),
                 ..Default::default()
             },
             scope_id: 0,
@@ -943,7 +951,9 @@ mod tests {
                 trigger: Some(ros_launch_manifest_types::Trigger::Input(vec![
                     "chatter".to_string(),
                 ])),
-                max_latency_ms: Some(8.0),
+                max_latency: Some(
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(8.0),
+                ),
                 ..Default::default()
             },
             scope_id: 0,
