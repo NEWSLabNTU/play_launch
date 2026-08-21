@@ -75,16 +75,39 @@ migration happens against a tag that already works.
 
 ## Waves
 
-### W1 — the type ✅ (built, unpushed)
+### W1 — the type ✅ (`ca027aa`, `913e945`, on `main`)
 
-`types/src/duration.rs`: nanoseconds in `i64`, parses `12ms`, rejects a bare
-number through every serde entry point, canonical form is the coarsest
-integral unit. `parse.rs::yaml_duration(canonical, legacy, unit)` accepts both
-spellings and reports which was used. 7 + 3 tests; 79 + 37 existing pass.
+`types/src/duration.rs`: nanoseconds in `i64`, parses `12ms`, canonical form
+is the coarsest integral unit.
 
-No field migrated. This is the mechanism only.
+**One type, two entry points** — a correction to this plan's first draft, which
+assumed a single mechanism. There is one `Duration`; what differs is how a
+field is *read*:
 
-### W2 — migrate the manifest repo's own fields
+- **serde** (`compat::opt_millis` / `compat::opt_micros`, applied with
+  `#[serde(alias = "…_us", deserialize_with = "…")]`) for everything
+  deserialized normally.
+- **`from_legacy_scalar`** for the hand-rolled contract reader, which exists
+  because `parse_manifest_with_spans` produces the `SpanIndex` the checker uses
+  for source excerpts, and serde gives no line or column into the original
+  YAML. That is a constraint, not an inconsistency.
+
+`the_two_entry_points_agree` asserts the two cannot drift.
+
+**A documented asymmetry.** Through serde, a bare number under the NEW name is
+read in the legacy unit rather than rejected: `alias` gives the deserializer
+one field and cannot report which spelling matched, so refusing would need a
+hand-written `Deserialize` per containing struct. Reading it as the legacy unit
+is conservative — an un-migrated file cannot change meaning — and the leniency
+is removed with the alias at W6. The hand-rolled side has no such limit and
+rejects properly. Pinned by
+`a_bare_number_takes_the_legacy_unit_through_serde`.
+
+An earlier revision of this wave introduced a second type
+(`sched::compat::PlatformDuration`) to paper over the mechanism split. Two
+types for one concept was the wrong answer and it was removed in `913e945`.
+
+### W2 — migrate the manifest repo's own fields (platform half ✅ `4e922a3`)
 
 Struct fields become `Duration`, `parse.rs` uses `yaml_duration`, the 112
 arithmetic sites become explicit conversions. Internal to one repo, no tag
@@ -98,6 +121,17 @@ the contract side (9 fields, `f64` today).
 **Acceptance:** every existing test passes unchanged except where it asserts a
 serialized string, and each such change is a unit suffix appearing — never a
 value moving.
+
+**Platform half done.** Five fields; 443 tests pass, 0 fail. Two findings worth
+carrying into the contract half:
+
+- **grep overstates the work by an order of magnitude.** It reported 67
+  consumer sites for these fields; the compiler found **five**. The rest were
+  test fixtures and doc comments. The campaign's ~455 figure is an upper bound
+  on the same basis.
+- **`ResolvedTier` was left speaking microseconds on purpose.** It is the wire
+  to play_launch and nano-ros, so both sides move together in W4 under one tag;
+  converting at that seam is what keeps this wave inside one repository.
 
 ### W3 — emit and lint
 
