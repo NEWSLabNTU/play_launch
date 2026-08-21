@@ -211,6 +211,13 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   decomposition (W3) and synthesis (W5). Study:
   [docs/research/scheduling-derivation-prior-art.md](../research/scheduling-derivation-prior-art.md).
   [phase-58-scheduling-derivation.md](./phase-58-scheduling-derivation.md).
+- **Phase 63** — 📋 the duration type campaign: executing Phase 59 as a type
+  change rather than a parser change, across ~455 Rust sites in two tag-pinned
+  repositories. W1 (the `Duration` type, deprecated-name aliases) is built.
+  Chosen over the cheap parse-only option because that leaves every consumer
+  holding a bare `f64` whose unit lives in a field name — the shape of the bug
+  where a *deadline* was substituted for a *cost*.
+  [phase-63-duration-type-campaign.md](./phase-63-duration-type-campaign.md).
 - **Phase 59** — 📋 timing vocabulary: units move onto the value
   (`max_latency: 12ms`), because `budget_us: 8` meaning 8 ms is a 1000x error
   that type-checks. Split out of Phase 58 — independent work, and cheaper now
