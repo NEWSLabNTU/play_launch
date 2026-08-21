@@ -346,7 +346,13 @@ impl LaunchTraverser {
                     if let Some(from_str) = yaml_str(param_map, "from") {
                         let subs = parse_substitutions(from_str)?;
                         param_files.push(subs.clone());
-                        param_sources.push(ParamSourceSpec::File(subs));
+                        param_sources.push(ParamSourceSpec::File {
+                            path: subs,
+                            allow_substs: param_map
+                                .get(Value::String("allow_substs".to_string()))
+                                .and_then(yaml_scalar_str)
+                                .and_then(crate::actions::node::parse_opt_bool),
+                        });
                     } else if let (Some(pname), Some(pvalue)) = (
                         yaml_str(param_map, "name"),
                         yaml_value_string(param_map, "value"),
@@ -681,11 +687,32 @@ fn validate_yaml_child_seq(map: &Mapping, key: &str, element: &str) -> Result<()
     };
     for item in seq {
         if let Some(item_map) = item.as_mapping() {
-            let keys: Vec<&str> = item_map.keys().filter_map(|k| k.as_str()).collect();
-            crate::xml::attr_spec::validate_yaml_keys(element, &keys)?;
+            let pairs: Vec<(&str, Option<&str>)> = item_map
+                .iter()
+                .filter_map(|(k, v)| k.as_str().map(|k| (k, yaml_scalar_str(v))))
+                .collect();
+            let keys: Vec<&str> = pairs.iter().map(|(k, _)| *k).collect();
+            let values: Vec<Option<&str>> = pairs.iter().map(|(_, v)| *v).collect();
+            crate::xml::attr_spec::validate_yaml_pairs(element, &keys, &values)?;
         }
     }
     Ok(())
+}
+
+/// A YAML scalar as the string the XML frontend would have seen.
+///
+/// YAML types what XML leaves as text, so `allow_substs: true` arrives as a
+/// `Bool` while `allow_substs="true"` arrives as a string. Both mean the same
+/// thing to the attribute checker, and folding them here is what keeps the
+/// two frontends' diagnostics identical (issue #8). Non-scalars have no XML
+/// equivalent and yield `None`.
+fn yaml_scalar_str(v: &Value) -> Option<&str> {
+    match v {
+        Value::String(s) => Some(s),
+        Value::Bool(true) => Some("true"),
+        Value::Bool(false) => Some("false"),
+        _ => None,
+    }
 }
 
 /// Human-readable YAML kind, for the malformed-action-body error.
@@ -879,5 +906,24 @@ mod tests {
     fn test_value_to_string_sequence() {
         let seq = Value::Sequence(vec![Value::String("a".to_string())]);
         assert_eq!(value_to_string(&seq), None);
+    }
+
+    /// Issue #8: the attribute checker decides whether a warning is warranted
+    /// by reading the value, and it was written against XML, where every
+    /// value is text. YAML types them, so `allow_substs: true` is a `Bool`
+    /// and would arrive as "no value in hand" — which is treated
+    /// conservatively, i.e. it would warn, and the two frontends would
+    /// disagree about the same launch file.
+    #[test]
+    fn a_yaml_bool_reads_as_the_text_the_xml_frontend_would_see() {
+        assert_eq!(yaml_scalar_str(&Value::Bool(true)), Some("true"));
+        assert_eq!(yaml_scalar_str(&Value::Bool(false)), Some("false"));
+        assert_eq!(
+            yaml_scalar_str(&Value::String("true".to_string())),
+            Some("true")
+        );
+        // No XML equivalent: report nothing rather than invent a spelling.
+        assert_eq!(yaml_scalar_str(&Value::Sequence(vec![])), None);
+        assert_eq!(yaml_scalar_str(&Value::Null), None);
     }
 }

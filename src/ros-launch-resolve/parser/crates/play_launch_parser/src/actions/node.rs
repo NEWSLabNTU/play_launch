@@ -18,7 +18,33 @@ pub enum ParamSourceSpec {
     /// `<param name= value=/>` — an inline key/value.
     Inline(Parameter),
     /// `<param from=/>` — a parameter file path (substitutions unresolved).
-    File(Vec<Substitution>),
+    File {
+        path: Vec<Substitution>,
+        /// The `allow_substs` opt-in, as authored: `Some(true)`,
+        /// `Some(false)`, or `None` when the attribute was absent.
+        ///
+        /// This parser always substitutes, so the flag changes nothing about
+        /// what it does — it is carried so the LOADER can tell whether the
+        /// author asked for the substitution it is about to perform, which is
+        /// the only case where the result differs from ROS 2 (issue #8).
+        /// A value this parser cannot read as a boolean (a `$(var …)`, say)
+        /// is `None`: unknown, not "no".
+        allow_substs: Option<bool>,
+    },
+}
+
+/// Read an authored boolean, or `None` if it is not one this parser can
+/// decide here.
+///
+/// A substitution (`$(var use_substs)`) is deliberately `None` rather than
+/// `false`: it may well resolve to `true`, and guessing would produce a
+/// warning about a divergence that does not exist.
+pub(crate) fn parse_opt_bool(raw: &str) -> Option<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" => Some(true),
+        "false" | "0" => Some(false),
+        _ => None,
+    }
 }
 
 /// Node action representing a ROS 2 node
@@ -93,7 +119,13 @@ impl NodeAction {
                         // This is a parameter file
                         let subs = parse_substitutions(&from_attr)?;
                         param_files.push(subs.clone());
-                        param_sources.push(ParamSourceSpec::File(subs));
+                        param_sources.push(ParamSourceSpec::File {
+                            path: subs,
+                            allow_substs: child
+                                .optional_attr_str("allow_substs")?
+                                .as_deref()
+                                .and_then(parse_opt_bool),
+                        });
                     } else {
                         // This is an inline parameter
                         let param = Parameter::from_entity(&child)?;
@@ -227,7 +259,7 @@ impl NodeAction {
                         value,
                     })
                 }
-                ParamSourceSpec::File(subs) => {
+                ParamSourceSpec::File { path: subs, .. } => {
                     // The capture carries the resolved PATH; the record
                     // generator swaps in the file's resolved contents (and
                     // expands launch temp files into Inline entries).
@@ -497,7 +529,7 @@ mod param_source_order_tests {
             node.param_sources[0]
         );
         assert!(
-            matches!(&node.param_sources[1], ParamSourceSpec::File(_)),
+            matches!(&node.param_sources[1], ParamSourceSpec::File { .. }),
             "the file must keep its position AFTER the inline `a`: {:?}",
             node.param_sources[1]
         );

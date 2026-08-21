@@ -233,7 +233,10 @@ impl CommandGenerator {
                         value,
                     });
                 }
-                crate::actions::node::ParamSourceSpec::File(subs) => {
+                crate::actions::node::ParamSourceSpec::File {
+                    path: subs,
+                    allow_substs,
+                } => {
                     let path = resolve_substitutions(subs, context)?;
                     if path.contains("/tmp/launch_params_") {
                         let extracted =
@@ -248,12 +251,16 @@ impl CommandGenerator {
                                 .push(crate::record::types::ParamSource::Inline { name, value });
                         }
                     } else {
-                        let content = load_and_resolve_param_file(Path::new(&path), context)
-                            .map_err(|e| {
-                                GenerationError::IoError(format!(
-                                    "Failed to load and resolve parameter file '{path}': {e}"
-                                ))
-                            })?;
+                        let content = crate::params::load_and_resolve_param_file_checked(
+                            Path::new(&path),
+                            context,
+                            *allow_substs,
+                        )
+                        .map_err(|e| {
+                            GenerationError::IoError(format!(
+                                "Failed to load and resolve parameter file '{path}': {e}"
+                            ))
+                        })?;
                         node_param_sources
                             .push(crate::record::types::ParamSource::File { content });
                     }

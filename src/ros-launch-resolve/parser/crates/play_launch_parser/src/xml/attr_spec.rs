@@ -382,6 +382,54 @@ pub fn spec_for(element: &str) -> Option<&'static AttrSpec> {
     SPECS.iter().find(|s| s.element == canonical)
 }
 
+/// `(element, attribute, value)` combinations where this parser's behaviour
+/// already matches ROS 2, so the attribute being "unsupported" changes nothing
+/// observable.
+///
+/// Issue #8. `<param from="…" allow_substs="true"/>` is the case: ROS 2 uses
+/// the flag to decide whether to substitute `$(...)` inside a loaded param
+/// file, and this parser ALWAYS substitutes
+/// (`params.rs::load_and_resolve_param_file()`). So for `true` the result is
+/// identical and the warning was pure noise — six lines per Autoware launch,
+/// each claiming a value was ignored, which sent readers auditing param files
+/// for damage that had not happened.
+///
+/// `allow_substs="false"` is NOT here, and must keep warning: there ROS 2
+/// would leave `$(...)` unsubstituted and this parser resolves it anyway,
+/// which is a real divergence.
+const BEHAVIOUR_MATCHES: &[(&str, &str, &str)] = &[("param", "allow_substs", "true")];
+
+/// What actually differs, for known-unsupported attributes where "the value
+/// is ignored" understates the consequence.
+///
+/// Issue #8's other half: told only that `allow_substs="false"` was ignored,
+/// a reader cannot tell whether that costs them anything. It does — the
+/// literal `$(...)` they asked to keep gets resolved anyway — and that is
+/// worth one sentence at the point of the warning rather than a trip to the
+/// source.
+const DIVERGENCE_NOTES: &[(&str, &str, &str)] = &[(
+    "param",
+    "allow_substs",
+    "this parser always resolves $(...) inside a loaded param file, so the \
+     flag cannot turn substitution off",
+)];
+
+fn divergence_note(element: &str, attr: &str) -> Option<&'static str> {
+    DIVERGENCE_NOTES
+        .iter()
+        .find(|(e, a, _)| *e == element && *a == attr)
+        .map(|(_, _, note)| *note)
+}
+
+/// Whether a known-unsupported attribute is benign at this value.
+fn behaviour_matches(element: &str, attr: &str, value: Option<&str>) -> bool {
+    let Some(v) = value else { return false };
+    let v = v.trim();
+    BEHAVIOUR_MATCHES
+        .iter()
+        .any(|(e, a, want)| *e == element && *a == attr && want.eq_ignore_ascii_case(v))
+}
+
 /// Validate an XML entity's attributes. Child ELEMENTS are validated
 /// separately, on their own entities, so `spec.children` is not consulted.
 ///
@@ -389,8 +437,10 @@ pub fn spec_for(element: &str) -> Option<&'static AttrSpec> {
 /// `&XmlEntity<'_, '_>`.
 pub fn validate_attrs<E: Entity + ?Sized>(entity: &E) -> Result<()> {
     let element = entity.type_name();
-    let names: Vec<&str> = entity.attributes().into_iter().map(|(k, _)| k).collect();
-    validate_named(element, &names)
+    let attrs = entity.attributes();
+    let names: Vec<&str> = attrs.iter().map(|(k, _)| *k).collect();
+    let values: Vec<Option<&str>> = attrs.iter().map(|(_, v)| Some(*v)).collect();
+    check_with_values(element, &names, &values, false)
 }
 
 /// Validate a bare `(element, attribute names)` pair.
@@ -421,6 +471,13 @@ pub fn validate_yaml_keys(element: &str, keys: &[&str]) -> Result<()> {
     check(element, keys, true)
 }
 
+/// As [`validate_yaml_keys`], but with each key's scalar value where the
+/// caller has it, so the YAML frontend produces the same diagnostics as the
+/// XML one (issue #8). A key whose value is not a scalar passes `None`.
+pub fn validate_yaml_pairs(element: &str, keys: &[&str], values: &[Option<&str>]) -> Result<()> {
+    check_with_values(element, keys, values, true)
+}
+
 /// Map an internal, non-XML spec key back to the real tag name for error
 /// messages. `include-arg`/`executable-arg` are lookup keys only — no launch
 /// file ever spells them, so a user-facing "Unexpected attribute(s) found in
@@ -449,12 +506,27 @@ const HONORED_ALIASES: &[(&str, &str)] = &[
 ];
 
 fn check(element: &str, names: &[&str], allow_children: bool) -> Result<()> {
+    let values: Vec<Option<&str>> = vec![None; names.len()];
+    check_with_values(element, names, &values, allow_children)
+}
+
+/// As [`check`], but with each attribute's value where the caller has it.
+///
+/// The value is only ever used to make a diagnostic more accurate (see
+/// [`BEHAVIOUR_MATCHES`]); `None` means "not known here" and keeps the
+/// conservative message. Accept/reject decisions never depend on it.
+fn check_with_values(
+    element: &str,
+    names: &[&str],
+    values: &[Option<&str>],
+    allow_children: bool,
+) -> Result<()> {
     let Some(spec) = spec_for(element) else {
         return Ok(());
     };
 
     let mut unexpected: Vec<&str> = Vec::new();
-    for name in names {
+    for (idx, name) in names.iter().enumerate() {
         if spec.supported.contains(name) {
             continue;
         }
@@ -474,13 +546,32 @@ fn check(element: &str, names: &[&str], allow_children: bool) -> Result<()> {
                      exact ROS 2 rejection behavior instead.",
                     display_name(element),
                 );
-            } else {
-                log::warn!(
-                    "<{} {name}=…> is valid ROS 2 but not supported by the \
-                     Rust parser; the value is ignored. Use --parser python \
-                     if you need it.",
+            } else if behaviour_matches(spec.element, name, values.get(idx).copied().flatten()) {
+                // Accepted, not implemented as a switch, and the result is
+                // the same one ROS 2 produces at this value. Saying "ignored"
+                // here reports a loss that did not happen, so this is a
+                // debug note rather than a warning (issue #8).
+                log::debug!(
+                    "<{} {name}=…> is not implemented as a switch, but this \
+                     parser's behaviour already matches ROS 2 at this value; \
+                     nothing is lost.",
                     display_name(element),
                 );
+            } else {
+                match divergence_note(spec.element, name) {
+                    Some(note) => log::warn!(
+                        "<{} {name}=…> is valid ROS 2 but not supported by \
+                         the Rust parser: {note}. Use --parser python if you \
+                         need it.",
+                        display_name(element),
+                    ),
+                    None => log::warn!(
+                        "<{} {name}=…> is valid ROS 2 but not supported by \
+                         the Rust parser; the value is ignored. Use --parser \
+                         python if you need it.",
+                        display_name(element),
+                    ),
+                }
             }
             continue;
         }
@@ -501,4 +592,102 @@ fn check(element: &str, names: &[&str], allow_children: bool) -> Result<()> {
         element: display_name(element).to_string(),
         attributes: rendered,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `BEHAVIOUR_MATCHES` row silences a warning, so a row that names an
+    /// attribute no spec lists as `known_unsupported` is dead weight that
+    /// nobody would notice — nothing fails, a warning simply never appears
+    /// for a case that no longer exists.
+    ///
+    /// The live risk is the reverse direction of issue #8: if `allow_substs`
+    /// is ever implemented for real and dropped from `known_unsupported`,
+    /// this row must go with it.
+    #[test]
+    fn every_benign_row_names_a_known_unsupported_attribute() {
+        for (element, attr, value) in BEHAVIOUR_MATCHES {
+            let spec = spec_for(element).unwrap_or_else(|| {
+                panic!(
+                    "<{element}> has no AttrSpec, so ({element}, {attr}, {value}) can never fire"
+                )
+            });
+            assert!(
+                spec.known_unsupported.contains(attr),
+                "<{element} {attr}=…> is not in known_unsupported, so this \
+                 BEHAVIOUR_MATCHES row is dead",
+            );
+        }
+    }
+
+    /// A note that names an element or attribute no spec carries can never
+    /// print, and would sit in the source reading as if it did.
+    #[test]
+    fn every_divergence_note_names_a_known_unsupported_attribute() {
+        for (element, attr, _) in DIVERGENCE_NOTES {
+            let spec = spec_for(element).unwrap_or_else(|| panic!("<{element}> has no AttrSpec"));
+            assert!(
+                spec.known_unsupported.contains(attr),
+                "<{element} {attr}=…> is not known_unsupported, so its note is dead",
+            );
+        }
+    }
+
+    /// The note must hold for EVERY non-benign value, including one the
+    /// parser cannot read here (`$(var …)`). So it states what the parser
+    /// does, never what the author intended — an earlier draft said
+    /// "substitutions you asked to keep literal will be expanded", which is
+    /// a guess about intent when the value is a substitution.
+    #[test]
+    fn a_divergence_note_claims_nothing_about_the_authors_intent() {
+        let note = divergence_note("param", "allow_substs").expect("note exists");
+        assert!(!note.contains("you asked"), "{note}");
+        assert!(note.contains("always resolves"), "{note}");
+    }
+
+    /// Issue #8: the flag's value decides whether anything is lost.
+    ///
+    /// `allow_substs="true"` asks for substitution and this parser always
+    /// substitutes, so the outcome is exactly ROS 2's. `false` asks for the
+    /// literal `$(...)` to survive, which this parser cannot do — a real
+    /// divergence that must keep warning.
+    #[test]
+    fn allow_substs_is_benign_only_when_it_asks_for_what_we_already_do() {
+        assert!(behaviour_matches("param", "allow_substs", Some("true")));
+        assert!(behaviour_matches("param", "allow_substs", Some("True")));
+        assert!(behaviour_matches("param", "allow_substs", Some(" true ")));
+
+        assert!(!behaviour_matches("param", "allow_substs", Some("false")));
+        // A substitution is not known until replay; stay conservative.
+        assert!(!behaviour_matches(
+            "param",
+            "allow_substs",
+            Some("$(var use_substs)")
+        ));
+        // No value in hand is not evidence of a benign one.
+        assert!(!behaviour_matches("param", "allow_substs", None));
+    }
+
+    /// The table is keyed on the CANONICAL element name — the same mistake
+    /// `HONORED_ALIASES` documents. `check_with_values` passes
+    /// `spec.element`, not the caller's spelling, and this pins that.
+    #[test]
+    fn the_benign_table_does_not_match_an_unrelated_element() {
+        assert!(!behaviour_matches("node", "allow_substs", Some("true")));
+    }
+
+    /// A known-unsupported attribute with no benign row keeps its warning —
+    /// the fix for #8 must not have silenced the whole category.
+    #[test]
+    fn a_genuinely_dropped_attribute_stays_unmatched() {
+        // `<node cwd=…>` is accepted by ROS 2 and really is discarded here.
+        assert!(!behaviour_matches("node", "cwd", Some("/tmp")));
+        assert!(!behaviour_matches(
+            "node",
+            "launch-prefix",
+            Some("gdb -ex run")
+        ));
+    }
 }

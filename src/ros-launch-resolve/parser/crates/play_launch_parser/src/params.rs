@@ -13,11 +13,55 @@ pub fn load_and_resolve_param_file(
     path: &Path,
     context: &LaunchContext,
 ) -> Result<String, ParseError> {
+    load_param_file_inner(path, context, Some(true))
+}
+
+/// As [`load_and_resolve_param_file`], but reporting the one case where the
+/// result differs from ROS 2 (issue #8).
+///
+/// ROS 2 substitutes inside a param file only when `<param from=…
+/// allow_substs="true"/>` says so; this parser always substitutes. For an
+/// opted-in file that is the same answer, which is why the attribute warning
+/// was removed. For a file that did NOT opt in and contains literal `$(…)`,
+/// ROS 2 would load the text verbatim and this parser expands it — a real
+/// divergence, and until now a silent one.
+///
+/// `allow_substs` is the authored value: `None` means the attribute was
+/// absent or unreadable, and only a definite `Some(false)`/absent-with-
+/// substitutions-present combination is worth a word. The warning fires only
+/// when a substitution was actually performed, so a file with no `$(` — the
+/// overwhelming majority — says nothing.
+pub fn load_and_resolve_param_file_checked(
+    path: &Path,
+    context: &LaunchContext,
+    allow_substs: Option<bool>,
+) -> Result<String, ParseError> {
+    load_param_file_inner(path, context, allow_substs)
+}
+
+fn load_param_file_inner(
+    path: &Path,
+    context: &LaunchContext,
+    allow_substs: Option<bool>,
+) -> Result<String, ParseError> {
     let content = fs::read_to_string(path)?;
 
     // If the file has no substitutions, return raw content (preserves comments/formatting)
     if !content.contains("$(") {
         return Ok(content);
+    }
+
+    // Past this point a substitution WILL be performed. ROS 2 would only do
+    // that on an explicit opt-in, so anything else is a divergence the user
+    // should hear about once, naming the file they can go look at.
+    if allow_substs != Some(true) {
+        log::warn!(
+            "{}: contains $(...) and is loaded by a <param from=…> that did \
+             not set allow_substs=\"true\"; real ROS 2 would load that text \
+             verbatim, this parser expands it. Use --parser python if you \
+             need the literal text.",
+            path.display(),
+        );
     }
 
     // Resolve substitutions line by line to preserve comments and formatting
@@ -367,5 +411,56 @@ node2:
         let params = load_param_file(file.path()).unwrap();
         // Should load parameters from all nodes
         assert_eq!(params.len(), 2);
+    }
+
+    /// Issue #8: the `allow_substs` opt-in is carried so the parser can
+    /// REPORT a divergence, never to create one.
+    ///
+    /// The tempting "real" fix — honour the flag by not substituting when it
+    /// is absent — would change what every existing launch file resolves to,
+    /// which is why it is not what happened here. This pins that: the same
+    /// file yields the same bytes at every value of the flag.
+    #[test]
+    fn the_opt_in_changes_what_is_reported_and_never_what_is_produced() {
+        let mut context = LaunchContext::new();
+        context.set_configuration("map".to_string(), "/maps/town".to_string());
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"/**:\n  ros__parameters:\n    path: $(var map)\n")
+            .unwrap();
+        file.flush().unwrap();
+
+        let opted_in =
+            load_and_resolve_param_file_checked(file.path(), &context, Some(true)).unwrap();
+        let opted_out =
+            load_and_resolve_param_file_checked(file.path(), &context, Some(false)).unwrap();
+        let unstated = load_and_resolve_param_file_checked(file.path(), &context, None).unwrap();
+
+        assert!(opted_in.contains("/maps/town"), "{opted_in}");
+        assert_eq!(opted_in, opted_out);
+        assert_eq!(opted_in, unstated);
+        // And the legacy entry point is still the always-substitute one.
+        assert_eq!(
+            load_and_resolve_param_file(file.path(), &context).unwrap(),
+            opted_in
+        );
+    }
+
+    /// A file with no `$(` is untouched, so it must not be reported at any
+    /// opt-in value — that is what keeps the new warning from becoming the
+    /// noise the old one was.
+    #[test]
+    fn a_file_without_substitutions_is_returned_verbatim() {
+        let context = LaunchContext::new();
+        let raw = "/**:\n  ros__parameters:\n    rate: 10.0  # a comment\n";
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(raw.as_bytes()).unwrap();
+        file.flush().unwrap();
+
+        assert_eq!(
+            load_and_resolve_param_file_checked(file.path(), &context, None).unwrap(),
+            raw
+        );
     }
 }
