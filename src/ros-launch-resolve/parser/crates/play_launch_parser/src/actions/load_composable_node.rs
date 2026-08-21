@@ -37,6 +37,16 @@ impl LoadComposableNodeAction {
             crate::xml::attr_spec::validate_attrs(&child)?;
             match child.type_name() {
                 "composable_node" | "composable-node" => {
+                    // Issue #7, same gap as `<node_container>`: the attribute
+                    // spec accepts if/unless here and nothing evaluated them.
+                    if !crate::condition::should_process_entity(&child, context)? {
+                        log::debug!(
+                            "Skipping composable_node '{}' in load_composable_node — \
+                             excluded by if/unless",
+                            child.optional_attr_str("name")?.unwrap_or_default()
+                        );
+                        continue;
+                    }
                     composable_nodes.push(ComposableNodeAction::from_entity(&child, context)?);
                 }
                 other => {

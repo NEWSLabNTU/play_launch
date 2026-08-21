@@ -1496,3 +1496,63 @@ fn test_container_namespace_does_not_reach_composable_nodes() {
     );
     assert_eq!(container_fqn("abs_container"), "/test/abs_container");
 }
+
+/// Issue #7 — `if=`/`unless=` on `<composable_node>` must be honoured.
+///
+/// The attribute spec listed both as supported, and nothing evaluated them, so
+/// a composable the launch file excluded was loaded anyway. That is a silent
+/// divergence from `ros2 launch`, which skips it — the worst shape of bug in a
+/// tool whose job is to reproduce launch behaviour.
+///
+/// Both container shapes are asserted because both had the gap: children of
+/// `<node_container>` and of `<load_composable_node>`.
+#[test]
+fn composable_node_conditions_are_honoured() {
+    let fixture = get_fixture_path("test_composable_conditions.launch.xml");
+    let record = parse_launch_file(&fixture, HashMap::new()).expect("fixture should parse");
+    let json = serde_json::to_value(&record).unwrap();
+
+    let names: Vec<&str> = json["load_node"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["node_name"].as_str().unwrap_or(""))
+        .collect();
+
+    for kept in ["always", "if_true", "unless_false", "loaded_kept"] {
+        assert!(names.contains(&kept), "{kept} should be loaded: {names:?}");
+    }
+    for dropped in ["if_false", "unless_true", "loaded_dropped"] {
+        assert!(
+            !names.contains(&dropped),
+            "{dropped} is excluded by its condition and must not be loaded: {names:?}"
+        );
+    }
+    // `if="$(var enable)"` with the arg defaulting to false — a substitution,
+    // not a literal, since that is how real launch files write it.
+    assert!(
+        !names.contains(&"by_arg"),
+        "a condition from a launch argument must be evaluated too: {names:?}"
+    );
+}
+
+/// The same fixture with the argument flipped: the substitution case must
+/// actually depend on the value, not merely be excluded always.
+#[test]
+fn a_composable_condition_follows_its_launch_argument() {
+    let fixture = get_fixture_path("test_composable_conditions.launch.xml");
+    let mut args = HashMap::new();
+    args.insert("enable".to_string(), "true".to_string());
+    let record = parse_launch_file(&fixture, args).expect("fixture should parse");
+    let json = serde_json::to_value(&record).unwrap();
+    let names: Vec<&str> = json["load_node"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["node_name"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        names.contains(&"by_arg"),
+        "enable:=true must include it: {names:?}"
+    );
+}

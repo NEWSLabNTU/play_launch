@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!-- Issue #7: if=/unless= on <composable_node>.
+     `ros2 launch` skips an excluded composable; play_launch loaded it anyway,
+     because the attribute spec accepted the condition and nothing evaluated it.
+     Both container shapes are covered — <node_container> children and
+     <load_composable_node> children had the same gap. -->
+<launch>
+  <arg name="enable" default="false"/>
+
+  <node_container pkg="rclcpp_components" exec="component_container"
+                  name="test_container" namespace="/cond">
+    <composable_node pkg="p" plugin="P" name="always"/>
+    <composable_node pkg="p" plugin="P" name="if_false"  if="false"/>
+    <composable_node pkg="p" plugin="P" name="if_true"   if="true"/>
+    <composable_node pkg="p" plugin="P" name="unless_true"  unless="true"/>
+    <composable_node pkg="p" plugin="P" name="unless_false" unless="false"/>
+    <composable_node pkg="p" plugin="P" name="by_arg" if="$(var enable)"/>
+  </node_container>
+
+  <load_composable_node target="/cond/test_container">
+    <composable_node pkg="p" plugin="P" name="loaded_kept"/>
+    <composable_node pkg="p" plugin="P" name="loaded_dropped" if="false"/>
+  </load_composable_node>
+</launch>

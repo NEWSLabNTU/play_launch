@@ -111,6 +111,19 @@ impl ContainerAction {
             crate::xml::attr_spec::validate_attrs(&child)?;
             match child.type_name() {
                 "composable_node" | "composable-node" => {
+                    // Issue #7: `if=`/`unless=` were accepted by the attribute
+                    // spec and then never evaluated, so a composable the
+                    // launch file excluded was loaded anyway — silently, and
+                    // differently from `ros2 launch`. Conditions are resolved
+                    // at parse time here exactly as they are for `<node>`,
+                    // because the selected path is what this parser records.
+                    if !crate::condition::should_process_entity(&child, context)? {
+                        log::debug!(
+                            "Skipping composable_node '{}' — excluded by if/unless",
+                            child.optional_attr_str("name")?.unwrap_or_default()
+                        );
+                        continue;
+                    }
                     composable_nodes.push(ComposableNodeAction::from_entity(&child, context)?);
                 }
                 "param" | "remap" | "env" => {
