@@ -10,13 +10,13 @@ nodes:
     sub:
       objects:
         min_rate_hz: 5
-        max_age_ms: 200
+        max_age: 200ms
         required: true
       map:
         state: true
     srv:
       compute:
-        max_response_ms: 100
+        max_response: 100ms
 
 topics:
   /perception/objects:
@@ -40,9 +40,9 @@ paths:
   e2e:
     input: /sensing/points
     output: [/perception/objects]
-    max_latency_ms: 80
+    max_latency: 80ms
     correlation: timestamp
-    tolerance_ms: 10
+    tolerance: 10ms
     drop:
       max_count: 2 / 25
       max_consecutive: 5

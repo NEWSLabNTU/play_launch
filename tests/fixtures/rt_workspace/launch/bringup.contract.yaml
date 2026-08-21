@@ -33,7 +33,7 @@ nodes:
       filter:
         trigger: { input: [points_raw] }
         output: [points_filtered]
-        max_latency_ms: 5
+        max_latency: 5ms
 
   control_node:
     # Phase 41.5: mapper hint, no numbers (design doc §2.1) — informational
@@ -43,7 +43,7 @@ nodes:
     sub:
       points_filtered:
         min_rate_hz: 100
-        max_age_ms: 50
+        max_age: 50ms
     pub:
       cmd:
         min_rate_hz: 100
@@ -51,7 +51,7 @@ nodes:
       control:
         trigger: { input: [points_filtered] }
         output: [cmd]
-        max_latency_ms: 10
+        max_latency: 10ms
 
 # Phase 44.5: end-to-end chain composed from the three paths above.
 # sampling_cost = tick's period (1000/100 = 10ms; no declared max_latency_ms
@@ -64,7 +64,7 @@ nodes:
 chains:
   points_to_cmd:
     semantics: reaction
-    max_latency_ms: 30
+    max_latency: 30ms
     segments:
       - { scope: /, path: tick }
       - { via: /perception/points_raw }

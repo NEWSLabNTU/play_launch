@@ -8,18 +8,18 @@ nodes:
     pub:
       objects:
         min_rate_hz: 10
-        jitter_ms: 5
+        jitter: 5ms
     paths:
       main:
         output: [objects]
-        max_latency_ms: 15
+        max_latency: 15ms
 
 topics:
   objects:
     type: std_msgs/msg/String
     pub: [detector/objects]
     rate_hz: 10
-    max_transport_ms: 5
+    max_transport: 5ms
     drop:
       max_count: 1 / 20
       max_consecutive: 3

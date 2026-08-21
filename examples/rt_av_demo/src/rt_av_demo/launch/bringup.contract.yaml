@@ -22,7 +22,7 @@ nodes:
         # counts this hop as ZERO and says so ("feasible ON INCOMPLETE
         # EVIDENCE") — the verdict would be optimistic by an unknown amount.
         # 2 ms matches the node's burn_ms in bringup.launch.xml.
-        max_latency_ms: 2
+        max_latency: 2ms
 
   obstacle_detector:
     criticality: high
@@ -36,14 +36,14 @@ nodes:
       detect:
         trigger: { input: [scan] }
         output: [obstacles]
-        max_latency_ms: 12
+        max_latency: 12ms
 
   brake_controller:
     criticality: high
     sub:
       obstacles:
         min_rate_hz: 50
-        max_age_ms: 60
+        max_age: 60ms
     pub:
       brake_cmd:
         min_rate_hz: 50
@@ -51,7 +51,7 @@ nodes:
       brake:
         trigger: { input: [obstacles] }
         output: [brake_cmd]
-        max_latency_ms: 8
+        max_latency: 8ms
 
 # The safety chain, and the claim under test.
 #
@@ -67,7 +67,7 @@ nodes:
 chains:
   lidar_to_brake:
     semantics: reaction
-    max_latency_ms: 60
+    max_latency: 60ms
     segments:
       - { scope: /, path: sample }
       - { via: /safety/scan }

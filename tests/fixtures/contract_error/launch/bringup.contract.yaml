@@ -31,7 +31,7 @@ nodes:
       control:
         trigger: { input: [points_raw] }
         output: [cmd]
-        max_latency_ms: 10
+        max_latency: 10ms
 
 topics:
   # absolute — the two nodes sit in different namespaces (/perception, /control)
