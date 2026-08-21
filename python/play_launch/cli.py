@@ -66,9 +66,25 @@ def main():
     ament_path = env.get("AMENT_PREFIX_PATH", "")
     env["AMENT_PREFIX_PATH"] = f"{pkg_dir}:{ament_path}" if ament_path else pkg_dir
 
-    # Pass through all arguments
-    result = subprocess.run([binary] + sys.argv[1:], env=env)
-    sys.exit(result.returncode)
+    # Pass through all arguments.
+    #
+    # Ctrl-C delivers SIGINT to the whole foreground process group: the Rust
+    # binary receives it directly and runs its staged shutdown (SIGINT, then
+    # SIGTERM, then SIGKILL on repeat). This wrapper's only job is to keep
+    # waiting for it -- subprocess.run() instead raises KeyboardInterrupt out
+    # of the wait, dumping a Python traceback over the launcher's own shutdown
+    # messages. Loop so a second or third Ctrl-C (force-terminate) is equally
+    # quiet.
+    proc = subprocess.Popen([binary] + sys.argv[1:], env=env)
+    while True:
+        try:
+            rc = proc.wait()
+            break
+        except KeyboardInterrupt:
+            continue
+    # A child killed by signal N reports -N; map it to the conventional
+    # 128+N shell exit status rather than passing a negative to sys.exit().
+    sys.exit(128 - rc if rc < 0 else rc)
 
 
 if __name__ == "__main__":
