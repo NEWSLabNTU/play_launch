@@ -6,6 +6,7 @@
 //! container service name.
 
 use super::{
+    control_channel::ControlChannel,
     ros_client::ContainerClients,
     supervisor::{ComposableNodeMetadata, ComposableSupervisor},
     timing::{LOADING_CHECK_INTERVAL, LoadTimings},
@@ -72,6 +73,11 @@ pub struct ContainerActor {
     pub(super) supervisor: ComposableSupervisor,
     /// Whether to subscribe to ComponentEvent topic (only when using play_launch_container)
     pub(super) use_component_events: bool,
+    /// Phase 64: the private control channel to our own container binary.
+    /// `None` for a stock container, for a container that did not answer the
+    /// hello (older wheel), and whenever `composable_node_loading.
+    /// control_socket` is off.
+    pub(super) control: Option<ControlChannel>,
 }
 
 impl ContainerActor {
@@ -107,6 +113,7 @@ impl ContainerActor {
             clients: ContainerClients::default(),
             supervisor,
             use_component_events: params.use_component_events,
+            control: None,
         }
     }
 
@@ -238,9 +245,18 @@ impl ContainerActor {
                     .await;
                 }
 
+                // Phase 64: settle the private control channel BEFORE any
+                // load is issued — the answer decides which transport the
+                // loads below use. The container sends its hello before
+                // `rclcpp::init`, so this normally costs microseconds; the
+                // budget only bites for a container binary that does not
+                // speak the protocol, and the fallback is the LoadNode
+                // service that was always there.
+                self.negotiate_control_channel().await;
+
                 // Phase 12: Auto-load composable nodes marked with auto_load=true
                 self.supervisor
-                    .handle_load_all_composables(&self.clients)
+                    .handle_load_all_composables(&self.clients, self.control.as_mut())
                     .await;
 
                 self.state = NodeState::Running { child, pid };
@@ -324,13 +340,17 @@ impl ContainerActor {
                             return self.handle_restart_command(&mut child, pid).await;
                         }
                         ControlEvent::LoadComposable { name } => {
-                            self.supervisor.handle_load_composable(&name, &self.clients).await;
+                            self.supervisor
+                                .handle_load_composable(&name, &self.clients, self.control.as_mut())
+                                .await;
                         }
                         ControlEvent::UnloadComposable { name } => {
                             self.supervisor.handle_unload_composable(&name, &self.clients).await;
                         }
                         ControlEvent::LoadAllComposables => {
-                            self.supervisor.handle_load_all_composables(&self.clients).await;
+                            self.supervisor
+                                .handle_load_all_composables(&self.clients, self.control.as_mut())
+                                .await;
                         }
                         ControlEvent::UnloadAllComposables => {
                             self.supervisor.handle_unload_all_composables(&self.clients).await;
@@ -345,7 +365,9 @@ impl ContainerActor {
                 }
 
                 Some(event) = self.load_control_rx.recv() => {
-                    self.supervisor.handle_load_control_event(event, &self.clients).await;
+                    self.supervisor
+                        .handle_load_control_event(event, &self.clients, self.control.as_mut())
+                        .await;
                 }
 
                 Some(completion) = self.supervisor.load_completion_rx.recv() => {
@@ -372,10 +394,47 @@ impl ContainerActor {
                     self.supervisor.handle_component_event(event, &self.config).await;
                 }
 
+                // Phase 64: the private channel to our own container. Ordered
+                // and lossless, so what arrives here is authoritative — the
+                // ComponentEvent branch above stays for stock containers and
+                // as a harmless duplicate while both are live.
+                Some(msg) = async {
+                    match &mut self.control {
+                        Some(channel) if !channel.is_closed() => channel.recv().await,
+                        _ => std::future::pending().await,
+                    }
+                } => {
+                    if let Some(channel) = self.control.as_mut() {
+                        self.supervisor
+                            .handle_container_msg(msg, &self.config, channel)
+                            .await;
+                    }
+                }
+
                 _ = loading_timeout_interval.tick() => {
-                    self.supervisor.report_construction_progress();
-                    self.supervisor.check_loading_timeouts(&self.clients).await;
-                    self.supervisor.rescue_lost_loads(&self.clients).await;
+                    // Phase 64: both sweeps below exist to reconstruct, through
+                    // ListNodes, facts a congested rmw layer lost. On the
+                    // control-socket path nothing is lost — the container
+                    // reports acceptance, progress and outcome on an ordered
+                    // stream — so running them would only add DDS traffic and
+                    // re-introduce the false alarms this phase removes.
+                    let socket_loads = self
+                        .control
+                        .as_ref()
+                        .is_some_and(|channel| channel.loads_over_socket());
+                    if socket_loads {
+                        // Phase 64 W2: the socket path has its own
+                        // reconciliation — it ASKS the container rather than
+                        // inferring from ListNodes, which cannot see a
+                        // mid-construction node at all.
+                        if let Some(channel) = self.control.as_mut() {
+                            self.supervisor.reconcile_socket_loads(channel).await;
+                        }
+                    } else {
+                        self.supervisor.report_construction_progress();
+                        self.supervisor.check_loading_timeouts(&self.clients).await;
+                        self.supervisor.rescue_lost_loads(&self.clients).await;
+                    }
                 }
 
                 _ = self.shutdown_rx.changed() => {

@@ -4,6 +4,7 @@
 //! the actor owns the container process; `ros_client` owns the ROS side.
 
 use super::{
+    control_channel::{ControlChannel, LoadFields},
     ros_client::{self, ContainerClients},
     timing::LoadTimings,
 };
@@ -45,6 +46,71 @@ pub struct ComposableNodeMetadata {
     pub sched: Option<crate::execution::sched_apply::AppliedTier>,
 }
 
+/// Everything phase 64 W2 tracks about a load in flight over the control
+/// socket, so that "slow" and "lost" stop being the same observation.
+///
+/// Present only for socket-dispatched loads; the LoadNode path keeps its own
+/// (unchanged) machinery.
+#[derive(Debug)]
+pub(super) struct LoadTracking {
+    /// Correlates the request until the container answers `Accepted`.
+    pub(super) seq: u64,
+    /// The container's last stated phase. `None` = not acknowledged yet.
+    pub(super) phase: Option<crate::ipc::container_protocol::LoadPhase>,
+    /// Mirrors the entry's id once the container has accepted the load, so the
+    /// sweep can decide which key to ask by without reaching for the entry.
+    pub(super) unique_id: Option<u64>,
+    /// When the container last said anything about this load.
+    pub(super) last_report: Instant,
+    /// The child process, once one exists.
+    pub(super) pid: i32,
+    /// Last two CPU samples, for the stall check's delta.
+    pub(super) cpu_ms: u64,
+    pub(super) prev_cpu_ms: u64,
+    pub(super) cpu_sampled_at: Option<Instant>,
+    /// When a `Query` was sent and has not been answered.
+    pub(super) probe_sent_at: Option<Instant>,
+    /// Consecutive unanswered probes, for logarithmic warning backoff.
+    pub(super) unanswered_probes: u32,
+    /// Load attempts made so far, this one included.
+    pub(super) attempts: usize,
+    /// A cancel is out; what to do once the container confirms.
+    pub(super) cancel_intent: Option<CancelIntent>,
+    /// Whether the stall report has already been printed for this load.
+    pub(super) stall_reported: bool,
+}
+
+impl LoadTracking {
+    pub(super) fn new(seq: u64, attempts: usize) -> Self {
+        Self {
+            seq,
+            phase: None,
+            unique_id: None,
+            last_report: Instant::now(),
+            pid: 0,
+            cpu_ms: 0,
+            prev_cpu_ms: 0,
+            cpu_sampled_at: None,
+            probe_sent_at: None,
+            unanswered_probes: 0,
+            attempts,
+            cancel_intent: None,
+            stall_reported: false,
+        }
+    }
+}
+
+/// What a pending cancellation is for. The container's confirmation is what
+/// makes the difference between a retry and a double load, so the intent is
+/// recorded when the cancel is SENT and acted on only when it is answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CancelIntent {
+    /// Give up on this composable.
+    Fail,
+    /// Load it again once the container confirms nothing is running.
+    Restart,
+}
+
 /// Entry for a composable node managed by this container (Phase 12)
 #[derive(Debug)]
 pub(super) struct ComposableNodeEntry {
@@ -56,6 +122,13 @@ pub(super) struct ComposableNodeEntry {
     pub(super) unique_id: Option<u64>,
     /// When the load started (for timeout detection)
     pub(super) load_started_at: Option<Instant>,
+    /// Phase 64 W2 tracking for a socket-dispatched load (`None` on the
+    /// LoadNode path).
+    pub(super) tracking: Option<LoadTracking>,
+    /// Set when a reload is due at a specific time (crash respawn delay).
+    pub(super) retry_after: Option<Instant>,
+    /// Crashes seen since this composable last loaded successfully.
+    pub(super) crash_count: u32,
 }
 
 /// Supervises the composable nodes of one container: composable map,
@@ -123,6 +196,9 @@ impl ComposableSupervisor {
             },
             unique_id: None,
             load_started_at: None,
+            tracking: None,
+            retry_after: None,
+            crash_count: 0,
         };
 
         self.composable_nodes.insert(name, entry);
@@ -165,6 +241,108 @@ impl ComposableSupervisor {
             ParameterType::PARAMETER_DOUBLE_ARRAY => format!("{:?}", value.double_array_value),
             ParameterType::PARAMETER_STRING_ARRAY => format!("{:?}", value.string_array_value),
             _ => String::new(),
+        }
+    }
+
+    /// Phase 64: ask our own container to load a composable over the private
+    /// control socket.
+    ///
+    /// There is no queue, no dispatch task and no startup permit here. A permit
+    /// meant "a LoadNode call is in flight"; on this path there is no call to
+    /// be in flight — the frame is written and the container paces its own
+    /// spawns against `MemAvailable`, which is the governor that was measured
+    /// to matter (`docs/design/composable-load-admission.md`). The mode-aware
+    /// cap was already disabled for `isolated` for the same reason.
+    ///
+    /// Parameters go over the wire in the types the model resolved them to,
+    /// rather than through the `Parameter -> String -> Parameter` round trip
+    /// the service path performs: re-inferring a type from a rendered string
+    /// turns a `string` parameter whose value happens to be `"true"` into a
+    /// `bool`. Same values, one fewer chance to change them.
+    pub(super) async fn send_load_over_socket(&mut self, name: &str, channel: &mut ControlChannel) {
+        use crate::ipc::container_protocol::ControlParam;
+
+        let Some(entry) = self.composable_nodes.get(name) else {
+            return;
+        };
+        let meta = &entry.metadata;
+
+        // The isolated container redirects the child's stdout/stderr into this
+        // directory, and cannot create it itself without knowing it is allowed
+        // to: the service path creates it here too.
+        if !meta.output_dir.as_os_str().is_empty()
+            && let Err(e) = std::fs::create_dir_all(&meta.output_dir)
+        {
+            warn!(
+                "{}: failed to create output dir for {}: {}",
+                self.container_name, name, e
+            );
+        }
+
+        let fields = LoadFields {
+            package: meta.package.clone(),
+            plugin: meta.plugin.clone(),
+            node_name: meta.node_name.clone(),
+            node_namespace: meta.namespace.clone(),
+            remap_rules: meta.remap_rules.clone(),
+            parameters: meta.parameters.iter().map(ControlParam::from).collect(),
+            extra_arguments: meta.extra_args.iter().map(ControlParam::from).collect(),
+            log_dir: meta.output_dir.to_string_lossy().into_owned(),
+        };
+
+        // Carry the attempt count across a resend: the budget is per
+        // composable, not per dispatch, and the whole point of W2 is that a
+        // second attempt is rare and accounted for.
+        let attempts = self
+            .composable_nodes
+            .get(name)
+            .and_then(|e| e.tracking.as_ref())
+            .map(|t| t.attempts)
+            .unwrap_or(0);
+
+        match channel.send_load(name, fields) {
+            Ok(seq) => {
+                if let Some(entry) = self.composable_nodes.get_mut(name) {
+                    entry.tracking = Some(LoadTracking::new(seq, attempts + 1));
+                    entry.retry_after = None;
+                    // Each attempt gets its own clock. Carrying the previous
+                    // attempt's elapsed time forward would report a fresh
+                    // constructor as already minutes old, and — where stall
+                    // detection is enabled — declare it stalled before it had
+                    // been given any time at all.
+                    let started_at = Instant::now();
+                    entry.state = ComposableState::Loading { started_at };
+                    entry.load_started_at = Some(started_at);
+                }
+                debug!(
+                    "{}: sent load for '{}' over the control channel (seq {}, attempt {})",
+                    self.container_name,
+                    name,
+                    seq,
+                    attempts + 1
+                );
+            }
+            Err(e) => {
+                let error = format!("control-channel: {e:#}");
+                warn!(
+                    "{}: could not send load for '{}': {}",
+                    self.container_name, name, error
+                );
+                if let Some(entry) = self.composable_nodes.get_mut(name) {
+                    entry.state = ComposableState::Failed {
+                        error: error.clone(),
+                    };
+                    entry.load_started_at = None;
+                }
+                emit(
+                    &self.state_tx,
+                    StateEvent::LoadFailed {
+                        name: name.to_string(),
+                        error,
+                    },
+                )
+                .await;
+            }
         }
     }
 
@@ -382,7 +560,12 @@ impl ComposableSupervisor {
     }
 
     /// Handle LoadComposable control event.
-    pub(super) async fn handle_load_composable(&mut self, name: &str, clients: &ContainerClients) {
+    pub(super) async fn handle_load_composable(
+        &mut self,
+        name: &str,
+        clients: &ContainerClients,
+        control: Option<&mut ControlChannel>,
+    ) {
         debug!(
             "{}: Handling LoadComposable for '{}'",
             self.container_name, name
@@ -421,6 +604,15 @@ impl ComposableSupervisor {
                     },
                 )
                 .await;
+
+                // Phase 64: when the container is ours and the private
+                // control channel negotiated, the load goes over the socket
+                // and none of the LoadNode queue/dispatch/timeout machinery
+                // below runs at all.
+                if let Some(channel) = control.filter(|c| c.loads_over_socket()) {
+                    self.send_load_over_socket(name, channel).await;
+                    return;
+                }
 
                 // Phase 12: Queue LoadNode request and dispatch immediately
                 if let Some(entry) = self.composable_nodes.get(name) {
@@ -546,7 +738,11 @@ impl ComposableSupervisor {
     }
 
     /// Handle LoadAllComposables control event.
-    pub(super) async fn handle_load_all_composables(&mut self, clients: &ContainerClients) {
+    pub(super) async fn handle_load_all_composables(
+        &mut self,
+        clients: &ContainerClients,
+        mut control: Option<&mut ControlChannel>,
+    ) {
         debug!("{}: Handling LoadAllComposables", self.container_name);
 
         // Log state of all composable nodes for debugging
@@ -602,7 +798,8 @@ impl ComposableSupervisor {
 
         // Load each node
         for name in nodes_to_load {
-            self.handle_load_composable(&name, clients).await;
+            self.handle_load_composable(&name, clients, control.as_deref_mut())
+                .await;
         }
     }
 
@@ -657,6 +854,7 @@ impl ComposableSupervisor {
         &mut self,
         event: ContainerControlEvent,
         clients: &ContainerClients,
+        control: Option<&mut ControlChannel>,
     ) {
         match event {
             ContainerControlEvent::LoadNode {
@@ -674,6 +872,11 @@ impl ComposableSupervisor {
                     "{}: Received load request for {}",
                     self.container_name, composable_name
                 );
+
+                if let Some(channel) = control.filter(|c| c.loads_over_socket()) {
+                    self.send_load_over_socket(&composable_name, channel).await;
+                    return;
+                }
 
                 let request = LoadRequest {
                     composable_name,

@@ -1,0 +1,12 @@
+<!-- Phase 64 W2: a constructor that will not return within any test's
+     lifetime. Stands in for the node that is genuinely wedged — the case the
+     supervisor must report honestly and must NOT fail, retry, or promote. -->
+<launch>
+  <node_container pkg="play_launch_container" exec="component_container"
+                  name="wedged_container" namespace="" args="--isolated">
+    <composable_node pkg="play_launch_container" plugin="play_launch_container::SlowLoader"
+                     name="wedged_node" namespace="">
+      <param name="load_delay_ms" value="600000"/>
+    </composable_node>
+  </node_container>
+</launch>

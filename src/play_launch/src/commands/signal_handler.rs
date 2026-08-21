@@ -436,6 +436,23 @@ pub(crate) async fn wait_for_completion_windows<F>(
     cleanup_guard.disable();
 }
 
+/// Members that are still starting or loading, for the "what are we waiting
+/// for" report. Names only: the elapsed time and pid for a composable live in
+/// its container's own liveness line, which is where the container's evidence
+/// belongs.
+async fn pending_member_names(
+    member_handle: &std::sync::Arc<crate::member_actor::MemberHandle>,
+) -> Vec<String> {
+    use crate::member_actor::model::MemberState;
+    member_handle
+        .list_members()
+        .await
+        .into_iter()
+        .filter(|m| matches!(m.state, MemberState::Loading | MemberState::Pending))
+        .map(|m| m.name)
+        .collect()
+}
+
 /// Print periodic startup progress (every 10s while loading, immediate completion message).
 ///
 /// Phase-52.3: on startup-complete-with-failures, names the failed members,
@@ -449,6 +466,10 @@ pub(crate) async fn print_periodic_statistics(
     startup_failed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     pgid: i32,
+    // `exception_after` (phase 64 W2): how long a startup may stay incomplete
+    // before the run says what it is still waiting for, once, instead of
+    // repeating a bare count.
+    exception_after: std::time::Duration,
 ) {
     // Print progress every 10 seconds while loading
     let mut progress_interval = tokio::time::interval(PROGRESS_INTERVAL);
@@ -457,6 +478,9 @@ pub(crate) async fn print_periodic_statistics(
     // Check completion every 100ms for immediate detection
     let mut completion_check = tokio::time::interval(COMPLETION_CHECK_INTERVAL);
     completion_check.tick().await; // Consume the immediate first tick
+
+    let started = std::time::Instant::now();
+    let mut exceptions_reported = false;
 
     loop {
         tokio::select! {
@@ -476,6 +500,26 @@ pub(crate) async fn print_periodic_statistics(
                         health.composable_total,
                         health.composable_pending
                     );
+
+                    // Phase 64 W2: a bare count repeated every 10 s is what a
+                    // launch waiting on one slow constructor looked like
+                    // before — "1 pending" reads the same at 15 s and at 15
+                    // minutes. Name them, once, and say plainly that nothing
+                    // has been failed or retried on their account.
+                    if !exceptions_reported && started.elapsed() >= exception_after {
+                        exceptions_reported = true;
+                        let pending = pending_member_names(&member_handle).await;
+                        if !pending.is_empty() {
+                            warn!(
+                                "Startup still incomplete after {}s, waiting on {} member(s): {}. \
+                                 They are alive as far as their container reports; nothing has \
+                                 been failed or reloaded on their account.",
+                                started.elapsed().as_secs(),
+                                pending.len(),
+                                pending.join(", ")
+                            );
+                        }
+                    }
                 }
                 // If complete, the completion_check will handle printing the message
             }

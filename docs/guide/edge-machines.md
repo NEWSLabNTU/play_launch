@@ -189,10 +189,79 @@ something waits on a driver being up early would break.
 
 ## Composable loading
 
+Under the default `--container-mode isolated`, loads do not use the ROS
+`LoadNode` service at all (phase 64). play_launch hands its own container one
+end of a socketpair before forking it and sends load requests down that; the
+container answers with the id it pre-assigned, a liveness line every 15 s while
+a constructor runs, and the final result.
+
+This exists because of a measurement, not a preference. On a 12-core Orin
+launching 144 processes, one run produced **14** `LoadNode service call timed
+out after 30s` warnings and **8** `ComponentEvent LOADED not received after
+10s` warnings — with **zero** composables actually failing. The container had
+answered each request in microseconds; what was congested was the rmw service
+layer, during precisely the window when load status matters.
+
+You will see this line once per container:
+
+```
+container:/perception_container: loading composables over the private control
+channel (no LoadNode service calls)
+```
+
+and, for a component whose constructor takes a while (a TensorRT engine build):
+
+```
+container:/tl_container: 'composable:/traffic_light_classifier' still
+constructing after 30s (pid 41213, alive — reported by the container)
+```
+
+That line is the container reporting, not play_launch guessing. It is what
+distinguishes a slow constructor from a wedged one.
+
+Nothing here changes a container play_launch does not own: `--container-mode
+stock` keeps the LoadNode service exactly as before, and so does `observable`
+(where loading has to run on the container's executor thread). If a container
+binary is older than play_launch it simply never answers the hello, and the
+service path takes over after `control_hello_timeout_ms`. To turn the channel
+off entirely, set `composable_node_loading.control_socket: false`.
+
+### When a load goes quiet
+
+play_launch never fails a composable for taking too long. If reporting stops it
+ASKS the container, and acts only on the answer:
+
+```
+container:/pointcloud_container: '/perception/.../lidar_centerpoint' is
+constructing at 47s (pid 41213) — still in flight, not resending
+```
+
+A resend happens only when the container states it has no record of the load —
+which means nothing was forked, so there is nothing to duplicate. Everything
+else waits and is reported. `max_load_attempts` (default 2) caps the total.
+
+Stall detection is **off** by default. Turning it on requires saying what a
+stall means on your hardware, because there is no number that is right on every
+board:
+
+```yaml
+composable_node_loading:
+  stall_after_secs: 120      # 0 (default) = never declare a stall
+  stall_action: report       # report | fail | restart
+```
+
+Even with a budget set, a constructor counts as stalled only if it is alive,
+past that budget, AND burning no CPU — and `report` (the default) just says so,
+because a node blocked on a service that has not come up yet looks identical to
+a wedged one. `fail` and `restart` route through a cancel: the container kills
+the child and confirms it is gone before anything is loaded again.
+
 `composable_node_loading.max_concurrent_load_node_spawn` (default 10) bounds how
 many LoadNode calls are in flight across all containers at once. Before phase-61
 this field existed but nothing read it, so every composable in the launch was
-dispatched simultaneously. Set it to `0` for the old unbounded behaviour.
+dispatched simultaneously. Set it to `0` for the old unbounded behaviour. It
+governs the service path only — on the socket path there is no call to be in
+flight, and the container paces its own spawns against `MemAvailable`.
 
 ## Full config reference
 
@@ -210,5 +279,15 @@ startup:
   stage_timeout_secs: 30
 
 composable_node_loading:
-  max_concurrent_load_node_spawn: 10   # 0 = unlimited
+  max_concurrent_load_node_spawn: 10   # 0 = unlimited; service path only
+  control_socket: true                 # false = always use the LoadNode service
+  control_hello_timeout_ms: 10000      # then fall back to LoadNode
+  ack_timeout_ms: 5000                 # unacknowledged load -> ask the container
+  report_timeout_secs: 45              # silence -> ask the container
+  probe_interval_secs: 15              # re-ask cadence when a query is unanswered
+  max_load_attempts: 2                 # 2 = one resend, after a CONFIRMED absence
+  stall_after_secs: 0                  # 0 = never declare a stall
+  stall_cpu_threshold_pct: 1.0
+  stall_action: report                 # report | fail | restart
+  composable_respawn: off              # off | on-crash
 ```

@@ -1,0 +1,13 @@
+<!-- Phase 64: a composable whose constructor runs long enough (20s) to cross
+     the container's 15s liveness interval, so the supervisor has to learn that
+     it is alive from what the container SAYS rather than from a timeout it
+     did not hit. -->
+<launch>
+  <node_container pkg="play_launch_container" exec="component_container"
+                  name="slow_progress_container" namespace="" args="--isolated">
+    <composable_node pkg="play_launch_container" plugin="play_launch_container::SlowLoader"
+                     name="very_slow_node" namespace="">
+      <param name="load_delay_ms" value="20000"/>
+    </composable_node>
+  </node_container>
+</launch>

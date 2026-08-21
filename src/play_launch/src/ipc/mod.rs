@@ -6,6 +6,7 @@
 //! The protocol uses bincode for efficient binary serialization over
 //! Unix domain sockets.
 
+pub mod container_protocol;
 pub mod error;
 pub mod protocol;
 pub mod sched_protocol;

@@ -59,7 +59,13 @@ fn wait_for_line(output_path: &std::path::Path, pattern: &str, timeout: Duration
 }
 
 /// Wait for all composable nodes to be ready. Checks for "Startup complete"
-/// (most reliable), falling back to counting ComponentEvent LOADED / LoadSucceeded events.
+/// (most reliable), falling back to counting LOADED / LoadSucceeded events.
+///
+/// Phase 64: a load result is reported by whichever channel got there first —
+/// `ComponentEvent LOADED for 'x'` (the topic) or `control channel LOADED for
+/// 'x'` (the private socket, and the usual winner in isolated mode). Matching
+/// on the shared `" LOADED for '"` covers both; the leading space is what
+/// keeps `UNLOADED for` out.
 fn wait_for_all_loaded(output_path: &std::path::Path, count: usize, timeout: Duration) -> bool {
     let start = Instant::now();
     while start.elapsed() < timeout {
@@ -77,9 +83,9 @@ fn wait_for_all_loaded(output_path: &std::path::Path, count: usize, timeout: Dur
             if l.contains("UNLOADED") || l.contains("FAILED") {
                 continue;
             }
-            // Extract node name from "ComponentEvent LOADED for '<name>'"
-            if let Some(start_idx) = l.find("ComponentEvent LOADED for '") {
-                let name_start = start_idx + "ComponentEvent LOADED for '".len();
+            // Extract node name from "<channel> LOADED for '<name>'"
+            if let Some(start_idx) = l.find(" LOADED for '") {
+                let name_start = start_idx + " LOADED for '".len();
                 if let Some(end_idx) = l[name_start..].find('\'') {
                     loaded_names.insert(l[name_start..name_start + end_idx].to_string());
                 }
@@ -222,7 +228,7 @@ fn test_parallel_load_completes() {
         let stdout = std::fs::read_to_string(&output_path).unwrap_or_default();
         loaded_count = stdout
             .lines()
-            .filter(|line| line.contains("ComponentEvent LOADED") || line.contains("LoadSucceeded"))
+            .filter(|line| line.contains(" LOADED for ") || line.contains("LoadSucceeded"))
             .count();
         if loaded_count >= 2 {
             break;
@@ -293,13 +299,10 @@ fn test_fast_not_blocked_by_slow() {
         let stdout = std::fs::read_to_string(&output_path).unwrap_or_default();
 
         let talker_done = stdout.contains(&format!(
-            "ComponentEvent LOADED for '{}'",
+            " LOADED for '{}'",
             composable_id("fast_talker")
         ));
-        let slow_done = stdout.contains(&format!(
-            "ComponentEvent LOADED for '{}'",
-            composable_id("slow_node")
-        ));
+        let slow_done = stdout.contains(&format!(" LOADED for '{}'", composable_id("slow_node")));
 
         if talker_done && !talker_loaded {
             talker_loaded = true;
@@ -311,10 +314,8 @@ fn test_fast_not_blocked_by_slow() {
     }
 
     let stdout_final = std::fs::read_to_string(&output_path).unwrap_or_default();
-    let slow_loaded = stdout_final.contains(&format!(
-        "ComponentEvent LOADED for '{}'",
-        composable_id("slow_node")
-    ));
+    let slow_loaded =
+        stdout_final.contains(&format!(" LOADED for '{}'", composable_id("slow_node")));
 
     eprintln!("--- Final output (last 3000 chars) ---");
     let snippet_start = stdout_final.len().saturating_sub(3000);
@@ -426,10 +427,8 @@ fn test_unload_via_web_api() {
     let snippet = stdout.len().saturating_sub(2000);
     eprintln!("{}", &stdout[snippet..]);
 
-    let has_event = stdout.contains(&format!(
-        "ComponentEvent UNLOADED for '{}'",
-        composable_id("fast_talker")
-    ));
+    let has_event =
+        stdout.contains(&format!(" UNLOADED for '{}'", composable_id("fast_talker")));
     eprintln!("unloaded={unloaded}, has_component_event={has_event}");
 
     assert!(unloaded, "Expected unload confirmation for fast_talker");
@@ -453,10 +452,12 @@ fn test_unload_and_reload() {
     std::thread::sleep(Duration::from_secs(2));
 
     // Count LOADED events before unload (baseline).
-    // Accept ComponentEvent (DDS), LoadSucceeded (actor log), and LoadNode SUCCESS
-    // (service response) patterns because DDS events may be lost under SHM exhaustion.
+    // Accept a load report from either channel (phase 64: `ComponentEvent
+    // LOADED` or `control channel LOADED`, matched by their shared tail) and
+    // the LoadNode service response, because the DDS event may be lost under
+    // SHM exhaustion.
     let reload_patterns: &[&str] = &[
-        &format!("ComponentEvent LOADED for '{}'", composable_id("fast_talker")),
+        &format!(" LOADED for '{}'", composable_id("fast_talker")),
         &format!("LoadNode SUCCESS for {}", composable_id("fast_talker")),
     ];
     let stdout_before = std::fs::read_to_string(&output_path).unwrap_or_default();

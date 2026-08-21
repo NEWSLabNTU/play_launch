@@ -37,6 +37,14 @@ name = "container_events"
 path = "tests/container_events.rs"
 
 [[test]]
+name = "control_channel"
+path = "tests/control_channel.rs"
+
+[[test]]
+name = "load_policy"
+path = "tests/load_policy.rs"
+
+[[test]]
 name = "parallel_loading"
 path = "tests/parallel_loading.rs"
 

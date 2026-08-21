@@ -23,9 +23,8 @@ use tracing::{debug, error, info, warn};
 /// identity token (older container binary, or a CRASHED/LOAD_FAILED event) —
 /// in that case there is nothing to verify against, so we keep today's
 /// pid>0-only behavior for wire compatibility.
-fn pid_identity_ok(event: &play_launch_msgs::msg::ComponentEvent) -> bool {
-    event.start_time == 0
-        || play_launch::sched::proc_start_time(event.pid as u32) == Some(event.start_time)
+fn pid_identity_ok(pid: i32, start_time: u64) -> bool {
+    start_time == 0 || play_launch::sched::proc_start_time(pid as u32) == Some(start_time)
 }
 
 /// Expected fully-qualified node name for a composable entry
@@ -40,6 +39,29 @@ fn full_node_name_of(meta: &super::supervisor::ComposableNodeMetadata) -> String
             meta.namespace.trim_end_matches('/'),
             meta.node_name
         )
+    }
+}
+
+/// Which channel reported a composable's fate.
+///
+/// Kept in the log line rather than folded away, because from phase 64 there
+/// are two and which one won is the first thing worth knowing when a load
+/// looks wrong: the topic can drop a message under a startup storm, the socket
+/// cannot. It also keeps `ComponentEvent LOADED for '<name>'` — the string
+/// integration tests have grepped for since phase 19 — saying exactly what it
+/// always said.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LoadReport {
+    ComponentEvent,
+    ControlChannel,
+}
+
+impl LoadReport {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            LoadReport::ComponentEvent => "ComponentEvent",
+            LoadReport::ControlChannel => "control channel",
+        }
     }
 }
 
@@ -79,21 +101,59 @@ impl ComposableSupervisor {
         event: &play_launch_msgs::msg::ComponentEvent,
         config: &ActorConfig,
     ) {
+        self.on_load_succeeded(
+            LoadReport::ComponentEvent,
+            event.unique_id,
+            &event.full_node_name,
+            event.pid,
+            event.start_time,
+            config,
+        )
+        .await;
+    }
+
+    /// A composable finished constructing — reported by whichever channel got
+    /// there first: the `ComponentEvent` topic, or (phase 64) the private
+    /// control socket.
+    ///
+    /// Both carry the same facts, and every transition below is guarded on the
+    /// entry still being `Loading`, so a duplicate is a no-op. That is what
+    /// lets the two coexist while a launch is mid-migration: the socket wins on
+    /// speed, the topic is harmless when it arrives second, and neither has to
+    /// know about the other.
+    pub(super) async fn on_load_succeeded(
+        &mut self,
+        source: LoadReport,
+        unique_id: u64,
+        full_node_name: &str,
+        pid: i32,
+        start_time: u64,
+        config: &ActorConfig,
+    ) {
         // Match by unique_id across ALL entries (parallel dispatch)
         let found = self
             .composable_nodes
             .iter()
-            .find(|(_, e)| e.unique_id == Some(event.unique_id))
+            .find(|(_, e)| e.unique_id == Some(unique_id))
             .map(|(name, _)| name.clone())
             // Fallback: a lost LoadNode response leaves the entry Loading
             // with unique_id None — claim it by full node name.
+            //
+            // NOT for a socket-tracked load. There the id is always known (the
+            // container states it in `accepted`), so the fallback can only ever
+            // match the WRONG thing: after a cancel-and-restart the topic still
+            // delivers the previous attempt's event, and claiming the fresh
+            // entry by name would let a dead attempt's outcome overwrite the
+            // live one. Measured: a restarted composable was marked Failed by
+            // the LOAD_FAILED of the attempt that had just been cancelled.
             .or_else(|| {
                 self.composable_nodes
                     .iter()
                     .find(|(_, e)| {
-                        e.unique_id.is_none()
+                        e.tracking.is_none()
+                            && e.unique_id.is_none()
                             && matches!(e.state, ComposableState::Loading { .. })
-                            && full_node_name_of(&e.metadata) == event.full_node_name
+                            && full_node_name_of(&e.metadata) == full_node_name
                     })
                     .map(|(name, _)| name.clone())
             });
@@ -104,34 +164,33 @@ impl ComposableSupervisor {
             if !matches!(entry.state, ComposableState::Loading { .. }) {
                 return; // Already handled by service response
             }
-            entry.unique_id = Some(event.unique_id);
-            entry.state = ComposableState::Loaded {
-                unique_id: event.unique_id,
-            };
+            entry.unique_id = Some(unique_id);
+            entry.state = ComposableState::Loaded { unique_id };
             entry.load_started_at = None;
         } else {
             return;
         }
 
         debug!(
-            "{}: ComponentEvent LOADED for '{}' (unique_id: {})",
+            "{}: {} LOADED for '{}' (unique_id: {})",
             self.name(),
+            source.label(),
             composable_name,
-            event.unique_id
+            unique_id
         );
 
         // Phase 38.9: apply resolved Linux scheduling to this composable's
-        // own process, now that ComponentEvent carries its pid. Observable/
-        // stock mode and LOAD_FAILED events carry pid 0, hence the guard.
+        // own process, now that the load report carries its pid. Observable/
+        // stock mode and failure reports carry pid 0, hence the guard.
         let sched_tier = self
             .composable_nodes
             .get(&composable_name)
             .and_then(|e| e.metadata.sched.clone());
         if config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
-            && event.pid > 0
+            && pid > 0
             && let Some(tier) = sched_tier.as_ref()
         {
-            if !pid_identity_ok(event) {
+            if !pid_identity_ok(pid, start_time) {
                 // The pid no longer matches the start_time captured at
                 // spawn: the composable died and (post PID-wraparound)
                 // the kernel may have handed this pid to an unrelated
@@ -142,12 +201,12 @@ impl ComposableSupervisor {
                      -- skipping sched apply (pid reused or process gone)",
                     self.name(),
                     composable_name,
-                    event.pid
+                    pid
                 );
             } else {
                 match crate::execution::rt_helper_client::apply_sched(
                     config.sched_helper.as_ref(),
-                    event.pid as u32,
+                    pid as u32,
                     tier,
                 )
                 .await
@@ -157,7 +216,7 @@ impl ComposableSupervisor {
                         self.name(),
                         tier.tier_name,
                         composable_name,
-                        event.pid
+                        pid
                     ),
                     Err(e) => {
                         // v1: a per-composable failure does not hard-abort the
@@ -172,7 +231,7 @@ impl ComposableSupervisor {
                                 "{}: STRICT sched apply failed for composable '{}' (pid {}): {}",
                                 self.name(),
                                 composable_name,
-                                event.pid,
+                                pid,
                                 e
                             );
                         } else {
@@ -180,7 +239,7 @@ impl ComposableSupervisor {
                                 "{}: sched apply failed for composable '{}' (pid {}): {}",
                                 self.name(),
                                 composable_name,
-                                event.pid,
+                                pid,
                                 e
                             );
                         }
@@ -194,8 +253,8 @@ impl ComposableSupervisor {
             self.state_tx(),
             StateEvent::LoadSucceeded {
                 name: composable_name,
-                full_node_name: event.full_node_name.clone(),
-                unique_id: event.unique_id,
+                full_node_name: full_node_name.to_string(),
+                unique_id,
             },
         )
         .await;
@@ -206,25 +265,50 @@ impl ComposableSupervisor {
         &mut self,
         event: &play_launch_msgs::msg::ComponentEvent,
     ) {
+        self.on_load_failed(
+            LoadReport::ComponentEvent,
+            event.unique_id,
+            &event.full_node_name,
+            &event.package_name,
+            &event.plugin_name,
+            &event.error_message,
+        )
+        .await;
+    }
+
+    /// A composable failed to construct, from either report channel.
+    pub(super) async fn on_load_failed(
+        &mut self,
+        source: LoadReport,
+        unique_id: u64,
+        full_node_name: &str,
+        package: &str,
+        plugin: &str,
+        error: &str,
+    ) {
         // Match by unique_id across ALL entries (parallel dispatch);
         // name-fallback for lost-LoadNode-response entries (unique_id None).
-        // LOAD_FAILED may carry an empty full_node_name (ctor never ran), so
+        // A failure may carry an empty full_node_name (ctor never ran), so
         // fall back further to package+plugin for a Loading no-id entry.
         let found = self
             .composable_nodes
             .iter()
-            .find(|(_, e)| e.unique_id == Some(event.unique_id))
+            .find(|(_, e)| e.unique_id == Some(unique_id))
             .map(|(name, _)| name.clone())
+            // Same restriction as the success path: a socket-tracked load
+            // always has an id, so matching one by name or by package+plugin
+            // could only attach a stale attempt's failure to a live one.
             .or_else(|| {
                 self.composable_nodes
                     .iter()
                     .find(|(_, e)| {
-                        e.unique_id.is_none()
+                        e.tracking.is_none()
+                            && e.unique_id.is_none()
                             && matches!(e.state, ComposableState::Loading { .. })
-                            && (full_node_name_of(&e.metadata) == event.full_node_name
-                                || (event.full_node_name.is_empty()
-                                    && e.metadata.package == event.package_name
-                                    && e.metadata.plugin == event.plugin_name))
+                            && (full_node_name_of(&e.metadata) == full_node_name
+                                || (full_node_name.is_empty()
+                                    && e.metadata.package == package
+                                    && e.metadata.plugin == plugin))
                     })
                     .map(|(name, _)| name.clone())
             });
@@ -236,7 +320,7 @@ impl ComposableSupervisor {
                 return; // Already handled by service response
             }
             entry.state = ComposableState::Failed {
-                error: event.error_message.clone(),
+                error: error.to_string(),
             };
             entry.load_started_at = None;
         } else {
@@ -244,10 +328,11 @@ impl ComposableSupervisor {
         }
 
         warn!(
-            "{}: ComponentEvent LOAD_FAILED for '{}': {}",
+            "{}: {} LOAD_FAILED for '{}': {}",
             self.name(),
+            source.label(),
             composable_name,
-            event.error_message
+            error
         );
 
         // Emit LoadFailed event
@@ -255,7 +340,7 @@ impl ComposableSupervisor {
             self.state_tx(),
             StateEvent::LoadFailed {
                 name: composable_name,
-                error: event.error_message.clone(),
+                error: error.to_string(),
             },
         )
         .await;
@@ -263,11 +348,17 @@ impl ComposableSupervisor {
 
     /// Handle an UNLOADED ComponentEvent.
     async fn handle_component_unloaded(&mut self, event: &play_launch_msgs::msg::ComponentEvent) {
+        self.on_unloaded(LoadReport::ComponentEvent, event.unique_id)
+            .await;
+    }
+
+    /// A composable was unloaded, from either report channel.
+    pub(super) async fn on_unloaded(&mut self, source: LoadReport, unique_id: u64) {
         // Match by unique_id (node already has it stored)
         let entry = self
             .composable_nodes
             .iter_mut()
-            .find(|(_, e)| e.unique_id == Some(event.unique_id));
+            .find(|(_, e)| e.unique_id == Some(unique_id));
         let Some((name, entry)) = entry else {
             return;
         };
@@ -277,10 +368,11 @@ impl ComposableSupervisor {
         entry.load_started_at = None;
 
         debug!(
-            "{}: ComponentEvent UNLOADED for '{}' (unique_id: {})",
+            "{}: {} UNLOADED for '{}' (unique_id: {})",
             self.name(),
+            source.label(),
             name,
-            event.unique_id
+            unique_id
         );
 
         // Emit Unloaded event
@@ -289,11 +381,16 @@ impl ComposableSupervisor {
 
     /// Handle a CRASHED ComponentEvent.
     async fn handle_component_crashed(&mut self, event: &play_launch_msgs::msg::ComponentEvent) {
+        self.on_crashed(event.unique_id, &event.error_message).await;
+    }
+
+    /// A loaded composable's process died, from either report channel.
+    pub(super) async fn on_crashed(&mut self, unique_id: u64, error: &str) {
         // Find composable node by unique_id
         let entry = self
             .composable_nodes
             .iter_mut()
-            .find(|(_, e)| e.unique_id == Some(event.unique_id));
+            .find(|(_, e)| e.unique_id == Some(unique_id));
 
         let Some((name, entry)) = entry else {
             return;
@@ -301,7 +398,7 @@ impl ComposableSupervisor {
         let name = name.clone();
 
         entry.state = ComposableState::Failed {
-            error: event.error_message.clone(),
+            error: error.to_string(),
         };
         entry.unique_id = None;
 
@@ -309,7 +406,7 @@ impl ComposableSupervisor {
             "{}: Composable node '{}' crashed: {}",
             self.name(),
             name,
-            event.error_message
+            error
         );
 
         // Emit StateEvent for logging/Web UI
@@ -317,12 +414,11 @@ impl ComposableSupervisor {
             self.state_tx(),
             StateEvent::LoadFailed {
                 name: name.clone(),
-                error: format!("Crashed: {}", event.error_message),
+                error: format!("Crashed: {}", error),
             },
         )
         .await;
     }
-
     /// Transition all composable nodes to Blocked state.
     ///
     /// Called when the container stops, fails, or shuts down to mark all
@@ -409,6 +505,29 @@ impl ComposableSupervisor {
                         .await;
                     }
                 }
+                VerifyOutcome::Absent if clients.has_event_sub() => {
+                    // Phase 64 W2: `Absent` from OUR OWN container is not
+                    // evidence of a lost load. `on_list_nodes` deliberately
+                    // hides ids that are still constructing, so a composable
+                    // that is merely slow answers exactly like one that never
+                    // arrived — and re-dispatching it forks a SECOND process
+                    // for a node that is alive and working. The reporter's
+                    // launch had 14 lost LoadNode responses in one run, so
+                    // this was one long constructor away from happening.
+                    //
+                    // The socket path can tell the difference because it asks
+                    // (`docs/design/composable-load-lifecycle.md`); this path
+                    // cannot, so it reports and waits.
+                    warn!(
+                        "{}: '{}' has been Loading for over {}s and ListNodes does not show it. \
+                         That is ambiguous for this container — a constructor still running \
+                         looks the same — so it is left alone. Enable the control channel \
+                         (composable_node_loading.control_socket) to resolve this case.",
+                        container_name,
+                        name,
+                        self.timings.total_budget.as_secs()
+                    );
+                }
                 VerifyOutcome::Absent => {
                     warn!(
                         "{}: '{}' was stuck Loading past the {}s budget and the \
@@ -421,7 +540,10 @@ impl ComposableSupervisor {
                         entry.state = ComposableState::Unloaded;
                         entry.load_started_at = None;
                     }
-                    self.handle_load_composable(&name, clients).await;
+                    // A stock container's ListNodes is unambiguous: it cannot
+                    // answer at all while a constructor holds its executor, so
+                    // an answer that omits the node means the node is absent.
+                    self.handle_load_composable(&name, clients, None).await;
                 }
                 VerifyOutcome::Unavailable => {
                     debug!(

@@ -228,9 +228,37 @@ rclcpp_components::ComponentManager           (upstream)
   evidence of success. `Unavailable` (container executor too busy to answer) is
   the normal state *while* a composable constructs and must never be read as
   loaded; that is what reported a killed node as `84/84 loaded` (#0019).
+- **We do not speak LoadNode to our own container** (phase 64). A
+  `socketpair(2)` created before the fork carries loads and load status to
+  `play_launch_container`; the fd is named in `PLAY_LAUNCH_CONTROL_FD`, framing
+  is 4-byte LE length + JSON, and the protocol of record is
+  `src/play_launch/src/ipc/container_protocol.rs`. The reason is measured:
+  144 processes discovering each other jam the *rmw service layer*, not the
+  container — one AutoSDV launch produced 14 `LoadNode service call timed out`
+  and 8 `ComponentEvent LOADED not received` warnings for **zero** real
+  failures. `LoadNode` remains exactly as it was for containers we do not own,
+  and stays the fallback for ours: an older container never answers the hello,
+  a mismatched protocol version closes the channel from both ends, and
+  `composable_node_loading.control_socket: false` never opens one. Only
+  `isolated` takes LOADS over the socket — `observable` gets status only,
+  because `ComponentManager::on_load_node` adds the node to the executor and
+  running that from the reader thread would race the manager's own bookkeeping.
+  `UnloadNode` stays on the service (every papered-over mechanism was on the
+  load path). The socket also carries what no timeout could infer: `accepted`
+  (the pre-assigned id, without a service call) and `constructing` every 15 s
+  while a child is alive, so a slow constructor is DISTINGUISHABLE from a
+  wedged one. On that path `check_loading_timeouts` and `rescue_lost_loads` are
+  skipped — they exist to reconstruct facts a congested rmw layer lost, and
+  nothing is lost on an ordered stream. Both report channels stay live and
+  every transition is guarded on `Loading`, so whichever arrives first wins and
+  the log names it (`ComponentEvent LOADED for '…'` / `control channel LOADED
+  for '…'`). Design: `docs/design/container-control-channel.md`.
 - **Two binaries**: `component_container [--use_multi_threaded_executor] [--isolated]` and `component_node` (standalone single-node loader)
-- **Design docs**: `docs/design/container-isolation.md`, `docs/archive/clone-vm-container-design.md`
-- **Roadmap**: `docs/roadmap/phase-19-isolated_container.md`
+- **Design docs**: `docs/design/container-isolation.md`,
+  `docs/design/container-control-channel.md`,
+  `docs/archive/clone-vm-container-design.md`
+- **Roadmap**: `docs/roadmap/phase-19-isolated_container.md`,
+  `docs/roadmap/phase-64-isolated-container-ipc.md`
 
 ## Configuration
 
@@ -385,6 +413,7 @@ just test              # Parser unit (371) + scope (9) + fast integration (6), ~
 just test-all          # Everything: unit + all integration + cross-parser parity
 just test-parity       # Cross-parser parity gates alone (Rust vs Python SystemModel)
 just test-unit         # Parser unit tests only
+just test-cpp          # Container C++ unit tests (control-channel JSON codec)
 just test-integration  # All integration tests (simple + Autoware)
 cargo test -p play_launch_parser --features ir  # IR tests (42 tests, not included in default)
 just compare-scopes <pkg> <launch> [args...]    # Cross-parser scope comparison
@@ -407,6 +436,70 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-08-22**: Phase 64 W2 — **when a load is lost, and when it may be
+  retried.** W1 removed five mechanisms and left a hole: on the socket path
+  nothing gave up and nothing could be retried. The fix is not another timeout
+  but a QUESTION — protocol v2 adds `query`/`status` (`queued | constructing |
+  loaded | failed | unknown`, with pid, elapsed and `cpu_ms`) and `cancel`, so
+  the supervisor asks the party that owns the child instead of inferring from
+  silence. `unknown` is the only answer that authorises a resend, and it is a
+  positive statement, not an expiry; a retry is **cancel → confirm → resend**,
+  which makes a double load unrepresentable rather than unlikely. Timers
+  (`ack_timeout_ms` 5 s, `report_timeout_secs` 45 s, `probe_interval_secs`
+  15 s) only ever cause a question. Stall detection is **off by default**
+  (`stall_after_secs: 0`) and needs evidence, not a clock: alive, past budget,
+  AND burning no CPU — and even then zero CPU is not proof, because a
+  constructor blocked on a service that has not come up yet behaves exactly the
+  same, so `stall_action` defaults to `report`. `max_load_attempts` (2 = one
+  resend) also bounds the restart cycle. Fixed on the way: `rescue_lost_loads`
+  re-dispatched on a ListNodes `Absent` verdict, which for OUR container is
+  ambiguous (`on_list_nodes` hides mid-construction ids) — that resend is now
+  refused for our containers and kept for stock ones; and a stale
+  `ComponentEvent LOAD_FAILED` from a cancelled attempt was claiming the
+  freshly restarted load through W1's name-fallback matching, measured and
+  fixed by restricting the fallback to entries with no socket tracking. The
+  container's pending-id set became a map (phase, pid, plugin, start, cancel),
+  a `queued` heartbeat closes the up-to-120 s silence at its memory gate, and
+  `PLAY_LAUNCH_CONTROL_DROP` injects the two faults that are otherwise
+  unreachable. Startup now names what it is still waiting for instead of
+  repeating `1 pending`. Design:
+  `docs/design/composable-load-lifecycle.md`.
+- **2026-08-22**: Phase 64 W1 — **a private load channel for our own container.**
+  play_launch no longer calls `composition_interfaces/srv/LoadNode` on
+  `play_launch_container`: a `socketpair(2)` created before the fork carries
+  `load` down and `accepted`/`loaded`/`load_failed`/`constructing`/`unloaded`/
+  `crashed` back, length-framed JSON, fd handed down in
+  `PLAY_LAUNCH_CONTROL_FD`. The motivating launch (AutoSDV, 54 nodes, 17
+  containers, 93 composables, 12-core Orin) reported 14 LoadNode timeouts and 8
+  ComponentEvent waits for **zero** real failures — the container answers a
+  load from a pre-assigned id in microseconds; what was congested was the rmw
+  service layer, during exactly the window load status matters. Five mechanisms
+  built to survive that congestion (30 s timeout, triple retry, response-lost
+  deferral, 10 s ComponentEvent wait, ListNodes verification) do not run on the
+  socket path. A socketpair rather than a socket file because a unix path is
+  capped at 108 bytes and needs a listener, a bind, a cleanup and a rendezvous
+  timeout; the pair's lifetime is the process's, and EOF means the container is
+  gone. `FD_CLOEXEC` is cleared only in the child being exec'd — clearing it in
+  the parent (how the interception fds are passed) leaks the fd into every node
+  spawned in the same window, and a leaked copy holds the socket open so EOF
+  never arrives. `observable` gets status but not loads (loading there runs on
+  the executor thread); `stock` gets no channel; three fallbacks — no hello,
+  version mismatch, `control_socket: false` — all land on the unchanged
+  LoadNode path. The container carries its own ~500-line JSON codec rather than
+  adding an nlohmann/yaml-cpp rosdep key to every source build to parse six
+  field types (`just test-cpp` covers it). Parameters now cross typed instead
+  of `Parameter -> String -> Parameter`, which used to turn a `string`
+  parameter valued `"true"` into a `bool`. **Measured A/B on the reporting
+  stack** (AutoSDV bag-replay variant, 44 nodes / 15 containers / 84
+  composables, same Orin, arms differing only by `control_socket`): the three
+  alarm classes went **18 / 18 / 5 -> 0 / 0 / 0**, with the same one genuine
+  failure in both arms, reported verbatim (`cudaErrorDevicesUnavailable`)
+  rather than as a timeout. The zeros are structural — those five mechanisms
+  are not reached on the socket path — and a composable that never finished
+  constructing was reported honestly every 30 s with its pid and elapsed time
+  instead of being timed out or falsely promoted. Design:
+  `docs/design/container-control-channel.md`. Roadmap:
+  `docs/roadmap/phase-64-isolated-container-ipc.md`.
 - **2026-08-16**: Phase 61 W1 — **the edge startup storm, and the fix that
   wasn't.** A 144-process Autoware launch on a 12-core AGX Orin put **484 tasks
   in the runnable queue at load1 203** and held ~10 of 12 cores for 49 s; on the
@@ -740,6 +833,9 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
     from declared hazards instead of a `high|medium|low` label
   - `unified-system-model.md` — Phase 46: the SystemModel as the ONE complete artifact (`record.json` retired to deprecated compat)
   - Manifest design docs live in the `ros-launch-manifest` repo's `docs/` (Phase 31; that repo is a git dependency, so read them at the pinned tag or in `~/.cargo/git/checkouts/`)
+  - `container-control-channel.md` — phase 64: the private socketpair to our
+    own container binary, why the LoadNode service was the wrong channel for
+    it, and what falls back to LoadNode anyway
   - `composable-load-admission.md` — how many composables may come up at once:
     why the governor is memory rather than a count, and why the answer differs
     per container mode

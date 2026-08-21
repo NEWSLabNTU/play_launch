@@ -521,6 +521,20 @@ test:
     echo ""
     just _run-suites fast
 
+# Run the container's C++ unit tests (phase 64: control-channel JSON codec)
+#
+# Separate from `test` because it needs a colcon test run rather than cargo:
+# `test`'s C++ step only checks that the package builds, which would not have
+# caught a codec that compiles and mis-encodes.
+test-cpp:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/{{ros_distro}}/setup.bash
+    colcon build --packages-select play_launch_msgs play_launch_container \
+        --base-paths src --cmake-args -DBUILD_TESTING=ON
+    colcon test --packages-select play_launch_container --base-paths src
+    colcon test-result --test-result-base build/play_launch_container --all
+
 # Run all tests — parser unit + all integration including Autoware (~30s)
 test-all:
     #!/usr/bin/env bash
@@ -528,6 +542,9 @@ test-all:
     echo "=== C++ build check ==="
     source /opt/ros/{{ros_distro}}/setup.bash
     colcon build --packages-select play_launch_msgs play_launch_container --symlink-install --base-paths src --cmake-args -DCMAKE_BUILD_TYPE=Release 2>&1
+    echo ""
+    echo "=== C++ unit tests ==="
+    just test-cpp
     echo ""
     echo "=== Fixture workspaces (guarded tests skip silently without these) ==="
     # A test that skips still reports as PASSED, so an unbuilt fixture hides

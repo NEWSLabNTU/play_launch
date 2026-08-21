@@ -432,6 +432,88 @@ pub struct ComposableNodeLoadingSettings {
     /// starts processing requests
     #[serde(default = "default_post_service_ready_warmup_ms")]
     pub post_service_ready_warmup_ms: u64,
+
+    /// Phase 64: talk to `play_launch_container` over a private socketpair
+    /// instead of the `LoadNode` service.
+    ///
+    /// Only ever applies to OUR container binary (`--container-mode
+    /// observable`/`isolated`); a stock container has no such channel and is
+    /// byte-for-byte unaffected. `false` restores the pre-phase-64 behaviour
+    /// of loading every composable through the ROS service — useful for
+    /// comparing the two paths, and the escape hatch if the socket ever
+    /// misbehaves.
+    #[serde(default = "default_control_socket")]
+    pub control_socket: bool,
+
+    /// Phase 64 W2: how long a `load` frame may go unacknowledged before the
+    /// supervisor ASKS the container about it (milliseconds).
+    ///
+    /// Expiry never fails a load; it only causes a `query`. The answer decides
+    /// — and `unknown` (nothing was accepted, so nothing was forked) is the
+    /// one case where a resend cannot double-load anything.
+    #[serde(default = "default_load_ack_timeout_ms")]
+    pub ack_timeout_ms: u64,
+
+    /// How long a load may go without any report from the container before the
+    /// supervisor asks about it (seconds). Three times the container's 15 s
+    /// liveness cadence, so a single dropped report is not an event.
+    #[serde(default = "default_report_timeout_secs")]
+    pub report_timeout_secs: u64,
+
+    /// How often to re-ask when a `query` itself went unanswered (seconds).
+    /// An unanswered query is its own state — neither loaded nor lost — and is
+    /// reported rather than resolved by assumption.
+    #[serde(default = "default_probe_interval_secs")]
+    pub probe_interval_secs: u64,
+
+    /// Total load attempts per composable, including the first.
+    ///
+    /// The default of 2 allows exactly one resend, and only ever after the
+    /// container has CONFIRMED that nothing is running for that load — never
+    /// on a timeout. Set to 1 to disable resending entirely.
+    #[serde(default = "default_max_load_attempts")]
+    pub max_load_attempts: usize,
+
+    /// Declare a constructor stalled after this many seconds. `0` (the
+    /// default) means NEVER.
+    ///
+    /// A fixed number here is a guess about hardware we do not have: a
+    /// first-run TensorRT engine build takes ~33 s cold and ~45 s cached on one
+    /// Orin, and when the guess is wrong it kills a node that was working. See
+    /// `PLAY_LAUNCH_COMPONENT_READY_TIMEOUT_MS`, which defaults to no deadline
+    /// for the same reason.
+    #[serde(default)]
+    pub stall_after_secs: u64,
+
+    /// CPU usage (percent of one core) below which a constructor counts as
+    /// making no progress. Evidence for a stall, never the trigger on its own:
+    /// a constructor blocked on a service that has not come up yet burns no
+    /// CPU while behaving correctly.
+    #[serde(default = "default_stall_cpu_threshold_pct")]
+    pub stall_cpu_threshold_pct: f64,
+
+    /// What to do about a stalled constructor. `report` (default) changes
+    /// nothing and says so with the evidence; `fail` cancels it; `restart`
+    /// cancels it and, once the container confirms nothing is running,
+    /// resends.
+    #[serde(default)]
+    pub stall_action: StallAction,
+
+    /// Whether a composable that CRASHED after loading is reloaded. Off by
+    /// default: a component that dies in its constructor and is retried
+    /// forever is a worse outcome than one that stays failed and says so.
+    #[serde(default)]
+    pub composable_respawn: ComposableRespawn,
+
+    /// How long to wait for the container's control-channel `Hello` before
+    /// falling back to the `LoadNode` service (milliseconds).
+    ///
+    /// The container sends it before `rclcpp::init`, so this is normally
+    /// answered in milliseconds; the budget exists for the version-skew case
+    /// where a container binary from an older wheel inherits the fd and never
+    /// speaks. Loading waits on it, so it is deliberately short.
+    #[serde(default = "default_control_hello_timeout_ms")]
+    pub control_hello_timeout_ms: u64,
 }
 
 impl Default for ComposableNodeLoadingSettings {
@@ -445,6 +527,16 @@ impl Default for ComposableNodeLoadingSettings {
             load_verify_poll_interval_secs: default_load_verify_poll_interval_secs(),
             loading_event_timeout_secs: default_loading_event_timeout_secs(),
             post_service_ready_warmup_ms: default_post_service_ready_warmup_ms(),
+            control_socket: default_control_socket(),
+            control_hello_timeout_ms: default_control_hello_timeout_ms(),
+            ack_timeout_ms: default_load_ack_timeout_ms(),
+            report_timeout_secs: default_report_timeout_secs(),
+            probe_interval_secs: default_probe_interval_secs(),
+            max_load_attempts: default_max_load_attempts(),
+            stall_after_secs: 0,
+            stall_cpu_threshold_pct: default_stall_cpu_threshold_pct(),
+            stall_action: StallAction::default(),
+            composable_respawn: ComposableRespawn::default(),
         }
     }
 }
@@ -472,6 +564,52 @@ fn default_loading_event_timeout_secs() -> u64 {
 }
 fn default_post_service_ready_warmup_ms() -> u64 {
     200
+}
+/// What to do when a constructor is alive, past its budget, and burning no CPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StallAction {
+    /// Say so, with pid, elapsed and CPU evidence. Change nothing.
+    #[default]
+    Report,
+    /// Cancel the load; the container kills the child and confirms.
+    Fail,
+    /// Cancel, wait for the confirmation, then resend — never the other order,
+    /// because a resend before a confirmed teardown is a double load.
+    Restart,
+}
+
+/// Whether a composable that crashed after loading is reloaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ComposableRespawn {
+    /// Leave it failed and reported (the pre-phase-64 behaviour).
+    #[default]
+    Off,
+    /// Reload it, bounded by the container's `max_respawn_attempts`.
+    OnCrash,
+}
+
+fn default_control_socket() -> bool {
+    true
+}
+fn default_load_ack_timeout_ms() -> u64 {
+    5000
+}
+fn default_report_timeout_secs() -> u64 {
+    45
+}
+fn default_probe_interval_secs() -> u64 {
+    15
+}
+fn default_max_load_attempts() -> usize {
+    2
+}
+fn default_stall_cpu_threshold_pct() -> f64 {
+    1.0
+}
+fn default_control_hello_timeout_ms() -> u64 {
+    10000
 }
 
 /// Container readiness checking settings

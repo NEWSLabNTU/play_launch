@@ -1,0 +1,12 @@
+<!-- Phase 64 W2: long enough to be probed and, with stall detection turned
+     on, long enough to be declared stalled — a constructor that sleeps burns
+     no CPU, which is exactly the evidence the stall check reads. -->
+<launch>
+  <node_container pkg="play_launch_container" exec="component_container"
+                  name="stall_container" namespace="" args="--isolated">
+    <composable_node pkg="play_launch_container" plugin="play_launch_container::SlowLoader"
+                     name="stalling_node" namespace="">
+      <param name="load_delay_ms" value="60000"/>
+    </composable_node>
+  </node_container>
+</launch>

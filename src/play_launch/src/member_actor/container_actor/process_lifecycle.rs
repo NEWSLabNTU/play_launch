@@ -69,8 +69,51 @@ impl ContainerActor {
     }
 
     /// Clear ROS service clients and event subscription so they're recreated on restart.
+    ///
+    /// Phase 64: the private control channel goes with them. It belongs to one
+    /// container PROCESS — the socketpair's far end died with it — so a
+    /// respawn negotiates a fresh one rather than writing into a closed fd.
     pub(super) fn clear_ros_clients(&mut self) {
         self.clients.clear();
+        self.control = None;
+    }
+
+    /// Phase 64: wait for the container to introduce itself on the control
+    /// channel, and decide what the channel is worth.
+    ///
+    /// Three outcomes, all normal: a container that speaks the protocol and
+    /// takes loads over it (`isolated`); one that speaks it for status only
+    /// (`observable`, where loading has to happen on the manager's executor
+    /// thread); and one that never answers — an older wheel's binary, or a
+    /// stock container that never had the fd — which drops the channel and
+    /// leaves the LoadNode path exactly as it was.
+    pub(super) async fn negotiate_control_channel(&mut self) {
+        let timeout = self.supervisor.timings.control_hello_timeout;
+        let Some(channel) = self.control.as_mut() else {
+            return;
+        };
+        if channel.await_hello(timeout).await {
+            if channel.loads_over_socket() {
+                info!(
+                    "{}: loading composables over the private control channel \
+                     (no LoadNode service calls)",
+                    self.name
+                );
+            } else {
+                debug!(
+                    "{}: control channel up for status; loads stay on the LoadNode service",
+                    self.name
+                );
+            }
+        } else {
+            info!(
+                "{}: container did not answer the control channel within {}s — \
+                 using the LoadNode service",
+                self.name,
+                timeout.as_secs()
+            );
+            self.control = None;
+        }
     }
 
     /// Build the full node name from namespace and name.
@@ -88,7 +131,7 @@ impl ContainerActor {
     }
 
     /// Spawn the container process.
-    pub(super) async fn spawn_process(&self) -> Result<tokio::process::Child> {
+    pub(super) async fn spawn_process(&mut self) -> Result<tokio::process::Child> {
         let exec_context = self
             .context
             .to_exec_context(self.config.pgid)
@@ -100,6 +143,57 @@ impl ContainerActor {
             "Spawning container process: {:?} (output_dir: {:?})",
             command, exec_context.output_dir
         );
+
+        // Phase 64: hand the container one end of a private socketpair, so the
+        // load path does not have to travel the rmw service layer that every
+        // other process on the machine is contending for during startup.
+        //
+        // Only for OUR binary: `use_component_events` is exactly the
+        // "container-mode is not stock" flag, and a stock container has no
+        // idea what the fd is for. It would inherit it harmlessly, never
+        // speak, and `negotiate_control_channel` would drop the channel — but
+        // there is no reason to create one.
+        let child_end = if self.use_component_events && self.supervisor.timings.control_socket {
+            match super::control_channel::ControlChannel::new(&self.name) {
+                Ok((channel, child_end)) => {
+                    self.control = Some(channel);
+                    Some(child_end)
+                }
+                Err(e) => {
+                    warn!(
+                        "{}: could not create the control channel ({:#}) — \
+                         falling back to the LoadNode service",
+                        self.name, e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if let Some(child_end) = child_end.as_ref() {
+            let fd = child_end.raw();
+            command.env(
+                crate::ipc::container_protocol::CONTROL_FD_ENV,
+                fd.to_string(),
+            );
+            // Clear FD_CLOEXEC in the CHILD, between fork and exec, rather
+            // than in this process: clearing it here would leak this
+            // container's control fd into every other node spawned while the
+            // flag was down, and each leaked copy holds the socket open so the
+            // supervisor would never see EOF when the container died.
+            //
+            // Async-signal-safe: one `fcntl`, no allocation.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
 
         // Phase 61: containers queue for a startup slot like any other
         // process. They are not exempt — a container is one of the more
@@ -120,6 +214,12 @@ impl ContainerActor {
         if let Some(pid) = child.id() {
             permit.hold_until_settled(pid, self.name.clone());
         }
+
+        // The fork has happened, so the container has its own copy: close
+        // ours. Holding it would keep a write end of the container's own
+        // socket open in this process, and EOF — how the supervisor learns the
+        // container is gone — would never arrive.
+        drop(child_end);
 
         Ok(child)
     }

@@ -1048,6 +1048,9 @@ pub(crate) async fn play(
 
     // Setup periodic statistics output task (runs every 10 seconds)
     let startup_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Reuse the staged-startup budget: it is already this system's answer to
+    // "how long is too long to be waiting on one member".
+    let startup_exception_after_secs = runtime_config.startup.stage_timeout_secs;
     let stats_task = {
         let stats_handle = member_handle.clone();
         let stats_shutdown = shutdown_signal.clone();
@@ -1062,6 +1065,9 @@ pub(crate) async fn play(
                 stats_flag,
                 stats_shutdown_tx,
                 pgid,
+                // Reuse the staged-startup budget: it is already the answer to
+                // "how long is too long to be waiting on one member".
+                std::time::Duration::from_secs(startup_exception_after_secs),
             )
             .await;
             Ok(())
