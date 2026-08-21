@@ -195,12 +195,59 @@ model key -> pid -> real ROS name, captured from the `rcl_node_t*` the
 interception hooks hold. Joining through it when interception is enabled closes
 these three, taking the attribution to ~98%.
 
-The remaining five are `vehicle_interface/{can_tx,frame_brk,frame_eps,frame_mtr,system}`
-— sub-checks of a hardware bridge rather than nodes. A `vehicle_interface`
-member does exist, so a leaf-of-path rule would attach them to it; whether that
-is right or misleading is a judgement for whoever owns the vehicle side. They
-are the concrete content of the unmatched bucket the acceptance criteria
-require, and confirm it will not be empty.
+The remaining five are `vehicle_interface/{can_tx,frame_brk,frame_eps,frame_mtr,system}`.
+
+**Resolved 2026-08-21 by the vehicle side.** They are not a separate hardware
+bridge: they are the vehicle interface node's OWN sub-checks, one per CAN frame
+family, and that node only runs when connected to the VCU over CAN. So the node
+is the head of the prefix, not the tail, and the rule now splits accordingly:
+
+| shape | segment that names the node |
+|---|---|
+| `/adapi/node/localization: state` (absolute path) | **last** |
+| `vehicle_interface/can_tx` (relative sub-check) | **first** |
+
+Taking the tail of the second shape yields `can_tx`, which matches no member.
+`Attribution::SubCheck` records this case distinctly from `PathLeaf`.
+
+**But they will still be unmatched on a normal run, and that is correct.**
+`vehicle_interface` is launched separately (`just vehicle interface` in the golf
+cart repo), not by `just launch`, so play_launch never spawned it. Its
+diagnostics arrive on `/diagnostics` all the same. Confirmed against every
+corpus on this machine: nine distinct `vehicle_interface/*` names, thousands of
+rows, and **no `vehicle_interface` member in any of them**.
+
+That is the general limit of this join, worth stating plainly: **play_launch can
+only attribute what it spawned.** Diagnostics from a separately-launched node,
+or from the other host on a two-machine run, are unattributable by construction
+rather than by any defect in the rule. The unmatched bucket is doing its job,
+not failing.
+
+The same effect explains a figure that looks alarming: on
+`play_log/2026-08-19_05-05-28` attribution is **32/197 (16%)**, because that run
+spawned 80 members while 197 diagnostic names appear. Old and new rules score
+identically there (0 gained, 0 lost), so it is a property of the corpus, not the
+rule. Do not read a single run's percentage as a quality measure without
+checking what it spawned.
+
+### The cross-check was not checking
+
+`corpus_tests` existed to catch the Rust join and the Python analysis drifting
+apart. It could not: it asserted only `pct >= 95`, a one-sided floor that passes
+when the two attribute entirely DIFFERENT sets, and it hardcoded a corpus path
+absent from this machine, so it skipped rather than ran. It reported "ok" while
+the two implementations genuinely disagreed.
+
+It now discovers a corpus, runs the Python with `--json`, and compares the
+unmatched SET name by name. Verified by mutation: breaking the Python's
+absolute-path rule makes it fail and name the four disagreeing entries, where
+the old floor stayed green.
+
+One honest limit found by that same mutation test: a rule the corpus does not
+exercise cannot be caught this way. Breaking the relative-subcheck rule changes
+nothing on a corpus with no `vehicle_interface` member. The unit tests cover
+that case directly, which is the right division of labour, but nobody should
+read a passing corpus test as coverage of every branch.
 
 ### Consequences for the W2 acceptance criteria
 

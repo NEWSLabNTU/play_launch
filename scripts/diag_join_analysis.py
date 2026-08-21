@@ -15,6 +15,7 @@ can be attributed, by which rule, and what is left over.
 import csv
 import collections
 import pathlib
+import json
 import re
 import sys
 
@@ -53,18 +54,25 @@ def classify(diag_name: str, nodes: set, comps: set) -> str:
         if leaf in comps:
             return "composable via path leaf"
         return "path, unmatched"
-    if leaf in nodes:
-        return "node via leaf"
-    if leaf in comps:
-        return "composable via leaf"
+    # A RELATIVE "node/subcheck" name, e.g. "vehicle_interface/can_tx". The
+    # node owns the sub-check, so the HEAD names the member. Taking the tail
+    # here yields "can_tx", which matches nothing and hides a member that
+    # exists. Opposite end from the absolute-path case above, deliberately.
+    head = prefix.split("/", 1)[0]
+    if head in nodes:
+        return "node via subcheck"
+    if head in comps:
+        return "composable via subcheck"
     return "unmatched"
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
+    args = [a for a in sys.argv[1:] if a != "--json"]
+    json_out = "--json" in sys.argv[1:]
+    if not args:
         print(__doc__)
         return 2
-    for arg in sys.argv[1:]:
+    for arg in args:
         run = pathlib.Path(arg)
         csv_path = run / "diagnostics.csv"
         if not csv_path.is_file():
@@ -112,6 +120,17 @@ def main() -> int:
             print(f"  unmatched examples ({len(un)}):")
             for n in un[:8]:
                 print(f"    {n[:70]}")
+
+        # Machine-readable, so the Rust join can be cross-checked against this
+        # one name by name rather than against a percentage. A percentage floor
+        # passes when the two implementations attribute entirely different sets.
+        if json_out:
+            print("---JSON---")
+            print(json.dumps({
+                "run": str(run),
+                "unmatched": un,
+                "attributed": sorted(n for n in names if n not in set(un)),
+            }))
     return 0
 
 

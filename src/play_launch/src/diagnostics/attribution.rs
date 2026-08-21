@@ -15,8 +15,13 @@
 //! - **Composables match exactly** — 161 of 173 attributions on the vehicle
 //!   corpus. The container-versus-composable question W2 raised does not arise
 //!   for them.
-//! - **Paths resolve on their last segment** (`/adapi/node/localization:
-//!   state`), which is 2 more.
+//! - **Absolute paths resolve on their last segment**
+//!   (`/adapi/node/localization: state`), which is 2 more.
+//! - **Relative `node/subcheck` names resolve on their FIRST segment**
+//!   (`vehicle_interface/can_tx`, `vehicle_interface/brake`). The node owns
+//!   the sub-check, so the node is the head of the prefix, not the tail.
+//!   These only appear when the vehicle interface is connected to the VCU
+//!   over CAN, which is why a bench corpus does not contain them.
 //! - **The `-N` ordinal is play_launch's, not the node's** (issue 0018), so it
 //!   is stripped before comparing.
 //!
@@ -37,8 +42,12 @@ use std::collections::HashMap;
 pub enum Attribution {
     /// The diagnostic's prefix is a member name.
     Direct,
-    /// Matched on the last segment of a ROS path prefix.
+    /// Matched on the last segment of an ABSOLUTE ROS path prefix
+    /// (`/adapi/node/localization`).
     PathLeaf,
+    /// Matched on the FIRST segment of a relative `node/subcheck` prefix
+    /// (`vehicle_interface/can_tx`), where the node owns the sub-check.
+    SubCheck,
     /// Matched through the interception identity map: the diagnostic names the
     /// node's REAL ROS name, which differs from the model key because the
     /// launch file never named it (issue 0017).
@@ -113,12 +122,26 @@ impl Attributor {
             return (None, Attribution::None);
         }
 
+        // Which end of a slash-separated prefix names the node depends on
+        // whether it is an absolute ROS path or a relative sub-check:
+        //
+        //   /adapi/node/localization  ->  localization   (LAST segment)
+        //   vehicle_interface/can_tx  ->  vehicle_interface (FIRST segment)
+        //
+        // Taking the last segment of the second shape yields `can_tx`, which
+        // matches no member, and left five real diagnostics of a node that
+        // does exist sitting in the unmatched bucket.
         let is_path = prefix.starts_with('/');
-        let leaf = prefix.rsplit('/').next().unwrap_or(prefix);
-        let leaf = strip_ordinal(leaf);
+        let (candidate, how) = if is_path {
+            (prefix.rsplit('/').next().unwrap_or(prefix), Attribution::PathLeaf)
+        } else if let Some((head, _)) = prefix.split_once('/') {
+            (head, Attribution::SubCheck)
+        } else {
+            (prefix, Attribution::Direct)
+        };
+        let leaf = strip_ordinal(candidate);
 
         if let Some(key) = self.members.get(leaf) {
-            let how = if is_path { Attribution::PathLeaf } else { Attribution::Direct };
             return (Some(key.as_str()), how);
         }
         if let Some(key) = self.identity.get(leaf) {
@@ -192,15 +215,42 @@ mod tests {
     /// not a member, and guessing that it belongs to `vehicle_interface` is a
     /// vehicle-side judgement this code must not make silently.
     #[test]
-    fn hardware_bridge_subchecks_stay_unmatched() {
+    fn vehicle_interface_subchecks_attribute_to_their_node() {
+        // These are the vehicle interface's OWN sub-checks, not a separate
+        // device: the node publishes one diagnostic per CAN frame family and
+        // only runs at all when connected to the VCU over CAN. So the node is
+        // the head of the prefix, and taking the tail (`can_tx`) matches
+        // nothing and hides five real diagnostics of a member that exists.
+        //
+        // An earlier revision asserted the opposite, on the reading that these
+        // were a hardware bridge with no corresponding member. They are the
+        // member.
         let a = attributor();
         for n in [
             "vehicle_interface/can_tx",
             "vehicle_interface/frame_brk",
+            "vehicle_interface/frame_eps",
+            "vehicle_interface/frame_mtr",
+            "vehicle_interface/brake",
+            "vehicle_interface/motor",
             "vehicle_interface/system",
         ] {
-            assert_eq!(a.attribute(n), (None, Attribution::None), "{n} should be unmatched");
+            let (key, how) = a.attribute(n);
+            assert_eq!(how, Attribution::SubCheck, "{n}");
+            assert!(key.is_some_and(|k| k.ends_with("vehicle_interface")), "{n} -> {key:?}");
         }
+        // The bare name still resolves, by the plain rule.
+        assert_eq!(a.attribute("vehicle_interface").1, Attribution::Direct);
+    }
+
+    #[test]
+    fn an_absolute_path_still_resolves_on_its_LAST_segment() {
+        // The two shapes pull in opposite directions, so this guards the
+        // first-segment rule from swallowing ROS paths.
+        let a = attributor();
+        let (key, how) = a.attribute("/adapi/node/localization: state");
+        assert_eq!(how, Attribution::PathLeaf);
+        assert!(key.is_some_and(|k| k.ends_with("localization")), "{key:?}");
     }
 
     /// The ordinal is play_launch's own (issue 0018) and no node publishes it.
@@ -225,22 +275,67 @@ mod tests {
 mod corpus_tests {
     use super::*;
 
-    /// Cross-check against `scripts/diag_join_analysis.py`.
+    /// Cross-check against `scripts/diag_join_analysis.py`, name by name.
     ///
-    /// The Rust join and the Python analysis that justified it must agree. If
-    /// they drift, one of them is wrong and the roadmap's 96% is unsupported
-    /// — so this runs the same rule over the same corpus and asserts the same
-    /// answer. Skips cleanly when the corpus is not on this machine, since it
-    /// lives in a sibling repo.
+    /// The Rust join and the Python analysis that justified it must agree. An
+    /// earlier version of this test asserted only that attribution stayed
+    /// above 95%, which is a one-sided floor: it passes when the two
+    /// implementations attribute entirely DIFFERENT sets, and it passed
+    /// silently when the two did diverge. It also hardcoded a corpus path that
+    /// is not on every machine, so it skipped rather than ran.
+    ///
+    /// This runs the Python over the same corpus and compares the unmatched
+    /// SET. Skips cleanly when the sibling repo, a corpus, or python3 is
+    /// absent, since none of them are this repo's to guarantee.
     #[test]
-    fn matches_the_python_analysis_on_the_vehicle_corpus() {
+    fn matches_the_python_analysis_name_by_name() {
         let Some(home) = std::env::var_os("HOME") else { return };
-        let run = std::path::PathBuf::from(home)
-            .join("repos/2026-golf-cart/play_log/2026-08-17_11-18-23");
-        if !run.join("diagnostics.csv").is_file() {
-            eprintln!("SKIP: matches_the_python_analysis_on_the_vehicle_corpus: corpus absent");
+        let logs = std::path::PathBuf::from(&home).join("repos/2026-golf-cart/play_log");
+        let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/diag_join_analysis.py");
+        if !logs.is_dir() || !script.is_file() {
+            eprintln!("SKIP: corpus or analysis script absent");
             return;
         }
+        // Any run that has both a diagnostics CSV and spawned members will do;
+        // pinning one path is how the old test came to skip everywhere.
+        let Some(run) = std::fs::read_dir(&logs).ok().and_then(|rd| {
+            let mut runs: Vec<_> = rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.join("diagnostics.csv").is_file() && p.join("node").is_dir())
+                .collect();
+            runs.sort();
+            runs.pop()
+        }) else {
+            eprintln!("SKIP: no run with diagnostics.csv and members");
+            return;
+        };
+
+        let out = match std::process::Command::new("python3")
+            .arg(&script)
+            .arg("--json")
+            .arg(&run)
+            .output()
+        {
+            Ok(o) if o.status.success() => o.stdout,
+            _ => {
+                eprintln!("SKIP: python3 or the analysis script would not run");
+                return;
+            }
+        };
+        let text = String::from_utf8_lossy(&out);
+        let Some(json) = text.split("---JSON---").nth(1) else {
+            eprintln!("SKIP: analysis produced no JSON block");
+            return;
+        };
+        let py: serde_json::Value = serde_json::from_str(json.trim()).expect("analysis JSON");
+        let py_unmatched: std::collections::BTreeSet<String> = py["unmatched"]
+            .as_array()
+            .expect("unmatched array")
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default().to_string())
+            .collect();
 
         let mut keys = Vec::new();
         for sub in ["node", "load_node"] {
@@ -254,14 +349,11 @@ mod corpus_tests {
                 }
             }
         }
-        assert!(!keys.is_empty(), "corpus has no member directories");
         let a = Attributor::new(&keys);
 
         let csv = std::fs::read_to_string(run.join("diagnostics.csv")).expect("read corpus");
         let mut names = std::collections::BTreeSet::new();
         for line in csv.lines().skip(1) {
-            // diagnostic_name is the third column; message and values may
-            // contain commas, but the first three fields never do.
             let mut it = line.splitn(4, ',');
             let (_ts, _hw, name) = (it.next(), it.next(), it.next());
             if let Some(n) = name
@@ -270,23 +362,27 @@ mod corpus_tests {
                 names.insert(n.to_string());
             }
         }
-
-        let unmatched = names
+        let rust_unmatched: std::collections::BTreeSet<String> = names
             .iter()
             .filter(|n| a.attribute(n).1 == Attribution::None)
-            .count();
-        let matched = names.len() - unmatched;
-        let pct = 100 * matched / names.len();
-        eprintln!("corpus: {matched}/{} attributed ({pct}%)", names.len());
+            .cloned()
+            .collect();
 
-        // The Python pass reported 173/181 = 96%. Allow a point of slack for
-        // CSV-parsing differences on quoted fields, and no more: the point of
-        // this test is that the two implementations agree, not that both are
-        // merely "high".
+        let only_rust: Vec<_> = rust_unmatched.difference(&py_unmatched).collect();
+        let only_py: Vec<_> = py_unmatched.difference(&rust_unmatched).collect();
         assert!(
-            pct >= 95,
-            "attribution {pct}% is below what the analysis measured (96%); \
-             the Rust join and scripts/diag_join_analysis.py have diverged"
+            only_rust.is_empty() && only_py.is_empty(),
+            "the Rust join and scripts/diag_join_analysis.py disagree on {}\n  \
+             unmatched only in Rust: {only_rust:?}\n  \
+             unmatched only in Python: {only_py:?}",
+            run.display()
+        );
+        eprintln!(
+            "corpus {}: {}/{} attributed, both implementations agree",
+            run.file_name().unwrap_or_default().to_string_lossy(),
+            names.len() - rust_unmatched.len(),
+            names.len()
         );
     }
+
 }
