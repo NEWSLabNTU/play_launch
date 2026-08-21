@@ -211,6 +211,22 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   decomposition (W3) and synthesis (W5). Study:
   [docs/research/scheduling-derivation-prior-art.md](../research/scheduling-derivation-prior-art.md).
   [phase-58-scheduling-derivation.md](./phase-58-scheduling-derivation.md).
+- **Phase 65** — 📋 mixed isolation granularity: phase 61's W3 made concrete
+  after a second vehicle hit the cost. One container, per-composable policy:
+  a short isolate list keeps fork+exec (segfault boundary, per-node OOM,
+  restart) for the nodes that need it; the rest load as threads on the paths
+  that already exist. 93 processes and ~110 DDS participants become ~8 and
+  ~34 on the motivating stack.
+  [phase-65-mixed-isolation-granularity.md](./phase-65-mixed-isolation-granularity.md).
+- **Phase 64** — 📋 a private load channel for the isolated container:
+  play_launch speaks LoadNode over rmw to its own container binary, and a
+  launch of ~150 fresh processes jams that layer exactly when load status
+  matters — one AutoSDV launch produced 14 spurious 30s LoadNode timeouts and
+  8 ComponentEvent waits, all false alarms confirmed loaded by ListNodes.
+  Both ends of the conversation are ours; a per-container unix socket retires
+  five timeout-and-fallback mechanisms on the default path, and LoadNode
+  remains for stock containers, which have no other interface.
+  [phase-64-isolated-container-ipc.md](./phase-64-isolated-container-ipc.md).
 - **Phase 63** — 📋 the duration type campaign: executing Phase 59 as a type
   change rather than a parser change, across ~455 Rust sites in two tag-pinned
   repositories. W1 (the `Duration` type, deprecated-name aliases) is built.
