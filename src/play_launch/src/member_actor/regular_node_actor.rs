@@ -86,6 +86,13 @@ pub struct RegularNodeActor {
     process_registry: Option<
         std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u32, std::path::PathBuf>>>,
     >,
+    /// Consecutive crash count since the last healthy run. This is the value
+    /// the Respawning state carries as `attempt`: both call sites used to pass
+    /// a literal 0, so `max_respawn_attempts` could never trip and every log
+    /// line read "attempt 1" however long a node had been crash-looping.
+    respawn_count: u32,
+    /// When the current child was spawned, for the healthy-uptime reset.
+    spawned_at: Option<std::time::Instant>,
 }
 
 impl RegularNodeActor {
@@ -111,6 +118,8 @@ impl RegularNodeActor {
             state_tx,
             shutdown_rx,
             process_registry,
+            respawn_count: 0,
+            spawned_at: None,
         }
     }
 
@@ -178,12 +187,14 @@ impl RegularNodeActor {
                     "[{}] Will respawn in {:.1}s",
                     log_name, self.config.respawn_delay
                 );
-                self.transition_to_respawning(None, 0).await?;
+                self.respawn_count = self.respawn_count.saturating_add(1);
+                self.transition_to_respawning(None, self.respawn_count).await?;
                 return Ok(());
             }
         };
 
         let pid = child.id().expect("Child process should have PID");
+        self.spawned_at = Some(std::time::Instant::now());
 
         // Hold the startup slot until this child has finished initialising,
         // not until spawn() returned — spawn() returns in microseconds, so
@@ -278,6 +289,20 @@ impl RegularNodeActor {
                         debug!("[{}] Unregistered PID {}", self.name, pid);
                     }
 
+                // A run that stayed up this long counts as healthy, and
+                // resets the crash streak: a node that crashes once an hour
+                // must not creep toward max_respawn_attempts forever.
+                const HEALTHY_UPTIME_SECS: u64 = 30;
+                let uptime = self.spawned_at.map(|t| t.elapsed());
+                let was_healthy =
+                    uptime.is_some_and(|d| d.as_secs() >= HEALTHY_UPTIME_SECS);
+                let clean_exit = matches!(&result, Ok(status) if status.success());
+                if was_healthy || clean_exit {
+                    self.respawn_count = 0;
+                } else {
+                    self.respawn_count = self.respawn_count.saturating_add(1);
+                }
+
                 let exit_code = match result {
                     Ok(status) => {
                         self.save_status(&status)?;
@@ -297,7 +322,8 @@ impl RegularNodeActor {
 
                 // Decide next state
                 if self.config.respawn_enabled {
-                    self.transition_to_respawning(exit_code, 0).await?;
+                    self.transition_to_respawning(exit_code, self.respawn_count)
+                        .await?;
                     Ok(true) // Continue running
                 } else {
                     self.transition_to_stopped(exit_code).await?;
@@ -386,7 +412,9 @@ impl RegularNodeActor {
             &self.state_tx,
             StateEvent::Respawning {
                 name: self.name.clone(),
-                attempt: attempt + 1,
+                // `attempt` is the crash streak, already incremented at the
+                // exit site; adding 1 here would double-count.
+                attempt,
                 delay: self.config.respawn_delay,
             },
         )
@@ -397,7 +425,7 @@ impl RegularNodeActor {
                 "[{}] Respawning in {:.1}s (attempt {})",
                 self.name,
                 self.config.respawn_delay,
-                attempt + 1
+                attempt
             );
         }
 
@@ -639,21 +667,38 @@ impl RegularNodeActor {
             writeln!(status_file, "[none]")?;
         }
 
-        // Log status
+        // Log status.
+        //
+        // A crash-looping respawn node used to print the same two ERROR lines
+        // every few seconds, indefinitely (a missing GNSS receiver produced
+        // ~26 identical pairs in two minutes). The first crash and every 10th
+        // keep the full report; the ones in between compress to a single WARN
+        // carrying the streak count. Non-respawn nodes are unchanged: their
+        // one exit report is the only notice anyone gets.
         if status.success() {
             if is_verbose() {
                 info!("[{}] Exited successfully", self.name);
             }
         } else {
-            match status.code() {
-                Some(code) => {
-                    error!("[{}] Exited with code {}", self.name, code);
-                    error!("Check {}", self.config.output_dir.display());
-                }
-                None => {
-                    error!("[{}] Exited without code", self.name);
-                    error!("Check {}", self.config.output_dir.display());
-                }
+            let code_text = match status.code() {
+                Some(code) => format!("with code {}", code),
+                None => "without code".to_string(),
+            };
+            let repeat_crash = self.config.respawn_enabled && self.respawn_count > 1;
+            if repeat_crash && self.respawn_count % 10 != 1 {
+                warn!(
+                    "[{}] Exited {} (crash {} since last healthy run)",
+                    self.name, code_text, self.respawn_count
+                );
+            } else if repeat_crash {
+                error!(
+                    "[{}] Exited {} (crash {} since last healthy run)",
+                    self.name, code_text, self.respawn_count
+                );
+                error!("Check {}", self.config.output_dir.display());
+            } else {
+                error!("[{}] Exited {}", self.name, code_text);
+                error!("Check {}", self.config.output_dir.display());
             }
         }
 
