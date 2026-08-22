@@ -1,6 +1,6 @@
 # Phase 66 — cgroup-per-container: the properties, without the container
 
-Status: **W1 in progress**. Design study, with every claim measured on the
+Status: **W1 done** (`5d8618a`). Design study, with every claim measured on the
 bench Orin (`5.15.148-tegra`, 12 cores, 61 GiB):
 [docs/design/cgroup-per-container.md](../design/cgroup-per-container.md).
 Probes are in `tmp/` (`cgroup_probe.sh`, `oom_group_probe.sh`,
@@ -52,7 +52,7 @@ re-learned (a 2x thread reduction moved peak runnable not at all).
 
 ## Work items
 
-### W1 — probe, place, account, tear down
+### W1 — probe, place, account, tear down ✅
 
 The whole mechanism, no limits. Only two visible changes: memory numbers
 become correct, and teardown becomes atomic.
@@ -83,6 +83,26 @@ become correct, and teardown becomes atomic.
 memory that matches `memory.current` rather than a sum of RSS; the same launch
 from a plain terminal behaves identically to today and says so once; no test
 requires delegation to pass.
+
+**Result.** Met, on a live 6-composable container. `metrics.csv` recorded
+173344 kB where the group was charged 82172 kB — **210% of truth** — and now
+records 80120–80292 kB against a live `memory.current` of 80168 kB. Seven
+members landed in the container's group with no change to
+`play_launch_container`, and `cgroup.kill` reached the grandchildren.
+
+Two defects that measurement caught, both of which would have shipped as
+silent wrongness rather than as errors:
+
+- **`cgroup.subtree_control` is enabled one level at a time.** The tree is two
+  deep, so enabling `+memory` on the root alone left the leaf with no
+  controllers — surfacing not as a failure but as `memory.current: 0` on a
+  group with seven live members. The intermediate level now enables its own,
+  and `memory_current()` treats a zero charge as *absent* rather than as a
+  memory figure: replacing an over-count with an under-count is worse than
+  either.
+- **Availability is not readable, only probeable.** A login shell and a
+  `systemd-run --user --scope` both report `memory pids` and differ only on
+  whether `mkdir` succeeds.
 
 ### W2 — limits and the failure model
 
