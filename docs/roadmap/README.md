@@ -211,7 +211,21 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   decomposition (W3) and synthesis (W5). Study:
   [docs/research/scheduling-derivation-prior-art.md](../research/scheduling-derivation-prior-art.md).
   [phase-58-scheduling-derivation.md](./phase-58-scheduling-derivation.md).
-- **Phase 65** — 📋 mixed isolation granularity: phase 61's W3 made concrete
+- **Phase 66** — 🚧 cgroup-per-container: `isolated` already surrendered
+    everything that makes a ROS container a container (shared address space,
+    shared executor, one participant); cgroup v2 gives the resource and
+    lifecycle half back to separate processes, and gives it back **better** —
+    `memory.oom.group` turns the failure model into a per-container choice
+    (`=1` all members die together, `=0` only the offender does) where both a
+    real container and plain processes each give you one row and no say. The
+    grouping needs no new config: the launch file already names each
+    composable's target container, and a composable inherits its container's
+    cgroup at fork, so per-container grouping costs **zero** changes to
+    `play_launch_container`. Also fixes a wrong number — summing child RSS
+    over-counts shared pages **2.4x**. Explicitly no performance claim: process
+    count, thread count and runqueue depth are untouched.
+    [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 65** — 📋 mixed isolation granularity: phase 61's W3 made concrete
   after a second vehicle hit the cost. One container, per-composable policy:
   a short isolate list keeps fork+exec (segfault boundary, per-node OOM,
   restart) for the nodes that need it; the rest load as threads on the paths
