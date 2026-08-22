@@ -1,3 +1,4 @@
+pub mod cgroup;
 pub mod context;
 pub mod cpuset;
 pub mod node_cmdline;

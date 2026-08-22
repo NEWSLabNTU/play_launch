@@ -77,6 +77,19 @@ pub struct ComposableNodeContext {
     pub model_fqn: Option<String>,
 }
 
+/// The cgroup handle for one member, or `None` when grouping is unavailable.
+///
+/// Failing to create a group is never fatal: the member spawns ungrouped, and
+/// the only loss is accounting.
+fn member_cgroup(
+    tree: Option<&super::cgroup::CgroupTree>,
+    kind: super::cgroup::GroupKind,
+    dir_name: &str,
+) -> Option<super::cgroup::CgroupHandle> {
+    let path = tree?.group_for(kind, dir_name)?;
+    super::cgroup::CgroupHandle::new(&path)
+}
+
 /// The context contains all essential data to execute a ROS node.
 pub struct NodeContext {
     pub record: NodeRecord,
@@ -84,6 +97,13 @@ pub struct NodeContext {
     pub output_dir: PathBuf,
     /// See [`ComposableNodeContext::model_fqn`].
     pub model_fqn: Option<String>,
+    /// Phase 66 — the cgroup this member joins between `fork()` and `exec()`.
+    /// `None` whenever grouping is unavailable, which is the ordinary case:
+    /// play_launch started from a terminal cannot create cgroups.
+    ///
+    /// A container's handle covers its composables too — they are forked by
+    /// the container and inherit its group.
+    pub cgroup: Option<super::cgroup::CgroupHandle>,
 }
 
 impl NodeContext {
@@ -93,6 +113,7 @@ impl NodeContext {
             cmdline,
             output_dir,
             model_fqn: _,
+            cgroup,
         } = self;
 
         // Raw executables (from <executable> tags) have no package or exec_name.
@@ -115,7 +136,8 @@ impl NodeContext {
         let stdout_file = File::create(stdout_path)?;
         let stderr_file = File::create(&stderr_path)?;
 
-        let mut command: tokio::process::Command = cmdline.to_command(false, pgid).into();
+        let mut command: tokio::process::Command =
+            cmdline.to_command(false, pgid, cgroup.clone()).into();
 
         command.kill_on_drop(true);
         command.stdin(Stdio::null());
@@ -253,6 +275,8 @@ pub fn prepare_node_contexts(
                 cmdline,
                 output_dir,
                 model_fqn: None,
+                // `run` spawns a single node and builds no cgroup tree.
+                cgroup: None,
             })
         })
         .collect();
@@ -312,6 +336,7 @@ fn dedup_model_dir_names(entries: &[(&String, &model::NodeInstance)]) -> Vec<Str
 pub fn prepare_node_contexts_from_model(
     system_model: &model::SystemModel,
     node_log_dir: &Path,
+    cgroups: Option<&super::cgroup::CgroupTree>,
 ) -> eyre::Result<Vec<NodeContext>> {
     let entries: Vec<(&String, &model::NodeInstance)> = system_model
         .structure
@@ -351,6 +376,7 @@ pub fn prepare_node_contexts_from_model(
             cmdline,
             output_dir,
             model_fqn: Some((*fqn).clone()),
+            cgroup: member_cgroup(cgroups, super::cgroup::GroupKind::Node, dir_name),
         });
     }
 
@@ -366,6 +392,7 @@ pub fn prepare_container_contexts_from_model(
     system_model: &model::SystemModel,
     container_log_dir: &Path,
     container_mode: ContainerMode,
+    cgroups: Option<&super::cgroup::CgroupTree>,
 ) -> eyre::Result<Vec<NodeContainerContext>> {
     let entries: Vec<(&String, &model::NodeInstance)> = system_model
         .structure
@@ -453,6 +480,7 @@ pub fn prepare_container_contexts_from_model(
                 cmdline,
                 output_dir,
                 model_fqn: Some((*fqn).clone()),
+                cgroup: member_cgroup(cgroups, super::cgroup::GroupKind::Container, dir_name),
             },
         });
     }

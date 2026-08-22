@@ -133,10 +133,14 @@ pub struct ResourceMonitor {
     // Subprocess PID cache -- refreshed by time interval (process trees are stable in steady-state)
     subprocess_cache: HashMap<u32, Vec<u32>>, // parent PID -> child PIDs
     subprocess_cache_last_refresh: std::time::Instant,
+    /// Phase 66 — the cgroup tree root, when play_launch owns one. Its presence
+    /// switches memory accounting from a sum of per-process RSS to the group's
+    /// own charge, which counts shared pages once instead of once per process.
+    cgroup_root: Option<PathBuf>,
 }
 
 impl ResourceMonitor {
-    pub fn new(nvml: Option<Nvml>) -> Result<Self> {
+    pub fn new(nvml: Option<Nvml>, cgroup_root: Option<PathBuf>) -> Result<Self> {
         // Use System::new() instead of new_all() to avoid loading everything upfront
         // We'll refresh only the processes we need in the monitoring loop
 
@@ -198,6 +202,7 @@ impl ResourceMonitor {
             net_connections_cache: None,
             subprocess_cache: HashMap::new(),
             subprocess_cache_last_refresh: std::time::Instant::now(),
+            cgroup_root,
         })
     }
 
@@ -241,6 +246,20 @@ impl ResourceMonitor {
                 io_write_bytes += child_disk.total_written_bytes;
                 num_threads += child_process.tasks().map(|t| t.len() as u32).unwrap_or(1);
             }
+        }
+
+        // Phase 66 — the sum above counts every shared page once per process,
+        // and under `--container-mode isolated` a container's children are all
+        // the same `component_node` binary plus the same rclcpp/rmw/DDS
+        // libraries. Measured across six far-less-shared processes: 49660 kB
+        // summed against 20644 kB actually charged, 2.4x. The cgroup's own
+        // figure counts shared pages once and covers exactly this process and
+        // its descendants, so it replaces the sum rather than adjusting it.
+        if let Some(root) = &self.cgroup_root
+            && let Some(charged) =
+                crate::execution::cgroup::CgroupTree::memory_current_for_pid(root, pid)
+        {
+            rss_bytes = charged;
         }
 
         // Count open file descriptors (Linux-specific)
@@ -410,10 +429,11 @@ pub async fn run_monitoring_task(
     nvml: Option<Nvml>,
     mut shutdown_rx: watch::Receiver<bool>,
     metrics_broadcaster: Option<Arc<crate::web::SystemMetricsBroadcaster>>,
+    cgroup_root: Option<PathBuf>,
 ) -> Result<()> {
     debug!("Starting async monitoring task...");
 
-    let mut monitor = ResourceMonitor::new(nvml)?;
+    let mut monitor = ResourceMonitor::new(nvml, cgroup_root)?;
 
     // Try to spawn I/O helper (already in async context, no nested runtime!)
     match super::io_helper_client::IoHelperClient::spawn().await {

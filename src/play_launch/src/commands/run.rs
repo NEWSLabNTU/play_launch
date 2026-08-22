@@ -185,6 +185,7 @@ async fn run_direct(
             nvml,
             shutdown_rx.clone(),
             None, // No metrics broadcaster in run mode
+            None, // `run` spawns a single node and builds no cgroup tree
         ));
 
         debug!("Monitoring task spawned successfully");

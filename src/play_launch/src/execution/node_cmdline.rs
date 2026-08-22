@@ -787,7 +787,16 @@ impl NodeCommandLine {
     }
 
     /// Create a command object.
-    pub fn to_command(&self, long_args: bool, pgid: Option<i32>) -> Command {
+    /// `cgroup` is prepared before the fork so the child's placement is a
+    /// signal-safe `open`/`write`/`close` — see [`super::cgroup`]. `None` is
+    /// the ordinary case: play_launch started from a terminal cannot create
+    /// cgroups at all.
+    pub fn to_command(
+        &self,
+        long_args: bool,
+        pgid: Option<i32>,
+        cgroup: Option<super::cgroup::CgroupHandle>,
+    ) -> Command {
         let cmdline = self.to_cmdline(long_args);
         let (program, args) = cmdline
             .split_first()
@@ -826,9 +835,15 @@ impl NodeCommandLine {
             // told the kernel that the 144 processes which had just appeared
             // were the ones that could be sacrificed.
             unsafe {
-                command.pre_exec(|| {
+                command.pre_exec(move || {
                     nix::sys::prctl::set_pdeathsig(nix::sys::signal::Signal::SIGKILL)
                         .map_err(std::io::Error::other)?;
+                    // Phase 66: join this member's cgroup before exec. Placement
+                    // must happen at birth — moving a running process into a
+                    // sibling group is EPERM (the common-ancestor rule).
+                    if let Some(cg) = &cgroup {
+                        cg.join();
+                    }
                     bias_oom_score();
                     Ok(())
                 });
@@ -1059,7 +1074,7 @@ mod tests {
             enclave: None,
             env: HashMap::new(),
         };
-        let _ = cmdline.to_command(false, None);
+        let _ = cmdline.to_command(false, None, None);
     }
 
     #[test]

@@ -175,6 +175,16 @@ pub(crate) async fn play(
     let cleanup_guard = CleanupGuard::new();
     debug!("CleanupGuard installed");
 
+    // Phase 66 — one cgroup per node and per container, so memory is accounted
+    // where it is actually spent. Probed before anything spawns, because the
+    // monitor needs the root and every member needs its group at fork time.
+    // `None` whenever the cgroup subtree is not ours to write, which is the
+    // ORDINARY case: play_launch started from a terminal cannot create
+    // cgroups, and the launch is identical either way. Dropping it at the end
+    // of `play()` removes the tree.
+    let cgroups = crate::execution::cgroup::CgroupTree::probe();
+    let cgroup_root = cgroups.as_ref().map(|t| t.root().to_path_buf());
+
     // Spawn anchor process task to allocate PGID (Phase 4: async task with shutdown)
     #[cfg(unix)]
     let (pgid_tx, pgid_rx) = tokio::sync::oneshot::channel();
@@ -405,6 +415,7 @@ pub(crate) async fn play(
             nvml,
             shutdown_signal.clone(),
             metrics_broadcaster.clone(),
+            cgroup_root.clone(),
         ));
 
         Some(task)
@@ -488,13 +499,15 @@ pub(crate) async fn play(
     // uses the LaunchDump-sourced `prepare_node_contexts`.)
     debug!("Preparing node execution contexts...");
     info!("Spawn source: SystemModel (structure.nodes)");
-    let mut pure_node_contexts = prepare_node_contexts_from_model(&system_model, &node_log_dir)?;
+    let mut pure_node_contexts =
+        prepare_node_contexts_from_model(&system_model, &node_log_dir, cgroups.as_ref())?;
 
     debug!("Preparing container execution contexts...");
     let mut container_contexts = prepare_container_contexts_from_model(
         &system_model,
         &node_log_dir,
         common.containers.container_mode,
+        cgroups.as_ref(),
     )?;
 
     // Prepare LoadNode request execution contexts
