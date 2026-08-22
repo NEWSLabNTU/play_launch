@@ -64,8 +64,50 @@ install-deps:
     rosdep update
     rosdep install --from-paths src --ignore-src -r -y
 
+# Refuse to build against a submodule that is not the one the superproject pins.
+#
+# A stale submodule does not fail loudly. It builds, installs, and produces a
+# binary whose source is a commit behind — so a feature the Rust side now
+# depends on is simply absent, and the tests that exercise it fail with
+# ordinary-looking assertion errors that point anywhere but here. That is how
+# five phase-64 tests were misread as a defect on `main`: the container had
+# been bumped by a pull, the checkout had not, and `just build` said nothing.
+#
+# Same shape as the stale pip install of issue #0020 and the silently dropped
+# capability of #0015 — the artifact looks right and behaves wrong.
+#
+# Deliberately refuses rather than updating: a `git submodule update` would
+# discard work in a submodule someone is mid-edit on, which is a worse failure
+# than the one it prevents. Set SKIP_SUBMODULE_CHECK=1 when the mismatch is
+# intentional.
+check-submodules:
+    #!/usr/bin/env bash
+    set -e
+    if [ -n "${SKIP_SUBMODULE_CHECK:-}" ]; then
+        echo "submodules: check skipped (SKIP_SUBMODULE_CHECK set)"
+        exit 0
+    fi
+    # `git submodule status` marks a mismatch in column 1: '+' checked out at a
+    # different commit, '-' not initialized, 'U' conflicted. A space means it
+    # matches the pin.
+    bad=$(git submodule status --recursive | grep -E '^[+-U]' || true)
+    if [ -n "$bad" ]; then
+        echo "error: submodule(s) do not match the commit this repo pins:" >&2
+        echo "$bad" | sed 's/^/  /' >&2
+        echo "" >&2
+        echo "  '-' not initialized   '+' at a different commit   'U' conflicted" >&2
+        echo "" >&2
+        echo "Building now would compile a DIFFERENT source than the one the" >&2
+        echo "Rust side expects, and the tests would fail somewhere unrelated." >&2
+        echo "" >&2
+        echo "  git submodule update --init --recursive" >&2
+        echo "" >&2
+        echo "If the mismatch is intentional, set SKIP_SUBMODULE_CHECK=1." >&2
+        exit 1
+    fi
+
 # Full build: colcon + bundle + wheel
-build:
+build: check-submodules
     #!/usr/bin/env bash
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
@@ -109,7 +151,7 @@ build:
     fi
 
 # C++ only (msgs + container)
-build-cpp:
+build-cpp: check-submodules
     #!/usr/bin/env bash
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
