@@ -275,6 +275,72 @@ When mode is not `stock`, `prepare_container_contexts()` in `src/execution/conte
 
 See `tests/fixtures/autoware/autoware_config.yaml` for an example config (not exhaustive — full field reference: `src/play_launch/src/cli/config.rs`).
 
+**cgroup limits** (`cgroups` config section, phase 66, default: no limits):
+```yaml
+cgroups:
+  limits:                          # first match wins; globs over node FQNs
+    - match: ["/perception/**"]
+      memory_high_mb: 4096         # -> memory.high  (throttle by reclaim)
+      memory_max_mb: ~             # -> memory.max   (hard, ends in OOM)
+      pids_max: 2048               # -> pids.max     (tasks incl. threads)
+      oom_group: true              # -> memory.oom.group
+```
+
+One cgroup v2 group per node and per container, derived from the launch file's
+own structure — a composable names its target container, that IS the group, and
+since the C++ container forks its composables they inherit it, so per-container
+grouping costs **zero** changes to `play_launch_container`.
+
+- Needs delegation, and that **cannot be read off the cgroup path or the
+  controller list** — a login shell and a `systemd-run --user --scope` both
+  report `memory pids` and differ only on whether `mkdir` succeeds, so
+  `execution/cgroup.rs::probe` attempts it, the way `cpuset.rs` probes the RT
+  partition by readback. Started from a terminal play_launch cannot create
+  cgroups at all, making **unavailable the DEFAULT path**: it degrades to
+  exactly the previous behaviour and logs nothing. A user who configured
+  `cgroups.limits` and cannot get them IS warned — configured intent is never
+  dropped in silence.
+- **Fixes a number that was wrong in `metrics.csv` and the web UI.**
+  `resource_monitor.rs` summed a container's RSS with each child's, counting
+  every shared page once per process — and under `isolated` the children are all
+  the same `component_node` binary plus the same rclcpp/rmw/DDS libraries.
+  Measured on one six-composable container: **173344 kB reported vs 82172 kB
+  charged, 210% of truth**. `memory.current` on the group replaces the loop.
+  (Phase 61's headline figures are unaffected — those came from `MemAvailable`
+  deltas, which count shared pages once.)
+- `memory.high` (throttle by reclaim), `memory.max` (hard, ends in OOM),
+  `pids.max`, and **`memory.oom.group`** — the bit deciding whether a container
+  is a FAULT UNIT. `1` and an OOM kills every member together, which is what a
+  real ROS container does whether or not anyone chose it; `0` and only the
+  offender dies, which is what `isolated` forks to buy. Neither a real container
+  nor plain processes offers the choice. Measured:
+  `oom.group=1 bystander=dead` / `oom.group=0 bystander=ALIVE`. Memory only — a
+  segfault is contained to one process either way.
+- Limits are written BEFORE the member is forked in; applied after, there is a
+  window the process spent without them, and for `memory.max` that window is
+  exactly when a constructor allocates most. Placement is at birth through the
+  `pre_exec` hook that already writes `oom_score_adj`, writing `"0"` (cgroup v2
+  reads it as "the calling process", so no integer formatting after `fork()`) —
+  migrating a running process into a sibling group is `EPERM`, the
+  common-ancestor rule `cpuset.rs` documents.
+- `cgroup.subtree_control` is enabled ONE LEVEL AT A TIME; the tree is two deep,
+  and enabling `+memory` only at the root leaves the leaf reading
+  `memory.current: 0` with live members — a plausible value, not an error, so
+  `memory_current()` treats a zero charge as ABSENT.
+- `memory.events` counters are reported at shutdown for groups whose counters
+  moved, and only those. **No performance claim**: process count, thread count
+  and runqueue depth are untouched, and phase 61 measured process count as the
+  driver of the startup storm.
+- `cpu`/`io`/`cpuset` are enabled at the cgroup root and dropped at
+  `user.slice`; a root-side `Delegate=cpu cpuset io memory pids` drop-in for
+  `user@.service` would grant them (phase 66 W4). **PSI is absent from
+  `5.15.148-tegra` entirely** (`/proc/pressure` does not exist), so nothing may
+  be built on `memory.pressure` without a fallback — it would work on a desktop
+  and degrade silently on the target.
+- Guide: `docs/guide/edge-machines.md`. Design:
+  `docs/design/cgroup-per-container.md`. Roadmap:
+  `docs/roadmap/phase-66-cgroup-per-container.md`.
+
 **Interception** (`interception` config section, default: disabled):
 - `enabled: true` — inject `LD_PRELOAD` interception .so into all child processes
 - `frontier: true` — enable per-topic timestamp frontier tracking

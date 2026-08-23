@@ -112,6 +112,149 @@ startup:
   # min_available_mb: ~    # default: 1 GiB, capped at RAM/4
 ```
 
+## Bounding a container, and choosing what a failure takes with it
+
+Everything above is best-effort: `oom_score_adj` volunteers a victim, the
+memory floor delays a spawn. Neither is a limit. cgroup v2 gives you real ones,
+per container, plus something a ROS container cannot offer at all — a choice
+about **what a failure destroys**.
+
+### It costs no configuration, and one wrapper
+
+The grouping needs nothing from you. Your launch file already says which
+composables belong to which container, and that *is* the group: play_launch
+creates a cgroup per node and per container, and because the container forks
+its composables, they land in its group automatically.
+
+What it does need is somewhere it is allowed to create cgroups. A login shell
+lives in a `session-N.scope` that systemd owns and no ordinary user can write,
+so started normally, play_launch cannot do any of this and says nothing about
+it. Start it inside a scope of your own and it can:
+
+```bash
+systemd-run --user --scope play_launch up system_model.yaml
+```
+
+You will see one line confirming it:
+
+```
+INFO cgroups: per-container grouping active under /sys/fs/cgroup/user.slice/...
+```
+
+Two things improve immediately, with no config at all:
+
+- **Per-container memory becomes correct.** play_launch used to report a
+  container's memory by summing its own RSS with each composable's, which counts
+  every shared page once per process — and under `--container-mode isolated`
+  every child is the same `component_node` binary plus the same rclcpp/rmw/DDS
+  libraries. Measured on one six-composable container: **173 344 kB reported
+  against 82 172 kB actually charged, 210% of truth.** The group's own figure
+  counts shared pages once.
+- **Teardown becomes atomic.** `cgroup.kill` removes every member at once,
+  including a composable whose container died first — which a process-group kill
+  can miss.
+
+### Limits, if you want them
+
+```yaml
+cgroups:
+  limits:
+    - match: ["/perception/**"]
+      memory_high_mb: 4096
+      oom_group: true
+    - match: ["**"]
+      pids_max: 2048
+```
+
+Globs match node FQNs, exactly like `startup.order`, and the **first matching
+rule wins** — put the specific pattern above the general one. Everything
+defaults unset, deliberately: a wrong `memory_max_mb` turns a slow launch into a
+killed one, and the right number is a property of your vehicle that nobody else
+can guess.
+
+**Prefer `memory_high_mb` to `memory_max_mb`.** `high` is a throttle: exceeding
+it puts the group under reclaim pressure and slows it down, and nothing is
+killed. `max` is a hard ceiling that ends in an OOM. `high` is the principled
+version of what `oom_score_adj` gropes at — instead of nominating a victim in
+advance, you make the launch yield memory rather than take it.
+
+`pids_max` bounds tasks including threads. A ROS node is 11–22 threads measured,
+so a ten-composable container is a couple of hundred; the ceiling turns runaway
+thread creation into a clean `EAGAIN` instead of a board you cannot log into.
+
+### `oom_group` — the setting worth thinking about
+
+This one decides whether a container is a **fault unit**.
+
+| | what an OOM kills |
+|---|---|
+| `oom_group: false` *(default)* | only the offending process |
+| `oom_group: true` | every member of the container, together |
+
+Neither a real ROS container nor plain separate processes lets you choose. A ROS
+container shares one address space, so its composables die together whether or
+not that was anyone's intent; `--container-mode isolated` forks a process each,
+so they die alone. This is the choice made explicit.
+
+The default is `false`, because per-node survival is what isolation is *for*.
+Set `true` where partial survival is the more dangerous outcome — a pipeline
+container that loses one stage keeps publishing stale data or nothing at all,
+and a supervisor will restart a dead thing while never noticing a degraded one.
+A clean failure you can see beats a quiet one you cannot.
+
+Note this is about **memory** only. A segfault is still contained to one process
+either way; no cgroup setting changes that.
+
+### What it reports
+
+At shutdown, any group whose memory counters moved is named — and only those,
+because a line of zeroes per container per launch is how a real signal gets
+scrolled past:
+
+```
+WARN cgroups: container mt_container: hit memory.max 139x
+```
+
+Those are the kernel's own counters, not an inference. A throttle is reported at
+INFO (the limit holding the line); a refused allocation or a kill at WARN (the
+kernel having already acted).
+
+That example is also worth reading as a warning about `max`: 139 refusals and
+**zero** kills. The kernel reclaimed instead, because those composables held
+little anonymous memory. `memory.max` throttles well before it kills — which is
+another reason to reach for `memory_high_mb` first.
+
+### If you configure limits and they do not apply
+
+You get told:
+
+```
+WARN cgroups.limits: 2 rule(s) configured but NONE were applied — play_launch
+cannot create cgroups here. Start it under `systemd-run --user --scope`.
+```
+
+Configured limits are never dropped silently. If you configured nothing and
+grouping is unavailable, play_launch says nothing at all — that is the ordinary
+case and not worth a line on every launch.
+
+### What this does not do
+
+It does not make the launch faster or lighter. Process count, thread count and
+runqueue depth are untouched, and on this hardware the process count is what
+dominates — see the container-mode decision at the top of this page. What you
+get here is accounting that is correct, teardown that is atomic, and limits that
+exist.
+
+CPU limits (`cpu.weight`, `cpu.max`) are **not** available: systemd delegates
+only `memory` and `pids` to a user session by default. Enabling them needs a
+root-side drop-in:
+
+```ini
+# /etc/systemd/system/user@.service.d/delegate.conf
+[Service]
+Delegate=cpu cpuset io memory pids
+```
+
 ## Pacing the startup
 
 There is a concurrency limit, and it is **off by default because it was measured
@@ -290,4 +433,14 @@ composable_node_loading:
   stall_cpu_threshold_pct: 1.0
   stall_action: report                 # report | fail | restart
   composable_respawn: off              # off | on-crash
+
+cgroups:
+  # Inert unless play_launch can create cgroups — start it under
+  # `systemd-run --user --scope`. First matching rule wins.
+  limits: []
+    # - match: ["/perception/**"]   # globs over node FQNs, as in startup.order
+    #   memory_high_mb: 4096        # throttle by reclaim; nothing is killed
+    #   memory_max_mb: ~            # hard ceiling, ends in an OOM. Prefer high.
+    #   pids_max: 2048              # tasks including threads
+    #   oom_group: false            # true = the container dies as a unit
 ```
