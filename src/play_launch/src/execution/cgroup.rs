@@ -248,6 +248,40 @@ impl CgroupTree {
         Self::memory_current(&group)
     }
 
+    /// Freeze or thaw every task in the group — phase 66 W3.
+    ///
+    /// A frozen task is stopped in the kernel: it runs no code, so a frozen
+    /// node cannot publish, cannot construct, and cannot answer a service. That
+    /// is stronger than any cooperative hold, and it is why this is interesting
+    /// for staged startup — but it also means freezing a node BEFORE it has
+    /// constructed simply defers the construction, which is what holding the
+    /// spawn already does.
+    ///
+    /// Returns whether the write landed. Freezing is best-effort by design: a
+    /// launch must not fail because a hold could not be applied, and the
+    /// fallback is the behaviour of a system that never froze anything.
+    pub fn set_frozen(group: &Path, frozen: bool) -> bool {
+        let value = if frozen { "1\n" } else { "0\n" };
+        std::fs::write(group.join("cgroup.freeze"), value).is_ok()
+    }
+
+    /// Whether the kernel reports the group as frozen.
+    ///
+    /// Read from `cgroup.events` rather than echoing back what was written:
+    /// freezing is asynchronous — the write returns before every task has
+    /// stopped — so the request and the state are different facts. A caller
+    /// that needs "is it actually stopped" must ask, and this is what asking
+    /// looks like.
+    pub fn is_frozen(group: &Path) -> Option<bool> {
+        let text = std::fs::read_to_string(group.join("cgroup.events")).ok()?;
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("frozen ") {
+                return Some(rest.trim() == "1");
+            }
+        }
+        None
+    }
+
     /// Kill every process in the group, atomically.
     ///
     /// Reaches grandchildren, which is the point: a composable whose container
@@ -682,6 +716,48 @@ mod tests {
             !s.contains("memory.max"),
             "silent about what did not happen: {s}"
         );
+    }
+
+    /// Freeze is asynchronous, so the request and the state are different
+    /// facts — `set_frozen` returning true says the write landed, not that
+    /// every task has stopped. This exercises the real kernel interface where
+    /// one is available, and skips where it is not rather than asserting a
+    /// capability the host may genuinely lack.
+    ///
+    /// Phase 66 W3 measured the DDS consequence separately
+    /// (`tmp/freeze_discovery.sh`): a 90 s freeze recovers in ~225 ms with no
+    /// message loss beyond the frozen interval.
+    #[test]
+    fn freeze_and_thaw_round_trip_when_the_kernel_allows_it() {
+        let Some(tree) = CgroupTree::probe() else {
+            // The ordinary case — see the module doc. Not a failure.
+            return;
+        };
+        let Some(group) = tree.group_for(GroupKind::Node, "freeze_probe") else {
+            return;
+        };
+
+        // An empty group still reports a freezer state, which is what makes
+        // this checkable without spawning anything.
+        assert_eq!(
+            CgroupTree::is_frozen(&group),
+            Some(false),
+            "a fresh group must not start frozen"
+        );
+
+        if !CgroupTree::set_frozen(&group, true) {
+            return; // no freezer on this kernel; nothing to assert
+        }
+        assert_eq!(CgroupTree::is_frozen(&group), Some(true));
+
+        assert!(CgroupTree::set_frozen(&group, false));
+        assert_eq!(
+            CgroupTree::is_frozen(&group),
+            Some(false),
+            "thaw must be observable, or a held stage could never be released"
+        );
+
+        let _ = std::fs::remove_dir(&group);
     }
 
     /// Probing must never panic or block, whatever the host looks like. On a
