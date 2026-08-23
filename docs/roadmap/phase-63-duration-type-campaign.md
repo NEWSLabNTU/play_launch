@@ -1,7 +1,6 @@
 # Phase 63 — the duration type campaign
 
-**Status:** 📋 planned. Foundation built (`ros-launch-manifest` `ca027aa`,
-unpushed).
+**Status:** 🚧 W1–W5 landed; W6 (sunset) blocked on nano-ros and Autoware.
 **Executes:** [Phase 59](./phase-59-timing-vocabulary.md), which decided the
 vocabulary. This decides how to land it.
 **Spans:** `ros-launch-manifest`, `play_launch`, and every contract on disk.
@@ -107,7 +106,7 @@ An earlier revision of this wave introduced a second type
 (`sched::compat::PlatformDuration`) to paper over the mechanism split. Two
 types for one concept was the wrong answer and it was removed in `913e945`.
 
-### W2 — migrate the manifest repo's own fields (platform half ✅ `4e922a3`)
+### W2 — migrate the manifest repo's own fields ✅ (`4e922a3`, `ca6936b`, `83f981b`)
 
 Struct fields become `Duration`, `parse.rs` uses `yaml_duration`, the 112
 arithmetic sites become explicit conversions. Internal to one repo, no tag
@@ -132,6 +131,17 @@ carrying into the contract half:
 - **`ResolvedTier` was left speaking microseconds on purpose.** It is the wire
   to play_launch and nano-ros, so both sides move together in W4 under one tag;
   converting at that seam is what keeps this wave inside one repository.
+
+**One field was missed, and the miss shipped a broken verb.** This wave scoped
+its platform half to fields it believed "the v2 schema has none of" — true of
+`TierDef`, false of `PosixOverride::budget_us`, which is the field an
+integrator authors and the one `play_launch measure` writes. The two shared a
+name and a meaning while sitting on opposite sides of that assumption, so
+migrating one read as migrating both. Result: `measure` emitted
+`budget: 8000us` and the loader answered `unknown field \`budget\`` under
+`deny_unknown_fields` — the whole output unusable, not an edge case. Fixed in
+`v0.1.10` (`83f981b`); `PosixResources::rr_timeslice_us` is the last
+un-migrated field on that surface, and nothing emits it.
 
 ### W3 — emit and lint
 
