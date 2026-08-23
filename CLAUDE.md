@@ -386,6 +386,58 @@ shows up as harmless `[[patch.unused]]` churn in
 `src/ros-launch-resolve/Cargo.lock`. Discard it; run the gate with
 `--standalone` for a clean-clone-equivalent check.
 
+### Submodules
+
+Five submodules, all owned by us (`NEWSLabNTU/play_launch_container`,
+`NEWSLabNTU/play_launch_msgs`, and three `jerry73204/` vendored forks). Two
+rules, in order.
+
+**1. Push the submodule commit BEFORE the superproject pins it.** A pin naming
+an unpushed commit is a repository that only builds on the machine that made
+it: every clone and every CI run fails at
+`git submodule update` with `reference is not a tree`, and the superproject
+commit that introduced it has to be rewritten or reverted, because a pin cannot
+point at nothing. Order is: commit in the submodule, push it, *then* stage the
+new pointer in the superproject and push that.
+
+Verify before pinning — a commit is pushed when a remote branch contains it:
+
+```bash
+git submodule foreach --quiet 'git fetch -q origin; sha=$(git rev-parse HEAD);
+  git branch -r --contains $sha | grep -q . \
+    && echo "$name  $sha  pushed" \
+    || echo "$name  $sha  *** NOT PUSHED — do not pin ***"'
+```
+
+**We own every one of these repos, so a fast-forward push to the tracking
+branch is ours to make** — no PR round-trip. The tracking branch is not always
+`main`: `src/vendor/ros2_rust` tracks `origin/play_launch`, and
+`rosidl_runtime_rs` carries a `play_launch` branch too. Check what the checkout
+is actually on before pushing, and fast-forward only — a force-push to a branch
+an older superproject commit pins breaks that commit's build forever.
+
+**2. `just check-submodules` refuses; it never updates.** It reads column 1 of
+`git submodule status` (`+` different commit, `-` uninitialized, `U`
+conflicted) and gates `build` and `build-cpp`. It deliberately does NOT run
+`git submodule update`, because that would discard work in a submodule someone
+is mid-edit on — a worse failure than the one it prevents. Updating is always
+an explicit, human `git submodule update --init --recursive`.
+`SKIP_SUBMODULE_CHECK=1` when a mismatch is intentional.
+
+The check exists because a stale submodule fails *quietly*: it builds, it
+installs, and the binary is simply a commit behind, so a feature the Rust side
+depends on is absent and the tests exercising it fail with ordinary-looking
+assertions pointing anywhere but at the cause. Five phase-64 `load_policy`
+tests were misread as a defect on `main` this way — `git pull` had moved the
+`play_launch_container` pin onto the private-control-channel commit and the
+local checkout stayed one behind. Worse, the wrong conclusion survived a check
+that looked rigorous: stashing local changes and re-running "at baseline"
+reproduced the same failures, which read as proof they were pre-existing. It
+only proved the submodule was stale in both states. **A comparison is only as
+good as the thing held constant.** Same family as issue #0020 (a stale pip
+install shadowing the real one) and #0015 (a capability dropped by a rebuild):
+the artifact looks right and behaves wrong.
+
 ### Process Management
 - **NEVER** `kill -9` individual processes — kill the process group (PGID):
   ```bash
