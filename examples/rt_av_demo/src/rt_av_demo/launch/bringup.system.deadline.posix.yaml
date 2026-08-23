@@ -27,7 +27,7 @@ resources:
   # This host's global SCHED_RR slice, so the mapper can judge whether RR is
   # worth deriving for a priority tie. Read from
   # /proc/sys/kernel/sched_rr_timeslice_ms — not assumed.
-  rr_timeslice_us: 100000
+  rr_timeslice: 100ms
 
 overrides:
   # THE COSTS. Unusually for this field, these are not estimates: each node
@@ -46,9 +46,9 @@ overrides:
   # the kernel's default 95% RT bandwidth ceiling. Admission control accepts
   # that with room; raise the burns far enough and it will refuse, which is
   # itself worth seeing.
-  lidar_driver:      { budget_us: 2000 }
-  obstacle_detector: { budget_us: 8000 }
-  brake_controller:  { budget_us: 3000 }
+  lidar_driver:      { budget: 2ms }
+  obstacle_detector: { budget: 8ms }
+  brake_controller:  { budget: 3ms }
 
   # Best-effort work stays explicitly out of the real-time band, exactly as in
   # the fifo arm. Under `reservations: required` this matters more, not less:

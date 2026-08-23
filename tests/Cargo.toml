@@ -73,7 +73,7 @@ libc = "0.2"
 # `testdata` exposes `fixture_dir()`. `manifest_check.rs` drives the CLI
 # against the manifest repository's checker fixtures; phase-55 W2 made that a
 # git dependency, so only the owning crate can name their path.
-ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.10", features = ["testdata"] }
+ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.11", features = ["testdata"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"

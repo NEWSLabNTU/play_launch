@@ -140,8 +140,12 @@ name and a meaning while sitting on opposite sides of that assumption, so
 migrating one read as migrating both. Result: `measure` emitted
 `budget: 8000us` and the loader answered `unknown field \`budget\`` under
 `deny_unknown_fields` — the whole output unusable, not an edge case. Fixed in
-`v0.1.10` (`83f981b`); `PosixResources::rr_timeslice_us` is the last
-un-migrated field on that surface, and nothing emits it.
+`v0.1.10` (`83f981b`). `PosixResources::rr_timeslice` followed in `v0.1.11`
+(`ce0b918`) — worth migrating despite nothing emitting it, because the field's
+whole job is to be compared against a node's period to decide whether SCHED_RR
+is worth deriving. A factor-of-1000 slip there does not crash; it quietly
+changes the answer, and `100ms` says out loud what `100000` only implies.
+**The v2 platform surface now carries no `_us` field.**
 
 ### W3 — emit and lint
 

@@ -1291,7 +1291,7 @@ fn describe_map_warning(w: &MapWarning) -> String {
                     *slice as f64 / 1000.0,
                     *period as f64 / 1000.0
                 ),
-                (None, _) => "the platform file does not declare `resources.rr_timeslice_us`, \
+                (None, _) => "the platform file does not declare `resources.rr_timeslice`, \
                               so the host's slice is unknown — it is not assumed to be the \
                               100ms default"
                     .to_string(),
