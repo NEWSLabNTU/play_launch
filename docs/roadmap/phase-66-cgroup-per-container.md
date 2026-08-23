@@ -5,7 +5,7 @@ bench Orin (`5.15.148-tegra`, 12 cores, 61 GiB):
 [docs/design/cgroup-per-container.md](../design/cgroup-per-container.md).
 Probes are in `tmp/` (`cgroup_probe.sh`, `oom_group_probe.sh`,
 `delegation_detect.sh`, `freeze_probe.sh`, `accounting_probe.sh`,
-`mechanics_probe.sh`).
+`mechanics_probe.sh`, `freeze_discovery.sh`).
 
 ## Why
 
@@ -163,9 +163,51 @@ graph. `cgroup.freeze` is strictly stronger: a frozen driver *cannot* publish,
 where a spawned-but-unsubscribed one merely shouldn't. Verified working
 (`frozen 1`, no progress until thawed).
 
-**Blocked on a measurement, not on code.** A frozen process holding DDS
-sockets may be timed out of discovery by its peers, which would make this worse
-than the graph wait it replaces. Measure that before writing any of it.
+**The blocking measurement is done, and the risk did not materialise.**
+
+The worry was that a frozen process sends no SPDP announcements, so past its
+peers' lease duration they purge the participant — and a driver thawed into a
+graph that has forgotten it would be worse off than one that was merely told to
+wait. Measured with `tmp/freeze_discovery.sh`: a publisher in its own cgroup,
+an unfrozen subscriber as the peer whose view matters, freeze, thaw, and time
+the recovery.
+
+| freeze | thaw to first message | messages in the next 10 s |
+|---|---|---|
+| 2 s | 116 ms | 10/10 |
+| 5 s | 752 ms | 10/10 |
+| 10 s | 115 ms | 10/10 |
+| 20 s | 224 ms | 10/10 |
+| 45 s | 229 ms | 10/10 |
+| 90 s | 225 ms | 10/10 |
+
+**A 90-second freeze recovers in ~225 ms with full throughput.** No threshold
+appeared, and recovery time does not grow with freeze duration — so whatever
+rediscovery happens is not on the critical path. Staged startup can hold a
+stage for as long as it needs to.
+
+Two things the harness got wrong first, both worth keeping in mind for the next
+one:
+
+- **`ros2 node list` measures the wrong thing.** It spawns a FRESH participant
+  that must complete discovery from scratch, so a "0" conflates "the peer
+  purged it" with "my brand-new observer had not found it yet" — it read 0
+  during a 2 s freeze and 1 during a 5 s freeze, which is backwards. The
+  subscriber's actual data flow is the ground truth; those columns are noise
+  and are not reported above.
+- **`grep -c` already prints 0 on no match**, so `|| echo 0` printed a second
+  zero and corrupted the first run's table.
+
+**Scope of the result.** Cyclone DDS (the Humble default), single host,
+loopback, two participants, and **default QoS** — `KeepLast(10)`, reliable, no
+liveliness or deadline contract. Not tested, and the case most likely to
+behave differently: a publisher whose QoS carries `LIVELINESS_AUTOMATIC` with a
+lease, or a `DEADLINE`, where a freeze longer than the lease should fire a
+not-alive or missed-deadline event at the subscriber even though data recovers.
+An Autoware stack has such nodes. Measure that before freezing anything on a
+vehicle.
+
+W3 is therefore unblocked for the plain case and can be written.
 
 ### W4 — CPU, only if the delegation ships
 
