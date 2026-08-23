@@ -5,7 +5,7 @@ from launch_ros.actions.composable_node_container import ComposableNodeContainer
 from launch_ros.descriptions import Parameter
 
 from ..launch_dump import ComposableNodeContainerRecord, LaunchDump
-from ..utils import param_to_kv
+from ..utils import dump_yaml, param_to_kv
 
 
 def visit_composable_node_container(
@@ -176,7 +176,13 @@ def visit_composable_node_container(
     for param in global_params_raw:
         if isinstance(param, tuple):
             name, value = param
-            global_params.append((name, str(value)))
+            # YAML, not str(): a SetParameter whose value is a list round-trips through
+            # str() as a Python repr -- str(['camera6']) is "['camera6']" -- and the
+            # single quotes survive into the node as part of the value. The traffic light
+            # multi-camera fusion node then built the topic name "'camera6'/detection/rois"
+            # and aborted on InvalidTopicNameError at startup. dump_yaml is what every
+            # other parameter path in this dumper already uses.
+            global_params.append((name, dump_yaml(value)))
 
     # Save container record with all node information
     node_name = container._Node__expanded_node_name

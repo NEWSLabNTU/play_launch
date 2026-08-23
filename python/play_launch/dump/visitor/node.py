@@ -12,7 +12,7 @@ from launch_ros.descriptions import Parameter
 from launch_ros.utilities import add_node_name, get_node_name_count
 
 from ..launch_dump import LaunchDump, NodeRecord
-from ..utils import param_to_kv
+from ..utils import dump_yaml, param_to_kv
 from .execute_process import visit_execute_process
 
 # Global flag to track if on_exit warning has been shown
@@ -107,7 +107,15 @@ def visit_node(
                                     for param_name, param_value in node_data[
                                         "ros__parameters"
                                     ].items():
-                                        params.append((param_name, str(param_value)))
+                                        # YAML, not str(). yaml.safe_load above returns real
+                                        # Python objects, and str() renders them as Python
+                                        # repr: str(['camera6']) is "['camera6']", whose
+                                        # quotes survive into the spawned node as part of the
+                                        # value. traffic_light_multi_camera_fusion then built
+                                        # the topic "'camera6'/detection/rois" and aborted on
+                                        # InvalidTopicNameError. str(True) is likewise "True"
+                                        # where ROS wants "true".
+                                        params.append((param_name, dump_yaml(param_value)))
                     except Exception as e:
                         execute_process_logger = launch.logging.get_logger(node.name)
                         execute_process_logger.warning(
@@ -229,7 +237,13 @@ def visit_node(
         if isinstance(param, tuple):
             # Direct parameter from SetParameter action
             name, value = param
-            global_params.append((name, str(value)))
+            # YAML, not str(): a SetParameter whose value is a list round-trips through
+            # str() as a Python repr -- str(['camera6']) is "['camera6']" -- and the
+            # single quotes survive into the node as part of the value. The traffic light
+            # multi-camera fusion node then built the topic name "'camera6'/detection/rois"
+            # and aborted on InvalidTopicNameError at startup. dump_yaml is what every
+            # other parameter path in this dumper already uses.
+            global_params.append((name, dump_yaml(value)))
         # Note: file paths (strings from SetParametersFromFile) are already handled
         # via __expanded_parameter_arguments by Node._perform_substitutions
 
