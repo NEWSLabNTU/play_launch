@@ -191,12 +191,15 @@ rclcpp_components::ComponentManager           (upstream)
     forwarded. `log_dir` is load-bearing — it is how each composable's stdout
     and stderr reach its own `out`/`err` under `play_log`, so the path is not
     removable. Of the two arguments upstream honours
-    (`ComponentManager::create_node_options`), neither applies here and each
-    fails differently: **`forward_global_arguments=false` WARNS** — in a shared
-    container it withholds the container's own command-line args, but here
-    `component_node`'s global args ARE the composable's `__node`/`__ns`/
-    `--params-file`, so obeying it would strip the node of its identity;
-    **`use_intra_process_comms` deliberately is NOT read** — this mode
+    (`ComponentManager::create_node_options`): **`forward_global_arguments` is
+    honoured** — `component_node` mirrors upstream by passing the composable's
+    `--ros-args` through `NodeOptions::arguments()` and defaulting
+    `use_global_arguments(false)`, so identity no longer rides on that flag and
+    it becomes a real choice. `false` (the default) is additionally guaranteed
+    here, since the child is a separate process whose argv the manager builds
+    from scratch — no container argument can reach it. `true` is forwarded and
+    warned about in upstream's own terms. **`use_intra_process_comms`
+    deliberately is NOT read** — this mode
     gives each composable its own process holding exactly one node, so the
     intra-process path can never find a peer, and enabling it only builds
     machinery that is checked on every publish and always finds nothing. It is
