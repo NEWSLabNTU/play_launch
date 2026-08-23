@@ -250,6 +250,43 @@ impl CgroupTree {
         std::fs::write(group.join("cgroup.kill"), "1\n").is_ok()
     }
 
+    /// Report every group whose `memory.events` counters moved, before the
+    /// tree is removed.
+    ///
+    /// This is the half of W2 that is not a limit. Without it play_launch can
+    /// only *infer* that a container was under memory pressure — from a node
+    /// that died, or a launch that was slow — and inference is what reported a
+    /// killed composable as loaded (#0019). These counters are the kernel's own
+    /// record of what it did.
+    ///
+    /// Silent when nothing happened. A line of zeroes per container per launch
+    /// is how a real signal gets scrolled past.
+    pub fn report_memory_events(&self) {
+        for kind in [GroupKind::Node, GroupKind::Container] {
+            let parent = self.root.join(kind.dir());
+            let Ok(entries) = std::fs::read_dir(&parent) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(ev) = MemoryEvents::read(&path) else {
+                    continue;
+                };
+                if ev.is_quiet() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                // A kill is the kernel having already acted; a throttle is it
+                // holding the line. Different severities, different reads.
+                if ev.oom_kill > 0 || ev.max > 0 {
+                    warn!("cgroups: {} {}: {}", kind.dir(), name, ev.summary());
+                } else {
+                    info!("cgroups: {} {}: {}", kind.dir(), name, ev.summary());
+                }
+            }
+        }
+    }
+
     /// Remove the tree. Best-effort: a non-empty group cannot be removed, and
     /// that is information rather than an error — it means something outlived
     /// the shutdown.
@@ -278,7 +315,185 @@ impl Drop for CgroupTree {
     /// group that will not remove is one whose members outlived shutdown —
     /// information, not an error.
     fn drop(&mut self) {
+        // Order matters: the counters live in the directories cleanup removes.
+        self.report_memory_events();
         self.cleanup();
+    }
+}
+
+/// `cgroups.limits` compiled once, so a glob is parsed at startup rather than
+/// per member.
+///
+/// An invalid pattern is reported and dropped rather than failing the launch:
+/// this is an optional enhancement, and refusing to start a vehicle over a
+/// typo in an optional limit is the wrong trade.
+#[derive(Debug, Default)]
+pub struct LimitRules {
+    rules: Vec<(Vec<glob::Pattern>, CgroupLimits)>,
+}
+
+impl LimitRules {
+    pub fn compile(groups: &[crate::cli::config::CgroupLimitGroup]) -> Self {
+        const MB: u64 = 1024 * 1024;
+        let mut rules = Vec::new();
+        for (i, g) in groups.iter().enumerate() {
+            let mut pats = Vec::new();
+            for raw in &g.match_ {
+                match glob::Pattern::new(raw) {
+                    Ok(p) => pats.push(p),
+                    Err(e) => warn!("cgroups.limits[{i}]: invalid glob {raw:?}: {e} — ignored"),
+                }
+            }
+            if pats.is_empty() {
+                continue;
+            }
+            rules.push((
+                pats,
+                CgroupLimits {
+                    memory_high_bytes: g.memory_high_mb.map(|m| m * MB),
+                    memory_max_bytes: g.memory_max_mb.map(|m| m * MB),
+                    pids_max: g.pids_max,
+                    oom_group: g.oom_group,
+                },
+            ));
+        }
+        Self { rules }
+    }
+
+    /// Limits for one member. FIRST match wins — a reader scanning the list top
+    /// to bottom expects the specific rule above the general one to be the one
+    /// that applies, and merging rules instead would make the effective limits
+    /// of a node unreadable without running the program.
+    pub fn for_member(&self, fqn: &str) -> CgroupLimits {
+        for (pats, limits) in &self.rules {
+            if pats.iter().any(|p| p.matches(fqn)) {
+                return *limits;
+            }
+        }
+        CgroupLimits::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+}
+
+/// Limits to write into one group — phase 66 W2.
+///
+/// Resolved from `cgroups.limits` before the group is created, so the values
+/// are already numbers by the time anything touches `/sys/fs/cgroup`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CgroupLimits {
+    pub memory_high_bytes: Option<u64>,
+    pub memory_max_bytes: Option<u64>,
+    pub pids_max: Option<u64>,
+    pub oom_group: Option<bool>,
+}
+
+impl CgroupLimits {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Write the limits, returning what was actually applied.
+    ///
+    /// Each write is independent: a kernel that refuses one must not silence
+    /// the others, and the caller reports what landed rather than what was
+    /// asked for. Anything unset is left alone — not written as "max", which
+    /// would overwrite a limit an outer cgroup imposed.
+    pub fn apply(&self, group: &Path) -> Vec<String> {
+        let mut applied = Vec::new();
+        let mut write = |file: &str, value: String, label: String| {
+            if std::fs::write(group.join(file), format!("{value}\n")).is_ok() {
+                applied.push(label);
+            } else {
+                debug!("cgroups: could not set {file} on {}", group.display());
+            }
+        };
+        if let Some(v) = self.memory_high_bytes {
+            write("memory.high", v.to_string(), format!("memory.high={v}"));
+        }
+        if let Some(v) = self.memory_max_bytes {
+            write("memory.max", v.to_string(), format!("memory.max={v}"));
+        }
+        if let Some(v) = self.pids_max {
+            write("pids.max", v.to_string(), format!("pids.max={v}"));
+        }
+        if let Some(v) = self.oom_group {
+            let raw = u8::from(v);
+            write(
+                "memory.oom.group",
+                raw.to_string(),
+                format!("oom.group={raw}"),
+            );
+        }
+        applied
+    }
+}
+
+/// The `memory.events` counters for a group.
+///
+/// These are FACTS the kernel keeps, which is the point: without them
+/// play_launch can only infer that a container was under memory pressure, and
+/// inference is what reported a killed composable as loaded (#0019).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemoryEvents {
+    /// Times the group was reclaimed for breaching `memory.high`.
+    pub high: u64,
+    /// Times allocation was refused at `memory.max`.
+    pub max: u64,
+    /// Times an OOM was declared in the group.
+    pub oom: u64,
+    /// Processes actually killed. With `oom.group=1` a single OOM kills every
+    /// member, so this exceeds `oom` — that gap IS the container semantics
+    /// being visible.
+    pub oom_kill: u64,
+}
+
+impl MemoryEvents {
+    pub fn read(group: &Path) -> Option<Self> {
+        let text = std::fs::read_to_string(group.join("memory.events")).ok()?;
+        let mut ev = MemoryEvents::default();
+        for line in text.lines() {
+            let mut it = line.split_whitespace();
+            let (Some(key), Some(val)) = (it.next(), it.next()) else {
+                continue;
+            };
+            let Ok(n) = val.parse::<u64>() else { continue };
+            match key {
+                "high" => ev.high = n,
+                "max" => ev.max = n,
+                "oom" => ev.oom = n,
+                "oom_kill" => ev.oom_kill = n,
+                _ => {}
+            }
+        }
+        Some(ev)
+    }
+
+    /// Nothing has gone wrong yet.
+    pub fn is_quiet(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// A one-line report for a human. Only the non-zero counters, because a
+    /// line of zeroes per container per launch is how a real signal gets
+    /// scrolled past.
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if self.high > 0 {
+            parts.push(format!("throttled {}x at memory.high", self.high));
+        }
+        if self.max > 0 {
+            parts.push(format!("hit memory.max {}x", self.max));
+        }
+        if self.oom > 0 {
+            parts.push(format!("{} OOM event(s)", self.oom));
+        }
+        if self.oom_kill > 0 {
+            parts.push(format!("{} process(es) killed", self.oom_kill));
+        }
+        parts.join(", ")
     }
 }
 
@@ -358,6 +573,105 @@ mod tests {
         );
         assert!(node.ends_with("node/talker"));
         assert!(ctr.ends_with("container/talker"));
+    }
+
+    use crate::cli::config::CgroupLimitGroup;
+
+    fn rule(pats: &[&str], f: impl FnOnce(&mut CgroupLimitGroup)) -> CgroupLimitGroup {
+        let mut g = CgroupLimitGroup {
+            match_: pats.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        f(&mut g);
+        g
+    }
+
+    /// First match wins. Merging instead would make a node's effective limits
+    /// unreadable without running the program — you could not answer "what
+    /// applies to /perception/x" by reading the file top to bottom.
+    #[test]
+    fn the_first_matching_rule_wins() {
+        let rules = LimitRules::compile(&[
+            rule(&["/perception/**"], |g| g.memory_high_mb = Some(4096)),
+            rule(&["**"], |g| g.memory_high_mb = Some(512)),
+        ]);
+        assert_eq!(
+            rules.for_member("/perception/detector").memory_high_bytes,
+            Some(4096 * 1024 * 1024)
+        );
+        assert_eq!(
+            rules.for_member("/other/node").memory_high_bytes,
+            Some(512 * 1024 * 1024)
+        );
+        // The specific rule sets only `memory_high`; a later rule must NOT
+        // contribute its own fields to the same member.
+        assert_eq!(rules.for_member("/perception/detector").pids_max, None);
+    }
+
+    /// A member matching nothing gets no limits — not a default someone
+    /// guessed. A wrong `memory.max` turns a slow launch into a killed one.
+    #[test]
+    fn an_unmatched_member_is_unlimited() {
+        let rules = LimitRules::compile(&[rule(&["/sensing/**"], |g| g.memory_max_mb = Some(1))]);
+        assert!(rules.for_member("/planning/x").is_empty());
+    }
+
+    /// An invalid glob is dropped with a warning, never fatal. Refusing to
+    /// start a vehicle over a typo in an OPTIONAL limit is the wrong trade.
+    #[test]
+    fn a_bad_glob_does_not_fail_the_launch() {
+        let rules = LimitRules::compile(&[
+            rule(&["["], |g| g.pids_max = Some(1)),
+            rule(&["/ok/**"], |g| g.pids_max = Some(64)),
+        ]);
+        assert_eq!(rules.for_member("/ok/node").pids_max, Some(64));
+    }
+
+    /// `oom_group` is the bit that chooses the failure model, so `false` must
+    /// reach the kernel as an explicit 0 rather than being dropped as
+    /// "falsy" — a group inheriting 1 from a parent would otherwise silently
+    /// keep container semantics for a node that asked for isolation.
+    #[test]
+    fn oom_group_false_is_a_value_not_an_absence() {
+        let rules = LimitRules::compile(&[rule(&["**"], |g| g.oom_group = Some(false))]);
+        let l = rules.for_member("/x");
+        assert_eq!(l.oom_group, Some(false));
+        assert!(!l.is_empty(), "an explicit false is a setting to apply");
+    }
+
+    /// Megabytes in the config, bytes in the cgroup file. An off-by-1024 here
+    /// would set a limit a thousand times too small and read as a mysterious
+    /// OOM.
+    #[test]
+    fn megabytes_become_bytes() {
+        let rules = LimitRules::compile(&[rule(&["**"], |g| {
+            g.memory_high_mb = Some(1);
+            g.memory_max_mb = Some(2);
+        })]);
+        let l = rules.for_member("/x");
+        assert_eq!(l.memory_high_bytes, Some(1_048_576));
+        assert_eq!(l.memory_max_bytes, Some(2_097_152));
+    }
+
+    /// Only non-zero counters are reported: a line of zeroes per container per
+    /// launch is how a real signal gets scrolled past.
+    #[test]
+    fn memory_events_reports_only_what_happened() {
+        assert!(MemoryEvents::default().is_quiet());
+        assert_eq!(MemoryEvents::default().summary(), "");
+
+        let ev = MemoryEvents {
+            high: 3,
+            oom_kill: 2,
+            ..Default::default()
+        };
+        let s = ev.summary();
+        assert!(s.contains("throttled 3x"), "{s}");
+        assert!(s.contains("2 process(es) killed"), "{s}");
+        assert!(
+            !s.contains("memory.max"),
+            "silent about what did not happen: {s}"
+        );
     }
 
     /// Probing must never panic or block, whatever the host looks like. On a

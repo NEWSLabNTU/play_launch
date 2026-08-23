@@ -232,6 +232,13 @@ pub(crate) async fn play(
         common.features.monitor_interval_ms,
         common.is_diagnostics_enabled(),
     )?;
+
+    // Phase 66 W2 — compile the limit globs once, rather than per member.
+    // Inert without a cgroup tree, so a config written for a delegated run
+    // costs nothing on a machine that has no delegation.
+    let cgroup_limits =
+        crate::execution::cgroup::LimitRules::compile(&runtime_config.cgroups.limits);
+    let cgroup_limits = (!cgroup_limits.is_empty()).then_some(cgroup_limits);
     debug!("Runtime configuration loaded successfully");
 
     debug!(
@@ -499,8 +506,12 @@ pub(crate) async fn play(
     // uses the LaunchDump-sourced `prepare_node_contexts`.)
     debug!("Preparing node execution contexts...");
     info!("Spawn source: SystemModel (structure.nodes)");
-    let mut pure_node_contexts =
-        prepare_node_contexts_from_model(&system_model, &node_log_dir, cgroups.as_ref())?;
+    let mut pure_node_contexts = prepare_node_contexts_from_model(
+        &system_model,
+        &node_log_dir,
+        cgroups.as_ref(),
+        cgroup_limits.as_ref(),
+    )?;
 
     debug!("Preparing container execution contexts...");
     let mut container_contexts = prepare_container_contexts_from_model(
@@ -508,6 +519,7 @@ pub(crate) async fn play(
         &node_log_dir,
         common.containers.container_mode,
         cgroups.as_ref(),
+        cgroup_limits.as_ref(),
     )?;
 
     // Prepare LoadNode request execution contexts

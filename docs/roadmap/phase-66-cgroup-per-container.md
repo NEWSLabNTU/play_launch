@@ -1,6 +1,6 @@
 # Phase 66 — cgroup-per-container: the properties, without the container
 
-Status: **W1 done** (`5d8618a`). Design study, with every claim measured on the
+Status: **W1–W2 done** (`5d8618a`, W2 below). Design study, with every claim measured on the
 bench Orin (`5.15.148-tegra`, 12 cores, 61 GiB):
 [docs/design/cgroup-per-container.md](../design/cgroup-per-container.md).
 Probes are in `tmp/` (`cgroup_probe.sh`, `oom_group_probe.sh`,
@@ -104,7 +104,7 @@ silent wrongness rather than as errors:
   `systemd-run --user --scope` both report `memory pids` and differ only on
   whether `mkdir` succeeds.
 
-### W2 — limits and the failure model
+### W2 — limits and the failure model ✅
 
 `pids.max`, `memory.high`, `memory.max` and `memory.oom.group` per container,
 from config. Defaults stay unset/0 — W2 makes them *expressible*, not
@@ -118,6 +118,43 @@ is 11–22 threads measured, and 93 composables is roughly 2000.
 **Acceptance:** a container with `oom.group=1` loses all members together and
 reports it as one event; with `0` it loses only the offender. `memory.events`
 counters are surfaced rather than inferred.
+
+**Result.** `cgroups.limits` is a glob list in the shape `startup.order`
+already uses, first match wins. Verified on a live container:
+
+```
+INFO cgroups: /mt_container: memory.high=4294967296, pids.max=4096, oom.group=1
+```
+
+and read back from the kernel as `memory.high 4294967296`, `pids.max 4096`,
+`memory.oom.group 1`.
+
+Limits are written **before** the member is forked into the group. A limit
+applied afterwards is a window the process spent without it, and for
+`memory.max` that window is exactly when a constructor allocates most.
+
+`memory.events` is reported at shutdown, only for groups whose counters moved,
+split by severity — a kill or a refused allocation is the kernel having acted,
+a throttle is it holding the line. Observed on a deliberately tight
+`memory_max_mb: 40`:
+
+```
+WARN cgroups: container mt_container: hit memory.max 139x
+```
+
+That run is also the useful negative: 139 `max` events and **zero**
+`oom_kill`. The kernel reclaimed rather than killed, because the six
+talker/listener composables hold little anonymous memory. It is a clean
+demonstration that `memory.max` throttles before it kills — and the reason
+`memory.high` is the knob to reach for first.
+
+**One acceptance clause is not closed end to end.** That `oom.group=1` makes a
+container die as a unit is verified as a *mechanism*
+(`tmp/oom_group_probe.sh`: `bystander=dead` at `1`, `bystander=ALIVE` at `0`),
+and the bit is verified reaching the kernel through play_launch. The two have
+not been composed, because no fixture composable allocates enough to force an
+OOM. Closing it needs a composable that does — `tests/fixtures/governor_stress/
+mem_hog.cpp` is the shape, but it is a standalone binary, not a plugin.
 
 ### W3 — `cgroup.freeze` for staged startup
 

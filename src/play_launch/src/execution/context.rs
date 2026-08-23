@@ -13,6 +13,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
 };
+use tracing::{info, warn};
 
 /// Metadata for a regular ROS node
 #[derive(Debug, Serialize)]
@@ -85,8 +86,26 @@ fn member_cgroup(
     tree: Option<&super::cgroup::CgroupTree>,
     kind: super::cgroup::GroupKind,
     dir_name: &str,
+    fqn: &str,
+    limits: Option<&super::cgroup::LimitRules>,
 ) -> Option<super::cgroup::CgroupHandle> {
     let path = tree?.group_for(kind, dir_name)?;
+
+    // Phase 66 W2 — limits are written BEFORE the member is forked into the
+    // group. A limit applied afterwards is a limit the process spent some
+    // window without, and for `memory.max` that window is exactly when a
+    // constructor allocates most.
+    if let Some(rules) = limits {
+        let l = rules.for_member(fqn);
+        if !l.is_empty() {
+            let applied = l.apply(&path);
+            if applied.is_empty() {
+                warn!("cgroups: no limit could be set for {fqn}");
+            } else {
+                info!("cgroups: {fqn}: {}", applied.join(", "));
+            }
+        }
+    }
     super::cgroup::CgroupHandle::new(&path)
 }
 
@@ -337,6 +356,7 @@ pub fn prepare_node_contexts_from_model(
     system_model: &model::SystemModel,
     node_log_dir: &Path,
     cgroups: Option<&super::cgroup::CgroupTree>,
+    limits: Option<&super::cgroup::LimitRules>,
 ) -> eyre::Result<Vec<NodeContext>> {
     let entries: Vec<(&String, &model::NodeInstance)> = system_model
         .structure
@@ -376,7 +396,13 @@ pub fn prepare_node_contexts_from_model(
             cmdline,
             output_dir,
             model_fqn: Some((*fqn).clone()),
-            cgroup: member_cgroup(cgroups, super::cgroup::GroupKind::Node, dir_name),
+            cgroup: member_cgroup(
+                cgroups,
+                super::cgroup::GroupKind::Node,
+                dir_name,
+                fqn,
+                limits,
+            ),
         });
     }
 
@@ -393,6 +419,7 @@ pub fn prepare_container_contexts_from_model(
     container_log_dir: &Path,
     container_mode: ContainerMode,
     cgroups: Option<&super::cgroup::CgroupTree>,
+    limits: Option<&super::cgroup::LimitRules>,
 ) -> eyre::Result<Vec<NodeContainerContext>> {
     let entries: Vec<(&String, &model::NodeInstance)> = system_model
         .structure
@@ -480,7 +507,13 @@ pub fn prepare_container_contexts_from_model(
                 cmdline,
                 output_dir,
                 model_fqn: Some((*fqn).clone()),
-                cgroup: member_cgroup(cgroups, super::cgroup::GroupKind::Container, dir_name),
+                cgroup: member_cgroup(
+                    cgroups,
+                    super::cgroup::GroupKind::Container,
+                    dir_name,
+                    fqn,
+                    limits,
+                ),
             },
         });
     }

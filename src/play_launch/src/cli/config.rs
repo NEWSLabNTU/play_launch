@@ -33,6 +33,83 @@ pub struct RuntimeConfig {
     /// Per-process configurations
     #[serde(default)]
     pub processes: Vec<ProcessConfig>,
+
+    /// Per-container / per-node cgroup limits (phase-66 W2)
+    #[serde(default)]
+    pub cgroups: CgroupSettings,
+}
+
+/// Phase 66 W2 — limits applied to the per-node and per-container cgroups
+/// created by [`crate::execution::cgroup`].
+///
+/// Everything is unset by default. W1 built the tree to *account* and *tear
+/// down*; this makes limits expressible, not mandatory. A wrong `memory_max`
+/// converts a slow launch into a killed one, and nobody has the per-system
+/// knowledge to pick one for someone else's vehicle.
+///
+/// Inert when the cgroup tree is unavailable, which is the ordinary case —
+/// play_launch started from a terminal cannot create cgroups at all.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct CgroupSettings {
+    /// Rules in declaration order. The FIRST match wins, so a specific pattern
+    /// belongs above a general one — the same precedence `startup.order` uses,
+    /// and the one a reader assumes when scanning a list top to bottom.
+    pub limits: Vec<CgroupLimitGroup>,
+}
+
+/// One `cgroups.limits` entry.
+///
+/// ```yaml
+/// cgroups:
+///   limits:
+///     - match: ["/perception/**"]
+///       memory_high_mb: 4096
+///       oom_group: true
+///     - match: ["**"]
+///       pids_max: 2048
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct CgroupLimitGroup {
+    /// Glob patterns matched against the member's FQN (`/ns/node_name`), as in
+    /// `startup.order`. `**` crosses namespace separators.
+    #[serde(rename = "match")]
+    pub match_: Vec<String>,
+
+    /// `memory.high` — a THROTTLE, not a limit. Exceeding it puts the group
+    /// under reclaim pressure and slows it; nothing is killed. This is the
+    /// principled version of what `oom_score_adj` guesses at: instead of
+    /// nominating a victim in advance, make the launch yield memory rather
+    /// than take it.
+    pub memory_high_mb: Option<u64>,
+
+    /// `memory.max` — the hard ceiling. Allocation past it triggers OOM inside
+    /// the group. Prefer `memory_high_mb` unless a hard bound is genuinely
+    /// wanted: `max` kills, `high` slows.
+    pub memory_max_mb: Option<u64>,
+
+    /// `pids.max` — a ceiling on tasks in the group, threads included. A ROS
+    /// node is 11-22 threads measured, so a container of ten composables is a
+    /// couple of hundred; this turns runaway thread creation into a clean
+    /// `EAGAIN` instead of a machine nobody can log into.
+    pub pids_max: Option<u64>,
+
+    /// `memory.oom.group` — whether the group is a FAULT UNIT.
+    ///
+    /// `true`: an OOM anywhere in the container kills every member together,
+    /// which is what a real ROS container does (they share one process, so
+    /// they die together whether or not anyone chose that). `false` (the
+    /// default): only the offending process dies, which is the isolation
+    /// `--container-mode isolated` forks to buy.
+    ///
+    /// Worth setting `true` where partial survival is the more dangerous
+    /// outcome: a pipeline container that loses one stage keeps publishing
+    /// stale or absent data, and a supervisor restarts a dead thing while
+    /// never noticing a degraded one.
+    ///
+    /// Meaningless on a plain node's group — it holds one process.
+    pub oom_group: Option<bool>,
 }
 
 /// Phase 61: how fast play_launch is allowed to start processes.
@@ -699,6 +776,8 @@ pub struct ResolvedRuntimeConfig {
     /// machine-dependent resolution happens at `StartupSettings::resolve`,
     /// where the core count and RAM are read, not here.
     pub startup: StartupSettings,
+    /// Phase 66 W2 — per-container cgroup limits.
+    pub cgroups: CgroupSettings,
 }
 
 /// Resolved monitoring configuration
@@ -826,6 +905,7 @@ pub fn load_runtime_config(
         diagnostics: config.diagnostics,
         interception: config.interception,
         startup: config.startup,
+        cgroups: config.cgroups,
     })
 }
 
