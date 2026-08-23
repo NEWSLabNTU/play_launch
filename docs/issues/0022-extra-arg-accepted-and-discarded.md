@@ -1,7 +1,7 @@
 ---
 id: 22
 title: "`<extra_arg>` is accepted as a child of `<composable_node>` and then discarded"
-status: open
+status: resolved
 type: correctness
 severity: medium
 ---
@@ -56,10 +56,38 @@ override for a pool it otherwise derives from callback groups; forwarding it
 from `<extra_arg>` was written, found to be a branch that could never execute,
 and removed rather than shipped.
 
-## Fix sketch
+## Resolution
 
-Read `extra_arg` children in the same loop as `param`/`remap`, keyed
-`name` → `value`. The model and the container already handle the rest. Add a
-fixture asserting a launch-file `<extra_arg>` reaches
-`NodeInstance.extra_args`, since every layer except the first already claims to
-support it.
+Fixed. The sketch above was wrong about the size of it — "the model and the
+container already handle the rest" was true of the *types* and false of the
+*code*. The value was dropped at **four** separate hops, each of which had to
+be found by testing rather than reading:
+
+1. **The XML child loop** (`actions/container.rs`) — `extra_args` initialised
+   empty, `extra_arg` falling through to a debug-level "skipping" arm. The one
+   hop the sketch predicted.
+2. **The YAML frontend** (`traverser/yaml.rs`) — the same `HashMap::new()`,
+   independently. Also a cross-parser divergence: the Python parser has always
+   carried `extra_arguments`.
+3. **`LoadNodeCapture`** (`captures.rs`) — no field at all. `<node_container>`
+   builds its records directly, but a top-level `<load_composable_node>` goes
+   through captures, so fixing hops 1 and 2 left that shape still dropping
+   everything.
+4. **`bridge.rs`'s capture → record conversion** — `extra_args: HashMap::new()`
+   even once the capture carried them.
+
+Hops 3 and 4 were found only because the test asserted BOTH container shapes.
+Asserting one and assuming the other is how issue #7 shipped half-fixed, and
+the same assumption would have shipped this one at 50%.
+
+`<extra_arg>` also gained an `AttrSpec` (`name`, `value`), since without one
+`spec_for` returns `None` and `check` exits before validating anything —
+`<extra_arg nmae="x"/>` was accepted in silence.
+
+Verified end to end: a launch file setting
+`<extra_arg name="executor_threads" value="4"/>` now reaches the running
+process, which starts with a 4-thread executor pool (14 threads) beside a
+sibling that did not ask and gets 11.
+
+`use_intra_process_comms`, the case this issue flagged as worth checking
+first, was indeed unreachable from an XML or YAML launch file. It is now.

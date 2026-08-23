@@ -356,10 +356,11 @@ impl ComposableNodeAction {
             .map(|s| parse_substitutions(&s))
             .transpose()?;
 
-        // Parse children for params and remaps (still resolved eagerly — these are runtime values)
+        // Parse children for params, remaps and extra args (still resolved
+        // eagerly — these are runtime values)
         let mut parameters = Vec::new();
         let mut remappings = Vec::new();
-        let extra_args = HashMap::new();
+        let mut extra_args = HashMap::new();
 
         for child in entity.children() {
             // Child elements never reach `traverse_entity` — validate here.
@@ -442,6 +443,36 @@ impl ComposableNodeAction {
                     let to_resolved = resolve_substitutions(&to_parsed, context)
                         .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
                     remappings.push((from_resolved, to_resolved));
+                }
+                "extra_arg" => {
+                    // Issue #0022. `extra_arg` was in this element's allowed
+                    // children — so a launch file using it validated cleanly —
+                    // and then fell through to the `other` arm below, which
+                    // logs at debug and drops it. Every layer downstream
+                    // already carried the field faithfully (action -> record ->
+                    // `NodeInstance.extra_args` -> LoadNode `extra_arguments`,
+                    // typed by YAML inference in `parameter_conversion.rs`), so
+                    // this was the only hop where the value went missing, and
+                    // the author got no signal at all.
+                    let name = child.required_attr_str("name")?.ok_or_else(|| {
+                        ParseError::MissingAttribute {
+                            element: "extra_arg".to_string(),
+                            attribute: "name".to_string(),
+                        }
+                    })?;
+                    let value = child.required_attr_str("value")?.ok_or_else(|| {
+                        ParseError::MissingAttribute {
+                            element: "extra_arg".to_string(),
+                            attribute: "value".to_string(),
+                        }
+                    })?;
+                    let name_parsed = parse_substitutions(&name)?;
+                    let value_parsed = parse_substitutions(&value)?;
+                    let name_resolved = resolve_substitutions(&name_parsed, context)
+                        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                    let value_resolved = resolve_substitutions(&value_parsed, context)
+                        .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                    extra_args.insert(name_resolved, value_resolved);
                 }
                 other => {
                     log::debug!("Skipping '{}' in composable_node", other);

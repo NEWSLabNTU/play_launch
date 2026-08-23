@@ -215,6 +215,7 @@ impl LoadComposableNodes {
                 namespace,
                 parameters,
                 remappings,
+                extra_args: Default::default(),
                 scope_id: None,
             };
 

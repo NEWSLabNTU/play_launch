@@ -1904,3 +1904,64 @@ fn test_yaml_command_substitution_concat() {
     let nodes = json["node"].as_array().unwrap();
     assert_eq!(nodes[0]["name"].as_str().unwrap(), "pre_mid_post");
 }
+
+/// Issue #0022, YAML half — `extra_arg` was dropped here exactly as in XML.
+///
+/// The Python parser has always carried `extra_arguments`
+/// (`visitor/load_composable_nodes.py`), so a YAML launch file lost them under
+/// the Rust parser and kept them under the Python one. That makes this a
+/// cross-parser divergence, which CLAUDE.md resolves one way: Python is right.
+#[test]
+fn yaml_extra_args_reach_the_record() {
+    let yaml = r#"
+launch:
+  - node_container:
+      pkg: rclcpp_components
+      exec: component_container
+      name: c
+      namespace: ""
+      composable_node:
+        - pkg: demo_nodes_cpp
+          plugin: demo_nodes_cpp::Talker
+          name: inner
+          extra_arg:
+            - name: use_intra_process_comms
+              value: true
+            - name: executor_threads
+              value: 4
+        - pkg: demo_nodes_cpp
+          plugin: demo_nodes_cpp::Listener
+          name: plain
+"#;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("extra.launch.yaml");
+    std::fs::write(&path, yaml).unwrap();
+
+    let record = parse_launch_file(&path, HashMap::new()).expect("fixture should parse");
+    let json = serde_json::to_value(&record).unwrap();
+    let node = |name: &str| -> serde_json::Value {
+        json["load_node"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["node_name"] == name)
+            .unwrap_or_else(|| panic!("{name} present"))
+            .clone()
+    };
+
+    // YAML types its scalars where XML leaves text, so `true` and `4` arrive
+    // as Bool and Number — both must survive as the strings the LoadNode
+    // conversion expects.
+    assert_eq!(
+        node("inner")["extra_args"]["use_intra_process_comms"],
+        "true"
+    );
+    assert_eq!(node("inner")["extra_args"]["executor_threads"], "4");
+
+    let plain = node("plain");
+    assert!(
+        plain["extra_args"].as_object().is_none_or(|m| m.is_empty()),
+        "unset must stay unset: {:?}",
+        plain["extra_args"]
+    );
+}

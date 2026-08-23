@@ -59,6 +59,14 @@ pub struct LoadNodeCapture {
     pub namespace: String,
     pub parameters: Vec<(String, String)>,
     pub remappings: Vec<(String, String)>,
+    /// `<extra_arg>` / `ComposableNode(extra_arguments=…)` — issue #0022.
+    ///
+    /// The capture path is a THIRD place these went missing. `<node_container>`
+    /// builds its `LoadNodeRecord`s directly, but a top-level
+    /// `<load_composable_node>` is converted to captures by the traverser, and
+    /// this struct simply had no field to hold them — so fixing the parser and
+    /// the record still left that shape dropping every value.
+    pub extra_args: std::collections::HashMap<String, String>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
 }

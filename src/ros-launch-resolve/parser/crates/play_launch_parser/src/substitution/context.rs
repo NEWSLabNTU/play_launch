@@ -1088,6 +1088,7 @@ mod tests {
             namespace: "/ns".to_string(),
             parameters: vec![("key".to_string(), "value".to_string())],
             remappings: Vec::new(),
+            extra_args: Default::default(),
             scope_id: None,
         });
 

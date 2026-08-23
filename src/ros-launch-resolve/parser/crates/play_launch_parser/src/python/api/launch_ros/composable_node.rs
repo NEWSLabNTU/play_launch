@@ -197,6 +197,7 @@ impl ComposableNode {
             namespace: normalized_namespace,
             parameters,
             remappings,
+            extra_args: Default::default(),
             scope_id: None,
         };
 

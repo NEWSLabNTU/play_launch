@@ -764,6 +764,7 @@ fn parse_yaml_composable_node(
 ) -> Result<ComposableNodeAction> {
     validate_yaml_child_seq(map, "param", "param")?;
     validate_yaml_child_seq(map, "remap", "remap")?;
+    validate_yaml_child_seq(map, "extra_arg", "extra_arg")?;
 
     let pkg_str = yaml_str(map, "pkg").ok_or_else(|| ParseError::MissingAttribute {
         element: "composable_node".to_string(),
@@ -831,6 +832,33 @@ fn parse_yaml_composable_node(
         }
     }
 
+    // Issue #0022 — the YAML frontend dropped these exactly as the XML one
+    // did, and the Python parser has always carried them
+    // (`visitor/load_composable_nodes.py`), so this was a cross-parser
+    // divergence as well as a silent loss.
+    let mut extra_args = HashMap::new();
+    if let Some(items) = map
+        .get(Value::String("extra_arg".to_string()))
+        .and_then(|v| v.as_sequence())
+    {
+        for item in items {
+            if let Some(item_map) = item.as_mapping()
+                && let (Some(name_str), Some(value_str)) = (
+                    yaml_str(item_map, "name"),
+                    yaml_value_string(item_map, "value"),
+                )
+            {
+                let name_subs = parse_substitutions(name_str)?;
+                let value_subs = parse_substitutions(&value_str)?;
+                let name_resolved = resolve_substitutions(&name_subs, context)
+                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                let value_resolved = resolve_substitutions(&value_subs, context)
+                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                extra_args.insert(name_resolved, value_resolved);
+            }
+        }
+    }
+
     Ok(ComposableNodeAction {
         package,
         plugin,
@@ -838,7 +866,7 @@ fn parse_yaml_composable_node(
         namespace,
         parameters,
         remappings,
-        extra_args: HashMap::new(),
+        extra_args,
     })
 }
 

@@ -1654,3 +1654,51 @@ fn a_container_carries_its_ros_args() {
     let level = cmd.iter().position(|c| *c == "--log-level").unwrap();
     assert!(level > first, "{cmd:?}");
 }
+
+/// Issue #0022 — `<extra_arg>` reaches the record instead of being discarded.
+///
+/// It was an ALLOWED child of `<composable_node>`, so a launch file using it
+/// validated cleanly, and the child loop then let it fall through to a
+/// debug-level "skipping" arm. Every layer below already carried the field
+/// (action → record → `NodeInstance.extra_args` → LoadNode `extra_arguments`),
+/// so this one hop was the whole defect — and the Python parser has always
+/// carried them, making it a cross-parser divergence too.
+#[test]
+fn extra_args_reach_the_record() {
+    let fixture = get_fixture_path("test_extra_args.launch.xml");
+    let record = parse_launch_file(&fixture, HashMap::new()).expect("fixture should parse");
+    let json = serde_json::to_value(&record).unwrap();
+
+    let by_name = |name: &str| -> serde_json::Value {
+        json["load_node"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["node_name"] == name)
+            .unwrap_or_else(|| panic!("{name} is in the record"))
+            .clone()
+    };
+
+    let inner = by_name("inner");
+    assert_eq!(inner["extra_args"]["use_intra_process_comms"], "true");
+    // A substitution resolves like any other value — `$(var pool)` with the
+    // arg defaulting to 4.
+    assert_eq!(
+        inner["extra_args"]["executor_threads"], "4",
+        "an extra_arg value must be substituted, not passed through raw"
+    );
+
+    // A composable with no extra_arg carries none — the fix must not invent
+    // defaults.
+    let plain = by_name("plain");
+    assert!(
+        plain["extra_args"].as_object().is_none_or(|m| m.is_empty()),
+        "unset must stay unset: {:?}",
+        plain["extra_args"]
+    );
+
+    // `<load_composable_node>` shares the same reader, and issue #7 showed
+    // that assuming so without asserting it is how one shape stays broken.
+    let loaded = by_name("loaded");
+    assert_eq!(loaded["extra_args"]["use_intra_process_comms"], "false");
+}

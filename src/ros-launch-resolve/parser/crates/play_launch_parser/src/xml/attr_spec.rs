@@ -352,6 +352,18 @@ static SPECS: &[AttrSpec] = &[
         children: &[],
     },
     AttrSpec {
+        // `<extra_arg>` under `<composable_node>` — the launch API's
+        // `ComposableNode(extra_arguments=[{...}])`. Without a spec here,
+        // `spec_for` returns `None` and `check` exits before validating
+        // anything, so `<extra_arg nmae="x" value="1"/>` would be accepted in
+        // full silence. Issue #0022 was the same failure one level up:
+        // `extra_arg` was an ALLOWED child that nothing read.
+        element: "extra_arg",
+        supported: &["name", "value"],
+        known_unsupported: &[],
+        children: &[],
+    },
+    AttrSpec {
         element: "env",
         supported: &["name", "value"],
         known_unsupported: &[],

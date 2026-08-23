@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!-- Issue #0022 — `extra_arg` on a composable node.
+
+     It was listed as an allowed child of `<composable_node>`, so a launch
+     file using it validated cleanly, and then the child loop dropped it: the
+     action initialised `extra_args` empty and never filled it. Every layer
+     below carried the field faithfully and every value was empty, so the
+     author got no signal at all. The Python parser has always carried them.
+
+     Both container shapes appear because both readers share
+     `ComposableNodeAction::from_entity` — a fix that only covered
+     `<node_container>` would leave `<load_composable_node>` silently wrong,
+     which is exactly how issue #7 went.
+-->
+<launch>
+  <arg name="pool" default="4"/>
+
+  <node_container pkg="rclcpp_components" exec="component_container" name="c" namespace="">
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="inner">
+      <extra_arg name="use_intra_process_comms" value="true"/>
+      <extra_arg name="executor_threads" value="$(var pool)"/>
+    </composable_node>
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Listener" name="plain"/>
+  </node_container>
+
+  <load_composable_node target="c">
+    <composable_node pkg="demo_nodes_cpp" plugin="demo_nodes_cpp::Talker" name="loaded">
+      <extra_arg name="use_intra_process_comms" value="false"/>
+    </composable_node>
+  </load_composable_node>
+</launch>

@@ -115,6 +115,7 @@ impl LoadComposableNodeAction {
                     namespace,
                     parameters: node.parameters.clone(),
                     remappings: node.remappings.clone(),
+                    extra_args: node.extra_args.clone(),
                     scope_id: None,
                 }
             })

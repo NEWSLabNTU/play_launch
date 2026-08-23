@@ -7,7 +7,7 @@ use crate::{
     record::{ComposableNodeContainerRecord, LoadNodeRecord, NodeRecord},
     substitution::LaunchContext,
 };
-use std::{cell::RefCell, collections::HashMap};
+use std::cell::RefCell;
 
 impl NodeCapture {
     /// Convert to NodeRecord and generate command line
@@ -248,7 +248,10 @@ impl LoadNodeCapture {
             log_level: None,
             remaps: self.remappings.clone(),
             params: merged_params,
-            extra_args: HashMap::new(),
+            // Issue #0022 — the FOURTH hop. Even with the parser reading
+            // `<extra_arg>`, the action carrying it, and the capture holding
+            // it, this conversion still discarded it.
+            extra_args: self.extra_args.clone(),
             env: None,
             scope: None,
         })
