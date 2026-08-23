@@ -336,6 +336,56 @@ mod tests {
         )
     }
 
+    /// The fragment must parse as a PLATFORM FILE, not merely as YAML.
+    ///
+    /// This is the assertion whose absence shipped a broken verb.
+    /// `fragment_is_pasteable_yaml_under_overrides` below checks the output is
+    /// well-formed YAML, which it always was — and `deny_unknown_fields` on
+    /// `PosixOverride` rejected it anyway, because the struct spelled the
+    /// field `budget_us` while this renders the Phase 59 `budget: <n>us`:
+    ///
+    /// ```text
+    /// overrides.lidar_driver: unknown field `budget`, expected one of
+    /// `priority`, `core`, `sched_class`, `cpus`, `nice`, `uclamp_min`,
+    /// `uclamp_max`, `budget_us`
+    /// ```
+    ///
+    /// "Pasteable" is a claim about the consumer, so only the consumer can
+    /// check it. Every other test here asserts on the string this module
+    /// itself produces, which is self-consistent by construction and was
+    /// wrong for exactly that reason.
+    #[test]
+    fn the_fragment_is_accepted_by_the_platform_file_loader() {
+        let out = render_of(&[
+            measured("/detector", "detect", 9_100_000),
+            measured("/brake", "stop", 3_000_000),
+        ]);
+        let fragment: String = out
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Exactly what an integrator does: paste it under a platform file's
+        // head.
+        let platform = format!("target: posix\nmapper: chain_aware\n{fragment}\n");
+        let file = ros_launch_manifest_sched::parse_platform_file_yaml(&platform)
+            .unwrap_or_else(|e| panic!("measure's own output must load:\n{e}\n---\n{platform}"));
+
+        let budget = |node: &str| {
+            let ros_launch_manifest_sched::PlatformOverrideEntry::Posix(ov) =
+                file.overrides.get(node).expect("override present")
+            else {
+                panic!("posix override");
+            };
+            ov.budget.map(|d| d.as_micros())
+        };
+        // And the value survives the round trip — a fragment that parses but
+        // loses the number would be a subtler version of the same bug.
+        assert_eq!(budget("/detector"), Some(9100));
+        assert_eq!(budget("/brake"), Some(3000));
+    }
+
     #[test]
     fn fragment_is_pasteable_yaml_under_overrides() {
         let out = render_of(&[measured("/detector", "detect", 9_100_000)]);

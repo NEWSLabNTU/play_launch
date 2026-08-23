@@ -1250,7 +1250,11 @@ fn posix_budgets(
         let ros_launch_manifest_sched::PlatformOverrideEntry::Posix(ov) = entry else {
             continue;
         };
-        let Some(budget_us) = ov.budget_us else {
+        // Phase 63: the platform file spells this `budget: 8000us`, with
+        // `budget_us: 8000` still accepted. Microseconds are what the rest of
+        // this function and the reservation derivation speak, so convert once
+        // here rather than threading a `Duration` through.
+        let Some(budget_us) = ov.budget.map(|d| d.as_micros()) else {
             continue;
         };
         out.insert(selector.clone(), budget_us);

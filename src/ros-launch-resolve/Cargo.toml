@@ -27,16 +27,16 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/NEWSLabNTU/ros-launch-resolve"
 
 [workspace.dependencies]
-ros-launch-manifest-types = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.9" }
-ros-launch-manifest-model = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.9" }
-ros-launch-manifest-sched = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.9" }
+ros-launch-manifest-types = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.10" }
+ros-launch-manifest-model = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.10" }
+ros-launch-manifest-sched = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.10" }
 # default-features off so the LEAF decides `smt` (rlm v0.1.8): the checker's
 # z3-backed satisfiability rule is default-on upstream, and forwarding the
 # choice is what lets a distribution build (nano-ros's `nros-launch-resolve`)
 # drop the z3 -> bindgen chain and its host prereqs (libclang, libz3-dev)
 # without a fork. A no-smt checker says so itself: it registers a stub rule
 # that emits one Info diagnostic instead of silently checking less.
-ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.9", default-features = false }
+ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.10", default-features = false }
 play_launch_parser = { path = "parser/crates/play_launch_parser" }
 eyre = "0.6"
 serde = { version = "1", features = ["derive"] }
