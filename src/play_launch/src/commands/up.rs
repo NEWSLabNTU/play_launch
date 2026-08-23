@@ -238,6 +238,17 @@ pub(crate) async fn play(
     // costs nothing on a machine that has no delegation.
     let cgroup_limits =
         crate::execution::cgroup::LimitRules::compile(&runtime_config.cgroups.limits);
+    // Configured intent must never be dropped in silence. Grouping being
+    // unavailable is unremarkable on its own — it is the default — but a user
+    // who wrote `cgroups.limits` asked for something specific and would
+    // otherwise watch it do nothing with no explanation.
+    if !cgroup_limits.is_empty() && cgroups.is_none() {
+        warn!(
+            "cgroups.limits: {} rule(s) configured but NONE were applied — play_launch cannot \
+             create cgroups here. Start it under `systemd-run --user --scope` to enable them.",
+            cgroup_limits.len()
+        );
+    }
     let cgroup_limits = (!cgroup_limits.is_empty()).then_some(cgroup_limits);
     debug!("Runtime configuration loaded successfully");
 

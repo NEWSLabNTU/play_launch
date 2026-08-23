@@ -122,7 +122,13 @@ impl CgroupTree {
         // case (see the module doc).
         let probe = root.join(".play_launch_probe");
         if let Err(e) = std::fs::create_dir(&probe) {
-            info!(
+            // `debug!`, not `info!`. This is the ORDINARY outcome — play_launch
+            // is normally started from a terminal, whose session scope no
+            // unprivileged user can write — and an INFO line on every launch
+            // forever, about an optional feature nobody asked for, is how a
+            // real signal gets scrolled past. A user who DID ask, by writing
+            // `cgroups.limits`, is warned by the caller instead.
+            debug!(
                 "cgroups: no per-container grouping — cannot create a cgroup under {} ({}). \
                  Memory is reported per process and teardown uses the process group, as before. \
                  To enable it, start play_launch under `systemd-run --user --scope`.",
@@ -145,7 +151,7 @@ impl CgroupTree {
             return None;
         }
         if let Err(e) = std::fs::write(supervisor.join("cgroup.procs"), "0\n") {
-            info!(
+            debug!(
                 "cgroups: no per-container grouping — could not move play_launch into its own \
                  leaf ({e})"
             );
@@ -375,6 +381,10 @@ impl LimitRules {
 
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.rules.len()
     }
 }
 
