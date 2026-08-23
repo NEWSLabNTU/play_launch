@@ -93,14 +93,33 @@ it happens through the same executor that may already be stuck.
 What happens when composable nodes that shared a container are split into
 separate processes, across different RMW implementations.
 
-### `use_intra_process_comms: true` Is Harmless
+### `use_intra_process_comms: true` Is Harmless — and No Longer Applied
 
 **It does not break.** The rclcpp publisher always creates a DDS publisher
 alongside the intra-process path. When a subscriber is in another process,
 `get_intra_process_subscription_count()` returns 0, so the publisher sends via
 DDS. The intra-process path finds no local subscribers and returns immediately.
 
-There is no error, no warning, no silent failure. The flag can be left in place.
+There is no error, no warning, no silent failure. A launch file may keep the
+setting.
+
+**play_launch no longer applies it in `isolated` mode.** "Harmless" was the
+right verdict and the wrong conclusion: because the flag cannot help here, the
+honest thing is not to set it. A `component_node` process hosts exactly one
+node — a single `--plugin`, one `create_node_instance`, one `add_node` — so
+there is never a peer, and enabling intra-process comms only builds the
+`IntraProcessManager` and checks it on every publish to find nothing. The
+forwarding was removed from `CloneIsolatedComponentManager`, and
+`component_node` has no flag to enable it.
+
+This changes nothing observable. The setting is still honoured where it can do
+something: in `stock` and `observable` the composables are threads in one
+container process, and upstream
+`rclcpp_components::ComponentManager::create_node_options` reads
+`use_intra_process_comms` from the LoadNode request directly. The value reaches
+that request from the launch file in all modes — issue #0022 fixed the parser
+hop that had been dropping it since 2026-01-18 — and only the isolated path
+declines to consume it.
 
 ### FastDDS (Default in Humble)
 

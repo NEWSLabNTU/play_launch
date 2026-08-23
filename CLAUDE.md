@@ -187,7 +187,16 @@ rclcpp_components::ComponentManager           (upstream)
 - **ObservableComponentManager**: publishes `ComponentEvent` on `~/_container/component_events` (reliable, transient_local, depth 100)
 - **CloneIsolatedComponentManager**: fork()+exec() of `component_node` binary per composable node
   - Parameters: `request->parameters` serialized to temp YAML (`/**:` wildcard namespace), passed via `--params-file`
-  - `extra_arguments`: only `use_intra_process_comms` is extracted and forwarded as `--use-intra-process-comms`
+  - `extra_arguments`: `log_dir` and `executor_threads` are extracted and
+    forwarded. **`use_intra_process_comms` deliberately is NOT** — this mode
+    gives each composable its own process holding exactly one node, so the
+    intra-process path can never find a peer, and enabling it only builds
+    machinery that is checked on every publish and always finds nothing. It is
+    still honoured in `stock`/`observable`, where composables share a process
+    and upstream `ComponentManager::create_node_options` reads it straight from
+    the LoadNode request with no involvement from us. The value travels through
+    the parser and model either way (#0022) — only the isolated path declines
+    to consume it.
   - Ready pipe protocol: child writes `"OK name\n"` or `"ERR msg\n"`. The wait
     covers the node's CONSTRUCTOR, so it is bounded by **LIVENESS, not time**:
     poll in 1 s slices, `waitpid(WNOHANG)` each slice, give up the moment the
