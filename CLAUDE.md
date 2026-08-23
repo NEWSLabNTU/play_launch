@@ -188,7 +188,15 @@ rclcpp_components::ComponentManager           (upstream)
 - **CloneIsolatedComponentManager**: fork()+exec() of `component_node` binary per composable node
   - Parameters: `request->parameters` serialized to temp YAML (`/**:` wildcard namespace), passed via `--params-file`
   - `extra_arguments`: `log_dir` and `executor_threads` are extracted and
-    forwarded. **`use_intra_process_comms` deliberately is NOT** — this mode
+    forwarded. `log_dir` is load-bearing — it is how each composable's stdout
+    and stderr reach its own `out`/`err` under `play_log`, so the path is not
+    removable. Of the two arguments upstream honours
+    (`ComponentManager::create_node_options`), neither applies here and each
+    fails differently: **`forward_global_arguments=false` WARNS** — in a shared
+    container it withholds the container's own command-line args, but here
+    `component_node`'s global args ARE the composable's `__node`/`__ns`/
+    `--params-file`, so obeying it would strip the node of its identity;
+    **`use_intra_process_comms` deliberately is NOT read** — this mode
     gives each composable its own process holding exactly one node, so the
     intra-process path can never find a peer, and enabling it only builds
     machinery that is checked on every publish and always finds nothing. It is
