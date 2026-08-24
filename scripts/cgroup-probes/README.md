@@ -26,6 +26,7 @@ systemd-run --user --scope -p Delegate=yes bash scripts/cgroup-probes/<probe>.sh
 | `freeze_cpu.sh` | What freezing a *constructed* node returns. Needs `PL=<path to play_launch>` and a launch file argument. |
 | `batch_wakeup.c` | What `SCHED_BATCH` costs a task that WAKES rather than computes. `gcc -O2 -o batch_wakeup batch_wakeup.c -lpthread`, then `./batch_wakeup other\|batch <hz> <secs> <load_threads>`. |
 | `cpu_share.sh` | What `SCHED_BATCH` costs a CPU-BOUND task (answer: nothing). |
+| `frame_budget.c` | Why a desktop goes laggy under a wide launch, and what fixes it. Calibrate ONCE on an idle machine (`./frame_budget -c 4`), then pass the count to every arm. |
 
 Two harness defects bit repeatedly while writing these, and are worth knowing
 before adding another:
@@ -33,6 +34,15 @@ before adding another:
 - **`grep -c` and `pgrep -c` already print `0` and exit non-zero** when nothing
   matches. A `|| echo 0` fallback therefore prints a *second* zero, and the
   result is a corrupted table or `[: 0\n0: integer expression expected`.
+- **Calibrate outside the measured run.** `frame_budget` first sized its work
+  loop inside each arm; under 144 burners the calibration window itself got a
+  twelfth of a CPU, concluded the machine was twelve times slower, shrank the
+  frame to a twelfth, and made the loaded arms look *better* than idle.
+- **A wakeup-latency proxy that does no work measures nothing.** The first
+  desktop model woke at 60 Hz and returned immediately; 144 burners barely
+  touched it, because CFS serves a sleeper promptly however deep the runqueue.
+  A compositor needs *milliseconds of CPU per frame*, and that is what
+  contention takes away. The two proxies disagree by four orders of magnitude.
 - **`ros2 node list` spawns a fresh participant** that must complete discovery
   from scratch, so it cannot answer "did the peer purge this node" — it
   conflates that with "my new observer has not found it yet". Ask an existing
