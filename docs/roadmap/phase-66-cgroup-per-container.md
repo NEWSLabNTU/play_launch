@@ -1,7 +1,14 @@
 # Phase 66 — cgroup-per-container: the properties, without the container
 
-Status: **W1–W2 done** (`5d8618a`, W2 below). **W3 closed by measurement** — the primitive shipped, the staging gate was not built and should not be. Design study, with every claim measured on the
-bench Orin (`5.15.148-tegra`, 12 cores, 61 GiB):
+Status: **complete.** W1, W2 and W4 shipped; W3 was closed by measurement — its
+primitive shipped and its staging gate was deliberately not built. Two loose
+ends are named rather than hidden: `oom.group=1` is verified as a mechanism and
+as a setting reaching the kernel but never composed end to end (no fixture
+composable allocates enough to OOM), and no `cpu.weight` has been read back from
+a live group here because `cpu` is not delegated on this bench.
+
+Every claim below was measured on the bench Orin (`5.15.148-tegra`, 12 cores,
+61 GiB):
 [docs/design/cgroup-per-container.md](../design/cgroup-per-container.md).
 Probes are in [`scripts/cgroup-probes/`](../../scripts/cgroup-probes/) —
 tracked, because `tmp/` is gitignored and a design whose evidence cannot be
