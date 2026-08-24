@@ -1,6 +1,6 @@
 # Phase 66 — cgroup-per-container: the properties, without the container
 
-Status: **W1–W2 done** (`5d8618a`, W2 below). Design study, with every claim measured on the
+Status: **W1–W2 done** (`5d8618a`, W2 below). **W3 closed by measurement** — the primitive shipped, the staging gate was not built and should not be. Design study, with every claim measured on the
 bench Orin (`5.15.148-tegra`, 12 cores, 61 GiB):
 [docs/design/cgroup-per-container.md](../design/cgroup-per-container.md).
 Probes are in [`scripts/cgroup-probes/`](../../scripts/cgroup-probes/) —
@@ -156,7 +156,7 @@ not been composed, because no fixture composable allocates enough to force an
 OOM. Closing it needs a composable that does — `tests/fixtures/governor_stress/
 mem_hog.cpp` is the shape, but it is a standalone binary, not a plugin.
 
-### W3 — `cgroup.freeze` for staged startup
+### W3 — `cgroup.freeze` for staged startup — CLOSED, primitive only
 
 Phase 61 W2 holds sensor drivers by waiting for consumers to appear in the ROS
 graph. `cgroup.freeze` is strictly stronger: a frozen driver *cannot* publish,
@@ -247,7 +247,20 @@ So freeze does not address the startup storm by quiescing what is already up,
 and the remaining case for a freeze-mode gate rests entirely on the
 release-latency argument — which is real, but is a trade (a small publish
 window for less serialised startup), not the strict improvement W3 claimed.
-That is a decision to take deliberately.
+
+**Decided: the gate is not built.** Phase 61 already spent a wave on a clever
+default that measured worse than nothing, and this one would ship a semantic
+weakening — a driver may publish between constructing and being frozen — in
+exchange for a benefit that the storm measurement says is not there. If the
+release-latency case is ever wanted it should be opened on its own terms, as
+"staged startup releases in milliseconds instead of a constructor", not as
+storm relief.
+
+What survives is the primitive. `set_frozen`/`is_frozen` are a correct,
+tested way to quiesce a container, and the two measurements behind this
+decision — that a freeze costs a node nothing to recover from, and that a
+constructed node costs nothing to suspend — are exactly what a future
+"quiesce this container" feature would otherwise have to re-establish.
 
 Scope: talker/listener composables with trivial callbacks in a 31-participant
 graph. Autoware nodes running real callbacks at 10–100 Hz in a 144-participant
