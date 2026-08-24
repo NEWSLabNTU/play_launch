@@ -268,10 +268,26 @@ whether the graph can be *inferred* from what is already declared (the join's
 derivable from the sink alone), or whether chains should name only source and
 sink and let the resolver walk the DAG between them.
 
-### Design checkpoint — 2026-08-24: the open question, answered
+### Design checkpoint — 2026-08-24: `parallel:` is DROPPED, routes are derived
 
-**The branches are inferrable. `parallel:` is not needed, and should not be
-added.**
+**Decided (human ruling): the author writes requirements at three levels and
+never a route.** `parallel:` is not deferred or kept as an option — it is out.
+
+The three levels are the ones the vocabulary already has, which is the reason
+this costs no new authoring surface:
+
+| level | where it lives today | what it says |
+|---|---|---|
+| per node | `NodeDecl.paths` (`PathDecl`) | trigger, outputs, this hop's own deadline |
+| per topic | `TopicDecl` | rate, QoS, drop, `max_transport` |
+| per scope | `chains` (`ChainDecl`) | end-to-end budget and `reaction` vs `age` |
+
+Everything between source and sink — including a fork-join — is **derived**.
+The only part of `ChainDecl` that violates the rule is `segments`, which today
+makes an author spell out the route; under this decision a chain names its
+endpoints, its budget and its semantics, and nothing else.
+
+**The branches are inferrable, which is what makes the ruling implementable.**
 
 The pass above stopped on whether a fork-join must be *authored* as nested
 segment lists or can be *derived*. It can be derived, and the vocabulary
@@ -294,7 +310,13 @@ route plus the sync skew the junction already declares (`sync:` policy,
 The argument against `parallel:` is not only verbosity. It asks an author to
 restate a fact the manifest already contains, in a second place, where the two
 can disagree — and a chain that disagrees with the graph is a defect no checker
-currently looks for.
+currently looks for. Deriving the route makes that disagreement
+unrepresentable, which is worth more than the syntax it saves.
+
+It also makes the fan-in fixture cheaper than finding 3 implies: a diamond
+needs no new chain syntax to express, only two nodes publishing topics a third
+declares in its `trigger: { input: [...] }`. The workload and the feature stop
+being coupled.
 
 **W3.a landed**: `MapperPath::exec_ms` is populated from the declared budget.
 The exploration named this as the blocker for proportional decomposition, and
@@ -308,9 +330,21 @@ the SUM of a node's per-path maxima, so attributing that sum to one of several
 paths would overstate it. Absent stays absent, which the feasibility diagnostic
 already reports as incomplete evidence rather than as feasible.
 
-**Still to do**, in order: a fixture that actually declares a fan-in (nothing in
-the repo does — finding 3, still true); the route walk; the two decomposition
-policies; then the `rt_av_demo` radar arm and the A/B.
+**Still to do**, in order:
+
+1. **A fixture that declares a fan-in.** Nothing in the repo does (finding 3,
+   still true), and building the policies against a workload whose only input is
+   their own unit tests is the mistake this phase has already recorded twice.
+   Under the ruling this is just two publishers and a multi-input `trigger:`.
+2. **Endpoints-only chains.** `ChainDecl` accepts source + sink; the existing
+   `segments` form stays readable for one release so no manifest breaks.
+3. **The route walk** over `PathDecl.output` x `Trigger::Input`, yielding every
+   route between the endpoints.
+4. **The two decomposition policies** — proportional-to-cost where every hop
+   declares one, fair laxity otherwise, with the rule that produced each
+   deadline named in `--explain`.
+5. **The `rt_av_demo` radar arm and the A/B** against `chain_aware`, reporting
+   latency and the best-effort throughput cost.
 
 **Findings from the exploration, all verified against the tree at `7b9f204`:**
 
