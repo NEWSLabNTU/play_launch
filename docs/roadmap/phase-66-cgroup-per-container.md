@@ -267,7 +267,7 @@ graph. Autoware nodes running real callbacks at 10–100 Hz in a 144-participant
 graph would cost more when idle-but-running; the direction is established, the
 magnitude on a real stack is not.
 
-### W4 — CPU, only if the delegation ships
+### W4 — CPU, only if the delegation ships ✅ (code side)
 
 `cpu`, `io` and `cpuset` are enabled at the cgroup root and dropped at
 `user.slice`; `DelegateControllers` reports `memory pids`. One root-side
@@ -375,6 +375,46 @@ timing fact" means "nobody wrote one down", not "timing does not matter" — the
 same absent-versus-zero confusion phase 60 removed from the chain checker.
 Applying it by default would be phase 61's clever-default mistake with a
 different mechanism.
+
+**Landed.** `cpu_weight` and `cpu_max_percent` join the per-container limit
+surface, and the controller set is no longer hardcoded.
+
+That last part was the actual work. `cgroup.subtree_control` accepts a write
+only if the parent granted every controller named in it — asking for one it did
+not enable fails the WHOLE write — so the previous `+memory +pids` constant was
+not conservatism, it was the only string that could not break. It now
+intersects `USABLE_CONTROLLERS` with what the host actually reports, which is
+what lets `cpu` appear on a delegated machine without taking `memory` down with
+it everywhere else.
+
+`cpu_weight` is a share (default 100, contended only); `cpu_max_percent` is a
+hard ceiling written as `"<quota> <period>"` in microseconds, converted from
+percent-of-one-CPU so the config reads in the units a person thinks in. Weight
+is the one to reach for: a cap wastes CPU nobody else wants.
+
+**Scope worth stating: this weighs containers against EACH OTHER, inside the
+launch.** To weigh the whole launch against a desktop, the weight belongs on
+the scope — `systemd-run --user --scope -p CPUWeight=20 play_launch …` — which
+needs no play_launch code at all.
+
+A configuration asking for CPU control on a session that was never delegated
+the controller is **reported, not dropped**, at the finer granularity the rest
+of the wave uses. Measured on this bench, where the memory half still applies:
+
+```
+INFO cgroups: per-container grouping active under …/run-….scope [memory pids]
+WARN cgroups.limits: cpu_weight/cpu_max_percent are configured but the CPU
+     controller was not delegated to this session, so only the memory and pids
+     limits apply.
+INFO cgroups: /mt_container: memory.high=4294967296
+```
+
+**Not verified against a real CPU-enabled cgroup.** `cpu` is not delegated on
+this box and granting it needs root, so the write path is covered by unit tests
+(the percent→quota conversion, the controller intersection) and by the
+end-to-end warning above, but no `cpu.weight` has been read back from a live
+group here. That is the one claim in this phase resting on unit tests rather
+than a kernel.
 
 ## Not doing
 

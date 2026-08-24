@@ -249,6 +249,20 @@ pub(crate) async fn play(
             cgroup_limits.len()
         );
     }
+    // Same rule one level down: a rule that asks for CPU control on a host
+    // whose session was never delegated the controller would apply its memory
+    // and pids parts and quietly drop the rest.
+    if let Some(tree) = cgroups.as_ref()
+        && !tree.has_cpu()
+        && cgroup_limits.wants_cpu()
+    {
+        warn!(
+            "cgroups.limits: cpu_weight/cpu_max_percent are configured but the CPU controller \
+             was not delegated to this session, so only the memory and pids limits apply. \
+             systemd grants `memory pids` by default; see docs/roadmap/\
+             phase-66-cgroup-per-container.md (W4) for the root-side drop-in."
+        );
+    }
     let cgroup_limits = (!cgroup_limits.is_empty()).then_some(cgroup_limits);
     debug!("Runtime configuration loaded successfully");
 

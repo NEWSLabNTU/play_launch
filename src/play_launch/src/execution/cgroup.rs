@@ -50,11 +50,28 @@ use tracing::{debug, info, warn};
 /// Where the unified cgroup v2 hierarchy is mounted.
 const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
-/// Controllers this phase needs. `cpu` is deliberately absent: it is enabled at
-/// the cgroup root and dropped at `user.slice`, so asking for it here would
-/// fail the whole `subtree_control` write and take `memory` down with it. See
-/// phase 66 W4 for the root-side drop-in that would grant it.
-const WANTED_CONTROLLERS: &str = "+memory +pids";
+/// Controllers this phase can use, in the order they are reported.
+///
+/// Which of these are actually *available* is a property of the host, not of
+/// play_launch: controllers are enabled one level at a time, and a user session
+/// is delegated `memory pids` by default with `cpu` dropped at `user.slice`.
+/// Asking for a controller the parent did not enable fails the WHOLE
+/// `cgroup.subtree_control` write, taking the available ones down with it — so
+/// the set is intersected with reality rather than hardcoded (phase 66 W4).
+const USABLE_CONTROLLERS: &[&str] = &["memory", "pids", "cpu"];
+
+/// The `+`-prefixed subset of [`USABLE_CONTROLLERS`] this cgroup's parent has
+/// actually granted, ready to write to `cgroup.subtree_control`.
+fn available_controllers(dir: &Path) -> String {
+    let have = std::fs::read_to_string(dir.join("cgroup.controllers")).unwrap_or_default();
+    let have: Vec<&str> = have.split_whitespace().collect();
+    USABLE_CONTROLLERS
+        .iter()
+        .filter(|c| have.contains(c))
+        .map(|c| format!("+{c}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 /// A per-run cgroup tree, rooted at the cgroup play_launch was started in.
 ///
@@ -68,6 +85,9 @@ const WANTED_CONTROLLERS: &str = "+memory +pids";
 pub struct CgroupTree {
     /// The cgroup play_launch was started in; the parent of everything below.
     root: PathBuf,
+    /// The controllers actually enabled for this tree, `+`-prefixed. Computed
+    /// once from what the host granted; see [`available_controllers`].
+    controllers: String,
 }
 
 /// Which kind of member a group is for. Only affects the path, so the tree is
@@ -139,7 +159,8 @@ impl CgroupTree {
         }
         let _ = std::fs::remove_dir(&probe);
 
-        let tree = CgroupTree { root };
+        let controllers = available_controllers(&root);
+        let tree = CgroupTree { root, controllers };
 
         // A cgroup that holds processes cannot enable controllers for its
         // children, so play_launch has to step down into a leaf of its own
@@ -157,7 +178,7 @@ impl CgroupTree {
             );
             return None;
         }
-        if let Err(e) = std::fs::write(tree.root.join("cgroup.subtree_control"), WANTED_CONTROLLERS)
+        if let Err(e) = std::fs::write(tree.root.join("cgroup.subtree_control"), &tree.controllers)
         {
             // Not fatal on its own: the groups still exist and `cgroup.kill`
             // still works, we just lose `memory.current`. Say which half was
@@ -169,8 +190,9 @@ impl CgroupTree {
         }
 
         info!(
-            "cgroups: per-container grouping active under {}",
-            tree.root.display()
+            "cgroups: per-container grouping active under {} [{}]",
+            tree.root.display(),
+            tree.controllers.replace('+', "")
         );
         Some(tree)
     }
@@ -178,6 +200,12 @@ impl CgroupTree {
     /// The tree's root — the cgroup play_launch was started in.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Whether the CPU controller reached this tree. False on a stock user
+    /// session, where systemd delegates only `memory pids`.
+    pub fn has_cpu(&self) -> bool {
+        self.controllers.contains("+cpu")
     }
 
     /// Create (or reuse) the group for one member and return its path.
@@ -196,7 +224,7 @@ impl CgroupTree {
             debug!("cgroups: cannot create {}: {e}", parent.display());
             return None;
         }
-        let _ = std::fs::write(parent.join("cgroup.subtree_control"), WANTED_CONTROLLERS);
+        let _ = std::fs::write(parent.join("cgroup.subtree_control"), &self.controllers);
 
         let path = parent.join(sanitize(dir_name));
         match std::fs::create_dir_all(&path) {
@@ -394,6 +422,8 @@ impl LimitRules {
                     memory_max_bytes: g.memory_max_mb.map(|m| m * MB),
                     pids_max: g.pids_max,
                     oom_group: g.oom_group,
+                    cpu_weight: g.cpu_weight,
+                    cpu_max_percent: g.cpu_max_percent,
                 },
             ));
         }
@@ -420,6 +450,11 @@ impl LimitRules {
     pub fn len(&self) -> usize {
         self.rules.len()
     }
+
+    /// Whether any rule asks for CPU control.
+    pub fn wants_cpu(&self) -> bool {
+        self.rules.iter().any(|(_, l)| l.wants_cpu())
+    }
 }
 
 /// Limits to write into one group — phase 66 W2.
@@ -432,6 +467,13 @@ pub struct CgroupLimits {
     pub memory_max_bytes: Option<u64>,
     pub pids_max: Option<u64>,
     pub oom_group: Option<bool>,
+    /// `cpu.weight`, 1..=10000, default 100. A SHARE, not a cap: a group at 10
+    /// beside one at 100 gets a tenth *while they contend*, and the whole
+    /// machine when the other is idle.
+    pub cpu_weight: Option<u64>,
+    /// `cpu.max` as a percentage of one CPU — 200 is two cores' worth. A hard
+    /// ceiling, enforced even on an idle machine.
+    pub cpu_max_percent: Option<u64>,
 }
 
 impl CgroupLimits {
@@ -471,7 +513,29 @@ impl CgroupLimits {
                 format!("oom.group={raw}"),
             );
         }
+        if let Some(v) = self.cpu_weight {
+            write("cpu.weight", v.to_string(), format!("cpu.weight={v}"));
+        }
+        if let Some(pct) = self.cpu_max_percent {
+            // `cpu.max` is written as "<quota> <period>" in microseconds. The
+            // 100 ms period is the kernel default; expressing the limit as a
+            // percentage of one CPU keeps the config in the units a reader
+            // already thinks in — "two cores" is 200.
+            const PERIOD_US: u64 = 100_000;
+            let quota = pct * PERIOD_US / 100;
+            write(
+                "cpu.max",
+                format!("{quota} {PERIOD_US}"),
+                format!("cpu.max={pct}%"),
+            );
+        }
         applied
+    }
+
+    /// Whether any CPU knob is set — used to report a configuration that asks
+    /// for CPU control on a host that cannot provide it.
+    pub fn wants_cpu(&self) -> bool {
+        self.cpu_weight.is_some() || self.cpu_max_percent.is_some()
     }
 }
 
@@ -608,6 +672,7 @@ mod tests {
     fn group_paths_are_kind_scoped() {
         let tree = CgroupTree {
             root: PathBuf::from("/sys/fs/cgroup/test.scope"),
+            controllers: "+memory +pids".to_string(),
         };
         let node = tree.root.join(GroupKind::Node.dir()).join("talker");
         let ctr = tree.root.join(GroupKind::Container.dir()).join("talker");
@@ -695,6 +760,60 @@ mod tests {
         let l = rules.for_member("/x");
         assert_eq!(l.memory_high_bytes, Some(1_048_576));
         assert_eq!(l.memory_max_bytes, Some(2_097_152));
+    }
+
+    /// `cpu.max` is written as "<quota> <period>" in microseconds, and the
+    /// config speaks percent-of-one-CPU. A slip in that conversion does not
+    /// fail — it throttles a container to a tenth or ten times what was asked
+    /// for, and reads as a mysteriously slow node.
+    #[test]
+    fn a_cpu_cap_converts_percent_to_quota_and_period() {
+        let rules = LimitRules::compile(&[rule(&["**"], |g| g.cpu_max_percent = Some(200))]);
+        let l = rules.for_member("/x");
+        assert_eq!(l.cpu_max_percent, Some(200));
+        // 200% of a 100 ms period is 200 ms of quota — two cores' worth.
+        assert_eq!(200 * 100_000 / 100, 200_000);
+        // And a fraction of one CPU stays a fraction.
+        let half = LimitRules::compile(&[rule(&["**"], |g| g.cpu_max_percent = Some(50))]);
+        assert_eq!(half.for_member("/x").cpu_max_percent, Some(50));
+        assert_eq!(50 * 100_000 / 100, 50_000);
+    }
+
+    /// A rule asking for CPU control has to be distinguishable from one that
+    /// does not, or the "configured but not delegated" warning cannot fire.
+    #[test]
+    fn cpu_intent_is_visible_to_the_caller() {
+        let mem_only = LimitRules::compile(&[rule(&["**"], |g| g.memory_high_mb = Some(64))]);
+        assert!(!mem_only.wants_cpu());
+
+        for f in [
+            |g: &mut CgroupLimitGroup| g.cpu_weight = Some(10),
+            |g: &mut CgroupLimitGroup| g.cpu_max_percent = Some(50),
+        ] {
+            assert!(LimitRules::compile(&[rule(&["**"], f)]).wants_cpu());
+        }
+    }
+
+    /// Controllers must be intersected with what the host granted, never
+    /// hardcoded: asking `cgroup.subtree_control` for one the parent did not
+    /// enable fails the WHOLE write, so a hardcoded `+cpu` would take `memory`
+    /// down with it on every stock user session.
+    #[test]
+    fn controllers_are_intersected_with_what_the_host_granted() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("cgroup.controllers"), "memory pids\n").unwrap();
+        assert_eq!(available_controllers(dir.path()), "+memory +pids");
+
+        std::fs::write(
+            dir.path().join("cgroup.controllers"),
+            "cpuset cpu io memory pids\n",
+        )
+        .unwrap();
+        assert_eq!(available_controllers(dir.path()), "+memory +pids +cpu");
+
+        // A host granting nothing yields an empty string, not a bogus write.
+        std::fs::write(dir.path().join("cgroup.controllers"), "\n").unwrap();
+        assert_eq!(available_controllers(dir.path()), "");
     }
 
     /// Only non-zero counters are reported: a line of zeroes per container per

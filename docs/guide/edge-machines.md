@@ -532,4 +532,6 @@ cgroups:
     #   memory_max_mb: ~            # hard ceiling, ends in an OOM. Prefer high.
     #   pids_max: 2048              # tasks including threads
     #   oom_group: false            # true = the container dies as a unit
+    #   cpu_weight: 20              # share vs sibling CONTAINERS (needs cpu delegated)
+    #   cpu_max_percent: 200        # hard cap, 200 = two cores' worth
 ```

@@ -110,6 +110,28 @@ pub struct CgroupLimitGroup {
     ///
     /// Meaningless on a plain node's group — it holds one process.
     pub oom_group: Option<bool>,
+
+    /// `cpu.weight` — 1..=10000, default 100. A SHARE against sibling groups,
+    /// not a cap: a container at 10 beside one at 100 gets a tenth of the CPU
+    /// *while they contend*, and all of it when the other is idle.
+    ///
+    /// Needs the CPU controller, which a stock user session does NOT have —
+    /// systemd delegates `memory pids` only. A config that asks for it on such
+    /// a host is warned about rather than silently dropped; see phase 66 W4
+    /// for the root-side drop-in that grants it.
+    ///
+    /// This weighs containers against EACH OTHER, inside the launch. To weigh
+    /// the whole launch against a desktop, put the weight on the scope:
+    /// `systemd-run --user --scope -p CPUWeight=20 play_launch …`.
+    pub cpu_weight: Option<u64>,
+
+    /// `cpu.max` as a percentage of one CPU — `200` is two cores' worth.
+    ///
+    /// A hard ceiling, enforced even on an idle machine, which is why
+    /// `cpu_weight` is the better default: a cap wastes CPU nobody else wants.
+    /// Reach for this only where predictable throughput matters more than
+    /// using the machine.
+    pub cpu_max_percent: Option<u64>,
 }
 
 /// Phase 61: how fast play_launch is allowed to start processes.
