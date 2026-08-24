@@ -384,6 +384,56 @@ the checker grading it.
 That reframes the remaining work. It is not "add branch support to chains"; it
 is "make the checker produce what the mapper needs, from primitives".
 
+### Measured: what dropping `segments` would actually cost
+
+Run on `rt_workspace`'s `points_to_cmd`, expressing the same requirement both
+ways and comparing what the checker says.
+
+**Expressivity is not the loss.** A scope path takes a `trigger:` (the checker
+lints for one), names entry and exit topics, and carries a budget — so
+everything the chain declares, a scope path can declare. The earlier worry that
+a scope path cannot express a timer-boundary source is wrong: `trigger: { timer:
+{ rate_hz: 100 } }` parses on a scope path.
+
+**Verification is the loss, and it is specific.** The two forms are checked by
+different arithmetic:
+
+| form | rule | what it sums |
+|---|---|---|
+| chain | `chain-budget` | Σ event-segment latency + Σ **sampling_cost** |
+| scope path | `scope-budget` | Σ node latency + Σ declared topic transport |
+
+Same fixture, budget tightened to 20 ms:
+
+```
+chain form   warning[chain-budget]: total (25.00ms = 15.00ms declared
+             event-segment latency + 10.00ms sampling_cost) exceeds the
+             chain budget (20ms)
+scope path   (clean — 0 budget diagnostics)
+```
+
+The scope path stays silent because it sums 15 ms of node latency and never
+adds the boundary's 10 ms sampling cost. In this fixture that term is **40% of
+the total**, and it is the term no priority assignment can remove — it is why
+`chain-sampling-feasibility` exists.
+
+Neither rule is a superset of the other, which is worth noticing on its own:
+`scope-budget` counts declared topic transport and `chain-budget` does not.
+
+**So the trade is not tidiness versus expressivity — it is tidiness versus a
+checker that currently does chain-grade math only for chains.** The facts a
+scope path carries are sufficient (a timer trigger gives the period; node paths
+give their latencies); the rule simply does not use them yet. Dropping
+`segments` before teaching `scope-budget` the sampling term would silently
+weaken checking for every periodically-sourced pipeline — the common case in a
+robot.
+
+That makes the ordering clear, and it is the reverse of what "drop segments
+first" would suggest: **teach the scope-path checker the sampling cost, confirm
+it reproduces `chain-budget`'s verdict on this fixture, and only then retire
+the authored route.** The migration is then provably lossless rather than
+argued to be.
+
 **Still to do**, in order:
 
 1. **A fixture that declares a fan-in.** Nothing in the repo does (finding 3,
