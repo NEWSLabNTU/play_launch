@@ -307,11 +307,19 @@ routes are not an ambiguity to resolve; they are the decomposition:
 route plus the sync skew the junction already declares (`sync:` policy,
 `max_interval` / `timeout`, zero for `exact`). Both read off the graph.
 
-The argument against `parallel:` is not only verbosity. It asks an author to
-restate a fact the manifest already contains, in a second place, where the two
-can disagree — and a chain that disagrees with the graph is a defect no checker
-currently looks for. Deriving the route makes that disagreement
-unrepresentable, which is worth more than the syntax it saves.
+**Correction to an earlier claim in this section.** It said a chain that
+disagrees with the graph "is a defect no checker currently looks for". That is
+false. `chain-link` requires every `via:` topic to "exist, be an output of the
+preceding path segment, and an input of the following one", and `chain_shape`
+records that the `via` is mandatory *precisely* so that verification covers
+every hop — "so declaration order is always **verified**, never trusted".
+
+The correction strengthens the case rather than weakening it. The checker
+compares the authored route against the graph, which means **the graph is
+already treated as authoritative**. If it is authoritative enough to validate
+a route, it is authoritative enough to produce one. What `chain-link` really
+demonstrates is that the route is redundant — it exists to be checked against
+the thing that could have generated it.
 
 It also makes the fan-in fixture cheaper than finding 3 implies: a diamond
 needs no new chain syntax to express, only two nodes publishing topics a third
@@ -329,6 +337,52 @@ this field is per path; `play_launch measure` documents its emitted budget as
 the SUM of a node's per-path maxima, so attributing that sum to one of several
 paths would overstate it. Absent stays absent, which the feasibility diagnostic
 already reports as incomplete evidence rather than as feasible.
+
+### Why `segments` exists — and why the reason no longer requires authoring it
+
+Asked before removing it. From `contract-theory.md`:
+
+> Scope paths compose budgets *within* one scope subtree. **Chains** name an
+> end-to-end cause-effect sequence that **crosses scope boundaries**: an
+> alternating list of `{scope, path}` segments joined by `via:` topics.
+
+So segments answer a real question: how do you express a requirement that spans
+independently-authored manifests, without silently matching FQNs across them?
+`{scope, path}` names which scope each hop belongs to, and `via:` makes the
+join explicit rather than inferred. That was sound.
+
+What changed is that the graph became complete enough to answer it instead. A
+`via` is the intersection of one path's `output` with the next path's
+`trigger.input`; the next path is the one triggered by a topic this one
+publishes. `chain-link` computes exactly that intersection today — to check the
+author's answer.
+
+**The direction (human ruling, 2026-08-24): contract files carry primitives
+only.**
+
+- `node`, `topic`, publisher/subscriber, `service`, `action` are ROS concepts an
+  author already knows. They stay.
+- `scope` is this project's addition, and is where constraints get annotated:
+  macro requirements such as a latency between a scope's endpoints, or a rate.
+- A **chain is not a primitive**. It is a route, and a route is derivable.
+
+Most of this already exists and was not built for this purpose:
+
+| the ruling's level | what carries it today |
+|---|---|
+| per node | `NodeDecl.paths` — trigger, output, `max_latency` |
+| per topic | `TopicDecl` — `rate_hz`, `qos`, `drop`, `max_transport` |
+| per scope | `Manifest.paths` — a scope's own path with its own `max_latency` |
+| checker composing them | `scope_budget` — scope budget vs the sum of node latencies |
+
+So the shape the ruling asks for is present at three of four levels, and the
+missing piece is the fourth: the model checker deciding whether per-node and
+per-scope contracts *can fit*, and emitting the derived route as a **byproduct
+the mapper consumes** — rather than the author writing that route by hand and
+the checker grading it.
+
+That reframes the remaining work. It is not "add branch support to chains"; it
+is "make the checker produce what the mapper needs, from primitives".
 
 **Still to do**, in order:
 
