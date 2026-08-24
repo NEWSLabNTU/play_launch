@@ -285,9 +285,44 @@ unbounded startup spike) and `cpu.idle` (whole group at `SCHED_IDLE`, and
 present on this kernel) become available — and `cpu.idle` would replace the
 per-process `SCHED_BATCH` work with one group setting.
 
-**Not started, and lower priority than it looks:** the unprivileged
-`SCHED_BATCH`/nice path needs no delegation at all and protects an operator's
-session on any machine.
+**Not started.** An earlier note here recommended the unprivileged
+`SCHED_BATCH`/nice path instead, on the grounds that it needs no delegation and
+protects an operator's session on any machine. **That recommendation is
+withdrawn — measured, it penalises exactly the nodes an AV stack most needs to
+be prompt.**
+
+`SCHED_BATCH`'s entire content is that the task does not preempt on wakeup
+(`check_preempt_wakeup`: *"Batch and idle tasks do not preempt non-idle tasks
+— their preemption is driven by the tick"*). For something that computes, that
+is free. For something that sleeps on a device and must act on waking — every
+sensor driver — it is added latency, and the name of the policy is the warning.
+
+A 100 Hz driver woken through a pipe, competing with 24 external un-niced
+burners on 12 cores (`scripts/cgroup-probes/batch_wakeup.c`):
+
+| arm | p50 | p99 | max |
+|---|---|---|---|
+| `SCHED_OTHER`, nice 0 | 9.2 us | 13.8 us | 156 us |
+| `SCHED_OTHER`, nice +10 | 9.3 us | **4005 us** | 4010 us |
+| `SCHED_BATCH` | **3741 us** | 3900 us | 4074 us |
+
+`SCHED_BATCH` moves the **median** wakeup to 3.7 ms — not a tail, every sample.
+`nice +10` keeps the median but puts 1% of wakeups 4 ms late, because CFS
+scales the wakeup-preemption comparison by weight, so a niced task loses
+preemption in practice as well as share.
+
+The CPU-bound half is the mirror image and confirms the mechanism: a fixed
+compute workload under 24 competitors took 4652/4587 ms at `SCHED_OTHER` and
+4896/4632 ms at `SCHED_BATCH` — no meaningful cost, because a task that never
+sleeps never uses wakeup preemption.
+
+So the policy is safe for an NDT-style compute node and unsafe for an I/O-bound
+driver, and **play_launch cannot tell which is which**. The model would have to
+say, and it does not: a plain launch resolves to zero contracts, so "carries no
+timing fact" means "nobody wrote one down", not "timing does not matter" — the
+same absent-versus-zero confusion phase 60 removed from the chain checker.
+Applying it by default would be phase 61's clever-default mistake with a
+different mechanism.
 
 ## Not doing
 

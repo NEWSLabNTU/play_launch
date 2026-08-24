@@ -24,6 +24,8 @@ systemd-run --user --scope -p Delegate=yes bash scripts/cgroup-probes/<probe>.sh
 | `freeze_probe.sh` | Does `cgroup.freeze` actually stop execution? |
 | `freeze_discovery.sh` | What a freeze costs a node's DDS discovery — the W3 blocker. |
 | `freeze_cpu.sh` | What freezing a *constructed* node returns. Needs `PL=<path to play_launch>` and a launch file argument. |
+| `batch_wakeup.c` | What `SCHED_BATCH` costs a task that WAKES rather than computes. `gcc -O2 -o batch_wakeup batch_wakeup.c -lpthread`, then `./batch_wakeup other\|batch <hz> <secs> <load_threads>`. |
+| `cpu_share.sh` | What `SCHED_BATCH` costs a CPU-BOUND task (answer: nothing). |
 
 Two harness defects bit repeatedly while writing these, and are worth knowing
 before adding another:
