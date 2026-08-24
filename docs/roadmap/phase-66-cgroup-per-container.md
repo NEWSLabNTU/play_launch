@@ -279,7 +279,7 @@ drop-in changes it:
 Delegate=cpu cpuset io memory pids
 ```
 
-**The drop-in is standard practice, with three caveats worth reading first.**
+**The drop-in is standard practice. Of the three caveats, one is resolved.**
 It is how rootless Podman and Docker obtain resource limits, and systemd
 documents `Delegate=` as the supported hand-off: the tree at and above the
 unit's cgroup is the host manager's, the tree below it is the unit's, and
@@ -296,11 +296,21 @@ below" it. So this is not fighting systemd.
    bench has them in the user session already — `pipewire` and
    `pipewire-media-session` at `SCHED_RR 20`, `rtkit-daemon` at `RR 99`,
    pulseaudio's ALSA threads at `RR 5` — and play_launch itself applies
-   `SCHED_FIFO`/`SCHED_DEADLINE` to nodes (phase 60). Whether
-   `CONFIG_RT_GROUP_SCHED` is set could not be determined here (the Tegra image
-   ships no kernel config), so **cpu delegation and this project's own RT
-   scheduling may be mutually exclusive on this kernel.** That is the first
-   thing to test, not something to assume away.
+   `SCHED_FIFO`/`SCHED_DEADLINE` to nodes (phase 60).
+
+   **Settled, and the answer is that it does not apply here.** The Tegra image
+   ships no kernel config, so `CONFIG_RT_GROUP_SCHED` cannot be read directly —
+   but it can be inferred from a cgroup that already violates the restriction
+   if it were on. `rtkit-daemon` runs a `SCHED_RR 99` thread and lives in
+   `/system.slice/rtkit-daemon.service`, which carries `cpu.weight 100` and
+   `cpu.max max 100000`, with `cpu` in its parent's `subtree_control`. So on
+   this kernel the CPU controller is *already* enabled for a cgroup holding a
+   userspace RT task. The RHEL 8 restriction is not in force here, and the
+   interaction with phase 60's RT scheduling is not a blocker.
+
+   Worth re-checking on a different kernel rather than carrying forward as a
+   general fact: it is a build-time option, and the probe above is the way to
+   ask.
 3. **Takes effect only after re-login or reboot**, and `cpuset` delegation
    needs systemd 244 or later.
 
