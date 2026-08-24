@@ -55,7 +55,7 @@ pub fn mapper_input_from_dump(
 ) -> MapperInput {
     let nodes = scheduled_records_from_dump(dump)
         .iter()
-        .map(|r| build_mapper_node(r, index))
+        .map(|r| build_mapper_node(r, index, budgets))
         .collect();
     let chains = index
         .map(|i| resolve_chains(i, budgets))
@@ -67,7 +67,11 @@ pub fn mapper_input_from_dump(
     }
 }
 
-fn build_mapper_node(record: &ScheduledRecord, index: Option<&ManifestIndex>) -> MapperNode {
+fn build_mapper_node(
+    record: &ScheduledRecord,
+    index: Option<&ManifestIndex>,
+    budgets: &BTreeMap<String, u64>,
+) -> MapperNode {
     let Some(index) = index else {
         return MapperNode {
             name: record.fqn.clone(),
@@ -79,7 +83,7 @@ fn build_mapper_node(record: &ScheduledRecord, index: Option<&ManifestIndex>) ->
     let rate_hz = extract_rate_hz(record, index);
     let (path_budget_ms, deadline_us) = extract_path_facts(record, index);
     let criticality = extract_criticality(record, index);
-    let paths = extract_paths(record, index);
+    let paths = extract_paths(record, index, budgets);
 
     MapperNode {
         name: record.fqn.clone(),
@@ -101,7 +105,29 @@ fn build_mapper_node(record: &ScheduledRecord, index: Option<&ManifestIndex>) ->
 /// `path.input` field is empty whenever the author used the explicit
 /// `trigger: { input: [...] }` form); `outputs` is the raw declared list
 /// (always populated, either form).
-fn extract_paths(record: &ScheduledRecord, index: &ManifestIndex) -> Vec<MapperPath> {
+fn extract_paths(
+    record: &ScheduledRecord,
+    index: &ManifestIndex,
+    budgets: &BTreeMap<String, u64>,
+) -> Vec<MapperPath> {
+    // A declared budget is per NODE, and `MapperPath::exec_ms` is per PATH, so
+    // the two only line up when the node has exactly one path. Where it has
+    // several the split is genuinely unknown — `play_launch measure` documents
+    // its own emitted budget as the SUM of the per-path maxima — and attributing
+    // that sum to any one path would overstate it. Absent is the honest answer,
+    // and the `chain-sampling-feasibility` diagnostic already reports absent
+    // cost as "feasible ON INCOMPLETE EVIDENCE" rather than as feasible.
+    let path_count = index
+        .node_paths
+        .iter()
+        .filter(|p| p.node_fqn == record.fqn)
+        .count();
+    let node_exec_ms = if path_count == 1 {
+        budget_us_for(budgets, &record.fqn).map(|us| us as f64 / 1000.0)
+    } else {
+        None
+    };
+
     index
         .node_paths
         .iter()
@@ -116,10 +142,15 @@ fn extract_paths(record: &ScheduledRecord, index: &ManifestIndex) -> Vec<MapperP
                 name: p.path_name.clone(),
                 effective_trigger: convert_trigger(effective),
                 max_latency_ms: p.path.max_latency.map(|d| d.as_millis_f64()),
-                // budget (WCET) — the current contract vocabulary declares
-                // no per-path execution-time fact, so this stays None until a
-                // future vocab addition (the shared schema carries the slot).
-                exec_ms: None,
+                // Cost, from the platform file's declared `budget` for this
+                // node. The comment that used to sit here said the vocabulary
+                // declared no execution-time fact — true when it was written,
+                // and stale since phase 60 made cost authorable. The slot was
+                // hard-coded `None` for long enough that phase 58's design pass
+                // named it as the blocker for proportional deadline
+                // decomposition, which needs a per-hop cost to distribute slack
+                // against.
+                exec_ms: node_exec_ms,
                 inputs,
                 outputs: p.path.output.clone(),
             }
@@ -682,6 +713,71 @@ mod tests {
     }
 
     // ── Phase 44.4: per-path extraction + chain resolution ──
+
+    /// A declared budget reaches `MapperPath::exec_ms` — the slot phase 58's
+    /// design pass named as the blocker for proportional deadline
+    /// decomposition, and which was hard-coded `None` behind a comment that
+    /// went stale when phase 60 made cost authorable.
+    ///
+    /// And it stays absent where it cannot be attributed. A budget is per NODE
+    /// while this field is per PATH, so the two line up only for a single-path
+    /// node; `play_launch measure` documents its own emitted budget as the SUM
+    /// of a node's per-path maxima, so giving that sum to one of several paths
+    /// would overstate it. Absent is a value here, not a gap — the feasibility
+    /// diagnostic reports it as "incomplete evidence" rather than as feasible.
+    #[test]
+    fn a_declared_budget_reaches_a_single_path_and_no_further() {
+        let dump = dump_with_two_nodes();
+        let budgets = BTreeMap::from([
+            ("/talker".to_string(), 3_500u64),
+            ("/listener".to_string(), 900u64),
+        ]);
+
+        // `/talker` gets ONE path — the budget is unambiguously its cost.
+        let mut index = ManifestIndex::default();
+        index.node_paths.push(ResolvedNodePath {
+            node_fqn: "/talker".to_string(),
+            path_name: "publish".to_string(),
+            path: PathDecl {
+                trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 10.0 }),
+                output: vec!["out_ep".to_string()],
+                ..Default::default()
+            },
+            scope_id: 0,
+        });
+        // `/listener` gets TWO — the split is unknown, so neither may claim it.
+        for name in ["a", "b"] {
+            index.node_paths.push(ResolvedNodePath {
+                node_fqn: "/listener".to_string(),
+                path_name: name.to_string(),
+                path: PathDecl {
+                    trigger: Some(ros_launch_manifest_types::Trigger::Input(vec![
+                        "out_ep".to_string(),
+                    ])),
+                    ..Default::default()
+                },
+                scope_id: 0,
+            });
+        }
+
+        let input = mapper_input_from_dump(&dump, Some(&index), None, &budgets);
+
+        let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
+        assert_eq!(
+            talker.paths[0].exec_ms,
+            Some(3.5),
+            "a single-path node's declared budget IS that path's cost"
+        );
+
+        let listener = input.nodes.iter().find(|n| n.name == "/listener").unwrap();
+        assert_eq!(listener.paths.len(), 2);
+        for path in &listener.paths {
+            assert_eq!(
+                path.exec_ms, None,
+                "a multi-path node's budget must not be attributed to any one path"
+            );
+        }
+    }
 
     #[test]
     fn extract_paths_uses_effective_trigger_endpoints_not_raw_input_field() {

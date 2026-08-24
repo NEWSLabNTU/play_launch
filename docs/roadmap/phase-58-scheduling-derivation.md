@@ -1,6 +1,8 @@
 # Phase 58 — Deriving scheduling from contracts: cost, deadlines, reservations
 
-**Status:** 🚧 in progress — **W2 done** (2026-08-13); W3 and W5 outstanding
+**Status:** 🚧 in progress — **W2 done** (2026-08-13); **W3.a done** (cost reaches
+`MapperPath`, branch vocabulary decided: infer, do not author); W3.b-d and W5
+outstanding
 (W1 and W4 were absorbed into Phase 60 and are done, see below)
 **Study of record:** [`docs/research/scheduling-derivation-prior-art.md`](../research/scheduling-derivation-prior-art.md)
 **Predecessor:** Phase 57 (mixed-criticality RT demo) — supplies the measurement
@@ -265,6 +267,50 @@ whether the graph can be *inferred* from what is already declared (the join's
 `trigger: { input: [...] }` names its arms' topics, so the arms may be
 derivable from the sink alone), or whether chains should name only source and
 sink and let the resolver walk the DAG between them.
+
+### Design checkpoint — 2026-08-24: the open question, answered
+
+**The branches are inferrable. `parallel:` is not needed, and should not be
+added.**
+
+The pass above stopped on whether a fork-join must be *authored* as nested
+segment lists or can be *derived*. It can be derived, and the vocabulary
+already carries everything required:
+
+- `PathDecl` output is a declared list of topics.
+- `Trigger::Input(Vec<String>)` names the topics that cause a path to run.
+
+Together those are a bipartite graph — path produces topic, topic triggers
+path — so a chain that names only its source and sink defines the set of routes
+between them, and the resolver can walk it. Nothing about a diamond needs
+restating in the chain.
+
+That also settles the semantics cleanly rather than by convention. Multiple
+routes are not an ambiguity to resolve; they are the decomposition:
+`reaction` requires every route to fit the budget, and `age` takes the slowest
+route plus the sync skew the junction already declares (`sync:` policy,
+`max_interval` / `timeout`, zero for `exact`). Both read off the graph.
+
+The argument against `parallel:` is not only verbosity. It asks an author to
+restate a fact the manifest already contains, in a second place, where the two
+can disagree — and a chain that disagrees with the graph is a defect no checker
+currently looks for.
+
+**W3.a landed**: `MapperPath::exec_ms` is populated from the declared budget.
+The exploration named this as the blocker for proportional decomposition, and
+the hard-coded `None` sat behind a comment saying the vocabulary declared no
+execution-time fact — true when written, stale since phase 60 made cost
+authorable.
+
+It is filled only for a node with exactly ONE path. A budget is per node and
+this field is per path; `play_launch measure` documents its emitted budget as
+the SUM of a node's per-path maxima, so attributing that sum to one of several
+paths would overstate it. Absent stays absent, which the feasibility diagnostic
+already reports as incomplete evidence rather than as feasible.
+
+**Still to do**, in order: a fixture that actually declares a fan-in (nothing in
+the repo does — finding 3, still true); the route walk; the two decomposition
+policies; then the `rt_av_demo` radar arm and the A/B.
 
 **Findings from the exploration, all verified against the tree at `7b9f204`:**
 
