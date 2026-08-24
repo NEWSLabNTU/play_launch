@@ -279,6 +279,48 @@ drop-in changes it:
 Delegate=cpu cpuset io memory pids
 ```
 
+**The drop-in is standard practice, with three caveats worth reading first.**
+It is how rootless Podman and Docker obtain resource limits, and systemd
+documents `Delegate=` as the supported hand-off: the tree at and above the
+unit's cgroup is the host manager's, the tree below it is the unit's, and
+systemd "will refrain from manipulating control groups or moving processes
+below" it. So this is not fighting systemd.
+
+1. **It is not scoped to one user.** `systemd.resource-control(5)`: *"any
+   controllers that are delegated will be enabled for the parent and sibling
+   units of the unit with delegation."* Enabling `cpu` for `user@.service`
+   turns the controller on across `user.slice` and its siblings — every user
+   session on the machine, not just the one running a launch.
+2. **Real-time tasks may block it, and this project creates them.** The v2 CPU
+   controller is reported not to enable while userspace RT tasks exist. This
+   bench has them in the user session already — `pipewire` and
+   `pipewire-media-session` at `SCHED_RR 20`, `rtkit-daemon` at `RR 99`,
+   pulseaudio's ALSA threads at `RR 5` — and play_launch itself applies
+   `SCHED_FIFO`/`SCHED_DEADLINE` to nodes (phase 60). Whether
+   `CONFIG_RT_GROUP_SCHED` is set could not be determined here (the Tegra image
+   ships no kernel config), so **cpu delegation and this project's own RT
+   scheduling may be mutually exclusive on this kernel.** That is the first
+   thing to test, not something to assume away.
+3. **Takes effect only after re-login or reboot**, and `cpuset` delegation
+   needs systemd 244 or later.
+
+**One argument in favour, specific to the target hardware.** systemd declines to
+delegate `cpu` by default partly because the kernel's autogroup feature already
+gives per-session scheduling isolation. It is not there:
+
+```
+/proc/sys/kernel/sched_autogroup_enabled -> does not exist
+```
+
+`CONFIG_SCHED_AUTOGROUP` is not compiled into `5.15.148-tegra`, so on a Jetson
+the fallback systemd assumes is **absent**, and the default leaves nothing in
+its place.
+
+Sources: [rootlesscontaine.rs cgroup v2](https://rootlesscontaine.rs/getting-started/common/cgroup2/),
+[systemd.resource-control(5)](https://www.man7.org/linux/man-pages/man5/systemd.resource-control.5.html),
+[systemd CGROUP_DELEGATION](https://systemd.io/CGROUP_DELEGATION/),
+[Red Hat: cpu controller in cgroup v2 on RHEL 8](https://access.redhat.com/solutions/6582021).
+
 Same class of provisioning as `scripts/provision_rt_cpuset.sh`. If it ships,
 `cpu.weight` (proportional share), `cpu.max.burst` (bounded steady state,
 unbounded startup spike) and `cpu.idle` (whole group at `SCHED_IDLE`, and

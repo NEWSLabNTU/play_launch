@@ -112,6 +112,95 @@ startup:
   # min_available_mb: ~    # default: 1 GiB, capped at RAM/4
 ```
 
+## When the launch makes your desktop unusable
+
+A common report from a developer bench: bring up an Autoware stack under
+`--container-mode isolated`, and the desktop goes to treacle — windows lag,
+video stutters, the mouse skips. It looks like the runqueue is saturated, and it
+is, but not in the way that first suggests.
+
+### What is actually starved
+
+Not CPU *share* — CFS still hands the compositor its slice. What it loses is
+**milliseconds inside a 16.6 ms frame**. A compositor wakes 60 times a second
+and needs several milliseconds of CPU each time to build a frame; with a few
+hundred runnable tasks it gets that CPU too late, and a frame that lands after
+its deadline is a frame you see drop.
+
+The distinction is not academic, and it is easy to measure the wrong thing. A
+probe that wakes at 60 Hz and does *nothing* is barely affected by 144 CPU
+burners (median wakeup 10 us), because the scheduler serves a sleeper promptly
+however deep the queue. That result is true and useless. Model a compositor that
+does real per-frame work and the same load gives:
+
+| load | frame p50 | frames late |
+|---|---|---|
+| none | 11.5 ms | 0 / 360 |
+| 144 processes, `nice 0` | **4226 ms** | **299 / 300 (99.7%)** |
+| 144 processes, `nice 10` | 3.85 ms | 0 / 300 (0.0%) |
+
+Three repetitions, same result each time. The two probes disagree by four orders
+of magnitude on identical load
+(`scripts/cgroup-probes/frame_budget.c`).
+
+### The fix, in order of effort
+
+**1. Renice the launch.** No setup, no privilege, no config:
+
+```bash
+nice -n 10 play_launch launch autoware_launch planning_simulator.launch.xml
+```
+
+`nice` is inherited across `fork()` and `exec()`, so every one of those hundreds
+of processes gets it. In the measurement above this is the whole difference
+between dropping essentially every frame and dropping none.
+
+Why it works, concretely: a compositor sharing a core with ~12 launch processes
+gets `1024/(12x1024+1024)` = 7.7% of that CPU at `nice 0` — under the ~24% it
+needs — and `1024/(12x110+1024)` = 44% at `nice 10`, which fits.
+
+**This is a bench recommendation, not a vehicle one.** It is a deliberate trade:
+you are making the whole launch yield, including its sensor drivers, to protect
+a desktop. On a vehicle there is no desktop to protect and driver latency is the
+thing you care about, so do not carry this into a deployment.
+
+**2. Use fewer processes.** `--container-mode observable` measured 3.9 cores
+against `isolated`'s 10.2 on the same stack — see the container-mode decision at
+the top of this page, including what fault isolation you give up for it.
+
+**3. The principled version, if you have root once.** `nice` has one structural
+weakness: weights **sum**. 144 processes at `nice 10` still out-weigh a handful
+of desktop tasks in aggregate, and doubling the launch halves the desktop's
+share again. A cgroup `cpu.weight` on the launch *group* is invariant to process
+count — the group gets its share whether it holds 60 processes or 1000 — and it
+leaves scheduling **inside** the launch untouched, so a sensor driver still
+preempts a compute node exactly as it normally would.
+
+That needs the CPU controller delegated to your user session, which by default
+it is not:
+
+```
+/sys/fs/cgroup              subtree='cpuset cpu io memory pids'
+/sys/fs/cgroup/system.slice subtree='cpuset cpu io memory pids'
+/sys/fs/cgroup/user.slice   subtree='memory pids'          <- stops here
+```
+
+Controllers are enabled one level at a time, so nothing in your session has a
+`cpu.weight` knob. The fix is a root-side drop-in:
+
+```ini
+# /etc/systemd/system/user@.service.d/delegate.conf
+[Service]
+Delegate=cpu cpuset io memory pids
+```
+
+Then `systemctl daemon-reload` and **re-login**. This is a documented, standard
+practice — it is how rootless Podman and Docker get resource limits — but read
+the three caveats in
+[phase 66 W4](../roadmap/phase-66-cgroup-per-container.md) before applying it,
+particularly the one about real-time tasks, which interacts directly with
+play_launch's own RT scheduling.
+
 ## Bounding a container, and choosing what a failure takes with it
 
 Everything above is best-effort: `oom_score_adj` volunteers a victim, the
