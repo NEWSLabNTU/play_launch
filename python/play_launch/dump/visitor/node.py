@@ -12,7 +12,7 @@ from launch_ros.descriptions import Parameter
 from launch_ros.utilities import add_node_name, get_node_name_count
 
 from ..launch_dump import LaunchDump, NodeRecord
-from ..utils import dump_yaml, param_to_kv
+from ..utils import param_to_kv, param_value_to_str
 from .execute_process import visit_execute_process
 
 # Global flag to track if on_exit warning has been shown
@@ -115,7 +115,7 @@ def visit_node(
                                         # the topic "'camera6'/detection/rois" and aborted on
                                         # InvalidTopicNameError. str(True) is likewise "True"
                                         # where ROS wants "true".
-                                        params.append((param_name, dump_yaml(param_value)))
+                                        params.append((param_name, param_value_to_str(param_value)))
                     except Exception as e:
                         execute_process_logger = launch.logging.get_logger(node.name)
                         execute_process_logger.warning(
@@ -243,7 +243,7 @@ def visit_node(
             # multi-camera fusion node then built the topic name "'camera6'/detection/rois"
             # and aborted on InvalidTopicNameError at startup. dump_yaml is what every
             # other parameter path in this dumper already uses.
-            global_params.append((name, dump_yaml(value)))
+            global_params.append((name, param_value_to_str(value)))
         # Note: file paths (strings from SetParametersFromFile) are already handled
         # via __expanded_parameter_arguments by Node._perform_substitutions
 

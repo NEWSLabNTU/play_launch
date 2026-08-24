@@ -89,3 +89,20 @@ def dump_yaml(value) -> str:
     if result.endswith("..."):
         result = result[:-3].rstrip()
     return result
+
+def param_value_to_str(value) -> str:
+    """Render a parameter value for the spawned node.
+
+    Strings pass through verbatim. They are already the exact text the node expects, and
+    YAML-encoding them wraps them in quotes and escapes their newlines -- which silently
+    destroyed `robot_description`, whose value is a whole URDF document. robot_state_publisher
+    then aborted with "Error document empty", nothing published /robot_description, and
+    acb_bridge waited for it forever.
+
+    Everything else goes through YAML, because Python's repr is not what a node parses:
+    str(['camera6']) is "['camera6']" and the quotes end up inside the value, and str(True)
+    is "True" where ROS wants "true".
+    """
+    if isinstance(value, str):
+        return value
+    return dump_yaml(value)
