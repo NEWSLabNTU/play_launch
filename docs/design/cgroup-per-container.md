@@ -3,8 +3,7 @@
 **Status:** design study. Every claim below was measured on the bench Orin
 (Tegra `5.15.148-tegra`, 12 cores, 61 GiB) — the same class of machine phase 61
 measured the startup storm on, so the negative results are on-target rather
-than desktop artifacts. Probes live in `tmp/` (`cgroup_probe.sh`,
-`oom_group_probe.sh`, `delegation_detect.sh`, `freeze_probe.sh`).
+than desktop artifacts. Probes live in [`scripts/cgroup-probes/`](../../scripts/cgroup-probes/).
 
 ## The question
 

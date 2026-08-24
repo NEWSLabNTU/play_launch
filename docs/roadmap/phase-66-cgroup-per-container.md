@@ -3,9 +3,9 @@
 Status: **W1–W2 done** (`5d8618a`, W2 below). Design study, with every claim measured on the
 bench Orin (`5.15.148-tegra`, 12 cores, 61 GiB):
 [docs/design/cgroup-per-container.md](../design/cgroup-per-container.md).
-Probes are in `tmp/` (`cgroup_probe.sh`, `oom_group_probe.sh`,
-`delegation_detect.sh`, `freeze_probe.sh`, `accounting_probe.sh`,
-`mechanics_probe.sh`, `freeze_discovery.sh`).
+Probes are in [`scripts/cgroup-probes/`](../../scripts/cgroup-probes/) —
+tracked, because `tmp/` is gitignored and a design whose evidence cannot be
+re-run is one asking to be believed.
 
 ## Why
 
@@ -150,7 +150,7 @@ demonstration that `memory.max` throttles before it kills — and the reason
 
 **One acceptance clause is not closed end to end.** That `oom.group=1` makes a
 container die as a unit is verified as a *mechanism*
-(`tmp/oom_group_probe.sh`: `bystander=dead` at `1`, `bystander=ALIVE` at `0`),
+(`scripts/cgroup-probes/oom_group_probe.sh`: `bystander=dead` at `1`, `bystander=ALIVE` at `0`),
 and the bit is verified reaching the kernel through play_launch. The two have
 not been composed, because no fixture composable allocates enough to force an
 OOM. Closing it needs a composable that does — `tests/fixtures/governor_stress/
@@ -168,7 +168,7 @@ where a spawned-but-unsubscribed one merely shouldn't. Verified working
 The worry was that a frozen process sends no SPDP announcements, so past its
 peers' lease duration they purge the participant — and a driver thawed into a
 graph that has forgotten it would be worse off than one that was merely told to
-wait. Measured with `tmp/freeze_discovery.sh`: a publisher in its own cgroup,
+wait. Measured with `scripts/cgroup-probes/freeze_discovery.sh`: a publisher in its own cgroup,
 an unfrozen subscriber as the peer whose view matters, freeze, thaw, and time
 the recovery.
 
@@ -208,6 +208,51 @@ An Autoware stack has such nodes. Measure that before freezing anything on a
 vehicle.
 
 W3 is therefore unblocked for the plain case and can be written.
+
+**W3.a landed** (`fcf2303`): `set_frozen`/`is_frozen` on `CgroupTree`, reading
+state back from `cgroup.events` rather than echoing the request, because
+freezing is asynchronous.
+
+**W3.b — the staging gate — is NOT written, because measuring the mechanism
+broke this wave's premise.**
+
+The premise was that freeze is "strictly stronger" than phase 61 W2's graph
+wait. It is not the right comparison: `StartupGovernor::admit` blocks the
+**spawn**, so a late stage is not forked at all until its dependencies are
+accounted for. It publishes nothing — exactly as strong as a freeze, and with
+no race. Freezing at spawn would buy nothing either, since a frozen process
+does not construct, and deferring construction is what holding the fork already
+does.
+
+That leaves one argument for a freeze-mode gate — spawn everything so
+constructors overlap, freeze each node once accounted-for, thaw in stage order,
+paying ~225 ms per release instead of a 33–45 s constructor. Before building
+it, the question underneath it was measured: **what does freezing a constructed
+node actually return?**
+
+```
+settled (running)     130 ticks/10s   mean_runnable 2.1
+frozen                  0 ticks/10s   mean_runnable 2.8
+thawed                 86 ticks/10s   mean_runnable 3.2
+```
+
+Freezing works completely — 0 ticks, the container stops dead. What it stopped
+was **0.13 cores across 30 composables**, about 0.4% of a core each, and mean
+runnable did not fall at all. A constructed ROS node with little data flowing
+is blocked in `rcl_wait`, and a blocked task is already off the runqueue, so
+suspending it returns what it was not using. Extrapolated to phase 61's 144
+processes that is ~0.6 cores against a measured **10.2-core** storm.
+
+So freeze does not address the startup storm by quiescing what is already up,
+and the remaining case for a freeze-mode gate rests entirely on the
+release-latency argument — which is real, but is a trade (a small publish
+window for less serialised startup), not the strict improvement W3 claimed.
+That is a decision to take deliberately.
+
+Scope: talker/listener composables with trivial callbacks in a 31-participant
+graph. Autoware nodes running real callbacks at 10–100 Hz in a 144-participant
+graph would cost more when idle-but-running; the direction is established, the
+magnitude on a real stack is not.
 
 ### W4 — CPU, only if the delegation ships
 
