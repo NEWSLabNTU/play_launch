@@ -1,7 +1,7 @@
 # What a contract must carry: the axis survey
 
-**Status: PARTLY RULED. §0 carries the decisions; the deferred and unruled
-axes stay open.**
+**Status: RULED. §0 carries the decisions. Two axes are deferred by choice
+(§3.3, §3.5); §6 holds what is still open inside the adopted ones.**
 
 `contract-primitives.md` decided one thing — *a contract states what the code
 does and what it must achieve; anything computable from those is derived.* That
@@ -40,7 +40,7 @@ absorb, so each axis carries a status rather than a place in a queue.
 | fault detection / reaction, FTTI (§3.1) | **eventually — ISO 26262 requires it.** Noted, not dropped |
 | operational modes (§3.3) | **defer** — revisit once the above settle |
 | cross-chain synchronization and offset (§3.5) | **defer** — with §3.3 |
-| executor / callback-group structure (§3.4) | **unruled** — see §5 |
+| executor / callback-group structure (§3.4) | **adopt as path exclusion** — see §3.4 |
 | measurement provenance (§3.7) | platform file, not contract |
 
 Two of these carry an obligation beyond a status.
@@ -272,6 +272,11 @@ Whether to ship `skip_next`/`abort` as declarations-of-intent (checked,
 reported, not enforced) or to omit them until there is a mechanism is the
 decision the implementation should settle.
 
+One cross-repo note: nano-ros's `ResolvedTier` **already carries
+`deadline_policy: Option<String>`**, so the RTOS side has a home for `action`
+that our platform file does not. Align the vocabulary before either side
+invents a second spelling — see §5.
+
 ### 3.3 Operational modes — DEFER, WITH A MITIGATION
 
 A fail-operational stack has normal / degraded / minimal-risk-maneuver modes,
@@ -297,7 +302,7 @@ mitigation should be taken now, while the schema is being touched anyway:
 That is the whole mitigation. It costs nothing now and converts a rewrite into
 an addition.
 
-### 3.4 Executor and callback-group structure — UNRULED
+### 3.4 Executor and callback-group structure — ADOPT, AS PATH EXCLUSION
 
 Our critical path sums declared per-node latencies. Nothing checks that nodes
 sharing an executor can all achieve theirs. The published analysis is blunt:
@@ -315,9 +320,114 @@ all.** Under `isolated`, nodes are separate processes and summing holds. Under
 `observable`/`stock` they share an executor and it does not. The checker never
 knows which it will run under.
 
-Authoring split, if this lands: callback-group membership is a **fact** (a
-source-level decision, belongs in the contract); executor thread count and
-container mode are **platform**.
+#### The objection, and why it does not hold
+
+The natural objection is that "executor" and "callback group" are `rclcpp`
+implementation vocabulary, and the contract is shared with nano-ros, which
+targets RTOSes with no executor at all.
+
+That is not what nano-ros does. Its scheduling assignment key is **already the
+callback group**:
+
+```rust
+// nros-orchestration-ir, ResolvedTier
+/// `(node_name, callback_group_id)` pairs assigned to this tier, sorted.
+pub members: Vec<(String, String)>,
+```
+
+A tier lowers to a concrete RTOS task; its members are callback groups, not
+nodes. `NodeOverride` exists to reassign *"a node's callback groups to tiers at
+deploy time without touching the node package"*, and groups themselves are
+declared per node:
+
+```rust
+pub struct CallbackGroupDecl {
+    pub id: String,      // "ctrl_loop", "telemetry"
+    pub r#type: String,  // "MutuallyExclusive" (default) or "Reentrant"
+    pub tier: String,
+}
+```
+
+So the concept is portable and already shared. **What is missing is a shared
+source for it.** nano-ros learns a node's groups from its own component
+declarations; play_launch learns nothing; the contract carries neither. The two
+toolchains therefore schedule the same system from different information, and
+nothing makes their answers agree. That is a worse defect than the analysis gap
+this section started from.
+
+#### Group membership is derived, not authored
+
+An earlier draft of this document listed "an author must write it" as a burden
+increase, and that was wrong. nano-ros **infers** groups from dataflow coupling
+and treats explicit declaration as an override:
+
+> every chain becomes one mutually-exclusive group (its stages serialize), and
+> every callback outside any chain becomes its own reentrant group (no coupling
+> detected → concurrent-safe)
+
+— with `PlanCallbackGroup::inferred` recording which. Coupling there is the
+causal structure, which is exactly what `trigger`/`output` already give us.
+
+So a group is a **consequence**, and `contract-primitives.md`'s rule applies
+unchanged: the author states a constraint, the tool computes the partition.
+
+#### Three things; one is a contract fact
+
+| | what | where |
+|---|---|---|
+| 1 | may two paths of a node run concurrently? | **contract** — a property of the source |
+| 2 | which nodes share an executor / task? | platform — `--container-mode` on Linux, tier on RTOS |
+| 3 | how many threads serve it? | platform — `executor_threads`, tier count |
+
+Only (1) is portable and unobservable from deployment. (2) and (3) are already
+platform-file concerns and stay there.
+
+#### Shape
+
+Not a group — an **exclusion relation between paths**. The group is derived from
+it, the way a route is derived from `trigger`/`output`:
+
+```yaml
+nodes:
+  detector:
+    paths:
+      to_boxes: { trigger: { input: [image] }, output: [boxes] }
+      to_masks: { trigger: { input: [image] }, output: [masks] }
+      health:   { trigger: { timer: { rate_hz: 1 } }, output: [diag] }
+    concurrency:
+      exclusive: [[to_boxes, to_masks]]   # share state, serialize
+      # `health` unlisted -> may run concurrently
+```
+
+A maximal set of mutually-exclusive paths *is* a group. The platform file then
+assigns that group to a tier or an executor.
+
+**The default carries more weight than the syntax.** Both realizations already
+default to serialize — `rclcpp`'s implicit per-node callback group is
+`MutuallyExclusive`, and `CallbackGroupDecl`'s `default_cbg_type` is
+`"MutuallyExclusive"`. So `concurrency:` absent means *every path of this node
+serializes*: conservative, identical on both targets, and requiring no
+inference at all.
+
+That inverts the authoring burden. Nothing is written unless the author claims
+**more** concurrency than the safe default — which is exactly the claim a
+reviewer should be made to look at.
+
+#### What this buys before any blocking model exists
+
+With (1) in the contract and (2) known from the platform, the checker can decide
+whether **summing is valid** and say so when it is not. That needs no
+response-time analysis, no blocking arithmetic, and no executor simulation. The
+full analysis stays a later option; converting a silent unsound assumption into
+a diagnostic is the part that matters now, and it is the same move §1.1 makes
+for per-path attribution.
+
+#### Granularity divergence to resolve with it
+
+Our platform file assigns per node; nano-ros assigns per `(node,
+callback_group)`. Once groups are derivable from the contract, our platform file
+should accept group granularity too — otherwise the shared contract can express
+a schedule nano-ros can realize and we cannot.
 
 ### 3.5 Cross-chain synchronization and offset — DEFER
 
@@ -472,6 +582,7 @@ anything that changes the shape — including deciding to defer, explicitly, whi
 - `max_jitter` as a path/scope requirement, and its best-case counterpart (§3.6)
 - `miss:` — tolerance and action (§3.2)
 - QoS `deadline` / `lease_duration` (§4)
+- `concurrency.exclusive` between a node's paths (§3.4)
 - take the modes mitigation (§3.3) without taking modes
 
 **Phase 2 — analysis and mapper:**
@@ -480,32 +591,24 @@ anything that changes the shape — including deciding to defer, explicitly, whi
 - sampling cost *and* sampling jitter in the scope-path rule (§1.3, §3.6)
 - consume the write-only fields (§2)
 - derive QoS from requirements, diagnose disagreement (§4)
+- derive callback groups from the exclusion relation; diagnose when summing is
+  invalid for the resolved container mode (§3.4)
 - miss detection on both scheduling paths; find out what `skip_next`/`abort`
   actually cost (§3.2)
 - measurement provenance in the platform file (§3.7)
 
-### The one axis still unruled
+### Cross-repo consequences
 
-§3.4 — executor and callback-group structure — was not covered by any ruling,
-and it is the one that can break this order. Today's summing analysis is sound
-only because `--container-mode isolated` is the default. If phase 1 ships a
-vocabulary that cannot express executor structure, phase 2 must add a *fact*,
-which is a second contract migration — the exact thing phase 1 exists to avoid.
+Two items reach beyond this repository and should be raised with nano-ros
+rather than decided here:
 
-It arguably falls under §4's ruling already: `rclcpp::CallbackGroup` with
-`MutuallyExclusive`/`Reentrant` is a ROS 2 concept, not an external one, and the
-ruling was to include what ROS 2 offers because the contract is for ROS 2.
-
-Against that: §6.3 is unresolved — callback-group membership is a source-level
-fact that neither the launch file nor the interception layer can observe, so an
-author would have to write it. That is a genuine burden increase, against the
-direction `contract-primitives.md` set.
-
-A middle option, if the full model is too much: carry only *whether* a node's
-callbacks are mutually exclusive, as one optional boolean per node, and use it
-to decide whether summing is valid rather than to compute blocking. That is
-enough to turn a silent unsound assumption into a diagnostic, which is the
-property that actually matters.
+- **Platform-file granularity** (§3.4). Ours assigns per node, nano-ros per
+  `(node, callback_group)`. The shared contract will soon express groups; the
+  platform files should agree on whether they can name one.
+- **`deadline_policy` already exists on the RTOS side.** `ResolvedTier` carries
+  `deadline_policy: Option<String>`, so nano-ros has a home for §3.2's `action`
+  that our platform file does not. Worth aligning the vocabulary before either
+  side invents a second spelling.
 
 ## 6. Open questions
 
@@ -519,10 +622,12 @@ these by number.
 2. **Do `miss:` and `drop:` share a type?** (§3.2) Same arithmetic, different
    events. Sharing the shape helps an author; sharing the type may force one
    event's fields onto the other.
-3. **Where does callback-group membership come from?** (§3.4, §5) A source-level
-   fact that no artifact we produce can observe. If an author must write it,
-   that is a burden increase — and the one-boolean variant in §5 may be the
-   affordable version.
+3. ~~Where does callback-group membership come from?~~ **Answered** (§3.4):
+   nano-ros infers groups from causal coupling and treats declaration as an
+   override, so a group is a consequence, not a fact. What remains is narrower —
+   is "same node ⇒ exclusive by default" the right rule for us, or does path
+   exclusion within a node ever want a finer derivation? Current answer: no
+   inference, the conservative default plus an explicit opt-out.
 4. **Does per-path cost need a `costs:` section**, or can `measure` attribute
    per (node, path) once path identity is on the edge? Prefer the second; not
    yet verified possible.
