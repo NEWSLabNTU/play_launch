@@ -20,8 +20,9 @@ literature, CAST-32A, published ROS 2 executor analysis, AMALTHEA and MARTE;
 sources are listed at the end.
 
 The purpose is to have the whole surface visible before the vocabulary refactor
-freezes a schema. §0 records what has been ruled on since; the rest is the
-evidence behind those rulings, and the parts still open.
+freezes a schema. §0 records what has been ruled on since, §5 the phase
+arrangement those rulings imply; the rest is the evidence behind them, and the
+parts still open.
 
 ---
 
@@ -526,7 +527,8 @@ We proved this on ourselves already: Phase 60 W8's three arms produced
 materially different numbers from identical code.
 
 Belongs in the platform file, not the contract — it describes a measurement, not
-the code.
+the code. Scheduled with the mapper work rather than the vocabulary (§5, phase
+B2), since nothing in the contract changes.
 
 ---
 
@@ -561,6 +563,38 @@ This also changes what a violated requirement does at runtime: today nothing,
 after this a DDS callback. That is the first enforcement the contract has, and
 it is why §3.1 gets cheaper to add later.
 
+#### Enforcement is opt-in by the node, and that is measured
+
+`rclcpp` exposes both policies we want as overridable kinds — `QosPolicyKind`
+lists `Deadline` and `LivelinessLeaseDuration` — and they are settable from
+outside the node as parameters:
+
+```yaml
+my_node_name:
+  ros__parameters:
+    qos_overrides:
+      /my/topic/name:
+        publisher:
+          reliability: reliable
+          depth: 100
+```
+
+But the gate is on the node's side:
+
+```cpp
+/// Default constructor, no overrides allowed.
+QosOverridingOptions() = default;
+```
+
+A publisher or subscription only accepts overrides if its author passed
+`QosOverridingOptions` at construction. Most do not.
+
+So the honest scope: **derive always, apply where accepted, and report where it
+cannot be.** A node carrying a rate requirement whose endpoints did not opt into
+QoS overriding is a node whose requirement can be checked but never enforced —
+and saying so is more useful than either silently emitting parameters that do
+nothing or silently declining to emit them.
+
 **Ownership/strength** — the standard fail-operational failover mechanism
 (redundant publishers, highest strength wins) — is **not in ROS 2's supported
 set**. Redundancy can therefore be a contract-level concept but has no
@@ -568,34 +602,112 @@ enforcement path. Worth knowing before designing for it.
 
 ---
 
-## 5. Provisional split across the two phases
+## 5. Phase arrangement
 
-The planned sequencing is: refactor the contract to primitives and migrate, get
-the mapper to minimum correctness, then make analysis and mapper correct and
-verify. That order is right. Phase 1 is a schema freeze, so it must **decide**
-anything that changes the shape — including deciding to defer, explicitly, which
-§0 now does.
+Three phases, not two. The change from the earlier draft is that **retirement
+moved out of phase 1 and behind verification**: nothing that works today is
+removed until the thing replacing it has been shown to produce the same answer
+on a real system.
 
-**Phase 1 — vocabulary:**
+That ordering is the repository's own precedent. The Duration migration shipped
+every new spelling as an alias with a compat deserializer, and its acceptance
+criterion was *"a unit suffix appearing, never a value moving"* — verified by
+resolving the same launch under both spellings and diffing the models. Phase 47
+only hard-removed `record.json` after a release of deprecation. Same shape here.
 
-- retire `chains:`/`segments:` and `topics.rate_hz` (`contract-primitives.md`)
-- `max_jitter` as a path/scope requirement, and its best-case counterpart (§3.6)
-- `miss:` — tolerance and action (§3.2)
-- QoS `deadline` / `lease_duration` (§4)
+### Phase A — additive vocabulary and migration
+
+Nothing is removed and nothing new is consumed. New fields parse and reach the
+model; every old spelling keeps working.
+
+- `max_jitter` on paths and scope paths, plus its best-case counterpart (§3.6)
+- `miss: { tolerate, consecutive, action }` (§3.2)
 - `concurrency.exclusive` between a node's paths (§3.4)
-- take the modes mitigation (§3.3) without taking modes
+- QoS `deadline` and `lease_duration` as authorable policies (§4)
+- the modes mitigation — requirements stay addressable, `if`/`unless` are not
+  bent into approximating modes (§3.3)
+- migrate the fixtures' own contracts to the new spellings
 
-**Phase 2 — analysis and mapper:**
+**Mapper: minimum correctness only.** It must not get worse. The new facts reach
+it and are ignored; a model resolved before and after phase A differs in nothing
+but the presence of unread fields.
+
+**Acceptance:** every existing contract in the tree resolves to a byte-identical
+model, `scripts/compare_models.py` clean. A phase A that changes any derived
+value has a defect in it.
+
+### Phase B — analysis and mapper consume, then verify
+
+#### B1 — analysis
 
 - per-path attribution (§1.1, §1.2) — one fix, two symptoms
-- sampling cost *and* sampling jitter in the scope-path rule (§1.3, §3.6)
+- sampling cost *and* sampling jitter, per route (§1.3, §3.6)
+- derive callback groups from the exclusion relation (§3.4)
+- diagnose when summing is invalid for the resolved container mode (§3.4)
 - consume the write-only fields (§2)
-- derive QoS from requirements, diagnose disagreement (§4)
-- derive callback groups from the exclusion relation; diagnose when summing is
-  invalid for the resolved container mode (§3.4)
-- miss detection on both scheduling paths; find out what `skip_next`/`abort`
-  actually cost (§3.2)
-- measurement provenance in the platform file (§3.7)
+
+**Acceptance is by known-in-advance numbers**, because they have been measured:
+`points_to_cmd` as a scope path reports **25 ms against a 20 ms budget**,
+matching `chain-budget` on the same fixture; the two-output fixture charges
+`to_tracks` **30 ms, not 45 ms**, and stops tracking an unrelated sibling path's
+latency.
+
+#### B2 — mapper
+
+Each adopted axis has a mapper job, and they are not symmetric — two are
+derivations, two are refusals:
+
+| axis | what the mapper must do |
+|---|---|
+| path exclusion (§3.4) | treat an exclusive group as **one** schedulable entity, not N nodes |
+| path exclusion (§3.4) | **refuse** a per-thread reservation for a node whose exclusive paths span threads — CLAUDE.md's F2 already records that a reservation is per-thread, so deriving one per node here is unsound |
+| `miss.action` (§3.2) | derive `deadline_policy`; turn on `SCHED_FLAG_DL_OVERRUN`, wired since phase 60 and always off |
+| `max_jitter` (§3.6) | a declared jitter bound argues against best-effort placement — promote, or **report why it cannot** |
+| per-path cost (§1.2) | reservation runtime from the traversed path's cost, not the node's sum |
+| QoS (§4) | emit `qos_overrides.*` parameters where accepted; report endpoints that did not opt in |
+
+**Acceptance:** `check --sched --explain` names the provenance of every changed
+decision, and a node whose placement changed says which new fact changed it.
+
+#### B3 — verify on play_launch, on real systems
+
+This is the wave that gates retirement. A checker agreeing with itself is not
+evidence; the vocabulary has to survive a running system.
+
+| fixture | what it proves | gate |
+|---|---|---|
+| `tests/fixtures/rt_workspace` | the vocabulary end-to-end through `resolve` → `check` → `up` | contract parity, both parsers |
+| `examples/rt_av_demo` (`just ab`) | the derivation still produces a working schedule | **reproduces the published 217 → 9 missed-frame result**; `just ab3` for the deadline arm |
+| Autoware (144 nodes, 17 containers) | no regression at scale, and the `observable` case actually exercises §3.4 | resolves; the summing-validity diagnostic fires where co-location is real |
+| golf cart / AutoSDV | the launch that motivated phase 61 and 64 | resolves and launches |
+
+`rt_av_demo` is the load-bearing one. Its numbers are published in
+`docs/reports/rt-mixed-criticality/` and were produced by measurement, so a
+derivation change that quietly degrades scheduling shows up as frames rather
+than as a passing test. Run it jailed in its own `ROS_DOMAIN_ID`.
+
+### Phase C — retire, gated on B3
+
+Only after B3 is green:
+
+- `chains:` / `segments:` — the derived route replaces them
+  (`contract-primitives.md`)
+- `topics.<t>.rate_hz` — propagates from the timer that starts the chain
+- `EndpointProps.jitter` — superseded by the path/scope requirement (§3.6)
+
+Each goes deprecated-with-a-lint first, naming the fact it is derivable from,
+then removed a release later.
+
+**Retirement gate — all four, not a majority:**
+
+1. every fixture in the tree migrated to the new spellings
+2. old and new spellings resolve to identical models (`compare_models.py`)
+3. `rt_av_demo`'s A/B reproduces its published numbers under the new derivation
+4. one release shipped with the deprecation lint live
+
+Condition 2 is the one that makes the rest safe: while both spellings produce
+the same model, retirement is provably lossless, and if they ever diverge the
+divergence is a defect in the new path rather than a reason to keep the old one.
 
 ### Cross-repo consequences
 
