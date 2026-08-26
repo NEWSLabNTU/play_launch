@@ -170,6 +170,16 @@ The obvious ordering is wrong. Do not drop `segments` first.
 Steps 1–2 make the migration *provably* lossless. Everything after is
 subtraction.
 
+## Completeness is a separate question
+
+This document says how to tell a fact from a consequence. It does not say
+whether the set of facts and requirements we carry is complete — that survey,
+against AADL, AUTOSAR TIMEX, ISO 26262, the weakly-hard literature, CAST-32A and
+the published ROS 2 executor analysis, is `contract-axes.md`. It is OPEN where
+this one is decided, and it holds the measured arithmetic defects (per-path
+attribution) alongside the missing axes (modes, fault detection, executor
+structure).
+
 ## What this does not claim
 
 - **`min_rate_hz` is not obviously redundant.** Five identical copies look like
