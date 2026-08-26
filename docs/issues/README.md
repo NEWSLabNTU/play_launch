@@ -17,7 +17,16 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-*(none)*
+**#0023** — six of 84 composable load requests never reached their container on
+a golf cart `isolated` run, and no log anywhere records it: the container never
+printed `Accepted load request`, so the loss is on play_launch's side of the
+service call, and play_launch writes no log of its own into `log_dir`. Not the
+global cap (a sibling container accepted 19 in the same window) and not #0019
+(nothing was accepted, so nothing was killed). The six were five diagnostic
+graph leaves plus `component_state_monitor/component` — the launch dropped
+exactly the nodes that would have noticed. Fix the launcher log and the
+declared-vs-loaded reconciliation first; the drop itself is not diagnosable
+until then. See `0023-*`.
 
 ## Resolved
 
