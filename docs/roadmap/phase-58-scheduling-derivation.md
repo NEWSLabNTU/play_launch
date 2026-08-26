@@ -434,6 +434,12 @@ it reproduces `chain-budget`'s verdict on this fixture, and only then retire
 the authored route.** The migration is then provably lossless rather than
 argued to be.
 
+**Folded into a design of record:**
+[`docs/design/contract-primitives.md`](../design/contract-primitives.md) — the
+facts/requirements/consequences split, what each level carries, the one missing
+checker term, and a seven-step migration whose first two steps make the rest
+provably lossless.
+
 **Still to do**, in order:
 
 1. **A fixture that declares a fan-in.** Nothing in the repo does (finding 3,
