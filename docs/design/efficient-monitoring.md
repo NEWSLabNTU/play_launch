@@ -2,10 +2,12 @@
 
 **Status: research, with measurements. No code changed yet.**
 
-**§6 supersedes the extrapolation in §2.3.** The bench model predicted the
-monitor at 0.47% of a core; measured against the real golf-cart stack it is
-3.8%, and it is 26% of what play_launch spends rather than most of it. Read §6
-before acting on §5.
+**§6 supersedes the extrapolation in §2.3, and §7 supersedes §6's
+recommendation.** The bench model predicted the monitor at 0.47% of a core;
+measured on the real stack it is 3.8%, a quarter of what play_launch spends. And
+play_launch spends **1.2% of a 12-core machine** while that machine runs at
+89% — so the supervisor is ~1.3% of system CPU and is not the thing to optimise.
+Read §7 first.
 
 Motivated by high CPU on a golf-cart Autoware stack on an Orin. Every number
 below was measured on a bench Tegra (`5.15.148-tegra`, 12 cores, 64 GiB) — the
@@ -439,3 +441,99 @@ time; a harness heavy enough to measure is heavy enough to distort.
 zero and the comparison fails with `[: 0\n0: integer expression expected`.
 Already recorded three times in `CLAUDE.md`; recorded again here because
 re-committing it cost another run.
+
+
+---
+
+## 7. play_launch is 1.3% of the CPU it was suspected of
+
+§6's headline recommendation — upgrade 0.5.1 to 0.9.0 — is **void**. The vehicle
+already runs 0.9. The 0.5.1 binary was on this bench's `PATH`, and inferring the
+vehicle's version from it was reasoning about the wrong machine.
+
+So the measured arm *is* the vehicle's configuration. Confirmed rather than
+assumed: the golf-cart repo ships no play_launch config file and its justfile
+passes no `--config`, so the stack runs stock defaults — monitoring on,
+diagnostics on, web UI on, interception **off** (interception defaults to
+disabled; only `interception.events` defaults on once interception is enabled).
+That is exactly the arm measured at **14.6% of one core**.
+
+### 7.1 Traffic does not move it
+
+§6.4 flagged that the run had no sensors, so per-message cost was invisible, and
+called the numbers a floor. Measured directly by sweeping `rt_av_demo`'s
+`lidar_hz` with burns pinned near zero, so the graph does messaging and nothing
+else:
+
+| lidar_hz | play_launch, % of one core |
+|---|---|
+| 10 | 2.20 |
+| 50 | 2.68 |
+| 200 | 2.56 |
+| 500 | 2.96 |
+| 1000 | 2.84 |
+
+**A 100× rate increase costs 0.64 percentage points.** play_launch's own CPU is
+essentially flat in message rate — it scales with *process count*, which is what
+§6 measured. The floor caveat is therefore much weaker than stated: sensors
+publishing will not move the supervisor.
+
+(The interception per-message cost of §4.2 remains real, but it is paid inside
+the intercepted processes and only when interception is switched on, which this
+vehicle does not do.)
+
+### 7.2 The proportion that reframes the question
+
+From the golf-cart run, in the same steady-state window:
+
+| | |
+|---|---|
+| play_launch | 14.6% of **one** core |
+| the machine | **89% of twelve** cores |
+| play_launch's share of system CPU | **~1.3%** |
+
+The CPU is the 159 node processes doing their work. Supervising them is a
+rounding error against running them. Every optimisation in §1–§5 divides that
+1.3%.
+
+### 7.3 The lever that does move it, measured
+
+Phase 61 established that process count is what drives the load, and
+`--container-mode` is the knob. On this stack, same 159 nodes:
+
+| mode | processes | system CPU (12 cores) | play_launch |
+|---|---|---|---|
+| `isolated` (default) | 160 | **89%** | 14.6% |
+| `observable` | 68 | **68%** | 22.9% |
+
+**~2.5 cores returned**, by collapsing 92 composable processes into threads
+inside their 16 containers. Against a pre-launch baseline of ~21% on this shared
+bench, the launch-attributable share falls from ~68% to ~47% — about a third.
+
+Two honest notes on that table:
+
+- **play_launch's own cost goes UP under `observable`** (14.6% → 22.9%) and I do
+  not have an explanation. Fewer processes should mean less monitoring, so this
+  is worth understanding before it is repeated as a recommendation. It does not
+  change the conclusion, since 8 points of one core is dwarfed by 2.5 cores.
+- **This is not a recommendation.** `docs/design/container-isolation.md` and
+  phase 61 already say why: `observable` gives up the segfault boundary, per-node
+  OOM accounting and per-node restart, and zero-copy IPC. Container mode is a
+  safety decision, not a performance one — `observable` on a bench, `isolated` on
+  a vehicle. play_launch even warns about the cost at spawn time.
+
+### 7.4 So what should be done
+
+If the complaint is **play_launch's own process**, there is little to win: it is
+14.6% of a core and the largest component of that is the irreducible supervision
+floor (§6.2).
+
+If the complaint is **the machine**, the answer is already documented and is not
+about monitoring at all — it is per-node isolation granularity, which phase 61
+identified as the real lever for a vehicle and which play_launch does not yet
+have (phase 65, `docs/roadmap/phase-65-mixed-isolation-granularity.md`: a short
+isolate-list keeping fork+exec for the nodes that need it while the rest load as
+threads). That is the shape of the fix, and it is unbuilt.
+
+§5's recommendations stay valid and stay small. They are worth taking on their
+own terms; none of them is the answer to high CPU on this vehicle.
