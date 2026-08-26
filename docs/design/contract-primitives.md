@@ -154,6 +154,11 @@ express today.
 
 ## Migration, in order
 
+Scheduled as [phase 67](../roadmap/phase-67-contract-primitives.md) and
+[phase 68](../roadmap/phase-68-contract-consequences.md); the steps below are
+the argument, those docs are the work.
+
+
 The obvious ordering is wrong. Do not drop `segments` first.
 
 1. **Write the acceptance test.** Express `points_to_cmd` as a scope path; assert

@@ -604,6 +604,11 @@ enforcement path. Worth knowing before designing for it.
 
 ## 5. Phase arrangement
 
+Implemented by [phase 67](../roadmap/phase-67-contract-primitives.md) (the
+vocabulary) and [phase 68](../roadmap/phase-68-contract-consequences.md)
+(analysis, mapper, verification, retirement).
+
+
 Three phases, not two. The change from the earlier draft is that **retirement
 moved out of phase 1 and behind verification**: nothing that works today is
 removed until the thing replacing it has been shown to produce the same answer

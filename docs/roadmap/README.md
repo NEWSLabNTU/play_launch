@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 34 phases total; 27 complete, 3 in progress, 4 planned.
+Started October 2025. 36 phases total; 27 complete, 3 in progress, 6 planned.
 
 Completed phase docs are in `archive/`.
 
@@ -225,6 +225,30 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 68** — 📋 contract consequences: analysis, mapper, verification,
+    retirement. Makes the checker and mapper read what phase 67 added, then
+    RETIRES the old paths only after a running system agrees. Fixes a silent
+    wrong answer measured on a two-output node — a route that never traverses
+    `masks` is charged for it, `to_tracks` costing **45ms where the truth is
+    30ms**, tracking an unrelated sibling path one-for-one — plus the sampling
+    cost missing from `scope-budget` (**40% of the real total** on
+    `rt_workspace`) and six declared facts no arithmetic reads. Two of the
+    mapper's jobs are REFUSALS, not derivations: an exclusive group is one
+    schedulable entity rather than N, and a per-thread reservation is refused
+    where exclusive paths span threads. Retirement is gated on `rt_av_demo`
+    reproducing its published 217 -> 9 missed-frame result, not on the checker
+    agreeing with itself.
+    [phase-68-contract-consequences.md](./phase-68-contract-consequences.md).
+  - **Phase 67** — 📋 contract primitives: the vocabulary. A contract states
+    what the code does and what it must achieve; anything computable from those
+    is derived. Measured, `rt_workspace`'s three-node contract writes **100 nine
+    times** and is about a third irreducible. Adds jitter as a requirement,
+    deadline-miss handling, path exclusion (from which callback groups derive —
+    nano-ros already keys its tiers on `(node, callback_group)`), and the two
+    ROS 2 QoS policies we describe but never ask for. Strictly ADDITIVE: nothing
+    is removed, nothing is consumed, and the acceptance criterion is that every
+    existing contract resolves BYTE-IDENTICALLY.
+    [phase-67-contract-primitives.md](./phase-67-contract-primitives.md).
   - **Phase 65** — 📋 mixed isolation granularity: phase 61's W3 made concrete
   after a second vehicle hit the cost. One container, per-composable policy:
   a short isolate list keeps fork+exec (segfault boundary, per-node OOM,
