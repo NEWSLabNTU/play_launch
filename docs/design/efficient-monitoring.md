@@ -2,6 +2,11 @@
 
 **Status: research, with measurements. No code changed yet.**
 
+**§6 supersedes the extrapolation in §2.3.** The bench model predicted the
+monitor at 0.47% of a core; measured against the real golf-cart stack it is
+3.8%, and it is 26% of what play_launch spends rather than most of it. Read §6
+before acting on §5.
+
 Motivated by high CPU on a golf-cart Autoware stack on an Orin. Every number
 below was measured on a bench Tegra (`5.15.148-tegra`, 12 cores, 64 GiB) — the
 same SoC class as the vehicle, so the ARM-versus-x86 differences that turn out
@@ -330,3 +335,107 @@ optimisation to justify per group size, not a defect to repair.
 
 htop source: `external/htop` (gitignored; `git clone --depth 1
 https://github.com/htop-dev/htop`).
+
+
+---
+
+## 6. Measured on the real stack
+
+Everything above is bench primitives. This section is the golf-cart launch
+itself (`~/repos/2026-golf-cart`, `host:=master launch_perception:=true`),
+**159 nodes — 51 pure, 16 containers, 92 composables** — jailed in
+`ROS_DOMAIN_ID=137` with CAN TX forced off. Same board.
+
+Sampled `utime+stime` of every `play_launch` process in the launch's session,
+in steady state (once the process count settles above 50).
+
+| arm | play_launch, % of one core | min | max | threads | procs |
+|---|---|---|---|---|---|
+| **0.5.1** (what the vehicle runs) | **47.5** | 15 | 79 | 43 | 70¹ |
+| **0.9.0** default | **14.6** | 8 | 32 | 23 | 160 |
+| 0.9.0 `--disable-monitoring` | 10.8 | 7 | 26 | 20 | 159 |
+| 0.9.0 `--disable-all` | 5.9 | 2 | 44 | 20 | 157 |
+
+¹ session-visible count only — 0.5.1's children `setsid` out of the session, so
+this undercounts. Both arms spawned the identical 159 nodes.
+
+### 6.1 The biggest lever is a version upgrade
+
+**0.5.1 costs 3.3× what 0.9.0 costs** on the same workload — 47.5% against
+14.6% of a core. No code change required to get it.
+
+Two structural differences behind that. 0.5.1's `launch` is a two-step that
+re-invokes itself, so the supervisor is *two* processes with **43 threads**;
+0.9.0's is in-memory, one process, **23 threads**. And the parse step:
+
+| | parse time |
+|---|---|
+| 0.5.1 (Python `dump_launch`) | **71 s** |
+| 0.9.0 (Rust parser) | **0.77 s** |
+
+**92×.** That is not steady-state CPU, but for 71 s one core is pinned at
+~112% before a single node starts — and it is why the first measurement attempts
+here saw nothing: the sampling window expired inside the parse.
+
+### 6.2 Where 0.9.0's 14.6% goes
+
+| component | cost | share |
+|---|---|---|
+| supervision floor (`--disable-all`) | 5.9% | **40%** |
+| web UI + diagnostics + interception | 4.9% | 34% |
+| resource monitoring | 3.8% | **26%** |
+
+**Monitoring is a quarter of it.** The largest single term is the irreducible
+cost of spawning and supervising 159 processes with `--disable-all` — every
+feature off.
+
+### 6.3 The bench model was wrong by 8×, and in an instructive way
+
+§2.3 predicted the per-tick `/proc` walk at 0.47% of a core for 144 processes at
+the 2 s default. The measured monitoring delta is **3.8%**. So the file reads
+this document spent most of its length on are roughly **an eighth** of what
+monitoring costs — the rest is CSV writing, `sysinfo` bookkeeping, per-node
+actor state and channel traffic, none of which a `/proc` microbenchmark sees.
+
+The 80× `sockstat` win and the single-`stat`-read consolidation are still real
+and still worth taking. They are just worth **~3% of 26% of 14.6%**, not the
+headline. A microbenchmark measures what you point it at, and pointing it at the
+syscalls is what makes everything else invisible.
+
+### 6.4 What this run does not measure
+
+**No sensors are attached to this bench.** Message rates are therefore near
+zero, so §4.2's per-message interception cost — the term that scales with
+traffic and is paid inside all 159 processes rather than in the supervisor — is
+**absent from every number above**. On a vehicle with lidar and cameras
+publishing, it is additive to this, and at 387 ns per `CLOCK_THREAD_CPUTIME_ID`
+on ARM it is the term most likely to grow.
+
+That also means these figures are a **floor** for the vehicle, not an estimate
+of it.
+
+### 6.5 Revised recommendation
+
+1. **Upgrade the vehicle to 0.9.0.** 3.3× on the supervisor, 92× on parse,
+   measured, no code change. Everything else on this list is smaller.
+2. Re-measure interception on ARM and revisit the `events` default (§4.2) — the
+   one term this run could not see.
+3. The `/proc` work (§5 items 2–3) — real, cheap, and now correctly sized at a
+   few percent of a quarter of the total.
+
+### 6.6 Two measurement errors worth recording
+
+Both produced confident wrong numbers before being caught.
+
+**A sampling loop that assumes its own interval.** The first version slept 1 s
+and divided by 1 s, while its own `pgrep`/`awk` over 160 processes made the real
+interval **4980 ms**. Every CPU figure was inflated ~3–5× — 0.9.0 read as 60.3%
+rather than 14.6%. It was caught only because system CPU printed **446% of 12
+cores**, which is impossible. Sample loops must divide by *measured* elapsed
+time; a harness heavy enough to measure is heavy enough to distort.
+
+**`|| echo 0` after `pgrep -c`, for the fourth time in this repository.**
+`pgrep -c` prints `0` *and* exits non-zero, so the fallback appends a second
+zero and the comparison fails with `[: 0\n0: integer expression expected`.
+Already recorded three times in `CLAUDE.md`; recorded again here because
+re-committing it cost another run.
