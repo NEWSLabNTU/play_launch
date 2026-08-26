@@ -415,6 +415,18 @@ Composable nodes don't have separate directories — metadata in parent containe
 - Temp files in `tmp/` (gitignored), never `/tmp`. Avoid writing large shell scripts in Bash tool — create files using Write/Edit tool instead of `cat` + EOF heredoc.
 - **External source exploration**: download source repos to `external/` (gitignored) for deep exploration. Use `gh api` only for quick peeks or GitHub-specific features (issues, PRs, actions).
 - **Standalone crates** (outside the workspace, with their own `[workspace]` in Cargo.toml) must have a `/target/` `.gitignore` — e.g. `play_launch_interception`, `rcl_interception_sys`, `spsc_shm`
+- **Test CLI verbs against `install/play_launch/lib/play_launch/play_launch`,
+  not whatever `play_launch` is on `PATH`.** A pip-installed copy in
+  `~/.local/bin` shadows the build and fails a new verb with
+  `error: unrecognized subcommand 'check'` — which reads as "the feature is
+  missing" rather than "you ran last month's binary" (issue #0020).
+- **A truncated pipeline is not a negative result.** `… | grep X | head -30` on
+  a diagnostic that prints source excerpts drops later matches, and the absence
+  then looks like a finding. Confirmed the hard way this session: a
+  Vocabulary-v2 `trigger:` was briefly reported as silently ignored by
+  `scope-budget` when the rule had fired all along, below the cut. Count the
+  matches, or grep the whole output, before concluding something did not
+  happen.
 
 ### Repository Layout (phase-55 W1)
 
@@ -573,6 +585,95 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-08-26**: Phases 67/68 designed — **contracts carry facts and
+  requirements, never consequences.** Design work only; no code. The rule:
+  *a contract states what the code does and what it must achieve; anything
+  computable from those two is derived.* A trigger is a fact, a budget is a
+  requirement, and a route, a total, a downstream rate and a per-node deadline
+  are consequences — every one written by hand is a second copy of something
+  the tool already knows, and two copies can disagree. Measured on
+  `rt_workspace`'s three-node contract: the number **100 appears nine times**
+  (once as `trigger: { timer: { rate_hz: 100 } }`, three times as derivable
+  `topics.*.rate_hz`, five as identical `min_rate_hz`), plus five lines of
+  `segments:` restating a route the graph defines — roughly **a third** of the
+  file is irreducible. The derivation already exists:
+  `check_scope_path_critical_path` builds the dataflow graph, subgraphs between
+  a scope path's endpoints, and is fork-join correct (a test pins
+  `max(50,30)+20 = 70`, not the sum 100).
+  **Two arithmetic defects found by measurement, both silent.** (1) The graph is
+  node-keyed while the facts are path-keyed, so `GlobalNode::max_latency_ms`
+  takes the max over ALL a node's paths regardless of which produced the
+  traversed topic. On a two-output detector (`image` → `boxes` 20ms /
+  `masks` 35ms), the route through `boxes` is charged **45ms against a true
+  30ms**, and raising the unrelated `to_masks` to 100ms charges it **110ms** —
+  one-for-one, on a route that never touches `masks`. Safe direction, no
+  diagnostic, and it makes a per-route budget ungradeable for exactly the
+  multi-output nodes that need one. Same root cause refuses cost outright when
+  `path_count > 1`. (2) `scope-budget`'s subgraph starts AT the input topic, so
+  an upstream timer boundary is outside the traced region by construction —
+  **40% of the real total** on `rt_workspace` (chain form warns
+  `25.00ms = 15.00ms event-segment + 10.00ms sampling_cost` against a 20ms
+  budget; the scope-path form is clean). Plus **six declared facts no
+  arithmetic reads**: `jitter`, `lifespan`, `max_response` have three read sites
+  each — a `model_builder` copy, a merge-equality check, a deprecation lint.
+  **Completeness survey** against AADL, AUTOSAR TIMEX, ISO 26262, the
+  weakly-hard literature, CAST-32A, the published ROS 2 executor analysis,
+  AMALTHEA and MARTE. Rulings, so they are not relitigated: ADOPT per-path
+  attribution, sampling cost, jitter as a path/scope requirement, and the ROS 2
+  QoS policies we describe but never ask for; DEFINE deadline-miss handling and
+  validate by implementing; keep fault detection and reaction time (FTTI/FDTI/
+  FRTI) on the list because **ISO 26262 requires it** — today every
+  `min_rate_hz` we carry is a performance wish, since nothing says what happens
+  when it is violated or how fast that must be noticed; DEFER operational modes
+  and cross-chain synchronization/offset.
+  **The executor axis turned out backwards from the objection.** "Callback
+  group" reads as `rclcpp` vocabulary the RTOS side cannot share — but nano-ros
+  already keys its scheduling on it: `ResolvedTier::members` is
+  `(node_name, callback_group_id)` pairs, and it INFERS groups from causal
+  coupling with declaration as an override (`PlanCallbackGroup::inferred`). So
+  the concept is shared and only the SOURCE is missing, which is worse than an
+  analysis gap: the two toolchains schedule the same system from different
+  information. Adopted shape is an **exclusion relation between a node's paths**
+  with the group derived from it; absent `concurrency:` means every path
+  serializes, which is already what both realizations default to
+  (`rclcpp`'s implicit group is `MutuallyExclusive`, so is nano-ros's
+  `default_cbg_type`), so nothing is written unless an author claims MORE
+  concurrency than the safe answer. This matters because today's summing
+  analysis is sound ONLY because `--container-mode isolated` is the default;
+  under `observable`/`stock` nodes share an executor and nothing says so.
+  **One ruling narrowed by reading the headers rather than assuming.** `rclcpp`
+  lists `Deadline` and `LivelinessLeaseDuration` as overridable kinds, settable
+  from outside as `qos_overrides.<topic>.<endpoint>.<policy>` parameters — but
+  `QosOverridingOptions() = default` is documented *"no overrides allowed"*, so
+  enforcement is opt-in by the node author and most nodes do not opt in. Scope
+  is therefore **derive always, apply where accepted, report where it cannot
+  be**, not the enforcement claim first written.
+  **Phase split, and why retirement is last.** 67 is strictly ADDITIVE —
+  vocabulary lands, nothing is consumed, and the acceptance criterion is that
+  every existing contract resolves BYTE-IDENTICALLY (a phase 67 that changes a
+  derived value has a defect in it; same criterion as the Duration migration's
+  *"a unit suffix appearing, never a value moving"*). 68 consumes, then verifies
+  on RUNNING systems, then retires. Retirement is gated on four conditions of
+  which the load-bearing one is that old and new spellings resolve to identical
+  models — while that holds it is provably lossless, and if it ever fails the
+  divergence is a defect in the new path rather than a reason to keep the old.
+  Verification leans on `examples/rt_av_demo` (`just ab`) because its
+  **217 → 9 missed-frame** result was published from measurement, so a
+  derivation that quietly degrades scheduling surfaces as frames rather than as
+  a passing test; Autoware under `observable` is the only fixture that exercises
+  the new exclusion diagnostic at all. Two of the mapper's jobs are REFUSALS,
+  not derivations: an exclusive group is one schedulable entity rather than N,
+  and a per-thread reservation is refused where exclusive paths span threads
+  (phase 60 F2 already established a reservation is per-thread).
+  **Cross-repo seams to raise with nano-ros before 67 freezes**: our platform
+  file assigns per node while theirs assigns per `(node, callback_group)`, and
+  `ResolvedTier` already carries `deadline_policy: Option<String>` — a home for
+  68's `miss.action` that our platform file lacks. Design:
+  `docs/design/contract-primitives.md` (the rule) and
+  `docs/design/contract-axes.md` (the survey and rulings — kept separate on
+  purpose). Roadmap: `docs/roadmap/phase-67-contract-primitives.md`,
+  `docs/roadmap/phase-68-contract-consequences.md`.
 
 - **2026-08-22**: Phase 64 W2 — **when a load is lost, and when it may be
   retried.** W1 removed five mechanisms and left a hole: on the socket path
@@ -969,6 +1070,15 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   - `system-model.md` — the SystemModel artifact: layout, layers, producer/consumer split
   - `criticality-from-hazards.md` — deriving criticality (and reservations)
     from declared hazards instead of a `high|medium|low` label
+  - `contract-primitives.md` — **the rule**: a contract states what the code
+    does and what it must achieve; anything computable from those is derived,
+    never written. DECIDED
+  - `contract-axes.md` — **the completeness pass**: which axes a safe system
+    needs that we cannot express, which arithmetic is wrong, and the rulings on
+    each. Survey of AADL, AUTOSAR TIMEX, ISO 26262, the weakly-hard literature,
+    CAST-32A and the published ROS 2 executor analysis. The two are separate on
+    purpose — the first says how to tell a fact from a consequence, the second
+    says whether the facts we carry are enough
   - `unified-system-model.md` — Phase 46: the SystemModel as the ONE complete artifact (`record.json` retired to deprecated compat)
   - Manifest design docs live in the `ros-launch-manifest` repo's `docs/` (Phase 31; that repo is a git dependency, so read them at the pinned tag or in `~/.cargo/git/checkouts/`)
   - `container-control-channel.md` — phase 64: the private socketpair to our
@@ -989,6 +1099,11 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 - **RCL Interception**: `docs/roadmap/phase-29-rcl_interception.md` — LD_PRELOAD interceptor, SPSC shared memory, frontier/stats plugins
 - **Launch Scoping**: `docs/roadmap/phase-30-launch_scoping.md` — scope table, context extraction, cross-parser validation
 - **Launch Manifest**: `docs/roadmap/phase-31-launch_manifest.md` — manifest crate, parser/executor integration, audit
+- **Contract vocabulary**: `docs/roadmap/phase-67-contract-primitives.md`
+  (additive vocabulary; acceptance is a byte-identical model) and
+  `docs/roadmap/phase-68-contract-consequences.md` (analysis, mapper,
+  verification, then retirement — in that order, because retirement is gated on
+  a running system agreeing)
 - **Migration Guide**: `docs/guide/parser-migration.md` — Rust parser migration (v0.6.0+)
 - **Multi-host Guide**: `docs/guide/multi-host.md` — running one launch file's nodes across multiple hosts (ROS 2 has no `<node machine=>`)
 - **Edge Machines Guide**: `docs/guide/edge-machines.md` — what to change on a Jetson-class board, and why `--container-mode observable` is worth more than everything else combined
