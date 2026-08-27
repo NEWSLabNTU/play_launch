@@ -712,12 +712,26 @@ fn check_scope_path_critical_path(
                 severity: Severity::Warning,
                 message: format!(
                     "scope path '{}' (scope {}) max_latency_ms ({}) is less than \
-                     critical path: {} = {}ms",
+                     critical path: {} = {:.2}ms{}",
                     scope_path.path_name,
                     scope_path.scope_id,
                     declared,
                     cp.nodes.join(" → "),
                     cp.total_ms,
+                    // Name the sampling term when there is one, the way
+                    // `chain-budget` does: it is the part of the total that no
+                    // priority assignment can remove, so an author reading
+                    // "reduce this" needs to know how much of it is not theirs
+                    // to reduce.
+                    if cp.sampling_cost_ms > 0.0 {
+                        format!(
+                            " ({:.2}ms event-segment + {:.2}ms sampling_cost)",
+                            cp.total_ms - cp.sampling_cost_ms,
+                            cp.sampling_cost_ms
+                        )
+                    } else {
+                        String::new()
+                    },
                 ),
                 path: format!("paths.{}", scope_path.path_name),
                 span: None,

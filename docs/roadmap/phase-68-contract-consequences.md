@@ -1,6 +1,6 @@
 # Phase 68 — contract consequences: analysis, mapper, verification, retirement
 
-Status: **W1.a done**, rest planned. Depends on phase 67 for W2 onward;
+Status: **W1.a and W1.b done**, rest planned. Depends on phase 67 for W2 onward;
 W1 needs no new vocabulary and is proceeding first (see §W1.a).
 
 Design of record:
@@ -113,7 +113,7 @@ Open (`contract-axes.md` §6.4): whether per-path cost then needs a `costs:`
 section, or whether `measure` can attribute it once path identity exists.
 Prefer the second; not yet verified possible.
 
-### W1.b — sampling cost and sampling jitter
+### W1.b — sampling cost and sampling jitter — DONE (cost; jitter deferred)
 
 `scope-budget`'s subgraph starts **at** the input topic, so a timer boundary
 upstream is outside the traced region by construction. On `rt_workspace` that is
@@ -133,9 +133,50 @@ Sampling jitter rides along, and is the half of §3.6 that needs no new facts �
 boundary contributes the **whole period** to end-to-end jitter regardless of how
 fast its callback is.
 
-**Acceptance:** `points_to_cmd` expressed as a scope path reports **25 ms
-against a 20 ms budget**, matching `chain-budget` on the same fixture. Write
-this test first; the value has already been measured both ways.
+**Acceptance — met at the value predicted in advance:** `points_to_cmd`
+expressed as a scope path totals **25.00 ms** (10 ms sampling + 5 ms filter +
+10 ms control), matching `chain-budget` on the same fixture, and the diagnostic
+now names the split the way `chain-budget` does.
+
+**The stated cause was wrong, and both design docs are corrected.** This wave's
+premise — that the boundary is "outside the traced region by construction,
+since the subgraph starts at the input topic" — does not survive reading
+`subgraph_for_scope_path`, which seeds sources from the input topic's
+**publishers as well as** its subscribers. The boundary was in the subgraph all
+along. Two independent causes were found instead, each of which alone produces
+the measured 15 ms:
+
+1. **No sampling term.** A timer path was charged its declared `exec` like any
+   other path, so the period never entered at all — and `rt_workspace`'s
+   boundary declares no `exec`, so it contributed exactly 0.
+2. **A source truncated the route.** Because a subscriber of the input topic is
+   also seeded as a source, and a source was treated as having nothing
+   upstream, the DP discarded the hop that produced its data — dropping the
+   boundary from the route even once the boundary had a cost.
+
+Reverting either fix independently restores 15.0 against the expected 25.0,
+which is what makes the pair load-bearing rather than one fix and one guess.
+
+**What shipped.** `traversal_latency_ms` charges a timer-triggered path
+`period + exec` rather than `exec`, the same one-period-per-boundary bound
+`chain_checks` uses, so the two forms of one system agree. `CriticalPath` gained
+`sampling_cost_ms`, summed over the winning route rather than the whole
+subgraph, and the `scope-budget` diagnostic reports the split — the part of a
+total that no priority assignment can remove is exactly what an author told to
+"reduce this" needs distinguished. Source vertices now take the larger of
+"start here" and "arrive from upstream" instead of ignoring their incoming
+edges.
+
+**Sampling jitter is deliberately NOT shipped.** A boundary contributes its
+whole period to end-to-end jitter, and that is computable today — but
+`max_jitter` is phase 67 vocabulary and does not exist yet, so the number would
+have nothing to be checked against. Adding it now would create a seventh
+write-only field, which is the exact failure `contract-axes.md` §2 is about. It
+lands with phase 67.
+
+Gates, all green: clippy clean, `just check-layer2-isolation`, and `just
+test-all` — **485 parser + 291 play_launch + 185 resolver + 142 integration,
+1103 tests, 0 failed, 0 skipped**, with an empty silently-skipped report.
 
 ### W1.c — groups from exclusion, and the validity diagnostic
 

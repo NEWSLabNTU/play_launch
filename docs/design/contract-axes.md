@@ -131,18 +131,39 @@ path-keyed.** Carrying path identity onto the edge fixes both — the DP charges
 the path that produced the traversed topic, and `measure` can attribute per
 (node, path).
 
-### 1.3 Sampling cost is missing from the scope-path rule
+### 1.3 Sampling cost is missing from the scope-path rule — FIXED, and the
+stated cause was wrong
 
-Carried over from `contract-primitives.md`. `scope-budget`'s subgraph starts
-*at* the input topic, so a timer boundary upstream is outside the traced region
-by construction. On the `rt_workspace` fixture that is 10 ms of 25 ms — 40%, and
-the part no priority assignment can remove:
+Carried over from `contract-primitives.md`. On the `rt_workspace` fixture the
+gap is 10 ms of 25 ms — 40%, and the part no priority assignment can remove:
 
 ```
 chain form   warning[chain-budget]: total (25.00ms = 15.00ms event-segment
              + 10.00ms sampling_cost) exceeds the chain budget (20ms)
 scope path   clean — 0 budget diagnostics
 ```
+
+**The explanation given here was wrong**, and worth correcting rather than
+quietly replacing, because it would have sent the fix to the wrong place. This
+document claimed the boundary was "outside the traced region by construction,
+since the subgraph starts *at* the input topic". It is not:
+`subgraph_for_scope_path` seeds sources from the input topic's **publishers as
+well as** its subscribers, so the timer node *was* in the subgraph all along.
+
+Phase 68 W1.b found two independent causes, each of which alone produces the
+measured 15 ms:
+
+1. **No sampling term.** A timer path was charged its declared `exec` like any
+   other, so the period never entered. `rt_workspace`'s boundary declares no
+   `exec` at all, so it contributed exactly 0.
+2. **A source truncated the route.** Seeding sources from both publishers and
+   subscribers makes the *subscriber* of the input topic a source too, and a
+   source was treated as having nothing upstream — so the DP discarded the hop
+   that produced its data, dropping the boundary from the route even once the
+   boundary had a cost.
+
+Both are fixed; reverting either independently restores 15 ms, which is what
+makes the pair load-bearing rather than one fix and one guess.
 
 ---
 

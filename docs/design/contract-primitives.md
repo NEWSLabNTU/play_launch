@@ -107,10 +107,16 @@ chain form   warning[chain-budget]: total (25.00ms = 15.00ms event-segment
 scope path   clean — 0 budget diagnostics
 ```
 
-The scope path is silent because its subgraph **starts at the input topic**, so
-the timer boundary upstream is outside the traced region by construction. That
-10 ms is 40% of the real total, and it is the part no priority assignment can
-remove — the reason `chain-sampling-feasibility` exists.
+That 10 ms is 40% of the real total, and it is the part no priority assignment
+can remove — the reason `chain-sampling-feasibility` exists.
+
+**Fixed in phase 68 W1.b.** An earlier version of this paragraph blamed the
+subgraph for "starting at the input topic", leaving the boundary outside it.
+That was wrong — sources are seeded from the input topic's publishers as well as
+its subscribers, so the boundary was always in the subgraph. The real causes
+were that a timer path was charged only its declared `exec` (zero here), and
+that a source was treated as having nothing upstream, which truncated the route
+at the subscriber. See `contract-axes.md` §1.3.
 
 Neither rule is a superset of the other: `scope-budget` counts declared topic
 transport, `chain-budget` does not.

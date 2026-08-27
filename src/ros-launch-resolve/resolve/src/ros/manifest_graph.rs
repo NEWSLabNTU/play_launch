@@ -80,10 +80,42 @@ impl GlobalNode {
     /// `None` means the traversal could not be attributed to any declared
     /// path, in which case the conservative node-wide maximum applies — never
     /// less than the old behaviour, and never more than it either.
+    ///
+    /// A **timer-triggered** path is a clock boundary and is charged
+    /// `period + exec` rather than `exec`: a message arriving at an arbitrary
+    /// point in the period waits up to a whole period before the callback that
+    /// forwards it runs, and that wait is latency no priority assignment can
+    /// remove. Same formula and same one-period-per-boundary bound as
+    /// `chain_checks`'s `sampling_cost`, so the chain and scope-path forms of
+    /// one system agree. The boundary's own `exec` is included here and must
+    /// not also be added elsewhere.
     pub fn traversal_latency_ms(&self, path: Option<&str>) -> f64 {
+        use ros_launch_manifest_types::EffectiveTrigger;
+        let Some(decl) = path.and_then(|name| self.paths.get(name)) else {
+            return self.max_latency_ms();
+        };
+        let exec = decl.max_latency.map(|d| d.as_millis_f64()).unwrap_or(0.0);
+        match decl.effective_trigger() {
+            EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => 1000.0 / rate_hz + exec,
+            _ => exec,
+        }
+    }
+
+    /// The sampling half of [`GlobalNode::traversal_latency_ms`], reported
+    /// separately so a diagnostic can name it.
+    ///
+    /// Non-zero only for a timer-triggered path. Kept distinct because the
+    /// two terms answer different questions — `exec` is work that scheduling
+    /// can shorten, a period is a wait that it cannot — which is the whole
+    /// reason `chain-sampling-feasibility` exists.
+    pub fn sampling_cost_ms(&self, path: Option<&str>) -> f64 {
+        use ros_launch_manifest_types::EffectiveTrigger;
         match path.and_then(|name| self.paths.get(name)) {
-            Some(p) => p.max_latency.map(|d| d.as_millis_f64()).unwrap_or(0.0),
-            None => self.max_latency_ms(),
+            Some(decl) => match decl.effective_trigger() {
+                EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => 1000.0 / rate_hz,
+                _ => 0.0,
+            },
+            None => 0.0,
         }
     }
 }
@@ -390,6 +422,14 @@ pub struct CriticalPath {
     pub total_ms: f64,
     /// Node FQNs visited in order, source first, sink last.
     pub nodes: Vec<String>,
+    /// The part of `total_ms` contributed by clock boundaries on this route —
+    /// one period per timer-triggered path crossed.
+    ///
+    /// Reported separately because it is the part **no scheduling assignment
+    /// can remove**: `exec` is work that a higher priority can shorten, a
+    /// sampling period is a wait that it cannot. Same split
+    /// `chain-sampling-feasibility` makes for chains.
+    pub sampling_cost_ms: f64,
 }
 
 /// A vertex of the PATH-level dataflow graph: one declared path of one node.
@@ -555,12 +595,17 @@ pub fn critical_path(subgraph: &ScopeSubgraph) -> Option<CriticalPath> {
             .map(|n| n.traversal_latency_ms(path_name.as_deref()))
             .unwrap_or(0.0);
 
-        // A source starts the route: its own processing, nothing upstream.
-        if source_nodes.contains(node_fqn.as_str()) {
-            let cur = latency[v].unwrap_or(0.0).max(cost);
-            latency[v] = Some(cur);
-            continue;
-        }
+        // A source may start the route — but it must not *truncate* one.
+        //
+        // `subgraph_for_scope_path` seeds sources from both the publishers and
+        // the subscribers of the input topic, because an input published
+        // outside the subtree has no publisher to start from. When the
+        // publisher IS in the subtree, that makes the subscriber a source too,
+        // and treating a source as having nothing upstream then discards the
+        // hop that produced its data — dropping every node before it. So a
+        // source takes the LARGER of "start here" and "arrive from upstream"
+        // rather than skipping its incoming edges.
+        let is_source = source_nodes.contains(node_fqn.as_str());
 
         let mut best: Option<(f64, usize)> = None;
         for &(pred, transport) in &incoming[v] {
@@ -572,9 +617,23 @@ pub fn critical_path(subgraph: &ScopeSubgraph) -> Option<CriticalPath> {
                 best = Some((candidate, pred));
             }
         }
-        if let Some((arrival, pred)) = best {
-            latency[v] = Some(arrival + cost);
-            prev[v] = Some(pred);
+        match (best, is_source) {
+            // Arriving from upstream beats starting here, or there is no
+            // "starting here" to compare against.
+            (Some((arrival, pred)), false) => {
+                latency[v] = Some(arrival + cost);
+                prev[v] = Some(pred);
+            }
+            (Some((arrival, pred)), true) => {
+                if arrival + cost > cost {
+                    latency[v] = Some(arrival + cost);
+                    prev[v] = Some(pred);
+                } else {
+                    latency[v] = Some(cost);
+                }
+            }
+            (None, true) => latency[v] = Some(cost),
+            (None, false) => {}
         }
     }
 
@@ -592,11 +651,19 @@ pub fn critical_path(subgraph: &ScopeSubgraph) -> Option<CriticalPath> {
 
     // Walk `prev` back to the source, reporting NODE names — several
     // consecutive vertices can belong to one node, and the diagnostic speaks
-    // in nodes.
+    // in nodes. The sampling term is summed over the SAME walk, so it is the
+    // sampling cost of the winning route rather than of the whole subgraph.
     let mut nodes: Vec<String> = Vec::new();
+    let mut sampling_cost_ms = 0.0_f64;
     let mut cur = Some(sink_v);
     while let Some(v) = cur {
-        let name = &vertices[v].0;
+        let (name, path_name) = &vertices[v];
+        sampling_cost_ms += subgraph
+            .graph
+            .nodes
+            .get(name)
+            .map(|n| n.sampling_cost_ms(path_name.as_deref()))
+            .unwrap_or(0.0);
         if nodes.last().map(|n| n != name).unwrap_or(true) {
             nodes.push(name.clone());
         }
@@ -604,13 +671,27 @@ pub fn critical_path(subgraph: &ScopeSubgraph) -> Option<CriticalPath> {
     }
     nodes.reverse();
 
-    Some(CriticalPath { total_ms, nodes })
+    Some(CriticalPath {
+        total_ms,
+        nodes,
+        sampling_cost_ms,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ros_launch_manifest_types::{PathDecl, Trigger};
+
+    fn timer_path(rate_hz: f64, out: &[&str], latency_ms: Option<f64>) -> PathDecl {
+        PathDecl {
+            trigger: Some(Trigger::Timer { rate_hz }),
+            output: out.iter().map(|s| s.to_string()).collect(),
+            max_latency: latency_ms
+                .map(ros_launch_manifest_types::duration::Duration::from_millis_f64),
+            ..Default::default()
+        }
+    }
 
     fn path(trigger_in: &[&str], out: &[&str], latency_ms: Option<f64>) -> PathDecl {
         PathDecl {
@@ -784,5 +865,134 @@ mod tests {
             cp.total_ms, 18.0,
             "7 + max(3,11) — the conservative fallback, not the cheaper path"
         );
+    }
+
+    /// `rt_workspace`'s three-node chain, expressed as a SCOPE PATH rather
+    /// than as `chains:` / `segments:`:
+    ///
+    ///   sensor_node  timer 100Hz -> points_raw       (no declared exec)
+    ///   filter       input       -> points_filtered  5ms
+    ///   control      input       -> cmd              10ms
+    ///
+    /// `chain_checks` reports this as `25.00ms = 15.00ms event-segment +
+    /// 10.00ms sampling_cost`. The scope-path form must agree, because the
+    /// two are descriptions of one system — that agreement is what makes
+    /// retiring `segments:` lossless.
+    fn rt_workspace_graph() -> GlobalDataflowGraph {
+        assemble(
+            vec![
+                node("/perception/sensor_node", &[("tick", timer_path(100.0, &["points_raw"], None))]),
+                node(
+                    "/perception/filter_component",
+                    &[("filter", path(&["points_raw"], &["points_filtered"], Some(5.0)))],
+                ),
+                node(
+                    "/control/control_node",
+                    &[("control", path(&["points_filtered"], &["cmd"], Some(10.0)))],
+                ),
+            ],
+            vec![
+                edge(
+                    "/perception/sensor_node",
+                    "points_raw",
+                    "/perception/filter_component",
+                    "points_raw",
+                ),
+                edge(
+                    "/perception/filter_component",
+                    "points_filtered",
+                    "/control/control_node",
+                    "points_filtered",
+                ),
+            ],
+        )
+    }
+
+    /// The acceptance test for W1.b. Both forms of one system must total
+    /// 25ms; against a 20ms budget both must complain.
+    #[test]
+    fn scope_path_total_matches_the_chain_form() {
+        let g = rt_workspace_graph();
+        // `subgraph_for_scope_path` seeds sources from BOTH the publishers and
+        // the subscribers of the input topic, so the real subgraph for a path
+        // whose input is /perception/points_raw has two sources.
+        let sg = ScopeSubgraph {
+            graph: &g,
+            scope_subtree: HashSet::from([0usize]),
+            sources: vec![
+                "/perception/sensor_node".to_string(),
+                "/perception/filter_component".to_string(),
+            ],
+            sinks: vec!["/control/control_node".to_string()],
+        };
+        let cp = critical_path(&sg).expect("the chain has a critical path");
+        assert_eq!(
+            cp.total_ms, 25.0,
+            "10ms sampling + 5ms filter + 10ms control, matching chain-budget"
+        );
+        assert_eq!(
+            cp.sampling_cost_ms, 10.0,
+            "one period of the 100Hz boundary, reported separately"
+        );
+        assert_eq!(
+            cp.nodes,
+            vec![
+                "/perception/sensor_node",
+                "/perception/filter_component",
+                "/control/control_node"
+            ],
+            "the route must not be truncated at the subscriber-source"
+        );
+    }
+
+    /// The sampling term tracks the boundary's rate, and is a *period*, not a
+    /// deadline: halving the rate doubles it.
+    #[test]
+    fn sampling_cost_is_one_period_per_boundary() {
+        for (rate_hz, expected_sampling) in [(100.0, 10.0), (50.0, 20.0), (10.0, 100.0)] {
+            let g = assemble(
+                vec![
+                    node("/src", &[("tick", timer_path(rate_hz, &["out"], None))]),
+                    node("/sink", &[("main", path(&["in"], &["o"], Some(4.0)))]),
+                ],
+                vec![edge("/src", "out", "/sink", "in")],
+            );
+            let cp = critical_path(&subgraph(&g, "/src", "/sink")).expect("route exists");
+            assert_eq!(cp.sampling_cost_ms, expected_sampling);
+            assert_eq!(cp.total_ms, expected_sampling + 4.0);
+        }
+    }
+
+    /// A boundary that declares its own execution budget is charged
+    /// `period + exec`, matching `chain_checks` exactly — and that exec must
+    /// not then be counted a second time.
+    #[test]
+    fn a_boundary_with_a_declared_exec_is_charged_period_plus_exec() {
+        let g = assemble(
+            vec![
+                node("/src", &[("tick", timer_path(100.0, &["out"], Some(3.0)))]),
+                node("/sink", &[("main", path(&["in"], &["o"], Some(4.0)))]),
+            ],
+            vec![edge("/src", "out", "/sink", "in")],
+        );
+        let cp = critical_path(&subgraph(&g, "/src", "/sink")).expect("route exists");
+        assert_eq!(cp.total_ms, 17.0, "10 period + 3 exec + 4 = 17, not 20");
+        assert_eq!(cp.sampling_cost_ms, 10.0, "the period alone");
+    }
+
+    /// An event-triggered route has no clock crossing, so nothing is added.
+    /// Guards against charging a period to every route.
+    #[test]
+    fn an_event_only_route_has_no_sampling_cost() {
+        let g = assemble(
+            vec![
+                node("/src", &[("main", path(&["in"], &["out"], Some(6.0)))]),
+                node("/sink", &[("main", path(&["out"], &["o"], Some(4.0)))]),
+            ],
+            vec![edge("/src", "out", "/sink", "out")],
+        );
+        let cp = critical_path(&subgraph(&g, "/src", "/sink")).expect("route exists");
+        assert_eq!(cp.sampling_cost_ms, 0.0);
+        assert_eq!(cp.total_ms, 10.0);
     }
 }
