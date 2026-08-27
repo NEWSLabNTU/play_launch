@@ -104,9 +104,10 @@ confirming the two defect tests fail with exactly the measured numbers
 max(50,30)+20=70, and the unattributable-hop fallback — correctly pass in both
 states, being guards rather than the defect.
 
-Gates: 181 resolver lib tests, clippy clean, `just check-layer2-isolation`,
-`just test` 96 passed / 15 skipped (all documented privilege skips).
-`just test-all` still owed before the wave is closed.
+Gates, all green: clippy clean, `just check-layer2-isolation`, and `just
+test-all` — **485 parser + 291 play_launch + 181 resolver + 142 integration,
+1099 tests, 0 failed, 0 skipped**, including the cross-parser parity gates and
+an empty silently-skipped report.
 
 Open (`contract-axes.md` §6.4): whether per-path cost then needs a `costs:`
 section, or whether `measure` can attribute it once path identity exists.
