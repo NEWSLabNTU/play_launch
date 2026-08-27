@@ -244,75 +244,32 @@ run *ARGS:
 # the apply syscalls to play_launch_rt_helper over IPC.
 setcap:
     #!/bin/bash
+    # One implementation, in scripts/setcap_container.sh, so the container
+    # path and the sudo path cannot drift apart — and so the same logic is
+    # reachable from CI and from examples/rt_av_demo without going through
+    # `just`. The script tries rootful docker, then rootful podman, then
+    # NON-INTERACTIVE sudo, refuses any rootless runtime (a capability set in
+    # a user namespace reads correct on the host and does not work there), and
+    # names the one-time admin action when none of them is available.
     set -e
-    dir=install/play_launch/lib/play_launch
-    main=$dir/play_launch
-    io_helper=$dir/play_launch_io_helper
-    rt_helper=$dir/play_launch_rt_helper
-
-    if [ ! -f "$io_helper" ]; then
-        echo "Error: play_launch_io_helper not found. Run 'just build' first."
-        exit 1
-    fi
-    if [ ! -f "$rt_helper" ]; then
-        echo "Error: play_launch_rt_helper not found. Run 'just build' first."
-        exit 1
-    fi
-
-    # Decide the mechanism. Rootless Docker is REJECTED, not fallen back on
-    # quietly for the wrong reason: inside a user namespace `security.capability`
-    # is namespaced (it carries a rootid) and is honored only within that
-    # namespace, so `getcap` on the host would show the capability and host
-    # processes would still get EPERM. A silent wrong answer is worse than sudo.
-    use_docker=0
-    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-        if docker info --format '{{ "{{" }}.SecurityOptions{{ "}}" }}' 2>/dev/null | grep -q rootless; then
-            echo "! rootless Docker detected — file capabilities set inside a user"
-            echo "  namespace are not valid to host processes. Using sudo instead."
-        else
-            use_docker=1
-        fi
-    fi
-
-    if [ "$use_docker" = "1" ]; then
-        # Built on demand, then cached. Depends only on ubuntu:22.04 — NOT on
-        # the CI builder image, which would make this break whenever that image
-        # was edited but not yet rebuilt.
-        if ! docker image inspect play-launch-setcap:local >/dev/null 2>&1; then
-            echo "Building the setcap helper image (one time)..."
-            docker build -q -f docker/setcap.Dockerfile -t play-launch-setcap:local . >/dev/null
-        fi
-        # Mount ONLY the helper directory: this runs as root inside the
-        # container, so the smaller the bind mount the better.
-        docker run --rm -v "$PWD/$dir:/w" play-launch-setcap:local sh -c '
-            set -e
-            [ -n "$(getcap /w/play_launch 2>/dev/null)" ] && setcap -r /w/play_launch || true
-            setcap cap_sys_ptrace+ep /w/play_launch_io_helper
-            setcap cap_sys_nice+ep   /w/play_launch_rt_helper
-        '
-        via="docker (no sudo)"
+    if ./scripts/setcap_container.sh; then
+        echo
+        echo "RT scheduling (--sched) now works WITHOUT root — no sudo/setuid needed"
+        echo "to run play_launch itself."
     else
-        # Self-heal: a capability on the main binary is ALWAYS wrong (AT_SECURE
-        # would make the loader ignore LD_LIBRARY_PATH and it could not find its
-        # ROS libs).
-        if [ -f "$main" ] && [ -n "$(getcap "$main" 2>/dev/null)" ]; then
-            echo "! main binary has file capabilities — removing (they break ROS lib loading)"
-            sudo setcap -r "$main"
-            echo "  removed."
+        rc=$?
+        # Exit 2 means "no password-free mechanism", which is a normal state on
+        # a machine whose user is not in the docker group. Interactive sudo is
+        # the remaining option and only a human can supply the password.
+        if [ "$rc" = "2" ]; then
+            echo
+            echo "You appear to have sudo. Run this yourself to finish:"
+            echo "  sudo setcap cap_sys_ptrace+ep install/play_launch/lib/play_launch/play_launch_io_helper"
+            echo "  sudo setcap cap_sys_nice+ep   install/play_launch/lib/play_launch/play_launch_rt_helper"
         fi
-        sudo setcap cap_sys_ptrace+ep "$io_helper"
-        sudo setcap cap_sys_nice+ep "$rt_helper"
-        via="sudo"
+        exit $rc
     fi
 
-    getcap "$io_helper"
-    echo "✓ I/O helper ready (reapply after rebuild) [$via]"
-    getcap "$rt_helper"
-    echo "✓ RT helper ready (reapply after rebuild) [$via]"
-
-    echo
-    echo "RT scheduling (--sched) now works WITHOUT root — no sudo/setuid needed"
-    echo "to run play_launch itself."
 
 # Verify capabilities: main binary has NONE, io_helper has CAP_SYS_PTRACE,
 # rt_helper has CAP_SYS_NICE.
