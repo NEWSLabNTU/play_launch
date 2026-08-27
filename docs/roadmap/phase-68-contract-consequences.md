@@ -1,6 +1,7 @@
 # Phase 68 — contract consequences: analysis, mapper, verification, retirement
 
-Status: **W1 done** (a, b, c, d); W2–W4 planned. Depends on phase 67 for W2 onward;
+Status: **W1 and W2 done. W3 partially blocked; W4 correctly NOT started,
+because its gate is unmet.** Depends on phase 67 for W2 onward;
 W1 needs no new vocabulary and is proceeding first (see §W1.a).
 
 Design of record:
@@ -239,7 +240,7 @@ Gates: clippy clean, `just check-layer2-isolation`, `just test-all` — **485 +
 
 ---
 
-## W2 — mapper
+## W2 — mapper — DONE
 
 Not all derivations. **Two of these are refusals**, and the refusals are the
 safety-relevant half.
@@ -312,9 +313,41 @@ decision — a node whose placement moved says which new fact moved it.
 
 ---
 
-## W3 — verify on running systems
+## W3 — verify on running systems — PARTIALLY BLOCKED
 
 The wave that gates retirement. A checker agreeing with itself is not evidence.
+
+**Status, arm by arm:**
+
+| arm | result |
+|---|---|
+| `rt_workspace` | **green** — vocabulary end to end, covered by `just test-all` |
+| `rt_av_demo` derivation | **green** — plan byte-identical: brake 40, detector 39, lidar 38, same `chain_aware` drain provenance that produced the published result |
+| `rt_av_demo` measured A/B | **BLOCKED** — see below |
+| Autoware / golf cart at scale | **green for regression, useless for verification** — see below |
+
+**The measured A/B cannot run on this machine.** `just ab` refuses, correctly:
+
+```
+REFUSING: play_launch_rt_helper lacks cap_sys_nice, so the RT-on run
+Run 'just setcap' ... first.
+```
+
+and `just setcap` cannot grant it here — its Docker path needs a socket this
+user cannot reach (not in the `docker` group) and its `sudo` fallback needs a
+password. So the 217 → 9 missed-frame reproduction is **owed, not done**. The
+derived plan being unchanged is real evidence that nothing upstream of
+application regressed, and it is not the same claim: it says the same decisions
+are made, not that applying them still produces the same frames.
+
+**Scale verifies no regression and cannot verify the vocabulary.** The golf-cart
+stack resolves **159 nodes in 0.83 s** with no new diagnostics — but it reports
+`0 topics, 0 contracts-carrying endpoints, 0 tier(s)`, because it ships **no
+contracts at all**. Every rule W1 and W2 added has nothing to act on there. The
+110 warnings it does emit are pre-existing provenance and identity notes, none
+from this phase. So the arm intended to exercise the exclusion diagnostic at
+scale cannot: that needs a large contract set, which the Autoware contract
+corpus would provide and this checkout does not have.
 
 | fixture | what it proves | gate |
 |---|---|---|
@@ -342,7 +375,19 @@ the run, and hand-typed values are how a regression hides.
 
 ---
 
-## W4 — retire
+## W4 — retire — NOT STARTED, and deliberately so
+
+Its gate is four conditions, and condition 3 — `rt_av_demo`'s A/B reproducing
+its published numbers — is unmet for want of `CAP_SYS_NICE` on this machine.
+Retiring `chains:`/`segments:` on a partially verified equivalence would be
+exactly the move the three-phase split exists to prevent: removing a working
+path before its replacement has been shown, on a running system, to produce the
+same answer.
+
+**To unblock:** run `just setcap` on a machine with Docker access or sudo, then
+`just ab` (and `sudo -E just ab3` for the deadline arm) in
+`examples/rt_av_demo/`. If those reproduce, W4 is a mechanical deprecation
+pass.
 
 Only after W3.
 
