@@ -1,7 +1,7 @@
 # Phase 68 — contract consequences: analysis, mapper, verification, retirement
 
-Status: **W1 and W2 done. W3 partially blocked; W4 correctly NOT started,
-because its gate is unmet.** Depends on phase 67 for W2 onward;
+Status: **W1, W2 and W3 done. W4 blocked on one missing piece of work — not
+on the environment, and not on judgement: the gate was run and it FAILED.** Depends on phase 67 for W2 onward;
 W1 needs no new vocabulary and is proceeding first (see §W1.a).
 
 Design of record:
@@ -313,7 +313,7 @@ decision — a node whose placement moved says which new fact moved it.
 
 ---
 
-## W3 — verify on running systems — PARTIALLY BLOCKED
+## W3 — verify on running systems — DONE
 
 The wave that gates retirement. A checker agreeing with itself is not evidence.
 
@@ -322,23 +322,23 @@ The wave that gates retirement. A checker agreeing with itself is not evidence.
 | arm | result |
 |---|---|
 | `rt_workspace` | **green** — vocabulary end to end, covered by `just test-all` |
-| `rt_av_demo` derivation | **green** — plan byte-identical: brake 40, detector 39, lidar 38, same `chain_aware` drain provenance that produced the published result |
-| `rt_av_demo` measured A/B | **BLOCKED** — see below |
+| `rt_av_demo` derivation | **green** — plan unchanged: brake 40, detector 39, lidar 38, same `chain_aware` drain provenance |
+| `rt_av_demo` measured A/B | **green** — 498/498 → 0/1033, p99 280.1 → 13.4 ms |
 | Autoware / golf cart at scale | **green for regression, useless for verification** — see below |
 
-**The measured A/B cannot run on this machine.** `just ab` refuses, correctly:
+**The measured A/B ran** once `docker` group membership made `just setcap`
+password-free. Steady state, first 200 samples discarded:
 
-```
-REFUSING: play_launch_rt_helper lacks cap_sys_nice, so the RT-on run
-Run 'just setcap' ... first.
-```
+| arm | p50 | p99 | missed |
+|---|---|---|---|
+| RT off | 225.3 ms | 280.1 ms | **498/498** |
+| `SCHED_FIFO` | 13.2 ms | 13.4 ms | **0/1033** |
 
-and `just setcap` cannot grant it here — its Docker path needs a socket this
-user cannot reach (not in the `docker` group) and its `sudo` fallback needs a
-password. So the 217 → 9 missed-frame reproduction is **owed, not done**. The
-derived plan being unchanged is real evidence that nothing upstream of
-application regressed, and it is not the same claim: it says the same decisions
-are made, not that applying them still produces the same frames.
+The RT-on arm — the one that tests the derivation — matches the published
+figures almost exactly (0/1039, p99 13.3 ms). The baseline is harsher than
+published (498/498 against ~217–272/1013, p99 280 against 106.6), consistent
+with load average 4.59 and other agents working on the same box. A worse
+baseline reaching the same outcome makes the result stronger, not weaker.
 
 **Scale verifies no regression and cannot verify the vocabulary.** The golf-cart
 stack resolves **159 nodes in 0.83 s** with no new diagnostics — but it reports
@@ -375,21 +375,56 @@ the run, and hand-typed values are how a regression hides.
 
 ---
 
-## W4 — retire — NOT STARTED, and deliberately so
+## W4 — retire — BLOCKED, and the gate is what caught it
 
-Its gate is four conditions, and condition 3 — `rt_av_demo`'s A/B reproducing
-its published numbers — is unmet for want of `CAP_SYS_NICE` on this machine.
-Retiring `chains:`/`segments:` on a partially verified equivalence would be
-exactly the move the three-phase split exists to prevent: removing a working
-path before its replacement has been shown, on a running system, to produce the
-same answer.
+Condition 3 (the A/B) is now **met**. Condition 2 — *old and new spellings
+resolve to identical models* — was then run and **failed**, which is the whole
+reason it is a gate.
 
-**To unblock:** run `just setcap` on a machine with Docker access or sudo, then
-`just ab` (and `sudo -E just ab3` for the deadline arm) in
-`examples/rt_av_demo/`. If those reproduce, W4 is a mechanical deprecation
-pass.
+`rt_workspace`'s chain was rewritten as the equivalent scope path and both
+forms resolved with the same platform file. The derived schedules came out
+**identical** — control_node 20/core 0, filter 39, sensor 38. Stopping there
+would have retired `segments:` on a false pass. The provenance says why:
 
-Only after W3.
+```
+chain form:  derived(chain_aware: points_to_cmd segment drain 2/2) -> prio 39
+             derived(chain_aware: points_to_cmd boundary RM period=10ms) -> prio 38
+
+scope form:  derived(chain_aware: non-chain criticality=None budget_ms=5) -> prio 39
+             derived(chain_aware: non-chain criticality=None budget_ms=10) -> prio 38
+```
+
+**`non-chain`.** With `chains:` removed the mapper finds no chain at all and
+falls back to ranking nodes by budget, which on this three-node fixture happens
+to produce the same two priorities. The agreement is a coincidence of the
+fixture, not a property of the derivation — on any system where budget order
+and drain order differ, retiring `segments:` would silently change the
+schedule. The chain form also emits an `sched:override-inversion` warning that
+the scope-path form does not, so the two are not equivalent in diagnostics
+either.
+
+### What is actually missing
+
+`contract-primitives.md`'s migration step 5 — *"Emit the derived routes for the
+mapper; switch the mapper to read them"* — which this phase did not do. W1
+taught the CHECKER to derive routes; the mapper still reads authored
+`chains:`/`segments:` and nothing connects the two. One derivation, one place,
+two consumers is the design; today it is one derivation and one consumer.
+
+**Order for whoever picks this up:**
+
+1. Have `check_scope_path_critical_path` emit its derived routes as
+   `ResolvedChain`s, the shape `resolve_chains` already produces from authored
+   segments.
+2. Switch `mapper_input_from_dump` to prefer derived routes, falling back to
+   authored ones while both exist.
+3. Re-run this probe. The gate is met when the scope-path form's provenance
+   reads `segment drain`, not `non-chain` — the numbers agreeing is not enough,
+   as this run demonstrates.
+4. Then, and only then, the deprecation lint and the release wait.
+
+Condition 4 (one release shipped with the lint live) is calendar time, not
+work, and cannot be closed in a session either way.
 
 - `chains:` / `segments:` — the derived route replaces them
 - `topics.<t>.rate_hz` — propagates from the timer that starts the chain
