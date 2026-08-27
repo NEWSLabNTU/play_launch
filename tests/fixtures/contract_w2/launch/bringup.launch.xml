@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- Phase 68 W2: the three mapper jobs the phase 67 vocabulary unlocked.
+     `rt` claims concurrency (reservation refused), `guard` declares miss
+     handling (DL_OVERRUN derived) with an action Linux cannot enforce, and
+     `slow` declares max_jitter while placed best-effort. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="rt"    namespace="/w"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="guard" namespace="/w"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="slow"  namespace="/w"/>
+</launch>

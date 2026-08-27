@@ -821,6 +821,7 @@ pub fn derive_sched_plan(
         &budgets,
         &mut warnings,
     )?;
+    report_jitter_placement(&plan, &input, &mut warnings);
     // Chain members an override pinned below their chain-derived rank
     // (45.1b): every contradiction where this node is the fact-implied
     // "should lead" side is a mechanical, already-explained downstream
@@ -1035,6 +1036,63 @@ pub fn derive_sched_plan(
 /// triggering rate by construction, so inheriting it states a fact rather than
 /// inventing one). `deadline` is the node's declared deadline, else the period
 /// (the implicit-deadline assumption).
+/// A declared `max_jitter` argues against best-effort placement.
+///
+/// Jitter is a *spread*, and on `SCHED_OTHER` the spread is whatever the run
+/// queue happens to be: CFS gives no bound on when a woken task runs, so a
+/// stability requirement expressed as jitter cannot be honoured there at all.
+///
+/// This REPORTS rather than promotes. Moving a node into the real-time band
+/// changes what else can preempt it and can starve the band it came from, so
+/// it is a decision for whoever owns the platform file — the mapper's job is
+/// to make sure the contradiction is visible, not to resolve it silently.
+fn report_jitter_placement(
+    plan: &ros_launch_manifest_sched::ResolvedTierTable,
+    input: &ros_launch_manifest_sched::MapperInput,
+    warnings: &mut Vec<String>,
+) {
+    let mut offenders: Vec<(String, f64)> = Vec::new();
+    for tier in &plan.tiers {
+        let is_rt = tier
+            .posix
+            .as_ref()
+            .map(|p| p.sched.is_real_time())
+            .unwrap_or(false);
+        if is_rt {
+            continue;
+        }
+        for member in &tier.members {
+            let tightest = input
+                .nodes
+                .iter()
+                .filter(|n| &n.name == member)
+                .flat_map(|n| n.paths.iter())
+                .filter_map(|p| p.max_jitter_ms)
+                .fold(f64::INFINITY, f64::min);
+            if tightest.is_finite() {
+                offenders.push((member.clone(), tightest));
+            }
+        }
+    }
+    if offenders.is_empty() {
+        return;
+    }
+    offenders.sort_by(|a, b| a.0.cmp(&b.0));
+    let listed: Vec<String> = offenders
+        .iter()
+        .map(|(n, ms)| format!("{n} ({ms:.2}ms)"))
+        .collect();
+    warnings.push(format!(
+        "scheduling: {} node(s) declare a max_jitter but were placed best-effort: {}. \
+         SCHED_OTHER puts no bound on when a woken task runs, so a jitter requirement cannot \
+         be met there by construction. Raise their criticality or pin them in the platform \
+         file's `overrides` — this is not promoted automatically, because moving a node into \
+         the real-time band changes what it can preempt and what it starves.",
+        offenders.len(),
+        listed.join(", ")
+    ));
+}
+
 fn derive_reservations(
     plan: &mut ResolvedTierTable,
     file: &ros_launch_manifest_sched::PlatformFile,
@@ -1052,6 +1110,7 @@ fn derive_reservations(
     let mut eligible: Vec<(usize, u64, u64, u64)> = Vec::new(); // idx, runtime, deadline, period
     let mut missing_budget: Vec<String> = Vec::new();
     let mut exempt_containers: Vec<String> = Vec::new();
+    let mut concurrent_nodes: Vec<String> = Vec::new();
 
     for (idx, tier) in plan.tiers.iter().enumerate() {
         if tier.name == ros_launch_manifest_sched::DEFAULT_TIER {
@@ -1074,6 +1133,28 @@ fn derive_reservations(
 
         if container_fqns.contains(node) {
             exempt_containers.push(node.clone());
+            continue;
+        }
+
+        // A reservation is PER THREAD. `play_launch` reserves the
+        // thread-group leader and leaves siblings on SCHED_FIFO (phase 60 F2),
+        // because sweeping one across a ROS node's ~11 threads would turn an
+        // 8ms/100ms budget into 88% of a CPU at admission control. That is
+        // sound only while the node's callbacks cannot run anywhere but the
+        // leader — i.e. while they all serialise.
+        //
+        // F2 recorded this as "unsound for multi-threaded executors; refused
+        // where detectable, documented where not". Phase 67 made it
+        // detectable: a node declaring `concurrency.exclusive` that does not
+        // put every path in one group is claiming its callbacks may run
+        // concurrently, which is exactly the case the leader-only reservation
+        // cannot cover.
+        if input
+            .nodes
+            .iter()
+            .any(|n| &n.name == node && n.claims_concurrency)
+        {
+            concurrent_nodes.push(node.clone());
             continue;
         }
 
@@ -1108,13 +1189,65 @@ fn derive_reservations(
         );
     }
 
+    if !concurrent_nodes.is_empty() {
+        concurrent_nodes.sort();
+        warnings.push(format!(
+            "scheduling: {} node(s) carry a timing fact but declare that their callbacks may \
+             run concurrently, so no SCHED_DEADLINE reservation was derived for them: {}. A \
+             reservation is per-thread — play_launch reserves the thread-group leader and \
+             leaves siblings on SCHED_FIFO — which cannot cover callbacks that may run on \
+             another thread. They keep fixed priority. Remove the `concurrency.exclusive` \
+             declaration if the callbacks do in fact serialise.",
+            concurrent_nodes.len(),
+            concurrent_nodes.join(", ")
+        ));
+    }
+
     for (idx, runtime_ns_us, deadline_ns_us, period_ns_us) in eligible {
         let tier = &mut plan.tiers[idx];
-        // `deadline_policy` is a v1 `[tiers.<name>]` field; the v2 schema has
-        // no way to author it, so on a v2 path `overrun` is always false.
-        // Stated rather than silently assumed — wiring SIGXCPU needs a place
-        // to declare the intent first.
-        let overrun = tier.deadline_policy.as_deref() == Some("fault");
+        // `SCHED_FLAG_DL_OVERRUN` delivers SIGXCPU when the reservation is
+        // exceeded. It was wired in phase 60 and always off, because
+        // `deadline_policy` is a v1 `[tiers.<name>]` field the v2 schema had
+        // no way to author.
+        //
+        // Phase 67's `miss:` is that missing declaration, and it lives on the
+        // CONTRACT rather than the platform file — which is the right home,
+        // since how many misses a controller survives is a property of the
+        // control law, not of the board. Any form of the declaration implies
+        // detection: tolerating n per w means counting them, acting on one
+        // means noticing it.
+        let node_name = tier.members.first().cloned().unwrap_or_default();
+        let miss_facts: Vec<&ros_launch_manifest_sched::MapperMiss> = input
+            .nodes
+            .iter()
+            .filter(|n| n.name == node_name)
+            .flat_map(|n| n.paths.iter())
+            .filter_map(|p| p.miss.as_ref())
+            .collect();
+        let derived_overrun = miss_facts.iter().any(|m| m.requires_detection());
+        let overrun = tier.deadline_policy.as_deref() == Some("fault") || derived_overrun;
+
+        // An action Linux cannot deliver is reported, never silently
+        // downgraded to what CBS happens to do.
+        for m in &miss_facts {
+            if let Some(action) = m.action
+                && !action.is_enforceable_on_linux()
+            {
+                warnings.push(format!(
+                    "scheduling: `{node_name}` declares miss.action `{}`, which Linux cannot \
+                     enforce — CBS throttles an overrunning job to its next replenishment \
+                     (that is `continue`), and dropping a release or interrupting a callback \
+                     mid-execution needs cooperation from the node, which rclcpp offers no hook \
+                     for. SIGXCPU on overrun IS delivered, so the node can implement the action \
+                     itself; nothing else about the reservation changes.",
+                    match action {
+                        ros_launch_manifest_sched::MapperMissAction::SkipNext => "skip_next",
+                        ros_launch_manifest_sched::MapperMissAction::Abort => "abort",
+                        ros_launch_manifest_sched::MapperMissAction::Continue => "continue",
+                    }
+                ));
+            }
+        }
         let sched = PosixSched::Deadline {
             runtime_ns: runtime_ns_us * 1_000,
             deadline_ns: deadline_ns_us * 1_000,
@@ -1142,6 +1275,18 @@ fn derive_reservations(
             }
             other => other,
         };
+        // The flag has to survive the MODEL boundary, not just this plan.
+        // `up` reads the model and never the platform file, and rebuilds the
+        // reservation from the portable tier head — where it reads `overrun`
+        // back out of `deadline_policy`. Setting only `PosixSched::Deadline`'s
+        // flag here would derive a reservation that silently loses its
+        // overrun notification the moment it round-trips, which is the same
+        // shape as phase 60's defect where the model carried SCHED_DEADLINE
+        // with no runtime or period.
+        if derived_overrun && tier.deadline_policy.is_none() {
+            tier.deadline_policy = Some("fault".to_string());
+        }
+
         let placement = PosixPlacement {
             sched,
             affinity,

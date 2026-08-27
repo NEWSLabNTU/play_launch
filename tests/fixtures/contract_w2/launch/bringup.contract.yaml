@@ -1,0 +1,49 @@
+version: 1
+
+nodes:
+  rt:
+    sub: { tick: { min_rate_hz: 50 } }
+    pub: { a: { min_rate_hz: 50 }, b: { min_rate_hz: 50 } }
+    # Claims its two callbacks may run concurrently -> a per-thread
+    # reservation cannot cover them (phase 60 F2).
+    concurrency:
+      exclusive:
+        - [pa]
+        - [pb]
+    paths:
+      pa: { trigger: { input: [tick] }, output: [a], max_latency: 5ms }
+      pb: { trigger: { input: [tick] }, output: [b], max_latency: 5ms }
+
+  guard:
+    sub: { a: { min_rate_hz: 50 } }
+    pub: { out: { min_rate_hz: 50 } }
+    criticality: high
+    paths:
+      check:
+        trigger: { input: [a] }
+        output: [out]
+        max_latency: 8ms
+        # Any miss declaration implies detection -> SCHED_FLAG_DL_OVERRUN.
+        # `abort` is reported as unenforceable rather than downgraded.
+        miss:
+          tolerate: 1 / 50
+          action: abort
+
+  slow:
+    sub: { b: { min_rate_hz: 50 } }
+    pub: { log: { min_rate_hz: 50 } }
+    paths:
+      record:
+        trigger: { input: [b] }
+        output: [log]
+        max_latency: 40ms
+        # A stability requirement on a node with no criticality -> lands
+        # best-effort, where no jitter bound is achievable.
+        max_jitter: 2ms
+
+topics:
+  /w/tick: { type: std_msgs/msg/String, external: pub, sub: [rt/tick], rate_hz: 50 }
+  /w/a:    { type: std_msgs/msg/String, pub: [rt/a], sub: [guard/a], rate_hz: 50 }
+  /w/b:    { type: std_msgs/msg/String, pub: [rt/b], sub: [slow/b], rate_hz: 50 }
+  /w/out:  { type: std_msgs/msg/String, external: sub, pub: [guard/out], rate_hz: 50 }
+  /w/log:  { type: std_msgs/msg/String, external: sub, pub: [slow/log], rate_hz: 50 }

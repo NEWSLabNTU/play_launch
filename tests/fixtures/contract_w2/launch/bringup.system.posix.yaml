@@ -1,0 +1,15 @@
+# Reservations required, so `rt` and `guard` are reservation candidates and
+# the concurrency refusal is reachable.
+target: posix
+mapper: rate_monotonic
+reservations: required
+
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+
+overrides:
+  # A declared cost is the only legitimate source for a reservation runtime.
+  guard: { budget_us: 4000 }
+  rt:    { budget_us: 3000 }
+  # `slow` is deliberately left best-effort so its max_jitter contradicts.
+  slow:  { sched_class: SCHED_OTHER, nice: 5 }

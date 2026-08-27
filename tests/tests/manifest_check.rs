@@ -835,3 +835,84 @@ fn phase67_vocabulary_checks_out_end_to_end() {
         "the superseded per-manifest fallback reappeared:\n{out}"
     );
 }
+
+// ── Phase 68 W2: the mapper acts on the phase 67 vocabulary. Two of these
+//    are REFUSALS, which is the half that matters for safety.
+
+fn check_with_sched(dir: &str) -> String {
+    let base = fixtures::repo_root().join("tests/fixtures").join(dir).join("launch");
+    let out = Command::new(fixtures::play_launch_bin())
+        .arg("check")
+        .arg(base.join("bringup.launch.xml"))
+        .arg("--sched")
+        .arg(base.join("bringup.system.posix.yaml"))
+        .output()
+        .expect("play_launch check --sched runs");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+#[test]
+fn w2_reservation_is_refused_for_a_node_that_claims_concurrency() {
+    let out = check_with_sched("contract_w2");
+    assert!(
+        out.contains("/w/rt") && out.contains("run concurrently"),
+        "the refusal must name the node and the reason:\n{out}"
+    );
+    // A reservation is per-thread; the leader-only reservation cannot cover
+    // callbacks that may run elsewhere (phase 60 F2, now detectable).
+    assert!(out.contains("per-thread"), "got:\n{out}");
+}
+
+#[test]
+fn w2_an_unenforceable_miss_action_is_reported_not_downgraded() {
+    let out = check_with_sched("contract_w2");
+    assert!(
+        out.contains("miss.action `abort`") && out.contains("Linux cannot enforce"),
+        "got:\n{out}"
+    );
+}
+
+#[test]
+fn w2_a_jitter_bound_on_a_best_effort_node_is_reported() {
+    let out = check_with_sched("contract_w2");
+    assert!(
+        out.contains("/w/slow") && out.contains("max_jitter"),
+        "got:\n{out}"
+    );
+    // Reported, never promoted: moving a node into the RT band changes what
+    // it preempts and what it starves.
+    assert!(out.contains("not promoted automatically"), "got:\n{out}");
+}
+
+/// The derived overrun flag has to survive the MODEL boundary — `up` reads the
+/// model and never the platform file, and rebuilds `overrun` from
+/// `deadline_policy`. A reservation that loses its notification on round-trip
+/// is phase 60's defect in a new place.
+#[test]
+fn w2_derived_overrun_reaches_the_model() {
+    let base = fixtures::repo_root().join("tests/fixtures/contract_w2/launch");
+    let out_path = std::env::temp_dir().join("play_launch_w2_model.yaml");
+    let status = Command::new(fixtures::play_launch_bin())
+        .arg("resolve")
+        .arg(base.join("bringup.launch.xml"))
+        .arg("--sched")
+        .arg(base.join("bringup.system.posix.yaml"))
+        .arg("-o")
+        .arg(&out_path)
+        .status()
+        .expect("resolve runs");
+    assert!(status.success(), "resolve failed");
+    let model = std::fs::read_to_string(&out_path).expect("model written");
+    assert!(
+        model.contains("deadline_policy: fault"),
+        "a `miss:` declaration must reach the model as deadline_policy:\n{model}"
+    );
+    assert!(model.contains("sched_class: SCHED_DEADLINE"), "{model}");
+    // And the node that was refused a reservation stays on fixed priority.
+    assert!(model.contains("sched_class: SCHED_FIFO"), "{model}");
+    let _ = std::fs::remove_file(&out_path);
+}

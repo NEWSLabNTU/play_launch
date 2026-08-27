@@ -93,6 +93,9 @@ fn build_mapper_node(
         criticality,
         path_budget_ms,
         paths,
+        claims_concurrency: node_decl(record, index)
+            .map(claims_concurrency)
+            .unwrap_or(false),
     }
 }
 
@@ -153,9 +156,66 @@ fn extract_paths(
                 exec_ms: node_exec_ms,
                 inputs,
                 outputs: p.path.output.clone(),
+                max_jitter_ms: p.path.max_jitter.map(|d| d.as_millis_f64()),
+                miss: p.path.miss.as_ref().map(convert_miss),
             }
         })
         .collect()
+}
+
+/// Translate the contract's `miss:` into the mapper's mirror of it.
+fn convert_miss(m: &ros_launch_manifest_types::MissSpec) -> ros_launch_manifest_sched::MapperMiss {
+    use ros_launch_manifest_sched::{MapperMiss, MapperMissAction};
+    use ros_launch_manifest_types::MissAction as A;
+    MapperMiss {
+        tolerate_n: m.tolerate.as_ref().map(|c| c.n),
+        tolerate_w: m.tolerate.as_ref().map(|c| c.w),
+        consecutive: m.consecutive,
+        action: m.action.map(|a| match a {
+            A::Continue => MapperMissAction::Continue,
+            A::SkipNext => MapperMissAction::SkipNext,
+            A::Abort => MapperMissAction::Abort,
+        }),
+    }
+}
+
+/// Does this node claim that some of its callbacks may run concurrently?
+///
+/// One bit, derived the same way `GlobalNode::exclusion_groups` derives them:
+/// an absent `concurrency:` means every path serialises (`false`), and a
+/// declaration claims concurrency whenever it does NOT put every declared path
+/// into a single group. `exclusive: []` therefore claims full concurrency,
+/// which is the opposite of omitting the section — a distinction the parser
+/// preserves and this must not flatten.
+fn claims_concurrency(node: &ros_launch_manifest_types::NodeDecl) -> bool {
+    let Some(decl) = &node.concurrency else {
+        return false;
+    };
+    if node.paths.len() <= 1 {
+        // One path cannot contend with itself, whatever is declared.
+        return false;
+    }
+    // Merge declared sets that share a member, exactly as the graph does.
+    let mut groups: Vec<std::collections::BTreeSet<&str>> = Vec::new();
+    for declared in &decl.exclusive {
+        let mut merged: std::collections::BTreeSet<&str> =
+            declared.iter().map(|s| s.as_str()).collect();
+        groups.retain(|g| {
+            if g.is_disjoint(&merged) {
+                true
+            } else {
+                merged.extend(g.iter().copied());
+                false
+            }
+        });
+        if !merged.is_empty() {
+            groups.push(merged);
+        }
+    }
+    // Concurrency is claimed unless one group covers every declared path.
+    !groups
+        .iter()
+        .any(|g| node.paths.keys().all(|p| g.contains(p.as_str())))
 }
 
 /// Translate a `types::EffectiveTrigger` (W1) into the sched crate's
