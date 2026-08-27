@@ -8,6 +8,117 @@ allowance heavily.
 
 ## Unreleased
 
+## 0.10.0 — 2026-08-27
+
+Two themes: the contract vocabulary stops carrying consequences, and a
+container's resource and lifecycle behaviour becomes something you can choose
+rather than something you inherit.
+
+### Contracts state facts and requirements, never consequences
+
+A contract says what the code does and what it must achieve; anything
+computable from those is derived. Measured on `tests/fixtures/rt_workspace`,
+the number 100 appeared **nine times** in a three-node contract — once as the
+fact, three times as topic rates propagating from it, five as identical
+`min_rate_hz` — plus five lines of `segments:` restating a route the graph
+already defines.
+
+**New vocabulary**, all optional; nothing removed, and every existing contract
+resolves to a byte-identical model:
+
+- `paths.<n>.max_jitter` and `min_latency` — jitter is a *spread*, and it is
+  the one requirement that needs a best case as well as a worst one.
+- `paths.<n>.miss` — deadline-miss tolerance (weakly-hard `n / w`) and
+  handling (`continue` | `skip_next` | `abort`), kept as two independent
+  things.
+- `nodes.<n>.concurrency.exclusive` — which of a node's paths may not run
+  concurrently. **Absent means every path serialises**, which is what both
+  `rclcpp` and nano-ros already default to, so nothing is written unless an
+  author claims *more* concurrency than the safe answer. Callback groups are
+  derived from it, never authored.
+- QoS `deadline` and `lease_duration` — ROS 2 supports eight QoS policies and
+  this vocabulary modelled six. The two missing were exactly the
+  runtime-enforced timing contracts.
+
+**Two silent arithmetic defects fixed.** A node with two causal outputs was
+charged the maximum over *all* its paths on every route, including routes that
+never touched the expensive one — a route costing 20+10 ms was billed 45 ms,
+and 110 ms when an unrelated sibling path was raised to 100 ms. And a scope
+path omitted the sampling cost of any clock boundary it crossed: on
+`rt_workspace` that is 10 ms of 25 ms, the part no priority assignment can
+remove. Both were silent; neither had a diagnostic.
+
+**Six write-only fields now have rules that can reject them** —
+`jitter`, `lifespan`, and the sync window (`tolerance`, `max_interval`,
+`timeout`) had a model copy, a merge check and a deprecation lint between them
+and nothing that could fail. New rules: `jitter-feasibility`, `lifespan-age`,
+`sync-budget`, `concurrency-decl`, `path-exclusion`.
+
+**The mapper acts on it**, and two of its jobs are refusals rather than
+derivations: a node that declares its callbacks may run concurrently gets no
+`SCHED_DEADLINE` reservation (a reservation is per-thread, and the
+thread-group leader cannot cover callbacks that may run elsewhere), and a
+`miss.action` Linux cannot enforce is reported rather than silently downgraded
+to what CBS happens to do. `SCHED_FLAG_DL_OVERRUN` — wired since 0.9.0 and
+always off — now turns on when a contract declares miss handling.
+
+`chains:`/`segments:` are **deprecated but still work** (`derivable-chain`,
+Info). The mapper now derives the same schedule from a scope path, verified by
+provenance rather than by the numbers agreeing.
+
+### cgroup per node and per container
+
+One cgroup v2 group per node and per container, derived from the launch file's
+own structure — a composable names its target container, that IS the group.
+Off by default; needs delegation, which cannot be read off the cgroup path and
+so is probed by attempting it.
+
+```yaml
+cgroups:
+  limits:
+    - match: ["/perception/**"]
+      memory_high_mb: 4096
+      pids_max: 2048
+      oom_group: true
+```
+
+`memory.oom.group` makes the failure model **a choice**: `1` and an OOM kills
+every member together, which is what a real ROS container does whether or not
+anyone chose it; `0` and only the offender dies, which is what `--container-mode
+isolated` forks to buy. Neither a real container nor plain processes offers the
+choice.
+
+Also fixes a number that was wrong in `metrics.csv` and the web UI: summing a
+container's RSS with each child's counted every shared page once per process —
+**173344 kB reported against 82172 kB charged, 210% of truth**. `memory.current`
+on the group replaces the loop.
+
+### A private load channel for the isolated container
+
+`play_launch` no longer calls `LoadNode` on its own container: a `socketpair(2)`
+created before the fork carries loads and status. Measured on a 44-node vehicle
+stack, the three alarm classes went **18 / 18 / 5 → 0 / 0 / 0**, with the same
+one genuine failure reported verbatim rather than as a timeout. Falls back to
+`LoadNode` for containers we do not own, for an older container, and on
+`composable_node_loading.control_socket: false`.
+
+A load that goes missing is now answered with a **question** rather than a
+timeout: protocol v2 adds `query`/`status`/`cancel`, and `unknown` is the only
+answer that authorises a resend, which makes a double load unrepresentable
+rather than unlikely.
+
+### Parser fixes
+
+- `if=`/`unless=` on `<composable_node>` were ignored (#7).
+- `<node_container ros_args=...>` was dropped (#9).
+- `<extra_arg>` was discarded (#0022).
+- The `allow_substs` warning claimed a loss that never happened (#8).
+- `<choice>` as a child of `<arg>` failed to parse — a regression against
+  0.5.1 that made a real vehicle launch unreadable.
+- Parameter values are serialised as YAML, not Python `repr`.
+
+### Diagnostics
+
 ### Diagnostics
 
 Five fixes, all found by asking why a four-hour vehicle run produced 405,480
