@@ -17,6 +17,14 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0024** — `play_launch run` cannot spawn a node when play_launch is itself
+inside a `systemd-run --user --scope`: `Unable to start: Operation not permitted
+(os error 1)`, empty node logs, no process. The same wrapper is fine for
+`launch` — 89 component_nodes alive in one scope while `run` failed in another —
+and cgroup `mkdir` inside the scope succeeds, so the per-member group is not the
+blocker. A `pre_exec` error surfaces exactly this way. The message names nothing
+(no cgroup, scope or `pre_exec`), which is the expensive part. See `0024-*`.
+
 **#0023** — six of 84 composable load requests never reached their container on
 a golf cart `isolated` run, and no log anywhere records it: the container never
 printed `Accepted load request`, so the loss is on play_launch's side of the
