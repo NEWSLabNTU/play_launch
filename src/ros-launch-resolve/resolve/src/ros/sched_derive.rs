@@ -275,9 +275,41 @@ fn convert_semantics(s: ros_launch_manifest_types::ChainSemantics) -> ChainSeman
 ///   processes, not scope aggregates), which a whole-scope aggregate path
 ///   cannot provide. Not a `chain-link` failure (the checker accepts scope
 ///   aggregates as valid hops); a documented sched-extraction limitation.
-/// Build `ResolvedChain`s from **derived** routes — the scope paths whose
-/// route the checker already computes — rather than from authored
-/// `chains:`/`segments:`.
+pub(crate) fn resolve_chains(
+    index: &ManifestIndex,
+    budgets: &BTreeMap<String, u64>,
+) -> Vec<ResolvedChain> {
+    let (pub_map, sub_map) = build_pub_sub_maps(index);
+
+    index
+        .manifests
+        .values()
+        .flat_map(|resolved| resolved.manifest.chains.iter())
+        .filter_map(|(chain_name, chain)| {
+            if chain_has_error_diagnostic(index, chain_name) {
+                tracing::debug!(
+                    "sched: chain '{chain_name}' excluded from mapper input — has a chain-link \
+                     or chain-shape error"
+                );
+                return None;
+            }
+            let resolved_chain =
+                build_resolved_chain(index, &pub_map, &sub_map, chain_name, chain, budgets);
+            if resolved_chain.is_none() {
+                tracing::debug!(
+                    "sched: chain '{chain_name}' excluded from mapper input — a path segment \
+                     resolved to a scope-level aggregate path (no owning node) or could not be \
+                     resolved"
+                );
+            }
+            resolved_chain
+        })
+        .collect()
+}
+
+/// Build `ResolvedChain`s from **derived** routes rather than from authored
+/// `chains:`/`segments:`. A derived route is the one
+/// `check_scope_path_critical_path` already computes for a scope path.
 ///
 /// This is the seam phase 68 W1 left open. W1 taught the CHECKER to derive a
 /// route from `trigger`/`output`; the mapper went on reading authored
@@ -355,38 +387,6 @@ pub(crate) fn resolve_chains_derived(
         });
     }
     out
-}
-
-pub(crate) fn resolve_chains(
-    index: &ManifestIndex,
-    budgets: &BTreeMap<String, u64>,
-) -> Vec<ResolvedChain> {
-    let (pub_map, sub_map) = build_pub_sub_maps(index);
-
-    index
-        .manifests
-        .values()
-        .flat_map(|resolved| resolved.manifest.chains.iter())
-        .filter_map(|(chain_name, chain)| {
-            if chain_has_error_diagnostic(index, chain_name) {
-                tracing::debug!(
-                    "sched: chain '{chain_name}' excluded from mapper input — has a chain-link \
-                     or chain-shape error"
-                );
-                return None;
-            }
-            let resolved_chain =
-                build_resolved_chain(index, &pub_map, &sub_map, chain_name, chain, budgets);
-            if resolved_chain.is_none() {
-                tracing::debug!(
-                    "sched: chain '{chain_name}' excluded from mapper input — a path segment \
-                     resolved to a scope-level aggregate path (no owning node) or could not be \
-                     resolved"
-                );
-            }
-            resolved_chain
-        })
-        .collect()
 }
 
 /// `true` if `chains.<chain_name>` has any `Severity::Error` diagnostic,
