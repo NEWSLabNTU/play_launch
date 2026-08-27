@@ -216,6 +216,7 @@ mod tests {
             from: from.to_string(),
             to: to.to_string(),
             topic: topic.to_string(),
+            pub_endpoint: "out".to_string(),
             sub_endpoint: "in".to_string(),
             max_transport_ms: None,
             is_state,

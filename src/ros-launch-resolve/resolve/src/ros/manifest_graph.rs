@@ -35,11 +35,56 @@ pub struct GlobalNode {
 impl GlobalNode {
     /// Worst-case `max_latency_ms` across this node's paths.
     /// Returns 0.0 if no path declares a budget.
+    ///
+    /// This is the **fallback** cost, used only when a traversal cannot be
+    /// attributed to a specific path (see [`GlobalNode::traversal_latency_ms`]).
+    /// Charging it unconditionally is what made a route through a node's cheap
+    /// output pay for its expensive one.
     pub fn max_latency_ms(&self) -> f64 {
         self.paths
             .values()
             .filter_map(|p| p.max_latency.map(|d| d.as_millis_f64()))
             .fold(0.0_f64, f64::max)
+    }
+
+    /// Names of paths whose `output` publishes `endpoint`.
+    pub fn paths_producing(&self, endpoint: &str) -> Vec<&str> {
+        self.paths
+            .iter()
+            .filter(|(_, p)| p.output.iter().any(|o| o == endpoint))
+            .map(|(name, _)| name.as_str())
+            .collect()
+    }
+
+    /// Names of paths whose *effective* trigger consumes `endpoint`.
+    ///
+    /// Reads `effective_trigger()` rather than the legacy `input:` field, so a
+    /// path written in Vocabulary v2 (`trigger: { input: [...] }`) is matched.
+    /// Timer-, once- and spontaneous-triggered paths consume nothing and so
+    /// never match — a route cannot arrive *into* them, which is exactly what
+    /// makes them chain boundaries.
+    pub fn paths_consuming(&self, endpoint: &str) -> Vec<&str> {
+        use ros_launch_manifest_types::EffectiveTrigger;
+        self.paths
+            .iter()
+            .filter(|(_, p)| match p.effective_trigger() {
+                EffectiveTrigger::Input(eps) => eps.iter().any(|e| e == endpoint),
+                _ => false,
+            })
+            .map(|(name, _)| name.as_str())
+            .collect()
+    }
+
+    /// Latency charged for traversing this node by way of `path`.
+    ///
+    /// `None` means the traversal could not be attributed to any declared
+    /// path, in which case the conservative node-wide maximum applies — never
+    /// less than the old behaviour, and never more than it either.
+    pub fn traversal_latency_ms(&self, path: Option<&str>) -> f64 {
+        match path.and_then(|name| self.paths.get(name)) {
+            Some(p) => p.max_latency.map(|d| d.as_millis_f64()).unwrap_or(0.0),
+            None => self.max_latency_ms(),
+        }
     }
 }
 
@@ -57,6 +102,15 @@ pub struct GlobalEdge {
     pub to: String,
     /// Topic FQN this edge represents.
     pub topic: String,
+    /// Publisher endpoint name on the source node.
+    ///
+    /// The counterpart of `sub_endpoint`, and the half that lets a
+    /// traversal be attributed to a *path* rather than to a node: the
+    /// path that produced this hop is the one whose `output` names this
+    /// endpoint. Without it the graph can only say "some path of `from`
+    /// published something", which is why the critical path used to
+    /// charge every route the maximum over all of a node's paths.
+    pub pub_endpoint: String,
     /// Subscriber endpoint name on the destination node.
     pub sub_endpoint: String,
     /// Worst-case transport latency for this hop (from topic).
@@ -145,7 +199,7 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
             .extend(sub_node_eps.iter().map(|(n, _)| n.clone()));
 
         // Create one edge per (pub, sub) pair.
-        for (pub_node, _pub_ep) in &pub_node_eps {
+        for (pub_node, pub_ep) in &pub_node_eps {
             for (sub_node, sub_ep) in &sub_node_eps {
                 let sub_props = graph
                     .nodes
@@ -165,6 +219,7 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
                     from: pub_node.clone(),
                     to: sub_node.clone(),
                     topic: topic_fqn.clone(),
+                    pub_endpoint: pub_ep.clone(),
                     sub_endpoint: sub_ep.clone(),
                     max_transport_ms,
                     is_state,
@@ -337,6 +392,121 @@ pub struct CriticalPath {
     pub nodes: Vec<String>,
 }
 
+/// A vertex of the PATH-level dataflow graph: one declared path of one node.
+///
+/// `None` for the path name means "this node, reached by a traversal that no
+/// declared path accounts for" — the fallback that preserves the old node-wide
+/// cost rather than inventing a cheaper one.
+type PathVertex = (String, Option<String>);
+
+/// Lower a node-level subgraph to path granularity.
+///
+/// The facts a contract declares are per PATH — `trigger`, `output` and
+/// `max_latency` all live on `PathDecl` — while the dataflow graph is keyed by
+/// node. A node with two causal outputs (one image in, boxes and masks out at
+/// different costs) cannot be represented at node granularity at all: there is
+/// one vertex and two answers. So the DP runs here instead, where a vertex is a
+/// path and an edge joins the path that PUBLISHED a topic to the path whose
+/// trigger CONSUMES it.
+///
+/// Returns the vertex list (deterministically ordered) and the edges as
+/// `(from_index, to_index, transport_ms)`.
+fn build_path_graph(sg: &ScopeSubgraph) -> (Vec<PathVertex>, Vec<(usize, usize, f64)>) {
+    use std::collections::BTreeSet;
+
+    let mut vset: BTreeSet<PathVertex> = BTreeSet::new();
+    for (fqn, node) in &sg.graph.nodes {
+        if !sg.contains_node(fqn) {
+            continue;
+        }
+        if node.paths.is_empty() {
+            vset.insert((fqn.clone(), None));
+        } else {
+            for name in node.paths.keys() {
+                vset.insert((fqn.clone(), Some(name.clone())));
+            }
+        }
+    }
+
+    // Resolve each node-level hop into the path pair(s) it actually connects.
+    let mut raw: Vec<(PathVertex, PathVertex, f64)> = Vec::new();
+    for edge in &sg.graph.edges {
+        if edge.is_state || !sg.contains_node(&edge.from) || !sg.contains_node(&edge.to) {
+            continue;
+        }
+        let (Some(from_node), Some(to_node)) = (
+            sg.graph.nodes.get(&edge.from),
+            sg.graph.nodes.get(&edge.to),
+        ) else {
+            continue;
+        };
+
+        // A hop no path claims still has to go somewhere: it lands on the
+        // node's fallback vertex, which charges the node-wide maximum.
+        let producers: Vec<Option<String>> = {
+            let p = from_node.paths_producing(&edge.pub_endpoint);
+            if p.is_empty() {
+                vec![None]
+            } else {
+                p.into_iter().map(|s| Some(s.to_string())).collect()
+            }
+        };
+        let consumers: Vec<Option<String>> = {
+            let c = to_node.paths_consuming(&edge.sub_endpoint);
+            if c.is_empty() {
+                vec![None]
+            } else {
+                c.into_iter().map(|s| Some(s.to_string())).collect()
+            }
+        };
+
+        let transport = edge.max_transport_ms.unwrap_or(0.0);
+        for p in &producers {
+            for c in &consumers {
+                let a = (edge.from.clone(), p.clone());
+                let b = (edge.to.clone(), c.clone());
+                vset.insert(a.clone());
+                vset.insert(b.clone());
+                raw.push((a, b, transport));
+            }
+        }
+    }
+
+    let vertices: Vec<PathVertex> = vset.into_iter().collect();
+    let index: HashMap<&PathVertex, usize> =
+        vertices.iter().enumerate().map(|(i, v)| (v, i)).collect();
+    let edges: Vec<(usize, usize, f64)> = raw
+        .iter()
+        .filter_map(|(a, b, t)| Some((*index.get(a)?, *index.get(b)?, *t)))
+        .collect();
+
+    (vertices, edges)
+}
+
+/// Kahn's algorithm over the path graph. `None` on a cycle.
+fn topo_sort_paths(n: usize, edges: &[(usize, usize, f64)]) -> Option<Vec<usize>> {
+    let mut indeg = vec![0usize; n];
+    let mut out: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for &(a, b, _) in edges {
+        indeg[b] += 1;
+        out[a].push(b);
+    }
+    // Ascending seed order keeps the result deterministic for a given graph.
+    let mut queue: std::collections::VecDeque<usize> =
+        (0..n).filter(|i| indeg[*i] == 0).collect();
+    let mut order = Vec::with_capacity(n);
+    while let Some(v) = queue.pop_front() {
+        order.push(v);
+        for &w in &out[v] {
+            indeg[w] -= 1;
+            if indeg[w] == 0 {
+                queue.push_back(w);
+            }
+        }
+    }
+    (order.len() == n).then_some(order)
+}
+
 /// Compute the worst-case (longest) latency from any source to any sink
 /// in the subgraph using forward DP. Returns `None` if there is no path.
 ///
@@ -347,148 +517,272 @@ pub struct CriticalPath {
 /// - Parallel branches don't sum at the join; only the slowest counts.
 /// - State edges (`state: true`) don't propagate latency.
 ///
-/// This is a topological-order DP where each node's latency is
-/// `max(predecessor_latencies + edge_transport) + node_processing`.
+/// **Granularity:** the DP runs over PATHS, not nodes (see
+/// [`build_path_graph`]). A route through a node is charged the latency of the
+/// path that actually produced the traversed topic, so an unrelated sibling
+/// output — a second extraction from the same input, say — no longer inflates
+/// it. Where a hop matches no declared path the node-wide maximum still
+/// applies, so this is never less conservative than charging by node.
 #[allow(dead_code)]
 pub fn critical_path(subgraph: &ScopeSubgraph) -> Option<CriticalPath> {
     if subgraph.sources.is_empty() || subgraph.sinks.is_empty() {
         return None;
     }
 
-    // Topological sort the subgraph (skip state edges).
-    let order = topo_sort(subgraph)?;
+    let (vertices, edges) = build_path_graph(subgraph);
+    if vertices.is_empty() {
+        return None;
+    }
+    let order = topo_sort_paths(vertices.len(), &edges)?;
 
-    // Forward DP: latency[node] = max over predecessors of
-    // (latency[pred] + edge.transport) + node.processing.
-    // Track the predecessor that gave the max for path reconstruction.
-    let mut latency: HashMap<String, f64> = HashMap::new();
-    let mut prev: HashMap<String, Option<String>> = HashMap::new();
-    let source_set: HashSet<&str> = subgraph.sources.iter().map(|s| s.as_str()).collect();
+    let mut incoming: Vec<Vec<(usize, f64)>> = vec![Vec::new(); vertices.len()];
+    for &(a, b, t) in &edges {
+        incoming[b].push((a, t));
+    }
 
-    for node in &order {
-        let processing = subgraph
+    let source_nodes: HashSet<&str> = subgraph.sources.iter().map(|s| s.as_str()).collect();
+    let sink_nodes: HashSet<&str> = subgraph.sinks.iter().map(|s| s.as_str()).collect();
+
+    let mut latency: Vec<Option<f64>> = vec![None; vertices.len()];
+    let mut prev: Vec<Option<usize>> = vec![None; vertices.len()];
+
+    for &v in &order {
+        let (node_fqn, path_name) = &vertices[v];
+        let cost = subgraph
             .graph
             .nodes
-            .get(node)
-            .map(|n| n.max_latency_ms())
+            .get(node_fqn)
+            .map(|n| n.traversal_latency_ms(path_name.as_deref()))
             .unwrap_or(0.0);
 
-        // If this is a source, initial latency is just its processing time.
-        if source_set.contains(node.as_str()) {
-            let cur = latency.entry(node.clone()).or_insert(0.0);
-            if processing > *cur {
-                *cur = processing;
-            }
-            prev.entry(node.clone()).or_insert(None);
+        // A source starts the route: its own processing, nothing upstream.
+        if source_nodes.contains(node_fqn.as_str()) {
+            let cur = latency[v].unwrap_or(0.0).max(cost);
+            latency[v] = Some(cur);
             continue;
         }
 
-        // Otherwise, take max over incoming causal edges from nodes already
-        // visited in topological order.
-        let in_indices = subgraph.graph.in_edges.get(node);
-        let mut best: Option<(f64, String)> = None;
-        if let Some(indices) = in_indices {
-            for &idx in indices {
-                let edge = &subgraph.graph.edges[idx];
-                if edge.is_state || !subgraph.contains_node(&edge.from) {
-                    continue;
-                }
-                let Some(&pred_lat) = latency.get(&edge.from) else {
-                    continue;
-                };
-                let candidate = pred_lat + edge.max_transport_ms.unwrap_or(0.0);
-                if best.as_ref().map(|(b, _)| candidate > *b).unwrap_or(true) {
-                    best = Some((candidate, edge.from.clone()));
-                }
+        let mut best: Option<(f64, usize)> = None;
+        for &(pred, transport) in &incoming[v] {
+            let Some(pred_lat) = latency[pred] else {
+                continue;
+            };
+            let candidate = pred_lat + transport;
+            if best.map(|(b, _)| candidate > b).unwrap_or(true) {
+                best = Some((candidate, pred));
             }
         }
-
-        if let Some((arrival, predecessor)) = best {
-            latency.insert(node.clone(), arrival + processing);
-            prev.insert(node.clone(), Some(predecessor));
+        if let Some((arrival, pred)) = best {
+            latency[v] = Some(arrival + cost);
+            prev[v] = Some(pred);
         }
     }
 
-    // Find the sink with the maximum latency.
-    let mut best_sink: Option<(String, f64)> = None;
-    for sink in &subgraph.sinks {
-        if let Some(&lat) = latency.get(sink)
-            && best_sink.as_ref().map(|(_, b)| lat > *b).unwrap_or(true)
-        {
-            best_sink = Some((sink.clone(), lat));
+    let mut best_sink: Option<(usize, f64)> = None;
+    for (v, (node_fqn, _)) in vertices.iter().enumerate() {
+        if !sink_nodes.contains(node_fqn.as_str()) {
+            continue;
+        }
+        let Some(lat) = latency[v] else { continue };
+        if best_sink.map(|(_, b)| lat > b).unwrap_or(true) {
+            best_sink = Some((v, lat));
         }
     }
-    let (sink, total_ms) = best_sink?;
+    let (sink_v, total_ms) = best_sink?;
 
-    // Reconstruct the path by walking `prev` backwards.
-    let mut nodes = Vec::new();
-    let mut cur = Some(sink);
-    while let Some(node) = cur {
-        let next = prev.get(&node).cloned().flatten();
-        nodes.push(node);
-        cur = next;
+    // Walk `prev` back to the source, reporting NODE names — several
+    // consecutive vertices can belong to one node, and the diagnostic speaks
+    // in nodes.
+    let mut nodes: Vec<String> = Vec::new();
+    let mut cur = Some(sink_v);
+    while let Some(v) = cur {
+        let name = &vertices[v].0;
+        if nodes.last().map(|n| n != name).unwrap_or(true) {
+            nodes.push(name.clone());
+        }
+        cur = prev[v];
     }
     nodes.reverse();
 
     Some(CriticalPath { total_ms, nodes })
 }
 
-/// Topological sort restricted to the scope subtree, skipping state edges.
-/// Returns `None` if a cycle is detected (other than via state edges).
-fn topo_sort(subgraph: &ScopeSubgraph) -> Option<Vec<String>> {
-    // Kahn's algorithm. In-degree = causal incoming edges within subtree.
-    let mut indeg: HashMap<String, usize> = HashMap::new();
-    let mut all_nodes: Vec<String> = subgraph
-        .graph
-        .nodes
-        .keys()
-        .filter(|fqn| subgraph.contains_node(fqn))
-        .cloned()
-        .collect();
-    all_nodes.sort(); // Deterministic order
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ros_launch_manifest_types::{PathDecl, Trigger};
 
-    for n in &all_nodes {
-        indeg.insert(n.clone(), 0);
-    }
-
-    for n in &all_nodes {
-        if let Some(indices) = subgraph.graph.in_edges.get(n) {
-            for &idx in indices {
-                let edge = &subgraph.graph.edges[idx];
-                if edge.is_state || !subgraph.contains_node(&edge.from) {
-                    continue;
-                }
-                *indeg.get_mut(n).unwrap() += 1;
-            }
+    fn path(trigger_in: &[&str], out: &[&str], latency_ms: Option<f64>) -> PathDecl {
+        PathDecl {
+            trigger: (!trigger_in.is_empty())
+                .then(|| Trigger::Input(trigger_in.iter().map(|s| s.to_string()).collect())),
+            output: out.iter().map(|s| s.to_string()).collect(),
+            max_latency: latency_ms.map(ros_launch_manifest_types::duration::Duration::from_millis_f64),
+            ..Default::default()
         }
     }
 
-    let mut queue: std::collections::VecDeque<String> = all_nodes
-        .iter()
-        .filter(|n| indeg.get(*n).copied().unwrap_or(0) == 0)
-        .cloned()
-        .collect();
-    let mut order = Vec::new();
-    while let Some(n) = queue.pop_front() {
-        order.push(n.clone());
-        if let Some(indices) = subgraph.graph.out_edges.get(&n) {
-            for &idx in indices {
-                let edge = &subgraph.graph.edges[idx];
-                if edge.is_state || !subgraph.contains_node(&edge.to) {
-                    continue;
-                }
-                if let Some(d) = indeg.get_mut(&edge.to) {
-                    *d -= 1;
-                    if *d == 0 {
-                        queue.push_back(edge.to.clone());
-                    }
-                }
-            }
+    fn node(fqn: &str, paths: &[(&str, PathDecl)]) -> GlobalNode {
+        GlobalNode {
+            fqn: fqn.to_string(),
+            scope_id: 0,
+            paths: paths
+                .iter()
+                .map(|(n, p)| (n.to_string(), p.clone()))
+                .collect(),
+            subscribers: BTreeMap::new(),
+            publishers: BTreeMap::new(),
         }
     }
-    if order.len() != all_nodes.len() {
-        // Cycle detected (not via state edges) — abort.
-        return None;
+
+    fn edge(from: &str, pub_ep: &str, to: &str, sub_ep: &str) -> GlobalEdge {
+        GlobalEdge {
+            from: from.to_string(),
+            to: to.to_string(),
+            topic: format!("/{pub_ep}"),
+            pub_endpoint: pub_ep.to_string(),
+            sub_endpoint: sub_ep.to_string(),
+            max_transport_ms: None,
+            is_state: false,
+        }
     }
-    Some(order)
+
+    fn assemble(nodes: Vec<GlobalNode>, edges: Vec<GlobalEdge>) -> GlobalDataflowGraph {
+        let mut g = GlobalDataflowGraph::default();
+        for n in nodes {
+            g.nodes.insert(n.fqn.clone(), n);
+        }
+        for (i, e) in edges.into_iter().enumerate() {
+            g.out_edges.entry(e.from.clone()).or_default().push(i);
+            g.in_edges.entry(e.to.clone()).or_default().push(i);
+            g.edges.push(e);
+        }
+        g
+    }
+
+    /// The motivating topology: ONE node, one input, two distinct causal
+    /// outputs with different costs, each feeding a different consumer.
+    ///
+    ///   /image -> detector -+-(boxes, 20ms)-> tracker   (10ms) -> /tracks
+    ///                       +-(masks, Xms) -> segmenter ( 5ms) -> /seg
+    fn two_output_graph(masks_ms: f64) -> GlobalDataflowGraph {
+        assemble(
+            vec![
+                node(
+                    "/detector",
+                    &[
+                        ("to_boxes", path(&["image"], &["boxes"], Some(20.0))),
+                        ("to_masks", path(&["image"], &["masks"], Some(masks_ms))),
+                    ],
+                ),
+                node("/tracker", &[("main", path(&["boxes"], &["tracks"], Some(10.0)))]),
+                node("/segmenter", &[("main", path(&["masks"], &["seg"], Some(5.0)))]),
+            ],
+            vec![
+                edge("/detector", "boxes", "/tracker", "boxes"),
+                edge("/detector", "masks", "/segmenter", "masks"),
+            ],
+        )
+    }
+
+    fn subgraph<'a>(g: &'a GlobalDataflowGraph, source: &str, sink: &str) -> ScopeSubgraph<'a> {
+        ScopeSubgraph {
+            graph: g,
+            scope_subtree: HashSet::from([0usize]),
+            sources: vec![source.to_string()],
+            sinks: vec![sink.to_string()],
+        }
+    }
+
+    /// A route is charged the path that produced the topic it traverses, not
+    /// the node's most expensive output. `/tracks` is reached through `boxes`
+    /// (20ms) + tracker (10ms) = 30ms, and must stay 30ms however costly the
+    /// unrelated `masks` path becomes.
+    ///
+    /// Before the path-level DP this returned 45 / 110 / 30 for the three
+    /// cases below — tracking an output the route never touches, one for one.
+    #[test]
+    fn route_is_charged_its_own_path_not_the_node_maximum() {
+        for masks_ms in [35.0, 100.0, 12.0] {
+            let g = two_output_graph(masks_ms);
+            let cp = critical_path(&subgraph(&g, "/detector", "/tracker"))
+                .expect("a route from detector to tracker exists");
+            assert_eq!(
+                cp.total_ms, 30.0,
+                "to_tracks must cost 20+10=30ms with to_masks at {masks_ms}ms, got {}",
+                cp.total_ms
+            );
+            assert_eq!(cp.nodes, vec!["/detector", "/tracker"]);
+        }
+    }
+
+    /// The sibling route IS charged the expensive path — the fix must not make
+    /// everything cheap, only attribute correctly.
+    #[test]
+    fn the_other_route_still_pays_its_own_cost() {
+        for (masks_ms, expected) in [(35.0, 40.0), (100.0, 105.0), (12.0, 17.0)] {
+            let g = two_output_graph(masks_ms);
+            let cp = critical_path(&subgraph(&g, "/detector", "/segmenter"))
+                .expect("a route from detector to segmenter exists");
+            assert_eq!(
+                cp.total_ms, expected,
+                "to_seg must cost {masks_ms}+5={expected}ms, got {}",
+                cp.total_ms
+            );
+        }
+    }
+
+    /// Fork-join still takes the max over branches and adds the join, at path
+    /// granularity: max(50, 30) + 20 = 70, never the sum 100.
+    #[test]
+    fn fork_join_takes_max_not_sum() {
+        let g = assemble(
+            vec![
+                node("/lidar", &[("main", path(&["input"], &["out"], Some(50.0)))]),
+                node("/camera", &[("main", path(&["input"], &["out"], Some(30.0)))]),
+                node(
+                    "/fusion",
+                    &[("main", path(&["lidar", "camera"], &["out"], Some(20.0)))],
+                ),
+            ],
+            vec![
+                edge("/lidar", "out", "/fusion", "lidar"),
+                edge("/camera", "out", "/fusion", "camera"),
+            ],
+        );
+        let sg = ScopeSubgraph {
+            graph: &g,
+            scope_subtree: HashSet::from([0usize]),
+            sources: vec!["/lidar".to_string(), "/camera".to_string()],
+            sinks: vec!["/fusion".to_string()],
+        };
+        let cp = critical_path(&sg).expect("fork-join has a critical path");
+        assert_eq!(cp.total_ms, 70.0, "max(50,30)+20, not the sum 100");
+    }
+
+    /// A hop no declared path accounts for falls back to the node-wide
+    /// maximum, so the change is never less conservative than charging by
+    /// node. Here the edge arrives on an endpoint `main` does not consume.
+    #[test]
+    fn unattributable_hop_falls_back_to_the_node_maximum() {
+        let g = assemble(
+            vec![
+                node("/src", &[("main", path(&["in"], &["out"], Some(7.0)))]),
+                node(
+                    "/sink",
+                    &[
+                        ("a", path(&["expected"], &["o"], Some(3.0))),
+                        ("b", path(&["other"], &["o"], Some(11.0))),
+                    ],
+                ),
+            ],
+            // arrives on `surprise`, which neither path declares
+            vec![edge("/src", "out", "/sink", "surprise")],
+        );
+        let cp = critical_path(&subgraph(&g, "/src", "/sink")).expect("route exists");
+        assert_eq!(
+            cp.total_ms, 18.0,
+            "7 + max(3,11) — the conservative fallback, not the cheaper path"
+        );
+    }
 }

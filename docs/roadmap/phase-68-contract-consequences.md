@@ -1,6 +1,7 @@
 # Phase 68 — contract consequences: analysis, mapper, verification, retirement
 
-Status: **planned.** Depends on phase 67.
+Status: **W1.a done**, rest planned. Depends on phase 67 for W2 onward;
+W1 needs no new vocabulary and is proceeding first (see §W1.a).
 
 Design of record:
 [docs/design/contract-primitives.md](../design/contract-primitives.md) and
@@ -57,7 +58,7 @@ deprecation lint. No rule reaches a verdict from them.
 
 ## W1 — analysis
 
-### W1.a — per-path attribution
+### W1.a — per-path attribution — DONE
 
 One fix, two symptoms (§1.1, §1.2). Carry path identity onto the graph edge so
 the critical-path DP charges the path that produced the traversed topic, and
@@ -73,9 +74,39 @@ pub fn max_latency_ms(&self) -> f64 {
 }
 ```
 
-**Acceptance — the expected value is known in advance:** on the fixture above,
-`to_tracks` is charged **30 ms, not 45 ms**, and varying `to_masks` from 12 to
-100 ms leaves it unchanged. Commit the fixture as a test, not a shell transcript.
+**Acceptance — the expected value was known in advance and is met:**
+`to_tracks` is charged **30 ms, not 45 ms**, and varying `to_masks` over
+12/35/100 ms leaves it unchanged.
+
+**What shipped.** The root cause was granularity, not arithmetic: the facts a
+contract declares (`trigger`, `output`, `max_latency`) all live on `PathDecl`,
+while the dataflow graph was keyed by node — so a node with two causal outputs
+had one vertex and two answers, and no patch to the reduction could fix that.
+
+- `GlobalEdge` gained `pub_endpoint`, the counterpart of `sub_endpoint`. The
+  publisher endpoint was already computed in `build_global_graph` and discarded
+  as `_pub_ep`; it is what lets a hop be attributed to the path whose `output`
+  names it.
+- `build_path_graph` lowers a subgraph to **path granularity** — a vertex is a
+  path, an edge joins the path that published a topic to the path whose
+  *effective* trigger consumes it (`effective_trigger()`, so Vocabulary v2
+  `trigger: { input: [...] }` matches, not just the legacy `input:`).
+- `critical_path` runs its DP over that graph. Timer/once/spontaneous paths
+  consume nothing and so can never be entered — which is what makes them chain
+  boundaries, and is the hook §W1.b needs.
+- A hop no declared path accounts for falls back to the node-wide maximum, so
+  the change is **never less conservative** than before.
+
+Four tests in `manifest_graph.rs`, built from hand-assembled graphs rather than
+cross-repo fixtures. Verified non-vacuous by reverting the attribution and
+confirming the two defect tests fail with exactly the measured numbers
+(`left: 45.0, right: 30.0`); the two invariant tests — fork-join takes
+max(50,30)+20=70, and the unattributable-hop fallback — correctly pass in both
+states, being guards rather than the defect.
+
+Gates: 181 resolver lib tests, clippy clean, `just check-layer2-isolation`,
+`just test` 96 passed / 15 skipped (all documented privilege skips).
+`just test-all` still owed before the wave is closed.
 
 Open (`contract-axes.md` §6.4): whether per-path cost then needs a `costs:`
 section, or whether `measure` can attribute it once path identity exists.
