@@ -916,3 +916,54 @@ fn w2_derived_overrun_reaches_the_model() {
     assert!(model.contains("sched_class: SCHED_FIFO"), "{model}");
     let _ = std::fs::remove_file(&out_path);
 }
+
+/// Phase 68 W4's gate, as a test rather than a shell probe.
+///
+/// `contract_derived_chain` is `rt_workspace`'s system with `chains:` and
+/// `segments:` removed entirely — the route is derivable from
+/// `trigger`/`output`. The mapper must reach the SAME scheduling decisions from
+/// the derived route as from the authored one.
+///
+/// The assertion is on the PROVENANCE, not the priorities. Before the derived
+/// route reached the mapper it fell back to ranking nodes by budget, which on
+/// this three-node system produces the same two priorities by coincidence — so
+/// a numeric check passed while the derivation was not being used at all. That
+/// false pass is the reason this test reads the string.
+#[test]
+fn w4_the_mapper_reads_the_derived_route_not_just_authored_segments() {
+    let base = fixtures::repo_root().join("tests/fixtures/contract_derived_chain/launch");
+    let out = Command::new(fixtures::play_launch_bin())
+        .arg("check")
+        .arg(base.join("bringup.launch.xml"))
+        .arg("--sched")
+        .arg(base.join("bringup.system.posix.yaml"))
+        .arg("--explain")
+        .output()
+        .expect("check --explain runs");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(
+        !text.contains("non-chain"),
+        "the mapper fell back to per-node ranking — the derived route did not \
+         reach it:\n{text}"
+    );
+    assert!(
+        text.contains("points_to_cmd segment drain"),
+        "expected chain-aware drain provenance from the DERIVED route:\n{text}"
+    );
+    assert!(
+        text.contains("points_to_cmd boundary RM"),
+        "the timer boundary must be classified from the derived route:\n{text}"
+    );
+    // The authored form emits this too; losing it would be a behavioural
+    // difference between the two spellings even with identical priorities.
+    assert!(
+        text.contains("override-inversion"),
+        "the override-inversion warning must survive the move to a scope \
+         path:\n{text}"
+    );
+}

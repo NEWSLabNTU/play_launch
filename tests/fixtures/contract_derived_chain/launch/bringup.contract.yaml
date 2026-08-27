@@ -1,0 +1,97 @@
+# Provider sidecar for bringup.launch.xml (Phase 40 layout: sits right next
+# to the launch file it describes, ships in rt_demo's installed share dir).
+# See src/ros-launch-manifest/docs/launch-manifest.md for the format.
+#
+# Vocabulary v2 (Phase 44.5): every path declares an explicit `trigger:` and
+# the three nodes compose into one named chain (`points_to_cmd`) — the
+# smallest honest decomposition: sensor_node's `tick` is timer-triggered (a
+# clock BOUNDARY, the chain's own source clock), filter_component's `filter`
+# and control_node's `control` are both input-triggered (one EVENT SEGMENT,
+# drain-toward-sink order control > filter). See
+# docs/superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md §1/§4
+# and 2026-07-17-chain-aware-mapper-design.md.
+version: 1
+
+nodes:
+  sensor_node:
+    pub:
+      points_raw:
+        min_rate_hz: 100
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 100 } }
+        output: [points_raw]
+
+  filter_component:
+    sub:
+      points_raw:
+        min_rate_hz: 100
+    pub:
+      points_filtered:
+        min_rate_hz: 100
+    paths:
+      filter:
+        trigger: { input: [points_raw] }
+        output: [points_filtered]
+        max_latency: 5ms
+
+  control_node:
+    # Phase 41.5: mapper hint, no numbers (design doc §2.1) — informational
+    # today (the built-in rate/deadline mappers rank by rate/deadline only),
+    # future mappers can weight by this.
+    criticality: high
+    sub:
+      points_filtered:
+        min_rate_hz: 100
+        max_age: 50ms
+    pub:
+      cmd:
+        min_rate_hz: 100
+    paths:
+      control:
+        trigger: { input: [points_filtered] }
+        output: [cmd]
+        max_latency: 10ms
+
+# Phase 44.5: end-to-end chain composed from the three paths above.
+# sampling_cost = tick's period (1000/100 = 10ms; no declared max_latency_ms
+# on the boundary path itself, so no extra exec_ms — "no invented WCETs").
+# declared event-segment sum = filter's 5ms + control's 10ms = 15ms.
+# total = 25ms, comfortably inside the 30ms budget (5ms honest slack) —
+# passes `chain-budget` (and `chain-sampling-feasibility`, sampling_cost
+# 10ms < 30ms budget) cleanly. See `.superpowers/sdd/p44-w5-report.md` for
+# the by-hand chain_aware priority derivation.
+# Phase 68 W4: the SAME system as rt_workspace's `points_to_cmd`, expressed as
+# a SCOPE PATH with no `chains:`/`segments:` at all.
+#
+# The route is derivable from `trigger`/`output`, so writing it out by hand was
+# a second copy of something the tool already knows. This fixture exists to
+# prove the mapper reads the DERIVED route: its provenance must say
+# `segment drain`, not `non-chain`. The numbers agreeing is not enough — with
+# the mapper falling back to budget ranking, this three-node system produces
+# the same two priorities by coincidence, which is how a false pass looked
+# before the derived-route seam was built.
+paths:
+  points_to_cmd:
+    input: /perception/points_raw
+    output: [/control/cmd]
+    max_latency: 30ms
+
+topics:
+  # absolute — nodes above sit in different namespaces (/perception, /control)
+  /perception/points_raw:
+    type: std_msgs/msg/String
+    pub: [sensor_node/points_raw]
+    sub: [filter_component/points_raw]
+    rate_hz: 100
+
+  /perception/points_filtered:
+    type: std_msgs/msg/String
+    pub: [filter_component/points_filtered]
+    sub: [control_node/points_filtered]
+    rate_hz: 100
+
+  /control/cmd:
+    type: std_msgs/msg/String
+    pub: [control_node/cmd]
+    rate_hz: 100

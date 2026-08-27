@@ -57,8 +57,23 @@ pub fn mapper_input_from_dump(
         .iter()
         .map(|r| build_mapper_node(r, index, budgets))
         .collect();
+    // Derived routes take precedence over authored `chains:` of the same
+    // name; authored ones survive only while nothing derives that name, which
+    // is what lets both spellings coexist through the deprecation window.
     let chains = index
-        .map(|i| resolve_chains(i, budgets))
+        .map(|i| {
+            let graph = super::manifest_graph::build_global_graph(i);
+            let derived = resolve_chains_derived(i, &graph, budgets);
+            let derived_names: std::collections::HashSet<&str> =
+                derived.iter().map(|c| c.name.as_str()).collect();
+            let authored: Vec<ResolvedChain> = resolve_chains(i, budgets)
+                .into_iter()
+                .filter(|c| !derived_names.contains(c.name.as_str()))
+                .collect();
+            let mut all = derived;
+            all.extend(authored);
+            all
+        })
         .unwrap_or_default();
     MapperInput {
         nodes,
@@ -260,6 +275,88 @@ fn convert_semantics(s: ros_launch_manifest_types::ChainSemantics) -> ChainSeman
 ///   processes, not scope aggregates), which a whole-scope aggregate path
 ///   cannot provide. Not a `chain-link` failure (the checker accepts scope
 ///   aggregates as valid hops); a documented sched-extraction limitation.
+/// Build `ResolvedChain`s from **derived** routes — the scope paths whose
+/// route the checker already computes — rather than from authored
+/// `chains:`/`segments:`.
+///
+/// This is the seam phase 68 W1 left open. W1 taught the CHECKER to derive a
+/// route from `trigger`/`output`; the mapper went on reading authored
+/// segments, so the two knew different things about the same system and
+/// removing `segments:` did not move the derivation to a new source — it
+/// removed the mapper's only source. Measured on `rt_workspace`: with
+/// `chains:` deleted the mapper reported `non-chain` provenance and fell back
+/// to ranking by budget, which on that three-node fixture coincidentally
+/// produced the same priorities. One derivation, one place, two consumers is
+/// the design; this is the second consumer.
+///
+/// `semantics` is `Reaction` for every derived route, because `PathDecl` has
+/// no `semantics` field yet — moving it there is `contract-axes.md` §3.6, the
+/// one thing a scope path still cannot say that a chain can.
+pub(crate) fn resolve_chains_derived(
+    index: &ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+    budgets: &BTreeMap<String, u64>,
+) -> Vec<ResolvedChain> {
+    use super::manifest_graph::{critical_path, subgraph_for_scope_path, subtree_scope_ids};
+    use ros_launch_manifest_types::EffectiveTrigger as T;
+
+    let mut out = Vec::new();
+    for sp in &index.scope_paths {
+        let Some(max_latency_ms) = sp.path.max_latency.map(|d| d.as_millis_f64()) else {
+            continue;
+        };
+        let subtree = subtree_scope_ids(index, sp.scope_id);
+        let subgraph =
+            subgraph_for_scope_path(graph, subtree, &sp.input_topics, &sp.output_topics);
+        let Some(cp) = critical_path(&subgraph) else {
+            continue;
+        };
+
+        let mut elements: Vec<ChainElement> = Vec::new();
+        let mut criticality = Criticality::Low;
+        for (node_fqn, path_name) in &cp.vertices {
+            let Some(path_name) = path_name else {
+                // A hop no declared path accounts for carries no trigger fact,
+                // so it can be neither a boundary nor a segment link. Skipping
+                // it keeps the route honest rather than inventing a category.
+                continue;
+            };
+            if let Some(c) = node_criticality(index, sp.scope_id, node_fqn)
+                && c > criticality
+            {
+                criticality = c;
+            }
+            let decl = graph
+                .nodes
+                .get(node_fqn)
+                .and_then(|n| n.paths.get(path_name));
+            let trigger = decl.map(|d| d.effective_trigger());
+            match trigger {
+                Some(T::Timer { rate_hz }) if rate_hz > 0.0 => {
+                    elements.push(ChainElement::Boundary {
+                        node: node_fqn.clone(),
+                        path: path_name.clone(),
+                        period_ms: 1000.0 / rate_hz,
+                        exec_ms: budget_us_for(budgets, node_fqn).map(|us| us as f64 / 1000.0),
+                    });
+                }
+                _ => push_segment_node(&mut elements, node_fqn.clone(), path_name.clone()),
+            }
+        }
+        if elements.is_empty() {
+            continue;
+        }
+        out.push(ResolvedChain {
+            name: sp.path_name.clone(),
+            criticality,
+            max_latency_ms,
+            semantics: ChainSemantics::Reaction,
+            elements,
+        });
+    }
+    out
+}
+
 pub(crate) fn resolve_chains(
     index: &ManifestIndex,
     budgets: &BTreeMap<String, u64>,
