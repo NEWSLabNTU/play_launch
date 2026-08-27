@@ -208,6 +208,7 @@ mod tests {
             paths: Default::default(),
             subscribers: Default::default(),
             publishers: Default::default(),
+            concurrency: None,
         }
     }
 

@@ -1,0 +1,99 @@
+# Phase 67 vocabulary, exercised end to end through the hand-rolled parser.
+#
+#   /image -> detector -+-(boxes, 20ms)-> tracker   (10ms) -> /tracks
+#                       +-(masks, 35ms)-> segmenter ( 5ms) -> /seg
+#
+# The two detector paths share a callback group, so a route through `boxes`
+# can wait for `to_masks` — which `path-exclusion` reports and the critical
+# path does not include.
+version: 1
+
+nodes:
+  detector:
+    sub: { image: { min_rate_hz: 30 } }
+    pub:
+      boxes: { min_rate_hz: 30 }
+      masks: { min_rate_hz: 30 }
+    concurrency:
+      exclusive:
+        - [to_boxes, to_masks]
+    paths:
+      to_boxes:
+        trigger: { input: [image] }
+        output: [boxes]
+        max_latency: 20ms
+        min_latency: 6ms
+        max_jitter: 4ms
+        miss:
+          tolerate: 2 / 100
+          consecutive: 1
+          action: continue
+      to_masks:
+        trigger: { input: [image] }
+        output: [masks]
+        max_latency: 35ms
+
+  tracker:
+    sub: { boxes: { min_rate_hz: 30 } }
+    pub: { tracks: { min_rate_hz: 30 } }
+    paths:
+      main:
+        trigger: { input: [boxes] }
+        output: [tracks]
+        max_latency: 10ms
+
+  segmenter:
+    sub: { masks: { min_rate_hz: 30 } }
+    pub: { seg: { min_rate_hz: 30 } }
+    paths:
+      main:
+        trigger: { input: [masks] }
+        output: [seg]
+        max_latency: 5ms
+
+topics:
+  /image:
+    type: sensor_msgs/msg/Image
+    # Produced outside this tree (a camera driver), so no internal publisher
+    # is required — without this, `dangling-entity` is right to complain.
+    external: pub
+    sub: [detector/image]
+    rate_hz: 30
+    qos:
+      reliability: reliable
+      deadline: 33ms
+      liveliness: automatic
+      lease_duration: 200ms
+  /perception/boxes:
+    type: std_msgs/msg/String
+    pub: [detector/boxes]
+    sub: [tracker/boxes]
+    rate_hz: 30
+  /perception/masks:
+    type: std_msgs/msg/String
+    pub: [detector/masks]
+    sub: [segmenter/masks]
+    rate_hz: 30
+  /tracks:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [tracker/tracks]
+    rate_hz: 30
+  /seg:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [segmenter/seg]
+    rate_hz: 30
+
+paths:
+  # True critical path: 20 (to_boxes) + 10 (tracker) = 30ms. Before phase 68
+  # W1.a this was charged 45ms — the node's max over ALL paths.
+  to_tracks:
+    input: /image
+    output: [/tracks]
+    max_latency: 30ms
+  # 35 (to_masks) + 5 (segmenter) = 40ms.
+  to_seg:
+    input: /image
+    output: [/seg]
+    max_latency: 40ms

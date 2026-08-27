@@ -645,6 +645,7 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // scope declare paths with the same resolved (input, output) topics,
     // the child's max_latency_ms must not exceed the ancestor's.
     check_path_budget_overflow(index);
+    check_concurrency_declaration(index);
 
     // Build the global dataflow graph once and reuse it for the
     // critical-path and rate-hierarchy checks.
@@ -658,6 +659,7 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
 
     // Critical-path latency check via the global dataflow graph.
     check_scope_path_critical_path(index, &graph);
+    check_route_exclusion_blocking(index, &graph);
 
     // Cross-scope rate hierarchy: publisher rate vs subscriber demand
     // even when pub and sub live in different manifests.
@@ -688,6 +690,7 @@ fn check_scope_path_critical_path(
 
     // Snapshot scope paths to avoid borrow conflict with merge_diagnostics.
     let scope_paths = index.scope_paths.clone();
+    let mut superseded: Vec<(usize, String)> = Vec::new();
 
     for scope_path in &scope_paths {
         let Some(declared) = scope_path.path.max_latency.map(|d| d.as_millis_f64()) else {
@@ -705,6 +708,16 @@ fn check_scope_path_critical_path(
         let Some(cp) = critical_path(&subgraph) else {
             continue;
         };
+
+        // The topology-aware verdict SUPERSEDES the per-manifest sum for this
+        // path. The fallback sums every node in the manifest, which its own
+        // rule documents as "pessimistic for parallel (fork-join) topologies";
+        // once a real route exists, leaving both in place reports two
+        // different totals for one path and sends an author chasing the wrong
+        // one. Suppressed only where a route was actually computed — a scope
+        // path with no traceable route keeps the fallback, which is then the
+        // only estimate available.
+        superseded.push((scope_path.scope_id, scope_path.path_name.clone()));
 
         if cp.total_ms > declared {
             index.merge_diagnostics.push(Diagnostic {
@@ -737,6 +750,110 @@ fn check_scope_path_critical_path(
                 span: None,
             });
         }
+    }
+
+    // Drop the per-manifest sum for every path a real route was found for.
+    // The fallback sums EVERY node in the manifest — its own rule documents
+    // that as "pessimistic for parallel (fork-join) topologies" — so once a
+    // route exists, leaving both in place reports two different totals for one
+    // path and sends an author chasing the wrong one. Suppressed only where a
+    // route was computed: a path with no traceable route keeps the fallback,
+    // which is then the only estimate there is.
+    for (scope_id, path_name) in superseded {
+        let key = format!("paths.{path_name}");
+        if let Some(m) = index.manifests.get_mut(&scope_id) {
+            let before = m.diagnostics.len();
+            m.diagnostics
+                .retain(|d| !(d.rule_id == "scope-budget" && d.path == key));
+            let dropped = before - m.diagnostics.len();
+            index.total_warnings = index.total_warnings.saturating_sub(dropped);
+        }
+    }
+}
+
+/// `path-exclusion` — report that a route's total omits blocking it is
+/// subject to.
+///
+/// The critical path sums the latency of each path it crosses, which assumes
+/// each runs the moment its message arrives. That is false when the traversed
+/// path shares a callback group with another path of the same node: the two
+/// serialise, so an arriving message can wait for a sibling already running.
+///
+/// This **reports** rather than computes. Deciding whether summing is VALID
+/// needs only the exclusion relation; bounding the blocking needs a
+/// response-time analysis, and the published work reports UNBOUNDED worst-case
+/// response times for some chains under the default ROS 2 executor — a result
+/// about ROS 2, not about this arithmetic. Turning a silent unsound assumption
+/// into a visible one is the part that matters here.
+///
+/// Only fires where the sibling has a declared `max_latency`, so the note can
+/// say how much is at stake rather than gesturing at it.
+fn check_route_exclusion_blocking(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    use super::manifest_graph::{critical_path, subgraph_for_scope_path, subtree_scope_ids};
+
+    let scope_paths = index.scope_paths.clone();
+    let mut findings: Vec<(String, usize, Vec<String>)> = Vec::new();
+
+    for scope_path in &scope_paths {
+        let subtree = subtree_scope_ids(index, scope_path.scope_id);
+        let subgraph = subgraph_for_scope_path(
+            graph,
+            subtree,
+            &scope_path.input_topics,
+            &scope_path.output_topics,
+        );
+        let Some(cp) = critical_path(&subgraph) else {
+            continue;
+        };
+
+        let mut notes: Vec<String> = Vec::new();
+        for (node_fqn, path_name) in &cp.vertices {
+            let (Some(node), Some(path)) = (graph.nodes.get(node_fqn), path_name.as_deref()) else {
+                continue;
+            };
+            let blockers: Vec<(String, f64)> = node
+                .exclusive_siblings_of(path)
+                .into_iter()
+                .filter_map(|sib| {
+                    node.paths
+                        .get(&sib)
+                        .and_then(|p| p.max_latency)
+                        .map(|d| (sib, d.as_millis_f64()))
+                })
+                .collect();
+            if blockers.is_empty() {
+                continue;
+            }
+            let worst = blockers.iter().map(|(_, ms)| *ms).fold(0.0_f64, f64::max);
+            let names: Vec<&str> = blockers.iter().map(|(n, _)| n.as_str()).collect();
+            notes.push(format!(
+                "{node_fqn}/{path} may wait for [{}] (up to {worst:.2}ms)",
+                names.join(", ")
+            ));
+        }
+        if !notes.is_empty() {
+            findings.push((scope_path.path_name.clone(), scope_path.scope_id, notes));
+        }
+    }
+
+    for (path_name, scope_id, notes) in findings {
+        index.merge_diagnostics.push(Diagnostic {
+            rule_id: "path-exclusion".to_string(),
+            severity: Severity::Info,
+            message: format!(
+                "scope path '{path_name}' (scope {scope_id}): the critical path assumes each \
+                 node runs on arrival, but these traversals serialise with a sibling callback \
+                 and may be delayed by it — {}. Declare `concurrency.exclusive` on the node if \
+                 they can in fact run concurrently; absent that declaration every path of a \
+                 node is assumed to serialise, matching rclcpp's default callback group",
+                notes.join("; ")
+            ),
+            path: format!("paths.{path_name}"),
+            span: None,
+        });
     }
 }
 
@@ -1042,6 +1159,49 @@ fn durability_compatible(pub_v: &str, sub_v: &str) -> bool {
 /// Match scope paths across the scope tree by resolved (input, output)
 /// topic identity. When a parent and child both declare a path with
 /// the same boundaries, the child's budget must not exceed the parent's.
+/// `concurrency-decl` — every path named in `concurrency.exclusive` must be a
+/// path this node declares.
+///
+/// Without this the field is decorative: a typo'd or stale path name silently
+/// forms a group of one, which changes nothing and reports nothing. The whole
+/// point of adding vocabulary is that it is checked — an unchecked field is
+/// indistinguishable from a comment.
+fn check_concurrency_declaration(index: &mut ManifestIndex) {
+    let mut findings: Vec<(usize, String, String, Vec<String>)> = Vec::new();
+    for resolved in index.manifests.values() {
+        for (node_name, node) in &resolved.manifest.nodes {
+            let Some(decl) = &node.concurrency else {
+                continue;
+            };
+            let unknown: Vec<String> = decl
+                .exclusive
+                .iter()
+                .flatten()
+                .filter(|p| !node.paths.contains_key(*p))
+                .cloned()
+                .collect();
+            if !unknown.is_empty() {
+                let declared: Vec<String> = node.paths.keys().cloned().collect();
+                findings.push((resolved.scope_id, node_name.clone(), declared.join(", "), unknown));
+            }
+        }
+    }
+    for (scope_id, node_name, declared, unknown) in findings {
+        index.merge_diagnostics.push(Diagnostic {
+            rule_id: "concurrency-decl".to_string(),
+            severity: Severity::Error,
+            message: format!(
+                "node '{node_name}' (scope {scope_id}) declares concurrency.exclusive over \
+                 path(s) it does not have: {}. Declared paths: [{declared}]. A name that \
+                 matches no path forms a group of one, which silently changes nothing",
+                unknown.join(", "),
+            ),
+            path: format!("nodes.{node_name}.concurrency.exclusive"),
+            span: None,
+        });
+    }
+}
+
 fn check_path_budget_overflow(index: &mut ManifestIndex) {
     // Build a parent-chain lookup: for each scope ID, the set of all
     // ancestor scope IDs (transitive parents).

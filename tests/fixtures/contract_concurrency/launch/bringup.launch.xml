@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!-- Phase 67 vocabulary end-to-end: a node with two causal outputs that share
+     a callback group, feeding two independent consumers. Exercises per-path
+     attribution, the exclusion derivation, and the `path-exclusion` note. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="detector"  namespace="/perception"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="tracker"   namespace="/perception"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="segmenter" namespace="/perception"/>
+</launch>

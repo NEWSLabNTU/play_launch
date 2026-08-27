@@ -13,7 +13,7 @@
 
 use super::manifest_loader::ManifestIndex;
 use ros_launch_manifest_types::PathDecl;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// A node in the global dataflow graph (one ROS 2 node).
 #[derive(Debug, Clone)]
@@ -30,6 +30,9 @@ pub struct GlobalNode {
     pub subscribers: BTreeMap<String, ros_launch_manifest_types::EndpointProps>,
     /// Publisher endpoint properties.
     pub publishers: BTreeMap<String, ros_launch_manifest_types::EndpointProps>,
+    /// Declared exclusion between this node's paths (phase 67). `None` means
+    /// the conservative default — see [`GlobalNode::exclusion_groups`].
+    pub concurrency: Option<ros_launch_manifest_types::ConcurrencyDecl>,
 }
 
 impl GlobalNode {
@@ -99,6 +102,66 @@ impl GlobalNode {
             EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => 1000.0 / rate_hz + exec,
             _ => exec,
         }
+    }
+
+    /// Sets of this node's paths that may not run concurrently.
+    ///
+    /// **Derived, never authored** — a maximal mutually exclusive set IS a
+    /// callback group, so the group is a consequence of the declared exclusion
+    /// relation. nano-ros already infers groups this way and treats an explicit
+    /// declaration as an override.
+    ///
+    /// The default is the load-bearing part. An absent `concurrency:` means
+    /// every path of the node is in ONE group — which is what both
+    /// realizations already do (`rclcpp`'s implicit per-node callback group is
+    /// `MutuallyExclusive`, and nano-ros's `default_cbg_type` is the same
+    /// string), so an author writes nothing unless claiming MORE concurrency
+    /// than the safe answer. An explicit `exclusive: []` is therefore NOT the
+    /// same as omitting the section: it says every path may run concurrently.
+    ///
+    /// Declared sets are merged transitively: `[[a, b], [b, c]]` is one group
+    /// `{a, b, c}`, because exclusion is not transitive by intent but a shared
+    /// member makes the three mutually serialised in any realization that maps
+    /// a group to one thread.
+    pub fn exclusion_groups(&self) -> Vec<BTreeSet<String>> {
+        let Some(decl) = &self.concurrency else {
+            // No declaration: everything serialises.
+            return if self.paths.is_empty() {
+                Vec::new()
+            } else {
+                vec![self.paths.keys().cloned().collect()]
+            };
+        };
+
+        let mut groups: Vec<BTreeSet<String>> = Vec::new();
+        for declared in &decl.exclusive {
+            let mut merged: BTreeSet<String> = declared.iter().cloned().collect();
+            // Absorb any existing group sharing a member.
+            groups.retain(|g| {
+                if g.is_disjoint(&merged) {
+                    true
+                } else {
+                    merged.extend(g.iter().cloned());
+                    false
+                }
+            });
+            if !merged.is_empty() {
+                groups.push(merged);
+            }
+        }
+        groups
+    }
+
+    /// Paths of this node that must serialise with `path` — its group, minus
+    /// itself. Empty when the path may run concurrently with everything.
+    pub fn exclusive_siblings_of(&self, path: &str) -> BTreeSet<String> {
+        let mut out: BTreeSet<String> = self
+            .exclusion_groups()
+            .into_iter()
+            .find(|g| g.contains(path))
+            .unwrap_or_default();
+        out.remove(path);
+        out
     }
 
     /// The sampling half of [`GlobalNode::traversal_latency_ms`], reported
@@ -197,6 +260,7 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
                     paths: node_decl.paths.clone(),
                     subscribers: node_decl.subscribers.clone(),
                     publishers: node_decl.publishers.clone(),
+                    concurrency: node_decl.concurrency.clone(),
                 },
             );
         }
@@ -422,6 +486,12 @@ pub struct CriticalPath {
     pub total_ms: f64,
     /// Node FQNs visited in order, source first, sink last.
     pub nodes: Vec<String>,
+    /// The `(node, path)` pairs the route actually traverses, source first.
+    ///
+    /// `nodes` collapses these to node names for the diagnostic text; rules
+    /// that need to know WHICH path was crossed — exclusion blocking, per-path
+    /// cost attribution — read this.
+    pub vertices: Vec<(String, Option<String>)>,
     /// The part of `total_ms` contributed by clock boundaries on this route —
     /// one period per timer-triggered path crossed.
     ///
@@ -654,10 +724,12 @@ pub fn critical_path(subgraph: &ScopeSubgraph) -> Option<CriticalPath> {
     // in nodes. The sampling term is summed over the SAME walk, so it is the
     // sampling cost of the winning route rather than of the whole subgraph.
     let mut nodes: Vec<String> = Vec::new();
+    let mut traversed: Vec<(String, Option<String>)> = Vec::new();
     let mut sampling_cost_ms = 0.0_f64;
     let mut cur = Some(sink_v);
     while let Some(v) = cur {
         let (name, path_name) = &vertices[v];
+        traversed.push((name.clone(), path_name.clone()));
         sampling_cost_ms += subgraph
             .graph
             .nodes
@@ -670,10 +742,12 @@ pub fn critical_path(subgraph: &ScopeSubgraph) -> Option<CriticalPath> {
         cur = prev[v];
     }
     nodes.reverse();
+    traversed.reverse();
 
     Some(CriticalPath {
         total_ms,
         nodes,
+        vertices: traversed,
         sampling_cost_ms,
     })
 }
@@ -713,6 +787,7 @@ mod tests {
                 .collect(),
             subscribers: BTreeMap::new(),
             publishers: BTreeMap::new(),
+            concurrency: None,
         }
     }
 
@@ -994,5 +1069,76 @@ mod tests {
         let cp = critical_path(&subgraph(&g, "/src", "/sink")).expect("route exists");
         assert_eq!(cp.sampling_cost_ms, 0.0);
         assert_eq!(cp.total_ms, 10.0);
+    }
+
+    fn node_with_concurrency(
+        fqn: &str,
+        paths: &[(&str, PathDecl)],
+        exclusive: Option<Vec<Vec<&str>>>,
+    ) -> GlobalNode {
+        let mut n = node(fqn, paths);
+        n.concurrency = exclusive.map(|groups| ros_launch_manifest_types::ConcurrencyDecl {
+            exclusive: groups
+                .into_iter()
+                .map(|g| g.into_iter().map(|s| s.to_string()).collect())
+                .collect(),
+        });
+        n
+    }
+
+    fn p() -> PathDecl {
+        path(&["in"], &["out"], Some(1.0))
+    }
+
+    /// The default is the load-bearing part: with no `concurrency:` every path
+    /// of the node is in ONE group, matching rclcpp's implicit
+    /// `MutuallyExclusive` callback group and nano-ros's `default_cbg_type`.
+    #[test]
+    fn absent_concurrency_puts_every_path_in_one_group() {
+        let n = node_with_concurrency("/n", &[("a", p()), ("b", p()), ("c", p())], None);
+        let groups = n.exclusion_groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].len(), 3);
+        assert_eq!(n.exclusive_siblings_of("a").len(), 2);
+    }
+
+    /// An explicit empty list is NOT the same as omitting the section: it says
+    /// every path may run concurrently.
+    #[test]
+    fn an_empty_exclusive_list_means_everything_is_concurrent() {
+        let n = node_with_concurrency("/n", &[("a", p()), ("b", p())], Some(vec![]));
+        assert!(n.exclusion_groups().is_empty());
+        assert!(n.exclusive_siblings_of("a").is_empty());
+    }
+
+    /// Declared sets sharing a member merge: `[[a,b],[b,c]]` is one group,
+    /// because any realization mapping a group to one thread serialises all
+    /// three.
+    #[test]
+    fn groups_sharing_a_member_merge() {
+        let n = node_with_concurrency(
+            "/n",
+            &[("a", p()), ("b", p()), ("c", p()), ("d", p())],
+            Some(vec![vec!["a", "b"], vec!["b", "c"], vec!["d"]]),
+        );
+        let groups = n.exclusion_groups();
+        assert_eq!(groups.len(), 2, "{{a,b,c}} and {{d}}");
+        let abc = groups.iter().find(|g| g.len() == 3).expect("merged group");
+        assert!(abc.contains("a") && abc.contains("b") && abc.contains("c"));
+        assert_eq!(n.exclusive_siblings_of("d").len(), 0);
+        assert_eq!(n.exclusive_siblings_of("a").len(), 2);
+    }
+
+    /// A partial declaration leaves unnamed paths concurrent — the author
+    /// opted them out by not naming them.
+    #[test]
+    fn paths_outside_a_declared_group_are_concurrent() {
+        let n = node_with_concurrency(
+            "/n",
+            &[("a", p()), ("b", p()), ("health", p())],
+            Some(vec![vec!["a", "b"]]),
+        );
+        assert!(n.exclusive_siblings_of("health").is_empty());
+        assert_eq!(n.exclusive_siblings_of("a"), ["b".to_string()].into());
     }
 }

@@ -257,6 +257,21 @@ fn render_scope_diagnostics(
                 check_result
                     .diagnostics
                     .retain(|d| d.rule_id != "dangling-entity" && d.rule_id != "service-wiring");
+                // Show what the LOADER decided, not what a fresh re-run
+                // derives. The re-run exists only to recover spans the stored
+                // diagnostics lack, so anything the loader suppressed —
+                // a `scope-budget` sum superseded by a real critical path, say
+                // — must not reappear here. Without this the terminal and
+                // `--format json` outputs disagree, since the JSON path emits
+                // the stored diagnostics directly.
+                let kept: std::collections::HashSet<(String, String)> = resolved
+                    .diagnostics
+                    .iter()
+                    .map(|d| (d.rule_id.clone(), d.path.clone()))
+                    .collect();
+                check_result
+                    .diagnostics
+                    .retain(|d| kept.contains(&(d.rule_id.clone(), d.path.clone())));
                 if let Some(set) = rule_filter {
                     check_result
                         .diagnostics
