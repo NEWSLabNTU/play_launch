@@ -646,6 +646,7 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // the child's max_latency_ms must not exceed the ancestor's.
     check_path_budget_overflow(index);
     check_concurrency_declaration(index);
+    check_sync_window_budget(index);
 
     // Build the global dataflow graph once and reuse it for the
     // critical-path and rate-hierarchy checks.
@@ -660,6 +661,7 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // Critical-path latency check via the global dataflow graph.
     check_scope_path_critical_path(index, &graph);
     check_route_exclusion_blocking(index, &graph);
+    check_lifespan_against_age(index, &graph);
 
     // Cross-scope rate hierarchy: publisher rate vs subscriber demand
     // even when pub and sub live in different manifests.
@@ -718,6 +720,39 @@ fn check_scope_path_critical_path(
         // path with no traceable route keeps the fallback, which is then the
         // only estimate available.
         superseded.push((scope_path.scope_id, scope_path.path_name.clone()));
+
+        // `jitter-feasibility`: a clock crossing contributes its WHOLE period
+        // to end-to-end jitter, whatever the callback costs — a message
+        // arriving just after a tick waits a full period, one arriving just
+        // before waits none. So sampling jitter alone can exceed a declared
+        // `max_jitter`, and when it does no scheduling assignment can help:
+        // the only fixes are a faster boundary rate or a looser requirement.
+        // Same structural-infeasibility shape as `chain-sampling-feasibility`.
+        //
+        // This is the half of the jitter requirement that needs no best-case
+        // fact. Execution jitter needs `min_latency`, which is optional and
+        // usually measured; sampling jitter is derivable from the trigger
+        // alone.
+        if let Some(max_jitter) = scope_path.path.max_jitter.map(|d| d.as_millis_f64())
+            && cp.sampling_cost_ms > max_jitter
+        {
+            index.merge_diagnostics.push(Diagnostic {
+                rule_id: "jitter-feasibility".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "scope path '{}' (scope {}) declares max_jitter ({max_jitter:.2}ms) below \
+                     the sampling jitter its own route already carries ({:.2}ms, one period \
+                     per clock boundary crossed: {}). No priority assignment can reduce this \
+                     — raise the boundary's rate or the requirement",
+                    scope_path.path_name,
+                    scope_path.scope_id,
+                    cp.sampling_cost_ms,
+                    cp.nodes.join(" → "),
+                ),
+                path: format!("paths.{}.max_jitter", scope_path.path_name),
+                span: None,
+            });
+        }
 
         if cp.total_ms > declared {
             index.merge_diagnostics.push(Diagnostic {
@@ -1159,6 +1194,119 @@ fn durability_compatible(pub_v: &str, sub_v: &str) -> bool {
 /// Match scope paths across the scope tree by resolved (input, output)
 /// topic identity. When a parent and child both declare a path with
 /// the same boundaries, the child's budget must not exceed the parent's.
+/// `sync-budget` — a fan-in path's synchronisation window must fit inside its
+/// own latency budget.
+///
+/// The COMPLEMENT of the manifest crate's `sync-feasibility`, which bounds the
+/// same window from below (it must be wide enough to span the slowest input's
+/// period). This bounds it from above: whatever the synchroniser waits for is
+/// time the path has already spent, so a window wider than the path's
+/// `max_latency` cannot be met however the system is scheduled.
+///
+/// Reads the three window fields that had no consumer: `sync.timeout`,
+/// `sync.max_interval` and the path's `tolerance`.
+fn check_sync_window_budget(index: &mut ManifestIndex) {
+    let paths = index.node_paths.clone();
+    for np in &paths {
+        let Some(budget) = np.path.max_latency.map(|d| d.as_millis_f64()) else {
+            continue;
+        };
+        // Each window is a lower bound on how long this path can take.
+        let mut windows: Vec<(&str, f64)> = Vec::new();
+        if let Some(sync) = &np.path.sync {
+            if let Some(t) = sync.timeout {
+                windows.push(("sync.timeout", t.as_millis_f64()));
+            }
+            if let Some(mi) = sync.max_interval {
+                windows.push(("sync.max_interval", mi.as_millis_f64()));
+            }
+        }
+        if let Some(tol) = np.path.tolerance {
+            windows.push(("tolerance", tol.as_millis_f64()));
+        }
+        for (field, window) in windows {
+            if window <= budget {
+                continue;
+            }
+            index.merge_diagnostics.push(Diagnostic {
+                rule_id: "sync-budget".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "path '{}' on {} declares {field} ({window:.2}ms) wider than its own \
+                     max_latency ({budget:.2}ms). The synchroniser may wait that long before \
+                     the callback even starts, so the budget cannot be met by any scheduling \
+                     assignment — this is a contradiction in the declaration, not a \
+                     performance problem",
+                    np.path_name, np.node_fqn,
+                ),
+                path: format!("nodes.{}.paths.{}", np.node_fqn, np.path_name),
+                span: None,
+            });
+        }
+    }
+}
+
+/// `lifespan-age` — a subscriber cannot require data older than the topic's
+/// `lifespan` allows to exist.
+///
+/// DDS discards a sample once it is older than `lifespan`, so an endpoint
+/// asking for data up to `max_age` old on a topic with a shorter lifespan is
+/// asking for samples the middleware has already thrown away. The two
+/// declarations contradict each other and no runtime behaviour can satisfy
+/// both.
+///
+/// `lifespan` had exactly three read sites before this — a `model_builder`
+/// copy, a merge-equality check and a deprecation lint — and so could not fail
+/// anything.
+fn check_lifespan_against_age(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    use ros_launch_manifest_types::QosDecl;
+    let topics: Vec<(String, Option<QosDecl>, Vec<String>)> = index
+        .topics
+        .iter()
+        .map(|(fqn, t)| (fqn.clone(), t.qos.clone(), t.subscribers.clone()))
+        .collect();
+
+    let mut findings: Vec<(String, String, f64, f64)> = Vec::new();
+    for (topic_fqn, topic_qos, subscribers) in &topics {
+        for ep_ref in subscribers {
+            let Some(pos) = ep_ref.rfind('/') else { continue };
+            let (node_fqn, ep) = (&ep_ref[..pos], &ep_ref[pos + 1..]);
+            let Some(props) = graph.nodes.get(node_fqn).and_then(|n| n.subscribers.get(ep))
+            else {
+                continue;
+            };
+            let Some(max_age) = props.max_age.map(|d| d.as_millis_f64()) else {
+                continue;
+            };
+            let effective = QosDecl::effective(topic_qos.as_ref(), props.qos.as_ref());
+            let Some(lifespan) = effective.lifespan.map(|d| d.as_millis_f64()) else {
+                continue;
+            };
+            if max_age > lifespan {
+                findings.push((ep_ref.clone(), topic_fqn.clone(), max_age, lifespan));
+            }
+        }
+    }
+
+    for (ep_ref, topic, max_age, lifespan) in findings {
+        index.merge_diagnostics.push(Diagnostic {
+            rule_id: "lifespan-age".to_string(),
+            severity: Severity::Warning,
+            message: format!(
+                "subscriber '{ep_ref}' accepts data up to {max_age:.2}ms old, but topic \
+                 '{topic}' has lifespan {lifespan:.2}ms — DDS discards a sample once it is \
+                 older than its lifespan, so the data this endpoint is willing to use no \
+                 longer exists to deliver"
+            ),
+            path: format!("topics.{topic}.qos.lifespan"),
+            span: None,
+        });
+    }
+}
+
 /// `concurrency-decl` — every path named in `concurrency.exclusive` must be a
 /// path this node declares.
 ///

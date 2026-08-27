@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- Phase 68 W1.d: every previously write-only field, in a state that FAILS.
+     A field with no rule that can reject it is indistinguishable from a
+     comment, so each one here is deliberately contradictory. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="listener" name="sensor" namespace="/s"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="fuser"  namespace="/s"/>
+</launch>

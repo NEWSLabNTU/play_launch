@@ -1,6 +1,6 @@
 # Phase 68 — contract consequences: analysis, mapper, verification, retirement
 
-Status: **W1.a and W1.b done**, rest planned. Depends on phase 67 for W2 onward;
+Status: **W1 done** (a, b, c, d); W2–W4 planned. Depends on phase 67 for W2 onward;
 W1 needs no new vocabulary and is proceeding first (see §W1.a).
 
 Design of record:
@@ -178,7 +178,7 @@ Gates, all green: clippy clean, `just check-layer2-isolation`, and `just
 test-all` — **485 parser + 291 play_launch + 185 resolver + 142 integration,
 1103 tests, 0 failed, 0 skipped**, with an empty silently-skipped report.
 
-### W1.c — groups from exclusion, and the validity diagnostic
+### W1.c — groups from exclusion, and the validity diagnostic — DONE
 
 Derive callback groups from phase 67's exclusion relation: a maximal mutually
 exclusive set is a group.
@@ -193,13 +193,49 @@ That needs no response-time analysis, no blocking arithmetic, no executor
 simulation. Converting a silent unsound assumption into a diagnostic is the part
 that matters; the full analysis stays a later option.
 
-### W1.d — consume the write-only fields
+### W1.d — consume the write-only fields — DONE
 
 `jitter` (now the path-level requirement), `lifespan`, `max_response`, and the
 sync window (`tolerance`, `max_interval`, `timeout`).
 
-**Acceptance:** each has at least one rule that can fail because of it, and a
-fixture that makes it fail.
+**Acceptance met**, with `tests/fixtures/contract_w1d` written to violate each
+one and an integration test asserting all of them fire:
+
+| field | rule | what it catches |
+|---|---|---|
+| `max_jitter` (new) | `jitter-feasibility` | a route's sampling jitter — one whole period per clock boundary — already exceeds the declared bound |
+| `lifespan` | `lifespan-age` | a subscriber accepts data older than DDS will keep it |
+| `sync.timeout`, `sync.max_interval`, `tolerance` | `sync-budget` | the synchronisation window is wider than the path's own budget |
+
+`sync-budget` is the **complement** of the manifest crate's existing
+`sync-feasibility`, which bounds the same window from below (it must span the
+slowest input's period). The fixture violates both at once, so the window must
+be ≥100 ms and ≤20 ms — an empty interval that neither rule alone can report.
+That is the argument for adding the upper bound rather than folding it into the
+existing rule.
+
+`max_jitter` is checked without `min_latency` because sampling jitter needs no
+best-case fact: a boundary contributes its whole period regardless of what the
+callback costs. Execution jitter still needs a best case and waits for
+measurement (`contract-axes.md` §6.1).
+
+**`max_response` is deliberately left unconsumed**, and that is a finding
+rather than an omission. It sits on the SERVER (`srv:`), is documented "runtime
+monitoring only", and nothing in the vocabulary binds a service call to the
+path that makes it — so any static rule would have to guess whether the call is
+synchronous and which callback pays for it. Absent is the honest answer; the
+missing fact is a caller-to-path binding, which is vocabulary work, not a rule.
+
+**Found on the way**: `sync-feasibility` had been printing a Rust expression at
+the user since the phase-63 rename —
+`sync.timeout.map(|d| d.as_millis_f64()) (60)` — because the rename replaced
+the field name inside the format string, where it was being quoted for the
+reader rather than evaluated. Both policy branches, so every diagnostic of that
+rule since the migration carried it. Fixed in manifest v0.1.13, and the
+integration test now asserts no diagnostic contains `as_millis_f64`.
+
+Gates: clippy clean, `just check-layer2-isolation`, `just test-all` — **485 +
+291 + 189 + 144 = 1109 tests, 0 failed, 0 skipped**.
 
 ---
 

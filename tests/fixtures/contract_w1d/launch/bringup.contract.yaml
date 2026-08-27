@@ -1,0 +1,72 @@
+# Every field W1.d gave a consumer, declared so that it FAILS.
+version: 1
+
+nodes:
+  sensor:
+    pub:
+      raw: { min_rate_hz: 10 }
+      aux: { min_rate_hz: 10 }
+    paths:
+      # A 10Hz clock boundary: 100ms of sampling jitter, whatever it costs.
+      tick:
+        trigger: { timer: { rate_hz: 10 } }
+        output: [raw, aux]
+
+  fuser:
+    sub:
+      raw:
+        min_rate_hz: 10
+        # Wants data up to 500ms old on a topic whose lifespan is 50ms:
+        # DDS has already discarded it. -> lifespan-age
+        max_age: 500ms
+      aux:
+        min_rate_hz: 10
+    pub:
+      fused: { min_rate_hz: 10 }
+    paths:
+      fuse:
+        trigger: { input: [raw, aux] }
+        output: [fused]
+        max_latency: 20ms
+        # The synchroniser may wait 60ms before the callback starts, inside a
+        # 20ms budget. -> sync-budget
+        #
+        # 60ms also trips the EXISTING `sync-feasibility`, which bounds the
+        # same window from the other side: it must be at least the slowest
+        # input's period (100ms at 10Hz). Both firing is the point — the
+        # window must be >=100ms and <=20ms, an empty interval, and neither
+        # rule alone can say so. That is why the upper bound was worth adding
+        # rather than folding into the existing rule.
+        correlation: timestamp
+        sync:
+          policy: timeout_any
+          timeout: 60ms
+
+topics:
+  /s/raw:
+    type: std_msgs/msg/String
+    pub: [sensor/raw]
+    sub: [fuser/raw]
+    rate_hz: 10
+    qos:
+      lifespan: 50ms
+  /s/aux:
+    type: std_msgs/msg/String
+    pub: [sensor/aux]
+    sub: [fuser/aux]
+    rate_hz: 10
+  /s/fused:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [fuser/fused]
+    rate_hz: 10
+
+paths:
+  # The route crosses a 10Hz boundary, so it carries 100ms of sampling jitter
+  # on its own — a 5ms requirement is unreachable by any scheduling.
+  # -> jitter-feasibility
+  raw_to_fused:
+    input: /s/raw
+    output: [/s/fused]
+    max_latency: 200ms
+    max_jitter: 5ms

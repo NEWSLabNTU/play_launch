@@ -776,3 +776,62 @@ resources:
         "expected the chain name in explain provenance:\n{combined}"
     );
 }
+
+// ── Phase 68 W1.d: every previously write-only field now has a rule that can
+//    reject it. A field nothing can fail on is indistinguishable from a
+//    comment, so each of these is asserted to FIRE on a fixture written to
+//    violate it.
+
+/// Run `play_launch check` on a fixture and return its combined output.
+fn check_fixture(dir: &str) -> String {
+    let launch = fixtures::repo_root()
+        .join("tests/fixtures")
+        .join(dir)
+        .join("launch/bringup.launch.xml");
+    let out = Command::new(fixtures::play_launch_bin())
+        .arg("check")
+        .arg(&launch)
+        .output()
+        .expect("play_launch check runs");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+#[test]
+fn w1d_write_only_fields_now_have_rules_that_fail() {
+    let out = check_fixture("contract_w1d");
+    for rule in ["jitter-feasibility", "lifespan-age", "sync-budget"] {
+        assert!(
+            out.contains(rule),
+            "expected {rule} to fire on contract_w1d; got:\n{out}"
+        );
+    }
+    // The pre-existing lower bound on the same sync window fires too: the
+    // window must be >= the slowest input's period (100ms) and <= the path's
+    // budget (20ms), an empty interval neither rule alone can report.
+    assert!(out.contains("sync-feasibility"), "got:\n{out}");
+    // And its message no longer leaks a Rust expression at the reader
+    // (manifest v0.1.13).
+    assert!(
+        !out.contains("as_millis_f64"),
+        "a diagnostic printed Rust source:\n{out}"
+    );
+}
+
+#[test]
+fn phase67_vocabulary_checks_out_end_to_end() {
+    let out = check_fixture("contract_concurrency");
+    // Derived callback groups: the route through `boxes` may be blocked by
+    // the sibling `masks` path they share a group with.
+    assert!(out.contains("path-exclusion"), "got:\n{out}");
+    assert!(out.contains("to_masks"), "the blocking sibling is named:\n{out}");
+    // The per-manifest sum is SUPERSEDED where a real route exists, so the
+    // two must not both report a total for one path.
+    assert!(
+        !out.contains("sum of node latencies"),
+        "the superseded per-manifest fallback reappeared:\n{out}"
+    );
+}
