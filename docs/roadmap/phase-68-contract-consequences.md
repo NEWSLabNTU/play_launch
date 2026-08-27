@@ -1,7 +1,7 @@
 # Phase 68 — contract consequences: analysis, mapper, verification, retirement
 
-Status: **W1, W2 and W3 done. W4 blocked on one missing piece of work — not
-on the environment, and not on judgement: the gate was run and it FAILED.** Depends on phase 67 for W2 onward;
+Status: **W1–W3 done. W4's gate is MET and its lint is live; only the
+deprecation window itself remains, which is calendar time.** Depends on phase 67 for W2 onward;
 W1 needs no new vocabulary and is proceeding first (see §W1.a).
 
 Design of record:
@@ -375,11 +375,12 @@ the run, and hand-typed values are how a regression hides.
 
 ---
 
-## W4 — retire — BLOCKED, and the gate is what caught it
+## W4 — retire — GATE MET, lint live, removal waits a release
 
-Condition 3 (the A/B) is now **met**. Condition 2 — *old and new spellings
-resolve to identical models* — was then run and **failed**, which is the whole
-reason it is a gate.
+Condition 3 (the A/B) is met. Condition 2 — *old and new spellings resolve to
+identical models* — was run, **failed**, was fixed, and now passes for the right
+reason. What follows is the record of that, because the failure is the more
+instructive half.
 
 `rt_workspace`'s chain was rewritten as the equivalent scope path and both
 forms resolved with the same platform file. The derived schedules came out
@@ -403,28 +404,59 @@ schedule. The chain form also emits an `sched:override-inversion` warning that
 the scope-path form does not, so the two are not equivalent in diagnostics
 either.
 
-### What is actually missing
+### What was missing, and is now built
 
 `contract-primitives.md`'s migration step 5 — *"Emit the derived routes for the
-mapper; switch the mapper to read them"* — which this phase did not do. W1
-taught the CHECKER to derive routes; the mapper still reads authored
-`chains:`/`segments:` and nothing connects the two. One derivation, one place,
-two consumers is the design; today it is one derivation and one consumer.
+mapper; switch the mapper to read them"* — which the earlier waves had skipped.
+`resolve_chains_derived` now builds `ResolvedChain`s from the routes
+`check_scope_path_critical_path` already computes, and
+`mapper_input_from_dump` prefers them, falling back to authored chains of a
+name nothing derives so both spellings coexist through the window.
 
-**Order for whoever picks this up:**
+`tests/fixtures/contract_derived_chain` is `rt_workspace`'s system with
+`chains:` and `segments:` removed entirely, and its provenance now reads
 
-1. Have `check_scope_path_critical_path` emit its derived routes as
-   `ResolvedChain`s, the shape `resolve_chains` already produces from authored
-   segments.
-2. Switch `mapper_input_from_dump` to prefer derived routes, falling back to
-   authored ones while both exist.
-3. Re-run this probe. The gate is met when the scope-path form's provenance
-   reads `segment drain`, not `non-chain` — the numbers agreeing is not enough,
-   as this run demonstrates.
-4. Then, and only then, the deprecation lint and the release wait.
+```
+derived(chain_aware: points_to_cmd segment drain 2/2) -> prio 39
+derived(chain_aware: points_to_cmd boundary RM period=10ms) -> prio 38
+```
 
-Condition 4 (one release shipped with the lint live) is calendar time, not
-work, and cannot be closed in a session either way.
+The `sched:override-inversion` warning, which the authored form emitted and the
+scope-path form did not, now fires in both.
+
+**The test asserts the provenance string, not the priorities**, and that is the
+whole point of it: with the mapper falling back to budget ranking this
+three-node system produced the *same two priorities by coincidence*, so a
+numeric check passed while the derivation was not being used at all. A gate
+that an accident of the fixture can satisfy is not a gate.
+
+### Condition 1 and the deprecation lint
+
+`derivable-chain` (Info, manifest v0.1.16) tells an author that an authored
+route is derivable and shows the scope path that replaces it. Blast radius is
+exactly one note per authored chain — `rt_workspace` and `rt_av_demo` — and
+none on the migrated fixture.
+
+Two deliberate silences in that lint, both because the replacement does not
+exist yet:
+
+- **`topics.<t>.rate_hz` is not deprecated.** The design lists it as derivable
+  by propagation from the timer that starts the chain, but that propagation is
+  **not implemented** — `inherited_rate` checks a stale legacy `input:` list,
+  not rate derivation. Deprecating a field nothing would reconstruct is worse
+  than leaving it alone.
+- **A chain declaring `semantics: age` is skipped.** `PathDecl` has no
+  `semantics` field (`contract-axes.md` §3.6), so migrating such a chain would
+  lose a requirement.
+
+### What remains
+
+Condition 4 — one release shipped with the lint live — is calendar time, not
+work. Removal of `chains:`/`segments:` follows it. Migrating the tree's own
+contracts (condition 1) is now safe to do at any point and is deliberately
+*not* done here: `rt_workspace` and `rt_av_demo` are the fixtures the published
+measurements were taken on, and changing their spelling in the same phase that
+changed the mapper would make a future regression harder to bisect.
 
 - `chains:` / `segments:` — the derived route replaces them
 - `topics.<t>.rate_hz` — propagates from the timer that starts the chain
