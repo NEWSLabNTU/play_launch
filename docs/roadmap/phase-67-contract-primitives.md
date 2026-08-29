@@ -201,7 +201,7 @@ found #0021.
 
 ---
 
-## W3 — migrate the tree's own contracts
+## W3 — migrate the tree's own contracts — DONE (phase 68 W4)
 
 `tests/fixtures/rt_workspace`, `tests/fixtures/contract_merge`,
 `tests/fixtures/contract_error`, `examples/rt_av_demo`, and the Autoware
@@ -211,10 +211,14 @@ Migration here means **adopting the new spellings where they say something
 true**, not rewriting for its own sake. A fixture with no jitter requirement
 does not gain one.
 
-The one real conversion is `rt_workspace`, which currently carries `chains:` and
-`segments:`. It keeps them — they are not retired until phase 68 W4 — and gains
-the scope-path form alongside, so that W4's equivalence gate has both spellings
-of the same system to compare.
+The one real conversion is `rt_workspace`, which carried `chains:` and
+`segments:`. The plan here was to keep them and gain the scope-path form
+alongside, so W4's gate had both spellings to compare. That is not how it went:
+the comparison was made against a SEPARATE fixture
+(`tests/fixtures/contract_derived_chain`, the same system with `chains:`
+removed), and the tree's own contracts were converted in one step at W4 —
+`rt_workspace`'s provider sidecar and overlay and `rt_av_demo`'s, verified by
+provenance rather than by the resulting priorities.
 
 **Acceptance:** every fixture resolves; `just test-all` green including the
 parity gates and the `rt_workspace` integration tests.
@@ -248,7 +252,7 @@ are ignored. `check --sched --explain` output is unchanged for every fixture.
 
 ---
 
-## W5 — tell nano-ros
+## W5 — tell nano-ros — NOT DONE
 
 Two seams where the toolchains would otherwise drift, both recorded in
 `contract-axes.md` §5:

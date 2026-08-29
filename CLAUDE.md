@@ -445,7 +445,7 @@ add `src/ros-launch-resolve` to `members`. `just check-layer2-isolation`
 boundary breaks: no ROS crates in the graph, no ROS shared libraries linked,
 and both launch frontends resolve with no ROS installed.
 
-**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.5`), not a
+**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.17`), not a
 submodule — phase-55 W2. Layer 2 now has no submodules at all. **Three**
 manifests name the tag and must move together:
 `src/play_launch/Cargo.toml`, `src/ros-launch-resolve/Cargo.toml` and
@@ -585,6 +585,58 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-08-29**: Phases 67/68 complete — **`chains:`/`segments:` are gone; a
+  route is derived, never written.** A contract now states an end-to-end
+  requirement as a scope path — two ends and a budget — and the route between
+  them is computed from the `trigger:`/`output:` facts the nodes already
+  declare. A contract still carrying `chains:` is a parse error naming the
+  replacement (manifest crate **`v0.1.5` → `v0.1.17`**; three manifests, via
+  `just bump-manifest`).
+  **`semantics: age` was deleted rather than migrated.** It looks like a lost
+  requirement and is not: *nothing ever branched on `ChainSemantics`* — no
+  check, no mapper, no arithmetic — so `age` and `reaction` produced identical
+  results. It was a write-only field of exactly the kind `contract-axes.md` §2
+  is about; a subscriber's `max_age:` is what states staleness, and
+  `lifespan-age` reads it.
+  **Equivalence was checked by PROVENANCE, never by the numbers**, and that
+  distinction is the whole lesson of this phase. `rt_workspace`'s three-node
+  system yields the same two priorities under plain budget ranking with no
+  chain at all, so a numeric comparison passes while the derivation is not
+  being used — `derived(chain_aware: non-chain budget_ms=5) -> prio 39` reads
+  identically to `derived(chain_aware: points_to_cmd segment drain 2/2) ->
+  prio 39` in every column except the one that matters. `rt_av_demo` is the
+  fixture that carries the weight: three members in a real drain order, on two
+  platform files.
+  **Two silent defects found by walking the migration path, both of that same
+  shape.** (1) `resolve_scope_paths` read the LEGACY `decl.input` while the
+  `explicit-trigger` lint tells authors to write `trigger:` instead — so
+  following the lint's own advice resolved a scope path to zero input topics,
+  which does not fail. It produces a path with no route, the mapper falls back
+  to budget ranking, and both scheduling warnings vanish while the priorities
+  stay put. It now reads `effective_trigger()`. (2) A band-compression test
+  claiming two DISTINCT chains never collapse kept passing with **zero chains
+  reaching the mapper** — two distinct non-chain nodes also refuse to collapse,
+  so it was right for the wrong reason. It now asserts the chains arrive before
+  testing anything.
+  **`chain-sampling-feasibility` was carried over, not dropped**, as
+  `scope-sampling-feasibility`: sampling cost ALONE meeting the budget is
+  structural infeasibility that no priority assignment can fix, which is a
+  different and worse claim than a total over budget. It is emitted before
+  `scope-budget` so the structural verdict reads first.
+  **One retirement condition was deliberately not met.** The gate asked for one
+  release shipped with the deprecation lint live; 0.10.0 was prepared but never
+  tagged, so no user saw the window and 0.9 → next is a hard cut. Removed on
+  request, recorded here rather than glossed.
+  **Still not retired, for stated reasons**: `topics.<t>.rate_hz` (its
+  replacement, propagation from the source timer, is NOT implemented —
+  `inherited_rate` checks a stale legacy `input:` list, and deprecating a field
+  nothing would reconstruct is worse than leaving it) and `EndpointProps.jitter`.
+  **Phase 67 W5 is still open**: nano-ros has not been told about either seam
+  (our platform file assigns per node, theirs per `(node, callback_group)`;
+  `ResolvedTier.deadline_policy` already exists there as a home for
+  `miss.action`). Roadmap: `docs/roadmap/phase-68-contract-consequences.md`
+  §W4. Design: `docs/design/contract-primitives.md`.
 
 - **2026-08-26**: Phases 67/68 designed — **contracts carry facts and
   requirements, never consequences.** Design work only; no code. The rule:
@@ -1100,10 +1152,12 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 - **Launch Scoping**: `docs/roadmap/phase-30-launch_scoping.md` — scope table, context extraction, cross-parser validation
 - **Launch Manifest**: `docs/roadmap/phase-31-launch_manifest.md` — manifest crate, parser/executor integration, audit
 - **Contract vocabulary**: `docs/roadmap/phase-67-contract-primitives.md`
-  (additive vocabulary; acceptance is a byte-identical model) and
+  (additive vocabulary; acceptance was a byte-identical model) and
   `docs/roadmap/phase-68-contract-consequences.md` (analysis, mapper,
-  verification, then retirement — in that order, because retirement is gated on
-  a running system agreeing)
+  verification, then retirement — in that order, because retirement was gated
+  on a running system agreeing). **Both complete**; W4's record of what the
+  migration found is the part worth reading, since two of the defects were
+  invisible to any check that compared numbers
 - **Migration Guide**: `docs/guide/parser-migration.md` — Rust parser migration (v0.6.0+)
 - **Multi-host Guide**: `docs/guide/multi-host.md` — running one launch file's nodes across multiple hosts (ROS 2 has no `<node machine=>`)
 - **Edge Machines Guide**: `docs/guide/edge-machines.md` — what to change on a Jetson-class board, and why `--container-mode observable` is worth more than everything else combined

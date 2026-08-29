@@ -375,7 +375,7 @@ the run, and hand-typed values are how a regression hides.
 
 ---
 
-## W4 — retire — GATE MET, lint live, removal waits a release
+## W4 — retire — DONE (with one condition unmet, on request)
 
 Condition 3 (the A/B) is met. Condition 2 — *old and new spellings resolve to
 identical models* — was run, **failed**, was fixed, and now passes for the right
@@ -449,35 +449,71 @@ exist yet:
   `semantics` field (`contract-axes.md` §3.6), so migrating such a chain would
   lose a requirement.
 
-### What remains
+### What was done
 
-Condition 4 — one release shipped with the lint live — is calendar time, not
-work. Removal of `chains:`/`segments:` follows it. Migrating the tree's own
-contracts (condition 1) is now safe to do at any point and is deliberately
-*not* done here: `rt_workspace` and `rt_av_demo` are the fixtures the published
-measurements were taken on, and changing their spelling in the same phase that
-changed the mapper would make a future regression harder to bisect.
+All three of the tree's own contracts moved to the scope-path spelling —
+`rt_workspace`'s provider sidecar and user overlay, and `rt_av_demo`'s —
+and `chains:`/`segments:` were then removed outright (manifest v0.1.17).
+A contract still carrying `chains:` is a parse error naming the replacement.
 
-- `chains:` / `segments:` — the derived route replaces them
-- `topics.<t>.rate_hz` — propagates from the timer that starts the chain
-- `EndpointProps.jitter` — superseded by the path/scope requirement
+Condition 2 was checked by PROVENANCE on both fixtures:
 
-Deprecation lint first, naming the fact each is derivable from; removal a
-release later. The manifest crate already has the pattern
-(`check/src/rules/deprecated_unit_suffix.rs`), so this is a rule, not a
-mechanism.
+```
+rt_workspace   points_to_cmd segment drain 2/2       -> prio 39   unchanged
+               points_to_cmd boundary RM period=10ms -> prio 38   unchanged
+rt_av_demo     lidar_to_brake segment drain 1/2      -> prio 40   unchanged
+               lidar_to_brake segment drain 2/2      -> prio 39   unchanged
+               lidar_to_brake boundary RM period=20ms -> prio 38  unchanged
+```
 
-**Retirement gate — all four, not a majority:**
+`rt_av_demo` is the one that carries the weight: three members in a real drain
+order, on both its platform files. `rt_workspace` produces the same two
+priorities under budget ranking with no chain at all, so on that fixture alone
+a numeric comparison proves nothing — the same coincidence that made W4's first
+gate run a false pass.
 
-1. every fixture in the tree migrated to the new spellings
-2. old and new spellings resolve to identical models
-   (`scripts/compare_models.py`)
-3. `rt_av_demo`'s A/B reproduces its published numbers under the new derivation
-4. one release shipped with the deprecation lint live
+**Condition 4 was not met.** One release with the lint live is calendar time,
+and 0.10.0 was prepared but never tagged, so no user ever saw the deprecation
+window. The removal was made on request with that stated. Anyone upgrading from
+0.9 gets a hard cut rather than a warned one.
 
-Condition 2 is what makes the rest safe. While both spellings produce the same
-model, retirement is **provably** lossless; if they ever diverge, the divergence
-is a defect in the new path rather than a reason to keep the old one.
+### Two defects found by walking the migration path
+
+**A scope path written in the spelling the lint recommends silently lost its
+route.** `resolve_scope_paths` read the legacy `decl.input` while
+`explicit-trigger` tells authors to write `trigger:` instead. Following that
+advice resolved to zero input topics — which does not fail. It produces a scope
+path with no route, the mapper falls back to budget ranking, and on
+`rt_workspace` the provenance became `non-chain criticality=None budget_ms=5`
+with priorities still 39/38 and both scheduling warnings silently gone. Same
+false-pass shape as W4's own gate, one layer down. Fixed to read
+`effective_trigger()`; the regression test fails with `left: []` against the
+old code.
+
+**A test that proved nothing.**
+`derive_chain_aware_band_too_narrow_warns_in_warn_mode_errors_in_strict` claims
+two DISTINCT chains never collapse under band compression. Once authored chains
+stopped reaching the mapper, **zero chains reached it and the test still
+passed** — two distinct non-chain nodes also refuse to collapse, so the warning
+was right for the wrong reason. It now asserts two chains reach the mapper
+before testing anything.
+
+### One diagnostic carried over, not dropped
+
+`chain-sampling-feasibility` had no scope-path equivalent, and it says
+something `scope-budget` does not: sampling cost ALONE meeting the budget is
+structural infeasibility, unfixable by any priority assignment, where a total
+over budget may be schedulable. It is now `scope-sampling-feasibility`, emitted
+first so the structural verdict reads before the budget warning that
+necessarily accompanies it.
+
+### Still not retired, and why
+
+- `topics.<t>.rate_hz` — propagation from the source timer is **not
+  implemented** (`inherited_rate` checks a stale legacy `input:` list). A field
+  whose replacement does not exist is better left alone.
+- `EndpointProps.jitter` — superseded by the path/scope requirement, not yet
+  removed.
 
 Phase 47 is the precedent for the removal itself — `record.json` went from
 deprecated-with-a-warning to `error: unexpected argument`, a hard clap failure

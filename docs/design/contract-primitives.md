@@ -51,11 +51,11 @@ consequence of these plus the launch tree.
 |---|---|---|
 | the route between two endpoints | `output` × `trigger.input` + topic pub/sub | **implemented** — `check_scope_path_critical_path` |
 | critical-path total | that route + node latencies + transport | **implemented**, fork-join aware |
-| sampling cost at a boundary | a boundary's `trigger: timer` rate | **missing** — the one gap |
+| sampling cost at a boundary | a boundary's `trigger: timer` rate | **implemented** — phase 68 W1.b |
 | feasibility, residual | budget − critical path | implemented for what it sums |
 | per-node deadlines | decomposition over the route | phase 58 W3 |
 | priorities, classes, reservations | the mapper, from the above | implemented |
-| `chains:` / `segments:` | the route | to retire |
+| `chains:` / `segments:` | the route | **retired** — phase 68 W4, manifest v0.1.17 |
 | `topics.<t>.rate_hz` | propagation from the timer that starts the chain | to retire |
 
 **The derived route already exists.** `check_scope_path_critical_path`
@@ -89,97 +89,35 @@ The irreducible content of that file is three `trigger`/`output` pairs, two node
 budgets, one `max_age`, one end-to-end budget — roughly **a third** of what is
 written.
 
-## The one thing standing in the way
+## The one thing that stood in the way
 
-Retiring `segments:` today would silently weaken checking, and the amount is
-measurable. The two rules use different arithmetic:
+Retiring `segments:` before phase 68 W1.b would have silently weakened checking,
+and the amount was measurable. The two rules used different arithmetic:
 
 | form | rule | sums |
 |---|---|---|
 | chain | `chain-budget` | Σ event-segment latency + Σ **sampling_cost** |
 | scope path | `scope-budget` | Σ critical-path node latency + Σ transport |
 
-Same fixture, 20 ms budget:
+On `rt_workspace` that gap was 10 ms of 25 — **40%**, and the part no priority
+assignment can remove. W1.b closed it: a timer-triggered path is charged
+`period + exec`, `CriticalPath` carries `sampling_cost_ms`, and the
+`scope-budget` diagnostic reports the split the way `chain-budget` did. Both
+forms of that fixture then agreed at 25.00 ms, the value predicted in advance.
 
-```
-chain form   warning[chain-budget]: total (25.00ms = 15.00ms event-segment
-             + 10.00ms sampling_cost) exceeds the chain budget (20ms)
-scope path   clean — 0 budget diagnostics
-```
+W4 closed the second half. `chain-sampling-feasibility` — sampling cost ALONE
+meeting the budget, which is structural infeasibility rather than a schedulable
+overrun — became `scope-sampling-feasibility`, so retiring the chain rules
+dropped no claim. `chains:`/`segments:` are now a parse error naming the scope
+path that replaces them.
 
-That 10 ms is 40% of the real total, and it is the part no priority assignment
-can remove — the reason `chain-sampling-feasibility` exists.
-
-**Fixed in phase 68 W1.b.** An earlier version of this paragraph blamed the
-subgraph for "starting at the input topic", leaving the boundary outside it.
-That was wrong — sources are seeded from the input topic's publishers as well as
-its subscribers, so the boundary was always in the subgraph. The real causes
-were that a timer path was charged only its declared `exec` (zero here), and
-that a source was treated as having nothing upstream, which truncated the route
-at the subscriber. See `contract-axes.md` §1.3.
-
-Neither rule is a superset of the other: `scope-budget` counts declared topic
-transport, `chain-budget` does not.
-
-## The design
-
-### One formula
-
-For each route between a scope path's endpoints:
-
-```
-route_total = Σ node latency + Σ topic transport + Σ sampling cost
-scope_total = max over routes
-```
-
-`sampling cost` is a boundary's `period + exec`, the formula `chain_checks`
-already uses. Both new terms enter *per route* and are maximised, not summed —
-with fork-join, two branches may have different boundaries, and summing across
-branches is the same error as summing node latencies across branches.
-
-### Where the boundary comes from
-
-A scope path's input topic is published by some path in the subtree. If that
-path is `trigger: timer`, it is a boundary and its sampling cost belongs to the
-route. The facts needed are already present: the trigger gives the period, and
-phase 58 W3.a made the cost reachable at `MapperPath::exec_ms`.
-
-### What the checker emits
-
-The checker stops being only a grader. Having derived the routes and their
-totals, it emits them as the **byproduct the mapper consumes** — today the
-mapper re-derives chains from authored segments; under this design it reads
-what the checker already computed. One derivation, one place, two consumers.
-
-### `semantics` moves
-
-`reaction` vs `age` exists only on `ChainDecl`, and the two diverge exactly at
-the junctions this work is about. It moves to `PathDecl` so a scope path can say
-which of the two its budget means. This is the only field a scope path cannot
-express today.
-
-## Migration, in order
-
-Scheduled as [phase 67](../roadmap/phase-67-contract-primitives.md) and
-[phase 68](../roadmap/phase-68-contract-consequences.md); the steps below are
-the argument, those docs are the work.
-
-
-The obvious ordering is wrong. Do not drop `segments` first.
-
-1. **Write the acceptance test.** Express `points_to_cmd` as a scope path; assert
-   `scope-budget` reports **25 ms against a 20 ms budget**, matching
-   `chain-budget` on the same fixture. Expected value known in advance.
-2. **Add the sampling-cost term** to `check_scope_path_critical_path`, per route.
-3. **Reconcile transport** — one formula, both terms.
-4. **Move `semantics`** to `PathDecl`, keeping the chain field as an alias.
-5. **Emit the derived routes** for the mapper; switch the mapper to read them.
-6. **Deprecate `segments:`**, then `topics.rate_hz`, with a lint naming the fact
-   each is derivable from.
-7. **Retire** after one release.
-
-Steps 1–2 make the migration *provably* lossless. Everything after is
-subtraction.
+**What migration proved, and how.** Both spellings of `rt_workspace` and of
+`rt_av_demo` produced identical schedules — but the check that mattered was
+PROVENANCE, not the numbers. `rt_workspace` alone yields the same two
+priorities under budget ranking with no chain at all (`non-chain
+budget_ms=5`), so a numeric comparison passes while the derivation is not being
+used. `rt_av_demo`, with three members in a real drain order across two
+platform files, is what makes the equivalence mean something.
 
 ## Completeness is a separate question
 
