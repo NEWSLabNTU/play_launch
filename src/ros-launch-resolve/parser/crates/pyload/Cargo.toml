@@ -1,0 +1,39 @@
+# Load the Python half at RUNTIME, instead of linking it (issue 0897 W3).
+#
+# This crate is what makes the version pin go away. `pyexec` as a normal
+# dependency puts `libpython3.10.so.1.0` in the consumer's DT_NEEDED, so one
+# build serves one interpreter and the loader kills the process before
+# `main` — measured, and the reason the whole split exists.
+#
+# Here the interpreter is DISCOVERED and `dlopen`ed, so:
+#
+#   * one build runs against any CPython >= the abi3 floor, and
+#   * a host with no usable interpreter gets an ERROR VALUE rather than a
+#     loader abort — which is what lets the caller scan and resolve
+#     XML/YAML launch files and fail only where Python is genuinely
+#     required.
+#
+# NOT a dependency of `play_launch_parser_pyexec`: that would put the link
+# back. This crate knows the parser (for the backend trait) and the C ABI
+# (as bytes), never pyo3.
+[package]
+name = "play_launch_parser_pyload"
+version = "0.1.0"
+edition = "2024"
+description = "Discover and dlopen a CPython, then the parser's Python half against it"
+license = "Apache-2.0"
+
+[dependencies]
+play_launch_parser = { path = "../play_launch_parser" }
+libloading = "0.8"
+serde_json = "1"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+
+[dev-dependencies]
+# The object under test. A dev-dependency rather than a normal one on
+# purpose: this crate must NOT link the Python half — it loads it — and a
+# dev-dep is not in the shipped graph, so the property cannot be lost by
+# accident. The test builds it with `--features extension-module` itself.
+play_launch_parser_pyexec = { path = "../pyexec" }
+tempfile = "3"

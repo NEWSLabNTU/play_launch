@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/play_launch_parser",
     "crates/pyexec",
+    "crates/pyload",
 ]
 exclude = [
     "crates/python",
