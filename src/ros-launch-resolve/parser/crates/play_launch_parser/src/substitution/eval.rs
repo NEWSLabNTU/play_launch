@@ -174,6 +174,23 @@ fn replace_ros_booleans(expr: &str) -> String {
 /// boolean logic). Blocks `__import__`, `exec`, `eval`, `open`, `compile` etc.
 /// to prevent arbitrary code execution from malicious launch files.
 fn python_eval_fallback(expr: &str) -> Result<String, SubstitutionError> {
+    // `$(eval …)` is Python evaluation BY SPECIFICATION, so this is reachable
+    // from XML and YAML, not only from `.launch.py`. A build with no Python
+    // half must therefore fail HERE too — naming the expression, so the user
+    // can see which attribute made an otherwise pure-XML tree need CPython.
+    let backend = crate::python_backend::require(
+        crate::python_backend::PythonNeed::EvalSubstitution,
+        &format!("$(eval {expr})"),
+    )
+    .map_err(|e| SubstitutionError::InvalidSubstitution(e.to_string()))?;
+    backend
+        .eval_expr(expr)
+        .map_err(SubstitutionError::InvalidSubstitution)
+}
+
+/// The pyo3 implementation, kept here until `python/` moves to its own crate
+/// (issue 0897 W2). It becomes the backend's `eval_expr`.
+pub(crate) fn python_eval_pyo3(expr: &str) -> Result<String, SubstitutionError> {
     use pyo3::{prelude::*, types::PyDict};
 
     // Unescaping happens in `evaluate_expression`, before the delimiter

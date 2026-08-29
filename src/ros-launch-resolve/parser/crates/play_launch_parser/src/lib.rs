@@ -9,6 +9,8 @@ mod file_cache;
 pub mod ir;
 pub mod params;
 pub mod python;
+// The seam between parsing and executing Python — see python_backend.rs.
+pub mod python_backend;
 pub mod record;
 pub mod substitution;
 mod traverser;

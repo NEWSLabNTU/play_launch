@@ -12,7 +12,14 @@ impl LaunchTraverser {
         path: &Path,
         args: &HashMap<String, String>,
     ) -> Result<()> {
-        use crate::python::PythonLaunchExecutor;
+        // The backend, resolved BEFORE any context is published: if there is
+        // no Python half in this build, say so while we can still name the
+        // file, rather than failing somewhere inside the executor.
+        let backend = crate::python_backend::require(
+            crate::python_backend::PythonNeed::LaunchFile,
+            &path.display().to_string(),
+        )
+        .map_err(|e| ParseError::PythonError(e.to_string()))?;
 
         log::debug!("Executing Python file: {}", path.display());
         log::trace!("Python file arguments: {} args", args.len());
@@ -51,17 +58,16 @@ impl LaunchTraverser {
         // Set the thread-local context for Python API to access (cleared on guard drop)
         let _ctx_guard = crate::python::bridge::LaunchContextGuard::new(&mut self.context);
 
-        let executor = PythonLaunchExecutor::new();
         let path_str = path.to_str().ok_or_else(|| {
             ParseError::PythonError(format!("Invalid UTF-8 in path: {}", path.display()))
         })?;
-        let exec_result = executor.execute(path_str);
+        let exec_result = backend.exec_file(path_str);
 
         // Guard clears context on drop (including on early return/panic)
         drop(_ctx_guard);
 
         // Propagate execution errors
-        exec_result.map_err(|e| ParseError::PythonError(e.to_string()))?;
+        exec_result.map_err(ParseError::PythonError)?;
 
         // Python API stores captures directly in self.context via thread-local
         // (SetParameter also writes global params directly to context via thread-local)
