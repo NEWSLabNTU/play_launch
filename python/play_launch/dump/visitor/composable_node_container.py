@@ -47,6 +47,16 @@ def visit_composable_node_container(
         return perform_substitutions(context, normalize_to_list_of_substitutions(subst))
 
     executable = substitute(container.node_executable)
+    # Unlike a plain node, a container MUST have a package: the record type requires one
+    # (`ComposableNodeContainerRecord.package: str`) and LoadNode requests are addressed
+    # by it. Say so, rather than letting the None fall into launch's substitution code
+    # and come back as a bare TypeError naming nothing (issue 0026).
+    if container.node_package is None:
+        raise ValueError(
+            f"Composable node container '{container.node_executable}' was declared "
+            "without a package. A container needs one; only plain nodes may give an "
+            "absolute executable instead."
+        )
     package = substitute(container.node_package)
 
     if container._Node__ros_arguments is not None:

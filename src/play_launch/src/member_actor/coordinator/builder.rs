@@ -47,6 +47,29 @@ struct ComposableNodeDefinition {
     sched: Option<crate::execution::sched_apply::AppliedTier>,
 }
 
+/// Does `member_name` name one of the members declared `on_exit=Shutdown()`?
+///
+/// Matches the name as-is, and again with a trailing `-N` counter removed. The dump
+/// strips that counter from `exec_name` ("talker-1" -> "talker") to match the Rust
+/// parser, while the model keeps the launch-level name, so an UNNAMED node reaches the
+/// coordinator as "dash-1" and appears in the dump-derived set as "dash". A node with a
+/// real ROS name (the case that matters — SSv2's `scenario_test_runner`) matches on the
+/// first comparison; this is only for the unnamed ones.
+fn declares_shutdown_on_exit(
+    declared: &std::collections::HashSet<String>,
+    member_name: &str,
+) -> bool {
+    if declared.contains(member_name) {
+        return true;
+    }
+    match member_name.rsplit_once('-') {
+        Some((stem, counter)) if !counter.is_empty() && counter.bytes().all(|b| b.is_ascii_digit()) => {
+            declared.contains(stem)
+        }
+        _ => false,
+    }
+}
+
 /// Builder for collecting member definitions before spawning
 pub struct MemberCoordinatorBuilder {
     regular_nodes: Vec<RegularNodeDefinition>,
@@ -240,7 +263,7 @@ impl MemberCoordinatorBuilder {
                 def.metadata.namespace.as_deref(),
                 &def.name,
             );
-            if self.shutdown_on_exit.contains(&def.name) {
+            if declares_shutdown_on_exit(&self.shutdown_on_exit, &def.name) {
                 shutdown_on_exit_ids.insert(member_id.clone());
             }
             let (control_tx, control_rx) = mpsc::channel(CONTROL_CHANNEL_SIZE);
@@ -648,5 +671,41 @@ impl MemberCoordinatorBuilder {
 impl Default for MemberCoordinatorBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::declares_shutdown_on_exit;
+    use std::collections::HashSet;
+
+    #[test]
+    fn a_named_node_matches_directly() {
+        let declared: HashSet<String> = ["scenario_test_runner".to_string()].into();
+        assert!(declares_shutdown_on_exit(&declared, "scenario_test_runner"));
+    }
+
+    /// The dump strips the launch counter from `exec_name`, the model keeps it.
+    #[test]
+    fn an_unnamed_node_matches_with_its_counter_stripped() {
+        let declared: HashSet<String> = ["dash".to_string()].into();
+        assert!(declares_shutdown_on_exit(&declared, "dash-1"));
+        assert!(declares_shutdown_on_exit(&declared, "dash-12"));
+    }
+
+    #[test]
+    fn an_unrelated_member_does_not_match() {
+        let declared: HashSet<String> = ["dash".to_string()].into();
+        assert!(!declares_shutdown_on_exit(&declared, "sh-1"));
+        assert!(!declares_shutdown_on_exit(&declared, "dashboard"));
+    }
+
+    /// A hyphen that is not a counter must not be stripped, or `foo-bar` would match a
+    /// declaration of `foo`.
+    #[test]
+    fn a_hyphen_that_is_not_a_counter_is_left_alone() {
+        let declared: HashSet<String> = ["foo".to_string()].into();
+        assert!(!declares_shutdown_on_exit(&declared, "foo-bar"));
+        assert!(!declares_shutdown_on_exit(&declared, "foo-"));
     }
 }

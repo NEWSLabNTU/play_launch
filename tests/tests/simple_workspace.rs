@@ -52,6 +52,30 @@ fn test_resolve_pure_nodes_python() {
     );
 }
 
+/// Issue 0026 — a `Node` with an absolute `executable` and no `package` must resolve.
+///
+/// The dump visitor used to substitute `node_package` unconditionally, so this shape
+/// died with a bare `TypeError: 'NoneType' object is not iterable` that named neither
+/// the node nor the field. Python parser only: the XML frontend requires a package, so
+/// the shape is unreachable from XML.
+#[test]
+fn test_resolve_package_less_node_python() {
+    if fixtures::install_env().is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+    let launch =
+        fixtures::test_workspace_path("simple_test").join("launch/package_less_node.launch.py");
+    let (nodes, containers, load_nodes) = resolve_counts(launch.to_str().unwrap(), "python");
+
+    assert_eq!(
+        nodes, 1,
+        "a package-less node should still resolve to exactly one node, got {nodes}"
+    );
+    assert_eq!(containers, 0);
+    assert_eq!(load_nodes, 0);
+}
+
 #[test]
 fn test_resolve_composition_python() {
     let launch = fixtures::test_workspace_path("simple_test").join("launch/composition.launch.xml");

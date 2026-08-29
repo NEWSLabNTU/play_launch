@@ -73,7 +73,13 @@ def visit_node(
         return perform_substitutions(context, normalize_to_list_of_substitutions(subst))
 
     executable = substitute(node.node_executable)
-    package = substitute(node.node_package)
+    # `package` is optional: launch_ros accepts an absolute `executable` with no package,
+    # which is how a plain program is run under the launch system. Substituting None
+    # threw `TypeError: 'NoneType' object is not iterable` from deep inside launch,
+    # naming neither the node nor the field (issue 0026). The record models this
+    # (`package: str | None`) and so does the Rust side, which routes a package-less
+    # record to `from_raw_executable`.
+    package = substitute(node.node_package) if node.node_package is not None else None
 
     if node._Node__ros_arguments is not None:
         ros_args = [substitute(subst) for subst in node._Node__ros_arguments]
