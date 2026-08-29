@@ -21,7 +21,7 @@ pub fn normalize_param_value(value: &str) -> String {
 
 /// Resolve executable path by trying package resolution, falling back to hardcoded path.
 pub fn resolve_exec_path(package: &str, executable: &str) -> String {
-    crate::python::bridge::find_package_executable(package, executable)
+    crate::bridge::find_package_executable(package, executable)
         .unwrap_or_else(|| format!("/opt/ros/humble/lib/{}/{}", package, executable))
 }
 

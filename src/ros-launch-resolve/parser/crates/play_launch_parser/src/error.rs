@@ -67,11 +67,10 @@ pub enum ParseError {
     PythonError(String),
 }
 
-impl From<pyo3::PyErr> for ParseError {
-    fn from(err: pyo3::PyErr) -> Self {
-        ParseError::PythonError(err.to_string())
-    }
-}
+// `impl From<pyo3::PyErr>` used to live here. It was the last pyo3 reference in
+// core outside `python/`, and it bought one `?` (0897 W2). The variant stays —
+// reporting a Python failure is core's business; knowing pyo3's error TYPE is
+// not.
 
 #[derive(Error, Debug)]
 pub enum SubstitutionError {

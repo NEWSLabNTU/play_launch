@@ -2,6 +2,10 @@
 
 pub mod actions;
 pub mod captures;
+// The launch context published to whatever executes Python, and the capture
+// accessors it writes back through. ZERO pyo3 code — it lived under python/
+// only because that is its one caller (0897 W2).
+pub mod bridge;
 pub mod condition;
 pub mod error;
 mod file_cache;

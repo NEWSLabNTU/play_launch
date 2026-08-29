@@ -53,7 +53,7 @@ impl SetLaunchConfiguration {
         );
 
         // Store in thread-local LaunchContext so subsequent LaunchConfiguration lookups resolve
-        crate::python::bridge::try_with_launch_context(|ctx| {
+        crate::bridge::try_with_launch_context(|ctx| {
             ctx.set_configuration(name_str, value_str);
         });
 

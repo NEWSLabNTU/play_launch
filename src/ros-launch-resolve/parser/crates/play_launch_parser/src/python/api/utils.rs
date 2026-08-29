@@ -13,7 +13,7 @@ use pyo3::{
 /// Create a LaunchContext-like Python object with access to launch configurations
 /// This allows substitutions to resolve LaunchConfiguration values during perform()
 pub fn create_launch_context(py: Python) -> PyResult<Py<PyAny>> {
-    use crate::python::bridge::with_launch_context;
+    use crate::bridge::with_launch_context;
 
     // Get resolved configurations and global parameters from the thread-local LaunchContext
     let configs = with_launch_context(|ctx| ctx.configurations());
@@ -196,10 +196,9 @@ pub fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
         {
             // s is "$(var name)" — extract 'name' and look up in context
             if let Some(var_name) = s.strip_prefix("$(var ").and_then(|s| s.strip_suffix(')'))
-                && let Some(value) = crate::python::bridge::try_with_launch_context(|ctx| {
-                    ctx.get_configuration(var_name)
-                })
-                .flatten()
+                && let Some(value) =
+                    crate::bridge::try_with_launch_context(|ctx| ctx.get_configuration(var_name))
+                        .flatten()
             {
                 return Ok(value);
             }

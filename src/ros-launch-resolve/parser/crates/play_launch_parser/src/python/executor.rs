@@ -8,6 +8,7 @@ use std::ffi::CString;
 
 /// Executes Python launch files with mock API
 #[derive(Default)]
+
 pub struct PythonLaunchExecutor;
 
 impl PythonLaunchExecutor {
@@ -22,7 +23,7 @@ impl PythonLaunchExecutor {
             log::debug!("Executing Python launch file: {}", launch_file_path);
 
             // Register PyO3 mock modules in sys.modules
-            crate::python::api::register_modules(py)?;
+            crate::python::api::register_modules(py).map_err(py_err)?;
 
             // CRITICAL: Aggressively isolate Python environment to prevent real ROS packages from loading
             let isolation_code = r#"
@@ -102,7 +103,7 @@ if not _ok:
 
             // IMPORTANT: Run isolation in the GLOBAL context first so sys.modules is clean
             let isolation_cstr = CString::new(isolation_code).expect("isolation code contains NUL");
-            py.run(&isolation_cstr, None, None)?;
+            py.run(&isolation_cstr, None, None).map_err(py_err)?;
             log::debug!("Installed aggressive Python environment isolation for launch* mocks");
 
             // Launch configurations are already in the thread-local LaunchContext
@@ -119,16 +120,18 @@ if not _ok:
             // This prevents imports from one file polluting another file's namespace
             // We use a new empty dict but set __builtins__ to maintain access to built-in functions
             let globals = pyo3::types::PyDict::new(py);
-            let builtins = py.import("builtins")?;
-            globals.set_item("__builtins__", builtins)?;
+            let builtins = py.import("builtins").map_err(py_err)?;
+            globals.set_item("__builtins__", builtins).map_err(py_err)?;
 
             // Set __file__ and __name__
-            globals.set_item("__file__", launch_file_path)?;
-            globals.set_item("__name__", "__main__")?;
+            globals
+                .set_item("__file__", launch_file_path)
+                .map_err(py_err)?;
+            globals.set_item("__name__", "__main__").map_err(py_err)?;
 
             // CRITICAL: Run isolation AGAIN right before executing the file
             // This ensures any modifications to sys.modules/sys.path by previous files are reset
-            py.run(&isolation_cstr, None, None)?;
+            py.run(&isolation_cstr, None, None).map_err(py_err)?;
             log::debug!("Re-applied isolation right before file execution");
 
             // Add debug logging to catch Python execution errors
@@ -150,26 +153,27 @@ if not _ok:
                 {
                     log::error!("Python traceback:\n{}", tb_str);
                 }
-                return Err(e.into());
+                return Err(py_err(e));
             }
 
             // Get and call generate_launch_description()
             let gen_fn = globals
-                .get_item("generate_launch_description")?
+                .get_item("generate_launch_description")
+                .map_err(py_err)?
                 .ok_or_else(|| {
                     crate::error::ParseError::PythonError(
                         "No generate_launch_description() function found".to_string(),
                     )
                 })?;
 
-            let launch_desc: Py<PyAny> = gen_fn.call0()?.into();
+            let launch_desc: Py<PyAny> = gen_fn.call0().map_err(py_err)?.into();
 
             // Visit all entities in the launch description
-            visit_launch_description(py, &launch_desc)?;
+            visit_launch_description(py, &launch_desc).map_err(py_err)?;
 
             // Re-resolve any containers/load_nodes with unresolved substitutions
             // This handles cases where containers are created before DeclareLaunchArgument
-            process_launch_arguments(py, &launch_desc)?;
+            process_launch_arguments(py, &launch_desc).map_err(py_err)?;
 
             log::debug!("Python launch file execution complete");
             Ok(())
@@ -180,7 +184,7 @@ if not _ok:
 /// Process launch arguments and re-resolve any containers with unresolved names
 fn process_launch_arguments(_py: Python, _launch_desc: &Py<PyAny>) -> PyResult<()> {
     use crate::{
-        python::bridge::{
+        bridge::{
             update_captured_containers, update_captured_load_nodes, update_captured_nodes,
             with_launch_context,
         },
@@ -448,4 +452,18 @@ fn visit_entity(py: Python, entity: &Py<PyAny>) -> PyResult<()> {
     }
 
     Ok(())
+}
+
+/// pyo3's error, as the parser's.
+///
+/// Was `impl From<pyo3::PyErr> for ParseError` in core's `error.rs`, which made
+/// core depend on pyo3 for the sake of `?`. Core keeps the VARIANT — reporting a
+/// Python failure is its business — and the pyo3 type stays on this side.
+///
+/// It has to be a function rather than a `From` impl once `python/` becomes its
+/// own crate: both `PyErr` and `ParseError` would then be foreign there, and the
+/// orphan rule forbids the impl. Explicit `.map_err(py_err)` is the price, and
+/// it is visible at each call site, which is not the worst outcome.
+fn py_err(e: pyo3::PyErr) -> crate::error::ParseError {
+    crate::error::ParseError::PythonError(e.to_string())
 }

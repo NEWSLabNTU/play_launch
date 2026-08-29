@@ -4,7 +4,7 @@ use super::{
     helpers::{is_yaml_file, load_yaml_params_for_node},
     node::Node,
 };
-use crate::{captures::LoadNodeCapture, python::bridge::capture_load_node};
+use crate::{bridge::capture_load_node, captures::LoadNodeCapture};
 use pyo3::{
     prelude::*,
     types::{PyDict, PyList},

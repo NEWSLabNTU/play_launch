@@ -16,7 +16,7 @@
 //! mock class captures it immediately (capture-on-construction pattern).
 
 pub mod api;
-pub mod bridge;
+pub mod eval_impl;
 pub mod executor;
 
 pub use executor::PythonLaunchExecutor;
@@ -38,7 +38,7 @@ impl crate::python_backend::PythonBackend for Pyo3Backend {
     }
 
     fn eval_expr(&self, expr: &str) -> Result<String, String> {
-        crate::substitution::eval::python_eval_pyo3(expr).map_err(|e| e.to_string())
+        eval_impl::eval_expr_pyo3(expr).map_err(|e| e.to_string())
     }
 }
 

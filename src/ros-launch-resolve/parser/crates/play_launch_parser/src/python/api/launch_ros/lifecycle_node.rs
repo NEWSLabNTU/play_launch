@@ -127,8 +127,8 @@ impl LifecycleNode {
     /// Capture the lifecycle node as a regular NodeCapture
     fn capture_node(&self, py: Python) -> PyResult<()> {
         use crate::{
+            bridge::{capture_node, get_current_ros_namespace},
             captures::NodeCapture,
-            python::bridge::{capture_node, get_current_ros_namespace},
         };
 
         // Parse parameters (same logic as regular Node)

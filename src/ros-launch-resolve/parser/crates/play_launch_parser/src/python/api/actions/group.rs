@@ -78,7 +78,7 @@ impl GroupAction {
 
         // Pop only the namespaces that were actually pushed
         if actual_push_count > 0 {
-            use crate::python::bridge::pop_ros_namespace;
+            use crate::bridge::pop_ros_namespace;
             for _ in 0..actual_push_count {
                 pop_ros_namespace();
             }

@@ -1,6 +1,6 @@
 //! IncludeLaunchDescription action
 
-use crate::python::bridge::capture_include;
+use crate::bridge::capture_include;
 use pyo3::prelude::*;
 
 /// Convert Py<PyAny> to string for launch arguments (handles strings, lists, substitutions)
@@ -29,7 +29,7 @@ fn pyobject_to_string_for_include_args(py: Python, obj: &Bound<'_, PyAny>) -> Py
     // This is different from regular parameter handling where we preserve the substitution
     let type_name = obj.get_type().name()?.to_string();
     if type_name == "LaunchConfiguration" {
-        use crate::python::bridge::with_launch_context;
+        use crate::bridge::with_launch_context;
 
         // Try to get the variable name
         if let Ok(name_obj) = obj.getattr("variable_name")
@@ -170,7 +170,7 @@ impl IncludeLaunchDescription {
 
         // Capture the include request with current ROS namespace
         {
-            use crate::python::bridge::get_current_ros_namespace;
+            use crate::bridge::get_current_ros_namespace;
             let ros_namespace = get_current_ros_namespace();
 
             log::debug!("Capturing include with ROS namespace: '{}'", ros_namespace);

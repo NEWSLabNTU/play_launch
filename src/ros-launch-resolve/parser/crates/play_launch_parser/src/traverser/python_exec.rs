@@ -56,7 +56,7 @@ impl LaunchTraverser {
         }
 
         // Set the thread-local context for Python API to access (cleared on guard drop)
-        let _ctx_guard = crate::python::bridge::LaunchContextGuard::new(&mut self.context);
+        let _ctx_guard = crate::bridge::LaunchContextGuard::new(&mut self.context);
 
         let path_str = path.to_str().ok_or_else(|| {
             ParseError::PythonError(format!("Invalid UTF-8 in path: {}", path.display()))

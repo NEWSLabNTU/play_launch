@@ -120,8 +120,8 @@ impl LoadComposableNodes {
         descriptions: &[Py<PyAny>],
     ) -> PyResult<()> {
         use crate::{
+            bridge::{capture_load_node, get_current_ros_namespace},
             captures::LoadNodeCapture,
-            python::bridge::{capture_load_node, get_current_ros_namespace},
         };
 
         // Extract target container name and namespace
@@ -273,7 +273,7 @@ impl LoadComposableNodes {
             // This must match how capture_container() builds the full name, which
             // combines the current ROS namespace (from push-ros-namespace stack)
             // with the container's own namespace.
-            use crate::python::bridge::get_current_ros_namespace;
+            use crate::bridge::get_current_ros_namespace;
             let ros_namespace = get_current_ros_namespace();
 
             // Normalize container's namespace (same logic as capture_container)

@@ -2,8 +2,8 @@
 
 use super::helpers::is_yaml_file;
 use crate::{
+    bridge::{capture_node, get_current_ros_namespace},
     captures::NodeCapture,
-    python::bridge::{capture_node, get_current_ros_namespace},
 };
 use pyo3::{
     prelude::*,

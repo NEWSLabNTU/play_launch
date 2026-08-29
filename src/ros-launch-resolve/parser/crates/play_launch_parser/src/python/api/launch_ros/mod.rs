@@ -59,7 +59,7 @@ impl SetParameter {
 
         // Capture this as a global parameter in LaunchContext via thread-local
         {
-            use crate::python::bridge::with_launch_context;
+            use crate::bridge::with_launch_context;
 
             // Match Python boolean case: "False"/"True" not "false"/"true"
             let normalized_value = match value_str.as_str() {

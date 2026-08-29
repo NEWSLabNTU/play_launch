@@ -1,7 +1,7 @@
 //! Mock ComposableNodeContainer class for launch_ros.actions
 
 use super::composable_node::ComposableNode;
-use crate::{captures::ContainerCapture, python::bridge::capture_container};
+use crate::{bridge::capture_container, captures::ContainerCapture};
 use pyo3::{prelude::*, types::PyDict};
 
 /// Mock ComposableNodeContainer class
@@ -79,7 +79,7 @@ impl ComposableNodeContainer {
 
         // Debug: Log if name is empty
         if name_str.is_empty() {
-            use crate::python::bridge::with_launch_context;
+            use crate::bridge::with_launch_context;
             let config_keys =
                 with_launch_context(|ctx| ctx.configurations().keys().cloned().collect::<Vec<_>>());
             log::warn!(
@@ -214,7 +214,7 @@ impl ComposableNodeContainer {
     }
 
     fn capture_container(container: &ComposableNodeContainer) {
-        use crate::python::bridge::get_current_ros_namespace;
+        use crate::bridge::get_current_ros_namespace;
 
         // Get current ROS namespace from the stack
         let ros_namespace = get_current_ros_namespace();

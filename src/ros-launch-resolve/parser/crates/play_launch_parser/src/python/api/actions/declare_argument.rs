@@ -37,7 +37,7 @@ impl DeclareLaunchArgument {
         description: Option<String>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
-        use crate::python::bridge::with_launch_context;
+        use crate::bridge::with_launch_context;
 
         // Convert default_value Py<PyAny> to string (may be string, substitution, or list)
         // Special case: when default_value is a LaunchConfiguration with the same name,
