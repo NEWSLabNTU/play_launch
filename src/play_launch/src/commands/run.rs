@@ -44,6 +44,9 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
 
     // Create a minimal LaunchDump with a single node
     let node_record = NodeRecord {
+        // `play_launch run` builds one node by hand; there is no launch file
+        // and so no on_exit handler to honour.
+        on_exit_shutdown: None,
         executable: args.executable.clone(),
         package: Some(args.package.clone()),
         name: Some(args.executable.clone()),

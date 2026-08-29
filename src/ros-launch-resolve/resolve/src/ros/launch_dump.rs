@@ -180,6 +180,10 @@ pub struct NodeRecord {
     pub respawn: Option<bool>,
     #[serde(default)]
     pub respawn_delay: Option<f64>,
+    /// `on_exit=Shutdown()` — this node is required, and its exit takes the whole
+    /// launch down with it. Absent on records dumped before this was supported.
+    #[serde(default)]
+    pub on_exit_shutdown: Option<bool>,
     /// Global parameters from SetParameter action (scope-aware)
     #[serde(default)]
     pub global_params: Option<Vec<(String, ParameterValue)>>,

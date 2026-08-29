@@ -354,6 +354,9 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
     NodeRecord {
         executable: inst.exec.clone().unwrap_or_default(),
         package: inst.pkg.clone(),
+        // Rebuilt from a resolved instance, which does not carry launch-level
+        // handlers; on_exit is honoured where the record is first read.
+        on_exit_shutdown: None,
         // The DECLARED name (drives the conditional `__node` remap) —
         // `None` when the launch had `name=None`, NOT the FQN segment.
         name: inst.node_name.clone(),
@@ -426,6 +429,8 @@ impl NodeCommandLine {
             package,
             name,
             namespace,
+            // Consumed by the coordinator, not by command-line construction.
+            on_exit_shutdown: _,
             params,
             params_files: params_file_contents,
             remaps,

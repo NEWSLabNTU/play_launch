@@ -66,6 +66,8 @@ class NodeRecord:
     env: list[tuple[str, str]] | None = None
     respawn: bool | None = None
     respawn_delay: float | None = None
+    # on_exit=Shutdown(): when this node exits, the whole launch goes with it.
+    on_exit_shutdown: bool | None = None
     global_params: list[tuple[str, str]] | None = None  # From SetParameter action
     scope: int | None = None
 

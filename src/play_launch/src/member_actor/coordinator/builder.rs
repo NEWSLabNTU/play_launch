@@ -52,6 +52,9 @@ pub struct MemberCoordinatorBuilder {
     regular_nodes: Vec<RegularNodeDefinition>,
     containers: Vec<ContainerDefinition>,
     composable_nodes: Vec<ComposableNodeDefinition>,
+    /// Nodes launched with `on_exit=Shutdown()`: when one of these exits, the whole
+    /// launch goes down with it. See `MemberRunner`.
+    shutdown_on_exit: std::collections::HashSet<String>,
     /// LoadNode-path timings applied to every container (phase-52.2)
     load_timings: crate::member_actor::container_actor::LoadTimings,
 }
@@ -63,8 +66,18 @@ impl MemberCoordinatorBuilder {
             regular_nodes: Vec::new(),
             containers: Vec::new(),
             composable_nodes: Vec::new(),
+            shutdown_on_exit: std::collections::HashSet::new(),
             load_timings: Default::default(),
         }
+    }
+
+    /// Declare the members that carry `on_exit=Shutdown()`.
+    ///
+    /// Taken from the dump rather than from each node's record because on the model
+    /// path the record is rebuilt from a `NodeInstance`, which does not carry
+    /// launch-level handlers. See `MemberRunner::honour_on_exit_shutdown`.
+    pub fn set_shutdown_on_exit(&mut self, names: std::collections::HashSet<String>) {
+        self.shutdown_on_exit.extend(names);
     }
 
     /// Set the LoadNode-path timings applied to every container
@@ -100,6 +113,10 @@ impl MemberCoordinatorBuilder {
                 .or(context.record.exec_name.clone()),
             auto_load: None, // Not applicable for regular nodes
         };
+
+        if context.record.on_exit_shutdown == Some(true) {
+            self.shutdown_on_exit.insert(name.clone());
+        }
 
         self.regular_nodes.push(RegularNodeDefinition {
             name,
@@ -212,12 +229,20 @@ impl MemberCoordinatorBuilder {
         // bare display names collide (issue 0001) and silently overwrote.
         let mut id_alloc = IdAllocator::new();
 
+        // Display names collected by `set_shutdown_on_exit` / `add_regular_node` become
+        // canonical member ids here, because that is what actors report in
+        // `StateEvent::Exited` — matching on the display name silently never fired.
+        let mut shutdown_on_exit_ids = std::collections::HashSet::new();
+
         for def in self.regular_nodes {
             let member_id = id_alloc.allocate(
                 MemberKind::Node,
                 def.metadata.namespace.as_deref(),
                 &def.name,
             );
+            if self.shutdown_on_exit.contains(&def.name) {
+                shutdown_on_exit_ids.insert(member_id.clone());
+            }
             let (control_tx, control_rx) = mpsc::channel(CONTROL_CHANNEL_SIZE);
 
             let actor = crate::member_actor::regular_node_actor::RegularNodeActor::new(
@@ -589,17 +614,27 @@ impl MemberCoordinatorBuilder {
         }
         let node_fqn_map = Arc::new(tokio::sync::RwLock::new(node_fqn_map));
 
+        // Shared, because the runner needs to be able to pull the same lever the
+        // handle does: a node with `on_exit=Shutdown()` exiting must stop every actor.
+        let shutdown_tx = Arc::new(shutdown_tx);
+
         let handle = MemberHandle::new(
             control_channels,
             Arc::new(tokio::sync::RwLock::new(metadata_map)),
             shared_state.clone(),
-            shutdown_tx,
+            shutdown_tx.clone(),
             virtual_member_routing,
             shared_ros_node,
             node_fqn_map,
         );
 
-        let runner = MemberRunner::new(tasks, state_rx, shared_state);
+        let runner = MemberRunner::new(
+            tasks,
+            state_rx,
+            shared_state,
+            shutdown_on_exit_ids,
+            shutdown_tx,
+        );
 
         (handle, runner)
     }

@@ -17,6 +17,10 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0026** — a `Node` with no package (absolute `executable`) makes `dump_launch`
+fail with a bare `TypeError: 'NoneType' object is not iterable`, naming neither
+the node nor the field.
+
 **#0024** — `play_launch run` cannot spawn a node when play_launch is itself
 inside a `systemd-run --user --scope`: `Unable to start: Operation not permitted
 (os error 1)`, empty node logs, no process. The same wrapper is fine for
@@ -37,6 +41,15 @@ declared-vs-loaded reconciliation first; the drop itself is not diagnosable
 until then. See `0023-*`.
 
 ## Resolved
+
+**#0025** — `on_exit=Shutdown()` was detected at dump time and deliberately
+discarded, so a required node's exit never ended the launch. SSv2's
+`scenario_test_runner` exits 0 and expects to take the interpreter with it; one
+interpreter was found still spinning 40 hours after its scenario passed, its own
+watchdog reporting "main unresponsive" because an idle node blocks in
+`spin_once()`. Handlers are now carried through the dump, matched on canonical
+member ids, and honoured with the same teardown the signal path uses. See
+`0025-*`.
 
 **#0015** — a rebuild drops the helpers' file capabilities, and every message
 blamed the user for not running `setcap`. The loss is correct (a capability is

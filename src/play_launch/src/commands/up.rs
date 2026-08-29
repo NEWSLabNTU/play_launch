@@ -934,6 +934,27 @@ pub(crate) async fn play(
         ))
     };
 
+    // Nodes declared `on_exit=Shutdown()` are required: when one exits, the launch is
+    // over. Read from the dump, because on the model path `context.record` is rebuilt
+    // from a NodeInstance that carries no launch-level handlers. Keyed the same way
+    // `member_name` is derived below, so the names match what the actors report.
+    {
+        let shutdown_on_exit: std::collections::HashSet<String> = launch_dump
+            .node
+            .iter()
+            .filter(|record| record.on_exit_shutdown == Some(true))
+            .filter_map(|record| record.name.clone().or_else(|| record.exec_name.clone()))
+            .collect();
+        if !shutdown_on_exit.is_empty() {
+            debug!(
+                "on_exit=Shutdown declared by {} node(s): {:?}",
+                shutdown_on_exit.len(),
+                shutdown_on_exit
+            );
+            builder.set_shutdown_on_exit(shutdown_on_exit);
+        }
+    }
+
     // Add regular nodes to builder
     debug!("Adding {} regular nodes", num_pure_nodes);
     for context in pure_node_contexts {
@@ -1074,9 +1095,25 @@ pub(crate) async fn play(
     // Clone before spawning — we need it for parameter_events subscription (Phase 24)
     let shared_ros_node_for_params = shared_ros_node.clone();
     debug!("Spawning all {} actors...", builder.member_count());
-    let (member_handle, member_runner) = builder.spawn(shared_ros_node).await;
+    let (member_handle, mut member_runner) = builder.spawn(shared_ros_node).await;
     let member_handle = std::sync::Arc::new(member_handle); // Wrap in Arc for sharing
     debug!("All actors spawned successfully");
+
+    // A node declared `on_exit=Shutdown()` is required: when it exits, the launch is
+    // over. Mirror the signal path EXACTLY, as `--on-startup-failure exit` does — the
+    // replay-level watch stops the background tasks, `member_handle.shutdown()` reaches
+    // the ACTORS, and the process GROUP gets SIGTERM. Pulling only the actor lever
+    // leaves every launched process running, which is the whole bug this fixes.
+    {
+        let hook_shutdown_tx = shutdown_tx.clone();
+        let hook_member_handle = member_handle.clone();
+        member_runner.set_shutdown_hook(std::sync::Arc::new(move || {
+            let _ = hook_shutdown_tx.send(true);
+            let _ = hook_member_handle.shutdown();
+            #[cfg(unix)]
+            crate::process::kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+        }));
+    }
 
     // Phase 61 W2: the task that opens each startup stage as the previous one
     // comes up. Spawned after the handle exists because it reads member state;

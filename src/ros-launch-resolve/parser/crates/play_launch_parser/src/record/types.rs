@@ -288,6 +288,11 @@ pub struct NodeRecord {
     pub global_params: Option<Vec<(String, String)>>,
     pub name: Option<String>,
     pub namespace: Option<String>,
+    /// `on_exit=Shutdown()` — this node is required, and its exit takes the whole
+    /// launch down. Optional and defaulted so records written before this field
+    /// still deserialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_exit_shutdown: Option<bool>,
     pub package: Option<String>,
     pub params: Vec<(String, String)>,
     pub params_files: Vec<String>,
@@ -402,6 +407,7 @@ mod tests {
     #[test]
     fn test_serialize_node_record() {
         let node = NodeRecord {
+            on_exit_shutdown: None,
             args: None,
             cmd: vec![
                 "/path/to/talker".to_string(),
@@ -434,6 +440,7 @@ mod tests {
     #[test]
     fn test_tuple_serialization() {
         let node = NodeRecord {
+            on_exit_shutdown: None,
             args: None,
             cmd: vec![],
             env: None,

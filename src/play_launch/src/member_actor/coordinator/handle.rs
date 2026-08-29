@@ -22,8 +22,9 @@ pub struct MemberHandle {
     metadata: Arc<RwLock<HashMap<String, MemberMetadata>>>,
     /// Shared state map (actors write directly, Web UI reads)
     shared_state: Arc<dashmap::DashMap<String, MemberState>>,
-    /// Shutdown signal broadcaster
-    shutdown_tx: watch::Sender<bool>,
+    /// Shutdown signal broadcaster. Shared with `MemberRunner`, which pulls the same
+    /// lever when a node declared `on_exit=Shutdown()` exits.
+    shutdown_tx: Arc<watch::Sender<bool>>,
     /// Virtual member routing: maps composable node names to parent container names (Phase 12)
     virtual_member_routing: HashMap<String, String>,
     /// Shared ROS node for parameter service calls (Phase 24)
@@ -38,7 +39,7 @@ impl MemberHandle {
         control_channels: HashMap<String, mpsc::Sender<ControlEvent>>,
         metadata: Arc<RwLock<HashMap<String, MemberMetadata>>>,
         shared_state: Arc<dashmap::DashMap<String, MemberState>>,
-        shutdown_tx: watch::Sender<bool>,
+        shutdown_tx: Arc<watch::Sender<bool>>,
         virtual_member_routing: HashMap<String, String>,
         shared_ros_node: Option<Arc<rclrs::Node>>,
         node_fqn_map: Arc<RwLock<HashMap<String, String>>>,

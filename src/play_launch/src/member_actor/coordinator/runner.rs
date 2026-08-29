@@ -8,8 +8,14 @@
 use super::state_reducer;
 use crate::member_actor::{events::StateEvent, model::MemberState};
 use eyre::Result;
-use std::{collections::HashMap, sync::Arc};
-use tokio::{sync::mpsc, task::JoinHandle};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 
 /// Runner that waits for all actors to complete
 /// Takes mut self - no Arc<Mutex> needed!
@@ -21,6 +27,16 @@ pub struct MemberRunner {
     /// Shared state map — written ONLY via `state_reducer` from the event
     /// stream owned here
     shared_state: Arc<dashmap::DashMap<String, MemberState>>,
+    /// Members launched with `on_exit=Shutdown()`, by canonical member id
+    shutdown_on_exit: HashSet<String>,
+    /// The same shutdown lever `MemberHandle::shutdown` pulls. Stops the actors, but
+    /// on its own it does not reap their children — see `shutdown_hook`.
+    shutdown_tx: Arc<watch::Sender<bool>>,
+    /// Full teardown, installed by the command layer. Stopping the actors is not
+    /// enough: the processes are killed by signalling the process GROUP, and the
+    /// replay-level watch is what stops the background tasks. Only the command layer
+    /// holds those, so it supplies the whole sequence here.
+    shutdown_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl MemberRunner {
@@ -29,11 +45,59 @@ impl MemberRunner {
         tasks: HashMap<String, JoinHandle<Result<()>>>,
         state_rx: mpsc::Receiver<StateEvent>,
         shared_state: Arc<dashmap::DashMap<String, MemberState>>,
+        shutdown_on_exit: HashSet<String>,
+        shutdown_tx: Arc<watch::Sender<bool>>,
     ) -> Self {
         Self {
             tasks,
             state_rx,
             shared_state,
+            shutdown_on_exit,
+            shutdown_tx,
+            shutdown_hook: None,
+        }
+    }
+
+    /// Install the full teardown used when a required node exits. Without it, only the
+    /// actors are stopped and the launched processes keep running.
+    pub fn set_shutdown_hook(&mut self, hook: Arc<dyn Fn() + Send + Sync>) {
+        self.shutdown_hook = Some(hook);
+    }
+
+    /// Honour `on_exit=Shutdown()`.
+    ///
+    /// In the launch system a node declared this way is *required*: when it exits, the
+    /// whole launch is torn down. play_launch used to drop these handlers at dump time
+    /// and warn about it, which is fine for an optional node and wrong for an
+    /// orchestrator. SSv2's `scenario_test_runner` is one — it runs the scenario, exits
+    /// 0, and expects to take the interpreter, preprocessor and visualization with it.
+    /// Without this, those three ran forever: one interpreter was found still spinning
+    /// 40 hours after its scenario had passed, holding a ROS domain and ~90 nodes.
+    ///
+    /// Pulling `shutdown_tx` stops every actor, which completes the runner task, which
+    /// is what the command layer already treats as "the launch is over".
+    fn honour_on_exit_shutdown(
+        shutdown_on_exit: &HashSet<String>,
+        shutdown_tx: &watch::Sender<bool>,
+        shutdown_hook: Option<&Arc<dyn Fn() + Send + Sync>>,
+        event: &StateEvent,
+    ) {
+        if let StateEvent::Exited { name, exit_code } = event
+            && shutdown_on_exit.contains(name)
+            && !*shutdown_tx.borrow()
+        {
+            tracing::info!(
+                "[{}] exited ({}) and was declared on_exit=Shutdown: shutting down the launch",
+                name,
+                match exit_code {
+                    Some(code) => format!("code {code}"),
+                    None => "no exit code".to_string(),
+                }
+            );
+            let _ = shutdown_tx.send(true);
+            if let Some(hook) = shutdown_hook {
+                hook();
+            }
         }
     }
 
@@ -43,6 +107,12 @@ impl MemberRunner {
     pub async fn next_state_event(&mut self) -> Option<StateEvent> {
         let event = self.state_rx.recv().await?;
         state_reducer::apply(&self.shared_state, &event);
+        Self::honour_on_exit_shutdown(
+            &self.shutdown_on_exit,
+            &self.shutdown_tx,
+            self.shutdown_hook.as_ref(),
+            &event,
+        );
         Some(event)
     }
 
@@ -55,6 +125,9 @@ impl MemberRunner {
             tasks,
             mut state_rx,
             shared_state,
+            shutdown_on_exit,
+            shutdown_tx,
+            shutdown_hook,
         } = self;
 
         // Track task count before moving into FuturesUnordered
@@ -79,6 +152,12 @@ impl MemberRunner {
                 Some(event) = state_rx.recv() => {
                     tracing::debug!("State event: {:?}", event);
                     state_reducer::apply(&shared_state, &event);
+                    Self::honour_on_exit_shutdown(
+                        &shutdown_on_exit,
+                        &shutdown_tx,
+                        shutdown_hook.as_ref(),
+                        &event,
+                    );
                 }
 
                 // Process task completions
@@ -125,5 +204,78 @@ impl MemberRunner {
                     .join(", ")
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exited(name: &str) -> StateEvent {
+        StateEvent::Exited {
+            name: name.to_string(),
+            exit_code: Some(0),
+        }
+    }
+
+    /// The names are canonical member ids (`node:/name`), NOT display names — matching
+    /// on the display name is exactly the bug that made this silently never fire.
+    #[test]
+    fn a_required_member_exiting_pulls_the_lever_and_runs_the_hook() {
+        let (tx, _rx) = watch::channel(false);
+        let tx = Arc::new(tx);
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ran_in_hook = ran.clone();
+        let hook: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            ran_in_hook.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let required: HashSet<String> = ["node:/scenario_test_runner".to_string()].into();
+
+        MemberRunner::honour_on_exit_shutdown(
+            &required,
+            &tx,
+            Some(&hook),
+            &exited("node:/scenario_test_runner"),
+        );
+
+        assert!(*tx.borrow(), "shutdown lever should be pulled");
+        assert!(
+            ran.load(std::sync::atomic::Ordering::SeqCst),
+            "the teardown hook is what actually reaps the processes"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_member_exiting_leaves_the_launch_alone() {
+        let (tx, _rx) = watch::channel(false);
+        let tx = Arc::new(tx);
+        let required: HashSet<String> = ["node:/scenario_test_runner".to_string()].into();
+
+        MemberRunner::honour_on_exit_shutdown(&required, &tx, None, &exited("node:/talker"));
+
+        assert!(!*tx.borrow(), "an unrelated node exiting must not end the launch");
+    }
+
+    /// Every node in a launch exits during a normal shutdown; the hook must not be run
+    /// again for each one.
+    #[test]
+    fn the_hook_does_not_run_again_once_shutdown_started() {
+        let (tx, _rx) = watch::channel(true); // already shutting down
+        let tx = Arc::new(tx);
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls_in_hook = calls.clone();
+        let hook: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            calls_in_hook.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+        let required: HashSet<String> = ["node:/scenario_test_runner".to_string()].into();
+
+        MemberRunner::honour_on_exit_shutdown(
+            &required,
+            &tx,
+            Some(&hook),
+            &exited("node:/scenario_test_runner"),
+        );
+
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }

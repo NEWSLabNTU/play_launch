@@ -298,6 +298,9 @@ impl ContainerAction {
         );
 
         Ok(NodeRecord {
+            // The Rust parser does not model on_exit handlers; only the Python
+            // dump path carries them (see NodeRecord::on_exit_shutdown).
+            on_exit_shutdown: None,
             args: arguments,
             cmd,
             env: None,

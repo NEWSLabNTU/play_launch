@@ -15,8 +15,45 @@ from ..launch_dump import LaunchDump, NodeRecord
 from ..utils import param_to_kv, param_value_to_str
 from .execute_process import visit_execute_process
 
-# Global flag to track if on_exit warning has been shown
+# Global flag to track if the "unsupported on_exit" warning has been shown
 _on_exit_warning_shown = False
+
+
+def _classify_on_exit(handlers):
+    """Split a node's on_exit actions into "shut the launch down" and everything else.
+
+    `on_exit=Shutdown()` is the launch idiom for "this process is required; when it
+    finishes, take the whole launch with it". It is how a scenario runner ends a run:
+    the orchestrator exits 0 and every other node is torn down. Replaying without it
+    leaves those nodes running forever -- an SSv2 interpreter was found still spinning
+    40 hours after its scenario passed, holding a ROS domain and a stack of 90 nodes.
+
+    Both `launch.actions.Shutdown` and SSv2's `ShutdownOnce` are `EmitEvent` actions
+    carrying a `launch.events.Shutdown`, so match on the event rather than the class.
+
+    Returns (shutdown, others): whether a shutdown handler is present, and the actions
+    that are something else and therefore still unsupported.
+    """
+    from launch.actions import EmitEvent
+    from launch.events import Shutdown as ShutdownEvent
+
+    # `on_exit` accepts a single action, a list of them, or a callable. launch does not
+    # always normalize it before it reaches here, and assuming a list made the dump die
+    # with "'Shutdown' object is not iterable" on exactly the launch files this is for.
+    if handlers is None:
+        handlers = []
+    elif not isinstance(handlers, (list, tuple)):
+        handlers = [handlers]
+
+    shutdown = False
+    others = []
+    for handler in handlers:
+        event = getattr(handler, "_EmitEvent__event", None)
+        if isinstance(handler, EmitEvent) and isinstance(event, ShutdownEvent):
+            shutdown = True
+        else:
+            others.append(handler)
+    return shutdown, others
 
 
 def visit_node(
@@ -216,15 +253,20 @@ def visit_node(
     if hasattr(node, "_ExecuteLocal__respawn_delay"):
         respawn_delay = node._ExecuteLocal__respawn_delay
 
-    # Detect on_exit handlers and warn (once)
+    # on_exit: shutdown handlers are replayed (see _classify_on_exit); anything else
+    # still is not, and is still warned about once.
     global _on_exit_warning_shown
-    if not _on_exit_warning_shown and hasattr(node, "_ExecuteLocal__on_exit"):
-        on_exit_handlers = node._ExecuteLocal__on_exit
-        if on_exit_handlers:
+    on_exit_shutdown = None
+    if hasattr(node, "_ExecuteLocal__on_exit"):
+        shutdown_handler, unsupported = _classify_on_exit(node._ExecuteLocal__on_exit)
+        if shutdown_handler:
+            on_exit_shutdown = True
+        if unsupported and not _on_exit_warning_shown:
             execute_process_logger = launch.logging.get_logger("dump_launch")
             execute_process_logger.warning(
-                "One or more nodes have on_exit handlers which are NOT supported by play_launch. "
-                "Only respawn functionality is supported. on_exit handlers will be ignored during replay."
+                "One or more nodes have on_exit handlers other than Shutdown, which are NOT "
+                "supported by play_launch. Only respawn and on_exit=Shutdown are supported; "
+                "the rest will be ignored during replay."
             )
             _on_exit_warning_shown = True
 
@@ -276,6 +318,7 @@ def visit_node(
         env=env_vars if env_vars else None,
         respawn=respawn,
         respawn_delay=respawn_delay,
+        on_exit_shutdown=on_exit_shutdown,
         global_params=global_params if global_params else None,
         scope=dump.current_scope_id,
     )
