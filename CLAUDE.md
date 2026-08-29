@@ -445,7 +445,7 @@ add `src/ros-launch-resolve` to `members`. `just check-layer2-isolation`
 boundary breaks: no ROS crates in the graph, no ROS shared libraries linked,
 and both launch frontends resolve with no ROS installed.
 
-**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.17`), not a
+**`ros-launch-manifest` is a git dependency pinned by tag** (`v0.1.20`), not a
 submodule — phase-55 W2. Layer 2 now has no submodules at all. **Three**
 manifests name the tag and must move together:
 `src/play_launch/Cargo.toml`, `src/ros-launch-resolve/Cargo.toml` and
@@ -662,11 +662,31 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   `deny_unknown_fields`), and the golden fixture deliberately KEEPS
   `jitter_ms:` on disk with a test asserting it is still there — that file is
   the evidence old models still load. **Nothing is left to retire.**
-  **Phase 67 W5 is still open**: nano-ros has not been told about either seam
-  (our platform file assigns per node, theirs per `(node, callback_group)`;
-  `ResolvedTier.deadline_policy` already exists there as a home for
-  `miss.action`). Roadmap: `docs/roadmap/phase-68-contract-consequences.md`
-  §W4. Design: `docs/design/contract-primitives.md`.
+  **W5 closed both cross-repo seams, and both were worse than "not aligned
+  yet" — they were UNOBSERVABLE.** nano-ros builds its `MapperPath` from the
+  **model**, not the manifest, so a fact that never reaches
+  `model::PathContract` cannot be seen from that side at all. `max_jitter` and
+  `miss` did not (manifest `v0.1.19` carries them); `concurrency:` reached the
+  model not at all (`v0.1.20`). The second seam is the one with teeth: an
+  absent `concurrency:` means every path serialises — the safe answer, and what
+  both `rclcpp` and nano-ros's `default_cbg_type` already do — but nano-ros's
+  `PlanCallbackGroup` INFERS groups from causal coupling and gives an uncoupled
+  callback its own **`Reentrant`** group. Opposite defaults, each picked
+  silently, deciding whether summing a chain's latencies is sound and whether a
+  per-thread reservation is. **Presence in `Contracts::node_concurrency` is the
+  declaration and absent is not empty**: no entry means everything serialises,
+  an entry with an EMPTY `exclusive` claims full concurrency — a bare `Vec`
+  collapses the two, which is the easiest way to lose this by accident.
+  Measured on the way: their phase 378 estimated 12 compile errors for a
+  one-tag bump from a grep of field names; the real **nine-tag** bump produced
+  **one**, because the Duration migration changed the CONTRACT's spelling while
+  the model kept `max_latency_ms: Option<f64>` — and the model is all they
+  read. Their side:
+  `~/repos/nano-ros/docs/roadmap/phase-379-contract-seams-closed.md`. Still
+  open there: the planner's group inference does not yet prefer a declaration
+  over its own inference. Roadmap:
+  `docs/roadmap/phase-68-contract-consequences.md` §W4. Design:
+  `docs/design/contract-primitives.md`.
 
 - **2026-08-26**: Phases 67/68 designed — **contracts carry facts and
   requirements, never consequences.** Design work only; no code. The rule:

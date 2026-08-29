@@ -253,7 +253,10 @@ mod tests {
 
         MemberRunner::honour_on_exit_shutdown(&required, &tx, None, &exited("node:/talker"));
 
-        assert!(!*tx.borrow(), "an unrelated node exiting must not end the launch");
+        assert!(
+            !*tx.borrow(),
+            "an unrelated node exiting must not end the launch"
+        );
     }
 
     /// Every node in a launch exits during a normal shutdown; the hook must not be run

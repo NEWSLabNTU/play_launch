@@ -167,7 +167,9 @@ fn extract_paths(
 }
 
 /// Translate the contract's `miss:` into the mapper's mirror of it.
-fn convert_miss(m: &ros_launch_manifest_types::MissSpec) -> ros_launch_manifest_sched::MapperMiss {
+pub(crate) fn convert_miss(
+    m: &ros_launch_manifest_types::MissSpec,
+) -> ros_launch_manifest_sched::MapperMiss {
     use ros_launch_manifest_sched::{MapperMiss, MapperMissAction};
     use ros_launch_manifest_types::MissAction as A;
     MapperMiss {

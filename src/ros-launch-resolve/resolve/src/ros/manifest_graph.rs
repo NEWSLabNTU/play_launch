@@ -1335,7 +1335,9 @@ mod tests {
     /// Build an index whose topics wire `(node, endpoint)` pairs together,
     /// which is what the rate walk reads (the graph's own edges only exist
     /// where a topic has a subscriber).
-    fn rate_index(topics: &[(&str, &[&str], &[&str])]) -> crate::ros::manifest_loader::ManifestIndex {
+    fn rate_index(
+        topics: &[(&str, &[&str], &[&str])],
+    ) -> crate::ros::manifest_loader::ManifestIndex {
         use crate::ros::manifest_loader::{ManifestIndex, ResolvedTopic};
         let mut index = ManifestIndex::default();
         for (fqn, pubs, subs) in topics {
@@ -1370,10 +1372,7 @@ mod tests {
             ],
             vec![],
         );
-        let index = rate_index(&[
-            ("/t1", &["/a/out"], &["/b/inp"]),
-            ("/t2", &["/b/out"], &[]),
-        ]);
+        let index = rate_index(&[("/t1", &["/a/out"], &["/b/inp"]), ("/t2", &["/b/out"], &[])]);
         let rates = derive_topic_rates(&index, &g);
         assert_eq!(rates["/t1"], DerivedRate::Hz(100.0));
         assert_eq!(rates["/t2"], DerivedRate::Hz(100.0));
@@ -1413,9 +1412,9 @@ mod tests {
         let mut both = path(&["a", "b"], &["out"], None);
         both.sync = Some(Sync {
             policy: SyncPolicy::Approximate,
-            max_interval: Some(ros_launch_manifest_types::duration::Duration::from_millis_f64(
-                20.0,
-            )),
+            max_interval: Some(
+                ros_launch_manifest_types::duration::Duration::from_millis_f64(20.0),
+            ),
             timeout: None,
         });
         let g = assemble(
@@ -1486,5 +1485,4 @@ mod tests {
             other => panic!("expected Unknown, got {other:?}"),
         }
     }
-
 }

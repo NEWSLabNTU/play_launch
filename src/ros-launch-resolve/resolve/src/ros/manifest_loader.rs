@@ -718,9 +718,7 @@ fn check_response_against_blocking(index: &mut ManifestIndex) {
             let longest = node
                 .paths
                 .iter()
-                .filter_map(|(name, p)| {
-                    p.max_latency.map(|d| (name.clone(), d.as_millis_f64()))
-                })
+                .filter_map(|(name, p)| p.max_latency.map(|d| (name.clone(), d.as_millis_f64())))
                 .fold(None, |acc: Option<(String, f64)>, v| match acc {
                     Some(a) if a.1 >= v.1 => Some(a),
                     _ => Some(v),

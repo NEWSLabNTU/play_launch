@@ -252,7 +252,7 @@ are ignored. `check --sched --explain` output is unchanged for every fixture.
 
 ---
 
-## W5 — tell nano-ros — NOT DONE
+## W5 — tell nano-ros — DONE (and both seams closed, not merely reported)
 
 Two seams where the toolchains would otherwise drift, both recorded in
 `contract-axes.md` §5:
@@ -271,9 +271,33 @@ treats declaration as an override (`PlanCallbackGroup::inferred`). W1's
 exclusion relation is the shared source that inference could read instead of
 each toolchain deriving from its own information.
 
-**Acceptance:** a phase doc in nano-ros naming the pin bump and the two seams.
-`~/repos/nano-ros/docs/roadmap/phase-378-duration-type-migration.md` is the
-model for how that reads from their side.
+**Acceptance:** a phase doc in nano-ros naming the pin bump and the two seams
+— `docs/roadmap/phase-379-contract-seams-closed.md`, and both seams are closed
+rather than only recorded.
+
+**Both were worse than "not aligned yet": they were unobservable.** nano-ros
+builds its `MapperPath` from the MODEL, not the manifest, and
+`model::PathContract` carried neither `max_jitter` nor `miss` — so phase 67's
+facts could not reach it at all. `concurrency:` reached the model not at all.
+Manifest `v0.1.19` carries the first pair, `v0.1.20` the exclusion relation,
+and both are read on the nano-ros side with tests that fail on a defaulted
+read.
+
+The seam with teeth is the second. An absent `concurrency:` means every path
+serialises — the safe answer, and what both realizations already do — but
+nano-ros's `PlanCallbackGroup` infers groups from causal coupling and gives an
+uncoupled callback its own **`Reentrant`** group. Opposite defaults, each
+picked silently, deciding whether summing a chain's latencies is sound.
+
+**Measured, against phase 378's estimate.** Their planned v0.1.11 → v0.1.12
+bump estimated 12 errors from a grep of field names; the real v0.1.11 →
+v0.1.20 bump — nine tags, two breaking removals — produced **one**, because
+the Duration migration changed the contract's spelling while the model kept
+`max_latency_ms: Option<f64>`, and the model is all they read.
+
+Still open on their side: `PlanCallbackGroup` reads the declaration into
+`claims_concurrency` but its group inference does not yet prefer a declaration
+over its own inference. A planner change, not a boundary change.
 
 ---
 

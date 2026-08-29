@@ -226,6 +226,15 @@ fn path_contract(
         correlation: correlation(decl.correlation.as_deref()),
         tolerance_ms: decl.tolerance.map(|d| d.as_millis_f64()),
         drop: decl.drop.as_ref().map(drop_contract),
+        // Phase 67 added these to the contract and to the sched crate's
+        // `MapperPath`, but not here — and the model is the only thing a
+        // second toolchain reads. nano-ros builds its `MapperPath` from the
+        // model, so until this line it could not see a declared jitter bound
+        // or miss policy at all; the two toolchains were scheduling the same
+        // system from different information, which is the seam
+        // `contract-axes.md` §5 names.
+        max_jitter_ms: decl.max_jitter.map(|d| d.as_millis_f64()),
+        miss: decl.miss.as_ref().map(super::sched_derive::convert_miss),
     }
 }
 
@@ -852,6 +861,31 @@ pub fn build_system_model(
             fqn(&scope_key(Some(p.scope_id)), &p.path_name),
             path_contract(&p.path, p.input_topics.clone(), p.output_topics.clone()),
         );
+    }
+
+    // The exclusion relation, lowered so a second toolchain can read it.
+    // PRESENCE is the declaration: an entry with an empty `exclusive` claims
+    // every path may run concurrently, while no entry at all means they all
+    // serialise. Those are opposite claims, so this must insert for a declared
+    // -but-empty `concurrency:` and insert nothing for an absent one.
+    for resolved in index.manifests.values() {
+        for (node_name, node) in &resolved.manifest.nodes {
+            let Some(decl) = &node.concurrency else {
+                continue;
+            };
+            let node_fqn = super::manifest_loader::resolve_node_fqn(
+                index,
+                resolved.scope_id,
+                &resolved.ns,
+                node_name,
+            );
+            contracts.node_concurrency.insert(
+                node_fqn,
+                ros_launch_manifest_sched::ConcurrencyContract {
+                    exclusive: decl.exclusive.clone(),
+                },
+            );
+        }
     }
 
     // --- execution ---------------------------------------------------------
