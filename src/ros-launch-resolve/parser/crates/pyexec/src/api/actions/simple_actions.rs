@@ -45,7 +45,7 @@ impl LogInfo {
     /// Convert a Py<PyAny> to a string (handles both strings and substitutions)
     /// Same logic as Node::pyobject_to_string
     fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::python::api::utils::pyobject_to_string(py, obj)
+        crate::api::utils::pyobject_to_string(py, obj)
     }
 }
 
@@ -95,7 +95,7 @@ impl SetEnvironmentVariable {
     /// Convert a Py<PyAny> to a string (handles strings, substitutions, and lists)
     /// Reuses the same pattern as LogInfo
     fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::python::api::utils::pyobject_to_string(py, obj)
+        crate::api::utils::pyobject_to_string(py, obj)
     }
 }
 
@@ -204,7 +204,7 @@ impl ExecuteProcess {
     /// Convert a Py<PyAny> to a string (handles strings, substitutions, and lists)
     /// Reuses the same pattern as SetEnvironmentVariable
     fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::python::api::utils::pyobject_to_string(py, obj)
+        crate::api::utils::pyobject_to_string(py, obj)
     }
 }
 

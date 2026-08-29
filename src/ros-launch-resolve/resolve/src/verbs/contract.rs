@@ -30,7 +30,7 @@ pub fn eject(inputs: ContractEjectInputs) -> Result<()> {
 
     // No launch arguments needed — eject only cares about the launch tree's
     // ROOT scope (pkg/file/origin path), not the fully-resolved node graph.
-    let record = play_launch_parser::parse_launch_file(&launch_path, Default::default())
+    let record = crate::verbs::parse_launch_file(&launch_path, Default::default())
         .map_err(|e| eyre!("Parser error: {e}"))?;
     let json = serde_json::to_string(&record)?;
     let dump: LaunchDump = serde_json::from_str(&json)?;

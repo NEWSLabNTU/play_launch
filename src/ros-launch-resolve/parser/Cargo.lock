@@ -359,7 +359,7 @@ dependencies = [
  "log",
  "lru",
  "once_cell",
- "pyo3",
+ "play_launch_parser_pyexec",
  "rand",
  "regex",
  "roxmltree",
@@ -369,6 +369,21 @@ dependencies = [
  "shlex",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "play_launch_parser_pyexec"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "once_cell",
+ "play_launch_parser",
+ "pyo3",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
 ]
 
 [[package]]

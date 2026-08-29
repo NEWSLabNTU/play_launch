@@ -43,8 +43,7 @@ impl SetLaunchConfiguration {
         };
 
         // Convert value to string
-        let value_str =
-            crate::python::api::utils::pyobject_to_string(py, &value).unwrap_or_default();
+        let value_str = crate::api::utils::pyobject_to_string(py, &value).unwrap_or_default();
 
         log::debug!(
             "Python Launch SetLaunchConfiguration: {}={}",
@@ -53,7 +52,7 @@ impl SetLaunchConfiguration {
         );
 
         // Store in thread-local LaunchContext so subsequent LaunchConfiguration lookups resolve
-        crate::bridge::try_with_launch_context(|ctx| {
+        play_launch_parser::bridge::try_with_launch_context(|ctx| {
             ctx.set_configuration(name_str, value_str);
         });
 
@@ -296,7 +295,7 @@ impl AppendEnvironmentVariable {
     /// Convert a Py<PyAny> to a string (handles strings, substitutions, and lists)
     /// Reuses the same pattern as SetEnvironmentVariable
     fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::python::api::utils::pyobject_to_string(py, obj)
+        crate::api::utils::pyobject_to_string(py, obj)
     }
 }
 

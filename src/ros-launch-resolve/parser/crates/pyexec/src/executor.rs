@@ -2,7 +2,7 @@
 //!
 //! Executes Python launch files with PyO3 mocks to capture node definitions.
 
-use crate::error::Result;
+use play_launch_parser::error::Result;
 use pyo3::prelude::*;
 use std::ffi::CString;
 
@@ -23,7 +23,7 @@ impl PythonLaunchExecutor {
             log::debug!("Executing Python launch file: {}", launch_file_path);
 
             // Register PyO3 mock modules in sys.modules
-            crate::python::api::register_modules(py).map_err(py_err)?;
+            crate::api::register_modules(py).map_err(py_err)?;
 
             // CRITICAL: Aggressively isolate Python environment to prevent real ROS packages from loading
             let isolation_code = r#"
@@ -113,7 +113,10 @@ if not _ok:
             // This gives us complete control over the execution environment
             use std::fs;
             let code = fs::read_to_string(launch_file_path).map_err(|e| {
-                crate::error::ParseError::PythonError(format!("Failed to read Python file: {}", e))
+                play_launch_parser::error::ParseError::PythonError(format!(
+                    "Failed to read Python file: {}",
+                    e
+                ))
             })?;
 
             // CRITICAL: Create a FRESH namespace for each Python file execution
@@ -140,7 +143,7 @@ if not _ok:
 
             // Execute the file
             let code_cstr = CString::new(code).map_err(|e| {
-                crate::error::ParseError::PythonError(format!(
+                play_launch_parser::error::ParseError::PythonError(format!(
                     "Python code contains NUL byte: {}",
                     e
                 ))
@@ -161,7 +164,7 @@ if not _ok:
                 .get_item("generate_launch_description")
                 .map_err(py_err)?
                 .ok_or_else(|| {
-                    crate::error::ParseError::PythonError(
+                    play_launch_parser::error::ParseError::PythonError(
                         "No generate_launch_description() function found".to_string(),
                     )
                 })?;
@@ -183,7 +186,7 @@ if not _ok:
 
 /// Process launch arguments and re-resolve any containers with unresolved names
 fn process_launch_arguments(_py: Python, _launch_desc: &Py<PyAny>) -> PyResult<()> {
-    use crate::{
+    use play_launch_parser::{
         bridge::{
             update_captured_containers, update_captured_load_nodes, update_captured_nodes,
             with_launch_context,
@@ -197,7 +200,7 @@ fn process_launch_arguments(_py: Python, _launch_desc: &Py<PyAny>) -> PyResult<(
     let configs = with_launch_context(|ctx| ctx.configurations());
 
     // Build a temporary context for substitution resolution
-    let mut ctx = crate::substitution::context::LaunchContext::new();
+    let mut ctx = play_launch_parser::substitution::context::LaunchContext::new();
     for (key, value) in &configs {
         ctx.set_configuration(key.clone(), value.clone());
     }
@@ -299,7 +302,8 @@ fn process_launch_arguments(_py: Python, _launch_desc: &Py<PyAny>) -> PyResult<(
 
                 // Expand __param_file entries: load YAML and inline parameters
                 if key == "__param_file" && (value.ends_with(".yaml") || value.ends_with(".yml")) {
-                    match crate::params::load_param_file(std::path::Path::new(&value)) {
+                    match play_launch_parser::params::load_param_file(std::path::Path::new(&value))
+                    {
                         Ok(yaml_params) => {
                             log::debug!(
                                 "Expanded __param_file '{}' -> {} parameters for node '{}'",
@@ -464,6 +468,6 @@ fn visit_entity(py: Python, entity: &Py<PyAny>) -> PyResult<()> {
 /// own crate: both `PyErr` and `ParseError` would then be foreign there, and the
 /// orphan rule forbids the impl. Explicit `.map_err(py_err)` is the price, and
 /// it is visible at each call site, which is not the worst outcome.
-fn py_err(e: pyo3::PyErr) -> crate::error::ParseError {
-    crate::error::ParseError::PythonError(e.to_string())
+fn py_err(e: pyo3::PyErr) -> play_launch_parser::error::ParseError {
+    play_launch_parser::error::ParseError::PythonError(e.to_string())
 }

@@ -11,6 +11,12 @@ static PYTHON_TEST_LOCK: Mutex<()> = Mutex::new(());
 /// Helper to get a lock for Python tests to ensure they run serially
 /// Recovers from poisoned mutex if a previous test panicked
 fn python_test_guard() -> MutexGuard<'static, ()> {
+    // Registration is the CALLER's job since 0897 W2b: the parser
+    // no longer links libpython, so a test that executes a
+    // `.launch.py` has to say WHICH implementation runs it. Doing it
+    // in the guard every Python test already takes means there is one
+    // place to say it rather than forty-five.
+    play_launch_parser_pyexec::register();
     PYTHON_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 

@@ -1,7 +1,7 @@
 //! Mock Node class for launch_ros.actions
 
 use super::helpers::is_yaml_file;
-use crate::{
+use play_launch_parser::{
     bridge::{capture_node, get_current_ros_namespace},
     captures::NodeCapture,
 };
@@ -185,7 +185,7 @@ impl Node {
 
     /// Convert a Py<PyAny> to a string (handles both strings and substitutions)
     fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::python::api::utils::pyobject_to_string(py, obj)
+        crate::api::utils::pyobject_to_string(py, obj)
     }
 
     /// Capture node to global storage
@@ -495,7 +495,7 @@ impl Node {
         // This handles evaluation of PythonExpression and other evaluating substitutions
         let py = value.py();
         let obj_py: Py<PyAny> = value.clone().unbind();
-        crate::python::api::utils::pyobject_to_string(py, &obj_py)
+        crate::api::utils::pyobject_to_string(py, &obj_py)
     }
 
     /// Parse Python remappings to string tuples

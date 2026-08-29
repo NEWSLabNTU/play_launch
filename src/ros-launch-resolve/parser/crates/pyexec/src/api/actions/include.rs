@@ -1,6 +1,6 @@
 //! IncludeLaunchDescription action
 
-use crate::bridge::capture_include;
+use play_launch_parser::bridge::capture_include;
 use pyo3::prelude::*;
 
 /// Convert Py<PyAny> to string for launch arguments (handles strings, lists, substitutions)
@@ -29,7 +29,7 @@ fn pyobject_to_string_for_include_args(py: Python, obj: &Bound<'_, PyAny>) -> Py
     // This is different from regular parameter handling where we preserve the substitution
     let type_name = obj.get_type().name()?.to_string();
     if type_name == "LaunchConfiguration" {
-        use crate::bridge::with_launch_context;
+        use play_launch_parser::bridge::with_launch_context;
 
         // Try to get the variable name
         if let Ok(name_obj) = obj.getattr("variable_name")
@@ -56,7 +56,7 @@ fn pyobject_to_string_for_include_args(py: Python, obj: &Bound<'_, PyAny>) -> Py
 
     // For other substitutions, try calling perform() with context
     if let Ok(perform_method) = obj.getattr("perform") {
-        let context = crate::python::api::utils::create_launch_context(py)?;
+        let context = crate::api::utils::create_launch_context(py)?;
         if let Ok(result) = perform_method.call1((context,))
             && let Ok(s) = result.extract::<String>()
         {
@@ -170,12 +170,12 @@ impl IncludeLaunchDescription {
 
         // Capture the include request with current ROS namespace
         {
-            use crate::bridge::get_current_ros_namespace;
+            use play_launch_parser::bridge::get_current_ros_namespace;
             let ros_namespace = get_current_ros_namespace();
 
             log::debug!("Capturing include with ROS namespace: '{}'", ros_namespace);
 
-            capture_include(crate::captures::IncludeCapture {
+            capture_include(play_launch_parser::captures::IncludeCapture {
                 file_path: file_path.clone(),
                 args: args.clone(),
                 ros_namespace,

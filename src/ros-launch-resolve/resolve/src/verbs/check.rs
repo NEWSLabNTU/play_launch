@@ -94,7 +94,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     let cli_args = super::parse_launch_arguments(&launch_arguments);
 
     // Parse launch file → record with scope table
-    let record = play_launch_parser::parse_launch_file(&launch_path, cli_args)
+    let record = crate::verbs::parse_launch_file(&launch_path, cli_args)
         .map_err(|e| eyre::eyre!("Parser error: {e}"))?;
 
     // Convert to LaunchDump (reuse existing deserialization path)

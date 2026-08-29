@@ -42,7 +42,7 @@ impl OpaqueFunction {
             log::debug!("OpaqueFunction has function, executing it");
             // Create a mock LaunchContext that provides access to launch configurations
             // This allows OpaqueFunction code to call LaunchConfiguration().perform(context)
-            use crate::bridge::{get_current_ros_namespace, with_launch_context};
+            use play_launch_parser::bridge::{get_current_ros_namespace, with_launch_context};
             let configs = with_launch_context(|ctx| ctx.configurations());
             let global_params = with_launch_context(|ctx| ctx.global_parameters());
             let ros_namespace = get_current_ros_namespace();
@@ -52,7 +52,7 @@ impl OpaqueFunction {
             // Helper function to resolve substitution strings from Rust
             #[pyfunction]
             fn resolve_substitution_string(sub_string: String) -> PyResult<String> {
-                use crate::substitution::{
+                use play_launch_parser::substitution::{
                     context::LaunchContext, parser::parse_substitutions,
                     types::resolve_substitutions,
                 };

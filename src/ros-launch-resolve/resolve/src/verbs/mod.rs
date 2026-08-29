@@ -281,7 +281,7 @@ pub async fn parse_to_launch_dump(
         ParserBackend::Rust => {
             let cli_args = parse_launch_arguments(launch_arguments);
             let record =
-                play_launch_parser::parse_launch_file(&launch_path, cli_args).map_err(|e| {
+                crate::verbs::parse_launch_file(&launch_path, cli_args).map_err(|e| {
                     // Verb- and binary-neutral: two CLIs share this, and
                     // every verb that reaches it accepts `--parser`.
                     let _ = launch_file;
@@ -332,6 +332,21 @@ pub async fn parse_to_launch_dump(
 }
 
 /// Parse `KEY:=VALUE` launch arguments, warning on anything that isn't.
+/// Parse a launch file, with the Python backend installed.
+///
+/// Registration is the CALLER's job since nano-ros issue 0897 W2b — the
+/// parser no longer links `libpython` itself, so somebody has to say which
+/// implementation executes `.launch.py` and `$(eval ...)`. Doing it HERE
+/// rather than at each verb means there is one place to change when that
+/// becomes a runtime `dlopen` rather than a link.
+pub fn parse_launch_file(
+    path: &std::path::Path,
+    args: std::collections::HashMap<String, String>,
+) -> play_launch_parser::error::Result<play_launch_parser::record::RecordJson> {
+    play_launch_parser_pyexec::register();
+    play_launch_parser::parse_launch_file(path, args)
+}
+
 pub fn parse_launch_arguments(args: &[String]) -> std::collections::HashMap<String, String> {
     args.iter()
         .filter_map(|arg| {

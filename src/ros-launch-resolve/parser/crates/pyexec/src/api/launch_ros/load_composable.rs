@@ -119,7 +119,7 @@ impl LoadComposableNodes {
         target_container: &Py<PyAny>,
         descriptions: &[Py<PyAny>],
     ) -> PyResult<()> {
-        use crate::{
+        use play_launch_parser::{
             bridge::{capture_load_node, get_current_ros_namespace},
             captures::LoadNodeCapture,
         };
@@ -273,7 +273,7 @@ impl LoadComposableNodes {
             // This must match how capture_container() builds the full name, which
             // combines the current ROS namespace (from push-ros-namespace stack)
             // with the container's own namespace.
-            use crate::bridge::get_current_ros_namespace;
+            use play_launch_parser::bridge::get_current_ros_namespace;
             let ros_namespace = get_current_ros_namespace();
 
             // Normalize container's namespace (same logic as capture_container)
@@ -327,7 +327,7 @@ impl LoadComposableNodes {
         // If this is a substitution, try to resolve it using perform() with real context
         let resolved_value = if target_ref.hasattr("perform")? {
             // Import create_launch_context helper
-            use crate::python::api::utils::create_launch_context;
+            use crate::api::utils::create_launch_context;
 
             // Try to resolve using real context
             if let Ok(context) = create_launch_context(py) {
@@ -556,6 +556,6 @@ impl LoadComposableNodes {
     fn pyobject_to_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
         let py = obj.py();
         let py_obj: Py<PyAny> = obj.clone().unbind();
-        crate::python::api::utils::pyobject_to_string(py, &py_obj)
+        crate::api::utils::pyobject_to_string(py, &py_obj)
     }
 }

@@ -107,16 +107,18 @@ pub fn backend() -> Option<&'static dyn PythonBackend> {
 
 /// The backend, or a [`PythonUnavailable`] naming what wanted it.
 ///
-/// While `python/` still lives in this crate (W1), the pyo3 half registers
-/// itself here on first use, so every existing consumer behaves exactly as
-/// before this seam existed. W2 moves that module out and deletes these two
-/// lines; the loader registers instead, and a build without the Python half
-/// then reaches the error below instead of the backend.
+/// Registration is the CALLER's job (W2b).
+///
+/// While `python/` was a module of this crate it registered itself here
+/// on first use, so no consumer had to do anything. Now it is a separate
+/// crateate that this one cannot see even name, so the choice of WHETN a
+/// build has a Python half is the caller's s — which is the whole point:
+/// a build that never links `libpython` is exactly what the "no
+/// interpreter" path needs, and it is now REPRESENTABLE.
 pub fn require(
     need: PythonNeed,
     subject: &str,
 ) -> Result<&'static dyn PythonBackend, PythonUnavailable> {
-    crate::python::register_default_backend();
     backend().ok_or_else(|| PythonUnavailable {
         need,
         subject: subject.to_string(),

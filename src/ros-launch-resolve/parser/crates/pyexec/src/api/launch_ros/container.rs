@@ -1,7 +1,7 @@
 //! Mock ComposableNodeContainer class for launch_ros.actions
 
 use super::composable_node::ComposableNode;
-use crate::{bridge::capture_container, captures::ContainerCapture};
+use play_launch_parser::{bridge::capture_container, captures::ContainerCapture};
 use pyo3::{prelude::*, types::PyDict};
 
 /// Mock ComposableNodeContainer class
@@ -79,7 +79,7 @@ impl ComposableNodeContainer {
 
         // Debug: Log if name is empty
         if name_str.is_empty() {
-            use crate::bridge::with_launch_context;
+            use play_launch_parser::bridge::with_launch_context;
             let config_keys =
                 with_launch_context(|ctx| ctx.configurations().keys().cloned().collect::<Vec<_>>());
             log::warn!(
@@ -183,7 +183,7 @@ impl ComposableNodeContainer {
     /// For lists, recursively resolves each element.
     /// Otherwise falls back to pyobject_to_string.
     fn resolve_pyobject_substitution(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        use crate::python::api::utils::create_launch_context;
+        use crate::api::utils::create_launch_context;
         use pyo3::types::PyList;
 
         let obj_ref = obj.bind(py);
@@ -214,7 +214,7 @@ impl ComposableNodeContainer {
     }
 
     fn capture_container(container: &ComposableNodeContainer) {
-        use crate::bridge::get_current_ros_namespace;
+        use play_launch_parser::bridge::get_current_ros_namespace;
 
         // Get current ROS namespace from the stack
         let ros_namespace = get_current_ros_namespace();
@@ -321,6 +321,6 @@ impl ComposableNodeContainer {
 
     /// Convert Py<PyAny> to string (handles both strings and substitutions)
     fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::python::api::utils::pyobject_to_string(py, obj)
+        crate::api::utils::pyobject_to_string(py, obj)
     }
 }

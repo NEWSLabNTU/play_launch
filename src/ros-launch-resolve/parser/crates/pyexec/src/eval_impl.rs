@@ -3,7 +3,9 @@
 //! Lives here rather than in `substitution/` because it is the only thing in
 //! that module that needs an interpreter, and `substitution/` is core (0897 W2).
 
-pub(crate) fn eval_expr_pyo3(expr: &str) -> Result<String, crate::error::SubstitutionError> {
+pub(crate) fn eval_expr_pyo3(
+    expr: &str,
+) -> Result<String, play_launch_parser::error::SubstitutionError> {
     use pyo3::{prelude::*, types::PyDict};
 
     // Unescaping happens in `evaluate_expression`, before the delimiter
@@ -12,7 +14,7 @@ pub(crate) fn eval_expr_pyo3(expr: &str) -> Result<String, crate::error::Substit
     // Convert ROS-style boolean literals to Python-style before eval.
     // ROS uses lowercase true/false, Python uses True/False.
     // Only replace standalone words (not inside quotes).
-    let expr = crate::substitution::eval::replace_ros_booleans(expr);
+    let expr = play_launch_parser::substitution::eval::replace_ros_booleans(expr);
     let expr = expr.as_str();
 
     // Trim whitespace — Python's compile('eval') rejects leading spaces
@@ -23,7 +25,7 @@ pub(crate) fn eval_expr_pyo3(expr: &str) -> Result<String, crate::error::Substit
 
     Python::attach(|py| {
         let expr_cstr = std::ffi::CString::new(expr).map_err(|e| {
-            crate::error::SubstitutionError::InvalidSubstitution(format!(
+            play_launch_parser::error::SubstitutionError::InvalidSubstitution(format!(
                 "Expression contains null byte: {}",
                 e
             ))
@@ -76,7 +78,7 @@ pub(crate) fn eval_expr_pyo3(expr: &str) -> Result<String, crate::error::Substit
         let _ = globals.set_item("__builtins__", restricted_builtins);
 
         let result = py.eval(&expr_cstr, Some(&globals), None).map_err(|e| {
-            crate::error::SubstitutionError::InvalidSubstitution(format!(
+            play_launch_parser::error::SubstitutionError::InvalidSubstitution(format!(
                 "Failed to evaluate expression '{}': {}",
                 expr, e
             ))
@@ -84,13 +86,13 @@ pub(crate) fn eval_expr_pyo3(expr: &str) -> Result<String, crate::error::Substit
 
         // Convert Python result to string
         let s = result.str().map_err(|e| {
-            crate::error::SubstitutionError::InvalidSubstitution(format!(
+            play_launch_parser::error::SubstitutionError::InvalidSubstitution(format!(
                 "Failed to convert eval result to string: {}",
                 e
             ))
         })?;
         let value = s.to_str().map_err(|e| {
-            crate::error::SubstitutionError::InvalidSubstitution(format!(
+            play_launch_parser::error::SubstitutionError::InvalidSubstitution(format!(
                 "Failed to extract string: {}",
                 e
             ))

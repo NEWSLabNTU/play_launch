@@ -37,7 +37,7 @@ impl DeclareLaunchArgument {
         description: Option<String>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
-        use crate::bridge::with_launch_context;
+        use play_launch_parser::bridge::with_launch_context;
 
         // Convert default_value Py<PyAny> to string (may be string, substitution, or list)
         // Special case: when default_value is a LaunchConfiguration with the same name,
@@ -53,7 +53,7 @@ impl DeclareLaunchArgument {
                     .unwrap_or_default();
                 if type_name == "LaunchConfiguration" {
                     // Try perform() which handles self-referencing defaults
-                    let context = crate::python::api::utils::create_launch_context(py)?;
+                    let context = crate::api::utils::create_launch_context(py)?;
                     if let Ok(result) = obj_ref.call_method1("perform", (context,))
                         && let Ok(s) = result.extract::<String>()
                     {
@@ -101,6 +101,6 @@ impl DeclareLaunchArgument {
     /// Convert Py<PyAny> to string (handles strings, substitutions, and lists)
     /// For substitutions, this will call perform() to resolve them
     fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::python::api::utils::pyobject_to_string(py, obj)
+        crate::api::utils::pyobject_to_string(py, obj)
     }
 }

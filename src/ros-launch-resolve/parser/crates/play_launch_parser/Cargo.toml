@@ -19,8 +19,8 @@ log = "0.4"
 regex = "1.10"
 rand = "0.8"
 
-# Python support (mandatory)
-pyo3 = { version = "0.29", features = ["auto-initialize", "py-clone"] }
+# `once_cell` stays: `file_cache` and `substitution/types` use it.
+# pyo3 left with 0897 W2b — the Python half is its own crate now.
 once_cell = "1.19"
 
 # Performance optimizations (Phase 7.1)
@@ -38,6 +38,15 @@ default = []
 ir = []
 
 [dev-dependencies]
+# The Python half, for TESTS only (nano-ros issue 0897 W2b/W3).
+#
+# A dev-dependency cycle is allowed by cargo and is the right shape
+# here: `pyexec` depends on this crate normally, and this crate
+# depends on it only to TEST the paths that need an interpreter.
+# The shipped rlib still links no libpython — that is the whole
+# point — and `tests/python_tests.rs` registers the backend in the
+# guard every Python test already takes.
+play_launch_parser_pyexec = { path = "../pyexec" }
 tempfile = "3.8"
 
 [[bin]]

@@ -52,7 +52,7 @@ impl ParameterFile {
     /// from the thread-local context, returning the actual file path instead of
     /// unresolved substitution syntax like "$(var config)".
     fn __str__(&self, py: Python) -> PyResult<String> {
-        crate::python::api::utils::pyobject_to_string(py, &self.param_file)
+        crate::api::utils::pyobject_to_string(py, &self.param_file)
     }
 }
 

@@ -126,7 +126,7 @@ impl LifecycleNode {
 
     /// Capture the lifecycle node as a regular NodeCapture
     fn capture_node(&self, py: Python) -> PyResult<()> {
-        use crate::{
+        use play_launch_parser::{
             bridge::{capture_node, get_current_ros_namespace},
             captures::NodeCapture,
         };
@@ -333,7 +333,7 @@ impl LifecycleNode {
     fn pyobject_to_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
         let py = obj.py();
         let py_obj: Py<PyAny> = obj.clone().unbind();
-        crate::python::api::utils::pyobject_to_string(py, &py_obj)
+        crate::api::utils::pyobject_to_string(py, &py_obj)
     }
 }
 

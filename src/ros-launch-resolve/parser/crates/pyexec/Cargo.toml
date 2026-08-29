@@ -1,0 +1,66 @@
+# The Python half of the launch parser (nano-ros issue 0897 W2b).
+#
+# Separate from `play_launch_parser` so that pyo3 — and therefore
+# `libpython` — is a dependency of THIS crate and not of the parser. A
+# consumer that never executes a `.launch.py` and never evaluates
+# `$(eval …)` links neither.
+#
+# Two crate types on purpose:
+#
+#   rlib     — link `libpython` statically, register the backend at
+#              startup. What every consumer did before this split; still
+#              the right answer for an image shipping a known interpreter.
+#   cdylib   — with `extension-module`, so `libpython` is NOT linked and its
+#              symbols are left undefined. The driver `dlopen`s a
+#              `libpython` with `RTLD_GLOBAL` first, then this, and the
+#              symbols resolve against it — which is what a CPython process
+#              does for its own extension modules.
+#
+# `abi3-py310` makes the cdylib one artifact for every CPython >= 3.10.
+# The floor matches `pyproject.toml`'s own `requires-python = ">=3.10"`.
+[package]
+name = "play_launch_parser_pyexec"
+version = "0.1.0"
+edition = "2024"
+description = "Executes the Python that ROS 2 launch files and $(eval) require"
+license = "Apache-2.0"
+
+[lib]
+name = "play_launch_parser_pyexec"
+crate-type = ["rlib", "cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+play_launch_parser = { path = "../play_launch_parser" }
+log = "0.4"
+serde_json = "1"
+regex = "1.10"
+serde_yaml_ng = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+
+# `extension-module` is NOT set here: it would leave `libpython` unlinked
+# for the rlib too, and the rlib is what an image with a known
+# interpreter wants. The cdylib build sets it (see the crate docs).
+pyo3 = { version = "0.29", features = ["auto-initialize", "py-clone"] }
+once_cell = "1.19"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# The cdylib for the dlopen path must NOT link libpython — its symbols
+# are resolved from whatever interpreter the driver dlopened first
+# (0897 W3). `extension-module` is what tells pyo3 to stop emitting
+# the link directive.
+#
+# It is a FEATURE rather than always-on because this crate is also an
+# rlib, and an rlib consumer (a container shipping a known interpreter,
+# which is what every consumer does today) DOES want the link. Cargo
+# cannot vary features per crate-type, so the two artifacts are two
+# builds:
+#
+#   cargo build -p play_launch_parser_pyexec                          -> rlib, links libpython
+#   cargo build -p play_launch_parser_pyexec --features extension-module -> cdylib, undefined
+#
+# Measured both ways; see the crate docs.
+extension-module = ["pyo3/extension-module"]

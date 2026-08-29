@@ -21,7 +21,7 @@ pub use package::{
 
 use pyo3::prelude::*;
 
-use crate::python::api::utils as sub_utils;
+use crate::api::utils as sub_utils;
 
 // ============================================================================
 // Helper Functions for Context Management
@@ -49,9 +49,11 @@ use crate::python::api::utils as sub_utils;
 /// ```
 pub(crate) fn resolve_substitution_string(
     value: &str,
-    context: &crate::substitution::context::LaunchContext,
+    context: &play_launch_parser::substitution::context::LaunchContext,
 ) -> Result<String, String> {
-    use crate::substitution::{parser::parse_substitutions, types::resolve_substitutions};
+    use play_launch_parser::substitution::{
+        parser::parse_substitutions, types::resolve_substitutions,
+    };
 
     // Micro-optimization: skip parsing if no substitution syntax
     if !value.contains("$(") {

@@ -28,6 +28,13 @@ ros-launch-manifest-model = { workspace = true }
 ros-launch-manifest-sched = { workspace = true }
 ros-launch-manifest-check = { workspace = true }
 play_launch_parser = { workspace = true }
+# The Python half of the parser (nano-ros issue 0897 W2b). Depending
+# on it HERE is the choice to link libpython: `.launch.py` files and
+# `$(eval ...)` are Python by ROS 2 specification, and this crate
+# resolves both. Without it the parser reports PythonUnavailable for
+# those two. W3 makes this a runtime dlopen instead; until then it is
+# a normal dependency and nothing about the shipped binary changes.
+play_launch_parser_pyexec = { path = "../parser/crates/pyexec" }
 eyre = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

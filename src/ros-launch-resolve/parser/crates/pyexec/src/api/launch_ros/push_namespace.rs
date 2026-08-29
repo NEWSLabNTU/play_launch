@@ -39,7 +39,7 @@ impl PushRosNamespace {
         log::debug!("Python Launch PushRosNamespace: '{}'", namespace_str);
 
         // Push onto the namespace stack and track whether it actually pushed
-        use crate::bridge::push_ros_namespace;
+        use play_launch_parser::bridge::push_ros_namespace;
         let did_push = push_ros_namespace(namespace_str);
 
         Ok(Self {
@@ -73,7 +73,7 @@ impl PopRosNamespace {
         log::debug!("Python Launch PopRosNamespace");
 
         // Pop from the namespace stack
-        use crate::bridge::pop_ros_namespace;
+        use play_launch_parser::bridge::pop_ros_namespace;
         pop_ros_namespace();
 
         Self {}

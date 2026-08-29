@@ -59,7 +59,7 @@ impl SetParameter {
 
         // Capture this as a global parameter in LaunchContext via thread-local
         {
-            use crate::bridge::with_launch_context;
+            use play_launch_parser::bridge::with_launch_context;
 
             // Match Python boolean case: "False"/"True" not "false"/"true"
             let normalized_value = match value_str.as_str() {
@@ -89,7 +89,7 @@ impl SetParameter {
 impl SetParameter {
     /// Resolve a value Py<PyAny>, attempting to resolve substitutions if possible
     fn resolve_value(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        use crate::python::api::utils::create_launch_context;
+        use crate::api::utils::create_launch_context;
 
         let obj_ref = obj.bind(py);
 
@@ -104,7 +104,7 @@ impl SetParameter {
         }
 
         // Fallback to regular string conversion
-        crate::python::api::utils::pyobject_to_string(py, obj)
+        crate::api::utils::pyobject_to_string(py, obj)
     }
 }
 

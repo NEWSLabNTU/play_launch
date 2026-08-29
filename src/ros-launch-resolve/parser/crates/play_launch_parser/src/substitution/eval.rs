@@ -11,7 +11,7 @@ use crate::error::SubstitutionError;
 /// $(eval) is defined as Python evaluation in the ROS 2 launch specification — any
 /// Rust-side reimplementation risks subtle incompatibilities with quoting, operators,
 /// or edge cases. Using Python eval ensures 100% compatibility.
-pub(crate) fn evaluate_expression(expr: &str) -> Result<String, SubstitutionError> {
+pub fn evaluate_expression(expr: &str) -> Result<String, SubstitutionError> {
     let expr = expr.trim();
 
     // Mirror what launch's frontend does, in the order it does it.
@@ -47,7 +47,7 @@ pub(crate) fn evaluate_expression(expr: &str) -> Result<String, SubstitutionErro
 /// `re.sub(r'\\(.)', r'\1', data)` — deliberately general rather than
 /// `\'`-only, because that is what the reference implementation does to every
 /// text fragment it builds.
-fn unescape(s: &str) -> String {
+pub fn unescape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
@@ -77,7 +77,7 @@ fn unescape(s: &str) -> String {
 ///                      unescaped, so these are Python string literals.
 ///   `''`             — nothing between them; stripping yields an empty
 ///                      expression, which `eval` rejects.
-fn outer_quotes_are_delimiters(expr: &str) -> bool {
+pub fn outer_quotes_are_delimiters(expr: &str) -> bool {
     let bytes = expr.as_bytes();
     if bytes.len() < 2 {
         return false;
@@ -113,7 +113,7 @@ fn outer_quotes_are_delimiters(expr: &str) -> bool {
 
 /// Replace standalone ROS-style boolean literals (true/false) with Python-style (True/False).
 /// Avoids replacing inside quoted strings.
-pub(crate) fn replace_ros_booleans(expr: &str) -> String {
+pub fn replace_ros_booleans(expr: &str) -> String {
     let mut result = String::with_capacity(expr.len());
     let mut in_single = false;
     let mut in_double = false;
@@ -186,88 +186,4 @@ fn python_eval_fallback(expr: &str) -> Result<String, SubstitutionError> {
     backend
         .eval_expr(expr)
         .map_err(SubstitutionError::InvalidSubstitution)
-}
-
-#[cfg(test)]
-mod escape_tests {
-    use super::*;
-
-    /// The form that broke the golf cart's main launch file. The BOOLEAN VALUES
-    /// were measured against real `ros2 launch` first, both branches of each
-    /// comparison, so these pin conformance rather than our preference. The
-    /// lowercase spelling is ours: `$(eval)` results feeding `if=`/`unless=`
-    /// are normalized to "true"/"false" (see CLAUDE.md).
-    #[test]
-    fn escaped_quotes_inside_a_quoted_template_are_content() {
-        assert_eq!(
-            evaluate_expression(r"'\'ndt\' == \'aruco\''").unwrap(),
-            "false"
-        );
-        assert_eq!(
-            evaluate_expression(r"'\'aruco\' == \'aruco\''").unwrap(),
-            "true"
-        );
-        // The `not in [...]` variant from the same file.
-        assert_eq!(
-            evaluate_expression(r"'\'ndt\' not in [\'cuda_ndt\', \'aruco\']'").unwrap(),
-            "true"
-        );
-        assert_eq!(
-            evaluate_expression(r"'\'aruco\' not in [\'cuda_ndt\', \'aruco\']'").unwrap(),
-            "false"
-        );
-    }
-
-    /// The `&quot;`-wrapped form used elsewhere in the same repository. It
-    /// worked before and must keep working.
-    #[test]
-    fn double_quoted_template_still_unwraps() {
-        assert_eq!(
-            evaluate_expression("\"'ndt' == 'cuda_ndt'\"").unwrap(),
-            "false"
-        );
-        assert_eq!(
-            evaluate_expression("\"'cuda_ndt' == 'cuda_ndt'\"").unwrap(),
-            "true"
-        );
-    }
-
-    /// Outer quotes that are NOT delimiters: a Python expression that merely
-    /// begins and ends with a string literal. Stripping here would corrupt it.
-    #[test]
-    fn python_string_literals_are_not_treated_as_delimiters() {
-        assert_eq!(evaluate_expression("'foo' + 'bar'").unwrap(), "foobar");
-        assert_eq!(evaluate_expression("'a' == 'a'").unwrap(), "true");
-    }
-
-    #[test]
-    fn empty_and_degenerate_inputs_do_not_panic() {
-        // `''` must not be stripped to nothing — eval('') is a SyntaxError.
-        assert_eq!(evaluate_expression("''").unwrap(), "");
-        assert!(evaluate_expression("").is_err());
-    }
-
-    #[test]
-    fn unescape_matches_the_reference_rule() {
-        // launch: re.sub(r'\\(.)', r'\1') — a backslash escapes ANY character.
-        assert_eq!(unescape(r"\'a\'"), "'a'");
-        assert_eq!(unescape(r"a\\b"), r"a\b");
-        assert_eq!(unescape(r"no escapes"), "no escapes");
-        // A lone trailing backslash has nothing to escape and is kept.
-        assert_eq!(unescape(r"trailing\"), r"trailing\");
-    }
-
-    #[test]
-    fn delimiter_detection_is_escape_aware() {
-        assert!(outer_quotes_are_delimiters(r"'\'a\' == \'b\''"));
-        assert!(outer_quotes_are_delimiters("\"'a' == 'b'\""));
-        // Unescaped inner quotes of the same kind => Python literals.
-        assert!(!outer_quotes_are_delimiters("'foo' + 'bar'"));
-        // Nothing to unwrap.
-        assert!(!outer_quotes_are_delimiters("''"));
-        assert!(!outer_quotes_are_delimiters("1 + 2"));
-        // A trailing backslash escapes the closing quote, so the pair is not
-        // balanced and must not be treated as delimiters.
-        assert!(!outer_quotes_are_delimiters(r"'a\'"));
-    }
 }

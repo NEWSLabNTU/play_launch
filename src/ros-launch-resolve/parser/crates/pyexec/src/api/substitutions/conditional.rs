@@ -7,7 +7,7 @@
 
 use pyo3::prelude::*;
 
-use crate::python::api::utils as sub_utils;
+use crate::api::utils as sub_utils;
 
 /// Mock NotSubstitution
 ///

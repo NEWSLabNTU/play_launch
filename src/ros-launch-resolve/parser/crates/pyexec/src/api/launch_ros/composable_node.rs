@@ -4,7 +4,7 @@ use super::{
     helpers::{is_yaml_file, load_yaml_params_for_node},
     node::Node,
 };
-use crate::{bridge::capture_load_node, captures::LoadNodeCapture};
+use play_launch_parser::{bridge::capture_load_node, captures::LoadNodeCapture};
 use pyo3::{
     prelude::*,
     types::{PyDict, PyList},
@@ -132,7 +132,7 @@ impl ComposableNode {
 impl ComposableNode {
     /// Convert a Py<PyAny> to a string (handles both strings and substitutions)
     fn pyobject_to_string(py: Python, obj: &Py<PyAny>) -> PyResult<String> {
-        crate::python::api::utils::pyobject_to_string(py, obj)
+        crate::api::utils::pyobject_to_string(py, obj)
     }
 
     pub(super) fn capture_as_load_node(

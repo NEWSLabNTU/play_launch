@@ -2,7 +2,7 @@
 
 #![allow(non_local_definitions)] // pyo3 macros generate non-local impls
 
-use crate::bridge::with_launch_context;
+use play_launch_parser::bridge::with_launch_context;
 use pyo3::{
     prelude::*,
     types::{PyDict, PyTuple},

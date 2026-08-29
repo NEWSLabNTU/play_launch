@@ -1801,6 +1801,11 @@ fn test_yaml_fixture_dirname() {
 
 #[test]
 fn test_yaml_include_python() {
+    // A YAML launch file INCLUDING a `.launch.py` needs an
+    // interpreter just as much as a Python file does, and this is
+    // the only test in this file that does. Registration is the
+    // caller's job since 0897 W2b.
+    play_launch_parser_pyexec::register();
     let fixture = get_fixture_path("test_yaml_include_python.launch.yaml");
     assert!(fixture.exists(), "Fixture should exist: {:?}", fixture);
 

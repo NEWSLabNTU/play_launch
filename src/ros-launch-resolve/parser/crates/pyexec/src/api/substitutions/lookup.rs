@@ -7,7 +7,7 @@
 
 use pyo3::prelude::*;
 
-use crate::python::api::utils as sub_utils;
+use crate::api::utils as sub_utils;
 
 use super::resolve_substitution_string;
 
@@ -50,7 +50,7 @@ impl LaunchConfiguration {
         // Register default in LaunchContext so it's available for variable substitution.
         // Only set if not already present (CLI args and DeclareLaunchArgument take precedence).
         if let Some(ref default_val) = default {
-            use crate::bridge::with_launch_context;
+            use play_launch_parser::bridge::with_launch_context;
             with_launch_context(|ctx| {
                 if ctx.get_configuration(&variable_name).is_none() {
                     ctx.set_configuration(variable_name.clone(), default_val.clone());
@@ -78,7 +78,7 @@ impl LaunchConfiguration {
     /// Uses the thread-local LaunchContext which already has all configurations
     /// with proper scope chain resolution.
     fn perform(&self, _context: &Bound<'_, PyAny>) -> PyResult<String> {
-        use crate::bridge::with_launch_context;
+        use play_launch_parser::bridge::with_launch_context;
 
         // Get value from LaunchContext (already resolves nested substitutions)
         let result = with_launch_context(|ctx| {

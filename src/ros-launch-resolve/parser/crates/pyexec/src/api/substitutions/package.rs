@@ -7,7 +7,7 @@
 
 use pyo3::prelude::*;
 
-use crate::python::api::utils as sub_utils;
+use crate::api::utils as sub_utils;
 
 /// Mock TextSubstitution
 ///
@@ -230,7 +230,7 @@ impl FindPackageShare {
 impl FindPackageShare {
     /// Find ROS 2 package share directory (delegates to shared implementation with caching)
     fn find_package_share(package_name: &str) -> Option<String> {
-        crate::substitution::types::find_package_share(package_name)
+        play_launch_parser::substitution::types::find_package_share(package_name)
     }
 }
 
