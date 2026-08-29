@@ -8,7 +8,6 @@ nodes:
     pub:
       objects:
         min_rate_hz: 10
-        jitter: 5ms
     paths:
       main:
         output: [objects]

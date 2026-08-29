@@ -547,10 +547,39 @@ just after that callback starts waits for it, and no priority assignment
 helps. Phase 67's `concurrency:` suppresses it, which is exactly what that
 vocabulary is for.
 
-### Still not retired
+### `EndpointProps.jitter`, retired
 
-- `EndpointProps.jitter` — superseded by the path/scope requirement, not yet
-  removed.
+Removed in manifest `v0.1.18`, and `PubContract.jitter_ms` with it. Same
+finding as `semantics: age`: declared, parsed, copied into
+`system_model.yaml`, and read by NOTHING — no check, no mapper, no runtime
+monitor, in the manifest crate, in play_launch, or in nano-ros. Its own row in
+the manifest documentation said *"Not checked"* for its whole life.
+
+It was also in the wrong place. What destabilises a controller is how much the
+END-TO-END latency varies, and one publisher's spread does not determine that.
+`max_jitter` on a path or scope path is the replacement, checked by
+`jitter-feasibility` against the sampling jitter the route already carries.
+
+Rejected rather than ignored, for the reason the whole retirement sequence has
+used: dropping it silently would leave an author believing a jitter
+requirement is enforced when the only thing that ever happened to it was being
+written down. The legacy `jitter_ms:` spelling is rejected too, so the removal
+cannot be bypassed by writing the older form.
+
+On the model side the removal is backward-compatible on READ — no
+`deny_unknown_fields`, so an old `system_model.yaml` still deserializes and
+drops the field, exactly as the retired `record:` field documents. The golden
+fixture deliberately KEEPS `jitter_ms:` on disk and the roundtrip test asserts
+it is still there: that file is the evidence old models load, and if anyone
+adds `deny_unknown_fields` it is the test that fails.
+
+### Nothing left to retire
+
+Every field the phase set out to remove is gone: `chains:`/`segments:`,
+`topics.<t>.rate_hz` (derivable, so linted rather than removed — a rate is
+sometimes the only place a number can come from), and `EndpointProps.jitter`.
+`max_response` was bound rather than retired, being a real requirement that
+had simply never been read.
 
 Phase 47 is the precedent for the removal itself — `record.json` went from
 deprecated-with-a-warning to `error: unexpected argument`, a hard clap failure

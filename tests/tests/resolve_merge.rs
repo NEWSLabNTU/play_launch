@@ -124,9 +124,15 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
         c["pub_endpoints"]["/perception/detector/objects"]["min_rate_hz"],
         10.0
     );
-    assert_eq!(
-        c["pub_endpoints"]["/perception/detector/objects"]["jitter_ms"],
-        5.0
+    // `jitter_ms` was removed from `PubContract` (phase 68) — the endpoint
+    // field that fed it was declared, copied here, and read by nothing. What
+    // this test is about is that every field class survives the dump, so the
+    // check becomes that the retired one does NOT appear rather than dropping
+    // silently and leaving the assertion count quietly lower.
+    assert!(
+        c["pub_endpoints"]["/perception/detector/objects"]["jitter_ms"].is_null(),
+        "jitter_ms is retired and must not reappear in the model: {}",
+        c["pub_endpoints"]["/perception/detector/objects"]
     );
     let sub = &c["sub_endpoints"]["/planning/planner/objects"];
     assert_eq!(sub["min_rate_hz"], 5.0);

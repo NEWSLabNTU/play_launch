@@ -652,8 +652,16 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   MUTUALLY EXCLUSIVE group in both rclcpp and nano-ros, so a 5 ms promise
   beside a 20 ms callback is ruled out by the node's own declarations —
   suppressed by phase 67's `concurrency:`, which is what it is for.
-  **Still not retired**: `EndpointProps.jitter`, superseded by the path/scope
-  requirement.
+  **`EndpointProps.jitter` is retired too** (manifest `v0.1.18`), along with
+  `PubContract.jitter_ms` — same finding as `semantics: age`: parsed, copied
+  into the model, read by NOTHING anywhere, and its own documentation row said
+  *"Not checked"* for its whole life. It was also in the wrong place: what
+  destabilises a controller is how much the END-TO-END latency varies, which
+  one publisher's spread does not determine. `max_jitter` on a path or scope
+  path replaced it. Model-side removal is backward-compatible on read (no
+  `deny_unknown_fields`), and the golden fixture deliberately KEEPS
+  `jitter_ms:` on disk with a test asserting it is still there — that file is
+  the evidence old models still load. **Nothing is left to retire.**
   **Phase 67 W5 is still open**: nano-ros has not been told about either seam
   (our platform file assigns per node, theirs per `(node, callback_group)`;
   `ResolvedTier.deadline_policy` already exists there as a home for

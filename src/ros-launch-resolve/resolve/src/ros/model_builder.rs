@@ -155,13 +155,12 @@ fn resolve_endpoint_ref(nodes: &IndexMap<String, model::NodeInstance>, ep_ref: &
 }
 
 fn pub_contract(p: &EndpointProps) -> Option<model::PubContract> {
-    if p.min_rate_hz.is_none() && p.max_rate_hz.is_none() && p.jitter.is_none() {
+    if p.min_rate_hz.is_none() && p.max_rate_hz.is_none() {
         return None;
     }
     Some(model::PubContract {
         min_rate_hz: p.min_rate_hz,
         max_rate_hz: p.max_rate_hz,
-        jitter_ms: p.jitter.map(|d| d.as_millis_f64()),
         // R1-M5 — manifest-side per-endpoint QoS lands here when the
         // loader surfaces it (P-item); None until then.
         qos: None,
