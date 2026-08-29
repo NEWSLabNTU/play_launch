@@ -42,7 +42,10 @@ until then. See `0023-*`.
 allows) made the dump die with a bare `TypeError: 'NoneType' object is not
 iterable` naming neither the node nor the field. The record type and the Rust
 spawn path both already modelled an optional package; only the dump visitor did
-not. Containers, which genuinely need one, now say so instead. See `0026-*`.
+not. Containers, which genuinely need one, now say so instead. Fixing the crash
+exposed a second half: `launch_ros` appends `--ros-args` to every node even with
+nothing to put after it, and `/bin/sleep 3600 --ros-args` exits 1 — both command
+builders now trim an empty ROS args section. See `0026-*`.
 
 **#0025** — `on_exit=Shutdown()` was detected at dump time and deliberately
 discarded, so a required node's exit never ended the launch. SSv2's

@@ -136,6 +136,16 @@ pub fn build_ros_command(
         cmd.push(format!("{}:={}", from, to));
     }
 
+    // Step 3 opens the ROS args section unconditionally, and steps 4-9 may put nothing
+    // in it. An empty section is a no-op for rcl, so a real ROS node never noticed — but
+    // a node given an absolute executable and no package is usually not a ROS program,
+    // and `/bin/sleep 3600 --ros-args` exits 1 on the unrecognized option (issue 0026).
+    // The Python dump trims it the same way; leaving it here would split the two parsers
+    // on every argument-less node.
+    if cmd.last().map(String::as_str) == Some("--ros-args") {
+        cmd.pop();
+    }
+
     cmd
 }
 
@@ -627,7 +637,14 @@ mod tests {
 
         // Executable path resolved via find_package_executable or fallback
         assert!(cmd[0].ends_with("/demo_nodes_cpp/talker"));
-        assert_eq!(cmd[1], "--ros-args");
+        // This node has no name, params or remaps, so the ROS args section would be
+        // empty — and an empty section is trimmed (issue 0026), on both parsers.
+        assert_eq!(
+            cmd.len(),
+            1,
+            "nothing follows the executable when there are no ROS arguments: {cmd:?}"
+        );
+        assert!(!cmd.contains(&"--ros-args".to_string()));
         // No __node:= when name is None (matches Python parser - ROS 2 defaults to executable)
         assert!(!cmd.iter().any(|s| s.starts_with("__node:=")));
         // No __ns when namespace is root (matches Python parser)

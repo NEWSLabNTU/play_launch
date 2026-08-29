@@ -74,6 +74,21 @@ fn test_resolve_package_less_node_python() {
     );
     assert_eq!(containers, 0);
     assert_eq!(load_nodes, 0);
+
+    // ...and it must be RUNNABLE. launch_ros appends `--ros-args` to every Node even
+    // when there is nothing to put after it; an empty section is a no-op for rcl but
+    // `/bin/sleep 3600 --ros-args` exits 1 on the unrecognized option.
+    let env = fixtures::install_env();
+    let (model, _tmp) = fixtures::resolve_model(&env, launch.to_str().unwrap(), None, "python");
+    let nodes = model["structure"]["nodes"].as_object().expect("nodes");
+    let (_fqn, inst) = nodes.iter().next().expect("one node");
+    // `raw_cmd`, not `args`: `args` holds only the user arguments, so asserting on it
+    // would pass whether or not the marker is there.
+    let raw_cmd = inst["raw_cmd"].as_array().cloned().unwrap_or_default();
+    assert!(
+        !raw_cmd.iter().any(|a| a == "--ros-args"),
+        "a node with no ROS arguments must not carry an empty --ros-args section: {inst:?}"
+    );
 }
 
 #[test]

@@ -60,11 +60,25 @@ routes a package-less record to `from_raw_executable` — only the dump disagree
   over a new Python fixture. Python, not XML — the XML frontend requires a package, so
   the shape is unreachable from XML.
 
-## Also found
+## Second half: the node dumped, but still could not run
 
-`launch_ros` appends `--ros-args` to every `Node` command line unconditionally, named or
-not. `/bin/sleep` rejects the flag, so a package-less node pointing at a non-ROS program
-still cannot *run* — it just dumps and spawns correctly now instead of aborting the whole
-dump. Wrapping in a shell (`/bin/sh -c ...`) works, since a shell takes the stray argument
-as `$0` and ignores it. This is upstream launch_ros behaviour, faithfully replayed; not a
-play_launch bug, but worth knowing before reaching for this shape.
+Fixing the crash was not enough. `launch_ros` appends `--ros-args` to every `Node`
+unconditionally, even when there is nothing to put after it, so the spawned command was
+
+```
+/bin/sleep 3600 --ros-args        ->  exits 1: unrecognized option '--ros-args'
+```
+
+An empty ROS args section is a no-op for rcl, which is why no real ROS node ever noticed.
+A package-less node usually is not a ROS program, and it is fatal there.
+
+Both command builders now drop a trailing `--ros-args` when nothing follows it — the
+Python dump visitor and the Rust parser's `generate_node_command`. A section with
+arguments in it is load-bearing and is left alone. Trimming in only one of them would have
+split the two parsers on every argument-less node, which is why both changed together; the
+Rust golden test that pinned the empty marker was updated, since its own comment said it
+was matching the Python parser.
+
+Still true, and not a play_launch bug: a package-less node that *names* itself gets
+`-r __node:=<name>` appended, which a non-ROS program will still reject. Naming a non-ROS
+process has no meaning, so this is left as is.
