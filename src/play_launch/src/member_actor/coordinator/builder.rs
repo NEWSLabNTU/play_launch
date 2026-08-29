@@ -63,7 +63,9 @@ fn declares_shutdown_on_exit(
         return true;
     }
     match member_name.rsplit_once('-') {
-        Some((stem, counter)) if !counter.is_empty() && counter.bytes().all(|b| b.is_ascii_digit()) => {
+        Some((stem, counter))
+            if !counter.is_empty() && counter.bytes().all(|b| b.is_ascii_digit()) =>
+        {
             declared.contains(stem)
         }
         _ => false,
