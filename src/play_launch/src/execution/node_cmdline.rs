@@ -122,6 +122,20 @@ fn params_to_yaml(params: &HashMap<String, String>) -> String {
 /// Values in record.json are already fully resolved by the parser — no Python
 /// expressions remain. This function only does type inference matching rcl's
 /// behavior for `-p` arguments: bool, integer, float, sequence, or string.
+/// Strip one layer of matching quotes from a Python repr scalar.
+///
+/// Returns `None` when the string is not quoted, so the caller can fall back to ordinary
+/// scalar classification. Only a matched pair counts: a value that merely contains a quote
+/// keeps it, because that quote is part of the string rather than repr syntax.
+fn unquote_repr_scalar(s: &str) -> Option<&str> {
+    for quote in ['\'', '"'] {
+        if s.len() >= 2 && s.starts_with(quote) && s.ends_with(quote) {
+            return Some(&s[1..s.len() - 1]);
+        }
+    }
+    None
+}
+
 fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
     use yaml_rust2::Yaml;
 
@@ -159,7 +173,21 @@ fn str_to_yaml(s: &str) -> yaml_rust2::Yaml {
         }
         let items: Vec<Yaml> = trimmed
             .split(',')
-            .map(|item| str_to_yaml(item.trim()))
+            .map(|item| {
+                let item = item.trim();
+                // String arrays arrive from the recorder in Python repr form, so their
+                // elements come quoted: "['camera6']" splits to "'camera6'". Classifying
+                // that as a scalar keeps the quotes, and the parameter becomes the literal
+                // string `'camera6'`. A node that builds a topic name from it then dies at
+                // construction with
+                //   Invalid topic name: ... ''camera6'/detection/rois'
+                // which names the topic but not the parameter it came from. Numeric arrays
+                // carry no quotes, which is why only string arrays were affected.
+                match unquote_repr_scalar(item) {
+                    Some(inner) => Yaml::String(inner.to_string()),
+                    None => str_to_yaml(item),
+                }
+            })
             .collect();
         // Nested brackets split naively would mangle; only accept flat scalar lists.
         if !inner.contains('[') {
@@ -954,6 +982,7 @@ fn bias_oom_score() {}
 
 #[cfg(test)]
 mod tests {
+    use yaml_rust2::Yaml;
     use super::*;
     use std::collections::{HashMap, HashSet};
 
@@ -1663,5 +1692,59 @@ mod tests {
                 "-nosound".to_string(),
             ]
         );
+    }
+
+    /// A string array arrives from the recorder as a Python repr, so its elements are
+    /// quoted. Keeping those quotes made `camera_namespaces: ['camera6']` reach the node as
+    /// the literal string `'camera6'`, and it aborted building a topic name from it.
+    #[test]
+    fn string_array_elements_lose_their_repr_quotes() {
+        let yaml = str_to_yaml("['camera6']");
+        assert_eq!(yaml, Yaml::Array(vec![Yaml::String("camera6".to_string())]));
+    }
+
+    #[test]
+    fn multi_element_string_arrays_are_unquoted_too() {
+        let yaml = str_to_yaml("['camera6', 'camera7']");
+        assert_eq!(
+            yaml,
+            Yaml::Array(vec![
+                Yaml::String("camera6".to_string()),
+                Yaml::String("camera7".to_string()),
+            ])
+        );
+    }
+
+    /// The case that already worked, and must keep working: a numeric array stays numeric,
+    /// because turning it into strings changes the ROS parameter type and statically typed
+    /// nodes reject that fatally.
+    #[test]
+    fn numeric_arrays_keep_their_type() {
+        let yaml = str_to_yaml("[1.0, 0.0]");
+        assert_eq!(
+            yaml,
+            Yaml::Array(vec![Yaml::Real("1.0".to_string()), Yaml::Real("0.0".to_string())])
+        );
+    }
+
+    /// Unquoted elements are left alone: Autoware's own launch files write the bracketed
+    /// form without quotes, and those already worked.
+    #[test]
+    fn unquoted_array_elements_are_unchanged() {
+        let yaml = str_to_yaml("[camera6, camera7]");
+        assert_eq!(
+            yaml,
+            Yaml::Array(vec![
+                Yaml::String("camera6".to_string()),
+                Yaml::String("camera7".to_string()),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_quote_inside_a_value_is_not_repr_syntax() {
+        assert_eq!(unquote_repr_scalar("it's"), None);
+        assert_eq!(unquote_repr_scalar("'quoted'"), Some("quoted"));
+        assert_eq!(unquote_repr_scalar("'"), None);
     }
 }
