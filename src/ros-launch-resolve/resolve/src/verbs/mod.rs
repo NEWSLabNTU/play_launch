@@ -343,7 +343,14 @@ pub fn parse_launch_file(
     path: &std::path::Path,
     args: std::collections::HashMap<String, String>,
 ) -> play_launch_parser::error::Result<play_launch_parser::record::RecordJson> {
-    play_launch_parser_pyexec::register();
+    // Load the Python half against a discovered interpreter. A
+    // failure here is NOT fatal: with no usable interpreter the
+    // parser still resolves XML and YAML and reports
+    // `PythonUnavailable` only where ROS 2 genuinely defines
+    // Python — so a launch tree that uses neither still works.
+    if let Err(e) = play_launch_parser_pyload::install() {
+        log::warn!("Python launch support unavailable: {e}");
+    }
     play_launch_parser::parse_launch_file(path, args)
 }
 

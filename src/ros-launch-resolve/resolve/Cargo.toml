@@ -34,7 +34,13 @@ play_launch_parser = { workspace = true }
 # resolves both. Without it the parser reports PythonUnavailable for
 # those two. W3 makes this a runtime dlopen instead; until then it is
 # a normal dependency and nothing about the shipped binary changes.
-play_launch_parser_pyexec = { path = "../parser/crates/pyexec" }
+# The LOADER, not the Python half (0897 W3). Depending on `pyexec`
+# directly is what put `libpython3.10.so.1.0` in this binary's
+# DT_NEEDED and pinned it to one interpreter; `pyload` discovers one
+# at runtime and dlopens it instead, so one build serves any CPython
+# >= the abi3 floor and a host without one gets an error VALUE.
+play_launch_parser_pyload = { path = "../parser/crates/pyload" }
+log = "0.4"
 eyre = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -861,6 +861,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "play_launch_parser_pyload"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "log",
+ "play_launch_parser",
+ "play_launch_parser_pyexec",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1089,9 +1102,10 @@ dependencies = [
  "clap",
  "eyre",
  "indexmap",
+ "log",
  "num_cpus",
  "play_launch_parser",
- "play_launch_parser_pyexec",
+ "play_launch_parser_pyload",
  "pyo3",
  "ros-launch-manifest-check",
  "ros-launch-manifest-model",
