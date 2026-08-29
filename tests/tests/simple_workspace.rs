@@ -69,8 +69,8 @@ fn test_resolve_package_less_node_python() {
     let (nodes, containers, load_nodes) = resolve_counts(launch.to_str().unwrap(), "python");
 
     assert_eq!(
-        nodes, 1,
-        "a package-less node should still resolve to exactly one node, got {nodes}"
+        nodes, 2,
+        "the package-less nodes should resolve, got {nodes}"
     );
     assert_eq!(containers, 0);
     assert_eq!(load_nodes, 0);
@@ -81,14 +81,22 @@ fn test_resolve_package_less_node_python() {
     let env = fixtures::install_env();
     let (model, _tmp) = fixtures::resolve_model(&env, launch.to_str().unwrap(), None, "python");
     let nodes = model["structure"]["nodes"].as_object().expect("nodes");
-    let (_fqn, inst) = nodes.iter().next().expect("one node");
-    // `raw_cmd`, not `args`: `args` holds only the user arguments, so asserting on it
-    // would pass whether or not the marker is there.
-    let raw_cmd = inst["raw_cmd"].as_array().cloned().unwrap_or_default();
-    assert!(
-        !raw_cmd.iter().any(|a| a == "--ros-args"),
-        "a node with no ROS arguments must not carry an empty --ros-args section: {inst:?}"
-    );
+    assert_eq!(nodes.len(), 2, "model nodes: {nodes:?}");
+    for (fqn, inst) in nodes {
+        // `raw_cmd`, not `args`: `args` holds only the user arguments, so asserting on
+        // it would pass whether or not the marker is there.
+        let raw_cmd = inst["raw_cmd"].as_array().cloned().unwrap_or_default();
+        assert!(
+            !raw_cmd.iter().any(|a| a == "--ros-args"),
+            "{fqn}: a package-less node is a raw executable and must carry no ROS args \
+             section, named or not: {inst:?}"
+        );
+        // The user's own arguments survive — only the ROS section is dropped.
+        assert!(
+            raw_cmd.iter().any(|a| a == "3600"),
+            "{fqn}: the node's own arguments must survive: {inst:?}"
+        );
+    }
 }
 
 #[test]

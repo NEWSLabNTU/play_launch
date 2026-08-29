@@ -79,6 +79,30 @@ split the two parsers on every argument-less node, which is why both changed tog
 Rust golden test that pinned the empty marker was updated, since its own comment said it
 was matching the Python parser.
 
-Still true, and not a play_launch bug: a package-less node that *names* itself gets
-`-r __node:=<name>` appended, which a non-ROS program will still reject. Naming a non-ROS
-process has no meaning, so this is left as is.
+## Third half: a named package-less node
+
+Trimming only the *empty* section still left a named one broken:
+
+```
+/bin/sleep 3600 --ros-args -r __node:=worker      ->  exits 1
+```
+
+The right rule is not "trim when empty" but "a node with no package is a raw executable,
+not a ROS node" — which is already play_launch's own model, not a new judgement.
+`NodeCommandLine::from_raw_executable` is selected precisely by `record.package.is_none()`
+and discards the record's remaps, params, params-files and log config. The command line
+was the one place that still disagreed with it.
+
+So for a package-less node the whole `--ros-args` section is now dropped, named or not.
+The user's own arguments precede the section and survive. The node's *name* still reaches
+the record and still identifies the member (log directory, member id, `on_exit` matching)
+— it simply is not passed to a process that would not understand it.
+
+One consequence, stated plainly: a package-less node that really *is* a ROS program no
+longer receives `__node:=`/`__ns:=`. That is consistent with play_launch already dropping
+its remaps and params for the same reason, so the shape was never fully supported; give
+such a node a package if it needs ROS configuration.
+
+An author-supplied `--ros-args` inside `arguments=` is indistinguishable from the appended
+one and is dropped with it. Same reasoning: a raw executable gets no ROS configuration
+either way.

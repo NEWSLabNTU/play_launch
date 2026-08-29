@@ -211,13 +211,25 @@ def visit_node(
 
             cmd_strings.append(resolved)
 
-    # launch_ros appends `--ros-args` to every Node, even one with no ROS arguments to
-    # put after it. An empty section is a no-op for rcl, so a real ROS node never noticed;
-    # a node given an absolute executable and no package is usually NOT a ROS program, and
-    # `/bin/sleep 3600 --ros-args` exits 1 on the unrecognized option (issue 0026). Drop
-    # the marker when nothing follows it. Only when it is last: a section with arguments
-    # in it is load-bearing and stays.
-    if cmd_strings and cmd_strings[-1] == "--ros-args":
+    # launch_ros appends a `--ros-args` section to every Node. Two cases where that
+    # section must not survive into the record (issue 0026):
+    #
+    # 1. A node with no package is a RAW EXECUTABLE, not a ROS node. That is already
+    #    play_launch's own model -- `NodeCommandLine::from_raw_executable` discards the
+    #    record's remaps, params, params-files and log config -- but the cmd still
+    #    carried `--ros-args -r __node:=...`, which a non-ROS program rejects
+    #    (`/bin/sleep 3600 --ros-args` exits 1). Keep the user's own arguments, which
+    #    precede the section, and drop the section itself.
+    # 2. Any node whose section ends up EMPTY. That is a no-op for rcl, so a real ROS
+    #    node never noticed, and it is fatal for a non-ROS one.
+    #
+    # A section with arguments in it, on a node that has a package, is load-bearing and
+    # stays. (A `--ros-args` the author passed in `arguments=` for a package-less node is
+    # indistinguishable from the appended one and is dropped with it; a raw executable
+    # gets no ROS configuration either way, per from_raw_executable.)
+    if package is None and "--ros-args" in cmd_strings:
+        cmd_strings = cmd_strings[: cmd_strings.index("--ros-args")]
+    elif cmd_strings and cmd_strings[-1] == "--ros-args":
         cmd_strings.pop()
 
     if node.expanded_remapping_rules is None:

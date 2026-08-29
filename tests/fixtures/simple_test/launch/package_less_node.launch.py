@@ -19,5 +19,16 @@ def generate_launch_description():
     return LaunchDescription(
         [
             Node(executable="/bin/sleep", arguments=["3600"], output="screen"),
+            # Named, too: launch_ros then appends `--ros-args -r __node:=named_worker`,
+            # which /bin/sleep also rejects. A package-less node is a raw executable --
+            # `NodeCommandLine::from_raw_executable` already discards its remaps, params
+            # and log config -- so the ROS args section must not reach the record either.
+            # The name still identifies the member; it just is not passed to the process.
+            Node(
+                executable="/bin/sleep",
+                arguments=["3600"],
+                name="named_worker",
+                output="screen",
+            ),
         ]
     )
