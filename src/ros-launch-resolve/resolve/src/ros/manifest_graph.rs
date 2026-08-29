@@ -544,10 +544,9 @@ fn build_path_graph(sg: &ScopeSubgraph) -> (Vec<PathVertex>, Vec<(usize, usize, 
         if edge.is_state || !sg.contains_node(&edge.from) || !sg.contains_node(&edge.to) {
             continue;
         }
-        let (Some(from_node), Some(to_node)) = (
-            sg.graph.nodes.get(&edge.from),
-            sg.graph.nodes.get(&edge.to),
-        ) else {
+        let (Some(from_node), Some(to_node)) =
+            (sg.graph.nodes.get(&edge.from), sg.graph.nodes.get(&edge.to))
+        else {
             continue;
         };
 
@@ -602,8 +601,7 @@ fn topo_sort_paths(n: usize, edges: &[(usize, usize, f64)]) -> Option<Vec<usize>
         out[a].push(b);
     }
     // Ascending seed order keeps the result deterministic for a given graph.
-    let mut queue: std::collections::VecDeque<usize> =
-        (0..n).filter(|i| indeg[*i] == 0).collect();
+    let mut queue: std::collections::VecDeque<usize> = (0..n).filter(|i| indeg[*i] == 0).collect();
     let mut order = Vec::with_capacity(n);
     while let Some(v) = queue.pop_front() {
         order.push(v);
@@ -772,7 +770,8 @@ mod tests {
             trigger: (!trigger_in.is_empty())
                 .then(|| Trigger::Input(trigger_in.iter().map(|s| s.to_string()).collect())),
             output: out.iter().map(|s| s.to_string()).collect(),
-            max_latency: latency_ms.map(ros_launch_manifest_types::duration::Duration::from_millis_f64),
+            max_latency: latency_ms
+                .map(ros_launch_manifest_types::duration::Duration::from_millis_f64),
             ..Default::default()
         }
     }
@@ -831,8 +830,14 @@ mod tests {
                         ("to_masks", path(&["image"], &["masks"], Some(masks_ms))),
                     ],
                 ),
-                node("/tracker", &[("main", path(&["boxes"], &["tracks"], Some(10.0)))]),
-                node("/segmenter", &[("main", path(&["masks"], &["seg"], Some(5.0)))]),
+                node(
+                    "/tracker",
+                    &[("main", path(&["boxes"], &["tracks"], Some(10.0)))],
+                ),
+                node(
+                    "/segmenter",
+                    &[("main", path(&["masks"], &["seg"], Some(5.0)))],
+                ),
             ],
             vec![
                 edge("/detector", "boxes", "/tracker", "boxes"),
@@ -894,8 +899,14 @@ mod tests {
     fn fork_join_takes_max_not_sum() {
         let g = assemble(
             vec![
-                node("/lidar", &[("main", path(&["input"], &["out"], Some(50.0)))]),
-                node("/camera", &[("main", path(&["input"], &["out"], Some(30.0)))]),
+                node(
+                    "/lidar",
+                    &[("main", path(&["input"], &["out"], Some(50.0)))],
+                ),
+                node(
+                    "/camera",
+                    &[("main", path(&["input"], &["out"], Some(30.0)))],
+                ),
                 node(
                     "/fusion",
                     &[("main", path(&["lidar", "camera"], &["out"], Some(20.0)))],
@@ -956,10 +967,16 @@ mod tests {
     fn rt_workspace_graph() -> GlobalDataflowGraph {
         assemble(
             vec![
-                node("/perception/sensor_node", &[("tick", timer_path(100.0, &["points_raw"], None))]),
+                node(
+                    "/perception/sensor_node",
+                    &[("tick", timer_path(100.0, &["points_raw"], None))],
+                ),
                 node(
                     "/perception/filter_component",
-                    &[("filter", path(&["points_raw"], &["points_filtered"], Some(5.0)))],
+                    &[(
+                        "filter",
+                        path(&["points_raw"], &["points_filtered"], Some(5.0)),
+                    )],
                 ),
                 node(
                     "/control/control_node",

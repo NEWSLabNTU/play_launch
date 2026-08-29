@@ -2472,10 +2472,10 @@ mod tests {
     /// between the scope path's two ends is DERIVED, exercising both
     /// `ChainElement` kinds (Phase 44.4) the way phase 68 W4 leaves them.
     fn index_with_chain() -> ManifestIndex {
+        use crate::ros::manifest_loader::ResolvedScopePath;
         use crate::ros::manifest_loader::{
             ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedTopic,
         };
-        use crate::ros::manifest_loader::ResolvedScopePath;
         use ros_launch_manifest_types::{Manifest, NodeDecl, PathDecl, Trigger};
 
         let mut index = ManifestIndex::default();
@@ -3492,8 +3492,22 @@ nodes = ["fast_node"]
         let mut nodes = BTreeMap::new();
 
         for (node, path_name, rate, endpoint, topic, chain) in [
-            ("fast_node", "tick", 50.0, "fast_out", "/fast_topic", "chain_a"),
-            ("slow_node", "tick2", 10.0, "slow_out", "/slow_topic", "chain_b"),
+            (
+                "fast_node",
+                "tick",
+                50.0,
+                "fast_out",
+                "/fast_topic",
+                "chain_a",
+            ),
+            (
+                "slow_node",
+                "tick2",
+                10.0,
+                "slow_out",
+                "/slow_topic",
+                "chain_b",
+            ),
         ] {
             let decl = PathDecl {
                 trigger: Some(Trigger::Timer { rate_hz: rate }),

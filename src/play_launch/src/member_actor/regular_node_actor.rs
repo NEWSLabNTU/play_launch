@@ -188,7 +188,8 @@ impl RegularNodeActor {
                     log_name, self.config.respawn_delay
                 );
                 self.respawn_count = self.respawn_count.saturating_add(1);
-                self.transition_to_respawning(None, self.respawn_count).await?;
+                self.transition_to_respawning(None, self.respawn_count)
+                    .await?;
                 return Ok(());
             }
         };
@@ -423,9 +424,7 @@ impl RegularNodeActor {
         if is_verbose() {
             info!(
                 "[{}] Respawning in {:.1}s (attempt {})",
-                self.name,
-                self.config.respawn_delay,
-                attempt
+                self.name, self.config.respawn_delay, attempt
             );
         }
 

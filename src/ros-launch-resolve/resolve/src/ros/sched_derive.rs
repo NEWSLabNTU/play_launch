@@ -266,8 +266,7 @@ pub(crate) fn resolve_chains_derived(
             continue;
         };
         let subtree = subtree_scope_ids(index, sp.scope_id);
-        let subgraph =
-            subgraph_for_scope_path(graph, subtree, &sp.input_topics, &sp.output_topics);
+        let subgraph = subgraph_for_scope_path(graph, subtree, &sp.input_topics, &sp.output_topics);
         let Some(cp) = critical_path(&subgraph) else {
             continue;
         };

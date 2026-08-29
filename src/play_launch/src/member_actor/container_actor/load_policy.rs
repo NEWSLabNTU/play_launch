@@ -98,6 +98,23 @@ fn decide(
     }
 }
 
+/// The fields of a `Status` frame, after the supervisor has resolved which
+/// pending load it answers.
+///
+/// A struct rather than six positional parameters: they all come from ONE
+/// decoded frame, and `(name, phase, pid, elapsed_ms, cpu_ms, full_node_name)`
+/// puts three same-typed integers next to each other at every call site, where
+/// a transposition compiles and reports a wrong elapsed time as a wrong CPU
+/// time.
+pub(super) struct StatusReport {
+    pub name: String,
+    pub phase: LoadPhase,
+    pub pid: i32,
+    pub elapsed_ms: u64,
+    pub cpu_ms: u64,
+    pub full_node_name: String,
+}
+
 impl ComposableSupervisor {
     /// The W2 sweep. Runs on the actor's 5 s tick whenever loads go over the
     /// socket, in place of the two `ListNodes` sweeps (which stay as the
@@ -253,15 +270,18 @@ impl ComposableSupervisor {
     /// `Unknown` here is a statement by the process owner, not an inference.
     pub(super) async fn on_status(
         &mut self,
-        name: String,
-        phase: LoadPhase,
-        pid: i32,
-        elapsed_ms: u64,
-        cpu_ms: u64,
-        full_node_name: String,
+        status: StatusReport,
         config: &ActorConfig,
         control: &mut ControlChannel,
     ) {
+        let StatusReport {
+            name,
+            phase,
+            pid,
+            elapsed_ms,
+            cpu_ms,
+            full_node_name,
+        } = status;
         let Some(entry) = self.composable_nodes.get(&name) else {
             return;
         };

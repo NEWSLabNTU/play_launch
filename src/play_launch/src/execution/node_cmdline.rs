@@ -982,9 +982,9 @@ fn bias_oom_score() {}
 
 #[cfg(test)]
 mod tests {
-    use yaml_rust2::Yaml;
     use super::*;
     use std::collections::{HashMap, HashSet};
+    use yaml_rust2::Yaml;
 
     #[test]
     fn test_generate_cmdline_with_remaps() {
@@ -1723,7 +1723,10 @@ mod tests {
         let yaml = str_to_yaml("[1.0, 0.0]");
         assert_eq!(
             yaml,
-            Yaml::Array(vec![Yaml::Real("1.0".to_string()), Yaml::Real("0.0".to_string())])
+            Yaml::Array(vec![
+                Yaml::Real("1.0".to_string()),
+                Yaml::Real("0.0".to_string())
+            ])
         );
     }
 

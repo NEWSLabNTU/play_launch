@@ -1304,9 +1304,14 @@ fn check_lifespan_against_age(
     let mut findings: Vec<(String, String, f64, f64)> = Vec::new();
     for (topic_fqn, topic_qos, subscribers) in &topics {
         for ep_ref in subscribers {
-            let Some(pos) = ep_ref.rfind('/') else { continue };
+            let Some(pos) = ep_ref.rfind('/') else {
+                continue;
+            };
             let (node_fqn, ep) = (&ep_ref[..pos], &ep_ref[pos + 1..]);
-            let Some(props) = graph.nodes.get(node_fqn).and_then(|n| n.subscribers.get(ep))
+            let Some(props) = graph
+                .nodes
+                .get(node_fqn)
+                .and_then(|n| n.subscribers.get(ep))
             else {
                 continue;
             };
@@ -1362,7 +1367,12 @@ fn check_concurrency_declaration(index: &mut ManifestIndex) {
                 .collect();
             if !unknown.is_empty() {
                 let declared: Vec<String> = node.paths.keys().cloned().collect();
-                findings.push((resolved.scope_id, node_name.clone(), declared.join(", "), unknown));
+                findings.push((
+                    resolved.scope_id,
+                    node_name.clone(),
+                    declared.join(", "),
+                    unknown,
+                ));
             }
         }
     }
@@ -4202,5 +4212,4 @@ paths:
         );
         assert_eq!(v2_paths[0].output_topics, legacy_paths[0].output_topics);
     }
-
 }

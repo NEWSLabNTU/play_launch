@@ -89,7 +89,10 @@ impl Attributor {
             let leaf = key.rsplit('/').next().unwrap_or(key);
             members.insert(strip_ordinal(leaf).to_string(), key.to_string());
         }
-        Self { members, identity: HashMap::new() }
+        Self {
+            members,
+            identity: HashMap::new(),
+        }
     }
 
     /// Add the interception identity map: real ROS FQN -> model key.
@@ -106,7 +109,8 @@ impl Attributor {
         for (fqn, key) in pairs {
             let fqn = fqn.as_ref();
             let leaf = fqn.rsplit('/').next().unwrap_or(fqn);
-            self.identity.insert(leaf.to_string(), key.as_ref().to_string());
+            self.identity
+                .insert(leaf.to_string(), key.as_ref().to_string());
         }
         self
     }
@@ -133,7 +137,10 @@ impl Attributor {
         // does exist sitting in the unmatched bucket.
         let is_path = prefix.starts_with('/');
         let (candidate, how) = if is_path {
-            (prefix.rsplit('/').next().unwrap_or(prefix), Attribution::PathLeaf)
+            (
+                prefix.rsplit('/').next().unwrap_or(prefix),
+                Attribution::PathLeaf,
+            )
         } else if let Some((head, _)) = prefix.split_once('/') {
             (head, Attribution::SubCheck)
         } else {
@@ -174,7 +181,10 @@ mod tests {
         // 161 of 173: a composable, matched exactly on its own name.
         assert_eq!(
             a.attribute("voltage_monitor: CMOS Battery Status"),
-            (Some("/system/system_monitor/voltage_monitor"), Attribution::Direct)
+            (
+                Some("/system/system_monitor/voltage_monitor"),
+                Attribution::Direct
+            )
         );
         // 10 of 173: a plain node.
         assert_eq!(
@@ -195,7 +205,10 @@ mod tests {
     #[test]
     fn identity_map_recovers_the_issue_0017_names() {
         let plain = attributor();
-        assert_eq!(plain.attribute("ekf_localizer: status"), (None, Attribution::None));
+        assert_eq!(
+            plain.attribute("ekf_localizer: status"),
+            (None, Attribution::None)
+        );
 
         let with_id = attributor().with_identity([(
             "/localization/pose_twist_fusion_filter/ekf_localizer",
@@ -237,14 +250,17 @@ mod tests {
         ] {
             let (key, how) = a.attribute(n);
             assert_eq!(how, Attribution::SubCheck, "{n}");
-            assert!(key.is_some_and(|k| k.ends_with("vehicle_interface")), "{n} -> {key:?}");
+            assert!(
+                key.is_some_and(|k| k.ends_with("vehicle_interface")),
+                "{n} -> {key:?}"
+            );
         }
         // The bare name still resolves, by the plain rule.
         assert_eq!(a.attribute("vehicle_interface").1, Attribution::Direct);
     }
 
     #[test]
-    fn an_absolute_path_still_resolves_on_its_LAST_segment() {
+    fn an_absolute_path_still_resolves_on_its_last_segment() {
         // The two shapes pull in opposite directions, so this guards the
         // first-segment rule from swallowing ROS paths.
         let a = attributor();
@@ -289,7 +305,9 @@ mod corpus_tests {
     /// absent, since none of them are this repo's to guarantee.
     #[test]
     fn matches_the_python_analysis_name_by_name() {
-        let Some(home) = std::env::var_os("HOME") else { return };
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
         let logs = std::path::PathBuf::from(&home).join("repos/2026-golf-cart/play_log");
         let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../scripts/diag_join_analysis.py");
@@ -384,5 +402,4 @@ mod corpus_tests {
             names.len()
         );
     }
-
 }

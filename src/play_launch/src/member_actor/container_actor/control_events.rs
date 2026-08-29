@@ -168,12 +168,14 @@ impl ComposableSupervisor {
                     return;
                 };
                 self.on_status(
-                    name,
-                    phase,
-                    pid,
-                    elapsed_ms,
-                    cpu_ms,
-                    full_node_name,
+                    super::load_policy::StatusReport {
+                        name,
+                        phase,
+                        pid,
+                        elapsed_ms,
+                        cpu_ms,
+                        full_node_name,
+                    },
                     config,
                     control,
                 )
