@@ -73,7 +73,7 @@ nodes:
 # before the derived-route seam was built.
 paths:
   points_to_cmd:
-    input: /perception/points_raw
+    trigger: { input: [/perception/points_raw] }
     output: [/control/cmd]
     max_latency: 30ms
 

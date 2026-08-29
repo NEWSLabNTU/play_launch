@@ -53,7 +53,9 @@ nodes:
         output: [brake_cmd]
         max_latency: 8ms
 
-# The safety chain, and the claim under test.
+# The safety chain, and the claim under test — stated as a scope path, which
+# names the two ENDS of the requirement and lets the route be derived from the
+# `trigger`/`output` facts the three nodes above already declare (phase 68 W4).
 #
 # sampling_cost = the 50 Hz boundary's period = 20 ms.
 # event segment  = detect 12 ms + brake 8 ms = 20 ms.
@@ -64,16 +66,11 @@ nodes:
 # and the deadline is missed. The budget is deliberately not tight — a chain
 # that only just fits would miss for arithmetic reasons rather than scheduling
 # ones, and would prove nothing.
-chains:
+paths:
   lidar_to_brake:
-    semantics: reaction
+    trigger: { input: [/safety/scan] }
+    output: [/safety/brake_cmd]
     max_latency: 60ms
-    segments:
-      - { scope: /, path: sample }
-      - { via: /safety/scan }
-      - { scope: /, path: detect }
-      - { via: /safety/obstacles }
-      - { scope: /, path: brake }
 
 topics:
   /safety/scan:

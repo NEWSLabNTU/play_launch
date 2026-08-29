@@ -53,24 +53,22 @@ nodes:
         output: [cmd]
         max_latency: 10ms
 
-# Phase 44.5: end-to-end chain composed from the three paths above.
-# sampling_cost = tick's period (1000/100 = 10ms; no declared max_latency_ms
-# on the boundary path itself, so no extra exec_ms — "no invented WCETs").
-# declared event-segment sum = filter's 5ms + control's 10ms = 15ms.
-# total = 25ms, comfortably inside the 30ms budget (5ms honest slack) —
-# passes `chain-budget` (and `chain-sampling-feasibility`, sampling_cost
-# 10ms < 30ms budget) cleanly. See `.superpowers/sdd/p44-w5-report.md` for
-# the by-hand chain_aware priority derivation.
-chains:
+# Phase 68 W4: the end-to-end requirement, stated WITHOUT the route.
+#
+# The route through the three paths above is derivable from the `trigger`/
+# `output` facts they already declare, so an authored `segments:` list was a
+# second copy of the graph — and two copies can disagree, which is the only
+# thing `chain-link` ever existed to catch. The derived total is unchanged:
+#   sampling_cost = tick's period (1000/100 = 10ms; the boundary declares no
+#                   max_latency, so it contributes no execution time — "no
+#                   invented WCETs")
+#   event segment = filter's 5ms + control's 10ms = 15ms
+#   total         = 25ms, inside the 30ms budget with 5ms of honest slack.
+paths:
   points_to_cmd:
-    semantics: reaction
+    trigger: { input: [/perception/points_raw] }
+    output: [/control/cmd]
     max_latency: 30ms
-    segments:
-      - { scope: /, path: tick }
-      - { via: /perception/points_raw }
-      - { scope: /, path: filter }
-      - { via: /perception/points_filtered }
-      - { scope: /, path: control }
 
 topics:
   # absolute — nodes above sit in different namespaces (/perception, /control)

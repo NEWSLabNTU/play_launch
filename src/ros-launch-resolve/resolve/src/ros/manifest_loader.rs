@@ -9,7 +9,8 @@ use super::launch_dump::{LaunchDump, ScopeEntry};
 use super::sched_loader::scheduled_records_from_dump;
 use ros_launch_manifest_check::{Diagnostic, Severity, run_checks_with_spans};
 use ros_launch_manifest_types::{
-    Manifest, filter_manifest, parse_manifest_with_spans, resolve_args, substitute_manifest,
+    EffectiveTrigger, Manifest, filter_manifest, parse_manifest_with_spans, resolve_args,
+    substitute_manifest,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -1892,11 +1893,41 @@ fn resolve_node_paths(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manif
 ///
 /// Scope path `input:`/`output:` are topic names (relative or absolute).
 /// Resolves each one using the scope's namespace via `qualify_name()`.
+///
+/// The input side reads [`PathDecl::effective_trigger`], not the legacy
+/// `input:` list, because both spellings are live and the `explicit-trigger`
+/// lint actively tells authors to migrate to the second one:
+///
+/// ```yaml
+/// paths: { e2e: { input: /a,                     output: [/b] } }   # legacy
+/// paths: { e2e: { trigger: { input: [/a] },      output: [/b] } }   # v2
+/// ```
+///
+/// Reading `decl.input` alone made the v2 spelling resolve to ZERO input
+/// topics, which does not fail — it produces a scope path with no route, so
+/// the mapper falls back to ranking by budget and the derivation is silently
+/// not used. Measured on `rt_workspace`: provenance went from
+/// `points_to_cmd segment drain 2/2` to `non-chain budget_ms=5` and both the
+/// `sched:override-inversion` and incomplete-evidence warnings disappeared,
+/// while the two priorities stayed 39/38 by coincidence of the fixture. That
+/// is the same false-pass shape phase 68 W4's gate was built to catch, one
+/// layer down.
 fn resolve_scope_paths(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
     let ns = &scope.ns;
 
     for (path_name, decl) in &manifest.paths {
-        let input_topics: Vec<String> = decl.input.iter().map(|t| qualify_name(ns, t)).collect();
+        // A scope path names two ENDS of a requirement, so only an
+        // input-triggered one has a topic to start from; `timer`/`once`/
+        // `spontaneous` carry no input endpoint and resolve to an empty list,
+        // exactly as an absent `input:` always did.
+        let declared_inputs = match decl.effective_trigger() {
+            EffectiveTrigger::Input(endpoints) => endpoints,
+            _ => Vec::new(),
+        };
+        let input_topics: Vec<String> = declared_inputs
+            .iter()
+            .map(|t| qualify_name(ns, t))
+            .collect();
         let output_topics: Vec<String> = decl.output.iter().map(|t| qualify_name(ns, t)).collect();
 
         index.scope_paths.push(ResolvedScopePath {
@@ -4076,4 +4107,69 @@ mod tests {
 
         assert_eq!(discover_overlay_root(None).unwrap(), None);
     }
+
+    /// A scope path written in the Vocabulary v2 spelling must resolve to the
+    /// same input topics as the legacy `input:` list.
+    ///
+    /// This is not style. `explicit-trigger` actively tells authors to migrate
+    /// to `trigger:`, and reading `decl.input` alone made that migration
+    /// resolve to ZERO input topics — which does not fail. It produces a scope
+    /// path with no route, so the mapper silently falls back to ranking by
+    /// budget. On `rt_workspace` the provenance went from
+    /// `points_to_cmd segment drain 2/2` to `non-chain budget_ms=5` while both
+    /// priorities stayed 39/38 by coincidence of the fixture, so no numeric
+    /// check would have caught it.
+    #[test]
+    fn a_scope_path_resolves_the_same_from_either_trigger_spelling() {
+        use ros_launch_manifest_types::parse::parse_manifest_str;
+
+        let legacy = r#"
+version: 1
+paths:
+  e2e:
+    input: points_raw
+    output: [cmd]
+    max_latency: 30ms
+"#;
+        let v2 = r#"
+version: 1
+paths:
+  e2e:
+    trigger: { input: [points_raw] }
+    output: [cmd]
+    max_latency: 30ms
+"#;
+
+        let resolve_one = |yaml: &str| {
+            let manifest = parse_manifest_str(yaml).expect("parses");
+            let scope = ScopeEntry {
+                id: 0,
+                origin: None,
+                ns: "/perception".to_string(),
+                args: Default::default(),
+                parent: None,
+            };
+            let mut index = ManifestIndex::default();
+            resolve_scope_paths(&manifest, &scope, &mut index);
+            index.scope_paths
+        };
+
+        let legacy_paths = resolve_one(legacy);
+        let v2_paths = resolve_one(v2);
+
+        assert_eq!(legacy_paths.len(), 1);
+        assert_eq!(
+            legacy_paths[0].input_topics,
+            vec!["/perception/points_raw".to_string()],
+            "legacy spelling lost its input"
+        );
+        assert_eq!(
+            v2_paths[0].input_topics, legacy_paths[0].input_topics,
+            "the v2 spelling must resolve the same input topics as the legacy one — \
+             an empty list here is a scope path with no route, which degrades \
+             silently rather than failing"
+        );
+        assert_eq!(v2_paths[0].output_topics, legacy_paths[0].output_topics);
+    }
+
 }

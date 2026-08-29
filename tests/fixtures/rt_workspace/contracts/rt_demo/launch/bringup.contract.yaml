@@ -48,16 +48,14 @@ nodes:
         output: [cmd]
         max_latency: 10ms
 
-chains:
+# Phase 68 W4: the same end-to-end requirement as the provider sidecar,
+# stated as a scope path. The route is derived from the `trigger`/`output`
+# facts above.
+paths:
   points_to_cmd:
-    semantics: reaction
+    trigger: { input: [/perception/points_raw] }
+    output: [/control/cmd]
     max_latency: 30ms
-    segments:
-      - { scope: /, path: tick }
-      - { via: /perception/points_raw }
-      - { scope: /, path: filter }
-      - { via: /perception/points_filtered }
-      - { scope: /, path: control }
 
 topics:
   /perception/points_raw:
