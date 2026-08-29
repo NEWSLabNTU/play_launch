@@ -964,3 +964,37 @@ fn w4_the_mapper_reads_the_derived_route_not_just_authored_segments() {
          path:\n{text}"
     );
 }
+
+/// Rate propagation and the service-response binding — the last two fields
+/// that were written but never read.
+///
+/// `contract_rates` declares exactly ONE rate fact (a 100 Hz timer) and lets
+/// every other rate be derived. Three separate claims are asserted, because
+/// each fails in a different way:
+///
+/// - `derivable-rate` — the author's number agrees with the graph, so it is a
+///   second copy and can go.
+/// - `rate-mismatch` — the author's number DISAGREES. `/rates/merged` is
+///   published by a fan-in path with no `sync:`, so its two 100 Hz inputs ADD
+///   to 200 Hz; a contract claiming 100 is wrong and nothing else in the
+///   toolchain would say so.
+/// - `response-blocking` — a node promising a 5ms service response while
+///   declaring a 20ms callback, which the default mutually-exclusive callback
+///   group rules out.
+#[test]
+fn rate_propagation_and_service_response_have_rules_that_fire() {
+    let out = check_fixture("contract_rates");
+    for rule in ["derivable-rate", "rate-mismatch", "response-blocking"] {
+        assert!(
+            out.contains(rule),
+            "expected `{rule}` to fire on contract_rates:\n{out}"
+        );
+    }
+    // The derived value, not just the fact that something was reported: 200 Hz
+    // is the sum of two 100 Hz inputs, and it is the number that distinguishes
+    // a fan-in summed from one min'd or max'd.
+    assert!(
+        out.contains("derives 200.0000 Hz"),
+        "a fan-in without `sync:` must SUM its input rates:\n{out}"
+    );
+}

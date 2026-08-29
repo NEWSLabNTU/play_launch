@@ -1,0 +1,92 @@
+# Rate propagation (`derivable-rate` / `rate-mismatch`) and the service
+# response binding (`response-blocking`).
+#
+# The only rate FACT here is `sensor.tick`'s 100 Hz timer. Everything else is
+# a consequence the graph derives:
+#   /rates/raw       = 100 Hz  (the timer publishes it)
+#   /rates/filtered  = 100 Hz  (filter is input-triggered by /rates/raw)
+#   /rates/merged    = 200 Hz  (merger has NO `sync:`, so its two 100 Hz
+#                               inputs ADD — a callback fires per message on
+#                               each topic it is registered for)
+#
+# `/rates/filtered` declares a rate that AGREES with the derivation, so it is
+# reported as redundant; `/rates/merged` declares one that disagrees, and the
+# disagreement is the whole reason a rate should not be written by hand.
+version: 1
+
+nodes:
+  sensor:
+    pub:
+      raw: {}
+    paths:
+      tick:
+        trigger: { timer: { rate_hz: 100 } }
+        output: [raw]
+
+  filter:
+    sub:
+      raw: {}
+    pub:
+      filtered: {}
+    paths:
+      clean:
+        trigger: { input: [raw] }
+        output: [filtered]
+        max_latency: 5ms
+
+  merger:
+    sub:
+      a: {}
+      b: {}
+    pub:
+      merged: {}
+    paths:
+      combine:
+        trigger: { input: [a, b] }
+        output: [merged]
+        max_latency: 4ms
+
+  # Promises a 5ms response while declaring a 20ms callback. Callbacks default
+  # to one mutually exclusive group, so a request arriving just after `crunch`
+  # starts waits for it — the promise is ruled out by this node's own
+  # declarations.
+  responder:
+    srv:
+      lookup:
+        max_response: 5ms
+    sub:
+      bulk: {}
+    pub:
+      digest: {}
+    paths:
+      crunch:
+        trigger: { input: [bulk] }
+        output: [digest]
+        max_latency: 20ms
+
+topics:
+  /rates/raw:
+    type: std_msgs/msg/String
+    pub: [sensor/raw]
+    sub: [filter/raw, merger/a]
+  /rates/filtered:
+    type: std_msgs/msg/String
+    pub: [filter/filtered]
+    sub: [merger/b]
+    rate_hz: 100        # agrees with the derivation — redundant
+  /rates/merged:
+    type: std_msgs/msg/String
+    pub: [merger/merged]
+    rate_hz: 100        # DISAGREES: two 100 Hz inputs, no sync, so 200 Hz
+  /rates/bulk:
+    type: std_msgs/msg/String
+    pub: []
+    sub: [responder/bulk]
+  /rates/digest:
+    type: std_msgs/msg/String
+    pub: [responder/digest]
+
+services:
+  /rates/lookup:
+    type: example_interfaces/srv/AddTwoInts
+    server: [responder/lookup]

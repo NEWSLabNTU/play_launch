@@ -180,6 +180,7 @@ mod tests {
                 publishers: vec!["/a/sensor/points".to_string()],
                 subscribers: vec!["/a/filter/points".to_string()],
                 rate_hz: Some(10.0),
+                derived_rate_hz: None,
                 max_transport_ms: None,
                 drop: Some(ros_launch_manifest_types::DropSpec {
                     max_count: Some(ros_launch_manifest_types::DropCount { n: 1, w: 20 }),

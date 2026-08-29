@@ -507,11 +507,48 @@ over budget may be schedulable. It is now `scope-sampling-feasibility`, emitted
 first so the structural verdict reads before the budget warning that
 necessarily accompanies it.
 
-### Still not retired, and why
+### Rate propagation, and the last write-only field
 
-- `topics.<t>.rate_hz` — propagation from the source timer is **not
-  implemented** (`inherited_rate` checks a stale legacy `input:` list). A field
-  whose replacement does not exist is better left alone.
+Both were listed here as outstanding and are now done.
+
+**`topics.<t>.rate_hz` is derived.** `derive_topic_rates` propagates from the
+timers that drive each topic: a timer path publishes at its own rate; an
+input-triggered path publishes at the SUM of its inputs' rates without `sync:`
+(a callback fires once per message on each topic it is registered for) and at
+the MIN with it (a synchronizer emits one output per matched set). Any
+unknown contributor — `once`, `spontaneous`, an external publisher, a cycle —
+makes the result `Unknown` with a reason attached, never zero, because a
+partial sum presented as a rate is a claim.
+
+Two diagnostics, and the difference between them is the argument for deriving
+at all: `rate-mismatch` (warning) when the author's number and the graph's
+disagree — one of them is wrong and nothing else checks it — and
+`derivable-rate` (info) when they agree, so the declaration is redundant.
+
+Measured on `rt_workspace`: deleting all three `rate_hz` and all five
+`min_rate_hz` lines leaves `check --sched --explain` byte-identical under
+`rate_monotonic`, all three nodes still at 100 Hz. Eight of that contract's
+nine copies of `100` were consequences of the one timer.
+
+**`max_response` is bound.** It was the last field carried into the model and
+read by nothing. It is a deadline like any other, and the hole it left was
+concrete: a node whose contract said `srv: { lookup: { max_response: 5ms } }`
+and nothing else reported `default (no timing facts)` and got `SCHED_OTHER`
+priority 0 — a 5 ms requirement scheduled as though none had been written. It
+now joins the tightest-wins fold in `extract_path_facts`, and that node comes
+out `SCHED_FIFO 40, derived(deadline_monotonic: 5000 us deadline)`.
+
+The companion rule, `response-blocking`, is a one-line blocking argument
+rather than the response-time analysis `contract-axes.md` keeps out of scope:
+both `rclcpp`'s implicit callback group and nano-ros's `default_cbg_type` are
+mutually exclusive, so a node promising a 5 ms response while declaring a
+20 ms callback has been ruled out by its own declarations — a request arriving
+just after that callback starts waits for it, and no priority assignment
+helps. Phase 67's `concurrency:` suppresses it, which is exactly what that
+vocabulary is for.
+
+### Still not retired
+
 - `EndpointProps.jitter` — superseded by the path/scope requirement, not yet
   removed.
 

@@ -177,6 +177,12 @@ pub struct ResolvedTopic {
     pub subscribers: Vec<String>,
     /// Expected rate (Hz, must agree across all declaring scopes if declared).
     pub rate_hz: Option<f64>,
+    /// Rate DERIVED by propagating from the timers that drive this topic —
+    /// kept beside `rate_hz` rather than overwriting it, so a consumer can
+    /// always tell an author's claim from the graph's consequence. `None`
+    /// when the rate is not derivable (`once`, `spontaneous`, an external
+    /// publisher, a cycle) — never zero, which would be a claim.
+    pub derived_rate_hz: Option<f64>,
     /// Worst-case transport latency (ms, must agree across all declaring scopes).
     pub max_transport_ms: Option<f64>,
     /// Drop tolerance (must agree across all declaring scopes if declared).
@@ -674,8 +680,168 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // topic-level default before comparison.
     check_cross_scope_qos_match(index, &graph);
 
-    // Vocabulary v2 chains: chain-link (existence + via linkage across
-    // scopes), chain-budget, chain-sampling-feasibility (Phase 44.2).
+    // Rate propagation: derive every topic's rate from the timers that drive
+    // it, record it, and report a declared `rate_hz` that the graph already
+    // implies.
+    derive_and_check_topic_rates(index, &graph);
+
+    // A service server's promised response time, against the blocking its own
+    // declarations imply.
+    check_response_against_blocking(index);
+}
+
+/// `response-blocking`: a service server promising a response faster than its
+/// own longest callback can finish.
+///
+/// This is a one-line blocking argument, not a response-time analysis (which
+/// `contract-axes.md` deliberately leaves out of scope). Both `rclcpp`'s
+/// implicit callback group and nano-ros's `default_cbg_type` are **mutually
+/// exclusive**, so a request arriving just after a 20 ms callback starts waits
+/// for that callback to finish before the service handler runs at all. A node
+/// that declares `max_response: 5ms` alongside a 20 ms path has therefore
+/// promised something its own declarations rule out — no priority assignment
+/// helps, because the blocking is on the same thread.
+///
+/// Skipped when the node claims concurrency (phase 67's `concurrency:`),
+/// which is exactly what that vocabulary is for: an author who says these
+/// paths may run at once is saying the exclusive-group premise does not hold.
+/// Skipped, too, when nothing is comparable — a server with no declared path
+/// budgets gets no verdict rather than a favourable one.
+fn check_response_against_blocking(index: &mut ManifestIndex) {
+    let mut findings: Vec<(String, String, f64, String, f64)> = Vec::new();
+
+    for resolved in index.manifests.values() {
+        for (node_name, node) in &resolved.manifest.nodes {
+            if node.concurrency.is_some() {
+                continue;
+            }
+            let longest = node
+                .paths
+                .iter()
+                .filter_map(|(name, p)| {
+                    p.max_latency.map(|d| (name.clone(), d.as_millis_f64()))
+                })
+                .fold(None, |acc: Option<(String, f64)>, v| match acc {
+                    Some(a) if a.1 >= v.1 => Some(a),
+                    _ => Some(v),
+                });
+            let Some((slow_path, slow_ms)) = longest else {
+                continue;
+            };
+            for (srv_name, props) in &node.srv {
+                let Some(max_response) = props.max_response.map(|d| d.as_millis_f64()) else {
+                    continue;
+                };
+                if slow_ms >= max_response {
+                    findings.push((
+                        node_name.clone(),
+                        srv_name.clone(),
+                        max_response,
+                        slow_path.clone(),
+                        slow_ms,
+                    ));
+                }
+            }
+        }
+    }
+
+    findings.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    for (node, srv, max_response, slow_path, slow_ms) in findings {
+        index.merge_diagnostics.push(Diagnostic {
+            rule_id: "response-blocking".to_string(),
+            severity: Severity::Warning,
+            message: format!(
+                "node '{node}' promises service '{srv}' a response within {max_response}ms, but \
+                 its own path '{slow_path}' declares {slow_ms}ms. Callbacks default to a \
+                 MUTUALLY EXCLUSIVE group in both rclcpp and nano-ros, so a request arriving \
+                 just after '{slow_path}' starts waits for it to finish — the promise is ruled \
+                 out by the node's own declarations, and no priority assignment changes it. \
+                 Declare `concurrency:` if these really can run at once"
+            ),
+            path: format!("nodes.{node}.srv.{srv}.max_response"),
+            span: None,
+        });
+    }
+}
+
+/// Propagate rates from timer boundaries, store the result on each topic, and
+/// report a hand-written `rate_hz` the graph already accounts for.
+///
+/// A rate is a consequence, not a fact: a timer path publishes at its own
+/// rate and an input-triggered path publishes at the rate its inputs arrive,
+/// so the number on `topics.<t>.rate_hz` is a second copy of something the
+/// declarations already determine. Measured on `rt_workspace`, where the
+/// number 100 appears nine times: three of those copies are this field.
+///
+/// Two diagnostics, and the difference between them is the entire argument for
+/// deriving rather than declaring:
+///
+/// - **`rate-mismatch`** (warning) — the author's number and the derived one
+///   DISAGREE. One of them is wrong and nothing else in the toolchain would
+///   have noticed.
+/// - **`derivable-rate`** (info) — they agree, so the declaration is
+///   redundant and can be deleted.
+///
+/// A topic whose rate cannot be derived gets NEITHER, and its declared value
+/// stands: `once`, `spontaneous`, an externally-driven publisher and a
+/// feedback cycle are all genuine absences of information, and a contract is
+/// the only place that number can come from. That is why the derivation
+/// returns a reason rather than a zero.
+fn derive_and_check_topic_rates(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    use super::manifest_graph::{DerivedRate, derive_topic_rates};
+
+    let derived = derive_topic_rates(index, graph);
+    let mut findings: Vec<(String, f64, Option<f64>)> = Vec::new();
+
+    for (fqn, rate) in &derived {
+        let DerivedRate::Hz(hz) = rate else {
+            continue;
+        };
+        if let Some(topic) = index.topics.get_mut(fqn) {
+            topic.derived_rate_hz = Some(*hz);
+            findings.push((fqn.clone(), *hz, topic.rate_hz));
+        }
+    }
+
+    findings.sort_by(|a, b| a.0.cmp(&b.0));
+    for (fqn, hz, declared) in findings {
+        let Some(declared) = declared else {
+            continue;
+        };
+        // A relative tolerance, because a derived rate is a quotient
+        // (`1000.0 / period`) and an authored one is a round number: 29.97 and
+        // 30 disagreeing to the seventh decimal is not a finding.
+        let differs = (declared - hz).abs() > (declared.abs().max(hz.abs()) * 1e-6);
+        if differs {
+            index.merge_diagnostics.push(Diagnostic {
+                rule_id: "rate-mismatch".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "topic '{fqn}' declares rate_hz {declared} but the graph derives \
+                     {hz:.4} Hz from the timers that drive it. One of the two is wrong, \
+                     and nothing else checks this — a declared rate is a second copy of \
+                     something the `trigger:`/`output:` facts already determine"
+                ),
+                path: format!("topics.{fqn}.rate_hz"),
+                span: None,
+            });
+        } else {
+            index.merge_diagnostics.push(Diagnostic {
+                rule_id: "derivable-rate".to_string(),
+                severity: Severity::Info,
+                message: format!(
+                    "topic '{fqn}' declares rate_hz {declared}, which the graph already \
+                     derives from the timers that drive it. The declaration is redundant \
+                     and can be deleted"
+                ),
+                path: format!("topics.{fqn}.rate_hz"),
+                span: None,
+            });
+        }
+    }
 }
 
 /// Build the global dataflow graph and verify each scope path's
@@ -1615,6 +1781,10 @@ fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestI
                     publishers,
                     subscribers,
                     rate_hz: topic_decl.rate_hz,
+                    // Filled in by `derive_and_check_topic_rates` once the
+                    // whole tree is merged — a rate propagates across scopes,
+                    // so it cannot be known while one scope is being read.
+                    derived_rate_hz: None,
                     max_transport_ms: topic_decl.max_transport.map(|d| d.as_millis_f64()),
                     drop: topic_decl.drop.clone(),
                     scope_ids: vec![scope.id],

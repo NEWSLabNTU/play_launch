@@ -56,7 +56,7 @@ consequence of these plus the launch tree.
 | per-node deadlines | decomposition over the route | phase 58 W3 |
 | priorities, classes, reservations | the mapper, from the above | implemented |
 | `chains:` / `segments:` | the route | **retired** — phase 68 W4, manifest v0.1.17 |
-| `topics.<t>.rate_hz` | propagation from the timer that starts the chain | to retire |
+| `topics.<t>.rate_hz` | propagation from the timer that starts the chain | **implemented** — `derive_topic_rates` |
 
 **The derived route already exists.** `check_scope_path_critical_path`
 (`manifest_loader.rs`) builds the global dataflow graph, takes the subgraph
@@ -88,6 +88,20 @@ Plus five lines of `segments:` restating a route the graph defines.
 The irreducible content of that file is three `trigger`/`output` pairs, two node
 budgets, one `max_age`, one end-to-end budget — roughly **a third** of what is
 written.
+
+**All eight redundant copies are now derived.** With `derive_topic_rates` in
+place, deleting every `rate_hz` and every `min_rate_hz` from that contract
+leaves `check --sched --explain` byte-identical: all three nodes still rank at
+100 Hz, propagated from the single `trigger: { timer: { rate_hz: 100 } }`. The
+one fact remains; the eight copies were consequences.
+
+The arithmetic is worth stating, because the natural-looking choice is wrong.
+A fan-in path with no `sync:` publishes at the **SUM** of its inputs' rates —
+a subscription callback fires once per message on *each* topic it is
+registered for — while a `sync:`'d path publishes at the **MIN**, since a
+synchronizer emits one output per matched set. Taking the min in both cases
+would understate a fan-in node's load by exactly the factor that decides
+whether it fits.
 
 ## The one thing that stood in the way
 

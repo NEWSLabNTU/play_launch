@@ -1,0 +1,9 @@
+<launch>
+  <!-- Phase 68 follow-up: rate propagation and the service response binding.
+       Every timing number below is either the ONE declared timer rate or a
+       consequence of it — which is the point of the fixture. -->
+  <node pkg="demo" exec="sensor" name="sensor" namespace="/rates"/>
+  <node pkg="demo" exec="filter" name="filter" namespace="/rates"/>
+  <node pkg="demo" exec="merger" name="merger" namespace="/rates"/>
+  <node pkg="demo" exec="responder" name="responder" namespace="/rates"/>
+</launch>

@@ -425,6 +425,13 @@ fn extract_rate_hz(record: &ScheduledRecord, index: &ManifestIndex) -> Option<f6
             .any(|p| ep_ref_node_fqn(p) == Some(record.fqn.as_str()))
         {
             consider(topic.rate_hz);
+            // The derived rate counts too, so a contract that declares only
+            // the timer that drives a chain still gets a rate for every node
+            // along it. Before this, a node two hops downstream of the only
+            // `trigger: { timer: ... }` in the file had no rate at all unless
+            // someone hand-copied one onto each topic — which is the
+            // duplication the derivation exists to remove.
+            consider(topic.derived_rate_hz);
         }
     }
 
@@ -445,7 +452,7 @@ fn extract_path_facts(
     record: &ScheduledRecord,
     index: &ManifestIndex,
 ) -> (Option<f64>, Option<u64>) {
-    let min_ms = index
+    let mut min_ms = index
         .node_paths
         .iter()
         .filter(|p| p.node_fqn == record.fqn)
@@ -453,6 +460,22 @@ fn extract_path_facts(
         .fold(None, |acc: Option<f64>, v| {
             Some(acc.map_or(v, |a: f64| a.min(v)))
         });
+
+    // A service server's `max_response` is a deadline too, and until now it
+    // was the only declared timing fact the mapper could not see: a node whose
+    // contract said `srv: { lookup: { max_response: 5ms } }` and nothing else
+    // reported `default (no timing facts)` and landed on SCHED_OTHER at
+    // priority 0 — a 5 ms requirement scheduled as though none had been
+    // written. It joins the same tightest-wins fold as a path budget, because
+    // it is the same kind of claim: a bound on how long this node may take to
+    // produce an answer.
+    if let Some(decl) = node_decl(record, index) {
+        for props in decl.srv.values() {
+            if let Some(ms) = props.max_response.map(|d| d.as_millis_f64()) {
+                min_ms = Some(min_ms.map_or(ms, |a: f64| a.min(ms)));
+            }
+        }
+    }
 
     let deadline_us = min_ms.map(|ms| (ms * 1000.0).round() as u64);
     (min_ms, deadline_us)
@@ -573,6 +596,7 @@ mod tests {
                 publishers: vec!["/talker/chatter".to_string()],
                 subscribers: vec![],
                 rate_hz: Some(100.0),
+                derived_rate_hz: None,
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],
@@ -917,6 +941,7 @@ mod tests {
                 publishers: vec!["/talker/chatter".to_string()],
                 subscribers: vec!["/listener/chatter".to_string()],
                 rate_hz: None,
+                derived_rate_hz: None,
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],
@@ -931,6 +956,7 @@ mod tests {
                 publishers: vec!["/listener/reaction".to_string()],
                 subscribers: vec![],
                 rate_hz: None,
+                derived_rate_hz: None,
                 max_transport_ms: None,
                 drop: None,
                 scope_ids: vec![0],

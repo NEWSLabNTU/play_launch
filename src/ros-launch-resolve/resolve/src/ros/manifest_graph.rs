@@ -750,6 +750,177 @@ pub fn critical_path(subgraph: &ScopeSubgraph) -> Option<CriticalPath> {
     })
 }
 
+// ── Rate propagation (phase 68 follow-up) ────────────────────────────────────
+
+/// A topic's publication rate, derived from the timers that ultimately drive
+/// it — or the reason it could not be.
+///
+/// `Unknown` is a first-class answer, not an error and not zero. The same
+/// absent-versus-zero distinction phase 60 removed from the chain checker and
+/// phase 58 W2 kept in `measure`: a topic whose rate cannot be derived must
+/// read as "not derivable, here is why", because reporting 0 Hz would be a
+/// claim, and omitting it silently reads as "nothing to say".
+#[derive(Debug, Clone, PartialEq)]
+pub enum DerivedRate {
+    Hz(f64),
+    Unknown(&'static str),
+}
+
+/// Derive every topic's publication rate by propagating from the timer paths
+/// that start each chain.
+///
+/// A rate is a CONSEQUENCE: a timer path publishes at its own rate, and an
+/// input-triggered path publishes at the rate its inputs arrive. Both facts
+/// are already declared, so the number written on `topics.<t>.rate_hz` is a
+/// second copy — which is the whole subject of `contract-primitives.md`.
+///
+/// # The arithmetic, and why each case is what it is
+///
+/// - **Timer** → its own `rate_hz`. This is the only source; nothing else
+///   creates messages.
+/// - **Input, no `sync:`** → the **SUM** of its inputs' rates. A subscription
+///   callback fires once per message on *each* topic it is registered for, so
+///   a path triggered by two 10 Hz topics runs 20 times a second. Taking the
+///   min here would be the natural-looking mistake and would understate a
+///   fan-in node's load by exactly the factor that matters for scheduling.
+/// - **Input, with `sync:`** → the **MIN**. A synchronizer emits one output
+///   per matched set, so it is paced by its slowest input.
+/// - **Several paths producing one endpoint, or several nodes publishing one
+///   topic** → the sum, for the same reason: they publish independently.
+/// - **`once` / `spontaneous` / unclassified** → `Unknown`. Nothing in the
+///   contract says how often an event-driven or one-shot path fires; that is
+///   a genuine absence of information, not a rate of zero.
+/// - **A cycle** → `Unknown`. A feedback loop's steady-state rate is not
+///   determined by the declarations alone, and guessing one would be worse
+///   than saying so.
+///
+/// Any unknown contributor makes the whole sum unknown: a partial sum would be
+/// a lower bound presented as a rate.
+pub fn derive_topic_rates(
+    index: &ManifestIndex,
+    graph: &GlobalDataflowGraph,
+) -> HashMap<String, DerivedRate> {
+    // (node FQN, subscriber endpoint) -> topic FQN, so an input-triggered
+    // path can find the topic each of its trigger endpoints reads.
+    let mut sub_topic: HashMap<(String, String), String> = HashMap::new();
+    for (topic_fqn, topic) in &index.topics {
+        for ep_ref in &topic.subscribers {
+            if let Some((node, ep)) = split_endpoint_ref(ep_ref) {
+                sub_topic.insert((node, ep), topic_fqn.clone());
+            }
+        }
+    }
+
+    let mut memo: HashMap<String, DerivedRate> = HashMap::new();
+    let mut in_progress: HashSet<String> = HashSet::new();
+    let topics: Vec<String> = index.topics.keys().cloned().collect();
+    for topic in &topics {
+        let r = topic_rate(topic, index, graph, &sub_topic, &mut memo, &mut in_progress);
+        memo.insert(topic.clone(), r);
+    }
+    memo
+}
+
+fn topic_rate(
+    topic_fqn: &str,
+    index: &ManifestIndex,
+    graph: &GlobalDataflowGraph,
+    sub_topic: &HashMap<(String, String), String>,
+    memo: &mut HashMap<String, DerivedRate>,
+    in_progress: &mut HashSet<String>,
+) -> DerivedRate {
+    if let Some(cached) = memo.get(topic_fqn) {
+        return cached.clone();
+    }
+    if !in_progress.insert(topic_fqn.to_string()) {
+        return DerivedRate::Unknown("a cycle in the dataflow graph");
+    }
+
+    let result = (|| {
+        let Some(topic) = index.topics.get(topic_fqn) else {
+            return DerivedRate::Unknown("no such topic in the merged index");
+        };
+        if topic.publishers.is_empty() {
+            return DerivedRate::Unknown("no declared publisher");
+        }
+
+        let mut total = 0.0;
+        for ep_ref in &topic.publishers {
+            let Some((node_fqn, endpoint)) = split_endpoint_ref(ep_ref) else {
+                return DerivedRate::Unknown("a publisher endpoint that does not parse");
+            };
+            let Some(node) = graph.nodes.get(&node_fqn) else {
+                return DerivedRate::Unknown("a publisher with no node declaration");
+            };
+            let producing = node.paths_producing(&endpoint);
+            if producing.is_empty() {
+                return DerivedRate::Unknown("a publisher endpoint no declared path produces");
+            }
+            for path_name in producing {
+                match path_rate(node, path_name, index, graph, sub_topic, memo, in_progress) {
+                    DerivedRate::Hz(hz) => total += hz,
+                    unknown => return unknown,
+                }
+            }
+        }
+        DerivedRate::Hz(total)
+    })();
+
+    in_progress.remove(topic_fqn);
+    result
+}
+
+fn path_rate(
+    node: &GlobalNode,
+    path_name: &str,
+    index: &ManifestIndex,
+    graph: &GlobalDataflowGraph,
+    sub_topic: &HashMap<(String, String), String>,
+    memo: &mut HashMap<String, DerivedRate>,
+    in_progress: &mut HashSet<String>,
+) -> DerivedRate {
+    use ros_launch_manifest_types::EffectiveTrigger as T;
+    let Some(decl) = node.paths.get(path_name) else {
+        return DerivedRate::Unknown("a path that is not declared");
+    };
+    match decl.effective_trigger() {
+        T::Timer { rate_hz } if rate_hz > 0.0 => DerivedRate::Hz(rate_hz),
+        T::Timer { .. } => DerivedRate::Unknown("a timer declaring a non-positive rate"),
+        T::Input(endpoints) if !endpoints.is_empty() => {
+            // A synchronizer emits one output per matched set, so it is paced
+            // by its slowest input; an ordinary multi-input callback fires per
+            // message on any of them, so those rates add.
+            let synchronized = decl.sync.is_some();
+            let mut acc: Option<f64> = None;
+            for ep in &endpoints {
+                let Some(t) = sub_topic.get(&(node.fqn.clone(), ep.clone())) else {
+                    return DerivedRate::Unknown("a trigger endpoint bound to no topic");
+                };
+                match topic_rate(t, index, graph, sub_topic, memo, in_progress) {
+                    DerivedRate::Hz(hz) => {
+                        acc = Some(match acc {
+                            None => hz,
+                            Some(a) if synchronized => a.min(hz),
+                            Some(a) => a + hz,
+                        })
+                    }
+                    unknown => return unknown,
+                }
+            }
+            match acc {
+                Some(hz) => DerivedRate::Hz(hz),
+                None => DerivedRate::Unknown("an input trigger with no endpoints"),
+            }
+        }
+        T::Input(_) => DerivedRate::Unknown("an input trigger with no endpoints"),
+        T::Once => DerivedRate::Unknown("a `once` trigger — it fires exactly once"),
+        T::Spontaneous => {
+            DerivedRate::Unknown("a `spontaneous` trigger — the contract says nothing about when")
+        }
+        T::Unclassified => DerivedRate::Unknown("a path with no declared trigger"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1158,4 +1329,162 @@ mod tests {
         assert!(n.exclusive_siblings_of("health").is_empty());
         assert_eq!(n.exclusive_siblings_of("a"), ["b".to_string()].into());
     }
+
+    // ── Rate propagation ────────────────────────────────────────────────────
+
+    /// Build an index whose topics wire `(node, endpoint)` pairs together,
+    /// which is what the rate walk reads (the graph's own edges only exist
+    /// where a topic has a subscriber).
+    fn rate_index(topics: &[(&str, &[&str], &[&str])]) -> crate::ros::manifest_loader::ManifestIndex {
+        use crate::ros::manifest_loader::{ManifestIndex, ResolvedTopic};
+        let mut index = ManifestIndex::default();
+        for (fqn, pubs, subs) in topics {
+            index.topics.insert(
+                fqn.to_string(),
+                ResolvedTopic {
+                    fqn: fqn.to_string(),
+                    msg_type: "std_msgs/msg/String".to_string(),
+                    qos: None,
+                    publishers: pubs.iter().map(|s| s.to_string()).collect(),
+                    subscribers: subs.iter().map(|s| s.to_string()).collect(),
+                    rate_hz: None,
+                    derived_rate_hz: None,
+                    max_transport_ms: None,
+                    drop: None,
+                    scope_ids: vec![0],
+                },
+            );
+        }
+        index
+    }
+
+    /// The base case: a timer's rate reaches a topic two hops downstream.
+    /// This is what lets `rt_workspace` delete eight of the nine copies of
+    /// `100` it used to carry.
+    #[test]
+    fn a_timer_rate_propagates_along_the_chain() {
+        let g = assemble(
+            vec![
+                node("/a", &[("tick", timer_path(100.0, &["out"], None))]),
+                node("/b", &[("relay", path(&["inp"], &["out"], None))]),
+            ],
+            vec![],
+        );
+        let index = rate_index(&[
+            ("/t1", &["/a/out"], &["/b/inp"]),
+            ("/t2", &["/b/out"], &[]),
+        ]);
+        let rates = derive_topic_rates(&index, &g);
+        assert_eq!(rates["/t1"], DerivedRate::Hz(100.0));
+        assert_eq!(rates["/t2"], DerivedRate::Hz(100.0));
+    }
+
+    /// Two inputs, no `sync:` — the rates ADD.
+    ///
+    /// A subscription callback fires once per message on *each* topic it is
+    /// registered for, so a path triggered by a 10 Hz and a 30 Hz topic runs
+    /// 40 times a second. Taking the min (or the max) is the natural-looking
+    /// mistake and understates a fan-in node's load by exactly the factor
+    /// that decides whether it fits.
+    #[test]
+    fn fan_in_without_sync_sums_its_input_rates() {
+        let g = assemble(
+            vec![
+                node("/fast", &[("tick", timer_path(30.0, &["out"], None))]),
+                node("/slow", &[("tick", timer_path(10.0, &["out"], None))]),
+                node("/merge", &[("both", path(&["a", "b"], &["out"], None))]),
+            ],
+            vec![],
+        );
+        let index = rate_index(&[
+            ("/fast_t", &["/fast/out"], &["/merge/a"]),
+            ("/slow_t", &["/slow/out"], &["/merge/b"]),
+            ("/merged", &["/merge/out"], &[]),
+        ]);
+        let rates = derive_topic_rates(&index, &g);
+        assert_eq!(rates["/merged"], DerivedRate::Hz(40.0));
+    }
+
+    /// The same shape with `sync:` declared — a synchronizer emits one output
+    /// per matched set, so it is paced by its SLOWEST input.
+    #[test]
+    fn fan_in_with_sync_takes_the_slowest_input() {
+        use ros_launch_manifest_types::{Sync, SyncPolicy};
+        let mut both = path(&["a", "b"], &["out"], None);
+        both.sync = Some(Sync {
+            policy: SyncPolicy::Approximate,
+            max_interval: Some(ros_launch_manifest_types::duration::Duration::from_millis_f64(
+                20.0,
+            )),
+            timeout: None,
+        });
+        let g = assemble(
+            vec![
+                node("/fast", &[("tick", timer_path(30.0, &["out"], None))]),
+                node("/slow", &[("tick", timer_path(10.0, &["out"], None))]),
+                node("/merge", &[("both", both)]),
+            ],
+            vec![],
+        );
+        let index = rate_index(&[
+            ("/fast_t", &["/fast/out"], &["/merge/a"]),
+            ("/slow_t", &["/slow/out"], &["/merge/b"]),
+            ("/merged", &["/merge/out"], &[]),
+        ]);
+        let rates = derive_topic_rates(&index, &g);
+        assert_eq!(rates["/merged"], DerivedRate::Hz(10.0));
+    }
+
+    /// A cycle is UNKNOWN, not zero and not a hang. A feedback loop's
+    /// steady-state rate is not determined by the declarations alone.
+    #[test]
+    fn a_cycle_is_unknown_rather_than_a_number() {
+        let g = assemble(
+            vec![
+                node("/a", &[("loop", path(&["inp"], &["out"], None))]),
+                node("/b", &[("loop", path(&["inp"], &["out"], None))]),
+            ],
+            vec![],
+        );
+        let index = rate_index(&[
+            ("/ab", &["/a/out"], &["/b/inp"]),
+            ("/ba", &["/b/out"], &["/a/inp"]),
+        ]);
+        let rates = derive_topic_rates(&index, &g);
+        assert!(
+            matches!(rates["/ab"], DerivedRate::Unknown(_)),
+            "got {:?}",
+            rates["/ab"]
+        );
+    }
+
+    /// An unknown ANYWHERE upstream makes the result unknown, rather than a
+    /// partial sum presented as a rate. `spontaneous` says the contract does
+    /// not know when the path fires, and a downstream rate cannot know better.
+    #[test]
+    fn an_unknown_upstream_is_not_silently_treated_as_zero() {
+        use ros_launch_manifest_types::Trigger;
+        let mut spont = PathDecl {
+            output: vec!["out".to_string()],
+            ..Default::default()
+        };
+        spont.trigger = Some(Trigger::Spontaneous);
+        let g = assemble(
+            vec![
+                node("/ext", &[("event", spont)]),
+                node("/down", &[("relay", path(&["inp"], &["out"], None))]),
+            ],
+            vec![],
+        );
+        let index = rate_index(&[
+            ("/events", &["/ext/out"], &["/down/inp"]),
+            ("/downstream", &["/down/out"], &[]),
+        ]);
+        let rates = derive_topic_rates(&index, &g);
+        match &rates["/downstream"] {
+            DerivedRate::Unknown(why) => assert!(why.contains("spontaneous"), "{why}"),
+            other => panic!("expected Unknown, got {other:?}"),
+        }
+    }
+
 }

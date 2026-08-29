@@ -628,10 +628,32 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   release shipped with the deprecation lint live; 0.10.0 was prepared but never
   tagged, so no user saw the window and 0.9 → next is a hard cut. Removed on
   request, recorded here rather than glossed.
-  **Still not retired, for stated reasons**: `topics.<t>.rate_hz` (its
-  replacement, propagation from the source timer, is NOT implemented —
-  `inherited_rate` checks a stale legacy `input:` list, and deprecating a field
-  nothing would reconstruct is worse than leaving it) and `EndpointProps.jitter`.
+  **Rate propagation and the service binding landed with it.**
+  `derive_topic_rates` propagates from the timers that drive each topic, so
+  `topics.<t>.rate_hz` is a consequence now: a timer path publishes at its own
+  rate, an input-triggered path at the **SUM** of its inputs' rates without
+  `sync:` (a callback fires once per message on *each* topic it is registered
+  for) and at the **MIN** with it (one output per matched set). Taking the min
+  in both cases is the natural-looking mistake and understates a fan-in node's
+  load by exactly the factor that decides whether it fits. Any unknown
+  contributor — `once`, `spontaneous`, an external publisher, a cycle — makes
+  the answer `Unknown` **with a reason**, never zero. `rate-mismatch` (warning)
+  fires when the author's number and the graph's disagree, `derivable-rate`
+  (info) when they agree. Measured on `rt_workspace`: deleting all three
+  `rate_hz` AND all five `min_rate_hz` leaves the derived schedule
+  byte-identical under `rate_monotonic` — **eight of that file's nine copies of
+  `100` were consequences of the one timer**.
+  `max_response` was the last field carried into the model and read by nothing,
+  and the hole was concrete: a node declaring only
+  `srv: { lookup: { max_response: 5ms } }` reported `default (no timing facts)`
+  and got `SCHED_OTHER` priority 0. It is a deadline, so it now joins
+  `extract_path_facts`. The companion `response-blocking` rule is a one-line
+  blocking argument, not response-time analysis: callbacks default to one
+  MUTUALLY EXCLUSIVE group in both rclcpp and nano-ros, so a 5 ms promise
+  beside a 20 ms callback is ruled out by the node's own declarations —
+  suppressed by phase 67's `concurrency:`, which is what it is for.
+  **Still not retired**: `EndpointProps.jitter`, superseded by the path/scope
+  requirement.
   **Phase 67 W5 is still open**: nano-ros has not been told about either seam
   (our platform file assigns per node, theirs per `(node, callback_group)`;
   `ResolvedTier.deadline_policy` already exists there as a home for
