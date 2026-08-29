@@ -29,15 +29,12 @@
 
 use std::collections::BTreeMap;
 
-use ros_launch_manifest_check::Severity;
 use ros_launch_manifest_sched::{
     ChainElement, ChainSemantics, Criticality, EffectiveTrigger, MapperInput, MapperNode,
     MapperPath, ResolvedChain, SystemSched,
 };
-use ros_launch_manifest_types::ChainSegment;
 
 use crate::ros::{
-    chain_checks::{build_pub_sub_maps, resolve_segment},
     launch_dump::LaunchDump,
     manifest_loader::ManifestIndex,
     sched_loader::{ScheduledRecord, scheduled_records_from_dump},
@@ -57,22 +54,13 @@ pub fn mapper_input_from_dump(
         .iter()
         .map(|r| build_mapper_node(r, index, budgets))
         .collect();
-    // Derived routes take precedence over authored `chains:` of the same
-    // name; authored ones survive only while nothing derives that name, which
-    // is what lets both spellings coexist through the deprecation window.
+    // Every chain the mapper sees is DERIVED. `chains:`/`segments:` were
+    // removed in phase 68 W4 — a written route was a second copy of the graph
+    // — so there is no authored spelling left to prefer one over.
     let chains = index
         .map(|i| {
             let graph = super::manifest_graph::build_global_graph(i);
-            let derived = resolve_chains_derived(i, &graph, budgets);
-            let derived_names: std::collections::HashSet<&str> =
-                derived.iter().map(|c| c.name.as_str()).collect();
-            let authored: Vec<ResolvedChain> = resolve_chains(i, budgets)
-                .into_iter()
-                .filter(|c| !derived_names.contains(c.name.as_str()))
-                .collect();
-            let mut all = derived;
-            all.extend(authored);
-            all
+            resolve_chains_derived(i, &graph, budgets)
         })
         .unwrap_or_default();
     MapperInput {
@@ -247,66 +235,6 @@ fn convert_trigger(t: ros_launch_manifest_types::EffectiveTrigger) -> EffectiveT
     }
 }
 
-fn convert_semantics(s: ros_launch_manifest_types::ChainSemantics) -> ChainSemantics {
-    match s {
-        ros_launch_manifest_types::ChainSemantics::Reaction => ChainSemantics::Reaction,
-        ros_launch_manifest_types::ChainSemantics::Age => ChainSemantics::Age,
-    }
-}
-
-/// Resolve every declared `chains:` block in the merged index into the
-/// sched crate's [`ResolvedChain`] (Phase 44.4 §2), reusing
-/// `chain_checks::resolve_segment` (44.2) for `{scope, path}` resolution —
-/// the same function `chain-link`/`chain-budget` use, so extraction and
-/// checking never disagree about what a segment resolves to.
-///
-/// A chain is **excluded** (not pushed to the result, logged at `debug`)
-/// when:
-/// - it already has a `Severity::Error` diagnostic under `chains.<name>`
-///   (either a cross-scope `chain-link` error, in `index.merge_diagnostics`,
-///   or a per-manifest `chain-shape` cyclic-chain error, in that scope's own
-///   `ResolvedManifest::diagnostics`) — a broken/cyclic chain is invisible
-///   to the mapper, exactly like the design's "chains failing chain-link are
-///   excluded from MapperInput" rule (44.2 already emits the diagnostic;
-///   this wave acts on it);
-/// - any of its path segments resolves to a **scope-level aggregate** path
-///   (`node_fqn: None`) rather than a node-owned one — `ChainElement`
-///   requires a node identity per segment (the POSIX apply layer schedules
-///   processes, not scope aggregates), which a whole-scope aggregate path
-///   cannot provide. Not a `chain-link` failure (the checker accepts scope
-///   aggregates as valid hops); a documented sched-extraction limitation.
-pub(crate) fn resolve_chains(
-    index: &ManifestIndex,
-    budgets: &BTreeMap<String, u64>,
-) -> Vec<ResolvedChain> {
-    let (pub_map, sub_map) = build_pub_sub_maps(index);
-
-    index
-        .manifests
-        .values()
-        .flat_map(|resolved| resolved.manifest.chains.iter())
-        .filter_map(|(chain_name, chain)| {
-            if chain_has_error_diagnostic(index, chain_name) {
-                tracing::debug!(
-                    "sched: chain '{chain_name}' excluded from mapper input — has a chain-link \
-                     or chain-shape error"
-                );
-                return None;
-            }
-            let resolved_chain =
-                build_resolved_chain(index, &pub_map, &sub_map, chain_name, chain, budgets);
-            if resolved_chain.is_none() {
-                tracing::debug!(
-                    "sched: chain '{chain_name}' excluded from mapper input — a path segment \
-                     resolved to a scope-level aggregate path (no owning node) or could not be \
-                     resolved"
-                );
-            }
-            resolved_chain
-        })
-        .collect()
-}
-
 /// Build `ResolvedChain`s from **derived** routes rather than from authored
 /// `chains:`/`segments:`. A derived route is the one
 /// `check_scope_path_critical_path` already computes for a scope path.
@@ -389,23 +317,6 @@ pub(crate) fn resolve_chains_derived(
     out
 }
 
-/// `true` if `chains.<chain_name>` has any `Severity::Error` diagnostic,
-/// either cross-scope (`chain-link`, in `merge_diagnostics`) or per-manifest
-/// (`chain-shape`, in some scope's own `ResolvedManifest::diagnostics`).
-fn chain_has_error_diagnostic(index: &ManifestIndex, chain_name: &str) -> bool {
-    let path = format!("chains.{chain_name}");
-    let cross_scope = index
-        .merge_diagnostics
-        .iter()
-        .any(|d| d.severity == Severity::Error && d.path == path);
-    let per_manifest = index.manifests.values().any(|m| {
-        m.diagnostics
-            .iter()
-            .any(|d| d.severity == Severity::Error && d.path == path)
-    });
-    cross_scope || per_manifest
-}
-
 /// Resolve one chain's segments into the alternating `Segment`/`Boundary`
 /// decomposition (design "Model: clock-segmented chains"): `via` segments
 /// are connectivity-only (already validated by `chain-link`) and don't
@@ -429,83 +340,6 @@ fn budget_us_for(budgets: &BTreeMap<String, u64>, node_fqn: &str) -> Option<u64>
             .next()
             .filter(|bare| !bare.is_empty())
             .and_then(|bare| budgets.get(bare).copied())
-    })
-}
-
-fn build_resolved_chain(
-    index: &ManifestIndex,
-    pub_map: &std::collections::HashMap<String, String>,
-    sub_map: &std::collections::HashMap<String, String>,
-    chain_name: &str,
-    chain: &ros_launch_manifest_types::ChainDecl,
-    budgets: &BTreeMap<String, u64>,
-) -> Option<ResolvedChain> {
-    let mut elements: Vec<ChainElement> = Vec::new();
-    let mut criticality: Option<Criticality> = None;
-
-    for seg in &chain.segments {
-        let ChainSegment::Path { scope, path } = seg else {
-            continue;
-        };
-        let resolved = resolve_segment(index, pub_map, sub_map, scope, path)?;
-        // `ChainElement` requires a node identity — scope-level aggregate
-        // paths (`node_fqn: None`) can't provide one; exclude the whole
-        // chain (documented limitation, see `resolve_chains` doc comment).
-        let node_fqn = resolved.node_fqn.clone()?;
-
-        if let Some(scope_id) = resolved.scope_id
-            && let Some(c) = node_criticality(index, scope_id, &node_fqn)
-            && criticality.is_none_or(|cur| c > cur)
-        {
-            criticality = Some(c);
-        }
-
-        match resolved.trigger {
-            ros_launch_manifest_types::EffectiveTrigger::Timer { rate_hz } if rate_hz > 0.0 => {
-                // `exec_ms` is a COST. It used to be filled with
-                // `resolved.max_latency_ms`, which is the path's declared
-                // *deadline* — the conflation that made response-time
-                // analysis, reservation sizing and feasibility all
-                // unreachable, because no true execution time existed
-                // anywhere in the model.
-                //
-                // The only legitimate source is a declared budget from the
-                // platform file. Absent one, the cost is ABSENT — which the
-                // `chain-sampling-feasibility` diagnostic already reports as
-                // "feasible ON INCOMPLETE EVIDENCE". Substituting the deadline
-                // made that verdict silently optimistic instead.
-                //
-                // Budgets are per-node, so a node appearing on two chains
-                // contributes the same cost to both. Per-(node, path) cost is
-                // the open question a `costs:` section would answer.
-                let exec_ms = budget_us_for(budgets, &node_fqn).map(|us| us as f64 / 1000.0);
-                elements.push(ChainElement::Boundary {
-                    node: node_fqn,
-                    path: path.clone(),
-                    period_ms: 1000.0 / rate_hz,
-                    exec_ms,
-                });
-            }
-            _ => push_segment_node(&mut elements, node_fqn, path.clone()),
-        }
-    }
-
-    if elements.is_empty() {
-        return None;
-    }
-
-    Some(ResolvedChain {
-        name: chain_name.to_string(),
-        // No W1 chain-level `criticality` field — the caller (this wave)
-        // derives it as the max over the chain's member nodes'
-        // `criticality`, per the W3 report's documented resolution of this
-        // question. `Low` when no member declares a criticality at all
-        // (matches `Criticality`'s own "advisory hint, absent = no signal"
-        // convention elsewhere in this module).
-        criticality: criticality.unwrap_or(Criticality::Low),
-        max_latency_ms: chain.max_latency.as_millis_f64(),
-        semantics: convert_semantics(chain.semantics),
-        elements,
     })
 }
 
@@ -635,7 +469,7 @@ fn extract_criticality(record: &ScheduledRecord, index: &ManifestIndex) -> Optio
 mod tests {
     use super::*;
     use crate::ros::manifest_loader::{
-        ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedTopic,
+        ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedScopePath, ResolvedTopic,
     };
     use ros_launch_manifest_types::{Manifest, NodeDecl, PathDecl};
     use std::collections::BTreeMap;
@@ -993,141 +827,6 @@ mod tests {
         assert!(listener.paths.is_empty());
     }
 
-    // ── Real cross-scope chain fixtures (mirrors
-    // `chain_checks::tests::chain_dump`/`overlay_index` — duplicated
-    // locally since those helpers are private to that module's own test
-    // submodule). ──
-
-    fn fixture_dir() -> std::path::PathBuf {
-        // See chain_checks::tests::fixture_dir — the manifest repository owns
-        // these fixtures and is a git dependency since phase-55 W2.
-        ros_launch_manifest_check::fixture_dir()
-    }
-
-    fn overlay_index(dump: &LaunchDump) -> ManifestIndex {
-        use crate::ros::manifest_loader::{ContractSources, load_manifests};
-
-        let tmp = tempfile::TempDir::new().unwrap();
-        for scope in &dump.scopes {
-            let Some(origin) = &scope.origin else {
-                continue;
-            };
-            let pkg_dir = origin.pkg.as_deref().unwrap_or("_");
-            let stem = origin
-                .file
-                .strip_suffix(".launch.xml")
-                .or_else(|| origin.file.strip_suffix(".launch.py"))
-                .or_else(|| origin.file.strip_suffix(".launch.yaml"))
-                .or_else(|| origin.file.strip_suffix(".launch"))
-                .unwrap_or(&origin.file);
-            let src = fixture_dir().join(pkg_dir).join("manifest.yaml");
-            if !src.exists() {
-                continue;
-            }
-            let dest_dir = tmp.path().join(pkg_dir).join("launch");
-            std::fs::create_dir_all(&dest_dir).unwrap();
-            std::fs::copy(&src, dest_dir.join(format!("{stem}.contract.yaml"))).unwrap();
-        }
-        let sources = ContractSources {
-            overlay: Some(tmp.path().to_path_buf()),
-            provider: false,
-        };
-        load_manifests(dump, &sources).unwrap()
-    }
-
-    fn make_chain_dump() -> LaunchDump {
-        use crate::ros::launch_dump::{ScopeEntry, ScopeOrigin};
-        let scope =
-            |id: usize, pkg: &str, file: &str, ns: &str, parent: Option<usize>| ScopeEntry {
-                id,
-                origin: Some(ScopeOrigin {
-                    pkg: Some(pkg.to_string()),
-                    file: file.to_string(),
-                    path: None,
-                }),
-                ns: ns.to_string(),
-                args: std::collections::HashMap::new(),
-                parent,
-            };
-        LaunchDump {
-            node: vec![],
-            load_node: vec![],
-            container: vec![],
-            lifecycle_node: vec![],
-            file_data: std::collections::HashMap::new(),
-            variables: std::collections::HashMap::new(),
-            scopes: vec![
-                scope(0, "manifest_chain_root", "root.launch.xml", "", None),
-                scope(1, "manifest_chain_a", "a.launch.xml", "/a", Some(0)),
-                scope(2, "manifest_chain_b", "b.launch.xml", "/b", Some(0)),
-            ],
-        }
-    }
-
-    #[test]
-    fn resolve_chains_includes_the_clean_chain_with_segment_elements() {
-        let index = overlay_index(&make_chain_dump());
-        let chains = resolve_chains(&index, &BTreeMap::new());
-        let ok = chains
-            .iter()
-            .find(|c| c.name == "ok_chain")
-            .expect("ok_chain should resolve — no chain-link errors");
-        // producer.make (spontaneous) -> consumer.consume (input): neither
-        // is a Timer trigger, so both merge into one Segment run, in
-        // declaration order.
-        assert_eq!(ok.elements.len(), 1);
-        match &ok.elements[0] {
-            ChainElement::Segment {
-                nodes_in_topo_order,
-            } => {
-                assert_eq!(
-                    nodes_in_topo_order,
-                    &vec![
-                        ros_launch_manifest_sched::SegmentNode {
-                            node: "/a/producer".to_string(),
-                            path: "make".to_string(),
-                        },
-                        ros_launch_manifest_sched::SegmentNode {
-                            node: "/b/consumer".to_string(),
-                            path: "consume".to_string(),
-                        },
-                    ]
-                );
-            }
-            other => panic!("expected a Segment, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn resolve_chains_excludes_chains_with_chain_link_errors() {
-        let index = overlay_index(&make_chain_dump());
-        let chains = resolve_chains(&index, &BTreeMap::new());
-        for broken in [
-            "broken_via_chain",
-            "via_not_output_chain",
-            "via_not_consumed_chain",
-        ] {
-            assert!(
-                !chains.iter().any(|c| c.name == broken),
-                "chain '{broken}' has a chain-link error and must be excluded from MapperInput, \
-                 got: {:?}",
-                chains.iter().map(|c| &c.name).collect::<Vec<_>>()
-            );
-        }
-    }
-
-    #[test]
-    fn resolve_chains_includes_budget_and_sampling_warned_chains() {
-        // `chain-budget`/`chain-sampling-feasibility` are WARNINGS, not
-        // `chain-link` ERRORs — these chains resolve fine structurally and
-        // must still reach the mapper (which has its own feasibility step
-        // and emits `MapWarning::ChainInfeasible` for the infeasible one).
-        let index = overlay_index(&make_chain_dump());
-        let chains = resolve_chains(&index, &BTreeMap::new());
-        assert!(chains.iter().any(|c| c.name == "budget_blown_chain"));
-        assert!(chains.iter().any(|c| c.name == "sampling_infeasible_chain"));
-    }
-
     /// Hand-built index: a two-node chain where one path is a Timer
     /// (Boundary) and the other Input (Segment), with distinct node
     /// criticalities. `/talker/tick` declares `max_latency_ms: 2.0` and NO
@@ -1137,11 +836,32 @@ mod tests {
         // (Boundary) and the other is Input (Segment), with distinct node
         // criticalities — asserts both the Boundary/Segment split and the
         // "criticality = max over member nodes" rule.
+        let ms = ros_launch_manifest_types::duration::Duration::from_millis_f64;
+        let tick = PathDecl {
+            trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 50.0 }),
+            output: vec!["chatter".to_string()],
+            max_latency: Some(ms(2.0)),
+            ..Default::default()
+        };
+        let react = PathDecl {
+            trigger: Some(ros_launch_manifest_types::Trigger::Input(vec![
+                "chatter".to_string(),
+            ])),
+            output: vec!["reaction".to_string()],
+            max_latency: Some(ms(8.0)),
+            ..Default::default()
+        };
+
         let mut nodes = BTreeMap::new();
         nodes.insert(
             "talker".to_string(),
             NodeDecl {
                 criticality: Some("low".to_string()),
+                // The route is derived from the graph, and `build_global_graph`
+                // reads paths off the manifest's own `NodeDecl` — declaring
+                // them only in `index.node_paths` gives a node with no trigger
+                // facts, hence no route and an empty chain list.
+                paths: BTreeMap::from([("tick".to_string(), tick.clone())]),
                 ..Default::default()
             },
         );
@@ -1149,34 +869,13 @@ mod tests {
             "listener".to_string(),
             NodeDecl {
                 criticality: Some("high".to_string()),
+                paths: BTreeMap::from([("react".to_string(), react.clone())]),
                 ..Default::default()
-            },
-        );
-        let mut chains = BTreeMap::new();
-        chains.insert(
-            "mixed_chain".to_string(),
-            ros_launch_manifest_types::ChainDecl {
-                semantics: ros_launch_manifest_types::ChainSemantics::Reaction,
-                max_latency: ros_launch_manifest_types::duration::Duration::from_millis_f64(100.0),
-                segments: vec![
-                    ChainSegment::Path {
-                        scope: "/".to_string(),
-                        path: "tick".to_string(),
-                    },
-                    ChainSegment::Via {
-                        via: "/chatter".to_string(),
-                    },
-                    ChainSegment::Path {
-                        scope: "/".to_string(),
-                        path: "react".to_string(),
-                    },
-                ],
             },
         );
         let manifest = Manifest {
             version: 1,
             nodes,
-            chains,
             ..Default::default()
         };
 
@@ -1184,31 +883,30 @@ mod tests {
         index
             .manifests
             .insert(0, empty_resolved_manifest(0, manifest));
+        // The requirement, stated as a scope path: two ends and a budget. The
+        // route between them is derived from the trigger/output facts of the
+        // two node paths below — which is the whole point of the spelling that
+        // replaced `chains:`/`segments:`.
+        index.scope_paths.push(ResolvedScopePath {
+            scope_id: 0,
+            path_name: "mixed_chain".to_string(),
+            input_topics: vec!["/chatter".to_string()],
+            output_topics: vec!["/reaction".to_string()],
+            path: PathDecl {
+                max_latency: Some(ms(100.0)),
+                ..Default::default()
+            },
+        });
         index.node_paths.push(ResolvedNodePath {
             node_fqn: "/talker".to_string(),
             path_name: "tick".to_string(),
-            path: PathDecl {
-                trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 50.0 }),
-                output: vec!["chatter".to_string()],
-                max_latency: Some(
-                    ros_launch_manifest_types::duration::Duration::from_millis_f64(2.0),
-                ),
-                ..Default::default()
-            },
+            path: tick,
             scope_id: 0,
         });
         index.node_paths.push(ResolvedNodePath {
             node_fqn: "/listener".to_string(),
             path_name: "react".to_string(),
-            path: PathDecl {
-                trigger: Some(ros_launch_manifest_types::Trigger::Input(vec![
-                    "chatter".to_string(),
-                ])),
-                max_latency: Some(
-                    ros_launch_manifest_types::duration::Duration::from_millis_f64(8.0),
-                ),
-                ..Default::default()
-            },
+            path: react,
             scope_id: 0,
         });
         index.topics.insert(
@@ -1225,6 +923,20 @@ mod tests {
                 scope_ids: vec![0],
             },
         );
+        index.topics.insert(
+            "/reaction".to_string(),
+            ResolvedTopic {
+                fqn: "/reaction".to_string(),
+                msg_type: "std_msgs/msg/String".to_string(),
+                qos: None,
+                publishers: vec!["/listener/reaction".to_string()],
+                subscribers: vec![],
+                rate_hz: None,
+                max_transport_ms: None,
+                drop: None,
+                scope_ids: vec![0],
+            },
+        );
 
         index
     }
@@ -1234,7 +946,8 @@ mod tests {
     fn a_declared_budget_becomes_the_boundary_cost() {
         let index = chain_index_for_cost_tests();
         let budgets = BTreeMap::from([("/talker".to_string(), 3_500u64)]);
-        let chains = resolve_chains(&index, &budgets);
+        let graph = super::super::manifest_graph::build_global_graph(&index);
+        let chains = resolve_chains_derived(&index, &graph, &budgets);
         let chain = chains
             .iter()
             .find(|c| c.name == "mixed_chain")
@@ -1260,7 +973,8 @@ mod tests {
     #[test]
     fn a_declared_deadline_is_never_used_as_a_cost() {
         let index = chain_index_for_cost_tests();
-        let chains = resolve_chains(&index, &BTreeMap::new());
+        let graph = super::super::manifest_graph::build_global_graph(&index);
+        let chains = resolve_chains_derived(&index, &graph, &BTreeMap::new());
         let chain = chains
             .iter()
             .find(|c| c.name == "mixed_chain")
@@ -1276,10 +990,11 @@ mod tests {
     }
 
     #[test]
-    fn build_resolved_chain_classifies_timer_as_boundary_and_criticality_is_max_of_members() {
+    fn a_derived_route_classifies_timer_as_boundary_and_criticality_is_max_of_members() {
         let index = chain_index_for_cost_tests();
 
-        let chains = resolve_chains(&index, &BTreeMap::new());
+        let graph = super::super::manifest_graph::build_global_graph(&index);
+        let chains = resolve_chains_derived(&index, &graph, &BTreeMap::new());
         let chain = chains
             .iter()
             .find(|c| c.name == "mixed_chain")

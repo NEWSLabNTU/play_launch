@@ -712,14 +712,11 @@ nodes:
         trigger: { input: [chatter] }
         output: [done]
         max_latency_ms: 20
-chains:
+paths:
   test_chain:
-    semantics: reaction
-    max_latency_ms: 500
-    segments:
-      - { scope: /, path: tick }
-      - { via: /chatter }
-      - { scope: /, path: handle }
+    trigger: { input: [/chatter] }
+    output: [/done]
+    max_latency: 500ms
 topics:
   chatter:
     type: std_msgs/msg/String

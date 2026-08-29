@@ -6,7 +6,6 @@
 //! which is layer 3's job (RFC-0060).
 pub mod causal_dag_global;
 pub mod causal_graph;
-pub mod chain_checks;
 pub mod graph_identity;
 pub mod launch_dump;
 pub mod manifest_graph;

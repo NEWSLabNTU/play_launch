@@ -434,14 +434,19 @@ fn check_explain_shows_derived_override_and_default_provenance() {
     );
 }
 
-/// Deliverable 4(c): an overlay that tightens the fixture's chain budget
-/// below the chain's own `sampling_cost` (the `sensor_node.tick` boundary's
-/// period alone, 10ms at 100 Hz) must trigger the `chain-sampling-
-/// feasibility` warning (structural infeasibility — no scheduling
-/// assignment can fix it) — `check` must still exit 0 (warnings never
-/// fail `check`).
+/// Deliverable 4(c): an overlay that tightens the fixture's end-to-end budget
+/// below the derived route's own sampling cost (the `sensor_node.tick`
+/// boundary's period alone, 10ms at 100 Hz) must trigger the
+/// `scope-sampling-feasibility` warning (structural infeasibility — no
+/// scheduling assignment can fix it) — `check` must still exit 0 (warnings
+/// never fail `check`).
+///
+/// Phase 68 W4 moved this from `chain-sampling-feasibility`, which said the
+/// same thing about an authored `chains:` route. The rule was carried over
+/// rather than dropped precisely so this claim keeps being made: a total over
+/// budget may be fixable by scheduling, a sampling cost over budget cannot be.
 #[test]
-fn check_chain_budget_tightened_below_sampling_cost_warns_infeasible() {
+fn check_scope_path_budget_tightened_below_sampling_cost_warns_infeasible() {
     if !require_rt_workspace() {
         return;
     }
@@ -493,16 +498,11 @@ nodes:
         output: [cmd]
         max_latency_ms: 10
 
-chains:
+paths:
   points_to_cmd:
-    semantics: reaction
-    max_latency_ms: 5
-    segments:
-      - { scope: /, path: tick }
-      - { via: /perception/points_raw }
-      - { scope: /, path: filter }
-      - { via: /perception/points_filtered }
-      - { scope: /, path: control }
+    trigger: { input: [/perception/points_raw] }
+    output: [/control/cmd]
+    max_latency: 5ms
 
 topics:
   /perception/points_raw:
@@ -545,16 +545,16 @@ topics:
         "tightened chain budget must warn, not fail, check:\n{combined}"
     );
     assert!(
-        combined.contains("chain-sampling-feasibility"),
-        "expected the chain-sampling-feasibility warning:\n{combined}"
+        combined.contains("scope-sampling-feasibility"),
+        "expected the scope-sampling-feasibility warning:\n{combined}"
     );
     assert!(
         combined.contains("points_to_cmd"),
         "expected the warning to name the infeasible chain:\n{combined}"
     );
     assert!(
-        combined.contains("sampling_cost"),
-        "expected the sampling_cost breakdown in the warning:\n{combined}"
+        combined.contains("sampling cost"),
+        "expected the sampling-cost breakdown in the warning:\n{combined}"
     );
 }
 
@@ -995,7 +995,7 @@ fn resolve_omits_sched_but_check_explain_shows_chain_aware() {
     // Every rt_demo node is bound to a tier (the mapper's projected outcome).
     assert!(!bindings.is_empty(), "bindings must be populated: {model}");
 
-    // The known points_to_cmd chain members (from the fixture's chains: decl).
+    // The known points_to_cmd members (from the fixture's scope path).
     let chain_member_fqns = [
         "/perception/sensor_node",
         "/perception/filter_component",
@@ -1330,8 +1330,10 @@ fn check_export_graph_json_matches_contract() {
     );
     assert_eq!(
         array_len(&graph, "scope_paths"),
-        0,
-        "bringup.contract.yaml declares no scope-level paths: {graph}"
+        1,
+        "phase 68 W4: bringup.contract.yaml states its end-to-end requirement \
+         as the scope path `points_to_cmd`, where it used to write the route \
+         out as `chains:`/`segments:`: {graph}"
     );
     assert_eq!(
         array_len(&graph, "cycles"),

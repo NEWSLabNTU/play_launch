@@ -2465,18 +2465,18 @@ mod tests {
         index
     }
 
-    /// A contract index declaring one chain (`sensing_chain`): `/fast_node`
-    /// has a Timer path (`tick`, 50 Hz — a Boundary) that outputs
+    /// A contract index declaring one scope path (`sensing_chain`):
+    /// `/fast_node` has a Timer path (`tick`, 50 Hz — a Boundary) that outputs
     /// `/link_topic`; `/slow_node` has an Input path (`react`, consuming
-    /// `/link_topic`, 8ms deadline — a Segment) — a 2-element chain
-    /// exercising both `ChainElement` kinds (Phase 44.4).
+    /// `/link_topic` and publishing `/sink_topic` — a Segment). The route
+    /// between the scope path's two ends is DERIVED, exercising both
+    /// `ChainElement` kinds (Phase 44.4) the way phase 68 W4 leaves them.
     fn index_with_chain() -> ManifestIndex {
         use crate::ros::manifest_loader::{
             ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedTopic,
         };
-        use ros_launch_manifest_types::{
-            ChainDecl, ChainSegment, ChainSemantics, Manifest, NodeDecl, PathDecl, Trigger,
-        };
+        use crate::ros::manifest_loader::ResolvedScopePath;
+        use ros_launch_manifest_types::{Manifest, NodeDecl, PathDecl, Trigger};
 
         let mut index = ManifestIndex::default();
         index.node_paths.push(ResolvedNodePath {
@@ -2507,6 +2507,7 @@ mod tests {
             path_name: "react".to_string(),
             path: PathDecl {
                 trigger: Some(Trigger::Input(vec!["react_in".to_string()])),
+                output: vec!["react_out".to_string()],
                 max_latency: Some(
                     ros_launch_manifest_types::duration::Duration::from_millis_f64(1.0),
                 ),
@@ -2529,39 +2530,77 @@ mod tests {
             },
         );
 
+        index.topics.insert(
+            "/sink_topic".to_string(),
+            ResolvedTopic {
+                fqn: "/sink_topic".to_string(),
+                msg_type: "std_msgs/msg/String".to_string(),
+                qos: None,
+                publishers: vec!["/slow_node/react_out".to_string()],
+                subscribers: vec![],
+                rate_hz: None,
+                max_transport_ms: None,
+                drop: None,
+                scope_ids: vec![0],
+            },
+        );
+        // The scope path: two ends and a budget. Its route is derived.
+        index.scope_paths.push(ResolvedScopePath {
+            scope_id: 0,
+            path_name: "sensing_chain".to_string(),
+            input_topics: vec!["/link_topic".to_string()],
+            output_topics: vec!["/sink_topic".to_string()],
+            path: PathDecl {
+                max_latency: Some(
+                    ros_launch_manifest_types::duration::Duration::from_millis_f64(100.0),
+                ),
+                ..Default::default()
+            },
+        });
+
         let mut nodes = BTreeMap::new();
         nodes.insert(
             "fast_node".to_string(),
             NodeDecl {
                 criticality: Some("high".to_string()),
+                // `build_global_graph` derives the route from the paths on the
+                // manifest's own `NodeDecl`, so a fixture that declares them
+                // only in `index.node_paths` yields a node with no trigger
+                // facts and therefore no route at all.
+                paths: BTreeMap::from([(
+                    "tick".to_string(),
+                    PathDecl {
+                        trigger: Some(Trigger::Timer { rate_hz: 50.0 }),
+                        output: vec!["tick_out".to_string()],
+                        max_latency: Some(
+                            ros_launch_manifest_types::duration::Duration::from_millis_f64(20.0),
+                        ),
+                        ..Default::default()
+                    },
+                )]),
                 ..Default::default()
             },
         );
-        let mut chains = BTreeMap::new();
-        chains.insert(
-            "sensing_chain".to_string(),
-            ChainDecl {
-                semantics: ChainSemantics::Reaction,
-                max_latency: ros_launch_manifest_types::duration::Duration::from_millis_f64(100.0),
-                segments: vec![
-                    ChainSegment::Path {
-                        scope: "/".to_string(),
-                        path: "tick".to_string(),
+        nodes.insert(
+            "slow_node".to_string(),
+            NodeDecl {
+                paths: BTreeMap::from([(
+                    "react".to_string(),
+                    PathDecl {
+                        trigger: Some(Trigger::Input(vec!["react_in".to_string()])),
+                        output: vec!["react_out".to_string()],
+                        max_latency: Some(
+                            ros_launch_manifest_types::duration::Duration::from_millis_f64(1.0),
+                        ),
+                        ..Default::default()
                     },
-                    ChainSegment::Via {
-                        via: "/link_topic".to_string(),
-                    },
-                    ChainSegment::Path {
-                        scope: "/".to_string(),
-                        path: "react".to_string(),
-                    },
-                ],
+                )]),
+                ..Default::default()
             },
         );
         let manifest = Manifest {
             version: 1,
             nodes,
-            chains,
             ..Default::default()
         };
         index.manifests.insert(
@@ -3444,53 +3483,69 @@ nodes = ["fast_node"]
     /// share one `coarse_group` and DO legally collapse together under
     /// scarcity.
     fn index_with_two_independent_chains() -> ManifestIndex {
-        use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedNodePath};
-        use ros_launch_manifest_types::{
-            ChainDecl, ChainSegment, ChainSemantics, Manifest, PathDecl, Trigger,
+        use crate::ros::manifest_loader::{
+            ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedScopePath, ResolvedTopic,
         };
+        use ros_launch_manifest_types::{Manifest, NodeDecl, PathDecl, Trigger};
 
         let mut index = ManifestIndex::default();
-        index.node_paths.push(ResolvedNodePath {
-            node_fqn: "/fast_node".to_string(),
-            path_name: "tick".to_string(),
-            path: PathDecl {
-                trigger: Some(Trigger::Timer { rate_hz: 50.0 }),
-                ..Default::default()
-            },
-            scope_id: 0,
-        });
-        index.node_paths.push(ResolvedNodePath {
-            node_fqn: "/slow_node".to_string(),
-            path_name: "tick2".to_string(),
-            path: PathDecl {
-                trigger: Some(Trigger::Timer { rate_hz: 10.0 }),
-                ..Default::default()
-            },
-            scope_id: 0,
-        });
+        let mut nodes = BTreeMap::new();
 
-        let mut chains = BTreeMap::new();
-        for (name, path) in [("chain_a", "tick"), ("chain_b", "tick2")] {
-            chains.insert(
-                name.to_string(),
-                ChainDecl {
-                    semantics: ChainSemantics::Reaction,
-                    max_latency: ros_launch_manifest_types::duration::Duration::from_millis_f64(
-                        1000.0,
-                    ),
-                    // A single-element chain is valid (first == last == a
-                    // Path segment); no `via` needed since there's nothing
-                    // to connect.
-                    segments: vec![ChainSegment::Path {
-                        scope: "/".to_string(),
-                        path: path.to_string(),
-                    }],
+        for (node, path_name, rate, endpoint, topic, chain) in [
+            ("fast_node", "tick", 50.0, "fast_out", "/fast_topic", "chain_a"),
+            ("slow_node", "tick2", 10.0, "slow_out", "/slow_topic", "chain_b"),
+        ] {
+            let decl = PathDecl {
+                trigger: Some(Trigger::Timer { rate_hz: rate }),
+                output: vec![endpoint.to_string()],
+                ..Default::default()
+            };
+            index.node_paths.push(ResolvedNodePath {
+                node_fqn: format!("/{node}"),
+                path_name: path_name.to_string(),
+                path: decl.clone(),
+                scope_id: 0,
+            });
+            nodes.insert(
+                node.to_string(),
+                NodeDecl {
+                    paths: BTreeMap::from([(path_name.to_string(), decl)]),
+                    ..Default::default()
                 },
             );
+            index.topics.insert(
+                topic.to_string(),
+                ResolvedTopic {
+                    fqn: topic.to_string(),
+                    msg_type: "std_msgs/msg/String".to_string(),
+                    qos: None,
+                    publishers: vec![format!("/{node}/{endpoint}")],
+                    subscribers: vec![],
+                    rate_hz: None,
+                    max_transport_ms: None,
+                    drop: None,
+                    scope_ids: vec![0],
+                },
+            );
+            // A single-boundary route: the scope path's two ends are the same
+            // topic, which is the shortest thing that still has a route.
+            index.scope_paths.push(ResolvedScopePath {
+                scope_id: 0,
+                path_name: chain.to_string(),
+                input_topics: vec![topic.to_string()],
+                output_topics: vec![topic.to_string()],
+                path: PathDecl {
+                    max_latency: Some(
+                        ros_launch_manifest_types::duration::Duration::from_millis_f64(1000.0),
+                    ),
+                    ..Default::default()
+                },
+            });
         }
+
         let manifest = Manifest {
             version: 1,
-            chains,
+            nodes,
             ..Default::default()
         };
         index.manifests.insert(
@@ -3516,6 +3571,24 @@ nodes = ["fast_node"]
     fn derive_chain_aware_band_too_narrow_warns_in_warn_mode_errors_in_strict() {
         let dump = dump_two_plain_nodes();
         let index = index_with_two_independent_chains();
+        // Guard against the vacuous pass this test spent a while in: when
+        // authored `chains:` stopped reaching the mapper, ZERO chains reached
+        // it here and the assertions below still passed, because two distinct
+        // NON-chain nodes also refuse to collapse. The warning was right for
+        // the wrong reason, which is no test at all.
+        let reaching = crate::ros::sched_derive::mapper_input_from_dump(
+            &dump,
+            Some(&index),
+            None,
+            &std::collections::BTreeMap::new(),
+        );
+        assert_eq!(
+            reaching.chains.len(),
+            2,
+            "this test is about two DISTINCT chains not collapsing; without two \
+             chains reaching the mapper it proves nothing: {:?}",
+            reaching.chains.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
         // A single-priority band: two DIFFERENT chains' items never
         // collapse into each other (design step 7), so 2 irreducible
         // classes can't fit into width 1 — guaranteed `BandTooNarrow`.

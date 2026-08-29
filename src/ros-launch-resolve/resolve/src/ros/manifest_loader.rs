@@ -676,7 +676,6 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
 
     // Vocabulary v2 chains: chain-link (existence + via linkage across
     // scopes), chain-budget, chain-sampling-feasibility (Phase 44.2).
-    super::chain_checks::check_chains(index);
 }
 
 /// Build the global dataflow graph and verify each scope path's
@@ -751,6 +750,38 @@ fn check_scope_path_critical_path(
                     cp.nodes.join(" → "),
                 ),
                 path: format!("paths.{}.max_jitter", scope_path.path_name),
+                span: None,
+            });
+        }
+
+        // `scope-sampling-feasibility`: the sampling term ALONE meeting or
+        // exceeding the budget is a different and worse statement than the
+        // total exceeding it. A total over budget may be fixable by
+        // scheduling; a sampling cost over budget cannot be fixed by any
+        // priority assignment, because it is the time the route spends waiting
+        // for clocks rather than running. The only fixes are a faster boundary
+        // or a looser budget.
+        //
+        // Carried over from the retired `chain-sampling-feasibility`, which
+        // said the same thing about an authored chain. Emitted BEFORE
+        // `scope-budget` so the structural verdict reads first — the budget
+        // warning necessarily fires too, and on its own it invites an author
+        // to go optimise callbacks that are not the problem.
+        if cp.sampling_cost_ms >= declared {
+            index.merge_diagnostics.push(Diagnostic {
+                rule_id: "scope-sampling-feasibility".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "scope path '{}' (scope {}) is structurally infeasible: sampling cost \
+                     alone ({:.2}ms, one period per clock boundary crossed: {}) meets or \
+                     exceeds the declared max_latency ({declared}ms). No priority assignment \
+                     can reduce this — raise the boundary's rate or the budget",
+                    scope_path.path_name,
+                    scope_path.scope_id,
+                    cp.sampling_cost_ms,
+                    cp.nodes.join(" \u{2192} "),
+                ),
+                path: format!("paths.{}", scope_path.path_name),
                 span: None,
             });
         }
