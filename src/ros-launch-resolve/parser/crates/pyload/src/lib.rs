@@ -55,6 +55,13 @@ pub enum LoadError {
     },
     /// The Python half is present but speaks a different C ABI.
     AbiMismatch { ours: u32, theirs: u32 },
+    /// The Python half is not installed beside the driver at all.
+    ///
+    /// Distinct from `Pyexec`, which is "it is there and would not load".
+    /// Collapsing the two produced `dlopen failed, but system did not report
+    /// the error` for a plain missing file — a message that sends the reader
+    /// looking for a loader problem when nothing was ever built.
+    PyexecMissing { searched: Vec<PathBuf> },
 }
 
 impl std::fmt::Display for LoadError {
@@ -95,6 +102,22 @@ impl std::fmt::Display for LoadError {
             Self::Libpython { path, source } => {
                 write!(f, "could not open `{}`: {source}", path.display())
             }
+            Self::PyexecMissing { searched } => write!(
+                f,
+                "the Python half is not installed: `libplay_launch_parser_pyexec.so` \
+                 is not beside this executable.\n\n\
+                 Looked in:\n{}\n\n\
+                 The driver and the Python half are TWO artifacts — the driver \
+                 links no `libpython` on purpose, so it loads one at runtime and \
+                 cannot evaluate anything on its own. Rebuild whatever installed \
+                 this binary; a build that emits only the driver produces exactly \
+                 this state.",
+                searched
+                    .iter()
+                    .map(|p| format!("  {}", p.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
             Self::Pyexec { path, source } => write!(
                 f,
                 "could not open the Python half `{}`: {source}\n\n\
@@ -351,12 +374,24 @@ impl play_launch_parser::python_backend::PythonBackend for Loaded {
 /// finds whichever copy is first, which is how an unrelated
 /// `play_launch` came to shadow ours.
 pub fn pyexec_beside_exe() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
+    pyexec_search_paths().into_iter().find(|c| c.is_file())
+}
+
+/// Where `pyexec_beside_exe` looks, in order.
+///
+/// Split out so a failure can NAME the paths it tried. "Not found" without
+/// them is unactionable — the reader cannot tell whether the lookup was even
+/// pointed at the right directory.
+#[must_use]
+pub fn pyexec_search_paths() -> Vec<PathBuf> {
     const NAME: &str = "libplay_launch_parser_pyexec.so";
-    [dir.join(NAME), dir.join("../lib").join(NAME)]
-        .into_iter()
-        .find(|c| c.is_file())
+    let Ok(exe) = std::env::current_exe() else {
+        return Vec::new();
+    };
+    let Some(dir) = exe.parent() else {
+        return Vec::new();
+    };
+    vec![dir.join(NAME), dir.join("../lib").join(NAME)]
 }
 
 /// Discover an interpreter, load the Python half, and install it as the
@@ -367,9 +402,8 @@ pub fn pyexec_beside_exe() -> Option<PathBuf> {
 /// which one it got; `Err` names what a person can do about it.
 pub fn install() -> Result<Interpreter, LoadError> {
     let interpreter = find_interpreter()?;
-    let pyexec = pyexec_beside_exe().ok_or_else(|| LoadError::Pyexec {
-        path: PathBuf::from("libplay_launch_parser_pyexec.so"),
-        source: libloading::Error::DlOpenUnknown,
+    let pyexec = pyexec_beside_exe().ok_or_else(|| LoadError::PyexecMissing {
+        searched: pyexec_search_paths(),
     })?;
     let loaded = Loaded::open(interpreter, &pyexec)?;
     let interpreter = loaded.interpreter.clone();

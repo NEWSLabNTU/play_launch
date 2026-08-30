@@ -77,20 +77,51 @@ impl std::fmt::Display for PythonUnavailable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "this build has no Python backend, and {} needs one: {}\n\
+            "no Python backend is loaded, and {} needs one: {}\n\
              \n\
              ROS 2 defines `.launch.py` files and `$(eval …)` in terms of CPython, so \
              these cannot be evaluated without an interpreter. XML and YAML launch files \
              that use neither are unaffected and were parsed normally.",
             self.need.what(),
             self.subject,
-        )
+        )?;
+        // WHY there is none, when the loader knows. Without this the message
+        // reads as a deliberate build choice — "this build has no Python
+        // backend" — on a machine that has Python installed and working, which
+        // is the most common case and the least actionable phrasing for it.
+        // The loader's own errors are written to be acted on (they name
+        // $NROS_PYTHON, the missing half, the ABI mismatch); they were going to
+        // `log::warn!` and being dropped, so the one place a user reads
+        // reported a symptom with no cause.
+        if let Some(reason) = unavailable_reason() {
+            write!(f, "\n\nWhy no interpreter is loaded:\n{reason}")?;
+        }
+        Ok(())
     }
 }
 
 impl std::error::Error for PythonUnavailable {}
 
 static BACKEND: OnceLock<Box<dyn PythonBackend>> = OnceLock::new();
+
+/// Why no backend was registered, when whoever tried knows.
+///
+/// Set by the driver that attempted the load; read only when something
+/// actually needed Python, so a launch tree that never touches it stays
+/// silent. `OnceLock` for the same reason as `BACKEND`: the first attempt is
+/// the informative one, and a later one cannot have more context.
+static UNAVAILABLE_REASON: OnceLock<String> = OnceLock::new();
+
+/// Record why the backend could not be installed. First call wins.
+pub fn set_unavailable_reason(reason: impl Into<String>) {
+    let _ = UNAVAILABLE_REASON.set(reason.into());
+}
+
+/// The recorded reason, if one was recorded.
+#[must_use]
+pub fn unavailable_reason() -> Option<&'static str> {
+    UNAVAILABLE_REASON.get().map(String::as_str)
+}
 
 /// Register the backend. Idempotent: the first registration wins and later
 /// ones are ignored. Returns whether THIS call installed it, so a caller that

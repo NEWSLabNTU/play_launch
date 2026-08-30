@@ -349,6 +349,13 @@ pub fn parse_launch_file(
     // `PythonUnavailable` only where ROS 2 genuinely defines
     // Python — so a launch tree that uses neither still works.
     if let Err(e) = play_launch_parser_pyload::install() {
+        // Record it where the USER will read it. `log::warn!` alone put the
+        // one actionable sentence behind `RUST_LOG`, so the error a person
+        // actually sees said "no Python backend" and stopped there — on hosts
+        // with a working Python, where that reads as a build that deliberately
+        // omits the feature rather than a load that failed for a nameable
+        // reason.
+        play_launch_parser::python_backend::set_unavailable_reason(e.to_string());
         log::warn!("Python launch support unavailable: {e}");
     }
     play_launch_parser::parse_launch_file(path, args)
