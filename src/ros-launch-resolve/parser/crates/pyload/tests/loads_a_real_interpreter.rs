@@ -25,7 +25,13 @@ fn build_pyexec() -> Option<PathBuf> {
             "play_launch_parser_pyexec",
             "--lib",
             "--features",
-            "extension-module",
+            // The SHIPPED configuration, both halves of it (issue 0915).
+            // `extension-module` alone only removes the link; `abi3` is what
+            // restricts the undefined symbols to the stable ABI, which is the
+            // claim "one build runs against any CPython >= 3.10" actually
+            // rests on. Testing without it would exercise a configuration
+            // nobody installs.
+            "extension-module,abi3",
             "--message-format=json",
         ])
         .env("NROS_CARGO_FLAGS", "")
@@ -89,6 +95,65 @@ fn this_binary_does_not_link_libpython() {
         needed.is_empty(),
         "the loader's own test binary links libpython, so this suite \
          cannot prove the dlopen path works: {needed:?}"
+    );
+}
+
+/// The shipped half must reference only the STABLE ABI.
+///
+/// Issue 0915: `extension-module` removes the `DT_NEEDED`, which makes the
+/// library loadable against an interpreter chosen at runtime. It says nothing
+/// about whether the symbols it left undefined exist, unchanged, in a
+/// DIFFERENT CPython — that is what `abi3` decides, and it was specified in
+/// the design and never enabled. The build carried six private symbols
+/// (`_Py_Dealloc`, `_PyObject_MakeTpCall`, …) and `Py_CompileStringExFlags`,
+/// none of which carry a cross-version guarantee.
+///
+/// pyo3 enforces this at compile time — its FFI gates non-limited symbols
+/// behind `cfg(not(Py_LIMITED_API))` — so this test does not re-derive the
+/// rule. It pins the OUTCOME, because the enforcement is a feature flag that
+/// a manifest edit can drop without any other test noticing.
+#[test]
+fn the_shipped_half_references_only_the_stable_abi() {
+    let Some(pyexec) = build_pyexec() else {
+        eprintln!("could not build the Python half; skipping");
+        return;
+    };
+    let out = std::process::Command::new("nm")
+        .args(["-D", "--undefined-only", pyexec.to_str().unwrap()])
+        .output();
+    let Ok(out) = out else {
+        eprintln!("nm unavailable; skipping the symbol assertion");
+        return;
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    // The private-symbol families that are stable ABI *data* exports —
+    // `Py_None` is a macro over `&_Py_NoneStruct`, and the limited API's
+    // refcount macros call `_Py_IncRef`/`_Py_DecRef`. Everything else
+    // beginning `_Py` is CPython internals.
+    const ALLOWED_PRIVATE: &[&str] = &[
+        "_Py_NoneStruct",
+        "_Py_TrueStruct",
+        "_Py_FalseStruct",
+        "_Py_IncRef",
+        "_Py_DecRef",
+    ];
+    let mut offenders: Vec<String> = Vec::new();
+    for line in text.lines() {
+        for tok in line.split_whitespace() {
+            let name = tok.split('@').next().unwrap_or(tok);
+            if name.starts_with("_Py") && !ALLOWED_PRIVATE.contains(&name) {
+                offenders.push(name.to_string());
+            }
+        }
+    }
+    offenders.sort();
+    offenders.dedup();
+    assert!(
+        offenders.is_empty(),
+        "the shipped half references CPython internals, so it is bound to the \
+         version it was built against rather than to the stable ABI — is \
+         `abi3` still on the cdylib build? {offenders:?}"
     );
 }
 

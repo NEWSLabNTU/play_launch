@@ -64,3 +64,18 @@ tempfile = "3"
 #
 # Measured both ways; see the crate docs.
 extension-module = ["pyo3/extension-module"]
+
+# issue 0915 — the OTHER half of 0897's specified shape, and the one that
+# actually decides version portability.
+#
+# `extension-module` only stops pyo3 emitting the link directive, so the
+# artifact names no interpreter and its `Py_*` symbols stay undefined. That
+# makes it LOADABLE against an interpreter chosen at runtime. `abi3-py310`
+# restricts pyo3 to the STABLE ABI, so the symbols it leaves undefined are
+# ones every CPython >= 3.10 exports with unchanged semantics — which is what
+# makes it CORRECT against a version other than the one it compiled against.
+#
+# Without this the shipped half needed 6 private symbols (`_Py_Dealloc`,
+# `_PyObject_MakeTpCall`, `_Py_NoneStruct`, …) and `Py_CompileStringExFlags`
+# / `PyEval_*`, none of which carry a cross-version guarantee.
+abi3 = ["pyo3/abi3-py310"]
