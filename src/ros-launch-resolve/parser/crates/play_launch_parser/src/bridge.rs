@@ -357,6 +357,58 @@ impl Drop for LaunchContextGuard {
     }
 }
 
+/// Everything `exec_file` must carry ACROSS the process boundary.
+///
+/// nano-ros issue 0935. The Python half used to communicate through this
+/// module's thread-local `LaunchContext`, on the assumption that the executor
+/// and the traverser share one. They do not: since issue 0897 split the Python
+/// half into a `dlopen`ed object, BOTH sides statically link this crate, so
+/// each has its OWN `CURRENT_LAUNCH_CONTEXT`. The binary set one; Python ran
+/// inside the object and read the other, found `None`, and aborted — every
+/// `.launch.py` did, including one that imports nothing.
+///
+/// `$(eval …)` never noticed because its request carries the expression and its
+/// response carries the result. That is the shape this gives `exec_file`.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ExecCaptures {
+    pub nodes: Vec<crate::captures::NodeCapture>,
+    pub containers: Vec<crate::captures::ContainerCapture>,
+    pub load_nodes: Vec<crate::captures::LoadNodeCapture>,
+    /// `SetParameter` at launch scope, which Python writes straight to the
+    /// context and would otherwise be lost with it.
+    pub global_parameters: Vec<(String, String)>,
+}
+
+impl ExecCaptures {
+    /// Read what a Python execution left in `ctx`.
+    #[must_use]
+    pub fn drain_from(ctx: &mut crate::substitution::context::LaunchContext) -> Self {
+        Self {
+            nodes: ctx.captured_nodes().to_vec(),
+            containers: ctx.captured_containers().to_vec(),
+            load_nodes: ctx.captured_load_nodes().to_vec(),
+            global_parameters: ctx
+                .global_parameters()
+                .into_iter()
+                .collect::<Vec<(String, String)>>(),
+        }
+    }
+
+    /// Append them to the caller's context.
+    ///
+    /// APPEND, not replace: the traverser may already hold captures from XML
+    /// siblings or an earlier include, and a `.launch.py` adds to that tree
+    /// rather than becoming it.
+    pub fn merge_into(self, ctx: &mut crate::substitution::context::LaunchContext) {
+        ctx.captured_nodes_mut().extend(self.nodes);
+        ctx.captured_containers_mut().extend(self.containers);
+        ctx.captured_load_nodes_mut().extend(self.load_nodes);
+        for (k, v) in self.global_parameters {
+            ctx.set_global_parameter(k, v);
+        }
+    }
+}
+
 /// Execute a closure with access to the current LaunchContext
 /// Panics if no context is set
 pub fn with_launch_context<F, R>(f: F) -> R

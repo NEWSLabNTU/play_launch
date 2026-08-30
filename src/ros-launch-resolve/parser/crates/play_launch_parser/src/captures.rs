@@ -8,7 +8,7 @@
 //! are defined in `python/bridge.rs` (they depend on global parameter state).
 
 /// Captured node data from Python or XML parsing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NodeCapture {
     pub package: String,
     pub executable: String,
@@ -33,7 +33,7 @@ pub struct NodeCapture {
 }
 
 /// Captured container data from Python or XML parsing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ContainerCapture {
     pub name: String,
     pub namespace: String,
@@ -50,7 +50,7 @@ pub struct ContainerCapture {
 }
 
 /// Captured composable node data from Python or XML parsing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LoadNodeCapture {
     pub package: String,
     pub plugin: String,

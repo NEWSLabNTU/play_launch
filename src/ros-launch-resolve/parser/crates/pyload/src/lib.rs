@@ -139,7 +139,13 @@ impl std::error::Error for LoadError {}
 
 /// The C ABI version this loader speaks. Must match
 /// `play_launch_py_abi_version()` in the object it loads.
-const ABI_VERSION: u32 = 1;
+///
+/// 2 since nano-ros issue 0935, which added `configs` to the `exec_file`
+/// request and `captures` to its response. A v1 object paired with this loader
+/// would execute the launch file and return nothing — a tree that resolves to
+/// no nodes, which is indistinguishable from an empty launch file. That is
+/// exactly the failure this constant exists to turn into a sentence.
+const ABI_VERSION: u32 = 2;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]
@@ -316,9 +322,18 @@ impl Loaded {
     }
 
     /// One call across the C boundary.
-    fn call(&self, op: &str, arg: &str) -> Result<String, String> {
+    ///
+    /// `configs` rides along because the object cannot read the caller's —
+    /// nano-ros issue 0935. Returns the whole response so `exec_file` can take
+    /// its captures out of it.
+    fn call(
+        &self,
+        op: &str,
+        arg: &str,
+        configs: std::collections::BTreeMap<String, String>,
+    ) -> Result<serde_json::Value, String> {
         use std::ffi::{CStr, CString};
-        let req = serde_json::json!({ "op": op, "arg": arg }).to_string();
+        let req = serde_json::json!({ "op": op, "arg": arg, "configs": configs }).to_string();
         let req = CString::new(req).map_err(|e| format!("request contains a NUL byte: {e}"))?;
 
         let raw = unsafe {
@@ -347,7 +362,7 @@ impl Loaded {
         let v: serde_json::Value =
             serde_json::from_str(&out).map_err(|e| format!("malformed response: {e}"))?;
         if v["ok"].as_bool().unwrap_or(false) {
-            Ok(v["value"].as_str().unwrap_or_default().to_string())
+            Ok(v)
         } else {
             Err(v["error"]
                 .as_str()
@@ -358,12 +373,44 @@ impl Loaded {
 }
 
 impl play_launch_parser::python_backend::PythonBackend for Loaded {
+    /// nano-ros issue 0935 — carry the context BOTH ways.
+    ///
+    /// The object runs Python against its own copy of `play_launch_parser`, so
+    /// the caller's thread-local launch context is invisible to it: the
+    /// configurations have to be sent, and whatever Python captured has to be
+    /// sent back and merged here. Before this, `exec_file` executed the file
+    /// perfectly and then dropped everything it produced, and any Python API
+    /// call that needed the context aborted the process.
     fn exec_file(&self, path: &str) -> Result<(), String> {
-        self.call("exec_file", path).map(|_| ())
+        use play_launch_parser::bridge::{ExecCaptures, with_launch_context};
+
+        let configs: std::collections::BTreeMap<String, String> =
+            with_launch_context(|ctx| ctx.configurations().into_iter().collect());
+
+        let response = self.call("exec_file", path, configs)?;
+
+        // Absent `captures` means the object predates this contract. The ABI
+        // version already refuses that pairing at load; this is the belt to
+        // that braces, because the failure it prevents — a launch file that
+        // resolves to nothing, quietly — is indistinguishable from an empty
+        // launch file.
+        let Some(raw) = response.get("captures") else {
+            return Err("the Python half returned no captures: it speaks an older \
+                        contract than this loader (expected ABI 2)"
+                .into());
+        };
+        let captures: ExecCaptures = serde_json::from_value(raw.clone())
+            .map_err(|e| format!("malformed captures from the Python half: {e}"))?;
+        with_launch_context(|ctx| captures.merge_into(ctx));
+        Ok(())
     }
 
     fn eval_expr(&self, expr: &str) -> Result<String, String> {
-        self.call("eval_expr", expr)
+        // Self-contained: the expression is the whole input, the string is the
+        // whole output. This is why `$(eval …)` kept working while `exec_file`
+        // did not.
+        self.call("eval_expr", expr, Default::default())
+            .map(|v| v["value"].as_str().unwrap_or_default().to_string())
     }
 }
 
