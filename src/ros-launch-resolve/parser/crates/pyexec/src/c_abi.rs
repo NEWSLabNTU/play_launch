@@ -96,34 +96,87 @@ fn respond(r: Response) -> *mut c_char {
 /// the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn play_launch_py_call(req: *const c_char) -> *mut c_char {
+    // CATCH PANICS AT THE BOUNDARY — nano-ros issue 0953.
+    //
+    // A panic unwinding out of an `extern "C"` function is undefined
+    // behaviour, so rustc emits a guard that ABORTS. Every other way out
+    // of this function is already a structured error (null request,
+    // non-UTF-8, malformed JSON, unknown op, even a NUL byte in our own
+    // response); a panic was the one path that took the whole process
+    // down instead, with no diagnostic the caller could read.
+    //
+    // That mattered because it defeats the promise `pyload` makes one
+    // layer up — "a `Result`, never an abort" (issue 0897). 0897 removed
+    // the LOADER abort; this removes the execution one. Reproduced with a
+    // `.launch.py` driven outside `LaunchTraverser`, where the parser
+    // panics `No LaunchContext set` and PyO3 resumes it as a
+    // `PanicException`: the resolver dumped core.
+    //
+    // `AssertUnwindSafe` because the closure borrows `req` and calls into
+    // the parser: making every captured type `UnwindSafe` buys nothing at
+    // a boundary whose entire contract is a JSON string in and a JSON
+    // string out. A panic here is reported and the object is not reused
+    // for anything that outlives the call.
+    //
+    // The ABI VERSION does not change: this adds no field and no new
+    // shape, only one more `ok: false` reason on a channel that already
+    // carries them.
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { call_inner(req) })) {
+        Ok(response) => respond(response),
+        Err(payload) => respond(Response {
+            ok: false,
+            value: String::new(),
+            error: format!("pyexec: panicked: {}", panic_message(&payload)),
+            captures: None,
+        }),
+    }
+}
+
+/// The panic payload's message, when it is one of the two shapes
+/// `panic!` produces. Anything else has no readable text, and saying so
+/// beats printing `Any { .. }`.
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else {
+        "panic with a non-string payload".to_string()
+    }
+}
+
+/// The real body. Returns a [`Response`] rather than a pointer so the
+/// shim above owns BOTH the serialisation and the panic guard, and there
+/// is exactly one place that can turn one into the other.
+unsafe fn call_inner(req: *const c_char) -> Response {
     if req.is_null() {
-        return respond(Response {
+        return Response {
             ok: false,
             value: String::new(),
             error: "pyexec: null request".into(),
             captures: None,
-        });
+        };
     }
     let text = match unsafe { CStr::from_ptr(req) }.to_str() {
         Ok(t) => t,
         Err(e) => {
-            return respond(Response {
+            return Response {
                 ok: false,
                 value: String::new(),
                 error: format!("pyexec: request is not UTF-8: {e}"),
                 captures: None,
-            });
+            };
         }
     };
     let req: Request = match serde_json::from_str(text) {
         Ok(r) => r,
         Err(e) => {
-            return respond(Response {
+            return Response {
                 ok: false,
                 value: String::new(),
                 error: format!("pyexec: malformed request: {e}"),
                 captures: None,
-            });
+            };
         }
     };
 
@@ -153,23 +206,29 @@ pub unsafe extern "C" fn play_launch_py_call(req: *const c_char) -> *mut c_char 
             r.map(|()| String::new())
         }
         "eval_expr" => backend.eval_expr(&req.arg),
+        // Test-only: the ONLY way to drive a panic through the real export
+        // and assert it comes back as `ok: false` rather than aborting the
+        // process. `#[cfg(test)]` keeps it out of the shipped cdylib, so the
+        // ABI a loader sees is unchanged (issue 0953).
+        #[cfg(test)]
+        "__test_panic" => panic!("deliberate panic from the test op"),
         other => Err(format!(
             "pyexec: unknown op `{other}` (expected `exec_file` or `eval_expr`)"
         )),
     };
     match result {
-        Ok(value) => respond(Response {
+        Ok(value) => Response {
             ok: true,
             value,
             error: String::new(),
             captures,
-        }),
-        Err(error) => respond(Response {
+        },
+        Err(error) => Response {
             ok: false,
             value: String::new(),
             error,
             captures: None,
-        }),
+        },
     }
 }
 
@@ -241,6 +300,34 @@ mod tests {
         let v = call("not json");
         assert_eq!(v["ok"], false);
         assert!(v["error"].as_str().unwrap().contains("malformed"));
+    }
+
+    /// A panic must not cross `extern "C"` — issue 0953.
+    ///
+    /// Unguarded this does not fail the test, it ABORTS the test binary:
+    /// rustc's guard on an unwinding `extern "C"` calls `abort()`. So the
+    /// assertion below only ever runs when the guard is present, and the
+    /// mutation check for it is "delete the `catch_unwind` and watch the
+    /// suite die rather than fail".
+    #[test]
+    fn a_panic_comes_back_as_an_error_not_an_abort() {
+        let v = call(r#"{"op":"__test_panic","arg":""}"#);
+        assert_eq!(v["ok"], false, "{v}");
+        let e = v["error"].as_str().unwrap();
+        assert!(e.contains("panicked"), "{e}");
+        // The original message survives — "panicked" alone would leave the
+        // reader no better off than the abort did.
+        assert!(e.contains("deliberate panic from the test op"), "{e}");
+    }
+
+    #[test]
+    fn panic_message_reads_both_payload_shapes() {
+        let s: Box<dyn std::any::Any + Send> = Box::new("static str".to_string());
+        assert_eq!(panic_message(&s), "static str");
+        let s: Box<dyn std::any::Any + Send> = Box::new("borrowed");
+        assert_eq!(panic_message(&s), "borrowed");
+        let s: Box<dyn std::any::Any + Send> = Box::new(42u8);
+        assert!(panic_message(&s).contains("non-string"));
     }
 
     /// Null is the one input a loader can pass by accident.
