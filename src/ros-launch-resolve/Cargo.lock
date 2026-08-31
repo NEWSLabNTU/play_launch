@@ -1049,7 +1049,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "ros-launch-manifest-check"
 version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.20#99bf03c9d3f6bf3dc7ce2cf890e4fab6ac03e14a"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.21#65ce09fcebe215dab00e33eb6a736739d9a9c65b"
 dependencies = [
  "codespan-reporting",
  "petgraph",
@@ -1061,7 +1061,7 @@ dependencies = [
 [[package]]
 name = "ros-launch-manifest-model"
 version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.20#99bf03c9d3f6bf3dc7ce2cf890e4fab6ac03e14a"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.21#65ce09fcebe215dab00e33eb6a736739d9a9c65b"
 dependencies = [
  "indexmap",
  "ros-launch-manifest-sched",
@@ -1074,7 +1074,7 @@ dependencies = [
 [[package]]
 name = "ros-launch-manifest-sched"
 version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.20#99bf03c9d3f6bf3dc7ce2cf890e4fab6ac03e14a"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.21#65ce09fcebe215dab00e33eb6a736739d9a9c65b"
 dependencies = [
  "ros-launch-manifest-types",
  "serde",
@@ -1086,7 +1086,7 @@ dependencies = [
 [[package]]
 name = "ros-launch-manifest-types"
 version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.20#99bf03c9d3f6bf3dc7ce2cf890e4fab6ac03e14a"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.21#65ce09fcebe215dab00e33eb6a736739d9a9c65b"
 dependencies = [
  "serde",
  "serde_json",
@@ -1760,3 +1760,55 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[patch.unused]]
+name = "action_msgs"
+version = "1.2.3"
+
+[[patch.unused]]
+name = "builtin_interfaces"
+version = "1.2.3"
+
+[[patch.unused]]
+name = "composition_interfaces"
+version = "1.2.3"
+
+[[patch.unused]]
+name = "diagnostic_msgs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "example_interfaces"
+version = "0.9.3"
+
+[[patch.unused]]
+name = "geometry_msgs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "lifecycle_msgs"
+version = "1.2.3"
+
+[[patch.unused]]
+name = "play_launch_msgs"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "rcl_interfaces"
+version = "1.2.3"
+
+[[patch.unused]]
+name = "rosgraph_msgs"
+version = "1.2.3"
+
+[[patch.unused]]
+name = "std_msgs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "test_msgs"
+version = "1.2.3"
+
+[[patch.unused]]
+name = "unique_identifier_msgs"
+version = "2.2.1"
