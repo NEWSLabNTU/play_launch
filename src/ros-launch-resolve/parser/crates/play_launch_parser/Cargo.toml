@@ -13,11 +13,17 @@ serde_json = "1.0"
 serde_yaml_ng = "0.10"
 roxmltree = "0.19"
 thiserror = "1.0"
-clap = { version = "4.0", features = ["derive"] }
-env_logger = "0.11"
 log = "0.4"
-regex = "1.10"
 rand = "0.8"
+
+# Used ONLY by `src/main.rs`, so they are gated behind the default `cli`
+# feature. Cargo resolves dependencies per PACKAGE, not per target, so
+# without the gate every library consumer also builds `env_logger` and
+# its `env_filter`/`regex`/`jiff` tree for a binary it never runs.
+# `default = ["cli"]` keeps `cargo build` producing the binary as before;
+# library consumers opt out with `default-features = false`.
+clap = { version = "4.0", features = ["derive"], optional = true }
+env_logger = { version = "0.11", optional = true }
 
 # `once_cell` stays: `file_cache` and `substitution/types` use it.
 # pyo3 left with 0897 W2b — the Python half is its own crate now.
@@ -34,7 +40,9 @@ indexmap = "2.0"          # Preserves insertion order for configurations
 shlex = "1.3.0"
 
 [features]
-default = []
+default = ["cli"]
+# The command-line binary and nothing else.
+cli = ["dep:clap", "dep:env_logger"]
 ir = []
 
 [dev-dependencies]
@@ -52,6 +60,7 @@ tempfile = "3.8"
 [[bin]]
 name = "play_launch_parser"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [lib]
 name = "play_launch_parser"
