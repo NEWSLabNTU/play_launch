@@ -47,7 +47,11 @@ serde_json = { workspace = true }
 serde_yaml_ng = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
-tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "macros", "sync", "time"] }
+# Only `runtime::Builder::new_multi_thread` and `task::spawn_blocking` are
+# used, both of which `rt-multi-thread` provides. `process`, `io-util`,
+# `macros`, `sync` and `time` were never referenced; each drags its own
+# transitive tree (mio, socket2, signal-hook-registry) into every consumer.
+tokio = { version = "1", features = ["rt-multi-thread"] }
 # `verbs::build_tokio_runtime` sizes the worker pool from the CPU count, so the
 # same verb adapts to a 2-core Pi and a 32-core server.
 num_cpus = "1"
