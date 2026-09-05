@@ -1,4 +1,4 @@
-# Rate propagation (`derivable-rate` / `rate-mismatch`) and the service
+# DELIBERATELY inconsistent in two places (see below). Rate propagation (`derivable-rate` / `rate-mismatch`) and the service
 # response binding (`response-blocking`).
 #
 # The only rate FACT here is `sensor.tick`'s 100 Hz timer. Everything else is
@@ -12,6 +12,11 @@
 # `/rates/filtered` declares a rate that AGREES with the derivation, so it is
 # reported as redundant; `/rates/merged` declares one that disagrees, and the
 # disagreement is the whole reason a rate should not be written by hand.
+#
+# Phase 70 W3 adds the endpoint side: a publisher's `min_rate_hz` is the same
+# consequence one hop earlier (`derivable-min-rate` / `min-rate-mismatch`),
+# and a subscriber's is a requirement the derived rate must meet
+# (`derived-rate-hierarchy`).
 version: 1
 
 nodes:
@@ -27,7 +32,9 @@ nodes:
     sub:
       raw: {}
     pub:
-      filtered: {}
+      # Promises exactly what the graph derives (100 Hz) — a second copy.
+      # -> derivable-min-rate
+      filtered: { min_rate_hz: 100 }
     paths:
       clean:
         trigger: { input: [raw] }
@@ -37,9 +44,13 @@ nodes:
   merger:
     sub:
       a: {}
-      b: {}
+      # Requires 150 Hz from /rates/filtered, which derives to 100 Hz.
+      # -> derived-rate-hierarchy
+      b: { min_rate_hz: 150 }
     pub:
-      merged: {}
+      # Promises 300 Hz where the graph derives 200 — more than its own
+      # triggers can produce. -> min-rate-mismatch
+      merged: { min_rate_hz: 300 }
     paths:
       combine:
         trigger: { input: [a, b] }

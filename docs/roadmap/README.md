@@ -236,7 +236,11 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     read `node_concurrency`, so phase 68 W5's seam is still open. W2 ruled on
     all nine: two deleted, three given the rule each was waiting for
     (`rate-hierarchy` upper bounds, `qos-match` liveliness, `jitter-range`),
-    four model-side copies kept for nano-ros and baselined as its debt.
+    four model-side copies kept for nano-ros and baselined as its debt. W3
+    makes the retirement argument countable (`scripts/derivation_census.py`):
+    of 24 authored topic rates, 10 agree with the graph, 0 genuinely disagree,
+    and **11 are underivable** — external sources — so the deletion it
+    licenses is the derivable copies only, never the field.
     [phase-70-consumer-census.md](./phase-70-consumer-census.md).
   - **Phase 69** — ✅ the field table: one source for the contract grammar.
     The manifest parser had **no unknown-key rejection anywhere**, so

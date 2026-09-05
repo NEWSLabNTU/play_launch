@@ -586,6 +586,26 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: Phase 70 W3 — **the agreement metric.** `chains:` was
+  retired on a provenance argument made by hand; nothing counted, so nothing
+  could say when the next field had earned the same.
+  `scripts/derivation_census.py` runs `check --format json` over every
+  launch fixture and tallies the resolver's own verdicts per derivable field:
+  agree (`derivable-*`), disagree (`*-mismatch`), underivable (no verdict —
+  `once`, `spontaneous`, an external publisher, a cycle). A second derivable
+  field landed with it: a publisher's `min_rate_hz` is the topic rate one hop
+  earlier, so `derive_and_check_endpoint_rates` emits `derivable-min-rate` /
+  `min-rate-mismatch` (attributed only where the topic has ONE publisher —
+  with several the derived rate is their sum), and `derived-rate-hierarchy`
+  keeps the subscriber requirement checked after `topics.<t>.rate_hz` is
+  gone. **Result: 24 authored topic rates — 10 agree, 0 genuinely disagree
+  (the 3 are in fixtures whose header says DELIBERATELY), 11 underivable.**
+  The third column is the finding: the underivable ones sit on chains driven
+  by `external: pub`, where the declaration is the only source of the number.
+  So the retirement W3 licenses is narrower than `chains:`'s — delete the
+  copies the `derivable-*` infos name, keep the declaration where the graph
+  returns `Unknown`. Roadmap: `docs/roadmap/phase-70-consumer-census.md` §W3.
+
 - **2026-09-06**: **Wrong types are errors, and `measure` produces the
   floor** (manifest `v0.1.25` → **`v0.1.26`**). Phase 69 made an unknown KEY
   an error; a wrong TYPE was still `None` — `max_count: 5`, `rate_hz: "100"`,

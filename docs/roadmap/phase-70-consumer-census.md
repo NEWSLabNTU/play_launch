@@ -1,6 +1,6 @@
 # Phase 70 — the consumer census: which fields are actually read
 
-Status: **W1, W2 complete** (manifest crate `v0.1.24`).
+Status: **W1–W3 complete.**
 
 Phase 69 made the contract grammar enumerable — every key a contract may carry
 is a row in the manifest crate's `types/src/field_table.rs`. That says what is
@@ -140,11 +140,50 @@ the new rules reject.
 - **Wrong types are errors** (manifest `v0.1.26`) — the other half of phase
   69's finding, recorded there.
 
+## W3 — the agreement metric
+
+Phase 68 retired `chains:` on a provenance argument made by hand: the
+derivation reproduced every authored route, so the copy was redundant. Right,
+and unrepeatable — nothing counted, so nothing could say when the next field
+had earned the same. `scripts/derivation_census.py` counts: for each field
+the resolver derives, it runs `check --format json` over every launch fixture
+and tallies the resolver's own verdicts.
+
+A second derivable field landed with it. A publisher's `min_rate_hz` is the
+topic rate one hop earlier — five of `rt_workspace`'s nine copies of `100`
+were this field — so `derive_and_check_endpoint_rates` emits
+`derivable-min-rate` (equal: a copy) and `min-rate-mismatch` (a promise
+above what the timers driving it can produce). Attribution is made only
+where the topic has one publisher; with several the derived rate is their
+sum and dividing it back out would present a bound as a rate. The
+subscriber side is a requirement, never a copy, but deleting
+`topics.<t>.rate_hz` would leave it unchecked (`rate-hierarchy` reads only
+the declared topic rate), so `derived-rate-hierarchy` is the form that
+survives the retirement.
+
+**Result, 2026-09-06** (8 launch fixtures, 9 contract files):
+
+| field | authored | agree | disagree | underivable |
+|---|---|---|---|---|
+| `topics.<t>.rate_hz` | 24 | 10 | 3 | 11 |
+| `nodes.<n>.pub.<e>.min_rate_hz` | 22 | 12 | 1 | 9 |
+
+All four disagreements are in fixtures that say so in their header
+(`contract_error`, `contract_rates`) — they are the tests that keep the rules
+honest, and the census marks them. Outside those, **every authored value the
+graph could derive, it derived to the same number.**
+
+The number that changes the ruling is the third column. Eleven of twenty-four
+authored topic rates sit on chains the graph cannot derive — `contract_w2`
+and `contract_concurrency` are driven by an `external: pub` source, so nothing
+inside the tree says how fast it ticks. There the declaration is not a copy;
+it is the only place that number can come from. So the retirement W3 licenses
+is **narrower than `chains:`'s was**: delete the derivable copies (the
+`derivable-*` infos name each one), keep the declaration where the graph
+returns `Unknown`, and let the census say which is which. A blanket deletion
+would remove a fact, not a consequence.
+
 ## Not done
-- **W3 — the derivation/agreement corpus metric.** `rate-mismatch` /
-  `derivable-rate` generalised: for each derivable field, count agreements and
-  disagreements over the whole corpus. Zero disagreements is the evidence for
-  retirement, replacing the by-hand provenance argument that carried `chains:`.
 - **The `kind` column** (fact / requirement / consequence) on the field table.
   W1 gives the `consumer` half; `kind` is a judgment per field. W2 made five
   of those judgments implicitly and wrote none of them down in the table —

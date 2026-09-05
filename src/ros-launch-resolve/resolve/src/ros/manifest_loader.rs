@@ -734,6 +734,7 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // it, record it, and report a declared `rate_hz` that the graph already
     // implies.
     derive_and_check_topic_rates(index, &graph);
+    derive_and_check_endpoint_rates(index, &graph);
 
     // A service server's promised response time, against the blocking its own
     // declarations imply.
@@ -890,6 +891,111 @@ fn derive_and_check_topic_rates(
             });
         }
     }
+}
+
+/// The second derivable copy (phase 70 W3): a publisher's `min_rate_hz`.
+///
+/// `topics.<t>.rate_hz` was the first field shown to be a consequence of the
+/// timers. A publisher's `min_rate_hz` is the same number one hop earlier —
+/// the rate the endpoint promises — and on `rt_workspace` five of the nine
+/// copies of `100` were this field. Measured on the corpus by
+/// `scripts/derivation_census.py`, which is what this rule exists to feed.
+///
+/// Attribution is per TOPIC, so it is only made where the topic has exactly
+/// one publisher: with several, the derived rate is their sum and dividing it
+/// back out would present a bound as a rate.
+///
+/// - **`derivable-min-rate`** (info) — the promise equals the derived rate:
+///   a second copy, deletable.
+/// - **`min-rate-mismatch`** (warning) — the promise EXCEEDS the derived
+///   rate: the endpoint guarantees more than the timers driving it can
+///   produce. Nothing else checks this once `topics.<t>.rate_hz` is deleted,
+///   because `rate-hierarchy` reads only the declared topic rate.
+/// - A promise BELOW the derived rate is a loose lower bound and gets
+///   nothing: it is true, just not tight.
+///
+/// The subscriber side is a REQUIREMENT, not a copy, so it is never
+/// "derivable" — but the same deletion leaves it unchecked, so a subscriber
+/// asking for more than the graph delivers is **`derived-rate-hierarchy`**
+/// (warning). `rate-hierarchy` keeps its name for the declared-topic-rate
+/// form; this is the form that survives the declaration's retirement.
+fn derive_and_check_endpoint_rates(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    let agrees = |a: f64, b: f64| (a - b).abs() <= a.abs().max(b.abs()) * 1e-6;
+    let mut diags: Vec<Diagnostic> = Vec::new();
+
+    for (fqn, topic) in &index.topics {
+        let Some(hz) = topic.derived_rate_hz else {
+            continue;
+        };
+
+        if topic.publishers.len() == 1 {
+            let pub_ref = &topic.publishers[0];
+            if let Some((node_fqn, ep)) = split_endpoint_ref_for_check(pub_ref)
+                && let Some(declared) = graph
+                    .nodes
+                    .get(&node_fqn)
+                    .and_then(|n| n.publishers.get(&ep))
+                    .and_then(|p| p.min_rate_hz)
+            {
+                let path = format!("nodes.{node_fqn}.pub.{ep}.min_rate_hz");
+                if agrees(declared, hz) {
+                    diags.push(Diagnostic {
+                        rule_id: "derivable-min-rate".to_string(),
+                        severity: Severity::Info,
+                        message: format!(
+                            "publisher '{pub_ref}' promises min_rate_hz {declared}, which the \
+                             graph already derives for '{fqn}' from the timers that drive it. \
+                             The declaration is redundant and can be deleted"
+                        ),
+                        path,
+                        span: None,
+                    });
+                } else if declared > hz {
+                    diags.push(Diagnostic {
+                        rule_id: "min-rate-mismatch".to_string(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "publisher '{pub_ref}' promises min_rate_hz {declared} on '{fqn}', \
+                             but the timers that drive it derive only {hz:.4} Hz. The endpoint \
+                             guarantees more than its own triggers can produce"
+                        ),
+                        path,
+                        span: None,
+                    });
+                }
+            }
+        }
+
+        for sub_ref in &topic.subscribers {
+            if let Some((node_fqn, ep)) = split_endpoint_ref_for_check(sub_ref)
+                && let Some(needed) = graph
+                    .nodes
+                    .get(&node_fqn)
+                    .and_then(|n| n.subscribers.get(&ep))
+                    .and_then(|p| p.min_rate_hz)
+                && needed > hz
+                && !agrees(needed, hz)
+            {
+                diags.push(Diagnostic {
+                    rule_id: "derived-rate-hierarchy".to_string(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "subscriber '{sub_ref}' requires min_rate_hz {needed} on '{fqn}', but \
+                         the timers that drive it derive only {hz:.4} Hz. The requirement \
+                         cannot be met by any scheduling assignment — the source is too slow"
+                    ),
+                    path: format!("nodes.{node_fqn}.sub.{ep}.min_rate_hz"),
+                    span: None,
+                });
+            }
+        }
+    }
+
+    diags.sort_by(|a, b| a.path.cmp(&b.path));
+    index.merge_diagnostics.extend(diags);
 }
 
 /// Build the global dataflow graph and verify each scope path's

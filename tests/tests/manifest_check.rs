@@ -987,7 +987,15 @@ fn w4_the_mapper_reads_the_derived_route_not_just_authored_segments() {
 #[test]
 fn rate_propagation_and_service_response_have_rules_that_fire() {
     let out = check_fixture("contract_rates");
-    for rule in ["derivable-rate", "rate-mismatch", "response-blocking"] {
+    for rule in [
+        "derivable-rate",
+        "rate-mismatch",
+        "response-blocking",
+        // Phase 70 W3: the endpoint side of the same derivation.
+        "derivable-min-rate",
+        "min-rate-mismatch",
+        "derived-rate-hierarchy",
+    ] {
         assert!(
             out.contains(rule),
             "expected `{rule}` to fire on contract_rates:\n{out}"
