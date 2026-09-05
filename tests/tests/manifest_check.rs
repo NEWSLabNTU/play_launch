@@ -800,7 +800,10 @@ fn check_fixture(dir: &str) -> String {
 #[test]
 fn w1d_write_only_fields_now_have_rules_that_fail() {
     let out = check_fixture("contract_w1d");
-    for rule in ["jitter-feasibility", "lifespan-age", "sync-budget"] {
+    // `jitter-range` (phase 70 W2) fires on the same declaration from the
+    // other side: a 0..200ms range cannot fit a 5ms jitter bound whatever the
+    // route's sampling jitter is.
+    for rule in ["jitter-feasibility", "jitter-range", "lifespan-age", "sync-budget"] {
         assert!(
             out.contains(rule),
             "expected {rule} to fire on contract_w1d; got:\n{out}"

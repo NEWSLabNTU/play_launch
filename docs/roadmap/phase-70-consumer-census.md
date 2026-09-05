@@ -1,6 +1,6 @@
 # Phase 70 — the consumer census: which fields are actually read
 
-Status: **W1 complete.**
+Status: **W1, W2 complete** (manifest crate `v0.1.24`).
 
 Phase 69 made the contract grammar enumerable — every key a contract may carry
 is a row in the manifest crate's `types/src/field_table.rs`. That says what is
@@ -107,17 +107,37 @@ reservation is.
 This is the census earning its place: the claim was in a document, the code
 disagreed, and nothing before now compared them.
 
-## Not done
+## W2 — the rulings
 
-- **W2 — act on the findings.** Each unread field is a delete-or-implement
-  decision, and several cross a repository boundary. `min_latency` already has
-  an agreed design (`min = 0` conservative, so `max_jitter` is checkable
-  today); `max_rate_hz` looks like a missing rule rather than a dead field;
-  `exclude_patterns` and `correlation` look like deletions.
+One per unread field. The rule was the campaign's: a write-only field is a
+comment with a schema, so either write the rule it waits for or delete it.
+Which of the two was decided by asking what the field would *check* if it
+were read — a field with no checkable claim behind it is a deletion.
+
+| field | ruling | what changed |
+|---|---|---|
+| `exclude_patterns` | **deleted** | Three mentions in the codebase, and two different documented meanings (node globs in the table, topic prefixes in the guide) — neither implemented. `external:` is the read way to mark an expected-absent side. Parse error names it. |
+| `correlation` | **deleted** | `timestamp` vs `latest` is exactly `sync:` present vs absent, and `sync:` is read by three rules and by rate derivation. Parse error names `sync:`. Old models still load; the golden fixture keeps `correlation: timestamp` on disk. `tolerance:` stays — `sync-budget` reads it. |
+| `max_rate_hz` | **implemented** | `rate-hierarchy` checks the upper bounds: `pub.max_rate_hz >= topic.rate_hz >= sub.max_rate_hz`. A topic faster than its subscriber drains is an error regardless of scheduling. |
+| `lease_duration` | **implemented** | `qos-match` applies the DDS matrix to `liveliness` (`manual_by_topic` ≥ `automatic`) and to the lease: a publisher asserting less often than the subscriber's lease is one the subscriber will periodically declare dead. |
+| `min_latency` | **implemented** | New rule `jitter-range`: with both bounds declared, `max_latency − min_latency > max_jitter` is an error; `min > max` is a contradiction on its own. With `min_latency` ABSENT the bound is unverifiable and the rule says so at info level — **the first draft read absence as zero**, which turned every jitter requirement on a wide-budget path into a hard error and blocked model emission on `contract_w2`. An upper bound of 40ms says nothing about whether latencies cluster at 38..40 or range over 0..40. That is the absent-versus-zero confusion phase 60 removed from the chain checker, caught here by a fixture. |
+| `node_concurrency`, `srv_endpoints`, `max_response_ms`, `tolerance_ms` | **kept, baselined** | Model-side copies of facts the contract declares and this repo consumes. They exist for nano-ros, which reads the model — and W1 established it does not read them *yet*. Deleting them would re-open the unobservable seam phase 68 W5 closed; the debt is theirs to pay by reading, and the baseline says so. |
+
+Every ruling landed with a test that fails without it. Corpus impact:
+`correlation: timestamp` appeared in four fixtures and one golden model; no
+fixture used `exclude_patterns`, `max_rate_hz` or `lease_duration` in a way
+the new rules reject.
+
+## Not done
 - **W3 — the derivation/agreement corpus metric.** `rate-mismatch` /
   `derivable-rate` generalised: for each derivable field, count agreements and
   disagreements over the whole corpus. Zero disagreements is the evidence for
   retirement, replacing the by-hand provenance argument that carried `chains:`.
 - **The `kind` column** (fact / requirement / consequence) on the field table.
-  W1 gives the `consumer` half; `kind` is a judgment per field and belongs with
-  W2's rulings.
+  W1 gives the `consumer` half; `kind` is a judgment per field. W2 made five
+  of those judgments implicitly and wrote none of them down in the table —
+  the column is still the right home, and still empty.
+- **Cross-scope `qos-match`.** The resolver's merged-graph copy of the rule
+  still checks reliability and durability only; liveliness and the lease are
+  checked per manifest. Same gap the per-manifest rule had until W2, one
+  layer up.

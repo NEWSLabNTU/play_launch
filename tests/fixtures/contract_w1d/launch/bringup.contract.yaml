@@ -37,7 +37,6 @@ nodes:
         # window must be >=100ms and <=20ms, an empty interval, and neither
         # rule alone can say so. That is why the upper bound was worth adding
         # rather than folding into the existing rule.
-        correlation: timestamp
         sync:
           policy: timeout_any
           timeout: 60ms
@@ -65,8 +64,14 @@ paths:
   # The route crosses a 10Hz boundary, so it carries 100ms of sampling jitter
   # on its own — a 5ms requirement is unreachable by any scheduling.
   # -> jitter-feasibility
+  # With a declared floor, the range 20..200ms cannot fit a 5ms spread
+  # either — a contradiction in the declarations themselves. Without the
+  # floor this would be an info, not an error: an absent min_latency is
+  # unknown, not zero.
+  # -> jitter-range (phase 70 W2)
   raw_to_fused:
     input: /s/raw
     output: [/s/fused]
     max_latency: 200ms
+    min_latency: 20ms
     max_jitter: 5ms

@@ -237,7 +237,7 @@ pub struct ResolvedScopePath {
     pub input_topics: Vec<String>,
     /// Resolved output topic FQNs (exit points).
     pub output_topics: Vec<String>,
-    /// The original path declaration (latency, drops, correlation, etc.).
+    /// The original path declaration (latency, drops, sync, etc.).
     pub path: ros_launch_manifest_types::PathDecl,
 }
 

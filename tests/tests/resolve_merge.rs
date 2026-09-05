@@ -147,7 +147,7 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
     let main = &c["node_paths"]["/perception/detector/main"];
     assert!(main["input"].is_null() || main["input"].as_array().is_none_or(|a| a.is_empty()));
     assert_eq!(main["max_latency_ms"], 15.0);
-    // scope path: E2E budget + correlation + drop, rooted at the root scope
+    // scope path: E2E budget + tolerance + drop, rooted at the root scope
     let (e2e_key, e2e) = c["scope_paths"]
         .as_object()
         .expect("scope_paths")
@@ -161,7 +161,8 @@ fn resolve_merges_launch_and_contracts_into_full_model() {
     assert_eq!(e2e["input"][0], "/sensing/points");
     assert_eq!(e2e["output"][0], "/perception/objects");
     assert_eq!(e2e["max_latency_ms"], 80.0);
-    assert_eq!(e2e["correlation"], "timestamp");
+    // `correlation` used to be asserted here; phase 70 removed it from the
+    // contract and the model, since nothing ever read it.
     assert_eq!(e2e["tolerance_ms"], 10.0);
     assert_eq!(e2e["drop"]["max_drop_rate"], 0.08);
     assert_eq!(e2e["drop"]["max_consecutive"], 5);

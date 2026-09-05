@@ -11,36 +11,11 @@
 # and none of them a reason for the field to exist.
 
 # --- declared in a contract, read by nothing ------------------------------
-
-exclude_patterns   # Manifest. THREE mentions in the entire codebase: this
-                   # table row, the struct field, and the line that parses it.
-                   # Documented as "node-name globs this manifest deliberately
-                   # does not describe" — a suppression that suppresses
-                   # nothing, so a manifest that excludes a node still gets
-                   # `dangling-entity` for it.
-
-lease_duration     # QosDecl. Liveliness lease. `qos_match`/`qos_compat` check
-                   # reliability, durability, depth and history; liveliness
-                   # kind and its lease are parsed and dropped.
-
-max_rate_hz        # EndpointProps. `min_rate_hz` has `rate-hierarchy` and
-                   # feeds rate derivation; the upper bound has neither. An
-                   # over-fast publisher is the one that overruns a
-                   # subscriber's queue, which is the case `queue-drain-rate`
-                   # is about.
-
-correlation        # PathDecl. Parsed, exported to the causal graph, lowered
-                   # to `model::Correlation` — all transport. No arithmetic
-                   # branches on it, exactly the shape `semantics: age` had
-                   # when phase 68 deleted it. `sync:` is what states fan-in
-                   # policy now, and `sync-feasibility` reads that.
-
-min_latency        # PathDecl. Added by phase 67 SO THAT `max_jitter` could be
-                   # falsified, and the jitter check still uses only the
-                   # sampling half. This is the one with a design already
-                   # agreed: `min = 0` is the conservative default, so
-                   # `max_jitter` is checkable today and declaring a floor
-                   # only relaxes it.
+#
+# None, as of phase 70 W2. The five that were here were each ruled on:
+# `exclude_patterns` and `correlation` deleted (parse errors naming the
+# replacement), `max_rate_hz`, `lease_duration` and `min_latency` given the
+# rule each was waiting for (`rate-hierarchy`, `qos-match`, `jitter-range`).
 
 # --- carried into the model for a consumer that does not read it ----------
 #

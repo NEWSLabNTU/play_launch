@@ -206,14 +206,6 @@ fn qos_contract(q: &QosDecl) -> model::Qos {
     }
 }
 
-fn correlation(c: Option<&str>) -> Option<model::Correlation> {
-    match c {
-        Some("timestamp") => Some(model::Correlation::Timestamp),
-        Some("latest") => Some(model::Correlation::Latest),
-        _ => None,
-    }
-}
-
 fn path_contract(
     decl: &ros_launch_manifest_types::PathDecl,
     input: Vec<String>,
@@ -223,7 +215,6 @@ fn path_contract(
         input,
         output,
         max_latency_ms: decl.max_latency.map(|d| d.as_millis_f64()),
-        correlation: correlation(decl.correlation.as_deref()),
         tolerance_ms: decl.tolerance.map(|d| d.as_millis_f64()),
         drop: decl.drop.as_ref().map(drop_contract),
         // Phase 67 added these to the contract and to the sched crate's

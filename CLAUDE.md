@@ -586,6 +586,29 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: Phase 70 W2 — **the rulings** (manifest crate `v0.1.23` →
+  **`v0.1.24`**). Every field W1 found unread got a decision, by one test:
+  what would it *check* if it were read? No checkable claim → deletion.
+  **Deleted**: `exclude_patterns` (three mentions, two contradictory
+  documented meanings, neither implemented; `external:` is the read way) and
+  `correlation` (`timestamp`/`latest` is `sync:` present/absent, which three
+  rules and rate derivation read). Both are parse errors naming the
+  replacement; old models still load (golden keeps `correlation:` on disk).
+  **Implemented**: `rate-hierarchy` now checks the UPPER bounds
+  (`pub.max_rate_hz >= topic.rate_hz >= sub.max_rate_hz`); `qos-match`
+  applies the DDS matrix to `liveliness` and `lease_duration` (a publisher
+  asserting less often than the subscriber's lease is one it will
+  periodically declare dead); new `jitter-range` checks
+  `max_latency − min_latency > max_jitter` when BOTH bounds are declared, and
+  reports an absent `min_latency` as unverifiable (info) — the first draft
+  read absence as zero and blocked model emission on `contract_w2`; an
+  absent floor is unknown, not 0. **Kept**: the four
+  model-side copies (`node_concurrency`, `srv_endpoints`, `max_response_ms`,
+  `tolerance_ms`) exist for nano-ros, which does not read them yet; deleting
+  them would re-open phase 68 W5's seam. Baseline is now four lines, all
+  nano-ros's debt. `just check-field-census` still gates. Roadmap:
+  `docs/roadmap/phase-70-consumer-census.md` §W2.
+
 - **2026-09-05**: Phase 70 W1 — **the consumer census: which fields are
   actually read.** Phase 69 made the grammar enumerable, which says what is
   LEGAL; this says what is READ. The four fields retired in phases 67/68

@@ -112,8 +112,6 @@ pub struct NodePathOut {
     pub max_latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tolerance_ms: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub correlation: Option<String>,
     pub scope_id: usize,
     /// Always `false` — node paths are intra-node by construction.
     pub cross_node: bool,
@@ -131,8 +129,6 @@ pub struct ScopePathOut {
     pub max_latency_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tolerance_ms: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub correlation: Option<String>,
     /// Always `true` — scope paths cross node boundaries by construction.
     pub cross_node: bool,
 }
@@ -277,7 +273,6 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             output: p.path.output.clone(),
             max_latency_ms: p.path.max_latency.map(|d| d.as_millis_f64()),
             tolerance_ms: p.path.tolerance.map(|d| d.as_millis_f64()),
-            correlation: p.path.correlation.clone(),
             scope_id: p.scope_id,
             cross_node: false,
         })
@@ -296,7 +291,6 @@ pub fn build_export(index: &ManifestIndex) -> GraphExport {
             output_topics: p.output_topics.clone(),
             max_latency_ms: p.path.max_latency.map(|d| d.as_millis_f64()),
             tolerance_ms: p.path.tolerance.map(|d| d.as_millis_f64()),
-            correlation: p.path.correlation.clone(),
             cross_node: true,
         })
         .collect();

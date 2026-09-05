@@ -41,7 +41,6 @@ paths:
     input: /sensing/points
     output: [/perception/objects]
     max_latency: 80ms
-    correlation: timestamp
     tolerance: 10ms
     drop:
       max_count: 2 / 25
