@@ -266,6 +266,16 @@ pub struct ManifestIndex {
     /// flags. Each entry records which side of the topic is provided
     /// by an external system. `dangling-entity` skips that side.
     pub externals: BTreeMap<String, ros_launch_manifest_types::ExternalSide>,
+    /// Externally-provided SERVICES and ACTIONS, keyed by FQN. Built from
+    /// per-service and per-action `external:` marks. Each entry records which
+    /// side is provided by an external system, and `dangling-entity` skips
+    /// that side.
+    ///
+    /// Separate from `externals` rather than folded into it: the two carry
+    /// different vocabularies (`pub`/`sub` against `server`/`client`), and a
+    /// service and a topic can legitimately share an FQN, so one map keyed by
+    /// name would make them collide.
+    pub endpoint_externals: BTreeMap<String, ros_launch_manifest_types::ExternalEndpointSide>,
     /// Cross-scope consistency diagnostics (collected after merge).
     pub merge_diagnostics: Vec<Diagnostic>,
     /// Total errors across all manifests.
@@ -631,9 +641,21 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
         }
     }
 
-    // Dangling service: 0 servers across the merged tree
+    // Dangling service: 0 servers across the merged tree.
+    //
+    // Skipped when the author declared the SERVER side external -- a client
+    // and its server are routinely two images, and the launch tree a contract
+    // describes is a subset of the running system. `external: client` does NOT
+    // skip it: that says nothing about the server.
     for (fqn, service) in &index.services {
-        if service.servers.is_empty() && !service.clients.is_empty() {
+        let server_external = matches!(
+            index.endpoint_externals.get(fqn).copied(),
+            Some(
+                ros_launch_manifest_types::ExternalEndpointSide::Server
+                    | ros_launch_manifest_types::ExternalEndpointSide::Both
+            )
+        );
+        if service.servers.is_empty() && !service.clients.is_empty() && !server_external {
             index.merge_diagnostics.push(Diagnostic {
                 rule_id: "dangling-entity".to_string(),
                 severity: Severity::Error,
@@ -1256,6 +1278,34 @@ fn collect_externals(index: &mut ManifestIndex) {
     }
 
     index.externals = externals;
+
+    // Services and actions, same shape, own vocabulary.
+    use ros_launch_manifest_types::ExternalEndpointSide;
+    let mut endpoint_externals: BTreeMap<String, ExternalEndpointSide> = BTreeMap::new();
+    let merge_ep = |m: &mut BTreeMap<String, ExternalEndpointSide>,
+                    fqn: String,
+                    side: ExternalEndpointSide| {
+        let merged = match m.get(&fqn).copied() {
+            None => side,
+            Some(existing) if existing == side => existing,
+            Some(_) => ExternalEndpointSide::Both,
+        };
+        m.insert(fqn, merged);
+    };
+    for resolved in index.manifests.values() {
+        let ns = &resolved.ns;
+        for (key, svc) in &resolved.manifest.services {
+            if let Some(side) = svc.external {
+                merge_ep(&mut endpoint_externals, qualify_name(ns, key), side);
+            }
+        }
+        for (key, act) in &resolved.manifest.actions {
+            if let Some(side) = act.external {
+                merge_ep(&mut endpoint_externals, qualify_name(ns, key), side);
+            }
+        }
+    }
+    index.endpoint_externals = endpoint_externals;
 }
 
 /// Split an endpoint FQN like `/ns/node/endpoint` into `(node_fqn, endpoint_name)`.
