@@ -68,12 +68,12 @@ pub fn build_checked_model(
 
     // Gate: Error severity anywhere refuses emission (validity by
     // construction — RFC-0050).
-    let merge_errors = index
-        .merge_diagnostics
-        .iter()
-        .filter(|d| matches!(d.severity, Severity::Error))
-        .count();
-    let total_errors = index.total_errors + merge_errors;
+    // `load_manifests` has already folded per-manifest, cross-scope AND
+    // load-failure errors into `total_errors`. Adding the cross-scope ones a
+    // second time here (as this did) inflated the number the refusal message
+    // reports — never the verdict, since the gate is `> 0`, but a user reading
+    // "4 contract error(s)" for two findings has no way to tell.
+    let total_errors = index.total_errors;
     if total_errors > 0 {
         for m in index.manifests.values() {
             for d in &m.diagnostics {
@@ -82,7 +82,7 @@ pub fn build_checked_model(
                 }
             }
         }
-        for d in &index.merge_diagnostics {
+        for d in index.merge_diagnostics.iter().chain(index.load_diagnostics.iter()) {
             if matches!(d.severity, Severity::Error) {
                 eprintln!("error: {d}");
             }

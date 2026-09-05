@@ -225,6 +225,19 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 69** — ✅ the field table: one source for the contract grammar.
+    The manifest parser had **no unknown-key rejection anywhere**, so
+    `max_latencyy: 5ms` deleted a budget and `rate_hzz: 100` deleted the
+    declaration `derivable-rate` reads — silencing the diagnostic that pointed
+    at the mistake, while `check` reported `1 clean`, exit 0. The grammar lived
+    in three places nothing compared; **six of 66 fields appeared nowhere in
+    the 1752-line specification**. `field_table.rs` is now the single source
+    and `docs/format-reference.md` is generated from it. Severity was measured
+    first: across 42 files and 132 key paths **exactly one key was dead**, so a
+    hard error rather than a deprecation window. Found on the way: a parse
+    failure silently dropped the whole file at exit 0, and a vacuous test whose
+    scope path named topics that did not exist.
+    [phase-69-contract-field-table.md](./phase-69-contract-field-table.md).
   - **Phase 68** — 📋 contract consequences: analysis, mapper, verification,
     retirement. Makes the checker and mapper read what phase 67 added, then
     RETIRES the old paths only after a running system agrees. Fixes a silent

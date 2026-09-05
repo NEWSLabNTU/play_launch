@@ -586,6 +586,73 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-05**: Phase 69 — **the contract grammar is enumerable, and an
+  unknown key is an error** (manifest crate `v0.1.20` → **`v0.1.22`**).
+  `types/src/parse.rs` is 1695 hand-written lines that, until now, had **no
+  unknown-key rejection anywhere**. Measured on `contract_rates`:
+  `max_latencyy: 5ms` silently deleted a budget and `rate_hzz: 100` silently
+  deleted the declaration the `derivable-rate` rule reads — so **the one
+  diagnostic pointing at the mistake was silenced by the mistake**, and
+  `check` reported `1 clean, 0 with errors`, exit 0. The opposite ruling
+  already existed one layer up: the launch XML parser's `attr_spec.rs`
+  allowlists (2026-07-31) error on an unknown attribute.
+  **The grammar lived in three places nothing compared** — the structs, the
+  reader, and `docs/launch-manifest.md` §Format Reference. Of 66 struct
+  fields, 22 were absent from that reference and **six appeared nowhere in
+  the 1752-line document at all** (`lease_duration`, `min_latency`,
+  `concurrency`, `exclusive`, `max_count`, `tolerate`). A "formal
+  specification" was therefore not a writing task: nothing could tell you such
+  a document was complete, because nothing enumerated the language.
+  `types/src/field_table.rs` (102 rows, 18 contexts) is now the single source
+  — `parse.rs` consults it at every schema-key context and
+  `docs/format-reference.md` is **generated** from it with a test that fails
+  on drift (`UPDATE_FORMAT_REFERENCE=1 cargo test -p
+  ros-launch-manifest-types`). The ten author-keyed containers (`nodes:`,
+  `topics:`, `pub:`, …) have **no `Context` variant at all**, so an allowlist
+  structurally cannot reach them — the exemption is data, not an omission.
+  **A worse defect was found while probing, and it inverts the value of any
+  rejection**: a parse failure was a bare `warn!` that **dropped the file
+  whole** and left `check` at exit 0, so one stray key stopped every contract
+  in that file from being checked, silently — while the documented exit
+  contract in `verbs/check.rs` claimed a manifest-load failure returned
+  `Err(..)`. Fixing that was a *precondition*, not a follow-up:
+  `ManifestIndex::load_diagnostics` is kept apart from `merge_diagnostics`
+  because the file it names is ABSENT from `index.manifests`, so every
+  per-manifest tally would otherwise count it as clean. It prints first,
+  counts in `total_errors`, drives exit 1, and refuses model emission.
+  "No manifests found" and "found, but none could be read" are now different
+  verdicts.
+  **The severity was measured before it was chosen.** Across 42 distinct
+  contract files and 132 canonical key paths, **exactly one key was dead** —
+  `srv.<endpoint>.request` in `manifest_ndt`, itself a second copy of the type
+  already on `services.trigger_ndt.type`. One fixture fix, so a hard error
+  rather than a deprecation window. (`sched/src/platform.rs` already carried
+  `deny_unknown_fields`; the contract parser was the outlier.)
+  **The check found a vacuous test on its first run.**
+  `checker_tests::test_clean_pipeline` declared its scope path's two topics
+  under **top-level `pub:`/`sub:` blocks that were never grammar**, so the
+  path named topics that did not exist and `errs.is_empty()` passed for the
+  absence of a check rather than the success of one — the same shape as phase
+  68's three. It now shrinks the budget below the pipeline total and requires
+  `scope-budget` to fire. `segments:` was found the same way: phase 68 named
+  it in the `chains:` migration message but never rejected it.
+  **Three details that mattered.** A removed key keeps its own dedicated
+  message (`chains:`, `jitter:` name their replacement; the generic check is
+  only the backstop). The "did you mean" suggestion is **budgeted by key
+  length**, because the corpus holds four genuine near-miss pairs
+  (`min_latency`/`max_latency`, `pub`/`sub`, `srv`/`sub`,
+  `sync.tolerance`/`miss.tolerate`) an unbudgeted nearest-wins would confuse.
+  And `parse_qos` took no `ctx`, so a bad QoS key reported at the document
+  root.
+  **Still open** (phase 70): the `kind`/`consumer` columns — deliberately NOT
+  added blank, since a column nothing fills is the write-only field this
+  campaign removes; **wrong TYPES are still silent** (`max_count: 5` as an
+  integer, a bare-scalar `output:`, a quoted number in any `yaml_f64` field);
+  free-string values (`qos.reliability`, `criticality`) accept anything; and
+  `max_latency_ms` is still the **majority** spelling (14 files vs 10).
+  Roadmap: `docs/roadmap/phase-69-contract-field-table.md`. Reference:
+  the manifest repo's `docs/format-reference.md`.
+
 - **2026-08-29**: Phases 67/68 complete — **`chains:`/`segments:` are gone; a
   route is derived, never written.** A contract now states an end-to-end
   requirement as a scope path — two ends and a budget — and the route between

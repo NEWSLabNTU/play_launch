@@ -278,6 +278,16 @@ pub struct ManifestIndex {
     pub endpoint_externals: BTreeMap<String, ros_launch_manifest_types::ExternalEndpointSide>,
     /// Cross-scope consistency diagnostics (collected after merge).
     pub merge_diagnostics: Vec<Diagnostic>,
+    /// Diagnostics from LOADING a contract, before any rule runs: a file
+    /// that could not be parsed, or whose args could not be resolved.
+    ///
+    /// Kept apart from [`Self::merge_diagnostics`] because these are not
+    /// cross-scope findings and because the file they name is ABSENT from
+    /// [`Self::manifests`] — every per-manifest tally would otherwise count
+    /// it as clean. Until phase 69 a parse failure was a bare `warn!` that
+    /// dropped the file and left the exit code at 0, so one stray key
+    /// silently stopped every contract in that file from being checked.
+    pub load_diagnostics: Vec<Diagnostic>,
     /// Total errors across all manifests.
     pub total_errors: usize,
     /// Total warnings across all manifests.
@@ -429,7 +439,17 @@ pub fn load_manifests(
         let parsed = match parse_manifest_with_spans(&path) {
             Ok(p) => p,
             Err(e) => {
-                warn!("Failed to parse manifest {}: {}", path.display(), e);
+                index.load_diagnostics.push(Diagnostic {
+                    rule_id: "manifest-parse".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "could not parse contract {}: {e}. Every contract in this \
+                         file is now UNCHECKED — the file is dropped, not partially read",
+                        path.display()
+                    ),
+                    path: path.display().to_string(),
+                    span: None,
+                });
                 continue;
             }
         };
@@ -542,6 +562,14 @@ pub fn load_manifests(
 
     // Cross-scope post-merge checks
     run_cross_scope_checks(&mut index);
+
+    // A contract that could not be loaded is an ERROR, not a warning: the
+    // file is dropped whole, so every contract in it silently stops being
+    // checked. Folded first so the tally below includes it.
+    for diag in &index.load_diagnostics {
+        index.total_errors += 1;
+        warn!("[load] {diag}");
+    }
 
     // Fold merge diagnostics into the total counts and log them
     for diag in &index.merge_diagnostics {

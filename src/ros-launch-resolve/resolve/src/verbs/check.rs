@@ -161,7 +161,10 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         );
     }
 
-    if index.manifests.is_empty() {
+    // "None found" and "found, but none could be read" are different verdicts.
+    // Only the first is a clean exit; conflating them let a contract file that
+    // failed to parse report as if the user had shipped no contracts at all.
+    if index.manifests.is_empty() && index.load_diagnostics.is_empty() {
         eprintln!(
             "No manifests found (overlay={:?}, provider={})",
             sources.overlay, sources.provider
@@ -175,6 +178,10 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     } else {
         Some(inputs.rule.iter().map(String::as_str).collect())
     };
+
+    // Render contracts that never loaded, before anything that tallies only
+    // the files that did.
+    render_load_diagnostics(&index, &inputs.format, rule_filter.as_ref())?;
 
     // Render per-scope diagnostics
     render_scope_diagnostics(&index, &inputs.format, rule_filter.as_ref())?;
@@ -289,6 +296,31 @@ fn render_scope_diagnostics(
     Ok(())
 }
 
+/// Render contracts that never loaded. Printed BEFORE every other section:
+/// a file that failed to parse is missing from every tally that follows, so
+/// reading those first would mean reading a clean report about a subset.
+fn render_load_diagnostics(
+    index: &manifest_loader::ManifestIndex,
+    format: &str,
+    rule_filter: Option<&HashSet<&str>>,
+) -> Result<()> {
+    let filtered = filter_diagnostics(&index.load_diagnostics, rule_filter);
+    if filtered.is_empty() {
+        return Ok(());
+    }
+
+    if format == "json" {
+        print_diagnostics_json(&filtered, "<load>", None)?;
+    } else {
+        eprintln!("\n── Contracts that failed to load ──");
+        for diag in &filtered {
+            eprintln!("  error[{}]: {}", diag.rule_id, diag.message);
+        }
+    }
+
+    Ok(())
+}
+
 /// Render cross-scope diagnostics (consistency, dangling-entity, budget-overflow).
 fn render_cross_scope_diagnostics(
     index: &manifest_loader::ManifestIndex,
@@ -325,9 +357,14 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
     );
     let (cross_errors, cross_warnings) =
         count_severities(index.merge_diagnostics.iter(), rule_filter);
+    // Files that never became a manifest. Counted separately because they are
+    // absent from `index.manifests`, so the clean/with-errors split below
+    // cannot see them at all.
+    let (load_errors, load_warnings) =
+        count_severities(index.load_diagnostics.iter(), rule_filter);
 
-    let total_errors = per_scope_errors + cross_errors;
-    let total_warnings = per_scope_warnings + cross_warnings;
+    let total_errors = per_scope_errors + cross_errors + load_errors;
+    let total_warnings = per_scope_warnings + cross_warnings + load_warnings;
     let clean_count = index
         .manifests
         .values()
@@ -346,6 +383,12 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
         ),
         None => String::new(),
     };
+    if !index.load_diagnostics.is_empty() {
+        eprintln!(
+            "{} contract file(s) FAILED TO LOAD and were not checked at all",
+            index.load_diagnostics.len()
+        );
+    }
     eprintln!(
         "\n{} manifest(s) checked: {} clean, {} with errors ({} errors, {} warnings){}",
         index.manifests.len(),
@@ -401,7 +444,8 @@ fn has_filtered_errors(
         .manifests
         .values()
         .flat_map(|m| m.diagnostics.iter())
-        .chain(index.merge_diagnostics.iter());
+        .chain(index.merge_diagnostics.iter())
+        .chain(index.load_diagnostics.iter());
     count_severities(combined, rule_filter).0 > 0
 }
 

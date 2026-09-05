@@ -201,7 +201,9 @@ unsafe fn call_inner(req: *const c_char) -> Response {
             // Read them back BEFORE returning: they live in `ctx`, which dies
             // with this scope. That silent discard is what issue 0935 was.
             if r.is_ok() {
-                captures = Some(play_launch_parser::bridge::ExecCaptures::drain_from(&mut ctx));
+                captures = Some(play_launch_parser::bridge::ExecCaptures::drain_from(
+                    &mut ctx,
+                ));
             }
             r.map(|()| String::new())
         }
@@ -424,5 +426,4 @@ mod tests {
     fn the_abi_version_moved_with_the_contract() {
         assert_eq!(play_launch_py_abi_version(), 2);
     }
-
 }

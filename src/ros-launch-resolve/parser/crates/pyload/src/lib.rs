@@ -208,10 +208,10 @@ fn interrogate(python: &str) -> Option<Interpreter> {
 /// works, then `python3` on `PATH`, then nothing. No filesystem scan.
 fn candidates() -> Vec<String> {
     let mut v = Vec::new();
-    if let Ok(p) = std::env::var("NROS_PYTHON") {
-        if !p.is_empty() {
-            v.push(p);
-        }
+    if let Ok(p) = std::env::var("NROS_PYTHON")
+        && !p.is_empty()
+    {
+        v.push(p);
     }
     v.push("python3".to_string());
     v
