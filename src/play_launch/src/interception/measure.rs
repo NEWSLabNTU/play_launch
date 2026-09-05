@@ -114,6 +114,11 @@ pub struct PathSpec {
 /// Percentiles over one measured quantity, in nanoseconds.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dist {
+    /// The floor. For `response` this is the path's best-case latency —
+    /// the `min_latency` a contract declares so that `max_jitter` can be
+    /// falsified (`jitter-range`). A measured floor is the only honest one:
+    /// nothing in a launch file or a contract knows it.
+    pub min: u64,
     pub p50: u64,
     pub p99: u64,
     pub max: u64,
@@ -404,6 +409,7 @@ fn dist(sorted: &[u64]) -> Dist {
         sorted[rank.saturating_sub(1).min(sorted.len() - 1)]
     };
     Dist {
+        min: sorted[0],
         p50: pick(0.50),
         p99: pick(0.99),
         max: *sorted.last().unwrap(),
@@ -620,6 +626,7 @@ mod tests {
     fn percentiles_are_nearest_rank() {
         let v: Vec<u64> = (1..=100).collect();
         let d = dist(&v);
+        assert_eq!(d.min, 1);
         assert_eq!(d.p50, 50);
         assert_eq!(d.p99, 99);
         assert_eq!(d.max, 100);
@@ -671,11 +678,13 @@ mod tests {
             outcome: Outcome::Measured(PathStats {
                 samples: 1,
                 cost: Dist {
+                    min: 0,
                     p50: max,
                     p99: max,
                     max,
                 },
                 response: Dist {
+                    min: 0,
                     p50: max,
                     p99: max,
                     max,
@@ -709,11 +718,13 @@ mod tests {
             outcome: Outcome::Measured(PathStats {
                 samples: 1,
                 cost: Dist {
+                    min: 0,
                     p50: 1,
                     p99: 1,
                     max: 8_000_001,
                 },
                 response: Dist {
+                    min: 0,
                     p50: 1,
                     p99: 1,
                     max: 8_000_001,

@@ -160,7 +160,8 @@ fn render(results: &[PathResult], run: &Run, events_path: &Path, model_path: &Pa
                     s.samples,
                 ));
                 body.push_str(&format!(
-                    "    #   response p50 {} p99 {} max {} ms (cost + preemption + wakeup)\n",
+                    "    #   response min {} p50 {} p99 {} max {} ms (cost + preemption + wakeup)\n",
+                    ms(s.response.min),
                     ms(s.response.p50),
                     ms(s.response.p99),
                     ms(s.response.max),
@@ -205,6 +206,36 @@ fn render(results: &[PathResult], run: &Run, events_path: &Path, model_path: &Pa
     if measured_any {
         out.push_str("\noverrides:\n");
         out.push_str(&body);
+    }
+
+    // The floor goes to the CONTRACT, not the platform file: `min_latency` is
+    // a fact about what the code does, which is the contract's half of the
+    // split (`contract-primitives.md`). It is the one bound in the vocabulary
+    // that is expected to be measured rather than authored — `jitter-range`
+    // cannot check a `max_jitter` without it and says so — and this run is
+    // the only place it can come from. Kept as comments so the whole of
+    // stdout stays pasteable under `overrides:`.
+    let floors: Vec<(&PathResult, u64)> = results
+        .iter()
+        .filter_map(|r| match &r.outcome {
+            Outcome::Measured(s) => Some((r, s.response.min)),
+            Outcome::NotMeasured(_) => None,
+        })
+        .collect();
+    if !floors.is_empty() {
+        out.push_str(
+            "\n# Measured floors — these belong in the CONTRACT (`paths.<name>.min_latency`),\n\
+             # not here. Best-case response over this run; a `max_jitter` on the path is\n\
+             # unverifiable without one (`jitter-range`):\n",
+        );
+        for (r, min_ns) in floors {
+            out.push_str(&format!(
+                "#   nodes.{}.paths.{}.min_latency: {}ms\n",
+                r.node.trim_start_matches('/'),
+                r.name,
+                ms(min_ns)
+            ));
+        }
     }
 
     let unmeasured: Vec<&PathResult> = results
@@ -312,11 +343,13 @@ mod tests {
             outcome: Outcome::Measured(PathStats {
                 samples: 10,
                 cost: Dist {
+                    min: 0,
                     p50: max_ns / 2,
                     p99: max_ns,
                     max: max_ns,
                 },
                 response: Dist {
+                    min: 0,
                     p50: max_ns,
                     p99: max_ns * 2,
                     max: max_ns * 2,
@@ -412,6 +445,20 @@ mod tests {
         let out = render_of(&[measured("/n", "p", 1_000_000)]);
         assert!(out.contains("NOT a WCET"), "{out}");
         assert!(out.contains("MAXIMUM"), "{out}");
+    }
+
+    /// The floor is printed for the contract and never lands in `overrides:`.
+    #[test]
+    fn the_measured_floor_is_offered_to_the_contract_as_a_comment() {
+        let out = render_of(&[measured("/detector", "detect", 8_000_000)]);
+        let line = out
+            .lines()
+            .find(|l| l.contains("nodes.detector.paths.detect.min_latency:"))
+            .expect("floor reported");
+        assert!(line.trim_start().starts_with('#'), "{line}");
+        // Everything under `overrides:` must still be a platform-file fragment.
+        let v: serde_yaml_ng::Value = serde_yaml_ng::from_str(&out).unwrap();
+        assert!(v["overrides"]["/detector"]["min_latency"].is_null());
     }
 
     #[test]

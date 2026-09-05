@@ -128,6 +128,18 @@ Every ruling landed with a test that fails without it. Corpus impact:
 fixture used `exclude_patterns`, `max_rate_hz` or `lease_duration` in a way
 the new rules reject.
 
+## W2 follow-through (2026-09-06)
+
+- **`measure` now produces the floor.** `jitter-range`'s info said
+  "`play_launch measure` produces the floor" and, when it shipped, that was
+  false — `measure` had no notion of a minimum. `Dist` gained `min`, and
+  the fragment prints one comment line per measured path
+  (`nodes.<n>.paths.<p>.min_latency: <best response>ms`) under a header
+  saying it belongs in the CONTRACT, not the platform file. Comments only,
+  so stdout stays pasteable under `overrides:`.
+- **Wrong types are errors** (manifest `v0.1.26`) — the other half of phase
+  69's finding, recorded there.
+
 ## Not done
 - **W3 — the derivation/agreement corpus metric.** `rate-mismatch` /
   `derivable-rate` generalised: for each derivable field, count agreements and

@@ -269,12 +269,13 @@ failures with this work stashed), so they are recorded rather than absorbed:
 
 - **The `kind` and `consumer` columns** — phase 70's consumer census. Until
   then the table says what is *legal*, not what is *read*.
-- **A second silent-loss class the table does not cover: wrong TYPES.**
-  `max_count: 5` (an integer where a `"N / W"` string is expected) still
-  parses to `None` in silence, and so do a bare-scalar `output:`, a
-  non-boolean `lifecycle:`, and a quoted number in any `yaml_f64` field.
-  The unknown-key check catches a misspelled key, not a mistyped value. The
-  helper inventory taken during W1 lists every such site.
+- ~~**A second silent-loss class the table does not cover: wrong TYPES.**~~
+  **Closed 2026-09-06** (manifest `v0.1.26`): every typed helper now
+  returns a `ParseError` naming what was expected, what was found and
+  where. `max_count: 5`, `rate_hz: "100"`, `lifecycle: "true"`, a
+  bare-scalar `output:` and a mapping where a string belongs are all
+  errors; `input:` keeps its single-name form. Nested blocks (`drop:`,
+  `miss:`, `qos:`, `sync:`) report at their own path.
 - **`trigger.timer` sibling keys** are now rejected, but `qos.reliability`,
   `qos.durability`, `qos.history`, `qos.liveliness` and `criticality` still
   accept **any string value** without validation. A closed value set is the

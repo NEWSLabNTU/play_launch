@@ -586,6 +586,23 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: **Wrong types are errors, and `measure` produces the
+  floor** (manifest `v0.1.25` → **`v0.1.26`**). Phase 69 made an unknown KEY
+  an error; a wrong TYPE was still `None` — `max_count: 5`, `rate_hz: "100"`,
+  `lifecycle: "true"`, a bare-scalar `output:`, a mapping where a string
+  belongs all deleted the declaration in silence and `check` reported clean.
+  Every typed helper in `types/src/parse.rs` now takes the context and
+  returns `Result`; absent stays `None`, another type is a `ParseError`
+  saying expected/found/where. Quoted number and quoted boolean get their own
+  wording ("remove the quotes"); list elements must be scalars; `depth: -1`
+  is rejected; `input:` keeps its single-name form. Nested blocks (`drop:`,
+  `miss:`, `qos:`, `sync:`) now report at their own path. Separately:
+  `jitter-range`'s info pointed at `play_launch measure` for the floor and
+  `measure` had no notion of one. `Dist` gained `min`; the fragment prints
+  `nodes.<n>.paths.<p>.min_latency: <best response>ms` per measured path as
+  comments under a header saying it belongs in the CONTRACT — stdout stays
+  pasteable under `overrides:`.
+
 - **2026-09-06**: Phase 70 W2 — **the rulings** (manifest crate `v0.1.23` →
   **`v0.1.24`**). Every field W1 found unread got a decision, by one test:
   what would it *check* if it were read? No checkable claim → deletion.
