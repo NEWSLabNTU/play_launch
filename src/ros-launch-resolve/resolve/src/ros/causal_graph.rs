@@ -540,7 +540,7 @@ nodes:
       passthrough:
         input: [scan]
         output: [output]
-        max_latency_ms: 20.0
+        max_latency: 20.0ms
   localizer:
     sub: [odom]
     pub: [pose]
@@ -577,7 +577,7 @@ paths:
   end_to_end:
     input: [scan]
     output: [filtered]
-    max_latency_ms: 50.0
+    max_latency: 50.0ms
 "#;
 
         let tmp = tempfile::TempDir::new().unwrap();

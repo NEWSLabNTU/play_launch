@@ -127,7 +127,7 @@ Built-in mappers:
 | mapper | derives from | ordering |
 |---|---|---|
 | `rate_monotonic` | the node's fastest declared rate (`pub`/`sub` `min_rate_hz`, or the topic's own `rate_hz`) | higher rate → higher priority |
-| `deadline_monotonic` | the node's tightest declared path `max_latency_ms` | tighter deadline → higher priority |
+| `deadline_monotonic` | the node's tightest declared path `max_latency` | tighter deadline → higher priority |
 | `chain_aware` (Phase 44) | declared `chains:` (§1.7) plus the same rate/deadline facts as a fallback for everything not on a chain | chain members ranked by criticality + drain-toward-sink; everything else falls back to criticality-bucketed RM/DM |
 | `manual` | nothing — requires the legacy `system.toml` bridge (§4) | hand-written tiers |
 
@@ -404,7 +404,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
          filter:
            trigger: { input: [points_raw] }        # event segment
            output: [points_filtered]
-           max_latency_ms: 5
+           max_latency: 5ms
    ```
 
 2. **Declare the chain, connected by `via:` links.** `chains:` is a
@@ -417,7 +417,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    chains:
      points_to_cmd:
        semantics: reaction
-       max_latency_ms: 30
+       max_latency: 30ms
        segments:
          - { scope: /, path: tick }
          - { via: /perception/points_raw }
@@ -440,7 +440,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    landing on a `timer` boundary is consumed through that node's own
    subscriptions, so boundaries can sit anywhere in the chain, not just
    first), `chain-budget` (warning — declared segment latencies plus
-   sampling cost must fit the chain's `max_latency_ms`), and
+   sampling cost must fit the chain's `max_latency`), and
    `chain-sampling-feasibility` (warning — sampling cost *alone* meeting
    or exceeding the budget means the chain is structurally infeasible;
    no scheduling assignment can fix it, only a period or architecture

@@ -481,14 +481,14 @@ nodes:
       filter:
         trigger: { input: [points_raw] }
         output: [points_filtered]
-        max_latency_ms: 5
+        max_latency: 5ms
 
   control_node:
     criticality: high
     sub:
       points_filtered:
         min_rate_hz: 100
-        max_age_ms: 50
+        max_age: 50ms
     pub:
       cmd:
         min_rate_hz: 100
@@ -496,7 +496,7 @@ nodes:
       control:
         trigger: { input: [points_filtered] }
         output: [cmd]
-        max_latency_ms: 10
+        max_latency: 10ms
 
 paths:
   points_to_cmd:

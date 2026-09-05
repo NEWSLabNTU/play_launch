@@ -1541,6 +1541,48 @@ fn check_cross_scope_qos_match(
                         span: None,
                     });
                 }
+
+                // Liveliness and its lease (phase 70 W4): the per-manifest
+                // rule gained these in W2, and this merged-graph copy is the
+                // one that sees a publisher and a subscriber declared in
+                // different scopes — which for a lease is the common case,
+                // since the party that asserts and the party that times out
+                // are rarely in one launch file.
+                if let (Some(pub_live), Some(sub_live)) =
+                    (pub_qos.liveliness.as_deref(), sub_qos.liveliness.as_deref())
+                    && pub_live == "automatic"
+                    && sub_live == "manual_by_topic"
+                {
+                    index.merge_diagnostics.push(Diagnostic {
+                        rule_id: "qos-match".to_string(),
+                        severity: Severity::Error,
+                        message: format!(
+                            "incompatible QoS on topic '{fqn}' field 'liveliness': \
+                             pub '{pub_ref}' offers '{pub_live}', sub '{sub_ref}' \
+                             requests '{sub_live}'"
+                        ),
+                        path: format!("topics.{fqn}.qos.liveliness"),
+                        span: None,
+                    });
+                }
+                if let (Some(pub_lease), Some(sub_lease)) =
+                    (pub_qos.lease_duration, sub_qos.lease_duration)
+                    && pub_lease.as_millis_f64() > sub_lease.as_millis_f64()
+                {
+                    index.merge_diagnostics.push(Diagnostic {
+                        rule_id: "qos-match".to_string(),
+                        severity: Severity::Error,
+                        message: format!(
+                            "incompatible QoS on topic '{fqn}' field 'lease_duration': \
+                             pub '{pub_ref}' asserts every {:.2}ms, sub '{sub_ref}' \
+                             declares it dead after {:.2}ms",
+                            pub_lease.as_millis_f64(),
+                            sub_lease.as_millis_f64()
+                        ),
+                        path: format!("topics.{fqn}.qos.lease_duration"),
+                        span: None,
+                    });
+                }
             }
         }
     }
@@ -4043,6 +4085,31 @@ mod tests {
                 && d.message.contains("best_effort")
                 && d.message.contains("reliable")),
             "expected cross-scope reliability mismatch error, got: {qos_errors:?}"
+        );
+    }
+
+    /// Phase 70 W4: the lease is checked across scopes, where it matters —
+    /// the publisher that asserts and the subscriber that times out are
+    /// rarely declared in one file.
+    #[test]
+    fn test_cross_scope_qos_match_liveliness_lease() {
+        let dump = make_dump(vec![
+            scope(0, "manifest_qos_liveliness_pub", "manifest.launch.xml", "", None),
+            scope(1, "manifest_qos_liveliness_sub", "manifest.launch.xml", "", Some(0)),
+        ]);
+        let index = overlay_index(&dump);
+        let qos_errors: Vec<_> = index
+            .merge_diagnostics
+            .iter()
+            .filter(|d| d.rule_id == "qos-match")
+            .collect();
+        assert!(
+            qos_errors.iter().any(|d| d.message.contains("lease_duration")),
+            "expected a cross-scope lease mismatch, got: {qos_errors:?}"
+        );
+        assert!(
+            qos_errors.iter().any(|d| d.message.contains("liveliness")),
+            "expected a cross-scope liveliness mismatch, got: {qos_errors:?}"
         );
     }
 

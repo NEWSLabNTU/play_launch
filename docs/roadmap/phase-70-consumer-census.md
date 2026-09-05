@@ -1,6 +1,6 @@
 # Phase 70 — the consumer census: which fields are actually read
 
-Status: **W1–W3 complete.**
+Status: **complete** (W1–W4; manifest crate `v0.1.29`).
 
 Phase 69 made the contract grammar enumerable — every key a contract may carry
 is a row in the manifest crate's `types/src/field_table.rs`. That says what is
@@ -183,12 +183,31 @@ is **narrower than `chains:`'s was**: delete the derivable copies (the
 returns `Unknown`, and let the census say which is which. A blanket deletion
 would remove a fact, not a consequence.
 
+## W4 — the leftovers, closed (2026-09-06)
+
+- **The `kind` column.** `Kind::{Meta, Fact, Requirement, ByEndpoint,
+  Consequence}` on every live row of `field_table.rs`, rendered in the
+  format reference. `contract-primitives.md`'s rule is now data a test can
+  hold: the live consequences are pinned to exactly `topics.<t>.rate_hz`, so
+  a new key of that kind cannot land without the census being told.
+  `ByEndpoint` exists for `min_rate_hz`/`max_rate_hz`, the one pair whose
+  kind depends on which side of the endpoint map they sit under.
+- **Cross-scope `qos-match`.** The resolver's merged-graph copy now checks
+  liveliness and the lease. This is the copy that matters for a lease: the
+  publisher that asserts and the subscriber that times out are rarely in
+  one launch file. Fixture pair `manifest_qos_liveliness_{pub,sub}`.
+- **`criticality` is a closed set.** It accepted any string, and
+  `sched_derive::parse_criticality` answered an unknown one with a debug log
+  and `None` — `criticality: urgent` scheduled a node exactly as if nothing
+  had been declared. `high | medium | low` at parse time now.
+- **The `_ms` spellings are retired.** Nine aliases are parse errors naming
+  the canonical form. The census had them as the *majority* spelling (14
+  files to 10); 135 occurrences were migrated across both repositories'
+  fixtures, test literals and guides. `deprecated-unit-suffix` is deleted
+  with them — a lint for a spelling that cannot parse has nothing to say.
+  One retirement condition met the way phase 68's was not: this one shipped
+  behind a lint for the whole of 0.10's preparation, so the window existed
+  even if no release carried it.
+
 ## Not done
-- **The `kind` column** (fact / requirement / consequence) on the field table.
-  W1 gives the `consumer` half; `kind` is a judgment per field. W2 made five
-  of those judgments implicitly and wrote none of them down in the table —
-  the column is still the right home, and still empty.
-- **Cross-scope `qos-match`.** The resolver's merged-graph copy of the rule
-  still checks reliability and durability only; liveliness and the lease are
-  checked per manifest. Same gap the per-manifest rule had until W2, one
-  layer up.
+

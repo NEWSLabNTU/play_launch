@@ -701,7 +701,7 @@ nodes:
       tick:
         trigger: { timer: { rate_hz: 10 } }
         output: [chatter]
-        max_latency_ms: 5
+        max_latency: 5ms
   listener:
     sub:
       chatter: {}
@@ -711,7 +711,7 @@ nodes:
       handle:
         trigger: { input: [chatter] }
         output: [done]
-        max_latency_ms: 20
+        max_latency: 20ms
 paths:
   test_chain:
     trigger: { input: [/chatter] }

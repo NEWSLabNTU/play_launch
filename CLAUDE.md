@@ -586,6 +586,22 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: Phase 70 W4 — **the leftovers** (manifest `v0.1.26` →
+  **`v0.1.29`**; `v0.1.27` ships with one failing test, use `.28`+).
+  **`kind` column** on `field_table.rs`: `Meta | Fact | Requirement |
+  ByEndpoint | Consequence` per live row, rendered in the format reference;
+  a test pins the live consequences to exactly `topics.<t>.rate_hz`, so a
+  new second-copy field cannot land without the census being told.
+  **`criticality` is closed** (`high | medium | low`): `urgent` used to
+  schedule a node as if nothing had been declared, via a debug log.
+  **Cross-scope `qos-match`** now checks liveliness and the lease in the
+  resolver's merged graph — the copy that sees a publisher and a subscriber
+  in different files, which for a lease is the normal case. **The `_ms`
+  spellings are retired**: nine aliases are parse errors naming the
+  canonical form; 135 occurrences migrated across both repos;
+  `deprecated-unit-suffix` deleted with them. Roadmap:
+  `docs/roadmap/phase-70-consumer-census.md` §W4.
+
 - **2026-09-06**: Phase 70 W3 — **the agreement metric.** `chains:` was
   retired on a provenance argument made by hand; nothing counted, so nothing
   could say when the next field had earned the same.
