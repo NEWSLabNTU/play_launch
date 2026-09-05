@@ -113,6 +113,43 @@ echo "  libplay_launch_interception.so -> lib/libplay_launch_interception.so"
 copied=$((copied + 1))
 
 # ---------------------------------------------------------------------------
+# Copy the parser's Python half (0897 W3). Also outside colcon — its own cargo
+# workspace under src/ros-launch-resolve/parser — so it is NOT under
+# $INSTALL_DIR either.
+#
+# Without it the wheel's `play_launch` cannot parse a `.launch.py` file or
+# evaluate `$(eval ...)`: the driver links no libpython on purpose and
+# discovers a CPython at runtime, so the two are separate artifacts. It looks
+# beside the executable first and then in `../lib`, which from `bin/` is
+# exactly this directory.
+#
+# RELEASE ONLY, for the same reason as the interception .so above.
+# ---------------------------------------------------------------------------
+PYEXEC_SO="$REPO_ROOT/build/.cargo_target/play_launch/release/libplay_launch_parser_pyexec.so"
+if [[ ! -f "$PYEXEC_SO" ]]; then
+  # The canonical path is a guess: this repo's colcon-generated
+  # .cargo/config.toml redirects CARGO_TARGET_DIR and cargo's config walk
+  # ignores workspace boundaries. Ask cargo where it actually put it.
+  target_dir=$(cd "$REPO_ROOT/src/ros-launch-resolve/parser" \
+    && cargo metadata --format-version 1 --no-deps 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' 2>/dev/null || true)
+  if [[ -n "$target_dir" && -f "$target_dir/release/libplay_launch_parser_pyexec.so" ]]; then
+    PYEXEC_SO="$target_dir/release/libplay_launch_parser_pyexec.so"
+  fi
+fi
+if [[ ! -f "$PYEXEC_SO" ]]; then
+  echo "Error: release build of libplay_launch_parser_pyexec.so not found:" >&2
+  echo "         $PYEXEC_SO" >&2
+  echo "       Without it the wheel cannot parse .launch.py or \$(eval ...)." >&2
+  echo "       Run 'just build-pyexec' first, or 'just build', which does it for you." >&2
+  exit 1
+fi
+cp "$PYEXEC_SO" "$DEST_ROOT/lib/"
+chmod +x "$DEST_ROOT/lib/libplay_launch_parser_pyexec.so"
+echo "  libplay_launch_parser_pyexec.so -> lib/libplay_launch_parser_pyexec.so"
+copied=$((copied + 1))
+
+# ---------------------------------------------------------------------------
 # Create markers
 # ---------------------------------------------------------------------------
 for marker in "${MARKERS[@]}"; do

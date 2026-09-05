@@ -225,6 +225,16 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 70** — 🚧 the consumer census: which fields are actually READ.
+    Phase 69 says what is legal; this says what is acted on. The four fields
+    retired in 67/68 were each found by hand after shipping, by the same
+    procedure — `scripts/field_census.py` performs it, classifying every read
+    as transport or consuming, and `--check` gates `just check`. **140 fields:
+    131 consumed, 9 unread.** `exclude_patterns` has three mentions in the
+    whole codebase and suppresses nothing; `correlation` is `semantics: age`'s
+    shape exactly. It also forced a cross-repo correction: nano-ros does not
+    read `node_concurrency`, so phase 68 W5's seam is still open.
+    [phase-70-consumer-census.md](./phase-70-consumer-census.md).
   - **Phase 69** — ✅ the field table: one source for the contract grammar.
     The manifest parser had **no unknown-key rejection anywhere**, so
     `max_latencyy: 5ms` deleted a budget and `rate_hzz: 100` deleted the

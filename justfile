@@ -112,6 +112,7 @@ build: check-submodules
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
     colcon build {{colcon_flags}} --base-paths src
+    just build-pyexec
     just build-interception
     # The layer-2 developer binary. `play_launch` carries every verb a user
     # needs, so this is NOT bundled into the wheel — but the integration
@@ -163,6 +164,60 @@ build-rust:
     set -e
     source /opt/ros/{{ros_distro}}/setup.bash
     colcon build {{colcon_flags}} --packages-select play_launch --base-paths src
+    just build-pyexec
+
+# Build the parser's Python half (0897 W3) and place it beside the binary.
+#
+# The driver links no `libpython` on purpose — it discovers a CPython at
+# runtime and `dlopen`s it, then this. That makes them TWO artifacts, and
+# colcon builds only the first: `play_launch` is one ament_cargo package in
+# `src/`, while `pyexec` lives in the parser's own cargo workspace under
+# `src/ros-launch-resolve/parser`. Nothing built it, so on `main` the shipped
+# binary could not parse a single `.launch.py` file or evaluate `$(eval ...)`
+# — it warned and carried on, which reads as a parser limitation rather than
+# a missing file.
+#
+# Two features, and both are load-bearing. `extension-module` stops pyo3
+# emitting the link directive, so the artifact names no interpreter and its
+# `Py_*` symbols stay undefined — that is what makes it LOADABLE against one
+# chosen at runtime. `abi3` restricts pyo3 to the stable ABI, so those
+# undefined symbols are ones every CPython >= 3.10 exports with unchanged
+# semantics — that is what makes it CORRECT against a version other than the
+# one it compiled against.
+build-pyexec:
+    #!/usr/bin/env bash
+    set -e
+    (cd src/ros-launch-resolve/parser \
+        && cargo build --release -p play_launch_parser_pyexec \
+             --features extension-module,abi3)
+    # ASK cargo where it put the artifact; do not assume. Same reason as
+    # build-interception: this repo's colcon-generated .cargo/config.toml
+    # redirects CARGO_TARGET_DIR, and cargo's config walk ignores workspace
+    # boundaries, so the canonical path is a guess and the real one is not.
+    target_dir=$(cd src/ros-launch-resolve/parser \
+        && cargo metadata --format-version 1 --no-deps 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
+    so="${target_dir}/release/libplay_launch_parser_pyexec.so"
+    if [ ! -f "$so" ]; then
+        echo "ERROR: cargo reported success but $so does not exist." >&2
+        exit 1
+    fi
+    # Beside the binary is the driver's FIRST search path; the wheel uses the
+    # second (`../lib`), which bundle_wheel.sh fills.
+    dest="install/play_launch/lib/play_launch"
+    if [ -d "$dest" ]; then
+        cp "$so" "$dest/"
+        echo "Built: $so -> $dest/"
+    else
+        echo "Built: $so (no install/ yet — run after colcon)"
+    fi
+    # An undefined `Py_*` symbol set with no libpython DT_NEEDED is the whole
+    # point; a build that quietly linked one would load only against the
+    # interpreter it was compiled against.
+    if ldd "$so" 2>/dev/null | grep -q libpython; then
+        echo "ERROR: $so links libpython — the runtime-chosen interpreter cannot work." >&2
+        exit 1
+    fi
 
 # Build interception .so (standalone, not in colcon workspace)
 build-interception:
@@ -997,6 +1052,23 @@ check:
 
     echo ""
     just check-layer2-isolation
+
+    echo ""
+    echo "=== Contract field census (nothing new went unread) ==="
+    just check-field-census
+
+# Phase 70: fail when a contract field becomes one that NOTHING reads.
+#
+# The grammar table says which keys are legal. It cannot say which are acted
+# on, and that difference is where this campaign's recurring defect lives:
+# `semantics: age`, an endpoint's `jitter`, `lifespan` and `max_response` were
+# each declared, parsed, copied into the model — and read by no rule, no
+# mapper and no monitor. Every one was found by hand, after shipping.
+#
+# The baseline is a list of accepted debts, not an exemption list. An empty
+# file is the right end state.
+check-field-census:
+    ./scripts/field_census.py --check
 
 # RFC-0060 layer-2 isolation gate: prove ros-launch-resolve still builds and
 # resolves with NO ROS installation. The script strips the environment itself,

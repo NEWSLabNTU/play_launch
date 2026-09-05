@@ -1,0 +1,69 @@
+# Contract fields that nothing CONSUMES, as of phase 70 W1 (2026-09-05).
+#
+# `scripts/field_census.py --check` fails when a field becomes unread that is
+# not listed here. This file is therefore a list of accepted debts, not a
+# permanent exemption: each line is a decision that has not been made yet, and
+# the right end state is an empty file.
+#
+# "Consumes" means a check rule, mapper arithmetic, or a runtime monitor.
+# Parsing it, serializing it, lowering it into the model, comparing it for
+# merge equality and linting it as deprecated are all TRANSPORT — necessary,
+# and none of them a reason for the field to exist.
+
+# --- declared in a contract, read by nothing ------------------------------
+
+exclude_patterns   # Manifest. THREE mentions in the entire codebase: this
+                   # table row, the struct field, and the line that parses it.
+                   # Documented as "node-name globs this manifest deliberately
+                   # does not describe" — a suppression that suppresses
+                   # nothing, so a manifest that excludes a node still gets
+                   # `dangling-entity` for it.
+
+lease_duration     # QosDecl. Liveliness lease. `qos_match`/`qos_compat` check
+                   # reliability, durability, depth and history; liveliness
+                   # kind and its lease are parsed and dropped.
+
+max_rate_hz        # EndpointProps. `min_rate_hz` has `rate-hierarchy` and
+                   # feeds rate derivation; the upper bound has neither. An
+                   # over-fast publisher is the one that overruns a
+                   # subscriber's queue, which is the case `queue-drain-rate`
+                   # is about.
+
+correlation        # PathDecl. Parsed, exported to the causal graph, lowered
+                   # to `model::Correlation` — all transport. No arithmetic
+                   # branches on it, exactly the shape `semantics: age` had
+                   # when phase 68 deleted it. `sync:` is what states fan-in
+                   # policy now, and `sync-feasibility` reads that.
+
+min_latency        # PathDecl. Added by phase 67 SO THAT `max_jitter` could be
+                   # falsified, and the jitter check still uses only the
+                   # sampling half. This is the one with a design already
+                   # agreed: `min = 0` is the conservative default, so
+                   # `max_jitter` is checkable today and declaring a floor
+                   # only relaxes it.
+
+# --- carried into the model for a consumer that does not read it ----------
+#
+# These cross a repository boundary, so no census confined to one repo can
+# judge them. nano-ros builds its `MapperPath` from the MODEL, never from the
+# manifest — and as of 2026-09-05 nothing on any of its branches mentions
+# `node_concurrency` or `srv_endpoints`. Its real reads are `node_paths`,
+# `pub_endpoints` and `sub_endpoints`.
+
+node_concurrency   # Contracts. Phase 68 W5 carried it across specifically for
+                   # nano-ros's `PlanCallbackGroup` inference. Absent is not
+                   # empty here: no entry means everything serialises, an
+                   # entry with an empty `exclusive` claims full concurrency.
+                   # Until it is read, both toolchains keep picking opposite
+                   # defaults in silence.
+
+srv_endpoints      # Contracts. Lowered and counted in `resolve`'s summary
+                   # line; nothing reads the endpoints themselves.
+
+max_response_ms    # SrvContract (model). The DECLARATION is read —
+                   # `extract_path_facts` folds `max_response` into the node's
+                   # deadline, and `response-blocking` checks it. The model
+                   # copy has no reader.
+
+tolerance_ms       # PathContract (model). Same shape: the declaration feeds
+                   # `sync-feasibility`; the lowered copy is read by nothing.

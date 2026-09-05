@@ -53,6 +53,7 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+REPO="$PWD"
 
 PROFILE_ARGS=()
 PROFILE_DIR="debug"
@@ -171,6 +172,28 @@ else
     echo "Build failed under a stripped environment -- the layer boundary is broken."
     exit 1
 fi
+
+# The Python half is a SECOND artifact, and it lives in a different cargo
+# workspace (`parser/`), so the build above cannot produce it. After 0897 W3
+# the driver links no libpython for the Rust parser's Python evaluation — it
+# discovers a CPython at runtime and dlopens it, then this cdylib. Building
+# only the driver leaves a binary that warns and carries on for every
+# `.launch.py` file and every `$(eval ...)`, which reads as a parser
+# limitation rather than a missing file. That is exactly the state `main` was
+# in when this gate went red.
+#
+# `extension-module` leaves the `Py_*` symbols undefined so they resolve
+# against the interpreter the driver dlopened first; `abi3` restricts them to
+# the stable ABI so a CPython other than the build's own works.
+if (cd "${REPO}/parser" && "${STRIP[@]}" cargo build -q "${PROFILE_ARGS[@]}" \
+        -p play_launch_parser_pyexec --features extension-module,abi3 2>&1); then
+    pass "cargo build -p play_launch_parser_pyexec (cdylib)"
+else
+    fail "cargo build -p play_launch_parser_pyexec (cdylib)"
+    echo
+    echo "The driver builds but its Python half does not -- .launch.py and \$(eval ...) cannot work."
+    exit 1
+fi
 echo
 
 # --- 2. Dependency graph ----------------------------------------------------
@@ -212,6 +235,30 @@ else
         # Not a leak -- but it means .launch.py cannot work, so the binary is
         # not the thing this layer is supposed to ship.
         fail "libpython NOT linked -- .launch.py support would be gone"
+    fi
+fi
+echo
+
+# The driver looks for the Python half beside itself first. The two are built
+# from two workspaces, and under --standalone they do not even share a target
+# directory, so place it rather than assume cargo did.
+if [[ -x "$bin" ]]; then
+    pyexec_dir="$(cd "${REPO}/parser" && "${STRIP[@]}" cargo metadata --format-version 1 --no-deps -q \
+        | python3 -c 'import sys, json; print(json.load(sys.stdin)["target_directory"])')"
+    pyexec_so="${pyexec_dir}/${PROFILE_DIR}/libplay_launch_parser_pyexec.so"
+    if [[ -f "$pyexec_so" ]]; then
+        if [[ "$pyexec_so" != "$(dirname "$bin")/libplay_launch_parser_pyexec.so" ]]; then
+            cp "$pyexec_so" "$(dirname "$bin")/"
+        fi
+        # An undefined Py_* set with no libpython DT_NEEDED is the point: a
+        # cdylib that linked one would load only against its build interpreter.
+        if ldd "$pyexec_so" 2>/dev/null | grep -q libpython; then
+            fail "the Python half links libpython -- a runtime-chosen interpreter cannot work"
+        else
+            pass "Python half present and names no interpreter"
+        fi
+    else
+        fail "Python half not found at ${pyexec_so}"
     fi
 fi
 echo

@@ -586,6 +586,76 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-05**: Phase 70 W1 — **the consumer census: which fields are
+  actually read.** Phase 69 made the grammar enumerable, which says what is
+  LEGAL; this says what is READ. The four fields retired in phases 67/68
+  (`semantics: age`, an endpoint's `jitter`, `lifespan`, `max_response`) were
+  each found by hand, after shipping, by the same procedure — grep the field,
+  read every hit, notice they are all *transport*. `scripts/field_census.py`
+  does that procedure: it classifies every `.<field>` read as **transport**
+  (parse, serialize, model lowering, merge equality, deprecation lint, graph
+  export, CLI reporting) or **consuming** (a check rule, mapper arithmetic,
+  the executor, a runtime monitor). Zero consuming reads means write-only:
+  delete it, or write the rule it waits for. `--check` gates `just check`
+  against `scripts/field_census_baseline.txt`, and fails in BOTH directions —
+  a baseline listing fields someone has since wired up hides the next one that
+  goes unread.
+  **140 fields: 131 consumed, 9 unread.** Four are new findings.
+  `exclude_patterns` has **three mentions in the entire codebase** — the table
+  row, the struct, the parse line — so a manifest that "deliberately does not
+  describe" a node still gets `dangling-entity` for it: the suppression
+  suppresses nothing. `correlation` is parsed, exported to the causal graph and
+  lowered to a `model::Correlation` enum with no arithmetic branching on it —
+  exactly `semantics: age`'s shape. `lease_duration` drops the liveliness half
+  of QoS while `qos_match`/`qos_compat` check the other four policies.
+  `max_rate_hz` has no rule while `min_rate_hz` has two, which is backwards for
+  queue overrun — the OVER-FAST publisher is the one that overruns a
+  subscriber.
+  **Three decisions make the verdict trustworthy rather than merely
+  automatic.** nano-ros is IN scope (it builds `MapperPath` from the model, so
+  a model field only it reads is consumed) but its **vendored copy of this
+  repository** is not — counting that would let a field look consumed
+  downstream on the strength of the lowering code that is transport here.
+  Tests are ignored, because a test can exercise a field the product never
+  reads, which is how a vacuous test looks from outside. And the grep errs
+  toward reporting MORE reads, so "write-only" is conservative while
+  "consumed" is not proof — every finding was confirmed by hand.
+  **A cross-repo correction the census forced.** The 2026-08-29 entry below
+  records phase 68 W5 as having closed both contract seams with nano-ros
+  reading `node_concurrency` and `max_jitter_ms` from the model. **That is not
+  true of nano-ros in any branch as of 2026-09-05**: nothing there mentions
+  `node_concurrency` or `claims_concurrency`, its phase 379 is a different
+  phase (API parity with the ROS 2 client libraries), and its real reads of
+  `model.contracts` are `node_paths`/`pub_endpoints`/`sub_endpoints` only. The
+  seam is still open, and open in the way with teeth: absent `concurrency:`
+  means everything serialises, while their `PlanCallbackGroup` infers groups
+  and gives an uncoupled callback its own `Reentrant` — opposite defaults,
+  each picked silently. Roadmap:
+  `docs/roadmap/phase-70-consumer-census.md`.
+
+- **2026-09-05**: **The shipped binary could not parse a single `.launch.py`
+  file, or evaluate `$(eval ...)`, on `main`.** 0897 W3 split the parser into
+  a driver that links no `libpython` and a `pyexec` cdylib it `dlopen`s at
+  runtime — and nothing built the second artifact. `pyexec` lives in the
+  parser's own cargo workspace (`src/ros-launch-resolve/parser`) while
+  `play_launch` is one ament_cargo package in `src/`, so `colcon build` never
+  reached it. The failure mode is the quiet one: the driver WARNS and carries
+  on, and its message ends with "re-run with `--parser python`", so it reads
+  as a parser limitation rather than a missing file.
+  `just build-pyexec` builds it `--features extension-module,abi3` and places
+  it beside the binary; `build-rust` and `build` call it, `bundle_wheel.sh`
+  puts it in the wheel's `lib/` (which is `bin/../lib`, the driver's second
+  search path), and `check-layer2-isolation` builds and places it too — that
+  gate was failing 3/3 for exactly this reason, and its `libpython linked`
+  check is NOT the same question (that one is `--parser python`'s
+  `auto-initialize`, a separate and still-correct dependency).
+  Both features are load-bearing: `extension-module` leaves the `Py_*` symbols
+  undefined so they resolve against whatever interpreter was dlopened, and
+  `abi3` restricts them to the stable ABI so a CPython other than the build's
+  own works. Both the recipe and the gate assert `ldd` shows no libpython —
+  a cdylib that quietly linked one would load only against its build
+  interpreter, which is the pin 0897 W3 removed.
+
 - **2026-09-05**: Phase 69 — **the contract grammar is enumerable, and an
   unknown key is an error** (manifest crate `v0.1.20` → **`v0.1.22`**).
   `types/src/parse.rs` is 1695 hand-written lines that, until now, had **no
