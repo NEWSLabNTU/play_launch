@@ -452,13 +452,20 @@ pub fn prepare_container_contexts_from_model(
                 record.executable.clone(),
                 Vec::<String>::new(),
             ),
-            ContainerMode::Observable | ContainerMode::Isolated => {
+            ContainerMode::Observable | ContainerMode::Isolated | ContainerMode::CloneVm => {
                 let mut args = Vec::new();
                 if record.executable == "component_container_mt" {
                     args.push("--use_multi_threaded_executor".to_string());
                 }
                 if container_mode == ContainerMode::Isolated {
                     args.push("--isolated".to_string());
+                }
+                // Every clone child spins its own SingleThreadedExecutor, so
+                // --use_multi_threaded_executor above governs the manager's own
+                // services only. Left alone rather than suppressed: a stock
+                // component_container_mt should still behave like one.
+                if container_mode == ContainerMode::CloneVm {
+                    args.push("--clone-vm".to_string());
                 }
                 (
                     "play_launch_container".to_string(),
@@ -467,10 +474,24 @@ pub fn prepare_container_contexts_from_model(
                 )
             }
         };
+        // A launch file may already spell an isolation flag into the
+        // container's `args` -- play_launch's own fixtures do. `--container-mode`
+        // is the operator asking for something else on this run, and the
+        // operator wins, so drop the launch file's choice rather than emit both
+        // and have the container refuse the pair.
+        let launch_args = record.args.clone().map(|args| {
+            args.into_iter()
+                .filter(|a| {
+                    !(container_mode != ContainerMode::Stock
+                        && matches!(a.as_str(), "--isolated" | "--clone-vm"))
+                })
+                .collect::<Vec<_>>()
+        });
+
         let final_args = if extra_args.is_empty() {
-            record.args.clone()
+            launch_args
         } else {
-            if let Some(mut existing) = record.args.clone() {
+            if let Some(mut existing) = launch_args {
                 extra_args.append(&mut existing);
             }
             Some(extra_args)

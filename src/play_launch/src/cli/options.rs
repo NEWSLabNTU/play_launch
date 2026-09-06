@@ -29,10 +29,18 @@ impl From<ParserBackend> for ros_launch_resolve::verbs::ParserBackend {
 pub enum ContainerMode {
     /// Use play_launch_container with ComponentEvent publishing
     Observable,
-    /// Use play_launch_container with clone(CLONE_VM) per-node isolation (default)
+    /// Use play_launch_container with fork+exec per-node isolation (default)
     Isolated,
     /// Use the original container from the launch file (no override)
     Stock,
+    /// EXPERIMENTAL, hidden: clone(CLONE_VM) per node -- own PID and signal
+    /// disposition, shared address space. Hidden from `--help` because it is
+    /// under evaluation, not because it is secret: see
+    /// `experiments/clone-vm-rmw/README.md` for what is measured and what is
+    /// not. Refuses to start under rmw_cyclonedds_cpp, which segfaults in a
+    /// clone child.
+    #[value(hide = true)]
+    CloneVm,
 }
 
 /// Features that can be selectively enabled
@@ -673,7 +681,7 @@ pub struct ContainerOptions {
 
     /// Container mode: which container binary to use for composable nodes.
     /// - observable: use play_launch_container with ComponentEvent publishing
-    /// - isolated: use play_launch_container with clone(CLONE_VM) per-node isolation (default)
+    /// - isolated: use play_launch_container with fork+exec per-node isolation (default)
     /// - stock: use the original container from the launch file (no override)
     #[arg(long, value_enum, default_value = "isolated")]
     pub container_mode: ContainerMode,
