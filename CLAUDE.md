@@ -1520,7 +1520,13 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   - `system-model.md` — the SystemModel artifact: layout, layers, producer/consumer split
   - `criticality-from-hazards.md` — deriving criticality (and reservations)
     from declared hazards instead of a `high|medium|low` label
-  - `fault-reaction-primitives.md` — **proposed**: FTTI as the one new
+  - `operational-modes.md` — **proposed**: the axis deferred in phases 67,
+    68 and 71. A function is a named guard group, a mode is the functions it
+    requires plus a fallback ladder, per-mode requirement values are
+    `overrides:` over scalars that stay scalars (the §3.3 mitigation cashed
+    in), and a hazard's `reaction` may name a mode. Measured against
+    Autoware's diagnostic graph, whose three layers ARE this shape
+  - `fault-reaction-primitives.md` — **implemented** (phase 71): FTTI as the one new
     requirement (on a hazard), `on_violation:` on the detecting subscriber
     with an EMV2-closed `on:` set, `safe_state` on the reaction path; FDTI and
     FRTI derived, five rules, eight keys each with a consumer. Surveys ISO

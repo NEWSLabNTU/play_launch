@@ -301,6 +301,11 @@ invents a second spelling — see §5.
 
 ### 3.3 Operational modes — DEFER, WITH A MITIGATION
 
+> **2026-09-06:** designed in `operational-modes.md` (proposed phase 75).
+> The mitigation below held: every requirement stayed a scalar, and the
+> design pays the debt with mode-keyed `overrides:` rather than maps.
+
+
 A fail-operational stack has normal / degraded / minimal-risk-maneuver modes,
 and **timing requirements differ per mode**. Our `if`/`unless` are launch-time
 conditions: static, resolved once, gone before runtime.
