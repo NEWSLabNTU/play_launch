@@ -12,6 +12,7 @@
 <launch>
   <arg name="lidar_hz"      default="50.0"/>
   <arg name="detect_burn"   default="8.0"/>
+  <arg name="detect_jitter" default="0.0"/>
   <arg name="brake_burn"    default="3.0"/>
   <arg name="deadline_ms"   default="60.0"/>
   <arg name="planner_burn"  default="40.0"/>
@@ -28,6 +29,7 @@
     </node>
     <node pkg="rt_av_demo" exec="obstacle_detector" name="obstacle_detector" output="screen">
       <param name="burn_ms" value="$(var detect_burn)"/>
+      <param name="burn_jitter_ms" value="$(var detect_jitter)"/>
     </node>
     <node pkg="rt_av_demo" exec="brake_controller" name="brake_controller" output="screen">
       <param name="burn_ms" value="$(var brake_burn)"/>

@@ -226,8 +226,10 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
   - **Phase 70** — ✅ the consumer census: which fields are actually READ
-    (W1–W4 complete; the `kind` column, closed `criticality`, cross-scope
-    liveliness, and the `_ms` spellings retired).
+    (W1–W5 complete; the `kind` column, closed `criticality`, cross-scope
+    liveliness, the `_ms` spellings retired, and the jitter vocabulary
+    verified on a running system — `just jitter` in `rt_av_demo`, an oracle
+    by construction: observed spread 6.03 ms against a true 6.0).
     Phase 69 says what is legal; this says what is acted on. The four fields
     retired in 67/68 were each found by hand after shipping, by the same
     procedure — `scripts/field_census.py` performs it, classifying every read

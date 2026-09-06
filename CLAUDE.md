@@ -586,6 +586,20 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: Phase 70 W5 — **the jitter vocabulary verified on a
+  running system.** `jitter-range` and `measure`'s floor were checked only
+  by unit tests, and `rt_av_demo` could not be the oracle: a fixed `burn_ms`
+  has ≈0 jitter, so no measurement can tell a correct rule from a vacuous
+  one. `burn_jitter_ms` makes the detector alternate `burn∓j`, so the true
+  spread is `2j` BY CONSTRUCTION — the same move that made it a cost oracle
+  in phase 58. `just jitter` (in `examples/rt_av_demo/`) runs with `j=3`,
+  measures (floor 5.01, p99 11.04, spread **6.03 ms vs 6.0 true**), writes
+  three overlay contracts and checks each verdict against the run: a bound
+  under the spread is REFUSED, one over it passes, and the same tight bound
+  with no floor is reported unverifiable while the run visibly violates it —
+  which is the whole argument for measuring the floor. Roadmap:
+  `docs/roadmap/phase-70-consumer-census.md` §W5.
+
 - **2026-09-06**: **The dlopen'd Python half lost the caller's namespace and
   dropped every include** — parity gate red on `main` (`composable: Rust=59
   Python=70`, nodes at `/component_state_monitor/...` on one side and

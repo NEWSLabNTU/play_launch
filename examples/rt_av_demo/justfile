@@ -215,6 +215,108 @@ measure:
     print("ground truth OK — measured cost matches the declared burn")
     PY
 
+# Verify the jitter vocabulary on a RUNNING system (phase 70 W5).
+#
+# Everything about `max_jitter`/`min_latency` was checked only by unit tests
+# until this recipe: `jitter-range` compares declarations to declarations, and
+# `measure` prints a floor nobody had compared to anything. This workspace can
+# be the oracle because `burn_jitter_ms` makes the detector alternate between
+# burn-j and burn+j, so the TRUE spread of its path is 2j by construction.
+#
+# The loop this closes: run with j={{ jitter_ms }} ms -> `measure` prints the
+# floor -> declare it in an overlay contract -> `jitter-range` gives a verdict
+# -> compare that verdict to what the run actually did. Both verdicts are
+# exercised: a `max_jitter` under the true spread must be REFUSED and one over
+# it must pass, and the refusal must NAME the declared range. The
+# no-floor case is printed too, because it is the whole argument for
+# measuring: without `min_latency` the rule can only say "unverifiable" while
+# the run is visibly violating the bound.
+#
+# Quiet and unconfined, like `measure`, and for the same reason: a preempted
+# burn stretches, and the oracle's answer stops being exact.
+jitter_ms := "3.0"
+jitter:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/humble/setup.bash
+    source "{{ repo }}/install/setup.bash"
+    source "{{ justfile_directory() }}/install/setup.bash"
+    cd "{{ justfile_directory() }}"
+
+    rm -rf out/jitter && mkdir -p out/jitter && cd out/jitter
+    printf 'interception:\n  enabled: true\n' > cfg.yaml
+
+    share="$(ros2 pkg prefix rt_av_demo)/share/rt_av_demo/launch"
+    export PLAY_LAUNCH_INTERCEPTION_SO="{{ interception_so }}"
+    export ROS_DOMAIN_ID=$(( 60 + RANDOM % 20 ))
+
+    "{{ play_launch }}" resolve rt_av_demo bringup.launch.xml \
+        --sched "$share/bringup.system.posix.yaml" -o model.yaml > resolve.log 2>&1
+
+    echo "=== run: detect burn alternates 8 -/+ {{ jitter_ms }} ms, RT off, unconfined, {{ duration }}s ==="
+    timeout {{ duration }} "{{ play_launch }}" launch rt_av_demo bringup.launch.xml \
+        --sched "$share/bringup.system.posix.yaml" --sched-apply off \
+        --config cfg.yaml --disable-web-ui detect_jitter:={{ jitter_ms }} {{ launch_args }} > run.log 2>&1 || true
+
+    "{{ play_launch }}" measure play_log/latest --model model.yaml > fragment.yaml
+    grep -E 'detect: cost|response min|detect.min_latency' fragment.yaml | sed 's/^/  /'
+    echo
+
+    # Overlay tree: <root>/<pkg>/launch/<stem>.contract.yaml, checked before
+    # the provider sidecar. Three variants of the detector's declaration.
+    mkdir -p overlay/rt_av_demo/launch
+    python3 - "$share/bringup.contract.yaml" fragment.yaml "{{ jitter_ms }}" <<'PY'
+    import re, sys, pathlib
+    provider, fragment, j = sys.argv[1], sys.argv[2], float(sys.argv[3])
+    text = open(fragment).read()
+    m = re.search(r"detect: cost .*\n\s*#\s+response min ([\d.]+) p50 ([\d.]+) p99 ([\d.]+) max ([\d.]+) ms", text)
+    if not m:
+        sys.exit("detect path not measured — see run.log")
+    rmin, p50, p99, rmax = map(float, m.groups())
+    floor = float(re.search(r"detect\.min_latency: ([\d.]+)ms", text).group(1))
+    # p99 rather than max: on a quiet but unconfined host a single DDS wakeup
+    # outlier is not the path's spread, and the oracle's truth is 2j.
+    spread = p99 - rmin
+    truth = 2 * j
+    print(f"observed: floor {rmin:.2f} ms, p99 {p99:.2f} ms, spread {spread:.2f} ms  (truth by construction: {truth:.1f} ms)")
+    if not (truth - 0.5 <= spread <= truth + 3.0):
+        sys.exit(f"ORACLE MISMATCH: observed spread {spread:.2f} ms, expected ~{truth:.1f} ms")
+    tight, loose = truth - 2.0, truth + 3.0
+    base = open(provider).read()
+    def variant(name, extra):
+        out = base.replace("        max_latency: 12ms\n", "        max_latency: 12ms\n" + extra, 1)
+        assert out != base
+        p = pathlib.Path(f"overlay-{name}/rt_av_demo/launch"); p.mkdir(parents=True, exist_ok=True)
+        (p / "bringup.contract.yaml").write_text(out)
+    variant("tight",   f"        min_latency: {floor}ms\n        max_jitter: {tight}ms\n")
+    variant("loose",   f"        min_latency: {floor}ms\n        max_jitter: {loose}ms\n")
+    variant("nofloor", f"        max_jitter: {tight}ms\n")
+    open("thresholds", "w").write(f"{tight} {loose} {spread:.2f}\n")
+    PY
+    read tight loose spread < thresholds
+
+    verdict() {  # $1 = variant, prints the jitter-range lines
+        "{{ play_launch }}" check rt_av_demo bringup.launch.xml --contracts "overlay-$1" 2>&1 \
+            | grep -E '\[jitter-range\]' | sed -E 's/\x1b\[[0-9;]*m//g' | cut -c1-200 || true
+    }
+
+    echo "=== max_jitter ${tight} ms, below the observed ${spread} ms — the run VIOLATES it; the rule must refuse ==="
+    out="$(verdict tight)"; echo "$out" | sed 's/^/  /'
+    echo "$out" | grep -q 'error\[jitter-range\]' || { echo "FAIL: jitter-range did not refuse a bound the run violates"; exit 1; }
+    echo "$out" | grep -q "${tight}0ms\|(${tight}" || true
+
+    echo "=== max_jitter ${loose} ms, above the observed ${spread} ms — the run SATISFIES it; the rule must pass ==="
+    out="$(verdict loose)"; echo "${out:-  (no jitter-range diagnostic)}" | sed 's/^/  /'
+    echo "$out" | grep -q 'error\[jitter-range\]' && { echo "FAIL: jitter-range refused a bound the run satisfies"; exit 1; }
+
+    echo "=== same tight bound with NO min_latency — the run still violates it; the rule can only say so much ==="
+    out="$(verdict nofloor)"; echo "${out:-  (no jitter-range diagnostic)}" | sed 's/^/  /'
+    echo "$out" | grep -q 'error\[jitter-range\]' && { echo "FAIL: without a floor the rule must not claim a violation it cannot see"; exit 1; }
+    echo "$out" | grep -qi 'unverif\|cannot be verified' || { echo "FAIL: without a floor the rule must say the bound is unverifiable"; exit 1; }
+
+    echo
+    echo "jitter vocabulary verified on a running system: refuse below, pass above, unverifiable without a floor."
+
 # Internal: one run. $1 = off|on, $2 = output dir.
 _run mode outdir:
     #!/usr/bin/env bash

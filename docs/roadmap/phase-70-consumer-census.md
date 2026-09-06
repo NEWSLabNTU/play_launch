@@ -1,6 +1,6 @@
 # Phase 70 — the consumer census: which fields are actually read
 
-Status: **complete** (W1–W4; manifest crate `v0.1.29`).
+Status: **complete** (W1–W5; manifest crate `v0.1.29`).
 
 Phase 69 made the contract grammar enumerable — every key a contract may carry
 is a row in the manifest crate's `types/src/field_table.rs`. That says what is
@@ -208,6 +208,35 @@ would remove a fact, not a consequence.
   One retirement condition met the way phase 68's was not: this one shipped
   behind a lint for the whole of 0.10's preparation, so the window existed
   even if no release carried it.
+
+## W5 — verified on a running system (2026-09-06)
+
+The campaign's rule is consume, then verify on running systems, then trust.
+Everything about `max_jitter`/`min_latency` was checked only by unit tests:
+`jitter-range` compares declarations to declarations, and `measure` printed a
+floor nobody had compared to anything. `rt_av_demo` could not be the oracle
+as it stood — it burns a fixed `burn_ms`, so its true jitter is ≈0 and no
+measurement can tell a correct rule from a vacuous one.
+
+`burn_jitter_ms` makes the detector alternate between `burn−j` and `burn+j`
+on successive invocations, so the true spread is `2j` **by construction** —
+the same move that made the workspace a cost oracle for phase 58. `just
+jitter` closes the loop: run with `j = 3` → `measure` prints the floor →
+declare it in an overlay contract → `jitter-range` gives a verdict → compare
+the verdict to what the run did.
+
+| | declared | observed | rule says | agree |
+|---|---|---|---|---|
+| floor, p99, spread | — | 5.01 / 11.04 / **6.03 ms** (truth 6.0) | — | — |
+| `max_jitter: 4ms` + floor | range 5.01..12 spans 6.99 | violated (6.03 > 4) | **error** | yes |
+| `max_jitter: 9ms` + floor | range spans 6.99 | satisfied (6.03 < 9) | clean | yes |
+| `max_jitter: 4ms`, no floor | ceiling 12 only | violated | **info: unverifiable** | yes — and it is why the floor exists |
+
+The third row is the one worth having on paper. The run *is* violating the
+bound, and the rule says only that it cannot tell — because an absent floor
+is unknown, not zero (the W2 correction). Declaring the measured floor is
+what turns "cannot tell" into "refused", and `measure` is where the floor
+comes from.
 
 ## Not done
 
