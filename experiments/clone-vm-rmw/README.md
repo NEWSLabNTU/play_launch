@@ -70,81 +70,99 @@ manually" and restricted clone children to a `SingleThreadedExecutor` forever.
 On aarch64/glibc 2.35 `pthread_create()` **returns 0 in the clone child**. That
 constraint deserves re-testing rather than inheriting.
 
-### 3. The verdict is per-backend, and it is not subtle
+### 3. All three shipped RMWs work — and the one that did not was our bug
 
 ```
 BACKEND                    VERDICT    CHILD REACHED          DETAIL
 ──────────────────────────────────────────────────────────────────────────
-rmw_cyclonedds_cpp         EXIT 134   —                      double free or corruption (out)
+rmw_cyclonedds_cpp         PASS       entered spin()         clean through shutdown
 rmw_fastrtps_cpp           PASS       entered spin()         clean through shutdown
 rmw_zenoh_cpp              PASS       entered spin()         clean through shutdown
 ```
 
-(`run_matrix.sh` output, verbatim. Cyclone reports no stage because the child
-dies before the parent's first report; the gdb invocation below names the frame.)
+Three repetitions each, all PASS.
 
-**Two of the three work.** `rmw_zenoh_cpp` 0.1.9 behaves exactly as
-`rmw_fastrtps_cpp` does, on every axis measured — both children deliver, both
-cancel, shutdown returns, and a SIGSEGV kills only the child that raised it.
-It needs its router (`rmw_zenohd`) running, like any Zenoh deployment; that is
-unrelated to CLONE_VM, and a run without one fails in the ordinary way with
-`Unable to connect to a Zenoh router`.
+This section previously said Cyclone segfaulted inside `dds_take` and concluded
+that one backend's use of dynamic TLS was incompatible with `CLONE_VM`. **That
+was wrong.** The crash was real and reproducible, and the cause was a thread
+pointer this code computed incorrectly. Cyclone was simply the only backend that
+touched the broken part often enough to notice. Keeping the wrong version here
+would be worse than useless, so what follows is the actual diagnosis.
 
-**FastRTPS works, completely.** The node is built in the parent (exactly as a
-container does), the child spins it, the parent publishes, the child's callback
-fires, `cancel()` brings the child home, `rclcpp::shutdown()` returns. Exit 0.
+### 4. The bug: `_dl_allocate_tls` returns the thread pointer, not a `struct pthread *`
 
-**CycloneDDS dies**, and the stack names the reason precisely:
+Measured, not read out of a header:
 
 ```
-#0  _dl_tlsdesc_dynamic ()              at ../sysdeps/aarch64/dl-tlsdesc.S:164
-#1  libddsc.so.0
-#2  dds_take ()
-#3  librmw_cyclonedds_cpp.so
-#4  rcl_take ()
-#5  rclcpp::SubscriptionBase::take_type_erased(...)
-...
-#9  rclcpp::executors::SingleThreadedExecutor::spin()
-#10 child_fn ()
-#11 thread_start ()                     at clone.S:79
+live thread: TP=0xffffb2c967e0  pthread_self=0xffffb2c96020  gap=-1984
+             TP[0] = 0xffffb2c96f20          <- the DTV pointer
+
+_dl_allocate_tls() -> 0xaaaaf0751a80
+    blk[0]         = 0xaaaaf07521d0          <- a DTV: blk IS the TCB, i.e. the TP
+    (blk-gap)[0]   = (nil)                   <- what the child was given as its TP
 ```
 
-`_dl_tlsdesc_dynamic` is the **dynamic TLS descriptor resolver**. Cyclone reads a
-thread-local from a dlopen'd module on its take path, which goes through a TLS
-descriptor rather than a fixed offset; resolving it walks the DTV of the calling
-thread. The DTV in a `_dl_allocate_tls()` block is not in a state that resolver
-accepts, and it faults on first touch.
+The code passed `blk - gap` to `CLONE_SETTLS`, treating the return as a
+`struct pthread *` that needed adjusting across the variant gap. It does not:
+on aarch64 `_dl_allocate_tls` hands back the **TCB address, which is exactly the
+value the thread pointer should take**.
 
-Note the verdict column above says `EXIT 134` — SIGABRT, "double free or
-corruption" — where an earlier run of the same binary reported a SIGSEGV in the
-frame below. **That the symptom moves between runs is itself the signature.** A
-TLS block whose DTV the resolver will not accept does not fail the same way
-twice: sometimes the resolver faults, sometimes it returns a wrong pointer and
-the corruption surfaces later in the allocator. Do not chase the specific
-symptom; the cause is the same either way.
+**Why this hid for so long.** On aarch64 the DTV pointer lives at `TP[0]`.
+Static and initial-exec TLS are addressed as `TP + offset` and never read it, so
+with a thread pointer 1984 bytes off the child was reading a shifted, zeroed
+window of its own TLS block — and a zeroed tcache is a *valid empty* tcache, a
+zeroed `errno` is a fine `errno`. `malloc`, `printf("%f")`, `isalpha`, mutexes
+and `pthread_create` all pass. Only **dynamic** TLS reads `TP[0]`, and only a
+`thread_local` in a `dlopen`'d module is dynamic.
 
-This is the real answer to "it gets stuck in the RMW backend library": it is not
-RMW as a layer, it is **one backend's use of dynamic TLS**. Anything that reads a
-`thread_local` from a shared object the loader resolved lazily is exposed;
-anything using initial-exec TLS, or none, is not — and two of the three shipped
-backends are in the second group.
+The fault, from `ld.so` itself:
 
-### 4. Teardown must be `cancel()`, never a signal
+```asm
+_dl_tlsdesc_dynamic:
+    mrs  x4, tpidr_el0    ; thread pointer
+    ldr  x0, [x4]         ; x0 = TP[0] = DTV pointer
+    ldr  x2, [x0]         ; dtv[0].counter          <-- SIGSEGV, x0 = 0
+```
 
-The first version of this probe stopped the child with `SIGKILL`. FastRTPS then
-"hung" — and it was not FastRTPS. Every thread of the parent sat in
-`futex_wait_queue_me`, because the child died holding a non-robust mutex
-somewhere in rclcpp or the DDS stack, in an address space the parent shares.
+which is precisely where gdb stopped, with `x0 = 0x0`.
 
-That is **Risk 2 of the archived design, reproduced on demand**. Replacing the
-kill with `executor->cancel()` — which writes the interrupt guard condition, so
-`spin()` returns and the clone function exits through the kernel's `_exit` —
-turned the same run into a clean exit 0.
+**Why Cyclone and nothing else.** `libddsc.so.0.10.5` carries exactly three
+`R_AARCH64_TLSDESC` relocations, and one of them is named:
 
-Consequence for any future container mode: a clone child may only ever be
-stopped cooperatively. `SIGKILL` on a clone child is not a fallback, it is a
-guaranteed deadlock of the whole container. The archived design already said
-this; it is now measured.
+```
+R_AARCH64_TLSDESC  tsd_thread_state + 0
+```
+
+That is `q_thread.c`'s exported per-thread state pointer, read by
+
+```c
+DDS_INLINE_EXPORT inline struct thread_state *lookup_thread_state (void) {
+  struct thread_state *thrst = tsd_thread_state;   // dynamic TLS read
+  ...
+}
+```
+
+which is the **first statement of `dds_read_impl`**, the body of `dds_take`. So
+every single take does a dynamic-TLS read.
+
+The other two backends are not virtuous, merely lucky:
+`librmw_zenoh_cpp.so` has **no** TLSDESC relocations at all, and
+`libfastrtps.so.2.6` has two — `std::__once_call` and `std::__once_callable`,
+libstdc++'s `std::call_once` machinery, touched during initialisation in the
+parent and never on the take path in the child.
+
+The fix is one line: pass `_dl_allocate_tls`'s return value to `CLONE_SETTLS`
+unchanged. `PROBE_TLS_SHIFT=1` restores the old, broken behaviour if you want to
+watch it fail.
+
+**This very likely explains the archived design's TLS saga too.** That document
+enumerates a list of `struct pthread` fields it had to hand-initialise on x86_64
+— a null locale pointer crashing `__printf_fp_l`, null ctype tables crashing
+`isalpha`, a null `tcbhead_t.self`. Every one of those is a symptom of reading
+`struct pthread` at the wrong address, which is the same mistake in the same
+place. The fixups are still applied here (`_dl_allocate_tls` genuinely does not
+set the tid, the locale or the ctype tables — `start_thread` does), but they
+should be re-derived from a correct thread pointer rather than inherited.
 
 ### 5. A crashing node kills the container unless the dump is suppressed
 
@@ -194,11 +212,10 @@ container that survives one.
 ## The mode this produced
 
 `--container-mode clone-vm`, hidden from `--help` (`#[value(hide = true)]`) and
-implemented by `CloneVmComponentManager`. It refuses to start under
-`rmw_cyclonedds_cpp` with the reason above rather than dying on the first
-message, treats `rmw_fastrtps_cpp` and `rmw_zenoh_cpp` as measured-good, warns
-on anything else rather than blocking the evaluation it exists for, and stops
-children only with
+implemented by `CloneVmComponentManager`. It refuses no backend —
+all three shipped RMWs are measured working — but still reports an untested one
+through the same hook rather than silently accepting it, and stops children only
+with
 `executor->cancel()` — never a signal. A child that does not exit within the
 grace period has its stack and TLS **deliberately leaked**, because unmapping a
 stack a running child is executing on is worse than the leak.
@@ -219,6 +236,8 @@ what the run is measuring:
 |---|---|
 | `PROBE_SEGV_CHILD0=1` | SIGSEGV child 0 and report whether the parent and child 1 survive |
 | `PROBE_NO_COREDUMP=1` | make the children undumpable first — the difference between the two rows in finding 5 |
+| `PROBE_TLS_SHIFT=1` | restore the wrong thread pointer of finding 4, to watch Cyclone fail |
+| `PROBE_NO_FIXUPS=1` | skip the tid / locale / ctype initialisation in the child |
 
 `run_matrix.sh` discovers the installed backends from the ament index rather
 than hardcoding them, so an added `rmw_zenoh_cpp` is picked up with no edit.
@@ -233,6 +252,14 @@ Without it the probe fails at `rclcpp::init` with `Unable to connect to a Zenoh
 router`, which is an ordinary Zenoh misconfiguration and says nothing about
 CLONE_VM.
 
+**Leaked `/dev/shm/fastrtps_*` segments will make this flaky, and the flakiness
+looks like a backend problem.** Repeated runs produced intermittent 60 s
+timeouts on FastRTPS and Zenoh that vanished once `/dev/shm` was cleared and
+`FASTRTPS_DEFAULT_PROFILES_FILE` was pointed at `tests/fixtures/fastdds_no_shm.xml`.
+A SIGKILLed process never runs `shm_unlink`, and this probe kills children on
+purpose. Check `ls /dev/shm | grep -c fastrtps` before believing any
+intermittent result here.
+
 For a SEGV, the frame is named by running under gdb:
 
 ```bash
@@ -242,8 +269,8 @@ RMW_IMPLEMENTATION=rmw_cyclonedds_cpp gdb -q -batch \
 
 ## What this does and does not establish
 
-It establishes that the address-space-sharing model is viable on aarch64 for
-`rmw_fastrtps_cpp`, end to end: two nodes, the second loaded while the first is
+It establishes that the address-space-sharing model is viable on aarch64 for all
+three shipped RMWs, end to end: two nodes, the second loaded while the first is
 spinning, both delivering, both cancelled, clean shutdown — and that a crashing
 node takes only itself down.
 

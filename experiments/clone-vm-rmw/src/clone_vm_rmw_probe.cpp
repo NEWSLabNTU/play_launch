@@ -194,9 +194,11 @@ pid_t spawn_child(int index)
   if (!tls) {
     return -1;
   }
-  // CLONE_SETTLS wants the value the thread pointer should take, which is the
-  // struct-pthread address adjusted back across the variant gap.
-  void * newtp = reinterpret_cast<char *>(tls) - g_pd_from_tp;
+  // _dl_allocate_tls returns the TCB address on aarch64, which is exactly the
+  // value the thread pointer should take. Do not adjust it.
+  void * newtp = std::getenv("PROBE_TLS_SHIFT")
+                   ? reinterpret_cast<void *>(reinterpret_cast<char *>(tls) - g_pd_from_tp)
+                   : tls;
 
   char * stack = static_cast<char *>(
     mmap(nullptr, kStackSize, PROT_READ | PROT_WRITE,
