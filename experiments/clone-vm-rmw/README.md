@@ -220,6 +220,48 @@ with
 grace period has its stack and TLS **deliberately leaked**, because unmapping a
 stack a running child is executing on is worse than the leak.
 
+## It does not survive a real stack
+
+Everything above was measured on a two-node fixture. Run against the golf cart's
+Autoware stack — 142 nodes, 16 containers, 82 composables, perception off, the
+two modes differing in nothing but `--container-mode` — clone-vm fails:
+
+| | observable | clone-vm |
+|---|---|---|
+| composables loaded | **62** of 82 | **18** of 82 |
+| containers aborting during the run | 0 | **11** of 16 |
+| `pthread_mutex_lock` assertions | 0 | **11** |
+
+```
+component_container: pthread_mutex_lock.c:94: ___pthread_mutex_lock:
+    Assertion `mutex->__data.__owner == 0' failed.
+```
+
+fired seconds after the first clone child began spinning, in eleven containers
+including `pointcloud_container`. `observable` produced no such assertion; its
+only aborts were nine at one identical timestamp, which is glog's signal handler
+at the SIGINT that ended the run.
+
+That assertion is glibc checking, on the *normal* mutex path, that a mutex it
+just acquired records no owner. A non-zero owner there means the mutex's memory
+was written by something that believed it was a different kind of mutex — that
+is shared-state corruption across the address space, which is Risk 1 and Risk 2
+of the archived design arriving on their own rather than because a signal was
+sent.
+
+**The CPU and memory figures from that pair are void** and are deliberately not
+reproduced here. clone-vm did appear to use 54.2% of the host against
+observable's 72.8%, but it was running less than a third of the composables. A
+mode that crashes two thirds of the stack will always look cheap.
+
+So: the model is sound in isolation and the reproducer passes on all three RMWs,
+but **`--container-mode clone-vm` is not usable for Autoware today.** The next
+thing to find out is what those eleven containers have in common — the survivors
+loaded 0-2 composables each and so did most of the casualties, so it is not
+simply a count — and whether the corruption is in rclcpp's shared state, in the
+allocator, or in the children's `struct pthread` still not being what glibc
+expects.
+
 ## Running it
 
 ```bash
