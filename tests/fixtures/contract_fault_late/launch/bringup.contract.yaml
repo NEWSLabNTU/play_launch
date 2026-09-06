@@ -60,6 +60,7 @@ nodes:
         max_latency: 2ms
 
   brake_controller:
+    criticality: low           # contradicts ASIL_D on drive_blind -> criticality-mismatch
     sub:
       obstacles:
         max_age: 60ms

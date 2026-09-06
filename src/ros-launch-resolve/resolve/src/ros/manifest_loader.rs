@@ -251,11 +251,47 @@ pub struct ResolvedHazard {
     pub decl: ros_launch_manifest_types::HazardDecl,
 }
 
+/// A node's criticality, derived from the hazards that reach it (phase 72).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DerivedCriticality {
+    /// The severity label, verbatim from the hazard.
+    pub level: String,
+    /// Position in the scale (0 = the no-requirement entry).
+    pub rank: usize,
+    /// Number of entries in the scale.
+    pub scale_len: usize,
+    /// The hazard that set it, and how the node relates to it.
+    pub hazard: String,
+    pub role: &'static str,
+}
+
+impl DerivedCriticality {
+    /// Fold the declared scale into the mapper's three buckets. Rank 0 (the
+    /// scale's first entry) is no requirement; the rest split evenly, top
+    /// third to `High`. On the default five-level scale: A → Low, B → Medium,
+    /// C and D → High.
+    pub fn bucket(&self) -> Option<ros_launch_manifest_sched::Criticality> {
+        use ros_launch_manifest_sched::Criticality;
+        let n = self.scale_len.saturating_sub(1);
+        if self.rank == 0 || n == 0 {
+            return None;
+        }
+        Some(match (self.rank * 3).div_ceil(n) {
+            0 | 1 => Criticality::Low,
+            2 => Criticality::Medium,
+            _ => Criticality::High,
+        })
+    }
+}
+
 /// The complete resolved manifest index for the launch tree.
 #[derive(Debug, Default, Clone)]
 pub struct ManifestIndex {
     /// Hazards, one entry per declaration (phase 71).
     pub hazards: Vec<ResolvedHazard>,
+    /// Node FQN → criticality derived from hazards (phase 72). Absent means
+    /// no hazard reaches the node, and its declared label — if any — stands.
+    pub derived_criticality: BTreeMap<String, DerivedCriticality>,
     /// Manifests by scope ID.
     pub manifests: HashMap<usize, ResolvedManifest>,
     /// All resolved topics (FQN → topic info, merged across scopes).
@@ -754,6 +790,10 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // detectors and FRTI from the reaction's route, and checks their sum
     // against the hazard's FTTI.
     check_fault_reaction(index, &graph);
+
+    // Phase 72: criticality is a consequence of the hazards that reach a
+    // node. Derived here; `sched_derive` reads it before any label.
+    derive_criticality_from_hazards(index, &graph);
 
     // A service server's promised response time, against the blocking its own
     // declarations imply.
@@ -1591,6 +1631,188 @@ fn check_fault_reaction(
 
     diags.sort_by(|a, b| a.path.cmp(&b.path).then(a.rule_id.cmp(&b.rule_id)));
     index.merge_diagnostics.extend(diags);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 72 — criticality from hazards
+// ---------------------------------------------------------------------------
+
+const DEFAULT_SEVERITY_SCALE: &[&str] = &["QM", "ASIL_A", "ASIL_B", "ASIL_C", "ASIL_D"];
+
+/// Which nodes a hazard reaches, and why. `criticality-from-hazards.md`'s
+/// rule: severity is never a property of a component, it is allocated
+/// inward from an outcome. Three ways in:
+///
+/// - **guards**: the publishers of a guard topic are the elements whose
+///   fault IS the hazard, and severity propagates UPSTREAM from them along
+///   every causal edge (state edges included — a stale map produces a
+///   hazardous plan as surely as a stale scan does). R1: max, never sum.
+/// - **detects**: a subscriber of a guard that declares an `on_violation`.
+/// - **reacts**: every node on the reaction walk to the safe state.
+///
+/// Nothing reaching a hazard derives nothing, and its label — if any —
+/// stands: that is the underivable case, the same absence-of-information
+/// the rate derivation reports as `Unknown`.
+fn derive_criticality_from_hazards(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    let hazards = index.hazards.clone();
+    let topics = index.topics.clone();
+    let node_paths = index.node_paths.clone();
+    let scope_paths = index.scope_paths.clone();
+    let mut diags: Vec<Diagnostic> = Vec::new();
+    let mut derived: BTreeMap<String, DerivedCriticality> = BTreeMap::new();
+
+    let mut assign = |node: &str, cand: DerivedCriticality| {
+        let replace = derived.get(node).is_none_or(|cur| cand.rank > cur.rank);
+        if replace {
+            derived.insert(node.to_string(), cand);
+        }
+    };
+
+    for h in &hazards {
+        let Some(level) = &h.decl.severity else {
+            continue;
+        };
+        let scale: Vec<String> = index
+            .manifests
+            .get(&h.scope_id)
+            .filter(|m| !m.manifest.severity_levels.is_empty())
+            .map(|m| m.manifest.severity_levels.clone())
+            .unwrap_or_else(|| DEFAULT_SEVERITY_SCALE.iter().map(|s| s.to_string()).collect());
+        let Some(rank) = scale.iter().position(|s| s.eq_ignore_ascii_case(level)) else {
+            diags.push(Diagnostic {
+                rule_id: "severity-unknown".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "hazard '{}' declares severity '{level}', which is not in the scale [{}]. \
+                     Declare `severity_levels:` if the scale is not ISO 26262's",
+                    h.name,
+                    scale.join(", ")
+                ),
+                path: format!("hazards.{}.severity", h.name),
+                span: None,
+            });
+            continue;
+        };
+        let mk = |role: &'static str| DerivedCriticality {
+            level: level.clone(),
+            rank,
+            scale_len: scale.len(),
+            hazard: h.name.clone(),
+            role,
+        };
+
+        // Guards: publishers and their upstream causal closure.
+        let mut frontier: Vec<String> = Vec::new();
+        for g in &h.guards {
+            for member in &g.members {
+                let Some(topic) = topics.get(member) else {
+                    continue;
+                };
+                for pub_ref in &topic.publishers {
+                    if let Some((node, _)) = split_endpoint_ref_for_check(pub_ref) {
+                        frontier.push(node);
+                    }
+                }
+                for sub_ref in &topic.subscribers {
+                    if let Some((node, ep)) = split_endpoint_ref_for_check(sub_ref)
+                        && graph
+                            .nodes
+                            .get(&node)
+                            .and_then(|n| n.subscribers.get(&ep))
+                            .is_some_and(|p| p.on_violation.is_some())
+                    {
+                        assign(&node, mk("detects"));
+                    }
+                }
+            }
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        while let Some(node) = frontier.pop() {
+            if !seen.insert(node.clone()) {
+                continue;
+            }
+            assign(&node, mk("feeds"));
+            if let Some(edges) = graph.in_edges.get(&node) {
+                for &i in edges {
+                    frontier.push(graph.edges[i].from.clone());
+                }
+            }
+        }
+
+        // Reacts: the walk to the safe state.
+        if let Some(reaction_name) = &h.decl.reaction
+            && let Some(reaction) = scope_paths
+                .iter()
+                .find(|p| p.scope_id == h.scope_id && &p.path_name == reaction_name)
+        {
+            let sinks: HashSet<&str> = reaction.output_topics.iter().map(String::as_str).collect();
+            let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
+            if let Some(w) = walk_reaction(&guards, &sinks, &topics, &node_paths, graph) {
+                for hop in &w.hops {
+                    if let Some((node, _)) = hop.rsplit_once('/') {
+                        assign(node, mk("reacts"));
+                    }
+                }
+            }
+        }
+    }
+
+    // The label against the derivation: a second copy of something the
+    // hazards already determine, or a disagreement nothing else would catch.
+    let labels: Vec<(String, String)> = index
+        .manifests
+        .values()
+        .flat_map(|m| {
+            m.manifest.nodes.iter().filter_map(|(name, d)| {
+                d.criticality
+                    .as_ref()
+                    .map(|c| (resolve_node_fqn(index, m.scope_id, &m.ns, name), c.clone()))
+            })
+        })
+        .collect();
+    for (node, label) in labels {
+        let Some(d) = derived.get(&node) else {
+            continue; // underivable: no hazard reaches this node; the label stands
+        };
+        let declared = super::sched_derive::parse_criticality_label(&label);
+        let bucket = d.bucket();
+        if declared == bucket {
+            diags.push(Diagnostic {
+                rule_id: "derivable-criticality".to_string(),
+                severity: Severity::Info,
+                message: format!(
+                    "node {node} declares criticality '{label}', which the hazards already \
+                     derive ({} {} hazard '{}'). The label is redundant and can be deleted",
+                    d.level, d.role, d.hazard
+                ),
+                path: format!("nodes.{node}.criticality"),
+                span: None,
+            });
+        } else {
+            diags.push(Diagnostic {
+                rule_id: "criticality-mismatch".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "node {node} declares criticality '{label}', but it {} hazard '{}' ({}), \
+                     which derives {}. The derivation wins for scheduling; one of the two \
+                     is wrong and nothing else checks this",
+                    d.role,
+                    d.hazard,
+                    d.level,
+                    bucket.map_or("no criticality".to_string(), |b| format!("{b:?}").to_lowercase())
+                ),
+                path: format!("nodes.{node}.criticality"),
+                span: None,
+            });
+        }
+    }
+
+    diags.sort_by(|a, b| a.path.cmp(&b.path));
+    index.merge_diagnostics.extend(diags);
+    index.derived_criticality = derived;
 }
 
 /// The second derivable copy (phase 70 W3): a publisher's `min_rate_hz`.

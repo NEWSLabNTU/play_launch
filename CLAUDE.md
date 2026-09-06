@@ -586,6 +586,27 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: Phase 72 — **criticality is a consequence of the
+  hazards** (manifest `v0.1.30` → **`v0.1.31`**). `criticality-from-hazards
+  .md` (Aug 7) argued the `high|medium|low` label is a bare ordering with no
+  meaning and should be allocated inward from an outcome, the way every
+  safety standard does it; phase 71's `hazards:` made that possible. A node
+  that **feeds** a guard (its publishers and their upstream causal closure,
+  state edges included), **detects** one (a subscriber with `on_violation`)
+  or **reacts** (the walk to the safe state) takes the hazard's severity,
+  max over hazards. `severity_levels:` declares the scale (default ISO
+  26262's `[QM, ASIL_A..ASIL_D]`); out-of-scale is `severity-unknown`, not
+  the silent `None` the old parser had. `sched_derive` reads the derivation
+  before any label. `derivable-criticality` (info) / `criticality-mismatch`
+  (warning) compare the label to it; a node no hazard reaches keeps its
+  label — the underivable case, which is why the key stays live as
+  `Kind::Consequence` (the pinned list is now two). `rt_av_demo`'s three
+  `high` labels all derive from `drive_blind`; schedule byte-identical.
+  **Census blind spot found**: `hazards.<h>.severity` was write-only and
+  reported consumed because every `Diagnostic.severity` read matches the
+  name — the false-positive shape of a common field name. Roadmap:
+  `docs/roadmap/phase-72-criticality-from-hazards.md`.
+
 - **2026-09-06**: Phase 71 — **fault detection and reaction** (manifest
   `v0.1.29` → **`v0.1.30`**). The contract could say a rate must hold and
   not what happens when it does not. ISO 26262's number is the fault-tolerant

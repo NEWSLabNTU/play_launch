@@ -225,6 +225,12 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 72** — ✅ criticality is a consequence of the hazards. A node
+    that feeds, detects or reacts for a hazard takes its severity (max, never
+    sum); the `high|medium|low` label becomes `Kind::Consequence`, reported
+    redundant where it agrees and contradicted where it does not, and stands
+    only where no hazard reaches. `rt_av_demo`'s three labels are all derived.
+    [phase-72-criticality-from-hazards.md](./phase-72-criticality-from-hazards.md).
   - **Phase 71** — ✅ fault detection and reaction. One requirement
     (`hazards.<h>.ftti`), one reaction edge (`on_violation` on the detecting
     subscriber), one fact (`safe_state.settle`); FDTI and FRTI derived, six

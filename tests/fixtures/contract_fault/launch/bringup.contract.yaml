@@ -52,6 +52,7 @@ nodes:
         max_latency: 2ms
 
   brake_controller:
+    criticality: high          # what ASIL_D on drive_blind already derives -> derivable-criticality
     sub:
       obstacles:
         max_age: 60ms

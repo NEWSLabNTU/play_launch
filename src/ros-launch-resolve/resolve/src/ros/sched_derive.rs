@@ -367,9 +367,18 @@ fn push_segment_node(elements: &mut Vec<ChainElement>, node: String, path: Strin
 /// generalized to any node identity (chain segments don't carry a
 /// `ScheduledRecord`, only a resolved `(scope_id, node_fqn)`).
 fn node_criticality(index: &ManifestIndex, scope_id: usize, node_fqn: &str) -> Option<Criticality> {
+    // Phase 72: the hazards decide first; the label only where none reaches.
+    if let Some(d) = index.derived_criticality.get(node_fqn) {
+        return d.bucket();
+    }
     let bare = node_fqn.rsplit('/').next()?;
     let resolved = index.manifests.get(&scope_id)?;
     let raw = resolved.manifest.nodes.get(bare)?.criticality.as_deref()?;
+    parse_criticality(raw)
+}
+
+/// The label's bucket, for comparing a declaration against the derivation.
+pub(crate) fn parse_criticality_label(raw: &str) -> Option<Criticality> {
     parse_criticality(raw)
 }
 
@@ -485,6 +494,10 @@ fn extract_path_facts(
 
 /// `nodes.<name>.criticality`, case-insensitive, ignore-if-absent-or-unrecognized.
 fn extract_criticality(record: &ScheduledRecord, index: &ManifestIndex) -> Option<Criticality> {
+    // Phase 72: derived from hazards where any reaches this node.
+    if let Some(d) = index.derived_criticality.get(&record.fqn) {
+        return d.bucket();
+    }
     let raw = node_decl(record, index)?.criticality.as_deref()?;
     parse_criticality(raw)
 }

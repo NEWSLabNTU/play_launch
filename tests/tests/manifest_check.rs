@@ -1023,6 +1023,9 @@ fn fault_reaction_budget_fits_and_names_its_terms() {
     assert!(out.contains("fits the fault-tolerant time interval"), "{out}");
     // Who watches the watcher: the reaction's sink is deliberately unguarded.
     assert!(out.contains("reaction-unguarded"), "{out}");
+    // Phase 72: the `high` label on the brake is what ASIL_D already derives.
+    assert!(out.contains("derivable-criticality"), "{out}");
+    assert!(out.contains("ASIL_D reacts hazard 'drive_blind'"), "{out}");
     assert!(!out.contains("error[fault-reaction-budget]"), "{out}");
 }
 
@@ -1036,6 +1039,8 @@ fn fault_reaction_rules_fire_on_a_broken_chain() {
         "not a scope path",
         "error[hazard-unguarded]",
         "nothing would ever notice",
+        // Phase 72: a `low` label on a node that reacts for an ASIL_D hazard.
+        "warning[criticality-mismatch]",
     ] {
         assert!(out.contains(needle), "expected `{needle}` on contract_fault_late:\n{out}");
     }

@@ -1,6 +1,6 @@
 # Criticality from hazards — deriving scheduling context from outcomes
 
-Status: Draft (2026-08-07). Design of record for replacing the contract's
+Status: **implemented** as phase 72 (2026-09-06, `docs/roadmap/phase-72-criticality-from-hazards.md`), on phase 71's `hazards:`. Originally Draft (2026-08-07). Design of record for replacing the contract's
 `criticality:` label with a derivation from declared hazards.
 Feeds: [`phase-58`](../roadmap/phase-58-scheduling-derivation.md) (cost,
 decomposition, reservations).
