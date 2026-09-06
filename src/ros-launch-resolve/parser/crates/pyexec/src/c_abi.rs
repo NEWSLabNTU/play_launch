@@ -49,6 +49,14 @@ struct Request {
     /// has its own. Empty for `eval_expr`, whose argument is self-contained.
     #[serde(default)]
     configs: std::collections::BTreeMap<String, String>,
+    /// The caller's ROS namespace stack (ABI 3). Without it every
+    /// `Node`, `ComposableNodeContainer` and `ComposableNode` a `.launch.py`
+    /// declares reads `get_current_ros_namespace()` from THIS object's fresh
+    /// context and lands at `/` — `/component_state_monitor/container` for a
+    /// file included under `/system`. The parity gate caught it as nodes
+    /// present on both sides under different names.
+    #[serde(default)]
+    namespace_stack: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -194,6 +202,9 @@ unsafe fn call_inner(req: *const c_char) -> Response {
             for (k, v) in &req.configs {
                 ctx.set_configuration(k.clone(), v.clone());
             }
+            if !req.namespace_stack.is_empty() {
+                ctx.set_namespace_stack(req.namespace_stack.clone());
+            }
             let r = {
                 let _guard = play_launch_parser::bridge::LaunchContextGuard::new(&mut ctx);
                 backend.exec_file(&req.arg)
@@ -259,7 +270,13 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // and `captures` in the response. A v1 object linked against a v2 loader
     // would run the file and silently return nothing, which is the bug — so
     // the version is what makes that mismatch a statement instead.
-    2
+    //
+    // 3: the request carries `namespace_stack` and the captures carry
+    // `includes`. Both are serde-defaulted, so a v2 object would ACCEPT a v3
+    // request and answer it wrong — every Python-declared node at `/`, every
+    // Python include dropped — which is exactly the silent shape a version
+    // exists to refuse.
+    3
 }
 
 #[cfg(test)]
@@ -424,6 +441,82 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 2);
+        assert_eq!(play_launch_py_abi_version(), 3);
+    }
+
+    /// ABI 3: the namespace the caller is in reaches the nodes Python
+    /// declares. This is the Autoware `system.launch.xml` shape — a
+    /// `<group>` with a pushed namespace including a `.launch.py`.
+    #[test]
+    fn exec_file_declares_nodes_under_the_callers_namespace() {
+        let dir = std::env::temp_dir().join("pyexec_abi_3_ns");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("ns.launch.py");
+        std::fs::write(
+            &file,
+            "from launch import LaunchDescription\n\
+             from launch_ros.actions import ComposableNodeContainer\n\
+             from launch_ros.descriptions import ComposableNode\n\
+             def generate_launch_description():\n\
+             \x20   c = ComposableNode(namespace='monitor', name='component', package='p', plugin='P')\n\
+             \x20   return LaunchDescription([ComposableNodeContainer(\n\
+             \x20       namespace='monitor', name='container', package='rclcpp_components',\n\
+             \x20       executable='component_container', composable_node_descriptions=[c])])\n",
+        )
+        .unwrap();
+        let req = serde_json::json!({
+            "op": "exec_file",
+            "arg": file.to_str().unwrap(),
+            "configs": {},
+            "namespace_stack": ["/", "/system"],
+        })
+        .to_string();
+        let v = call(&req);
+        assert_eq!(v["ok"], true, "{v}");
+        let containers = v["captures"]["containers"].as_array().expect("containers");
+        assert_eq!(containers.len(), 1, "{v}");
+        assert_eq!(
+            containers[0]["namespace"], "/system/monitor",
+            "the caller's namespace must prefix what Python declares: {v}"
+        );
+        let loads = v["captures"]["load_nodes"].as_array().expect("load_nodes");
+        assert_eq!(loads.len(), 1, "{v}");
+        assert_eq!(loads[0]["namespace"], "/system/monitor", "{v}");
+    }
+
+    /// ABI 3: an `IncludeLaunchDescription` comes back to the caller, whose
+    /// traverser is the one that replays includes.
+    #[test]
+    fn exec_file_returns_its_includes_over_the_wire() {
+        let dir = std::env::temp_dir().join("pyexec_abi_3_inc");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("inc.launch.py");
+        std::fs::write(
+            &file,
+            "from launch import LaunchDescription\n\
+             from launch.actions import IncludeLaunchDescription\n\
+             def generate_launch_description():\n\
+             \x20   return LaunchDescription([IncludeLaunchDescription(\n\
+             \x20       '/nonexistent/child.launch.xml', launch_arguments=[('k', 'v')])])\n",
+        )
+        .unwrap();
+        let req = serde_json::json!({
+            "op": "exec_file",
+            "arg": file.to_str().unwrap(),
+            "configs": {},
+            "namespace_stack": ["/", "/system"],
+        })
+        .to_string();
+        let v = call(&req);
+        assert_eq!(v["ok"], true, "{v}");
+        let includes = v["captures"]["includes"]
+            .as_array()
+            .unwrap_or_else(|| panic!("captures.includes must be in the RESPONSE: {v}"));
+        assert_eq!(includes.len(), 1, "{v}");
+        assert_eq!(
+            includes[0]["file_path"], "/nonexistent/child.launch.xml",
+            "{v}"
+        );
+        assert_eq!(includes[0]["ros_namespace"], "/system", "{v}");
     }
 }

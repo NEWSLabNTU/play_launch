@@ -145,7 +145,13 @@ impl std::error::Error for LoadError {}
 /// would execute the launch file and return nothing — a tree that resolves to
 /// no nodes, which is indistinguishable from an empty launch file. That is
 /// exactly the failure this constant exists to turn into a sentence.
-const ABI_VERSION: u32 = 2;
+///
+/// 3: the request carries the caller's `namespace_stack` and the captures
+/// carry `includes`. A v2 object accepts a v3 request (both fields are
+/// serde-defaulted) and answers it wrong — every node a `.launch.py` declares
+/// lands at `/`, every include it makes is dropped — so this is the version
+/// that turns that pairing into a refusal.
+const ABI_VERSION: u32 = 3;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]
@@ -331,9 +337,16 @@ impl Loaded {
         op: &str,
         arg: &str,
         configs: std::collections::BTreeMap<String, String>,
+        namespace_stack: Vec<String>,
     ) -> Result<serde_json::Value, String> {
         use std::ffi::{CStr, CString};
-        let req = serde_json::json!({ "op": op, "arg": arg, "configs": configs }).to_string();
+        let req = serde_json::json!({
+            "op": op,
+            "arg": arg,
+            "configs": configs,
+            "namespace_stack": namespace_stack,
+        })
+        .to_string();
         let req = CString::new(req).map_err(|e| format!("request contains a NUL byte: {e}"))?;
 
         let raw = unsafe {
@@ -384,10 +397,15 @@ impl play_launch_parser::python_backend::PythonBackend for Loaded {
     fn exec_file(&self, path: &str) -> Result<(), String> {
         use play_launch_parser::bridge::{ExecCaptures, with_launch_context};
 
-        let configs: std::collections::BTreeMap<String, String> =
-            with_launch_context(|ctx| ctx.configurations().into_iter().collect());
+        let (configs, namespace_stack): (std::collections::BTreeMap<String, String>, Vec<String>) =
+            with_launch_context(|ctx| {
+                (
+                    ctx.configurations().into_iter().collect(),
+                    ctx.namespace_stack(),
+                )
+            });
 
-        let response = self.call("exec_file", path, configs)?;
+        let response = self.call("exec_file", path, configs, namespace_stack)?;
 
         // Absent `captures` means the object predates this contract. The ABI
         // version already refuses that pairing at load; this is the belt to
@@ -409,7 +427,7 @@ impl play_launch_parser::python_backend::PythonBackend for Loaded {
         // Self-contained: the expression is the whole input, the string is the
         // whole output. This is why `$(eval …)` kept working while `exec_file`
         // did not.
-        self.call("eval_expr", expr, Default::default())
+        self.call("eval_expr", expr, Default::default(), Vec::new())
             .map(|v| v["value"].as_str().unwrap_or_default().to_string())
     }
 }

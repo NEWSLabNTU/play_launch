@@ -586,6 +586,27 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: **The dlopen'd Python half lost the caller's namespace and
+  dropped every include** — parity gate red on `main` (`composable: Rust=59
+  Python=70`, nodes at `/component_state_monitor/...` on one side and
+  `/system/component_state_monitor/...` on the other). 0897 W3 split the
+  parser into a driver and a `pyexec` object that each statically link
+  `play_launch_parser`, so each has its OWN thread-local `LaunchContext`;
+  0935 carried `configs` in and `nodes/containers/load_nodes` out, and
+  nothing else. Two gaps: (1) the request carried no `namespace_stack`, so
+  every `Node`/`ComposableNodeContainer`/`ComposableNode` a `.launch.py`
+  declared read `get_current_ros_namespace()` from the object's fresh
+  context and landed at `/`; (2) `ExecCaptures` carried no `includes`, so
+  every `IncludeLaunchDescription` died with the object's context —
+  `component_state_monitor.launch.py` returns one container and ELEVEN
+  includes, and the eleven were the missing composables. **ABI 2 → 3**, on
+  purpose: both new fields are serde-defaulted, so a v2 object would ACCEPT
+  a v3 request and answer it wrong, which is precisely the silent shape the
+  version exists to refuse. This is #0021's class — a composable's namespace
+  wrong in the RUNNING topology — and the parity gate is what caught it,
+  which is why `just test-all` runs it. Three boundary tests in
+  `pyexec/src/c_abi.rs` pin it.
+
 - **2026-09-06**: Phase 70 W4 — **the leftovers** (manifest `v0.1.26` →
   **`v0.1.29`**; `v0.1.27` ships with one failing test, use `.28`+).
   **`kind` column** on `field_table.rs`: `Meta | Fact | Requirement |

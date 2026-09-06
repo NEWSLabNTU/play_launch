@@ -377,6 +377,16 @@ pub struct ExecCaptures {
     /// `SetParameter` at launch scope, which Python writes straight to the
     /// context and would otherwise be lost with it.
     pub global_parameters: Vec<(String, String)>,
+    /// `IncludeLaunchDescription` — the traverser replays these AFTER the
+    /// file, from its own context, so they have to come back to it.
+    ///
+    /// Missing until ABI 3. On Autoware's `component_state_monitor.launch.py`
+    /// that dropped eleven composables: the file returns one container and
+    /// eleven includes of `load_topic_state_monitor.launch.xml`, and the
+    /// includes died with the object's context. The parity gate caught it as
+    /// `composable: Rust=59 Python=70`.
+    #[serde(default)]
+    pub includes: Vec<crate::captures::IncludeCapture>,
 }
 
 impl ExecCaptures {
@@ -391,6 +401,7 @@ impl ExecCaptures {
                 .global_parameters()
                 .into_iter()
                 .collect::<Vec<(String, String)>>(),
+            includes: ctx.captured_includes().to_vec(),
         }
     }
 
@@ -406,6 +417,7 @@ impl ExecCaptures {
         for (k, v) in self.global_parameters {
             ctx.set_global_parameter(k, v);
         }
+        ctx.captured_includes_mut().extend(self.includes);
     }
 }
 

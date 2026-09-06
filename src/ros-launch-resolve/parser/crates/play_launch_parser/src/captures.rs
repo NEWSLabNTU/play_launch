@@ -72,7 +72,7 @@ pub struct LoadNodeCapture {
 }
 
 /// Captured include data from Python or XML parsing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IncludeCapture {
     pub file_path: String,
     pub args: Vec<(String, String)>,
