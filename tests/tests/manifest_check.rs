@@ -1009,3 +1009,34 @@ fn rate_propagation_and_service_response_have_rules_that_fire() {
         "a fan-in without `sync:` must SUM its input rates:\n{out}"
     );
 }
+
+/// Phase 71: the fault-reaction arithmetic on a chain that fits, and on
+/// one that fails three different ways.
+#[test]
+fn fault_reaction_budget_fits_and_names_its_terms() {
+    let out = check_fixture("contract_fault");
+    assert!(out.contains("fault-reaction-budget"), "{out}");
+    assert!(
+        out.contains("detection 100.00ms") && out.contains("settle 200.00ms"),
+        "the verdict must name the derived terms:\n{out}"
+    );
+    assert!(out.contains("fits the fault-tolerant time interval"), "{out}");
+    // Who watches the watcher: the reaction's sink is deliberately unguarded.
+    assert!(out.contains("reaction-unguarded"), "{out}");
+    assert!(!out.contains("error[fault-reaction-budget]"), "{out}");
+}
+
+#[test]
+fn fault_reaction_rules_fire_on_a_broken_chain() {
+    let out = check_fixture("contract_fault_late");
+    for needle in [
+        "error[fault-reaction-budget]",
+        "607.00ms exceeds",
+        "error[reaction-unreachable]",
+        "not a scope path",
+        "error[hazard-unguarded]",
+        "nothing would ever notice",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}` on contract_fault_late:\n{out}");
+    }
+}

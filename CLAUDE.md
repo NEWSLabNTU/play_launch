@@ -586,6 +586,36 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: Phase 71 — **fault detection and reaction** (manifest
+  `v0.1.29` → **`v0.1.30`**). The contract could say a rate must hold and
+  not what happens when it does not. ISO 26262's number is the fault-tolerant
+  time interval, and its three supervision kinds (alive, deadline, logical)
+  were already the three things the contract declared — so the vocabulary is
+  one requirement (`hazards.<h>.ftti`, with `guards` that compose as
+  `all_of` and a closed `on: omission|late|loss|reported`), one reaction edge
+  (`sub.<e>.on_violation: {on, reaction, within, mechanism}` on the
+  subscriber that detects — the `cmd_vel` timeout of every mobile base), one
+  fact (`paths.<p>.safe_state: {emits, settle}`), and everything else
+  derived. **FDTI** = the fastest detector among a guard's subscribers that
+  REACT; **FRTI** = a walk over reaction edges (an `on_violation` at the
+  guard, then `on_violation` or ordinary input-triggered paths onward — a
+  reaction is a real message) plus the sink's settle. Six rules;
+  `fault-reaction-budget` names every term. **Two arithmetic defects caught
+  by the first fixture**: a rate floor is not a detector (nothing fires when
+  a period passes), and the reaction route is not the critical path (the
+  dead lidar's sampling period was being charged). **Verified**: `just
+  fault` in `rt_av_demo` kills the lidar's data mid-run — observed 104 ms
+  against derived 107 (lease 100 + route 7) — after `measure` learned that
+  a reaction is the first sink publish carrying **no upstream provenance**
+  (a naive "first publish after" reported 11 ms: the brake answering the
+  last scan). **Autoware**: overlay contracts with 1.5.0's own parameter
+  numbers derive 500 + 244 + 1200 = 1944 ms across three real nodes in three
+  launch files — fits 2 s, fails 1.5 s, and nothing performed that sum
+  before. `check --emit diagnostics-params` prints `diagnostic_updater`
+  parameters from declared bounds: the adoption path for a system with no
+  hazard analysis. Roadmap: `docs/roadmap/phase-71-fault-reaction.md`.
+  Design: `docs/design/fault-reaction-primitives.md`.
+
 - **2026-09-06**: **The census's advice, taken — and it found a rule reading
   the copy.** The 18 `derivable-rate`/`derivable-min-rate` copies in our own
   fixtures are deleted (`rt_workspace`, `contract_derived_chain`,

@@ -1,0 +1,37 @@
+# Phase 71 W4 — vehicle_cmd_gate: the last nominal hop, and the second
+# layer (its own heartbeat timeout guards the MRM's output).
+version: 1
+
+nodes:
+  vehicle_cmd_gate:
+    sub:
+      emergency_cmd:
+        # system_emergency_heartbeat_timeout: 0.5 — who watches the watcher.
+        qos: { liveliness: manual_by_topic, lease_duration: 500ms }
+        on_violation:
+          on: [omission]
+          reaction: gate_emergency
+          mechanism: application
+    pub:
+      control_cmd: {}
+    paths:
+      gate:
+        trigger: { input: [emergency_cmd] }
+        output: [control_cmd]
+        max_latency: 100ms         # update_rate 10 Hz
+        safe_state: { emits: control_cmd, settle: 1200ms }
+      gate_emergency:
+        trigger: { input: [emergency_cmd] }
+        output: [control_cmd]
+        max_latency: 100ms
+        safe_state: { emits: control_cmd, settle: 1200ms }   # emergency_acceleration: -2.4
+
+topics:
+  /system/emergency/control_cmd:
+    type: autoware_control_msgs/msg/Control
+    external: pub
+    sub: [vehicle_cmd_gate/emergency_cmd]
+  /control/command/control_cmd:
+    type: autoware_control_msgs/msg/Control
+    external: sub
+    pub: [vehicle_cmd_gate/control_cmd]

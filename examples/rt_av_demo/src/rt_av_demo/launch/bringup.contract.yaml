@@ -8,6 +8,20 @@
 # deadline at runtime.
 version: 1
 
+# Phase 71: the hazard the chain exists to prevent, and the one number that
+# turns the rate requirements below into a safety requirement. Detection is
+# the lease on obstacle_detector's subscription; reaction is `safety.stop`'s
+# route plus the brake's settle. `just fault` kills the lidar mid-run and
+# compares the observed fault-to-brake time to what `check` derives.
+hazards:
+  drive_blind:
+    severity: ASIL_D
+    description: vehicle continues with no obstacle data
+    guards: [/safety/scan]
+    on: omission
+    ftti: 500ms
+    reaction: safety.stop
+
 nodes:
   lidar_driver:
     criticality: high
@@ -29,6 +43,14 @@ nodes:
     sub:
       scan:
         min_rate_hz: 50
+        # The detector: 100ms without a scan is a lost lidar. `watchdog_ms`
+        # in bringup.launch.xml is this number, applied by the node itself.
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: declare_lost
+          within: 10ms
+          mechanism: application
     pub:
       obstacles:
         min_rate_hz: 50
@@ -37,6 +59,11 @@ nodes:
         trigger: { input: [scan] }
         output: [obstacles]
         max_latency: 12ms
+      # Publishes an "obstacles unknown" message so the brake reacts.
+      declare_lost:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 2ms
 
   brake_controller:
     criticality: high
@@ -44,6 +71,11 @@ nodes:
       obstacles:
         min_rate_hz: 50
         max_age: 60ms
+        on_violation:
+          on: [late, omission]
+          reaction: emergency_stop
+          within: 20ms
+          mechanism: application
     pub:
       brake_cmd:
         min_rate_hz: 50
@@ -52,6 +84,13 @@ nodes:
         trigger: { input: [obstacles] }
         output: [brake_cmd]
         max_latency: 8ms
+      emergency_stop:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 5ms
+        # `settle_ms` in bringup.launch.xml: the plant's time to reach the
+        # safe state once commanded. A parameter here so the oracle is exact.
+        safe_state: { emits: brake_cmd, settle: 200ms }
 
 # The safety chain, and the claim under test — stated as a scope path, which
 # names the two ENDS of the requirement and lets the route be derived from the
@@ -71,6 +110,11 @@ paths:
     trigger: { input: [/safety/scan] }
     output: [/safety/brake_cmd]
     max_latency: 60ms
+  # The reaction route, from the guarded topic to the safe-state command.
+  safety.stop:
+    trigger: { input: [/safety/scan] }
+    output: [/safety/brake_cmd]
+    max_latency: 100ms
 
 topics:
   /safety/scan:

@@ -1,0 +1,32 @@
+# Phase 71 W4 — mrm_handler: the reaction edge of Autoware's MRM chain.
+version: 1
+
+nodes:
+  mrm_handler:
+    sub:
+      operation_mode_availability:
+        # timeout_operation_mode_availability: 0.5 — the detector.
+        qos: { liveliness: manual_by_topic, lease_duration: 500ms }
+        on_violation:
+          on: [omission]
+          reaction: call_mrm
+          within: 150ms
+          mechanism: application
+    pub:
+      emergency_stop_operate: {}
+    paths:
+      call_mrm:
+        trigger: { input: [operation_mode_availability] }
+        output: [emergency_stop_operate]
+        # update_rate 10 Hz + timeout_call_mrm_behavior 0.01 s
+        max_latency: 110ms
+
+topics:
+  /system/operation_mode/availability:
+    type: tier4_system_msgs/msg/OperationModeAvailability
+    external: pub
+    sub: [mrm_handler/operation_mode_availability]
+  /system/mrm/emergency_stop/operate:
+    type: tier4_system_msgs/msg/OperateMrm
+    pub: [mrm_handler/emergency_stop_operate]
+    sub: [/system/mrm_emergency_stop_operator/operate]

@@ -1,0 +1,26 @@
+# Phase 71 W4 — the stop operator: a nominal hop of the reaction, and the
+# path that commands the safe state.
+version: 1
+
+nodes:
+  mrm_emergency_stop_operator:
+    sub:
+      operate: {}
+    pub:
+      control_cmd: {}
+    paths:
+      stop:
+        trigger: { input: [operate] }
+        output: [control_cmd]
+        max_latency: 34ms          # update_rate 30 Hz
+        safe_state: { emits: control_cmd, settle: 1200ms }
+
+topics:
+  /system/mrm/emergency_stop/operate:
+    type: tier4_system_msgs/msg/OperateMrm
+    external: pub
+    sub: [mrm_emergency_stop_operator/operate]
+  /system/emergency/control_cmd:
+    type: autoware_control_msgs/msg/Control
+    pub: [mrm_emergency_stop_operator/control_cmd]
+    sub: [/control/vehicle_cmd_gate/emergency_cmd]

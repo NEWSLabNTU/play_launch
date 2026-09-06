@@ -82,7 +82,11 @@ pub fn build_checked_model(
                 }
             }
         }
-        for d in index.merge_diagnostics.iter().chain(index.load_diagnostics.iter()) {
+        for d in index
+            .merge_diagnostics
+            .iter()
+            .chain(index.load_diagnostics.iter())
+        {
             if matches!(d.severity, Severity::Error) {
                 eprintln!("error: {d}");
             }

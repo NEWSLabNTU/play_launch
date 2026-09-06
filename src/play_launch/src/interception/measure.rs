@@ -185,7 +185,7 @@ pub struct PathResult {
 // ---------------------------------------------------------------------------
 
 /// Parsed contents of an `events.jsonl` file.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Run {
     pub events: Vec<RunEvent>,
     /// topic_hash → FQN. Incomplete for topics whose name chunks never
@@ -432,6 +432,149 @@ pub fn node_budget_us(results: &[&PathResult]) -> Option<u64> {
         })
         .sum();
     (total > 0).then_some(total.div_ceil(1_000))
+}
+
+// ---------------------------------------------------------------------------
+// Phase 71 — observed fault detection and reaction
+// ---------------------------------------------------------------------------
+
+/// A hazard, as `measure` needs it: which topics going silent IS the fault,
+/// which topics carry the reaction, and the declared numbers to compare
+/// against. Built from the model's `contracts.hazards` by the command.
+#[derive(Debug, Clone)]
+pub struct HazardSpec {
+    pub key: String,
+    /// Guard topic FQNs (all groups flattened — any one going silent is
+    /// observed on its own).
+    pub guards: Vec<String>,
+    /// Topics the reaction commands the safe state on.
+    pub sinks: Vec<String>,
+    pub ftti_ms: Option<f64>,
+    /// `safe_state.settle` at the sink, from the model.
+    pub settle_ms: Option<f64>,
+    /// `(subscriber, within_ms)` for every `on_violation` on a guard that
+    /// promised a per-hop bound.
+    pub within: Vec<(String, f64)>,
+    /// Any detector on the route reports through `/diagnostics`, so the
+    /// first publish there after the fault is the observable detection mark.
+    pub via_diagnostics: bool,
+}
+
+/// One guard that went silent during the run, and what followed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HazardObservation {
+    pub key: String,
+    pub guard: String,
+    /// `CLOCK_MONOTONIC` ns of the guard's last publish — the fault.
+    pub fault_ns: u64,
+    /// First `/diagnostics` publish after the fault, when `via_diagnostics`.
+    pub detected_ns: Option<u64>,
+    /// First publish on a sink after the fault.
+    pub reacted_ns: Option<u64>,
+    /// How long the guard had been publishing before it stopped — so a
+    /// topic that never started is not reported as one that died.
+    pub alive_ms: f64,
+}
+
+impl HazardObservation {
+    /// Fault to reaction, ms — the observed FDTI + FRTI minus the plant's
+    /// settle, which no message records.
+    pub fn reaction_ms(&self) -> Option<f64> {
+        self.reacted_ns
+            .map(|r| r.saturating_sub(self.fault_ns) as f64 / 1e6)
+    }
+    pub fn detection_ms(&self) -> Option<f64> {
+        self.detected_ns
+            .map(|d| d.saturating_sub(self.fault_ns) as f64 / 1e6)
+    }
+}
+
+/// Find, per hazard, a guard topic that stopped publishing before the run
+/// ended, and the first reaction that followed.
+///
+/// "Stopped" is judged against the topic's own cadence: silent for longer
+/// than ten of its median inter-publish gaps (and at least 50ms), with the
+/// run continuing past that. A topic that was silent for the whole run is
+/// not a fault, it is a topic that never came up; it is skipped.
+///
+/// "Reaction" is the first sink publish after the fault **that carries no
+/// upstream provenance**. The nominal pipeline forwards the guard's
+/// `header.stamp` hop by hop, so the sink's response to the guard's LAST
+/// message arrives a few milliseconds after the fault wearing that message's
+/// stamp — and it is not a reaction, it is the tail of normal operation. A
+/// reaction originates its own stamp. Measured on `rt_av_demo`: the first
+/// rule reported 11ms for a 100ms lease; this one reports the lease. Where a
+/// sink is unstamped, the fallback is the first publish after one nominal
+/// period has passed.
+pub fn observe_hazards(run: &Run, hazards: &[HazardSpec]) -> Vec<HazardObservation> {
+    let fqn_of = |h: u64| run.topics.get(&h).map(String::as_str);
+    let run_end = run.events.iter().map(|e| e.t).max().unwrap_or(0);
+    let publishes = |topic: &str| -> Vec<u64> {
+        let mut v: Vec<u64> = run
+            .events
+            .iter()
+            .filter(|e| e.d == Dir::Publish && fqn_of(e.h) == Some(topic))
+            .map(|e| e.t)
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    let mut out = Vec::new();
+    for spec in hazards {
+        let diag = if spec.via_diagnostics {
+            publishes("/diagnostics")
+        } else {
+            Vec::new()
+        };
+        let mut sink_events: Vec<&RunEvent> = run
+            .events
+            .iter()
+            .filter(|e| {
+                e.d == Dir::Publish
+                    && fqn_of(e.h).is_some_and(|f| spec.sinks.iter().any(|s| s == f))
+            })
+            .collect();
+        sink_events.sort_by_key(|e| e.t);
+        for guard in &spec.guards {
+            let guard_stamps: std::collections::HashSet<u64> = run
+                .events
+                .iter()
+                .filter(|e| e.d == Dir::Publish && fqn_of(e.h) == Some(guard.as_str()))
+                .filter_map(RunEvent::stamp_key)
+                .collect();
+            let pubs = publishes(guard);
+            if pubs.len() < 2 {
+                continue;
+            }
+            let mut gaps: Vec<u64> = pubs.windows(2).map(|w| w[1] - w[0]).collect();
+            gaps.sort_unstable();
+            let median_gap = gaps[gaps.len() / 2];
+            let silence_threshold = (median_gap * 10).max(50_000_000);
+            let last = *pubs.last().unwrap();
+            if run_end.saturating_sub(last) < silence_threshold {
+                continue; // still publishing when the run ended
+            }
+            let reacted_ns = sink_events
+                .iter()
+                .filter(|e| e.t > last)
+                .find(|e| match e.stamp_key() {
+                    // Stamped: a reaction carries no guard provenance.
+                    Some(k) => !guard_stamps.contains(&k),
+                    // Unstamped: past one nominal period, the tail is over.
+                    None => e.t > last + median_gap,
+                })
+                .map(|e| e.t);
+            out.push(HazardObservation {
+                key: spec.key.clone(),
+                guard: guard.clone(),
+                fault_ns: last,
+                detected_ns: diag.iter().copied().find(|t| *t > last),
+                reacted_ns,
+                alive_ms: (last - pubs[0]) as f64 / 1e6,
+            });
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -760,5 +903,61 @@ mod tests {
         assert_eq!(run.events.len(), 1);
         assert_eq!(run.events[0].d, Dir::Publish);
         assert_eq!(run.events[0].tid, 6);
+    }
+
+    /// Phase 71: a guard that stops publishing is a fault; the first sink
+    /// publish after it is the reaction; a guard that never stops is not.
+    #[test]
+    fn a_silent_guard_is_a_fault_and_the_next_sink_publish_is_the_reaction() {
+        let scan = 11u64;
+        let brake = 22u64;
+        let mut run = Run::default();
+        run.topics.insert(scan, "/safety/scan".into());
+        run.topics.insert(brake, "/safety/brake_cmd".into());
+        let ev = |h: u64, t: u64, stamp: u32| RunEvent {
+            n: "/n".into(),
+            d: Dir::Publish,
+            h,
+            s: 1,
+            ns: stamp,
+            t,
+            c: 0,
+            tid: 1,
+        };
+        // scan at 20ms cadence for 1s, then silence. The brake forwards each
+        // scan's stamp 7ms later (the nominal chain), including for the LAST
+        // scan — which arrives after the fault and must not count. The
+        // reaction, 130ms after the last scan, carries its own stamp.
+        for i in 0..50u64 {
+            let stamp = 1000 + i as u32;
+            run.events
+                .push(ev(scan, 1_000_000_000 + i * 20_000_000, stamp));
+            run.events
+                .push(ev(brake, 1_000_000_000 + i * 20_000_000 + 7_000_000, stamp));
+        }
+        let last_scan = 1_000_000_000 + 49 * 20_000_000;
+        run.events.push(ev(brake, last_scan + 130_000_000, 999_999));
+        run.events
+            .push(ev(brake, last_scan + 3_000_000_000, 999_998)); // run continues
+        let spec = HazardSpec {
+            key: "drive_blind".into(),
+            guards: vec!["/safety/scan".into()],
+            sinks: vec!["/safety/brake_cmd".into()],
+            ftti_ms: Some(500.0),
+            settle_ms: Some(200.0),
+            within: vec![],
+            via_diagnostics: false,
+        };
+        let obs = observe_hazards(&run, std::slice::from_ref(&spec));
+        assert_eq!(obs.len(), 1, "{obs:?}");
+        assert_eq!(obs[0].fault_ns, last_scan);
+        // 7ms after the last scan the brake answered THAT scan — provenance
+        // says so — and that is not the reaction. 130ms is.
+        assert_eq!(obs[0].reaction_ms(), Some(130.0));
+
+        // A guard still publishing at the end is not a fault.
+        let mut alive = run.clone();
+        alive.events.push(ev(scan, last_scan + 3_000_000_000, 7));
+        assert!(observe_hazards(&alive, &[spec]).is_empty());
     }
 }

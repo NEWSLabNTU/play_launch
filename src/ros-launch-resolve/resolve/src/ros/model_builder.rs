@@ -167,12 +167,40 @@ fn pub_contract(p: &EndpointProps) -> Option<model::PubContract> {
     })
 }
 
-fn sub_contract(p: &EndpointProps) -> Option<model::SubContract> {
+fn fault_kind(k: ros_launch_manifest_types::FaultKind) -> model::FaultKind {
+    use ros_launch_manifest_types::FaultKind as F;
+    match k {
+        F::Omission => model::FaultKind::Omission,
+        F::Late => model::FaultKind::Late,
+        F::Loss => model::FaultKind::Loss,
+        F::Reported => model::FaultKind::Reported,
+    }
+}
+
+fn on_violation_contract(
+    node_fqn: &str,
+    ov: &ros_launch_manifest_types::OnViolation,
+) -> model::OnViolationContract {
+    use ros_launch_manifest_types::DetectMechanism as M;
+    model::OnViolationContract {
+        on: ov.on.iter().map(|k| fault_kind(*k)).collect(),
+        reaction: format!("{node_fqn}/{}", ov.reaction),
+        within_ms: ov.within.map(|d| d.as_millis_f64()),
+        mechanism: match ov.mechanism {
+            M::Qos => model::DetectMechanism::Qos,
+            M::Diagnostics => model::DetectMechanism::Diagnostics,
+            M::Application => model::DetectMechanism::Application,
+        },
+    }
+}
+
+fn sub_contract(node_fqn: &str, p: &EndpointProps) -> Option<model::SubContract> {
     let state = p.state.unwrap_or(false);
     let required = p.required.unwrap_or(false);
     if p.min_rate_hz.is_none()
         && p.max_rate_hz.is_none()
         && p.max_age.is_none()
+        && p.on_violation.is_none()
         && !state
         && !required
     {
@@ -185,6 +213,10 @@ fn sub_contract(p: &EndpointProps) -> Option<model::SubContract> {
         state,
         required,
         qos: None,
+        on_violation: p
+            .on_violation
+            .as_ref()
+            .map(|ov| on_violation_contract(node_fqn, ov)),
     })
 }
 
@@ -210,8 +242,15 @@ fn path_contract(
     decl: &ros_launch_manifest_types::PathDecl,
     input: Vec<String>,
     output: Vec<String>,
+    // How `safe_state.emits` (an endpoint name on a node path, a topic on a
+    // scope path) becomes a model key.
+    emits_key: &dyn Fn(&str) -> String,
 ) -> model::PathContract {
     model::PathContract {
+        safe_state: decl.safe_state.as_ref().map(|s| model::SafeStateContract {
+            emits: emits_key(&s.emits),
+            settle_ms: s.settle.map(|d| d.as_millis_f64()),
+        }),
         input,
         output,
         max_latency_ms: decl.max_latency.map(|d| d.as_millis_f64()),
@@ -802,7 +841,7 @@ pub fn build_system_model(
                 }
             }
             for (ep, props) in &decl.subscribers {
-                if let Some(c) = sub_contract(props) {
+                if let Some(c) = sub_contract(&node_fqn, props) {
                     contracts
                         .sub_endpoints
                         .insert(format!("{node_fqn}/{ep}"), c);
@@ -844,13 +883,44 @@ pub fn build_system_model(
             .collect();
         contracts.node_paths.insert(
             format!("{node_fqn}/{}", p.path_name),
-            path_contract(&p.path, input, output),
+            path_contract(&p.path, input, output, &|e| format!("{node_fqn}/{e}")),
         );
     }
     for p in &index.scope_paths {
         contracts.scope_paths.insert(
             fqn(&scope_key(Some(p.scope_id)), &p.path_name),
-            path_contract(&p.path, p.input_topics.clone(), p.output_topics.clone()),
+            path_contract(
+                &p.path,
+                p.input_topics.clone(),
+                p.output_topics.clone(),
+                &|t| t.to_string(),
+            ),
+        );
+    }
+
+    // Hazards (phase 71): guards already resolved to topic FQNs by the
+    // loader; the reaction is keyed the way `scope_paths` is.
+    for h in &index.hazards {
+        contracts.hazards.insert(
+            fqn(&scope_key(Some(h.scope_id)), &h.name),
+            model::HazardContract {
+                severity: h.decl.severity.clone(),
+                guards: h
+                    .guards
+                    .iter()
+                    .map(|g| model::GuardContract {
+                        members: g.members.clone(),
+                        all_of: g.all_of,
+                    })
+                    .collect(),
+                on: h.decl.on.map(fault_kind),
+                ftti_ms: h.decl.ftti.map(|d| d.as_millis_f64()),
+                reaction: h
+                    .decl
+                    .reaction
+                    .as_ref()
+                    .map(|r| fqn(&scope_key(Some(h.scope_id)), r)),
+            },
         );
     }
 

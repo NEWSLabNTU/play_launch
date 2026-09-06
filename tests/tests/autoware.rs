@@ -266,3 +266,58 @@ fn test_autoware_process_count_python() {
 
     // _proc dropped here — ManagedProcess::drop kills the process group
 }
+
+/// Phase 71 W4: Autoware's MRM chain as a contract, with its own parameter-
+/// file numbers. Detection 500ms (the availability timeout) + reaction
+/// 110 + 34 + 100 ms + settle 1200 = 1944ms: fits a 2 s interval with 56ms
+/// of slack, and fails a 1.5 s one — arithmetic the parameter files imply
+/// and nothing performed until now.
+#[test]
+fn test_autoware_mrm_chain_fault_reaction_budget() {
+    require_autoware();
+    let env = fixtures::autoware_env();
+    let contracts = fixtures::repo_root().join("tests/fixtures/autoware/contracts");
+    let map_path_arg = format!("map_path:={}", fixtures::autoware_map_path());
+    let out = std::process::Command::new(fixtures::play_launch_bin())
+        .envs(&env)
+        .arg("check")
+        .arg("--contracts")
+        .arg(&contracts)
+        .arg("autoware_launch")
+        .arg("planning_simulator.launch.xml")
+        .arg(&map_path_arg)
+        .output()
+        .expect("play_launch check runs");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let plain = strip_ansi(&text);
+    assert!(
+        plain.contains("hazard 'mode_unavailable': detection 500.00ms"),
+        "{plain}"
+    );
+    assert!(plain.contains("= 1944.00ms fits the fault-tolerant time interval 2000.00ms"), "{plain}");
+    assert!(
+        plain.contains("hazard 'mode_unavailable_tight'") && plain.contains("1944.00ms exceeds"),
+        "{plain}"
+    );
+}
+
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for c2 in chars.by_ref() {
+                if c2.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}

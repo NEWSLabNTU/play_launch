@@ -15,7 +15,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::interception::measure::{self, NotMeasured, Outcome, PathResult, PathSpec, Run};
+use crate::interception::measure::{
+    self, HazardObservation, HazardSpec, NotMeasured, Outcome, PathResult, PathSpec, Run,
+};
 use ros_launch_manifest_model::SystemModel;
 
 /// Arguments for `play_launch measure`.
@@ -54,7 +56,143 @@ pub fn handle_measure(args: &MeasureArgs) -> eyre::Result<()> {
 
     let results = measure::measure(&run, &specs);
     print!("{}", render(&results, &run, &events_path, &args.model));
+
+    // Phase 71: hazards. Observed fault → reaction, against the declared
+    // fault-tolerant time interval. Only printed when the model declares any.
+    let hazard_specs = hazard_specs(&model);
+    if !hazard_specs.is_empty() {
+        let observed = measure::observe_hazards(&run, &hazard_specs);
+        print!("{}", render_hazards(&hazard_specs, &observed));
+    }
     Ok(())
+}
+
+/// Everything `observe_hazards` needs, read off the model: this is the
+/// consumer of `contracts.hazards`, `on_violation.within_ms`/`mechanism` and
+/// `safe_state.settle_ms` on the model side.
+fn hazard_specs(model: &SystemModel) -> Vec<HazardSpec> {
+    use ros_launch_manifest_model::DetectMechanism;
+    let c = &model.contracts;
+    c.hazards
+        .iter()
+        .map(|(key, h)| {
+            let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
+            let sinks: Vec<String> = h
+                .reaction
+                .as_ref()
+                .and_then(|r| c.scope_paths.get(r))
+                .map(|p| p.output.clone())
+                .unwrap_or_default();
+            // The sink's settle: any node path whose safe_state emits onto a
+            // sink topic.
+            let settle_ms = c
+                .node_paths
+                .values()
+                .filter_map(|p| {
+                    let ss = p.safe_state.as_ref()?;
+                    sinks
+                        .iter()
+                        .any(|t| {
+                            model
+                                .structure
+                                .topics
+                                .get(t)
+                                .is_some_and(|w| w.publishers.contains(&ss.emits))
+                        })
+                        .then_some(ss.settle_ms)
+                        .flatten()
+                })
+                .fold(None, |acc: Option<f64>, v| {
+                    Some(acc.map_or(v, |a| a.max(v)))
+                });
+            // Reaction edges on the guards: per-hop promises and how they
+            // are observed.
+            let mut within = Vec::new();
+            let mut via_diagnostics = false;
+            for guard in &guards {
+                let Some(w) = model.structure.topics.get(guard) else {
+                    continue;
+                };
+                for sub in &w.subscribers {
+                    if let Some(ov) = c
+                        .sub_endpoints
+                        .get(sub)
+                        .and_then(|s| s.on_violation.as_ref())
+                    {
+                        if let Some(ms) = ov.within_ms {
+                            within.push((sub.clone(), ms));
+                        }
+                        via_diagnostics |= ov.mechanism == DetectMechanism::Diagnostics;
+                    }
+                }
+            }
+            HazardSpec {
+                key: key.clone(),
+                guards,
+                sinks,
+                ftti_ms: h.ftti_ms,
+                settle_ms,
+                within,
+                via_diagnostics,
+            }
+        })
+        .collect()
+}
+
+fn render_hazards(specs: &[HazardSpec], observed: &[HazardObservation]) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "\n# Hazards — observed fault → reaction. The fault is the guard's last publish;\n\
+         # the reaction is the first publish on the reaction's sink after it. The plant's\n\
+         # settle is not observable from messages, so it is added from the contract.\n",
+    );
+    for spec in specs {
+        let obs: Vec<&HazardObservation> = observed.iter().filter(|o| o.key == spec.key).collect();
+        if obs.is_empty() {
+            out.push_str(&format!(
+                "#   {}: no guard went silent during this run — nothing to observe\n",
+                spec.key
+            ));
+            continue;
+        }
+        for o in obs {
+            let Some(react) = o.reaction_ms() else {
+                out.push_str(&format!(
+                    "#   {}: '{}' went silent at +{:.1}s and NOTHING reacted on {} before the run ended\n",
+                    spec.key,
+                    o.guard,
+                    o.alive_ms / 1000.0,
+                    spec.sinks.join(", ")
+                ));
+                continue;
+            };
+            let settle = spec.settle_ms.unwrap_or(0.0);
+            let total = react + settle;
+            let verdict = match spec.ftti_ms {
+                Some(ftti) if total <= ftti => {
+                    format!("fits ftti {ftti:.2}ms with {:.2}ms of slack", ftti - total)
+                }
+                Some(ftti) => format!("EXCEEDS ftti {ftti:.2}ms by {:.2}ms", total - ftti),
+                None => "no ftti declared".to_string(),
+            };
+            out.push_str(&format!(
+                "#   {}: '{}' went silent after {:.1}s; reaction on the sink {react:.2}ms later",
+                spec.key,
+                o.guard,
+                o.alive_ms / 1000.0
+            ));
+            if let Some(d) = o.detection_ms() {
+                out.push_str(&format!(" (reported on /diagnostics at {d:.2}ms)"));
+            }
+            out.push_str(&format!(
+                "\n#     observed {react:.2}ms + settle {settle:.2}ms = {total:.2}ms — {verdict}\n"
+            ));
+            for (sub, w) in &spec.within {
+                out.push_str(&format!("#     {sub} promised to react within {w:.2}ms\n"));
+            }
+        }
+    }
+    out
 }
 
 /// Accept a run directory, its `interception/` subdirectory, or the file.

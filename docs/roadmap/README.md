@@ -225,6 +225,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 71** — ✅ fault detection and reaction. One requirement
+    (`hazards.<h>.ftti`), one reaction edge (`on_violation` on the detecting
+    subscriber), one fact (`safe_state.settle`); FDTI and FRTI derived, six
+    rules. Verified on `rt_av_demo` with the lidar killed mid-run (observed
+    104 ms against a derived 107) and on Autoware's real MRM chain with its
+    own parameter-file numbers (1944 ms: fits 2 s, fails 1.5 s).
+    `check --emit diagnostics-params` is the adoption path.
+    [phase-71-fault-reaction.md](./phase-71-fault-reaction.md).
   - **Phase 70** — ✅ the consumer census: which fields are actually READ
     (W1–W5 complete; the `kind` column, closed `criticality`, cross-scope
     liveliness, the `_ms` spellings retired, and the jitter vocabulary

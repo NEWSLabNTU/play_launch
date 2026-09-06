@@ -57,6 +57,10 @@ pub struct CheckInputs {
     pub explain: bool,
     /// Export the declared causal graph to this path (`.json` or `.dot`).
     pub export_graph: Option<PathBuf>,
+    /// Emit a derived artifact instead of running the checks. Today:
+    /// `diagnostics-params` — `diagnostic_updater` parameters restated from
+    /// the declared endpoint bounds (phase 71 W5).
+    pub emit: Option<String>,
 }
 
 impl CheckInputs {
@@ -114,6 +118,20 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // all whenever the launch file ships sidecar contracts.
     let sources = inputs.contract_sources()?;
     let index = manifest_loader::load_manifests(&dump, &sources)?;
+
+    // Phase 71 W5: a consequence, printed rather than written. Every ROS user
+    // who runs `diagnostic_updater` configures `FrequencyStatus` and
+    // `TimeStampStatus` by hand from numbers that ARE the contract's
+    // `min_rate_hz` / `max_rate_hz` / `max_age`. Restating them here is the
+    // adoption path for a system with no hazard analysis: declare the bounds
+    // once, get the monitor's parameters for free.
+    if let Some(what) = inputs.emit.as_deref() {
+        if what != "diagnostics-params" {
+            eyre::bail!("unknown --emit `{what}` (accepted: diagnostics-params)");
+        }
+        print!("{}", emit_diagnostics_params(&index));
+        return Ok(0);
+    }
 
     // Export the declared causal graph (Phase 42.1). This is an export, not
     // a validation step — it runs regardless of rule filters/errors below
@@ -296,6 +314,70 @@ fn render_scope_diagnostics(
     Ok(())
 }
 
+/// `diagnostic_updater` parameters as a consequence of the declared bounds.
+///
+/// One `ros__parameters` block per node that declares a rate or age bound on
+/// a subscriber. `frequency.min`/`max` are `min_rate_hz`/`max_rate_hz`;
+/// `timestamp.max_acceptable` is `max_age` in seconds. `tolerance` and
+/// `window_size` are `diagnostic_updater`'s own defaults, named so an author
+/// can see them. A subscriber with none of the three emits nothing.
+pub fn emit_diagnostics_params(index: &manifest_loader::ManifestIndex) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "# diagnostic_updater parameters, DERIVED from the contract's endpoint bounds by\n\
+         # `play_launch check --emit diagnostics-params`. Do not edit: change the contract.\n\
+         #   frequency.min / max      <- sub.<ep>.min_rate_hz / max_rate_hz\n\
+         #   timestamp.max_acceptable <- sub.<ep>.max_age (seconds)\n",
+    );
+    let mut nodes: Vec<(String, String)> = Vec::new();
+    let mut manifests: Vec<&manifest_loader::ResolvedManifest> = index.manifests.values().collect();
+    manifests.sort_by_key(|m| m.scope_id);
+    for m in manifests {
+        for (name, decl) in &m.manifest.nodes {
+            let fqn = manifest_loader::resolve_node_fqn(index, m.scope_id, &m.ns, name);
+            let mut body = String::new();
+            for (ep, props) in &decl.subscribers {
+                if props.min_rate_hz.is_none()
+                    && props.max_rate_hz.is_none()
+                    && props.max_age.is_none()
+                {
+                    continue;
+                }
+                body.push_str(&format!("      {ep}:\n"));
+                if props.min_rate_hz.is_some() || props.max_rate_hz.is_some() {
+                    body.push_str("        frequency:\n");
+                    if let Some(v) = props.min_rate_hz {
+                        body.push_str(&format!("          min: {v}\n"));
+                    }
+                    if let Some(v) = props.max_rate_hz {
+                        body.push_str(&format!("          max: {v}\n"));
+                    }
+                    body.push_str("          tolerance: 0.1\n          window_size: 10\n");
+                }
+                if let Some(age) = props.max_age {
+                    body.push_str(&format!(
+                        "        timestamp:\n          min_acceptable: 0.0\n          max_acceptable: {}\n",
+                        age.as_millis_f64() / 1000.0
+                    ));
+                }
+            }
+            if !body.is_empty() {
+                nodes.push((fqn, body));
+            }
+        }
+    }
+    nodes.sort();
+    for (fqn, body) in nodes {
+        out.push_str(&format!(
+            "{fqn}:\n  ros__parameters:\n    diagnostic_updater:\n{body}"
+        ));
+    }
+    if out.lines().count() <= 4 {
+        out.push_str("# (no subscriber declares min_rate_hz, max_rate_hz or max_age)\n");
+    }
+    out
+}
+
 /// Render contracts that never loaded. Printed BEFORE every other section:
 /// a file that failed to parse is missing from every tally that follows, so
 /// reading those first would mean reading a clean report about a subset.
@@ -360,8 +442,7 @@ fn print_summary(index: &manifest_loader::ManifestIndex, rule_filter: Option<&Ha
     // Files that never became a manifest. Counted separately because they are
     // absent from `index.manifests`, so the clean/with-errors split below
     // cannot see them at all.
-    let (load_errors, load_warnings) =
-        count_severities(index.load_diagnostics.iter(), rule_filter);
+    let (load_errors, load_warnings) = count_severities(index.load_diagnostics.iter(), rule_filter);
 
     let total_errors = per_scope_errors + cross_errors + load_errors;
     let total_warnings = per_scope_warnings + cross_warnings + load_warnings;

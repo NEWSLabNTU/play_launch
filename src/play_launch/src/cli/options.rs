@@ -323,6 +323,14 @@ pub struct CheckArgs {
     /// and exit codes are unaffected (Phase 42.1).
     #[arg(long, value_name = "PATH")]
     pub export_graph: Option<PathBuf>,
+
+    /// Emit a DERIVED artifact instead of running the checks. Today:
+    /// `diagnostics-params` — `diagnostic_updater` FrequencyStatus /
+    /// TimeStampStatus parameters restated from every subscriber's
+    /// `min_rate_hz` / `max_rate_hz` / `max_age` (phase 71 W5). A
+    /// consequence of the contract, printed to stdout, never written back.
+    #[arg(long, value_name = "WHAT")]
+    pub emit: Option<String>,
 }
 
 // `CheckArgs::contract_sources` is gone: resolving the overlay/provider

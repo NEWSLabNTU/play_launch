@@ -1,6 +1,6 @@
 # Fault detection and reaction — the primitives worth folding in
 
-Status: design, **proposed** (2026-09-06). Answers `contract-axes.md` §3.1
+Status: design, **implemented** as phase 71 (2026-09-06; `docs/roadmap/phase-71-fault-reaction.md`). Two arithmetic corrections made during implementation are recorded there. Answers `contract-axes.md` §3.1
 ("adopt eventually — ISO 26262 requires it") and open question 6 ("is FTTI a
 contract requirement or a hazard-level one?"). Builds on
 `criticality-from-hazards.md` (hazards as the source of criticality) and

@@ -26,6 +26,18 @@ public:
     sub_ = this->create_subscription<rt_av_demo::msg::Stamped>(
       "obstacles", 10,
       [this](const rt_av_demo::msg::Stamped::SharedPtr in) {
+        // Phase 71: the `emergency_stop` reaction. A "lost" message from the
+        // detector means obstacles are unknown; the safe state is a full
+        // brake, commanded once and reported for the oracle.
+        if (in->payload == "lost") {
+          if (!emergency_) {
+            emergency_ = true;
+            std::printf("EMERGENCY_STOP\n");
+            std::fflush(stdout);
+            pub_->publish(rt_av_demo::make_msg(this->now(), 0, "emergency"));
+          }
+          return;
+        }
         rt_av_demo::burn_ms(burn_ms_);
 
         const double latency_ms =
@@ -49,6 +61,7 @@ public:
 private:
   double burn_ms_, deadline_ms_;
   size_t total_ {0}, missed_ {0};
+  bool emergency_ {false};
   rclcpp::Publisher<rt_av_demo::msg::Stamped>::SharedPtr pub_;
   rclcpp::Subscription<rt_av_demo::msg::Stamped>::SharedPtr sub_;
 };

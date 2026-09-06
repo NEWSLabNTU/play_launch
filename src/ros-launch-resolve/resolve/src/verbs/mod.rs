@@ -280,18 +280,17 @@ pub async fn parse_to_launch_dump(
     let dump = match parser {
         ParserBackend::Rust => {
             let cli_args = parse_launch_arguments(launch_arguments);
-            let record =
-                crate::verbs::parse_launch_file(&launch_path, cli_args).map_err(|e| {
-                    // Verb- and binary-neutral: two CLIs share this, and
-                    // every verb that reaches it accepts `--parser`.
-                    let _ = launch_file;
-                    eyre::eyre!(
-                        "Rust parser error while parsing {package_or_path}: {e}\n\n\
+            let record = crate::verbs::parse_launch_file(&launch_path, cli_args).map_err(|e| {
+                // Verb- and binary-neutral: two CLIs share this, and
+                // every verb that reaches it accepts `--parser`.
+                let _ = launch_file;
+                eyre::eyre!(
+                    "Rust parser error while parsing {package_or_path}: {e}\n\n\
                          Hint: if this is a parser limitation rather than a bad launch \
                          file, re-run the same command with `--parser python` (slower, \
                          maximum compatibility)."
-                    )
-                })?;
+                )
+            })?;
             let json = serde_json::to_string_pretty(&record)?;
             serde_json::from_str(&json)?
         }

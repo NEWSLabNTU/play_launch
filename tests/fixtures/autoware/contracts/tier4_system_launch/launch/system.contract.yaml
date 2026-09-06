@@ -1,0 +1,42 @@
+# Phase 71 W4 — Autoware's minimum-risk-manoeuvre chain as a contract.
+#
+# Every number is Autoware 1.5.0's own, read from its parameter files:
+#   mrm_handler.param.yaml            timeout_operation_mode_availability: 0.5
+#                                     update_rate: 10, timeout_call_mrm_behavior: 0.01
+#   mrm_emergency_stop_operator       update_rate: 30, target_acceleration: -2.5
+#   vehicle_cmd_gate.param.yaml       update_rate: 10, system_emergency_heartbeat_timeout: 0.5
+# The settle (1.2 s) is what -2.5 m/s² takes from 3 m/s; illustrative.
+#
+# Two hazards, deliberately one on each side of the line: with 2 s to react
+# the chain fits with 56 ms of slack; with 1.5 s it does not, and the
+# diagnostic names the 500 ms availability timeout as the term to tighten.
+# That arithmetic is implied by Autoware's parameter files and performed by
+# nothing until now.
+version: 1
+
+hazards:
+  mode_unavailable:
+    severity: ASIL_D
+    description: the operation-mode availability stream stops; the vehicle must reach a stop
+    guards: [/system/operation_mode/availability]
+    on: omission
+    ftti: 2s
+    reaction: system.emergency_stop
+  mode_unavailable_tight:
+    description: the same chain against a 1.5 s interval, which it cannot meet
+    guards: [/system/operation_mode/availability]
+    on: omission
+    ftti: 1500ms
+    reaction: system.emergency_stop
+
+paths:
+  system.emergency_stop:
+    trigger: { input: [/system/operation_mode/availability] }
+    output: [/control/command/control_cmd]
+    max_latency: 300ms
+
+topics:
+  /system/operation_mode/availability:
+    type: tier4_system_msgs/msg/OperationModeAvailability
+    external: pub
+    sub: [/system/mrm_handler/operation_mode_availability]

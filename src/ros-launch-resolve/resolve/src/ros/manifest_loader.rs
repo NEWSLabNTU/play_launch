@@ -13,7 +13,7 @@ use ros_launch_manifest_types::{
     substitute_manifest,
 };
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt,
     path::{Path, PathBuf},
 };
@@ -241,9 +241,21 @@ pub struct ResolvedScopePath {
     pub path: ros_launch_manifest_types::PathDecl,
 }
 
+/// A hazard with its guard topics resolved to FQNs (phase 71).
+#[derive(Debug, Clone)]
+pub struct ResolvedHazard {
+    pub scope_id: usize,
+    pub name: String,
+    /// Guard groups with members qualified by the scope namespace.
+    pub guards: Vec<ros_launch_manifest_types::GuardGroup>,
+    pub decl: ros_launch_manifest_types::HazardDecl,
+}
+
 /// The complete resolved manifest index for the launch tree.
 #[derive(Debug, Default, Clone)]
 pub struct ManifestIndex {
+    /// Hazards, one entry per declaration (phase 71).
+    pub hazards: Vec<ResolvedHazard>,
     /// Manifests by scope ID.
     pub manifests: HashMap<usize, ResolvedManifest>,
     /// All resolved topics (FQN → topic info, merged across scopes).
@@ -537,6 +549,7 @@ pub fn load_manifests(
         resolve_actions(&manifest, scope, &mut index);
         resolve_node_paths(&manifest, scope, &mut index);
         resolve_scope_paths(&manifest, scope, &mut index);
+        resolve_hazards(&manifest, scope, &mut index);
 
         index.manifests.insert(
             scope.id,
@@ -737,6 +750,11 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     derive_and_check_endpoint_rates(index, &graph);
     check_sync_feasibility_on_derived_rates(index);
 
+    // Phase 71: fault detection and reaction. Derives FDTI from the guards'
+    // detectors and FRTI from the reaction's route, and checks their sum
+    // against the hazard's FTTI.
+    check_fault_reaction(index, &graph);
+
     // A service server's promised response time, against the blocking its own
     // declarations imply.
     check_response_against_blocking(index);
@@ -928,7 +946,8 @@ fn check_sync_feasibility_on_derived_rates(index: &mut ManifestIndex) {
         let mut rates: Vec<f64> = Vec::new();
         let mut any_derived = false;
         for ep in &endpoints {
-            let Some((_, declared, derived)) = sub_topic.get(&format!("{}/{ep}", np.node_fqn)) else {
+            let Some((_, declared, derived)) = sub_topic.get(&format!("{}/{ep}", np.node_fqn))
+            else {
                 continue;
             };
             match (declared, derived) {
@@ -982,6 +1001,595 @@ fn check_sync_feasibility_on_derived_rates(index: &mut ManifestIndex) {
         }
     }
     diags.sort_by(|a, b| a.path.cmp(&b.path));
+    index.merge_diagnostics.extend(diags);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 71 — fault detection and reaction
+// ---------------------------------------------------------------------------
+
+/// The slowest interval at which a subscriber would notice its assumption
+/// violated, in ms, from the detectors it declares — or `None` if it declares
+/// none. The subscriber detects when ANY of its mechanisms fires, so this is
+/// the minimum over them.
+///
+/// `omission`/`late`/`loss` map onto middleware facts (lease, deadline,
+/// `max_age`, the rate floor's period, consecutive drops); `reported` is
+/// accounted for on the detector's output topic by the caller, not here.
+fn detector_interval_ms(
+    props: &ros_launch_manifest_types::EndpointProps,
+    topic_qos: Option<&ros_launch_manifest_types::QosDecl>,
+    topic_drop: Option<&ros_launch_manifest_types::DropSpec>,
+    topic_period_ms: Option<f64>,
+    kinds: &[ros_launch_manifest_types::FaultKind],
+) -> Option<f64> {
+    use ros_launch_manifest_types::{FaultKind as F, QosDecl};
+    let qos = QosDecl::effective(topic_qos, props.qos.as_ref());
+    let mut best: Option<f64> = None;
+    let mut consider = |v: Option<f64>| {
+        if let Some(v) = v
+            && v > 0.0
+        {
+            best = Some(best.map_or(v, |b: f64| b.min(v)));
+        }
+    };
+    let wants = |k: F| kinds.is_empty() || kinds.contains(&k);
+    if wants(F::Omission) {
+        // The lease is the only omission MECHANISM. `min_rate_hz` is a
+        // requirement, not a detector: nothing fires when a period passes
+        // unless a QoS deadline (below) or an application watchdog is
+        // declared. Counting the period here made a 50 Hz floor "detect" a
+        // dead lidar in 20ms while the real lease was 100ms.
+        consider(qos.lease_duration.map(|d| d.as_millis_f64()));
+    }
+    if wants(F::Late) {
+        consider(qos.deadline.map(|d| d.as_millis_f64()));
+        consider(props.max_age.map(|d| d.as_millis_f64()));
+    }
+    if wants(F::Loss)
+        && let (Some(n), Some(period)) =
+            (topic_drop.and_then(|d| d.max_consecutive), topic_period_ms)
+    {
+        consider(Some(n as f64 * period));
+    }
+    best
+}
+
+/// The reaction route a hazard actually runs (phase 71).
+struct ReactionWalk {
+    /// Longest-branch sum of the reaction paths' `max_latency`.
+    route_ms: f64,
+    /// `safe_state.settle` at the sink, if declared there.
+    settle_ms: Option<f64>,
+    /// `node/path` hops on the longest branch, for the message.
+    hops: Vec<String>,
+}
+
+/// Walk the reaction from the guard topics to a sink topic.
+///
+/// At the guard, only a subscriber with an `on_violation` moves: the nominal
+/// path there is waiting for a message that will not come. From the first
+/// reaction onward the walk follows `on_violation` where one is declared and
+/// otherwise the ORDINARY input-triggered paths, because a reaction is a
+/// real message and downstream nodes forward it the way they forward
+/// anything — Autoware's chain is one reaction edge (`mrm_handler` on the
+/// availability timeout) followed by two nominal hops (the stop operator,
+/// the command gate). A path with a `safe_state` whose `emits` publishes
+/// onto a sink ends the walk; failing that, any path publishing onto a sink
+/// ends it with no settle. Fork-join takes the longest branch. Depth-bounded
+/// rather than cycle-detected: a reaction that re-triggers itself is a
+/// declaration error worth a wrong number, not a hang.
+fn walk_reaction(
+    guards: &[String],
+    sinks: &HashSet<&str>,
+    topics: &BTreeMap<String, ResolvedTopic>,
+    node_paths: &[ResolvedNodePath],
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) -> Option<ReactionWalk> {
+    fn from_topic(
+        topic_fqn: &str,
+        depth: usize,
+        sinks: &HashSet<&str>,
+        topics: &BTreeMap<String, ResolvedTopic>,
+        node_paths: &[ResolvedNodePath],
+        graph: &super::manifest_graph::GlobalDataflowGraph,
+    ) -> Option<ReactionWalk> {
+        if depth > 16 {
+            return None;
+        }
+        let topic = topics.get(topic_fqn)?;
+        let mut best: Option<ReactionWalk> = None;
+        for sub_ref in &topic.subscribers {
+            let Some((node_fqn, ep)) = split_endpoint_ref_for_check(sub_ref) else {
+                continue;
+            };
+            let props = graph
+                .nodes
+                .get(&node_fqn)
+                .and_then(|n| n.subscribers.get(&ep));
+            // Which paths of this node carry the reaction onward?
+            let hop_paths: Vec<&ResolvedNodePath> =
+                match props.and_then(|p| p.on_violation.as_ref()) {
+                    Some(ov) => node_paths
+                        .iter()
+                        .filter(|p| p.node_fqn == node_fqn && p.path_name == ov.reaction)
+                        .collect(),
+                    None if depth > 0 => node_paths
+                        .iter()
+                        .filter(|p| {
+                            p.node_fqn == node_fqn
+                                && matches!(
+                                    p.path.effective_trigger(),
+                                    ros_launch_manifest_types::EffectiveTrigger::Input(ref eps)
+                                        if eps.contains(&ep)
+                                )
+                        })
+                        .collect(),
+                    None => Vec::new(),
+                };
+            for path in hop_paths {
+                let hop_ms = path.path.max_latency.map_or(0.0, |d| d.as_millis_f64());
+                let hop = format!("{node_fqn}/{}", path.path_name);
+                let publishes_sink = |ep_name: &str| {
+                    let r = format!("{node_fqn}/{ep_name}");
+                    sinks
+                        .iter()
+                        .any(|t| topics.get(*t).is_some_and(|tp| tp.publishers.contains(&r)))
+                };
+                // Does this path command the safe state on a sink — or, failing a
+                // declared safe_state, simply publish onto one?
+                let emits_sink = match path.path.safe_state.as_ref() {
+                    Some(ss) if publishes_sink(&ss.emits) => {
+                        Some(ss.settle.map(|d| d.as_millis_f64()))
+                    }
+                    _ if path.path.output.iter().any(|o| publishes_sink(o)) => Some(None),
+                    _ => None,
+                };
+                let candidate = if let Some(settle) = emits_sink {
+                    ReactionWalk {
+                        route_ms: hop_ms,
+                        settle_ms: settle,
+                        hops: vec![hop],
+                    }
+                } else {
+                    // Continue from every topic this reaction publishes onto.
+                    let mut longest: Option<ReactionWalk> = None;
+                    for out_ep in &path.path.output {
+                        let out_ref = format!("{node_fqn}/{out_ep}");
+                        for (t_fqn, t) in topics {
+                            if !t.publishers.contains(&out_ref) {
+                                continue;
+                            }
+                            if let Some(mut w) =
+                                from_topic(t_fqn, depth + 1, sinks, topics, node_paths, graph)
+                                && longest.as_ref().is_none_or(|l| w.route_ms > l.route_ms)
+                            {
+                                w.route_ms += hop_ms;
+                                w.hops.insert(0, hop.clone());
+                                longest = Some(w);
+                            }
+                        }
+                    }
+                    let Some(w) = longest else {
+                        continue;
+                    };
+                    w
+                };
+                if best
+                    .as_ref()
+                    .is_none_or(|b| candidate.route_ms > b.route_ms)
+                {
+                    best = Some(candidate);
+                }
+            }
+        }
+        best
+    }
+    let mut best: Option<ReactionWalk> = None;
+    for g in guards {
+        if let Some(w) = from_topic(g, 0, sinks, topics, node_paths, graph)
+            && best.as_ref().is_none_or(|b| w.route_ms > b.route_ms)
+        {
+            best = Some(w);
+        }
+    }
+    best
+}
+
+/// Phase 71 rules. Everything numeric here is DERIVED from facts the contract
+/// already carries; the only authored number is the hazard's `ftti`.
+fn check_fault_reaction(
+    index: &mut ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+) {
+    use ros_launch_manifest_types::FaultKind;
+
+    let mut diags: Vec<Diagnostic> = Vec::new();
+    let hazards = index.hazards.clone();
+    let topics = index.topics.clone();
+    let node_paths = index.node_paths.clone();
+    let scope_paths = index.scope_paths.clone();
+
+    // --- per-subscriber: the reaction edge must name a real path that the
+    //     subscription triggers, and its budget must fit `within`.
+    for (fqn_t, topic) in &topics {
+        for sub_ref in &topic.subscribers {
+            let Some((node_fqn, ep)) = split_endpoint_ref_for_check(sub_ref) else {
+                continue;
+            };
+            let Some(props) = graph
+                .nodes
+                .get(&node_fqn)
+                .and_then(|n| n.subscribers.get(&ep))
+            else {
+                continue;
+            };
+            let Some(ov) = &props.on_violation else {
+                continue;
+            };
+            let at = format!("nodes.{node_fqn}.sub.{ep}.on_violation");
+            let reaction = node_paths
+                .iter()
+                .find(|p| p.node_fqn == node_fqn && p.path_name == ov.reaction);
+            let Some(reaction) = reaction else {
+                diags.push(Diagnostic {
+                    rule_id: "reaction-unreachable".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "subscriber '{sub_ref}' declares reaction '{}' but node {node_fqn} \
+                         has no path of that name",
+                        ov.reaction
+                    ),
+                    path: format!("{at}.reaction"),
+                    span: None,
+                });
+                continue;
+            };
+            let triggered_by_sub = match reaction.path.effective_trigger() {
+                ros_launch_manifest_types::EffectiveTrigger::Input(eps) => eps.contains(&ep),
+                _ => false,
+            };
+            if !triggered_by_sub {
+                diags.push(Diagnostic {
+                    rule_id: "reaction-unreachable".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "subscriber '{sub_ref}' declares reaction '{}', but that path's trigger \
+                         does not include '{ep}' — the violation would never start it",
+                        ov.reaction
+                    ),
+                    path: format!("{at}.reaction"),
+                    span: None,
+                });
+            }
+            if let (Some(within), Some(budget)) = (
+                ov.within.map(|d| d.as_millis_f64()),
+                reaction.path.max_latency.map(|d| d.as_millis_f64()),
+            ) && budget > within
+            {
+                diags.push(Diagnostic {
+                    rule_id: "reaction-within".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "subscriber '{sub_ref}' promises to react within {within:.2}ms, but its \
+                         reaction path '{}' declares max_latency {budget:.2}ms",
+                        ov.reaction
+                    ),
+                    path: format!("{at}.within"),
+                    span: None,
+                });
+            }
+            let _ = fqn_t;
+        }
+    }
+
+    // --- per hazard
+    for h in &hazards {
+        let at = format!("hazards.{}", h.name);
+        let kinds: Vec<FaultKind> = h.decl.on.into_iter().collect();
+
+        // FDTI per guard group. A group is one fault; the hazard's budget
+        // must hold for whichever group faults, so the worst group governs.
+        let mut fdti_worst: Option<(f64, String)> = None;
+        for g in &h.guards {
+            let mut member_intervals: Vec<(f64, String)> = Vec::new();
+            for member in &g.members {
+                let Some(topic) = topics.get(member) else {
+                    diags.push(Diagnostic {
+                        rule_id: "hazard-unguarded".to_string(),
+                        severity: Severity::Error,
+                        message: format!(
+                            "hazard '{}' guards '{member}', which no manifest in the tree declares",
+                            h.name
+                        ),
+                        path: format!("{at}.guards"),
+                        span: None,
+                    });
+                    continue;
+                };
+                let period_ms = topic
+                    .derived_rate_hz
+                    .or(topic.rate_hz)
+                    .filter(|r| *r > 0.0)
+                    .map(|r| 1000.0 / r);
+                let mut best: Option<(f64, String)> = None;
+                if kinds.contains(&FaultKind::Reported) {
+                    // The guard IS a detector's output. Detection = its
+                    // input period + its own path latency, both derived.
+                    for pub_ref in &topic.publishers {
+                        let Some((node_fqn, ep)) = split_endpoint_ref_for_check(pub_ref) else {
+                            continue;
+                        };
+                        let lat = node_paths
+                            .iter()
+                            .filter(|p| p.node_fqn == node_fqn && p.path.output.contains(&ep))
+                            .filter_map(|p| p.path.max_latency.map(|d| d.as_millis_f64()))
+                            .fold(0.0, f64::max);
+                        if let Some(period) = period_ms {
+                            let v = period + lat;
+                            if best.as_ref().is_none_or(|(b, _)| v < *b) {
+                                best = Some((
+                                    v,
+                                    format!("{pub_ref} reports every {period:.2}ms + {lat:.2}ms"),
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    // Only a subscriber that REACTS counts as a detector:
+                    // one that notices and does nothing has not detected
+                    // anything the system can use.
+                    for sub_ref in &topic.subscribers {
+                        let Some((node_fqn, ep)) = split_endpoint_ref_for_check(sub_ref) else {
+                            continue;
+                        };
+                        let Some(props) = graph
+                            .nodes
+                            .get(&node_fqn)
+                            .and_then(|n| n.subscribers.get(&ep))
+                        else {
+                            continue;
+                        };
+                        if props.on_violation.is_none() {
+                            continue;
+                        }
+                        if let Some(v) = detector_interval_ms(
+                            props,
+                            topic.qos.as_ref(),
+                            topic.drop.as_ref(),
+                            period_ms,
+                            &kinds,
+                        ) && best.as_ref().is_none_or(|(b, _)| v < *b)
+                        {
+                            best = Some((v, format!("{sub_ref} detects within {v:.2}ms")));
+                        }
+                    }
+                }
+                match best {
+                    Some(b) => member_intervals.push(b),
+                    None => diags.push(Diagnostic {
+                        rule_id: "hazard-unguarded".to_string(),
+                        severity: Severity::Error,
+                        message: format!(
+                            "hazard '{}' guards '{member}', but no subscriber of it declares an \
+                             `on_violation` reaction with a detector (lease_duration, deadline, \
+                             max_age or min_rate_hz) — nothing would ever notice",
+                            h.name
+                        ),
+                        path: format!("{at}.guards"),
+                        span: None,
+                    }),
+                }
+            }
+            if member_intervals.is_empty() {
+                continue;
+            }
+            // all_of: the fault is the loss of EVERY member, detected when the
+            // last one is noticed gone — the slowest member. A bare topic is
+            // the same formula over one member.
+            let (v, why) = member_intervals
+                .into_iter()
+                .fold(None, |acc: Option<(f64, String)>, (v, why)| match acc {
+                    Some((a, w)) if a >= v => Some((a, w)),
+                    _ => Some((v, why)),
+                })
+                .unwrap();
+            if fdti_worst.as_ref().is_none_or(|(w, _)| v > *w) {
+                fdti_worst = Some((v, why));
+            }
+        }
+
+        // FRTI: the reaction's derived route + the sink's settle.
+        let Some(reaction_name) = &h.decl.reaction else {
+            if h.decl.ftti.is_some() {
+                diags.push(Diagnostic {
+                    rule_id: "reaction-unreachable".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "hazard '{}' declares an ftti but no `reaction:` path — there is nothing \
+                         to fit inside it",
+                        h.name
+                    ),
+                    path: at.clone(),
+                    span: None,
+                });
+            }
+            continue;
+        };
+        let Some(reaction) = scope_paths
+            .iter()
+            .find(|p| p.scope_id == h.scope_id && &p.path_name == reaction_name)
+        else {
+            diags.push(Diagnostic {
+                rule_id: "reaction-unreachable".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "hazard '{}' names reaction '{reaction_name}', which is not a scope path in \
+                     its scope",
+                    h.name
+                ),
+                path: format!("{at}.reaction"),
+                span: None,
+            });
+            continue;
+        };
+        // FRTI: walk the REACTION edges, not the normal dataflow. The guard's
+        // publisher is the thing that failed, so a critical path through the
+        // normal graph charges a clock boundary that will never tick again and
+        // the nominal callbacks rather than the reactions. The route that
+        // actually runs is: the detecting subscriber's `on_violation.reaction`
+        // path, its output topic, the subscribers THERE with an
+        // `on_violation`, and so on until a path declares a `safe_state` on
+        // the hazard's reaction sink. Fork-join takes the longest branch.
+        let sinks: HashSet<&str> = reaction.output_topics.iter().map(String::as_str).collect();
+        let walk = walk_reaction(
+            &h.guards
+                .iter()
+                .flat_map(|g| g.members.iter().cloned())
+                .collect::<Vec<_>>(),
+            &sinks,
+            &topics,
+            &node_paths,
+            graph,
+        );
+        let declared_ms = reaction.path.max_latency.map(|d| d.as_millis_f64());
+        let (frti_route, settle_ms, route_note) = match (&walk, declared_ms) {
+            (Some(w), _) => (
+                w.route_ms,
+                w.settle_ms,
+                format!(
+                    "reaction route {} = {:.2}ms",
+                    w.hops.join(" → "),
+                    w.route_ms
+                ),
+            ),
+            (None, Some(d)) => {
+                diags.push(Diagnostic {
+                    rule_id: "reaction-unreachable".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "hazard '{}': no chain of `on_violation` reactions leads from its guards \
+                         to '{}' — the reaction '{reaction_name}' is declared but nothing \
+                         would run it. Using its declared max_latency ({d:.2}ms) as the route",
+                        h.name,
+                        reaction.output_topics.join(", ")
+                    ),
+                    path: format!("{at}.reaction"),
+                    span: None,
+                });
+                (
+                    d,
+                    None,
+                    format!("declared max_latency {d:.2}ms (no reaction route)"),
+                )
+            }
+            (None, None) => {
+                diags.push(Diagnostic {
+                    rule_id: "reaction-unbudgeted".to_string(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "hazard '{}' reaction '{reaction_name}' has neither a reaction route nor a \
+                         declared max_latency — its reaction time is unknown, so the FTTI check \
+                         runs on INCOMPLETE EVIDENCE",
+                        h.name
+                    ),
+                    path: format!("{at}.reaction"),
+                    span: None,
+                });
+                (0.0, None, "unknown route".to_string())
+            }
+        };
+        if let Some(w) = &walk
+            && w.settle_ms.is_none()
+        {
+            diags.push(Diagnostic {
+                rule_id: "reaction-unbudgeted".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "hazard '{}': the reaction reaches {} but no path there declares a \
+                     `safe_state` with a settle time — the plant's share of the reaction is \
+                     unknown, so the FTTI check runs on INCOMPLETE EVIDENCE",
+                    h.name,
+                    reaction.output_topics.join(", ")
+                ),
+                path: format!("{at}.reaction"),
+                span: None,
+            });
+        }
+        let frti = frti_route + settle_ms.unwrap_or(0.0);
+
+        // Who watches the watcher: the reaction's output should itself be
+        // guarded, or a stalled reaction is invisible.
+        let sink_guarded = reaction.output_topics.iter().any(|t| {
+            topics.get(t).is_some_and(|tp| {
+                tp.subscribers.iter().any(|s| {
+                    split_endpoint_ref_for_check(s).is_some_and(|(n, e)| {
+                        graph
+                            .nodes
+                            .get(&n)
+                            .and_then(|nn| nn.subscribers.get(&e))
+                            .is_some_and(|p| p.on_violation.is_some())
+                    })
+                })
+            })
+        });
+        if !sink_guarded {
+            diags.push(Diagnostic {
+                rule_id: "reaction-unguarded".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "hazard '{}' reaction '{reaction_name}' ends at {} and no subscriber there \
+                     declares an `on_violation` — a stalled reaction would go unnoticed. Guard \
+                     it with a second hazard whose guard is this output",
+                    h.name,
+                    reaction.output_topics.join(", ")
+                ),
+                path: format!("{at}.reaction"),
+                span: None,
+            });
+        }
+
+        let Some(ftti) = h.decl.ftti.map(|d| d.as_millis_f64()) else {
+            continue;
+        };
+        let Some((fdti, fdti_why)) = fdti_worst else {
+            continue;
+        };
+        let settle_note = settle_ms.map_or(String::new(), |s| format!(" + settle {s:.2}ms"));
+        if fdti + frti > ftti {
+            diags.push(Diagnostic {
+                rule_id: "fault-reaction-budget".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "hazard '{}': detection {fdti:.2}ms ({fdti_why}) + reaction {frti:.2}ms \
+                     ({route_note}{settle_note}) = {:.2}ms exceeds the fault-tolerant time \
+                     interval {ftti:.2}ms. Tighten the slowest detector, shorten the reaction \
+                     route, or the hazard is not covered in time",
+                    h.name,
+                    fdti + frti
+                ),
+                path: format!("{at}.ftti"),
+                span: None,
+            });
+        } else {
+            diags.push(Diagnostic {
+                rule_id: "fault-reaction-budget".to_string(),
+                severity: Severity::Info,
+                message: format!(
+                    "hazard '{}': detection {fdti:.2}ms ({fdti_why}) + reaction {frti:.2}ms \
+                     ({route_note}{settle_note}) = {:.2}ms fits the fault-tolerant time \
+                     interval {ftti:.2}ms with {:.2}ms of slack",
+                    h.name,
+                    fdti + frti,
+                    ftti - fdti - frti
+                ),
+                path: format!("{at}.ftti"),
+                span: None,
+            });
+        }
+    }
+
+    diags.sort_by(|a, b| a.path.cmp(&b.path).then(a.rule_id.cmp(&b.rule_id)));
     index.merge_diagnostics.extend(diags);
 }
 
@@ -2463,6 +3071,31 @@ fn resolve_scope_paths(manifest: &Manifest, scope: &ScopeEntry, index: &mut Mani
             input_topics,
             output_topics,
             path: decl.clone(),
+        });
+    }
+}
+
+/// Resolve hazard declarations: guard topics are topic names, relative or
+/// absolute, qualified the way scope-path ends are.
+fn resolve_hazards(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
+    for (name, decl) in &manifest.hazards {
+        let guards = decl
+            .guards
+            .iter()
+            .map(|g| ros_launch_manifest_types::GuardGroup {
+                members: g
+                    .members
+                    .iter()
+                    .map(|t| qualify_name(&scope.ns, t))
+                    .collect(),
+                all_of: g.all_of,
+            })
+            .collect();
+        index.hazards.push(ResolvedHazard {
+            scope_id: scope.id,
+            name: name.clone(),
+            guards,
+            decl: decl.clone(),
         });
     }
 }
@@ -4186,8 +4819,20 @@ mod tests {
     #[test]
     fn test_cross_scope_qos_match_liveliness_lease() {
         let dump = make_dump(vec![
-            scope(0, "manifest_qos_liveliness_pub", "manifest.launch.xml", "", None),
-            scope(1, "manifest_qos_liveliness_sub", "manifest.launch.xml", "", Some(0)),
+            scope(
+                0,
+                "manifest_qos_liveliness_pub",
+                "manifest.launch.xml",
+                "",
+                None,
+            ),
+            scope(
+                1,
+                "manifest_qos_liveliness_sub",
+                "manifest.launch.xml",
+                "",
+                Some(0),
+            ),
         ]);
         let index = overlay_index(&dump);
         let qos_errors: Vec<_> = index
@@ -4196,7 +4841,9 @@ mod tests {
             .filter(|d| d.rule_id == "qos-match")
             .collect();
         assert!(
-            qos_errors.iter().any(|d| d.message.contains("lease_duration")),
+            qos_errors
+                .iter()
+                .any(|d| d.message.contains("lease_duration")),
             "expected a cross-scope lease mismatch, got: {qos_errors:?}"
         );
         assert!(

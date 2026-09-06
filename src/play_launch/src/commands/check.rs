@@ -32,6 +32,7 @@ pub fn handle_check(args: &CheckArgs) -> Result<()> {
         rule: args.rule.clone(),
         explain: args.explain,
         export_graph: args.export_graph.clone(),
+        emit: args.emit.clone(),
     })?;
 
     if code != 0 {

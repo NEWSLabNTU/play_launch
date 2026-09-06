@@ -317,6 +317,75 @@ jitter:
     echo
     echo "jitter vocabulary verified on a running system: refuse below, pass above, unverifiable without a floor."
 
+# Verify the fault-reaction vocabulary on a RUNNING system (phase 71 W3).
+#
+# The lidar is told to stop publishing after `die_after` seconds; the node
+# stays alive, so what dies is the data. obstacle_detector's watchdog
+# (`watchdog_ms`, the contract's lease) declares the scan lost and publishes
+# an "unknown obstacles" message; brake_controller commands the emergency
+# stop. `measure` reads the run: the fault is the last scan publish, the
+# reaction is the first brake_cmd publish after it.
+#
+# The oracle: the observed fault→reaction time must be the lease plus the two
+# reaction hops plus scheduling noise — roughly `watchdog_ms` + 7ms — and
+# `check`'s derived FDTI + route must say the same number. Both halves are
+# compared: the observation against the run, and the derivation against the
+# observation.
+fault:
+    #!/usr/bin/env bash
+    set -e
+    source /opt/ros/humble/setup.bash
+    source "{{ repo }}/install/setup.bash"
+    source "{{ justfile_directory() }}/install/setup.bash"
+    cd "{{ justfile_directory() }}"
+
+    rm -rf out/fault && mkdir -p out/fault && cd out/fault
+    printf 'interception:\n  enabled: true\n' > cfg.yaml
+
+    share="$(ros2 pkg prefix rt_av_demo)/share/rt_av_demo/launch"
+    export PLAY_LAUNCH_INTERCEPTION_SO="{{ interception_so }}"
+    export ROS_DOMAIN_ID=$(( 60 + RANDOM % 20 ))
+
+    "{{ play_launch }}" resolve rt_av_demo bringup.launch.xml \
+        --sched "$share/bringup.system.posix.yaml" -o model.yaml > resolve.log 2>&1
+    "{{ play_launch }}" check rt_av_demo bringup.launch.xml 2>&1 \
+        | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E '\[fault-reaction-budget\]' | head -1 > derived.txt || true
+    echo "derived: $(cut -c1-160 derived.txt)…"
+
+    echo "=== run: lidar dies at 8s, RT off, unconfined, 14s ==="
+    timeout 14 "{{ play_launch }}" launch rt_av_demo bringup.launch.xml \
+        --sched "$share/bringup.system.posix.yaml" --sched-apply off \
+        --config cfg.yaml --disable-web-ui die_after:=8.0 {{ launch_args }} > run.log 2>&1 || true
+    grep -h 'LIDAR_DEAD\|SCAN_LOST\|EMERGENCY_STOP' play_log/latest/node/*/out | sed 's/^/  /'
+
+    "{{ play_launch }}" measure play_log/latest --model model.yaml > fragment.yaml
+    grep -A3 '^# Hazards' fragment.yaml | sed 's/^/  /'
+    grep -E "drive_blind: '" -A1 fragment.yaml | sed 's/^/  /'
+
+    python3 - fragment.yaml derived.txt <<'PY'
+    import re, sys
+    frag, derived = open(sys.argv[1]).read(), open(sys.argv[2]).read()
+    m = re.search(r"reaction on the sink ([\d.]+)ms later", frag)
+    if not m:
+        sys.exit("FAIL: measure did not observe a reaction to the dead lidar")
+    observed = float(m.group(1))
+    lease = 100.0; route = 7.0
+    lo, hi = lease, lease + route + 40.0   # watchdog polls every 5ms; two hops; DDS wakeups
+    print(f"observed fault->reaction {observed:.2f} ms; oracle expects {lo:.0f}..{hi:.0f} ms (lease {lease:.0f} + route {route:.0f} + noise)")
+    if not (lo <= observed <= hi):
+        sys.exit("ORACLE MISMATCH")
+    d = re.search(r"detection ([\d.]+)ms .*?reaction route .*? = ([\d.]+)ms \+ settle ([\d.]+)ms", derived)
+    if not d:
+        sys.exit("FAIL: check did not derive the hazard's terms")
+    fdti, route_d, settle = map(float, d.groups())
+    print(f"derived: FDTI {fdti:.0f} + route {route_d:.0f} (+ settle {settle:.0f}) — observed {observed:.2f} is within {fdti + route_d:.0f} + noise: {'yes' if observed <= fdti + route_d + 40 else 'NO'}")
+    if observed > fdti + route_d + 40:
+        sys.exit("DERIVATION MISMATCH: the run reacted slower than the contract derives")
+    v = re.search(r"= ([\d.]+)ms — (fits|EXCEEDS)", frag)
+    print("measure's verdict:", v.group(0) if v else "none")
+    print("fault-reaction vocabulary verified on a running system.")
+    PY
+
 # Internal: one run. $1 = off|on, $2 = output dir.
 _run mode outdir:
     #!/usr/bin/env bash
