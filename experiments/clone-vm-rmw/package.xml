@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://relaxng.org/ns/structure/1.0"?>
+<package format="3">
+  <name>clone_vm_rmw_probe</name>
+  <version>0.1.0</version>
+  <description>
+    Minimal reproducer: does an rclcpp executor spin correctly inside a
+    clone(CLONE_VM) child, and does the answer depend on the RMW backend?
+    Not part of play_launch proper -- this exists to decide whether a
+    CLONE_VM container mode is viable at all. See README.md.
+  </description>
+  <maintainer email="jerry73204@gmail.com">aeon</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>
