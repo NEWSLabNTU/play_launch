@@ -225,6 +225,15 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 73** — ✅ the fault observer runs live. `RuleEngine` watches
+    every hazard's guards and sinks on the interception stream: DDS
+    liveliness/deadline events or a silence tick detect, a provenance-free
+    sink publish is the reaction, and both land in `runtime_violations.jsonl`
+    while the system runs. The first run found the reaction landing BEFORE
+    the observer's threshold — the watchdog is faster than ten periods — so
+    detection looks back through a sink buffer. Live and post-hoc agree to
+    0.00 ms on `just fault`.
+    [phase-73-live-fault-observer.md](./phase-73-live-fault-observer.md).
   - **Phase 72** — ✅ criticality is a consequence of the hazards. A node
     that feeds, detects or reacts for a hazard takes its severity (max, never
     sum); the `high|medium|low` label becomes `Kind::Consequence`, reported

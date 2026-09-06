@@ -58,6 +58,29 @@ pub enum Severity {
     Error,
 }
 
+/// Live state of one hazard (phase 73).
+#[derive(Debug, Default)]
+struct HazardRuntime {
+    /// Guard FQN → last publish (monotonic ns).
+    last_pub: HashMap<String, u64>,
+    /// Guard FQN → recent inter-publish gaps, for the cadence-based
+    /// silence threshold when no detector is declared.
+    gaps: HashMap<String, std::collections::VecDeque<u64>>,
+    /// Guard FQN → recent `header.stamp`s it published, so a sink publish
+    /// that merely answers the guard's LAST message is not mistaken for the
+    /// reaction (measured: 11ms for a 100ms lease before this).
+    stamps: HashMap<String, std::collections::VecDeque<u64>>,
+    /// The fault in progress: (guard, fault ns = its last publish).
+    fault: Option<(String, u64)>,
+    detected_ns: Option<u64>,
+    reacted: bool,
+    /// Recent sink publishes, (monotonic ns, stamp key). The reaction often
+    /// lands BEFORE the observer's own silence threshold trips — the node's
+    /// watchdog is faster than ten periods — so detection has to look back
+    /// for it rather than only forward.
+    sink_pubs: std::collections::VecDeque<(u64, Option<u64>, String)>,
+}
+
 /// Per-topic aggregated state used by the runtime rules.
 #[derive(Debug, Default)]
 struct TopicRuntimeState {
@@ -124,6 +147,8 @@ pub enum LifecycleState {
 /// The runtime rule engine. One per `play_launch` invocation.
 pub struct RuleEngine {
     view: Arc<ContractView>,
+    /// Phase 73 — live fault detection and reaction, one per hazard.
+    hazards: Vec<HazardRuntime>,
     mode: EnforceMode,
     /// Map topic_hash → resolved FQN, built from the manifest index at
     /// startup so we don't have to hash on every event.
@@ -204,6 +229,11 @@ impl RuleEngine {
             .collect();
 
         Self {
+            hazards: view
+                .hazards
+                .iter()
+                .map(|_| HazardRuntime::default())
+                .collect(),
             view,
             mode,
             topic_hash_to_fqn,
@@ -266,6 +296,7 @@ impl RuleEngine {
         if matches!(self.mode, EnforceMode::Off) {
             return;
         }
+        self.observe_hazards(event);
 
         let entry = self.state.entry(event.topic_hash).or_default();
         match event.kind {
@@ -898,6 +929,188 @@ impl RuleEngine {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Phase 73 — live fault detection and reaction
+    // -----------------------------------------------------------------------
+
+    /// Feed a hazard's guards and sinks from the event stream.
+    ///
+    /// A guard publish records cadence and provenance; a DDS liveliness or
+    /// deadline event on a guard is a detection by the middleware
+    /// (`mechanism: qos`); a sink publish during a fault that carries no
+    /// guard provenance is the reaction. Silence itself is judged in
+    /// [`RuleEngine::tick`], because a dead topic never produces an event.
+    fn observe_hazards(&mut self, event: &InterceptionEvent) {
+        if self.view.hazards.is_empty() {
+            return;
+        }
+        let Some(fqn) = self.topic_hash_to_fqn.get(&event.topic_hash).cloned() else {
+            return;
+        };
+        let stamp = (event.stamp_sec != 0 || event.stamp_nanosec != 0)
+            .then(|| pack_stamp(event.stamp_sec, event.stamp_nanosec));
+        let mut pending: Vec<(String, Severity, String, String)> = Vec::new();
+        for (i, watch) in self.view.hazards.iter().enumerate() {
+            let rt = &mut self.hazards[i];
+            let is_guard = watch.guards.contains(&fqn);
+            let is_sink = watch.sinks.contains(&fqn);
+            match event.kind {
+                EventKind::Publish if is_guard => {
+                    if let Some(prev) = rt.last_pub.get(&fqn) {
+                        let gaps = rt.gaps.entry(fqn.clone()).or_default();
+                        gaps.push_back(event.monotonic_ns.saturating_sub(*prev));
+                        if gaps.len() > 32 {
+                            gaps.pop_front();
+                        }
+                    }
+                    rt.last_pub.insert(fqn.clone(), event.monotonic_ns);
+                    if let Some(k) = stamp {
+                        let st = rt.stamps.entry(fqn.clone()).or_default();
+                        st.push_back(k);
+                        if st.len() > 512 {
+                            st.pop_front();
+                        }
+                    }
+                    if let Some((g, fault_ns)) = &rt.fault
+                        && *g == fqn
+                    {
+                        pending.push((
+                            "hazard-recovered".to_string(),
+                            Severity::Warning,
+                            watch.key.clone(),
+                            format!(
+                                "hazard '{}': '{fqn}' resumed publishing {:.2}ms after it went silent",
+                                watch.key,
+                                event.monotonic_ns.saturating_sub(*fault_ns) as f64 / 1e6
+                            ),
+                        ));
+                        rt.fault = None;
+                        rt.detected_ns = None;
+                        rt.reacted = false;
+                    }
+                }
+                EventKind::Publish if is_sink => {
+                    rt.sink_pubs
+                        .push_back((event.monotonic_ns, stamp, fqn.clone()));
+                    if rt.sink_pubs.len() > 256 {
+                        rt.sink_pubs.pop_front();
+                    }
+                    if rt.fault.is_some()
+                        && !rt.reacted
+                        && let Some(p) = reaction_of(rt, watch)
+                    {
+                        pending.push(p);
+                    }
+                }
+                EventKind::LivelinessChanged
+                | EventKind::LivelinessLost
+                | EventKind::RequestedDeadlineMissed
+                    if is_guard && rt.fault.is_none() =>
+                {
+                    // The middleware detected it before the observer's own
+                    // silence threshold did: `mechanism: qos`.
+                    let not_alive =
+                        event.kind != EventKind::LivelinessChanged || (event._pad[1] as i8) > 0;
+                    if !not_alive {
+                        continue;
+                    }
+                    let fault_ns = rt.last_pub.get(&fqn).copied().unwrap_or(event.monotonic_ns);
+                    rt.fault = Some((fqn.clone(), fault_ns));
+                    rt.detected_ns = Some(event.monotonic_ns);
+                    pending.push((
+                        "hazard-detected".to_string(),
+                        Severity::Error,
+                        watch.key.clone(),
+                        format!(
+                            "hazard '{}': '{fqn}' reported {:?} by DDS {:.2}ms after its last \
+                             publish (mechanism: qos)",
+                            watch.key,
+                            event.kind,
+                            event.monotonic_ns.saturating_sub(fault_ns) as f64 / 1e6
+                        ),
+                    ));
+                    if let Some(p) = reaction_of(rt, watch) {
+                        pending.push(p);
+                    }
+                }
+                EventKind::Publish if watch.via_diagnostics && fqn == "/diagnostics" => {
+                    if let Some((_, fault_ns)) = rt.fault
+                        && rt.detected_ns.is_none()
+                        && event.monotonic_ns > fault_ns
+                    {
+                        rt.detected_ns = Some(event.monotonic_ns);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (rule, sev, key, msg) in pending {
+            self.emit_repeatable(rule, sev, key, msg, event.monotonic_ns);
+        }
+    }
+
+    /// Judge silence. A dead guard produces no event, so this runs on the
+    /// consumer's poll tick with the current `CLOCK_MONOTONIC` time. The
+    /// threshold is the fastest declared detector among the guard's reacting
+    /// subscribers (`max_age` today), else ten of the topic's own median
+    /// inter-publish gaps and at least 50ms — the same rule `measure` uses
+    /// after the fact.
+    pub fn tick(&mut self, now_ns: u64) {
+        if matches!(self.mode, EnforceMode::Off) || self.view.hazards.is_empty() {
+            return;
+        }
+        let mut pending: Vec<(String, Severity, String, String)> = Vec::new();
+        for (i, watch) in self.view.hazards.iter().enumerate() {
+            let rt = &mut self.hazards[i];
+            if rt.fault.is_some() {
+                continue;
+            }
+            for guard in &watch.guards {
+                let Some(&last) = rt.last_pub.get(guard) else {
+                    continue;
+                };
+                let gaps = rt.gaps.get(guard);
+                if gaps.is_none_or(|g| g.len() < 4) {
+                    continue; // not enough cadence to judge silence against
+                }
+                let threshold_ns = match watch.silence_ms {
+                    Some(ms) => (ms * 1e6) as u64,
+                    None => (median_gap(gaps) * 10).max(50_000_000),
+                };
+                if now_ns.saturating_sub(last) > threshold_ns {
+                    rt.fault = Some((guard.clone(), last));
+                    rt.detected_ns = Some(now_ns);
+                    pending.push((
+                        "hazard-detected".to_string(),
+                        Severity::Error,
+                        watch.key.clone(),
+                        format!(
+                            "hazard '{}': '{guard}' silent for {:.2}ms (threshold {:.2}ms, {}) — the \
+                             fault the hazard guards against is in progress",
+                            watch.key,
+                            now_ns.saturating_sub(last) as f64 / 1e6,
+                            threshold_ns as f64 / 1e6,
+                            if watch.silence_ms.is_some() {
+                                "declared max_age"
+                            } else {
+                                "10x the topic's median period"
+                            }
+                        ),
+                    ));
+                    // The node's own watchdog is usually faster than this
+                    // threshold, so the reaction may already have happened.
+                    if let Some(p) = reaction_of(rt, watch) {
+                        pending.push(p);
+                    }
+                    break;
+                }
+            }
+        }
+        for (rule, sev, key, msg) in pending {
+            self.emit_repeatable(rule, sev, key, msg, now_ns);
+        }
+    }
+
     /// Resolve `topic_hash` → FQN string. Falls back to `(unknown hash 0x…)`
     /// when the manifest tree didn't declare the topic.
     fn resolve_fqn(&self, topic_hash: u64) -> String {
@@ -1085,6 +1298,85 @@ impl RuleEngine {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// The reaction to the fault in progress, if a provenance-free sink publish
+/// after the fault has been seen — looking BACK through the sink buffer,
+/// since the node's watchdog usually reacts before the observer's threshold
+/// trips. Marks the hazard reacted and returns the diagnostic to emit.
+fn reaction_of(
+    rt: &mut HazardRuntime,
+    watch: &crate::runtime_enforcement::view::HazardWatch,
+) -> Option<(String, Severity, String, String)> {
+    let (guard, fault_ns) = rt.fault.clone()?;
+    let gap = median_gap(rt.gaps.get(&guard));
+    let hit = rt
+        .sink_pubs
+        .iter()
+        .filter(|(t, _, _)| *t > fault_ns)
+        .find(|(t, stamp, _)| match stamp {
+            Some(k) => !rt.stamps.get(&guard).is_some_and(|s| s.contains(k)),
+            None => *t > fault_ns + gap,
+        })
+        .cloned()?;
+    rt.reacted = true;
+    let (t, _, sink) = hit;
+    let react_ms = (t - fault_ns) as f64 / 1e6;
+    let settle = watch.settle_ms.unwrap_or(0.0);
+    let total = react_ms + settle;
+    let (sev, verdict) = match watch.ftti_ms {
+        Some(ftti) if total <= ftti => (
+            Severity::Warning,
+            format!("fits ftti {ftti:.2}ms with {:.2}ms of slack", ftti - total),
+        ),
+        Some(ftti) => (
+            Severity::Error,
+            format!("EXCEEDS ftti {ftti:.2}ms by {:.2}ms", total - ftti),
+        ),
+        None => (Severity::Warning, "no ftti declared".to_string()),
+    };
+    let detected = rt
+        .detected_ns
+        .map(|d| {
+            format!(
+                ", observer noticed at {:.2}ms",
+                d.saturating_sub(fault_ns) as f64 / 1e6
+            )
+        })
+        .unwrap_or_default();
+    Some((
+        "hazard-reaction".to_string(),
+        sev,
+        watch.key.clone(),
+        format!(
+            "hazard '{}': reaction on '{sink}' {react_ms:.2}ms after '{guard}' went \
+             silent{detected}; + settle {settle:.2}ms = {total:.2}ms — {verdict}",
+            watch.key
+        ),
+    ))
+}
+
+/// Median of recorded inter-publish gaps, ns; a generous default when there
+/// is no cadence yet so a sink publish is never mistaken for a reaction on
+/// the strength of no evidence.
+fn median_gap(gaps: Option<&std::collections::VecDeque<u64>>) -> u64 {
+    let Some(g) = gaps.filter(|g| !g.is_empty()) else {
+        return 50_000_000;
+    };
+    let mut v: Vec<u64> = g.iter().copied().collect();
+    v.sort_unstable();
+    v[v.len() / 2]
+}
+
+/// `CLOCK_MONOTONIC` in ns, the clock every interception event carries.
+pub fn monotonic_now_ns() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid out-pointer; CLOCK_MONOTONIC always exists.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+}
 
 fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xCBF29CE484222325;
@@ -1607,6 +1899,91 @@ mod tests {
             "strict mode should trip the flag on first violation"
         );
 
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Phase 73: a guard that goes silent is detected on the tick, and the
+    /// first sink publish afterwards WITHOUT the guard's provenance is the
+    /// reaction. The sink's answer to the guard's last message — same stamp —
+    /// is not.
+    #[test]
+    fn hazard_silence_is_detected_and_the_provenance_free_sink_publish_is_the_reaction() {
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            runtime_enforcement::view::{HazardWatch, TopicView},
+        };
+        let mut view = ContractView::default();
+        for t in ["/safety/scan", "/safety/brake_cmd"] {
+            view.topics.insert(
+                t.to_string(),
+                TopicView {
+                    msg_type: "x".into(),
+                    ..Default::default()
+                },
+            );
+        }
+        view.hazards.push(HazardWatch {
+            key: "drive_blind".into(),
+            guards: vec!["/safety/scan".into()],
+            sinks: vec!["/safety/brake_cmd".into()],
+            ftti_ms: Some(500.0),
+            settle_ms: Some(200.0),
+            silence_ms: Some(100.0),
+            via_diagnostics: false,
+        });
+        let tmp =
+            std::env::temp_dir().join(format!("play_launch_hazard_rt_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Warn, &tmp);
+        let scan = fnv1a(b"/safety/scan");
+        let brake = fnv1a(b"/safety/brake_cmd");
+        let ev = |kind: EventKind, h: u64, t: u64, stamp: u32| InterceptionEvent {
+            kind,
+            _pad: [0; 3],
+            topic_hash: h,
+            stamp_sec: 1,
+            stamp_nanosec: stamp,
+            handle: 1,
+            monotonic_ns: t,
+            cpu_ns: 0,
+            tid: 1,
+            _pad2: [0; 4],
+        };
+        // 20ms cadence; the brake answers each scan 7ms later with its stamp.
+        for i in 0..20u64 {
+            let t = 1_000_000_000 + i * 20_000_000;
+            re.observe(&ev(EventKind::Publish, scan, t, 100 + i as u32));
+            re.observe(&ev(
+                EventKind::Publish,
+                brake,
+                t + 7_000_000,
+                100 + i as u32,
+            ));
+        }
+        let last = 1_000_000_000 + 19 * 20_000_000;
+        re.tick(last + 50_000_000);
+        assert_eq!(
+            re.violation_count, 0,
+            "50ms of silence is under the 100ms threshold"
+        );
+        // The node's own watchdog reacts at 80ms — BEFORE the observer's
+        // threshold. The provenance-free publish is buffered.
+        re.observe(&ev(EventKind::Publish, brake, last + 80_000_000, 999_999));
+        assert_eq!(re.violation_count, 0, "no fault is known yet");
+        re.tick(last + 120_000_000);
+        assert_eq!(
+            re.violation_count, 2,
+            "hazard-detected on the tick, and the buffered reaction with it"
+        );
+        // The brake's answer to the LAST scan (same stamp) is never a reaction.
+        re.observe(&ev(EventKind::Publish, brake, last + 125_000_000, 119));
+        assert_eq!(re.violation_count, 2);
+        re.flush();
+        let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(log.contains("hazard-detected"), "{log}");
+        assert!(log.contains("hazard-reaction"), "{log}");
+        assert!(log.contains("80.00ms after"), "{log}");
+        assert!(log.contains("fits ftti 500.00ms"), "{log}");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

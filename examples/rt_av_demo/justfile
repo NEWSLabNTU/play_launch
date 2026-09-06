@@ -383,7 +383,19 @@ fault:
         sys.exit("DERIVATION MISMATCH: the run reacted slower than the contract derives")
     v = re.search(r"= ([\d.]+)ms — (fits|EXCEEDS)", frag)
     print("measure's verdict:", v.group(0) if v else "none")
-    print("fault-reaction vocabulary verified on a running system.")
+    # Phase 73 — the LIVE observer must have seen the same fault and reaction
+    # while the system ran, not only `measure` afterwards.
+    import json
+    live = [json.loads(l) for l in open("play_log/latest/runtime_violations.jsonl") if l.strip()]
+    det = [x for x in live if x["rule_id"] == "hazard-detected"]
+    rea = [x for x in live if x["rule_id"] == "hazard-reaction"]
+    if not det or not rea:
+        sys.exit(f"FAIL: live observer saw detected={len(det)} reaction={len(rea)}")
+    r = re.search(r"reaction on '\S+' ([\d.]+)ms after", rea[0]["message"]).group(1)
+    print(f"live observer: detected, and reaction {r}ms after the fault ({rea[0]['severity']})")
+    if abs(float(r) - observed) > 5.0:
+        sys.exit(f"FAIL: live ({r}) and post-hoc ({observed}) reaction times disagree")
+    print("fault-reaction vocabulary verified on a running system, live and after the fact.")
     PY
 
 # Internal: one run. $1 = off|on, $2 = output dir.

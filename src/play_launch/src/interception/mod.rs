@@ -599,6 +599,11 @@ pub async fn run_interception_task(
                         }
                     }
                 }
+                // Phase 73 — a dead topic produces no event, so silence is
+                // judged on the poll tick rather than on arrival.
+                if let Some(re) = rule_engine.as_mut() {
+                    re.tick(crate::runtime_enforcement::monotonic_now_ns());
+                }
             }
             _ = shutdown_signal.changed() => {
                 if *shutdown_signal.borrow() {

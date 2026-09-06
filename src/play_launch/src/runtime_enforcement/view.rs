@@ -46,6 +46,28 @@ pub struct ContractView {
     /// Lifecycle (managed) node FQNs — contract checks gate on Active.
     pub lifecycle_nodes: HashSet<String>,
     pub scope_paths: Vec<ScopePathView>,
+    /// Hazards to watch live (phase 73).
+    pub hazards: Vec<HazardWatch>,
+}
+
+/// A hazard as the live observer needs it (phase 73): which topics going
+/// silent IS the fault, which topics carry the reaction, and the declared
+/// numbers to judge the reaction against.
+#[derive(Debug, Clone, Default)]
+pub struct HazardWatch {
+    pub key: String,
+    /// Guard topic FQNs, all groups flattened.
+    pub guards: Vec<String>,
+    /// Topics the reaction commands the safe state on.
+    pub sinks: Vec<String>,
+    pub ftti_ms: Option<f64>,
+    pub settle_ms: Option<f64>,
+    /// The fastest declared detector on a guard's reacting subscribers, in
+    /// ms — `max_age` today, since the model does not carry a lease. `None`
+    /// means the observer judges silence against the topic's own cadence.
+    pub silence_ms: Option<f64>,
+    /// A reacting subscriber reports through `/diagnostics`.
+    pub via_diagnostics: bool,
 }
 
 impl ContractView {
@@ -109,6 +131,74 @@ impl ContractView {
                 max_latency_ms: sp.path.max_latency.map(|d| d.as_millis_f64()),
             });
         }
+        for h in &index.hazards {
+            let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
+            let sinks: Vec<String> = h
+                .decl
+                .reaction
+                .as_ref()
+                .and_then(|r| {
+                    index
+                        .scope_paths
+                        .iter()
+                        .find(|p| p.scope_id == h.scope_id && &p.path_name == r)
+                })
+                .map(|p| p.output_topics.clone())
+                .unwrap_or_default();
+            let settle_ms = index
+                .node_paths
+                .iter()
+                .filter_map(|p| {
+                    let ss = p.path.safe_state.as_ref()?;
+                    let emits = format!("{}/{}", p.node_fqn, ss.emits);
+                    sinks
+                        .iter()
+                        .any(|t| {
+                            index
+                                .topics
+                                .get(t)
+                                .is_some_and(|tp| tp.publishers.contains(&emits))
+                        })
+                        .then_some(ss.settle.map(|d| d.as_millis_f64()))
+                        .flatten()
+                })
+                .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.max(v))));
+            let (mut silence_ms, mut via_diagnostics) = (None::<f64>, false);
+            for g in &guards {
+                let Some(t) = index.topics.get(g) else {
+                    continue;
+                };
+                for sub in &t.subscribers {
+                    let Some((node, ep)) = sub.rsplit_once('/') else {
+                        continue;
+                    };
+                    let props = index.manifests.values().find_map(|m| {
+                        m.manifest.nodes.iter().find_map(|(name, d)| {
+                            (super::qualify(&m.ns, name) == node)
+                                .then(|| d.subscribers.get(ep))
+                                .flatten()
+                        })
+                    });
+                    let Some(ov) = props.and_then(|p| p.on_violation.as_ref()) else {
+                        continue;
+                    };
+                    if let Some(a) = props.and_then(|p| p.max_age).map(|d| d.as_millis_f64()) {
+                        silence_ms = Some(silence_ms.map_or(a, |s: f64| s.min(a)));
+                    }
+                    via_diagnostics |=
+                        ov.mechanism == ros_launch_manifest_types::DetectMechanism::Diagnostics;
+                }
+            }
+            view.hazards.push(HazardWatch {
+                key: h.name.clone(),
+                guards,
+                sinks,
+                ftti_ms: h.decl.ftti.map(|d| d.as_millis_f64()),
+                settle_ms,
+                silence_ms,
+                via_diagnostics,
+            });
+        }
         view
     }
 
@@ -155,6 +245,60 @@ impl ContractView {
                 input_topics: p.input.clone(),
                 output_topics: p.output.clone(),
                 max_latency_ms: p.max_latency_ms,
+            });
+        }
+        for (key, h) in &m.contracts.hazards {
+            let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
+            let sinks: Vec<String> = h
+                .reaction
+                .as_ref()
+                .and_then(|r| m.contracts.scope_paths.get(r))
+                .map(|p| p.output.clone())
+                .unwrap_or_default();
+            let settle_ms = m
+                .contracts
+                .node_paths
+                .values()
+                .filter_map(|p| {
+                    let ss = p.safe_state.as_ref()?;
+                    sinks
+                        .iter()
+                        .any(|t| {
+                            m.structure
+                                .topics
+                                .get(t)
+                                .is_some_and(|w| w.publishers.contains(&ss.emits))
+                        })
+                        .then_some(ss.settle_ms)
+                        .flatten()
+                })
+                .fold(None, |a: Option<f64>, v| Some(a.map_or(v, |x| x.max(v))));
+            let (mut silence_ms, mut via_diagnostics) = (None::<f64>, false);
+            for g in &guards {
+                let Some(w) = m.structure.topics.get(g) else {
+                    continue;
+                };
+                for sub in &w.subscribers {
+                    let Some(c) = m.contracts.sub_endpoints.get(sub) else {
+                        continue;
+                    };
+                    let Some(ov) = &c.on_violation else {
+                        continue;
+                    };
+                    if let Some(a) = c.max_age_ms {
+                        silence_ms = Some(silence_ms.map_or(a, |s: f64| s.min(a)));
+                    }
+                    via_diagnostics |= ov.mechanism == model::DetectMechanism::Diagnostics;
+                }
+            }
+            view.hazards.push(HazardWatch {
+                key: key.clone(),
+                guards,
+                sinks,
+                ftti_ms: h.ftti_ms,
+                settle_ms,
+                silence_ms,
+                via_diagnostics,
             });
         }
         view

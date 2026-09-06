@@ -586,6 +586,25 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: Phase 73 — **the fault observer runs live.**
+  `runtime_enforcement::RuleEngine` already consumed every interception
+  event including phase 36's DDS liveliness/deadline events; it lacked the
+  hazard vocabulary and a clock. `ContractView` now carries a `HazardWatch`
+  per model hazard; the engine emits `hazard-detected` (DDS event on a
+  guard, or a silence **tick** — a dead topic never produces an event, so
+  the interception consumer's 10 ms poll now calls `tick()` — judged
+  against `max_age` or ten median periods), `hazard-reaction` (first sink
+  publish after the fault with **no guard provenance**, the phase 71 W3
+  rule) and `hazard-recovered`. **The first run found the reaction landing
+  before the observer's own threshold** (106 ms vs 207 ms: the node's
+  watchdog is faster than ten periods by construction), so sink publishes
+  are buffered and detection looks back. `just fault` now checks live
+  against post-hoc: **103.55 ms both**. Also this date: phase 72 (below) and
+  nano-ros PR #601 (`work/phase-434-contract-seams`, from a separate clone)
+  reading `node_concurrency`/`max_jitter_ms`/`miss` and serialising
+  undeclared nodes' callbacks by default. Roadmap:
+  `docs/roadmap/phase-73-live-fault-observer.md`.
+
 - **2026-09-06**: Phase 72 — **criticality is a consequence of the
   hazards** (manifest `v0.1.30` → **`v0.1.31`**). `criticality-from-hazards
   .md` (Aug 7) argued the `high|medium|low` label is a bare ordering with no

@@ -113,7 +113,9 @@ declaring bounds they already have.
 
 ## Not done
 
-- Live QoS event callbacks in `runtime_enforcement` (above).
+- ~~Live QoS event callbacks in `runtime_enforcement` (above).~~ Done in
+  phase 73: the observer runs live on the interception stream, with a tick
+  for silence, and agrees with `measure` to the hundredth of a millisecond.
 - `all_of` guards on a running system: the demo has one lidar.
 - The safe-state envelope (a reaction commanding −2.5 m/s² through a gate
   limited to −2.4): a value-domain check, declined in the design.
