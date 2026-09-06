@@ -1433,6 +1433,13 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   - `system-model.md` — the SystemModel artifact: layout, layers, producer/consumer split
   - `criticality-from-hazards.md` — deriving criticality (and reservations)
     from declared hazards instead of a `high|medium|low` label
+  - `fault-reaction-primitives.md` — **proposed**: FTTI as the one new
+    requirement (on a hazard), `on_violation:` on the detecting subscriber
+    with an EMV2-closed `on:` set, `safe_state` on the reaction path; FDTI and
+    FRTI derived, five rules, eight keys each with a consumer. Surveys ISO
+    26262 Part 6 supervision, AUTOSAR WdgM/E2E, AADL EMV2, STPA, ROS 2 QoS
+    events, and Autoware's real MRM chain — whose parameter files already
+    imply the arithmetic and nothing performs it
   - `contract-primitives.md` — **the rule**: a contract states what the code
     does and what it must achieve; anything computable from those is derived,
     never written. DECIDED
