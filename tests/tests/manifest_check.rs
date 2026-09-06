@@ -1045,3 +1045,27 @@ fn fault_reaction_rules_fire_on_a_broken_chain() {
         assert!(out.contains(needle), "expected `{needle}` on contract_fault_late:\n{out}");
     }
 }
+
+/// Phase 74: the contract's liveliness lease reaches the model as a
+/// `qos_overrides` parameter on the subscribing node, and the lease itself
+/// is lowered for the live observer.
+#[test]
+fn contract_qos_becomes_qos_override_parameters_on_the_model() {
+    let base = fixtures::repo_root().join("tests/fixtures/contract_fault/launch");
+    let out_path = std::env::temp_dir().join("play_launch_p74_model.yaml");
+    let status = Command::new(fixtures::play_launch_bin())
+        .arg("resolve")
+        .arg(base.join("bringup.launch.xml"))
+        .arg("-o")
+        .arg(&out_path)
+        .status()
+        .expect("resolve runs");
+    assert!(status.success(), "resolve failed");
+    let model = std::fs::read_to_string(&out_path).expect("model written");
+    assert!(
+        model.contains("qos_overrides./safety/scan.subscription.liveliness_lease_duration: 100000000"),
+        "the lease must reach the node as an rclcpp qos_overrides parameter, in ns:\n{model}"
+    );
+    assert!(model.contains("lease_duration_ms: 100.0"), "{model}");
+    let _ = std::fs::remove_file(&out_path);
+}

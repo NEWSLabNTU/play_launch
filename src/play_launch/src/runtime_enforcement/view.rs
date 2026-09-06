@@ -63,7 +63,7 @@ pub struct HazardWatch {
     pub ftti_ms: Option<f64>,
     pub settle_ms: Option<f64>,
     /// The fastest declared detector on a guard's reacting subscribers, in
-    /// ms — `max_age` today, since the model does not carry a lease. `None`
+    /// ms: the liveliness lease or `max_age`, whichever is shorter. `None`
     /// means the observer judges silence against the topic's own cadence.
     pub silence_ms: Option<f64>,
     /// A reacting subscriber reports through `/diagnostics`.
@@ -182,7 +182,19 @@ impl ContractView {
                     let Some(ov) = props.and_then(|p| p.on_violation.as_ref()) else {
                         continue;
                     };
-                    if let Some(a) = props.and_then(|p| p.max_age).map(|d| d.as_millis_f64()) {
+                    let lease = ros_launch_manifest_types::QosDecl::effective(
+                        index.topics.get(g).and_then(|t| t.qos.as_ref()),
+                        props.and_then(|p| p.qos.as_ref()),
+                    )
+                    .lease_duration
+                    .map(|d| d.as_millis_f64());
+                    for a in [
+                        props.and_then(|p| p.max_age).map(|d| d.as_millis_f64()),
+                        lease,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
                         silence_ms = Some(silence_ms.map_or(a, |s: f64| s.min(a)));
                     }
                     via_diagnostics |=
@@ -285,7 +297,13 @@ impl ContractView {
                     let Some(ov) = &c.on_violation else {
                         continue;
                     };
-                    if let Some(a) = c.max_age_ms {
+                    for a in [
+                        c.max_age_ms,
+                        c.qos.as_ref().and_then(|q| q.lease_duration_ms),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
                         silence_ms = Some(silence_ms.map_or(a, |s: f64| s.min(a)));
                     }
                     via_diagnostics |= ov.mechanism == model::DetectMechanism::Diagnostics;

@@ -28,6 +28,13 @@ nodes:
     pub:
       scan:
         min_rate_hz: 50
+        # Phase 74: applied to the node as qos_overrides parameters. With
+        # `manual_by_topic` liveliness every publish asserts the writer is
+        # alive, so a publisher that stops lapses at the lease and the
+        # SUBSCRIBER's DDS reports it — no watchdog code needed to detect.
+        # (`automatic` would NOT do this: it is asserted by the participant,
+        # so a node that stops publishing but stays up never lapses.)
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
     paths:
       sample:
         trigger: { timer: { rate_hz: 50 } }
@@ -50,7 +57,7 @@ nodes:
           on: [omission]
           reaction: declare_lost
           within: 10ms
-          mechanism: application
+          mechanism: qos      # DDS detects (the lease); the watchdog only reacts
     pub:
       obstacles:
         min_rate_hz: 50

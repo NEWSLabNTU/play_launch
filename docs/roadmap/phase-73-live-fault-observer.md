@@ -59,10 +59,8 @@ more than 5 ms.
 
 ## Not done
 
-- The observer's silence threshold is `max_age` or cadence, never the
-  declared `lease_duration`: `SubContract` in the model carries no QoS
-  lease. Lowering it is a manifest change; until then `mechanism: qos`
-  detection comes from DDS events, which are exact, and the cadence rule
-  is the fallback for `mechanism: application` (the demo's watchdog).
+- ~~The observer's silence threshold is `max_age` or cadence, never the
+  declared `lease_duration`.~~ Phase 74 lowered the lease to the model and
+  applied it to the node; DDS now reports the lapse itself.
 - `hazard-detected` fires once per fault; a flapping guard produces a
   detected/recovered pair per flap, which is right but noisy.

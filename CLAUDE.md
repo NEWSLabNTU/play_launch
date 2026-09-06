@@ -586,6 +586,23 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: Phase 74 — **the contract's QoS reaches the running
+  node** (manifest `v0.1.31` → **`v0.1.32`**). `contract-axes.md` §4 ruled
+  "derive always, apply where accepted, report where it cannot be" and
+  nothing applied. The resolver now writes `qos.deadline`/`liveliness`/
+  `lease_duration` into the node's parameters on the model as rclcpp's
+  `qos_overrides.<topic>.<entity>.<policy>` — into BOTH `params` and the
+  ordered `param_sources`, because a spawn renders only the second (the
+  first run's overrides never left the model while the acceptance report
+  said "accepted"). `up` reports acceptance by VALUE: a node that opted in
+  declares every `qos_overrides.*` parameter itself, so a name proves
+  nothing. Two more defects on the way: `automatic` liveliness is asserted
+  by the participant and cannot lapse for a silent publisher
+  (`manual_by_topic` can); rclcpp takes a QoS event only when a callback is
+  registered for it. `just fault` now: DDS reports the lapse **99.3 ms**
+  after the last publish, from a number in the contract, no watchdog code
+  in the detection path. Roadmap: `docs/roadmap/phase-74-contract-qos-applied.md`.
+
 - **2026-09-06**: Phase 73 — **the fault observer runs live.**
   `runtime_enforcement::RuleEngine` already consumed every interception
   event including phase 36's DDS liveliness/deadline events; it lacked the

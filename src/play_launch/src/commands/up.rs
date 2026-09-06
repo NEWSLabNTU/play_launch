@@ -1423,6 +1423,116 @@ pub(crate) async fn play(
         }
         drop(lifecycle_tx); // keep only senders inside callbacks alive
 
+        // Phase 74 — "apply where accepted, report where it cannot be". The
+        // model carries the QoS overrides the contract derived; whether a
+        // node DECLARED them is the node author's opt-in
+        // (`QosOverridingOptions`), which is knowable only by asking the
+        // running node. A parameter passed to a node that never declares it
+        // is silently ignored by rclcpp, which is exactly the silence this
+        // report exists to break.
+        // (name, expected value as the node would report it): a node that
+        // opted in DECLARES every `qos_overrides.*` parameter itself with the
+        // profile's default, so the name alone proves nothing — only the
+        // VALUE says whether the contract's number is what the entity runs
+        // with.
+        let overrides_by_node: Vec<(String, Vec<(String, String)>)> = system_model
+            .structure
+            .nodes
+            .iter()
+            .filter_map(|(fqn, inst)| {
+                let keys: Vec<(String, String)> = inst
+                    .params
+                    .iter()
+                    .filter(|(k, _)| k.starts_with("qos_overrides."))
+                    .map(|(k, v)| {
+                        let shown = match v {
+                            ros_launch_manifest_model::ParamValue::Int(i) => i.to_string(),
+                            ros_launch_manifest_model::ParamValue::Str(s) => s.clone(),
+                            other => other.to_bake_string(),
+                        };
+                        (k.clone(), shown)
+                    })
+                    .collect();
+                (!keys.is_empty()).then(|| (fqn.clone(), keys))
+            })
+            .collect();
+        if !overrides_by_node.is_empty()
+            && let Some(ros_node) = shared_ros_node_for_params.as_ref()
+        {
+            let ros_node = ros_node.clone();
+            tokio::spawn(async move {
+                // Give discovery and node construction a moment; a node that
+                // has not come up yet is reported as unreachable, not as
+                // having refused.
+                tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
+                for (fqn, keys) in overrides_by_node {
+                    let proxy =
+                        match crate::ros::parameter_proxy::ParameterProxy::new(&ros_node, &fqn) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                warn!("[qos-override] {fqn}: cannot query parameters ({e:#})");
+                                continue;
+                            }
+                        };
+                    let live: std::collections::HashMap<String, String> = match proxy
+                        .list_all()
+                        .await
+                    {
+                        Ok(entries) => entries
+                            .into_iter()
+                            .map(|e| {
+                                use crate::ros::parameter_types::ParamValue as P;
+                                let shown = match &e.value {
+                                    P::Integer(i) => i.to_string(),
+                                    P::String(s) => s.clone(),
+                                    P::Double(d) => d.to_string(),
+                                    P::Bool(b) => b.to_string(),
+                                    other => format!("{other:?}"),
+                                };
+                                (e.name, shown)
+                            })
+                            .collect(),
+                        Err(e) => {
+                            warn!(
+                                "[qos-override] {fqn}: {} contract QoS override(s) derived, node \
+                                 unreachable for a parameter query ({e:#}) — acceptance unknown",
+                                keys.len()
+                            );
+                            continue;
+                        }
+                    };
+                    let mut applied = Vec::new();
+                    let mut undeclared = Vec::new();
+                    let mut differs = Vec::new();
+                    for (k, want) in &keys {
+                        let policy = k.rsplit('.').next().unwrap_or(k);
+                        match live.get(k) {
+                            None => undeclared.push(policy.to_string()),
+                            Some(have) if have == want => applied.push(policy.to_string()),
+                            Some(have) => {
+                                differs.push(format!("{policy} (node has {have}, contract {want})"))
+                            }
+                        }
+                    }
+                    if undeclared.is_empty() && differs.is_empty() {
+                        info!(
+                            "[qos-override] {fqn}: contract QoS applied — {}",
+                            applied.join(", ")
+                        );
+                    } else {
+                        warn!(
+                            "[qos-override] {fqn}: contract QoS NOT fully applied. \
+                             undeclared (node did not opt in via QosOverridingOptions): [{}]; \
+                             different value: [{}]; applied: [{}]",
+                            undeclared.join(", "),
+                            differs.join(", "),
+                            applied.join(", ")
+                        );
+                    }
+                }
+            });
+        }
+
         // Phase 36.4: in Strict mode, spawn a watcher task that polls
         // the engine's `strict_violated` flag and triggers shutdown on
         // first hit. The flag is also flipped under Warn mode but only

@@ -225,6 +225,14 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 74** — ✅ the contract's QoS reaches the running node. Deadline,
+    liveliness and lease become `qos_overrides` parameters on the model,
+    applied where the node opted in, verified by VALUE afterwards. Three
+    defects in the apply path found by the first runs (the map vs the ordered
+    list a spawn renders; `automatic` liveliness cannot lapse; rclcpp takes
+    a QoS event only with a callback registered). `just fault`: DDS reports
+    the lapse at 99.3 ms from a number in the contract.
+    [phase-74-contract-qos-applied.md](./phase-74-contract-qos-applied.md).
   - **Phase 73** — ✅ the fault observer runs live. `RuleEngine` watches
     every hazard's guards and sinks on the interception stream: DDS
     liveliness/deadline events or a silence tick detect, a provenance-free

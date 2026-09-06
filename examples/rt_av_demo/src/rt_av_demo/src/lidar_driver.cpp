@@ -22,7 +22,19 @@ public:
     // omission fault the contract's hazard guards against.
     die_after_s_ = this->declare_parameter<double>("die_after", 0.0);
 
-    pub_ = this->create_publisher<rt_av_demo::msg::Stamped>("scan", 10);
+    // Phase 74: opt in to the contract's QoS. play_launch applies the
+    // contract's deadline/liveliness as `qos_overrides.*` parameters, and
+    // rclcpp honours them only for the policies a node lists here. With
+    // `liveliness: manual_by_topic` every publish asserts this writer is
+    // alive, so when this node stops publishing the SUBSCRIBER's DDS notices
+    // within the lease — no watchdog code needed on either side to detect.
+    rclcpp::PublisherOptions pub_opts;
+    pub_opts.qos_overriding_options = rclcpp::QosOverridingOptions({
+      rclcpp::QosPolicyKind::Deadline,
+      rclcpp::QosPolicyKind::Liveliness,
+      rclcpp::QosPolicyKind::LivelinessLeaseDuration,
+    });
+    pub_ = this->create_publisher<rt_av_demo::msg::Stamped>("scan", 10, pub_opts);
     timer_ = this->create_wall_timer(
       std::chrono::duration<double>(1.0 / rate_hz_),
       [this]() {

@@ -1091,7 +1091,7 @@ impl RuleEngine {
                             now_ns.saturating_sub(last) as f64 / 1e6,
                             threshold_ns as f64 / 1e6,
                             if watch.silence_ms.is_some() {
-                                "declared max_age"
+                                "the declared lease / max_age"
                             } else {
                                 "10x the topic's median period"
                             }
@@ -1984,6 +1984,78 @@ mod tests {
         assert!(log.contains("hazard-reaction"), "{log}");
         assert!(log.contains("80.00ms after"), "{log}");
         assert!(log.contains("fits ftti 500.00ms"), "{log}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Phase 74: a DDS liveliness event on a guard is the detection —
+    /// exact, from the middleware, before the observer's own threshold.
+    #[test]
+    fn a_dds_liveliness_event_on_a_guard_is_the_detection() {
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            runtime_enforcement::view::{HazardWatch, TopicView},
+        };
+        let mut view = ContractView::default();
+        view.topics.insert(
+            "/safety/scan".to_string(),
+            TopicView {
+                msg_type: "x".into(),
+                ..Default::default()
+            },
+        );
+        view.hazards.push(HazardWatch {
+            key: "drive_blind".into(),
+            guards: vec!["/safety/scan".into()],
+            sinks: vec![],
+            ftti_ms: Some(500.0),
+            settle_ms: None,
+            silence_ms: Some(100.0),
+            via_diagnostics: false,
+        });
+        let tmp =
+            std::env::temp_dir().join(format!("play_launch_hazard_dds_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Warn, &tmp);
+        let scan = fnv1a(b"/safety/scan");
+        let publish = |t: u64| InterceptionEvent {
+            kind: EventKind::Publish,
+            _pad: [0; 3],
+            topic_hash: scan,
+            stamp_sec: 1,
+            stamp_nanosec: 7,
+            handle: 1,
+            monotonic_ns: t,
+            cpu_ns: 0,
+            tid: 1,
+            _pad2: [0; 4],
+        };
+        re.observe(&publish(1_000_000_000));
+        re.observe(&publish(1_020_000_000));
+        // not_alive_change = +1 rides `_pad[1]`.
+        re.observe(&InterceptionEvent {
+            kind: EventKind::LivelinessChanged,
+            _pad: [0xff, 1, 0], // alive -1, not_alive +1
+            topic_hash: scan,
+            stamp_sec: 0,
+            stamp_nanosec: 1,
+            handle: 1,
+            monotonic_ns: 1_119_000_000,
+            cpu_ns: 0,
+            tid: 1,
+            _pad2: [0; 4],
+        });
+        // Two lines for one event: phase 36's `liveliness-runtime` (the DDS
+        // fact) and phase 74's `hazard-detected` (what it means).
+        assert_eq!(re.violation_count, 2);
+        re.flush();
+        let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(
+            log.contains("reported LivelinessChanged by DDS 99.00ms"),
+            "{log}"
+        );
+        // The tick does not report it a second time.
+        re.tick(1_300_000_000);
+        assert_eq!(re.violation_count, 2);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -393,6 +393,18 @@ fault:
         sys.exit(f"FAIL: live observer saw detected={len(det)} reaction={len(rea)}")
     r = re.search(r"reaction on '\S+' ([\d.]+)ms after", rea[0]["message"]).group(1)
     print(f"live observer: detected, and reaction {r}ms after the fault ({rea[0]['severity']})")
+    # Phase 74 — DDS itself must be the detector: the contract's lease was
+    # applied to both nodes as qos_overrides, and the subscriber's DDS
+    # reported the lapse. If the observer had to fall back to its own clock
+    # the apply path is broken somewhere between the model and the node.
+    if "by DDS" not in det[0]["message"]:
+        sys.exit(f"FAIL: detection did not come from DDS: {det[0]['message']}")
+    d = re.search(r"by DDS ([\d.]+)ms after", det[0]["message"]).group(1)
+    print(f"DDS reported the lapse {d}ms after the last publish (lease 100ms)")
+    applied = [l for l in open("run.log") if "[qos-override]" in l and "contract QoS applied" in l]
+    if len(applied) < 2:
+        sys.exit("FAIL: the contract's QoS was not applied to both nodes (see run.log for [qos-override])")
+    print(f"contract QoS applied and verified by value on {len(applied)} nodes")
     if abs(float(r) - observed) > 5.0:
         sys.exit(f"FAIL: live ({r}) and post-hoc ({observed}) reaction times disagree")
     print("fault-reaction vocabulary verified on a running system, live and after the fact.")

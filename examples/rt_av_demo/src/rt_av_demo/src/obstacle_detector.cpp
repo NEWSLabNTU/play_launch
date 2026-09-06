@@ -41,6 +41,23 @@ public:
     }
 
     pub_ = this->create_publisher<rt_av_demo::msg::Stamped>("obstacles", 10);
+    // Phase 74: opt in to the contract's QoS (see lidar_driver.cpp). The
+    // lease then makes DDS the detector; the watchdog below stays as the
+    // application-level reaction that publishes "lost".
+    rclcpp::SubscriptionOptions sub_opts;
+    sub_opts.qos_overriding_options = rclcpp::QosOverridingOptions({
+      rclcpp::QosPolicyKind::Deadline,
+      rclcpp::QosPolicyKind::Liveliness,
+      rclcpp::QosPolicyKind::LivelinessLeaseDuration,
+    });
+    // rclcpp takes DDS QoS events only when a callback is registered for
+    // them; without this the lease expiry never surfaces as an event and the
+    // observer falls back to judging silence on its own clock.
+    sub_opts.event_callbacks.liveliness_callback =
+      [](rclcpp::QOSLivelinessChangedInfo & info) {
+        std::printf("LIVELINESS alive=%d not_alive=%d\n", info.alive_count, info.not_alive_count);
+        std::fflush(stdout);
+      };
     sub_ = this->create_subscription<rt_av_demo::msg::Stamped>(
       "scan", 10,
       [this](const rt_av_demo::msg::Stamped::SharedPtr in) {
@@ -51,7 +68,8 @@ public:
         const double sign = (seq_++ % 2 == 0) ? -1.0 : 1.0;
         rt_av_demo::burn_ms(burn_ms_ + sign * burn_jitter_ms_);
         pub_->publish(rt_av_demo::make_msg(in->header.stamp, in->seq, "obstacles"));
-      });
+      },
+      sub_opts);
   }
 
 private:

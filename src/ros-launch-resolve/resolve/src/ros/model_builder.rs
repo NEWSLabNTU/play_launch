@@ -154,17 +154,26 @@ fn resolve_endpoint_ref(nodes: &IndexMap<String, model::NodeInstance>, ep_ref: &
     }
 }
 
-fn pub_contract(p: &EndpointProps) -> Option<model::PubContract> {
-    if p.min_rate_hz.is_none() && p.max_rate_hz.is_none() {
+fn pub_contract(p: &EndpointProps, topic_qos: Option<&QosDecl>) -> Option<model::PubContract> {
+    let qos = effective_qos(topic_qos, p.qos.as_ref());
+    if p.min_rate_hz.is_none() && p.max_rate_hz.is_none() && qos.is_none() {
         return None;
     }
     Some(model::PubContract {
         min_rate_hz: p.min_rate_hz,
         max_rate_hz: p.max_rate_hz,
-        // R1-M5 — manifest-side per-endpoint QoS lands here when the
-        // loader surfaces it (P-item); None until then.
-        qos: None,
+        qos,
     })
+}
+
+/// The endpoint's effective QoS (topic default overlaid with the endpoint's
+/// own), lowered — `None` when neither side declares anything. Phase 74:
+/// this is what `up` applies to the node and what the live observer reads.
+fn effective_qos(topic_qos: Option<&QosDecl>, endpoint_qos: Option<&QosDecl>) -> Option<model::Qos> {
+    if topic_qos.is_none() && endpoint_qos.is_none() {
+        return None;
+    }
+    Some(qos_contract(&QosDecl::effective(topic_qos, endpoint_qos)))
 }
 
 fn fault_kind(k: ros_launch_manifest_types::FaultKind) -> model::FaultKind {
@@ -194,13 +203,19 @@ fn on_violation_contract(
     }
 }
 
-fn sub_contract(node_fqn: &str, p: &EndpointProps) -> Option<model::SubContract> {
+fn sub_contract(
+    node_fqn: &str,
+    p: &EndpointProps,
+    topic_qos: Option<&QosDecl>,
+) -> Option<model::SubContract> {
     let state = p.state.unwrap_or(false);
     let required = p.required.unwrap_or(false);
+    let qos = effective_qos(topic_qos, p.qos.as_ref());
     if p.min_rate_hz.is_none()
         && p.max_rate_hz.is_none()
         && p.max_age.is_none()
         && p.on_violation.is_none()
+        && qos.is_none()
         && !state
         && !required
     {
@@ -212,7 +227,7 @@ fn sub_contract(node_fqn: &str, p: &EndpointProps) -> Option<model::SubContract>
         max_age_ms: p.max_age.map(|d| d.as_millis_f64()),
         state,
         required,
-        qos: None,
+        qos,
         on_violation: p
             .on_violation
             .as_ref()
@@ -235,6 +250,8 @@ fn qos_contract(q: &QosDecl) -> model::Qos {
         depth: q.depth,
         lifespan_ms: q.lifespan.map(|d| d.as_millis_f64() as u64),
         liveliness: q.liveliness.clone(),
+        deadline_ms: q.deadline.map(|d| d.as_millis_f64()),
+        lease_duration_ms: q.lease_duration.map(|d| d.as_millis_f64()),
     }
 }
 
@@ -830,21 +847,33 @@ pub fn build_system_model(
     }
 
     // --- contracts: endpoints (from each scope's node declarations) -------
+    // Endpoint ref → the declared QoS of the topic it is wired to, so the
+    // lowered endpoint QoS is the EFFECTIVE one (topic default overlaid with
+    // the endpoint's own), the same overlay `qos-match` checks.
+    let topic_qos_of: BTreeMap<String, QosDecl> = index
+        .topics
+        .values()
+        .flat_map(|t| {
+            t.publishers
+                .iter()
+                .chain(t.subscribers.iter())
+                .filter_map(|r| t.qos.clone().map(|q| (r.clone(), q)))
+                .collect::<Vec<_>>()
+        })
+        .collect();
     for m in index.manifests.values() {
         for (name, decl) in &m.manifest.nodes {
             let node_fqn = resolve_node_ref(&structure.nodes, &fqn(&m.ns, name));
             for (ep, props) in &decl.publishers {
-                if let Some(c) = pub_contract(props) {
-                    contracts
-                        .pub_endpoints
-                        .insert(format!("{node_fqn}/{ep}"), c);
+                let ep_ref = format!("{node_fqn}/{ep}");
+                if let Some(c) = pub_contract(props, topic_qos_of.get(&ep_ref)) {
+                    contracts.pub_endpoints.insert(ep_ref, c);
                 }
             }
             for (ep, props) in &decl.subscribers {
-                if let Some(c) = sub_contract(&node_fqn, props) {
-                    contracts
-                        .sub_endpoints
-                        .insert(format!("{node_fqn}/{ep}"), c);
+                let ep_ref = format!("{node_fqn}/{ep}");
+                if let Some(c) = sub_contract(&node_fqn, props, topic_qos_of.get(&ep_ref)) {
+                    contracts.sub_endpoints.insert(ep_ref, c);
                 }
             }
             for (ep, props) in &decl.srv {
@@ -896,6 +925,84 @@ pub fn build_system_model(
                 &|t| t.to_string(),
             ),
         );
+    }
+
+    // Phase 74 — the contract's QoS reaches the running node. `rclcpp`
+    // accepts `qos_overrides.<topic>.<entity>.<policy>` parameters for the
+    // policies a node opted in to (`QosOverridingOptions`); the contract's
+    // deadline, liveliness and lease are exactly those policies, so they are
+    // written into the node's parameters HERE, on the model, where every
+    // spawn path (plain node, composable) already honours them. "Derive
+    // always, apply where accepted, report where it cannot be"
+    // (`contract-axes.md` §4): the applying is this, the reporting is `up`
+    // asking each node afterwards whether it declared them. A launch-file
+    // parameter of the same name wins — the author wrote it on purpose.
+    let mut derived_overrides = 0usize;
+    {
+        let topic_of: BTreeMap<&str, &str> = structure
+            .topics
+            .iter()
+            .flat_map(|(t, w)| {
+                w.publishers
+                    .iter()
+                    .chain(w.subscribers.iter())
+                    .map(move |r| (r.as_str(), t.as_str()))
+            })
+            .collect();
+        let mut planned: Vec<(String, String, model::ParamValue)> = Vec::new();
+        let mut plan = |ep_ref: &str, entity: &str, qos: &model::Qos| {
+            let Some(topic) = topic_of.get(ep_ref) else {
+                return;
+            };
+            let Some((node, _)) = ep_ref.rsplit_once('/') else {
+                return;
+            };
+            let key = |policy: &str| format!("qos_overrides.{topic}.{entity}.{policy}");
+            if let Some(ms) = qos.deadline_ms {
+                planned.push((node.to_string(), key("deadline"), model::ParamValue::Int((ms * 1e6) as i64)));
+            }
+            if let Some(ms) = qos.lease_duration_ms {
+                planned.push((
+                    node.to_string(),
+                    key("liveliness_lease_duration"),
+                    model::ParamValue::Int((ms * 1e6) as i64),
+                ));
+            }
+            if let Some(l) = &qos.liveliness {
+                planned.push((node.to_string(), key("liveliness"), model::ParamValue::Str(l.clone())));
+            }
+        };
+        for (ep_ref, c) in &contracts.pub_endpoints {
+            if let Some(q) = &c.qos {
+                plan(ep_ref, "publisher", q);
+            }
+        }
+        for (ep_ref, c) in &contracts.sub_endpoints {
+            if let Some(q) = &c.qos {
+                plan(ep_ref, "subscription", q);
+            }
+        }
+        for (node, key, value) in planned {
+            if let Some(inst) = structure.nodes.get_mut(&node)
+                && !inst.params.contains_key(&key)
+            {
+                // Both views: `params` is what readers index, `param_sources`
+                // is the ORDERED list a spawn actually renders (phase 54) —
+                // an entry in the map alone never reaches the node.
+                inst.param_sources.push(model::ParamSource::Inline {
+                    name: key.clone(),
+                    value: value.clone(),
+                });
+                inst.params.insert(key, value);
+                derived_overrides += 1;
+            }
+        }
+    }
+    if derived_overrides > 0 {
+        diagnostics.push(format!(
+            "{derived_overrides} QoS override parameter(s) derived from contract deadline/liveliness \
+             declarations (applied where the node opted in via QosOverridingOptions)"
+        ));
     }
 
     // Hazards (phase 71): guards already resolved to topic FQNs by the
