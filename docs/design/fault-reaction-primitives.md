@@ -382,6 +382,182 @@ files imply and nothing today performs.
 Eight keys, eight consumers, one closed set. `scripts/field_census.py --check`
 holds it.
 
+## 9. Real cases, and what they changed
+
+The design above was written from the standards. This section walks it past
+the people who would write the contracts, and records where it bent. Six
+amendments came out; they are folded into §2/§3 by reference here rather
+than rewriting the sections above, so the seam is visible.
+
+### 9.1 Autoware — sensor loss with redundancy
+
+The chain in §1.6 is real, but Autoware's decision is not per topic. The
+diagnostic graph is `and`/`or`: `pose_estimation` may hold if NDT **or**
+GNSS survives, and a dual-lidar rig loses obstacle detection only when
+**both** stop. `guards: [a, b]` as "any loss is the fault" is wrong for a
+redundant pair.
+
+**Amendment A — `guards` composes.** A list means any-of; an `all_of:` item
+means the fault is the loss of every member:
+
+```yaml
+guards:
+  - /planning/trajectory                      # any-of: losing this alone is the fault
+  - all_of: [/localization/ndt/pose, /localization/gnss/pose]
+```
+
+AADL EMV2 has the same shape (composite error behaviour over `1 ormore`
+/ `all`), and so does the diagnostic graph. FDTI of an `all_of` group is the
+slowest of its members' detectors — the fault is detected when the *last*
+survivor is noticed gone.
+
+### 9.2 Autoware — alive but wrong
+
+NDT diverges and keeps publishing at 10 Hz. `topic_state_monitor` sees
+nothing. What catches it is `localization_error_monitor`, a dedicated node
+that reads covariance and publishes a diagnostic. This is how every value
+fault in Autoware is detected: by an application node that inspects and
+*reports*. §1.3 declined value faults — correctly for us, but the design
+must still let a system that has such a detector name it.
+
+**Amendment B — `on: reported`.** A fourth member of the closed set. The
+guard is the detector's *output* topic and the fault is whatever that
+detector checks:
+
+```yaml
+hazards:
+  localization_diverged:
+    guards: [/localization/error_status]     # what localization_error_monitor publishes
+    on: reported
+```
+
+FDTI for `reported` = the detector's input period + its own path latency —
+both already declared or derived. We never inspect a value; we account for
+the node that does. This turns "value faults are out of scope" into "value
+faults are detected by a node you declare like any other", which is what
+ISO 26262 means by a safety mechanism anyway.
+
+### 9.3 Autoware — the reaction fails
+
+`mrm_emergency_stop_operator` crashes mid-stop, or its command stream to
+`vehicle_cmd_gate` stalls. Autoware's answer is a second layer: the gate has
+its own `system_emergency_heartbeat_timeout: 0.5s` and applies
+`emergency_acceleration: -2.4` itself. Who watches the watcher is a real
+question and the design had no rule for it.
+
+**Amendment C — a reaction's output is a guard too.** `reaction-unguarded`
+(warning): the sink topic of a hazard's reaction path has no subscriber
+declaring an `on_violation`. And the fallback is written as what it is —
+another hazard whose guard is the first reaction's output:
+
+```yaml
+hazards:
+  mrm_stalled:
+    guards: [/system/emergency/control_cmd]   # the MRM's own output
+    ftti: 700ms
+    reaction: gate.emergency
+```
+
+The arithmetic nests: worst case is FDTI₁ + FRTI₁'s failure detected in
+FDTI₂ + FRTI₂. `fault-reaction-budget` on `mrm_stalled` checks the second
+layer on its own; the first layer's budget is unchanged. No new key.
+
+### 9.4 Autoware — graded reactions
+
+`mrm_handler` chooses between `pull_over`, `comfortable_stop` and
+`emergency_stop` by what the diagnostic graph says is still available. One
+`reaction:` per hazard cannot say that. This is **modes**, deferred in
+`contract-axes.md` §3.3, and the diagnostic graph is a mode graph.
+
+**Ruling: one reaction per hazard in this design, the most conservative
+one.** The budget must hold for the worst reaction the system may fall to;
+if emergency stop fits, the graded ones are refinements. Selection logic
+returns with modes. Recorded so it is not re-argued.
+
+### 9.5 Nav2 and every mobile base — the `cmd_vel` timeout
+
+The most common safety mechanism in ROS is not in any standard: the base
+driver stops the motors if `cmd_vel` goes silent (`ros2_control`
+`cmd_vel_timeout`, most vendor drivers, `nav2_velocity_smoother`'s
+`velocity_timeout`, `nav2_collision_monitor`'s `source_timeout`). And
+lifecycle nodes carry a `bond` heartbeat (4 s default) that the lifecycle
+manager reacts to by deactivating the system.
+
+This is `on_violation` exactly, and it validates the choice of putting the
+edge on the **subscriber**: the driver is the party that times out and
+reacts. The certified stop (ISO 13849 PLd, a safety laser scanner into a
+safety PLC, STO) is hardware and outside ROS; what the contract describes is
+the software layer above it, and FTTI there comes from the same stopping-
+distance calculation the PLd path used. Nothing to fold; a case that fits.
+
+### 9.6 ROS users who will never write `hazards:`
+
+Most ROS systems have no HARA and never will. What they *do* run is
+`diagnostic_updater`: `FrequencyStatus(min, max, tolerance, window)` and
+`TimeStampStatus(min_acceptable, max_acceptable)` on the topics that
+matter, feeding `diagnostic_aggregator`. That is alive supervision and age
+supervision, configured by hand, per node, in numbers that duplicate the
+contract's `min_rate_hz` / `max_rate_hz` / `max_age`.
+
+**Amendment D — a detector is a mechanism, and one of them is a
+consequence.** `on_violation.mechanism: qos | diagnostics | application`
+(closed; default `qos`) says *where the runtime observer reads the event*:
+the QoS event callback, the `/diagnostics` stream, or the reaction path's
+own trigger. And because `diagnostic_updater`'s parameters are the contract's
+endpoint bounds restated, they are **derivable** — `play_launch check
+--emit diagnostics-params` can print them the way `measure` prints
+`overrides:`. A consequence, never written by hand; the second entry in the
+`Consequence` list the field table pins (with `topics.<t>.rate_hz`), and
+it does not live in the contract at all.
+
+This is the adoption path for users without a safety process: they get
+generated `diagnostic_updater` parameters from bounds they already declare,
+and `hazards:` can come later or never.
+
+### 9.7 AUTOSAR Classic consumers
+
+A Tier-1 configures WdgM per SW-C: alive supervision over a reference
+cycle, expiry tolerance (`WdgMExpiredSupervisionCycleTol`) and a global
+reaction (reset, or a safe state through the safety manager). Three
+differences from us, none fatal:
+
+- **Their unit is the runnable checkpoint, ours the subscription.** For
+  nano-ros the two coincide (a callback); for rclcpp the subscription is
+  the finer of the two. Fine.
+- **Expiry tolerance delays the reaction**, which is `within` plus
+  `miss.tolerate` — both exist.
+- **Degraded reactions** (limp-home before reset) are §9.4 again: modes.
+
+What they would want and we can give: emit WdgM-shaped supervision config
+from the contract, the same way §9.6 emits `diagnostic_updater` parameters.
+Same consequence, different consumer. Not in this design's scope; the
+derivation is.
+
+### 9.8 AADL / avionics consumers
+
+An EMV2 user models error *flows*: sources, paths, sinks, and the
+propagation of a stale value through nodes that never detect it. Our derived
+route already gives the propagation (fan-out closure of a guard), and
+`criticality-from-hazards.md` propagates severity along it. What they would
+ask for — and this design provides without a key — is the **exposure inside
+FDTI**: every consumer downstream of a guard that acts on the data during
+the detection window. `check --explain` should list it per hazard, because
+"the planner keeps planning on a stale pose for 1.0 s" is the sentence a
+safety reviewer wants to read, and it is derivable today.
+
+### 9.9 What the cases did to the key count
+
+| amendment | keys | consumer |
+|---|---|---|
+| A `guards[].all_of` | 0 new keys (a shape) | FDTI derivation, `hazard-unguarded` |
+| B `on: reported` | 0 new keys (a set member) | FDTI derivation |
+| C `reaction-unguarded` | 0 | a rule |
+| D `on_violation.mechanism` | **+1** | runtime observer; `diagnostics-params` emission |
+| graded reactions | 0 — deferred to modes | — |
+| exposure listing | 0 | `check --explain` |
+
+Nine keys. The census holds.
+
 ## 8. Phase plan (71, proposed)
 
 - **W1 — vocabulary, additive.** Field table rows with `kind`, parse with
@@ -398,6 +574,9 @@ holds it.
 - **W4 — the Autoware slice**, as a contract in `tests/fixtures/autoware`,
   with the parameter-file numbers. The first `fault-reaction-budget` error on
   a real system is the deliverable.
+- **W5 — the adoption path.** `check --emit diagnostics-params`: generated
+  `diagnostic_updater` parameters from declared endpoint bounds (§9.6). The
+  first thing a user with no safety process gets from this work.
 - **Retirement:** none. Nothing here replaces an existing key.
 
 ## Sources
