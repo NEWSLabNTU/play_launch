@@ -9,7 +9,12 @@
 version: 1
 
 # Phase 71: the hazard the chain exists to prevent, and the one number that
-# turns the rate requirements below into a safety requirement. Detection is
+# turns the rate requirements below into a safety requirement. Phase 72
+# derives each node's criticality from it — lidar_driver FEEDS the guard,
+# obstacle_detector DETECTS, brake_controller REACTS, so all three are
+# ASIL_D — which is why no node below carries a `criticality:` label any
+# more: the three `high`s that used to be here were reported redundant by
+# `derivable-criticality`, and deleting them left the schedule byte-identical. Detection is
 # the lease on obstacle_detector's subscription; reaction is `safety.stop`'s
 # route plus the brake's settle. `just fault` kills the lidar mid-run and
 # compares the observed fault-to-brake time to what `check` derives.
@@ -24,7 +29,6 @@ hazards:
 
 nodes:
   lidar_driver:
-    criticality: high
     pub:
       scan:
         min_rate_hz: 50
@@ -46,7 +50,6 @@ nodes:
         max_latency: 2ms
 
   obstacle_detector:
-    criticality: high
     sub:
       scan:
         min_rate_hz: 50
@@ -73,7 +76,6 @@ nodes:
         max_latency: 2ms
 
   brake_controller:
-    criticality: high
     sub:
       obstacles:
         min_rate_hz: 50
