@@ -4,8 +4,8 @@ version: 1
 nodes:
   sensor:
     pub:
-      raw: { min_rate_hz: 10 }
-      aux: { min_rate_hz: 10 }
+      raw: {}
+      aux: {}
     paths:
       # A 10Hz clock boundary: 100ms of sampling jitter, whatever it costs.
       tick:
@@ -22,7 +22,7 @@ nodes:
       aux:
         min_rate_hz: 10
     pub:
-      fused: { min_rate_hz: 10 }
+      fused: {}
     paths:
       fuse:
         trigger: { input: [raw, aux] }
@@ -46,19 +46,16 @@ topics:
     type: std_msgs/msg/String
     pub: [sensor/raw]
     sub: [fuser/raw]
-    rate_hz: 10
     qos:
       lifespan: 50ms
   /s/aux:
     type: std_msgs/msg/String
     pub: [sensor/aux]
     sub: [fuser/aux]
-    rate_hz: 10
   /s/fused:
     type: std_msgs/msg/String
     external: sub
     pub: [fuser/fused]
-    rate_hz: 10
 
 paths:
   # The route crosses a 10Hz boundary, so it carries 100ms of sampling jitter

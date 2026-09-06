@@ -10,13 +10,18 @@
 # drain-toward-sink order control > filter). See
 # docs/superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md §1/§4
 # and 2026-07-17-chain-aware-mapper-design.md.
+# Every rate below the timer is a CONSEQUENCE (phase 70 W3): the 100 Hz
+# timer on `sensor_node.tick` is the one rate fact, and the graph derives
+# the topic rates and the publishers' promises from it. They used to be
+# written out (nine copies of `100`), the census reported each as
+# `derivable-*`, and this file now declares only what cannot be derived —
+# the subscribers' REQUIREMENTS, which are theirs to state.
 version: 1
 
 nodes:
   sensor_node:
     pub:
-      points_raw:
-        min_rate_hz: 100
+      points_raw: {}
     paths:
       tick:
         trigger: { timer: { rate_hz: 100 } }
@@ -27,8 +32,7 @@ nodes:
       points_raw:
         min_rate_hz: 100
     pub:
-      points_filtered:
-        min_rate_hz: 100
+      points_filtered: {}
     paths:
       filter:
         trigger: { input: [points_raw] }
@@ -45,8 +49,7 @@ nodes:
         min_rate_hz: 100
         max_age: 50ms
     pub:
-      cmd:
-        min_rate_hz: 100
+      cmd: {}
     paths:
       control:
         trigger: { input: [points_filtered] }
@@ -83,15 +86,12 @@ topics:
     type: std_msgs/msg/String
     pub: [sensor_node/points_raw]
     sub: [filter_component/points_raw]
-    rate_hz: 100
 
   /perception/points_filtered:
     type: std_msgs/msg/String
     pub: [filter_component/points_filtered]
     sub: [control_node/points_filtered]
-    rate_hz: 100
 
   /control/cmd:
     type: std_msgs/msg/String
     pub: [control_node/cmd]
-    rate_hz: 100

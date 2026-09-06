@@ -183,6 +183,24 @@ is **narrower than `chains:`'s was**: delete the derivable copies (the
 returns `Unknown`, and let the census say which is which. A blanket deletion
 would remove a fact, not a consequence.
 
+### W3 follow-through — taking the census's advice (2026-09-06)
+
+The 18 `derivable-*` copies in our own fixtures are deleted (`rt_workspace`,
+`contract_derived_chain`, `contract_w1d`; `contract_rates` keeps its two
+because they ARE the test for the infos). `rt_workspace`'s derived schedule
+is byte-identical before and after — the only diff is six infos gone.
+
+**And the deletion found a rule consuming the copy.** `sync-feasibility`
+went silent on `contract_w1d`: the per-manifest rule reads
+`topics.<t>.rate_hz` — the declared copy — never the derived rate, so
+following `derivable-rate`'s own advice turned a real warning off. That is
+the census's class of defect exactly (a consumer reading transport), found
+by doing what the tool said. The resolver now runs the same comparison on
+`derived_rate_hz` for any path with an input whose rate is derived but not
+declared; where every input is declared the per-manifest rule has already
+spoken. Corpus after: 15 authored topic rates, 1 agree, 3 disagree (all in
+fixtures that say so), 11 underivable.
+
 ## W4 — the leftovers, closed (2026-09-06)
 
 - **The `kind` column.** `Kind::{Meta, Fact, Requirement, ByEndpoint,

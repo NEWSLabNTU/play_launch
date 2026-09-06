@@ -735,6 +735,7 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // implies.
     derive_and_check_topic_rates(index, &graph);
     derive_and_check_endpoint_rates(index, &graph);
+    check_sync_feasibility_on_derived_rates(index);
 
     // A service server's promised response time, against the blocking its own
     // declarations imply.
@@ -891,6 +892,97 @@ fn derive_and_check_topic_rates(
             });
         }
     }
+}
+
+/// `sync-feasibility` on DERIVED rates.
+///
+/// The manifest crate's rule of the same name reads `topics.<t>.rate_hz` — the
+/// declared copy — so deleting that copy where the graph derives it (which is
+/// what `derivable-rate` tells an author to do) silenced the rule on
+/// `contract_w1d`. A rule that consumes the copy rather than the fact is the
+/// census's own class of defect, found by taking the census's advice.
+///
+/// This is the same comparison, fed from `derived_rate_hz`, and it runs only
+/// for a path where at least one input topic has NO declared rate — where
+/// every input rate is declared the per-manifest rule has already spoken, and
+/// saying it twice would be the duplicate the rule's own note warns about.
+fn check_sync_feasibility_on_derived_rates(index: &mut ManifestIndex) {
+    use ros_launch_manifest_types::{EffectiveTrigger, SyncPolicy};
+
+    // Subscriber endpoint ref -> (topic fqn, declared rate, derived rate).
+    let mut sub_topic: HashMap<String, (String, Option<f64>, Option<f64>)> = HashMap::new();
+    for (fqn, t) in &index.topics {
+        for sub_ref in &t.subscribers {
+            sub_topic.insert(sub_ref.clone(), (fqn.clone(), t.rate_hz, t.derived_rate_hz));
+        }
+    }
+
+    let mut diags: Vec<Diagnostic> = Vec::new();
+    for np in &index.node_paths {
+        let Some(sync) = &np.path.sync else {
+            continue;
+        };
+        let EffectiveTrigger::Input(endpoints) = np.path.effective_trigger() else {
+            continue;
+        };
+        let mut rates: Vec<f64> = Vec::new();
+        let mut any_derived = false;
+        for ep in &endpoints {
+            let Some((_, declared, derived)) = sub_topic.get(&format!("{}/{ep}", np.node_fqn)) else {
+                continue;
+            };
+            match (declared, derived) {
+                (Some(r), _) => rates.push(*r),
+                (None, Some(r)) => {
+                    rates.push(*r);
+                    any_derived = true;
+                }
+                (None, None) => {}
+            }
+        }
+        if !any_derived {
+            continue;
+        }
+        let Some(slowest) = rates.iter().cloned().reduce(f64::min) else {
+            continue;
+        };
+        if slowest <= 0.0 {
+            continue;
+        }
+        let period_ms = 1000.0 / slowest;
+        let (field, window) = match sync.policy {
+            SyncPolicy::Exact | SyncPolicy::Approximate => {
+                let Some(w) = sync.max_interval.map(|d| d.as_millis_f64()) else {
+                    continue;
+                };
+                ("sync.max_interval", w)
+            }
+            SyncPolicy::TimeoutAny => {
+                let Some(w) = sync.timeout.map(|d| d.as_millis_f64()) else {
+                    continue;
+                };
+                ("sync.timeout", w)
+            }
+        };
+        if window < period_ms {
+            diags.push(Diagnostic {
+                rule_id: "sync-feasibility".to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "path '{}' on {} declares {field} ({window:.2}ms) below the slowest \
+                     input's period ({period_ms:.2}ms, from the {slowest:.4} Hz the graph \
+                     derives for it) — the window can never span that input. The rate is \
+                     derived, not declared: deleting the declared copy must not silence \
+                     this check",
+                    np.path_name, np.node_fqn,
+                ),
+                path: format!("nodes.{}.paths.{}.sync", np.node_fqn, np.path_name),
+                span: None,
+            });
+        }
+    }
+    diags.sort_by(|a, b| a.path.cmp(&b.path));
+    index.merge_diagnostics.extend(diags);
 }
 
 /// The second derivable copy (phase 70 W3): a publisher's `min_rate_hz`.

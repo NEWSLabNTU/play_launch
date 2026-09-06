@@ -586,6 +586,19 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-06**: **The census's advice, taken — and it found a rule reading
+  the copy.** The 18 `derivable-rate`/`derivable-min-rate` copies in our own
+  fixtures are deleted (`rt_workspace`, `contract_derived_chain`,
+  `contract_w1d`; `contract_rates` keeps two as the test). `rt_workspace`'s
+  derived schedule is byte-identical. But `sync-feasibility` went SILENT on
+  `contract_w1d`: the per-manifest rule reads `topics.<t>.rate_hz` — the
+  declared copy — so deleting it where `derivable-rate` said to turned a
+  real warning off. Exactly the census's class of defect (a consumer that
+  reads transport), found by following the tool's own advice. The resolver
+  now runs the same comparison on `derived_rate_hz`
+  (`check_sync_feasibility_on_derived_rates`), only where an input's rate
+  is derived but not declared, so the two never double-report.
+
 - **2026-09-06**: Phase 70 W5 — **the jitter vocabulary verified on a
   running system.** `jitter-range` and `measure`'s floor were checked only
   by unit tests, and `rt_av_demo` could not be the oracle: a fixed `burn_ms`
