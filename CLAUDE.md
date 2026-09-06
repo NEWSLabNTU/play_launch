@@ -586,6 +586,31 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-07**: Phase 75 — **operational modes**, the axis deferred in
+  phases 67, 68 and 71 (manifest `v0.1.32` → **`v0.1.33`**). `functions.<f>`
+  names a guard group; `modes.<m>` carries `requires` (fact), `fallback`
+  (the ordered ladder), `reaction` and `overrides`. A hazard's `reaction:`
+  may name a MODE, and then the ladder IS the reaction — phase 71's
+  single-path form is the one-rung case, byte-identical. Three rules:
+  `ladder-rung-budget` (each rung against the ftti in its own right — a
+  graded reaction is a promise, not just a step toward the floor),
+  `ladder-unterminated` (**a last rung requiring something the hazard's own
+  guards remove is not a floor**), `mode-requires-unguarded`.
+  `modes.<m>.overrides` is `contract-axes.md` §3.3's mitigation cashed in:
+  every requirement keeps ONE value where declared, and a mode pins another
+  by naming its contract path — no scalar becomes a map, so no reader
+  changes. **A defect the good fixture caught at once**: override targets
+  are dotted and scope-path names contain dots (`safety.stop`), so
+  positional splitting fired `override-target-missing` on a CORRECT
+  contract; the target is now read section-from-front, field-from-back.
+  Runtime: `mode-availability` once per transition
+  (`mode 'driving': LOST — falling to 'stopped'`, observed in `just
+  fault`), and `terminal_reaction_path` shared with `measure`, which
+  otherwise read a mode-shaped reaction as no reaction at all. **Autoware**:
+  the real four-mode ladder proves `comfortable_stop` cannot cover a 2 s
+  interval (500 + 4000 = 4500 ms) that the emergency floor beneath it can.
+  Roadmap: `docs/roadmap/phase-75-operational-modes.md`.
+
 - **2026-09-06**: Phase 74 — **the contract's QoS reaches the running
   node** (manifest `v0.1.31` → **`v0.1.32`**). `contract-axes.md` §4 ruled
   "derive always, apply where accepted, report where it cannot be" and

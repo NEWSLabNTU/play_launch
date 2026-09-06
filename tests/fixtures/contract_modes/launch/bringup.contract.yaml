@@ -1,0 +1,119 @@
+# Phase 71 — fault detection and reaction, fitting its budget.
+#
+# The one authored number is `ftti`. Detection (FDTI) is derived from the
+# guard's detectors: obstacle_detector subscribes to /safety/scan with a
+# 100ms liveliness lease and REACTS, so the fault is noticed within 100ms.
+# Reaction (FRTI) is the derived route of `safety.stop` (declare_lost 2ms +
+# emergency_stop 5ms, no clock boundary crossed) plus the plant's settle
+# (200ms). 100 + 7 + 200 = 307ms, inside 500ms.
+#
+# The reaction's sink (/safety/brake_cmd) is deliberately NOT guarded, so
+# `reaction-unguarded` warns: who watches the watcher.
+version: 1
+
+# Phase 75 — a function is a named guard group; a mode is the functions it
+# requires plus the ladder to fall to. The hazard's reaction names a MODE,
+# so the ladder IS the reaction: `degraded` is checked in its own right by
+# `ladder-rung-budget`, and `stopped` — the floor, requiring nothing the
+# fault can remove — is what `fault-reaction-budget` measures.
+functions:
+  perception: [/safety/scan]
+
+modes:
+  driving:
+    description: full speed, obstacle detection live
+    requires: [perception]
+    fallback: [degraded, stopped]
+  degraded:
+    requires: [perception]
+    reaction: safety.stop
+    # In degraded mode the chain may take longer: the override pins a value
+    # over the scalar declared on the path, which stays a scalar.
+    overrides:
+      paths:
+        safety.stop: { max_latency: 200ms }
+  stopped:
+    requires: []
+    reaction: safety.stop
+
+hazards:
+  drive_blind:
+    severity: ASIL_D
+    description: vehicle continues with no obstacle data
+    guards: [perception]          # the function, by name
+    on: omission
+    ftti: 500ms
+    reaction: driving             # a MODE: take its ladder
+
+nodes:
+  lidar_driver:
+    pub:
+      scan: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [scan]
+        max_latency: 2ms
+
+  obstacle_detector:
+    sub:
+      scan:
+        min_rate_hz: 50
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms }
+        on_violation:
+          on: [omission]
+          reaction: declare_lost
+          within: 10ms
+    pub:
+      obstacles: {}
+    paths:
+      detect:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 12ms
+      declare_lost:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 2ms
+
+  brake_controller:
+    criticality: high          # what ASIL_D on drive_blind already derives -> derivable-criticality
+    sub:
+      obstacles:
+        max_age: 60ms
+        on_violation:
+          on: [late, omission]
+          reaction: emergency_stop
+          within: 20ms
+    pub:
+      brake_cmd: {}
+    paths:
+      brake:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 8ms
+      emergency_stop:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 5ms
+        safe_state: { emits: brake_cmd, settle: 200ms }
+
+paths:
+  safety.stop:
+    trigger: { input: [/safety/scan] }
+    output: [/safety/brake_cmd]
+    max_latency: 100ms
+
+topics:
+  /safety/scan:
+    type: std_msgs/msg/String
+    pub: [lidar_driver/scan]
+    sub: [obstacle_detector/scan]
+  /safety/obstacles:
+    type: std_msgs/msg/String
+    pub: [obstacle_detector/obstacles]
+    sub: [brake_controller/obstacles]
+  /safety/brake_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [brake_controller/brake_cmd]

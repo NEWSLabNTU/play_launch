@@ -1,6 +1,6 @@
 # Operational modes — the axis deferred three times
 
-Status: design, **proposed** (2026-09-06). Answers `contract-axes.md` §3.3
+Status: design, **implemented** as phase 75 (2026-09-07; `docs/roadmap/phase-75-operational-modes.md`). One correction made during implementation is recorded there: a dotted override target cannot be split positionally, because names contain dots. Originally proposed 2026-09-06. Answers `contract-axes.md` §3.3
 (deferred with a mitigation) and open question 7 ("do modes belong in the
 contract at all?"). Supersedes phase 71 §9.4's ruling that a hazard has one
 reaction.

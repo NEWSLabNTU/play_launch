@@ -225,6 +225,15 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 75** — ✅ operational modes, the axis deferred three times. A
+    function is a named guard group, a mode is what it requires plus an
+    ordered fallback ladder, and per-mode requirement values are `overrides:`
+    over scalars that stay scalars. A hazard's `reaction` may name a mode:
+    every rung is checked in its own right, the last rung must survive the
+    fault, and `fault-reaction-budget` measures the floor. On Autoware,
+    `comfortable_stop` is proved unable to cover a 2 s interval the
+    emergency floor can. Live: `mode 'driving': LOST — falling to 'stopped'`.
+    [phase-75-operational-modes.md](./phase-75-operational-modes.md).
   - **Phase 74** — ✅ the contract's QoS reaches the running node. Deadline,
     liveliness and lease become `qos_overrides` parameters on the model,
     applied where the node opted in, verified by VALUE afterwards. Three

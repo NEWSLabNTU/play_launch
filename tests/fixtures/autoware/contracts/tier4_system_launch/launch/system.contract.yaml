@@ -14,6 +14,28 @@
 # nothing until now.
 version: 1
 
+# Phase 75 — Autoware's diagnostic graph, as functions and modes. Its three
+# layers ARE this shape: diag units are topics, `and`/`or` function units are
+# guard groups, and the `/autoware/modes/*` units are modes over them.
+# `mrm_handler` walks a fixed ladder at runtime; here the ladder is declared,
+# and every rung is checked in its own right.
+functions:
+  operation_mode_availability: [/system/operation_mode/availability]
+
+modes:
+  autonomous:
+    description: full autonomy
+    requires: [operation_mode_availability]
+    fallback: [comfortable_stop, emergency_stop]
+  comfortable_stop:
+    # A graded reaction: slower, and checked against the same interval as
+    # the floor — which is the whole point of `ladder-rung-budget`.
+    requires: [operation_mode_availability]
+    reaction: system.comfortable_stop
+  emergency_stop:
+    requires: []
+    reaction: system.emergency_stop
+
 hazards:
   mode_unavailable:
     severity: ASIL_D
@@ -21,7 +43,7 @@ hazards:
     guards: [/system/operation_mode/availability]
     on: omission
     ftti: 2s
-    reaction: system.emergency_stop
+    reaction: autonomous          # a MODE: the ladder is the reaction
   mode_unavailable_tight:
     description: the same chain against a 1.5 s interval, which it cannot meet
     guards: [/system/operation_mode/availability]
@@ -30,6 +52,14 @@ hazards:
     reaction: system.emergency_stop
 
 paths:
+  # The comfortable-stop route: the MRM operator's slower behaviour, through
+  # the same handler and gate. 110 (handler) + 34 (operator) + 100 (gate) is
+  # the emergency route; comfortable stop decelerates over ~4 s, so its own
+  # settle dominates and the rung cannot make a 2 s interval.
+  system.comfortable_stop:
+    trigger: { input: [/system/operation_mode/availability] }
+    output: [/planning/scenario_planning/max_velocity_candidates]
+    max_latency: 4s
   system.emergency_stop:
     trigger: { input: [/system/operation_mode/availability] }
     output: [/control/command/control_cmd]

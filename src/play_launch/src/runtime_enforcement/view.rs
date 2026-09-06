@@ -48,6 +48,21 @@ pub struct ContractView {
     pub scope_paths: Vec<ScopePathView>,
     /// Hazards to watch live (phase 73).
     pub hazards: Vec<HazardWatch>,
+    /// Modes to derive availability for (phase 75).
+    pub modes: Vec<ModeWatch>,
+}
+
+/// One mode, as the live observer needs it (phase 75): the topic groups it
+/// requires and the ladder it falls to.
+#[derive(Debug, Clone, Default)]
+pub struct ModeWatch {
+    pub key: String,
+    /// Each entry is one required function: its member topics, and whether
+    /// it is lost only when EVERY member is (`all_of`).
+    pub requires: Vec<(Vec<String>, bool)>,
+    /// Fallback rungs, in order, as `(mode key, its requires)` — enough to
+    /// pick the first still-available rung without a second lookup.
+    pub fallback: Vec<String>,
 }
 
 /// A hazard as the live observer needs it (phase 73): which topics going
@@ -68,6 +83,26 @@ pub struct HazardWatch {
     pub silence_ms: Option<f64>,
     /// A reacting subscriber reports through `/diagnostics`.
     pub via_diagnostics: bool,
+}
+
+/// The scope path a hazard's `reaction:` finally reaches (phase 75).
+///
+/// A reaction naming a scope path IS that path — phase 71's form. One
+/// naming a MODE walks its `fallback` ladder and takes the last rung's
+/// `reaction`, because that rung is the floor the system is guaranteed to
+/// reach. Every consumer that asks "what topic does the reaction command?"
+/// has to go through this, or a mode-shaped reaction reads as no reaction
+/// at all — which is exactly what `measure` reported the first time.
+pub fn terminal_reaction_path(contracts: &model::Contracts, reaction: &str) -> Option<String> {
+    let Some(mode) = contracts.modes.get(reaction) else {
+        return Some(reaction.to_string());
+    };
+    let last = mode.fallback.last()?;
+    contracts
+        .modes
+        .get(last)
+        .and_then(|m| m.reaction.clone())
+        .or_else(|| Some(last.clone()))
 }
 
 impl ContractView {
@@ -211,6 +246,26 @@ impl ContractView {
                 via_diagnostics,
             });
         }
+        for m in &index.modes {
+            let requires = m
+                .decl
+                .requires
+                .iter()
+                .map(|r| {
+                    index
+                        .functions
+                        .iter()
+                        .find(|f| f.scope_id == m.scope_id && &f.name == r)
+                        .map(|f| (f.group.members.clone(), f.group.all_of))
+                        .unwrap_or_else(|| (vec![super::qualify("", r)], false))
+                })
+                .collect();
+            view.modes.push(ModeWatch {
+                key: m.name.clone(),
+                requires,
+                fallback: m.decl.fallback.clone(),
+            });
+        }
         view
     }
 
@@ -219,6 +274,8 @@ impl ContractView {
     /// time), so no bare-name fallback is needed here.
     pub fn from_model(m: &model::SystemModel) -> Self {
         let mut view = ContractView::default();
+        let m_modes = m.contracts.modes.clone();
+        let m_functions = m.contracts.functions.clone();
 
         for (fqn, w) in &m.structure.topics {
             let contract = m.contracts.topics.get(fqn);
@@ -264,7 +321,8 @@ impl ContractView {
             let sinks: Vec<String> = h
                 .reaction
                 .as_ref()
-                .and_then(|r| m.contracts.scope_paths.get(r))
+                .and_then(|r| terminal_reaction_path(&m.contracts, r))
+                .and_then(|r| m.contracts.scope_paths.get(&r))
                 .map(|p| p.output.clone())
                 .unwrap_or_default();
             let settle_ms = m
@@ -317,6 +375,23 @@ impl ContractView {
                 settle_ms,
                 silence_ms,
                 via_diagnostics,
+            });
+        }
+        for (key, m) in &m_modes {
+            let requires = m
+                .requires
+                .iter()
+                .map(|r| {
+                    m_functions
+                        .get(r)
+                        .map(|f| (f.members.clone(), f.all_of))
+                        .unwrap_or_else(|| (vec![r.clone()], false))
+                })
+                .collect();
+            view.modes.push(ModeWatch {
+                key: key.clone(),
+                requires,
+                fallback: m.fallback.clone(),
             });
         }
         view

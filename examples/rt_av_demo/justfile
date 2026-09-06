@@ -405,6 +405,13 @@ fault:
     if len(applied) < 2:
         sys.exit("FAIL: the contract's QoS was not applied to both nodes (see run.log for [qos-override])")
     print(f"contract QoS applied and verified by value on {len(applied)} nodes")
+    # Phase 75 — the mode transition the ladder predicts, observed live.
+    modes = [x for x in live if x["rule_id"] == "mode-availability"]
+    if not modes:
+        sys.exit("FAIL: no mode-availability event; the ladder was never taken")
+    print("mode transition:", modes[0]["message"])
+    if "falling to" not in modes[0]["message"]:
+        sys.exit(f"FAIL: the ladder named no rung: {modes[0]['message']}")
     if abs(float(r) - observed) > 5.0:
         sys.exit(f"FAIL: live ({r}) and post-hoc ({observed}) reaction times disagree")
     print("fault-reaction vocabulary verified on a running system, live and after the fact.")

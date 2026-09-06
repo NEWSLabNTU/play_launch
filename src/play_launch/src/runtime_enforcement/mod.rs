@@ -149,6 +149,11 @@ pub struct RuleEngine {
     view: Arc<ContractView>,
     /// Phase 73 — live fault detection and reaction, one per hazard.
     hazards: Vec<HazardRuntime>,
+    /// Phase 75 — which guarded topics are currently silent, and which modes
+    /// have already been reported lost (so a transition reports once, not
+    /// once per event).
+    silent_topics: std::collections::HashSet<String>,
+    modes_lost: std::collections::HashSet<String>,
     mode: EnforceMode,
     /// Map topic_hash → resolved FQN, built from the manifest index at
     /// startup so we don't have to hash on every event.
@@ -234,6 +239,8 @@ impl RuleEngine {
                 .iter()
                 .map(|_| HazardRuntime::default())
                 .collect(),
+            silent_topics: std::collections::HashSet::new(),
+            modes_lost: std::collections::HashSet::new(),
             view,
             mode,
             topic_hash_to_fqn,
@@ -1047,6 +1054,95 @@ impl RuleEngine {
         for (rule, sev, key, msg) in pending {
             self.emit_repeatable(rule, sev, key, msg, event.monotonic_ns);
         }
+        self.recheck_modes(event.monotonic_ns);
+    }
+
+    /// Phase 75 — derive mode availability from the guards that are silent.
+    ///
+    /// A function is lost when its group is (every member for `all_of`, any
+    /// member otherwise); a mode is lost when a function it requires is. The
+    /// ladder is walked in order and the first still-available rung is what
+    /// the system falls to — the selection `mrm_handler` makes at runtime,
+    /// reported here against the contract that predicted it.
+    ///
+    /// Reported once per transition: a 50 Hz guard would otherwise emit the
+    /// same line fifty times a second.
+    fn recheck_modes(&mut self, ts: u64) {
+        if self.view.modes.is_empty() {
+            return;
+        }
+        // Which guarded topics are silent, from the hazards' own state — the
+        // observer already tracks exactly this, per guard.
+        let silent: std::collections::HashSet<String> = self
+            .hazards
+            .iter()
+            .filter_map(|rt| rt.fault.as_ref().map(|(g, _)| g.clone()))
+            .collect();
+        if silent == self.silent_topics {
+            return;
+        }
+        self.silent_topics = silent;
+
+        let lost = |w: &crate::runtime_enforcement::view::ModeWatch,
+                    silent: &std::collections::HashSet<String>| {
+            w.requires.iter().any(|(members, all_of)| {
+                if *all_of {
+                    members.iter().all(|t| silent.contains(t))
+                } else {
+                    members.iter().any(|t| silent.contains(t))
+                }
+            })
+        };
+        let mut pending: Vec<(Severity, String, String, bool)> = Vec::new();
+        for w in &self.view.modes {
+            let is_lost = lost(w, &self.silent_topics);
+            if is_lost == self.modes_lost.contains(&w.key) {
+                continue;
+            }
+            if is_lost {
+                let rung = w.fallback.iter().find(|name| {
+                    self.view
+                        .modes
+                        .iter()
+                        .find(|m| &m.key == *name)
+                        .is_some_and(|m| !lost(m, &self.silent_topics))
+                });
+                let (sev, to) = match rung {
+                    Some(r) => (Severity::Warning, format!("falling to '{r}'")),
+                    None if w.fallback.is_empty() => {
+                        (Severity::Warning, "no fallback ladder declared".to_string())
+                    }
+                    None => (
+                        Severity::Error,
+                        format!(
+                            "NO rung of [{}] is available either — the ladder has no floor left",
+                            w.fallback.join(", ")
+                        ),
+                    ),
+                };
+                pending.push((
+                    sev,
+                    w.key.clone(),
+                    format!("mode '{}': LOST — {to}", w.key),
+                    true,
+                ));
+            } else {
+                pending.push((
+                    Severity::Warning,
+                    w.key.clone(),
+                    format!("mode '{}': available again", w.key),
+                    false,
+                ));
+            }
+        }
+        for (sev, key, msg, now_lost) in pending {
+            self.emit_repeatable("mode-availability".to_string(), sev, key.clone(), msg, ts);
+            if now_lost {
+                self.modes_lost.insert(key);
+            } else {
+                self.modes_lost.remove(&key);
+            }
+        }
     }
 
     /// Judge silence. A dead guard produces no event, so this runs on the
@@ -1109,6 +1205,7 @@ impl RuleEngine {
         for (rule, sev, key, msg) in pending {
             self.emit_repeatable(rule, sev, key, msg, now_ns);
         }
+        self.recheck_modes(now_ns);
     }
 
     /// Resolve `topic_hash` → FQN string. Falls back to `(unknown hash 0x…)`
@@ -2056,6 +2153,89 @@ mod tests {
         // The tick does not report it a second time.
         re.tick(1_300_000_000);
         assert_eq!(re.violation_count, 2);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Phase 75: a silent guard makes its function lost, which makes every
+    /// mode requiring it lost, and the ladder names the rung that is still
+    /// available. Reported once per transition, and cleared on recovery.
+    #[test]
+    fn a_lost_function_loses_its_modes_and_names_the_rung() {
+        use crate::{
+            interception::{EventKind, InterceptionEvent},
+            runtime_enforcement::view::{HazardWatch, ModeWatch, TopicView},
+        };
+        let mut view = ContractView::default();
+        view.topics.insert(
+            "/safety/scan".to_string(),
+            TopicView {
+                msg_type: "x".into(),
+                ..Default::default()
+            },
+        );
+        view.hazards.push(HazardWatch {
+            key: "drive_blind".into(),
+            guards: vec!["/safety/scan".into()],
+            sinks: vec![],
+            ftti_ms: Some(500.0),
+            settle_ms: None,
+            silence_ms: Some(100.0),
+            via_diagnostics: false,
+        });
+        view.modes.push(ModeWatch {
+            key: "driving".into(),
+            requires: vec![(vec!["/safety/scan".into()], false)],
+            fallback: vec!["stopped".into()],
+        });
+        view.modes.push(ModeWatch {
+            key: "stopped".into(),
+            requires: vec![],
+            fallback: vec![],
+        });
+        let tmp = std::env::temp_dir().join(format!("play_launch_modes_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Warn, &tmp);
+        let scan = fnv1a(b"/safety/scan");
+        let pubev = |t: u64, stamp: u32| InterceptionEvent {
+            kind: EventKind::Publish,
+            _pad: [0; 3],
+            topic_hash: scan,
+            stamp_sec: 1,
+            stamp_nanosec: stamp,
+            handle: 1,
+            monotonic_ns: t,
+            cpu_ns: 0,
+            tid: 1,
+            _pad2: [0; 4],
+        };
+        for i in 0..10u64 {
+            re.observe(&pubev(1_000_000_000 + i * 20_000_000, 100 + i as u32));
+        }
+        let last = 1_000_000_000 + 9 * 20_000_000;
+        assert_eq!(re.violation_count, 0);
+        re.tick(last + 150_000_000);
+        // hazard-detected + mode-availability for `driving`. `stopped`
+        // requires nothing, so it is never lost and never reported.
+        assert_eq!(re.violation_count, 2);
+        re.flush();
+        let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(
+            log.contains("mode 'driving': LOST — falling to 'stopped'"),
+            "{log}"
+        );
+        assert!(
+            !log.contains("mode 'stopped'"),
+            "a mode requiring nothing is never lost: {log}"
+        );
+        // Idempotent: a second tick reports nothing new.
+        re.tick(last + 300_000_000);
+        assert_eq!(re.violation_count, 2);
+        // The guard resumes: hazard-recovered + mode available again.
+        re.observe(&pubev(last + 400_000_000, 999));
+        assert_eq!(re.violation_count, 4);
+        re.flush();
+        let log = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(log.contains("mode 'driving': available again"), "{log}");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

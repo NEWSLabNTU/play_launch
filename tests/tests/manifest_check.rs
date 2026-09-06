@@ -1069,3 +1069,32 @@ fn contract_qos_becomes_qos_override_parameters_on_the_model() {
     assert!(model.contains("lease_duration_ms: 100.0"), "{model}");
     let _ = std::fs::remove_file(&out_path);
 }
+
+/// Phase 75: functions and modes on a contract that fits — the ladder
+/// resolves, the terminal rung is what the budget measures, and no mode
+/// rule fires on a correct declaration.
+#[test]
+fn modes_resolve_and_a_correct_ladder_is_quiet() {
+    let out = check_fixture("contract_modes");
+    assert!(out.contains("fault-reaction-budget"), "{out}");
+    assert!(out.contains("fits the fault-tolerant time interval"), "{out}");
+    for rule in ["ladder-unterminated", "ladder-rung-budget", "mode-requires-unguarded", "override-target-missing"] {
+        assert!(!out.contains(rule), "`{rule}` must not fire on a correct contract:\n{out}");
+    }
+}
+
+/// And the four mode rules on a contract built to break each one.
+#[test]
+fn mode_rules_fire_on_a_broken_ladder() {
+    let out = check_fixture("contract_modes_bad");
+    for needle in [
+        "error[ladder-unterminated]",
+        "there is no floor",
+        "error[ladder-rung-budget]",
+        "rung 'degraded'",
+        "error[mode-requires-unguarded]",
+        "error[override-target-missing]",
+    ] {
+        assert!(out.contains(needle), "expected `{needle}` on contract_modes_bad:\n{out}");
+    }
+}

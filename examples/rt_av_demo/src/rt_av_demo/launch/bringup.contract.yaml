@@ -18,14 +18,31 @@ version: 1
 # the lease on obstacle_detector's subscription; reaction is `safety.stop`'s
 # route plus the brake's settle. `just fault` kills the lidar mid-run and
 # compares the observed fault-to-brake time to what `check` derives.
+# Phase 75 — the mode the chain runs in, and the one it falls to. `driving`
+# needs perception; losing it takes the ladder to `stopped`, whose reaction
+# is the same safe state the hazard already names. One rung, so the
+# arithmetic is phase 71's — what modes add here is the transition the
+# observer reports while the system runs.
+functions:
+  perception: [/safety/scan]
+
+modes:
+  driving:
+    description: the chain is live
+    requires: [perception]
+    fallback: [stopped]
+  stopped:
+    requires: []
+    reaction: safety.stop
+
 hazards:
   drive_blind:
     severity: ASIL_D
     description: vehicle continues with no obstacle data
-    guards: [/safety/scan]
+    guards: [perception]
     on: omission
     ftti: 500ms
-    reaction: safety.stop
+    reaction: driving
 
 nodes:
   lidar_driver:

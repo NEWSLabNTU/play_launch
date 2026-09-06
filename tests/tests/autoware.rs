@@ -303,6 +303,14 @@ fn test_autoware_mrm_chain_fault_reaction_budget() {
         plain.contains("hazard 'mode_unavailable_tight'") && plain.contains("1944.00ms exceeds"),
         "{plain}"
     );
+    // Phase 75 — `mode_unavailable`'s reaction is the `autonomous` MODE, so
+    // the ladder is the reaction: `comfortable_stop` is checked in its own
+    // right (it decelerates over ~4 s and cannot make the 2 s interval),
+    // while `emergency_stop`, the floor, is what the budget above measures.
+    assert!(
+        plain.contains("error[ladder-rung-budget]") && plain.contains("rung 'comfortable_stop'"),
+        "a graded rung must be checked in its own right:\n{plain}"
+    );
 }
 
 fn strip_ansi(s: &str) -> String {

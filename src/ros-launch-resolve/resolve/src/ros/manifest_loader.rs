@@ -241,6 +241,22 @@ pub struct ResolvedScopePath {
     pub path: ros_launch_manifest_types::PathDecl,
 }
 
+/// A mode with its references resolved (phase 75).
+#[derive(Debug, Clone)]
+pub struct ResolvedMode {
+    pub scope_id: usize,
+    pub name: String,
+    pub decl: ros_launch_manifest_types::ModeDecl,
+}
+
+/// A named guard group (phase 75), members qualified by the scope namespace.
+#[derive(Debug, Clone)]
+pub struct ResolvedFunction {
+    pub scope_id: usize,
+    pub name: String,
+    pub group: ros_launch_manifest_types::GuardGroup,
+}
+
 /// A hazard with its guard topics resolved to FQNs (phase 71).
 #[derive(Debug, Clone)]
 pub struct ResolvedHazard {
@@ -289,6 +305,10 @@ impl DerivedCriticality {
 pub struct ManifestIndex {
     /// Hazards, one entry per declaration (phase 71).
     pub hazards: Vec<ResolvedHazard>,
+    /// Named guard groups (phase 75).
+    pub functions: Vec<ResolvedFunction>,
+    /// Operational modes (phase 75).
+    pub modes: Vec<ResolvedMode>,
     /// Node FQN → criticality derived from hazards (phase 72). Absent means
     /// no hazard reaches the node, and its declared label — if any — stands.
     pub derived_criticality: BTreeMap<String, DerivedCriticality>,
@@ -1236,6 +1256,117 @@ fn walk_reaction(
     best
 }
 
+/// Resolve a hazard's `reaction:` to the ladder of `(mode, scope path)`
+/// rungs it selects, ending at the terminal one (phase 75).
+///
+/// A reaction naming a scope path is a ONE-RUNG ladder — phase 71's form,
+/// unchanged. A reaction naming a mode walks its `fallback` in order; every
+/// rung must carry its own `reaction:` path, and the last must require
+/// nothing the hazard can take away, or there is no floor.
+#[allow(clippy::type_complexity)]
+fn resolve_ladder(
+    h: &ResolvedHazard,
+    reaction_name: &str,
+    modes: &[ResolvedMode],
+    diags: &mut Vec<Diagnostic>,
+    at: &str,
+) -> Option<(Vec<(String, String)>, String)> {
+    let mode_of = |name: &str| {
+        modes
+            .iter()
+            .find(|m| m.scope_id == h.scope_id && m.name == name)
+    };
+    let Some(top) = mode_of(reaction_name) else {
+        // Not a mode: the reaction is a scope path, one rung.
+        return Some((
+            vec![(reaction_name.to_string(), reaction_name.to_string())],
+            reaction_name.to_string(),
+        ));
+    };
+    let mut rungs: Vec<(String, String)> = Vec::new();
+    let mut last_requires: Vec<String> = Vec::new();
+    for name in &top.decl.fallback {
+        let Some(m) = mode_of(name) else {
+            diags.push(Diagnostic {
+                rule_id: "reaction-unreachable".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "hazard '{}': mode '{reaction_name}' falls back to '{name}', which is not a \
+                     mode in its scope",
+                    h.name
+                ),
+                path: format!("{at}.reaction"),
+                span: None,
+            });
+            return None;
+        };
+        let Some(path) = &m.decl.reaction else {
+            diags.push(Diagnostic {
+                rule_id: "reaction-unreachable".to_string(),
+                severity: Severity::Error,
+                message: format!(
+                    "hazard '{}': fallback rung '{name}' declares no `reaction:` path, so falling \
+                     to it reaches no safe state",
+                    h.name
+                ),
+                path: format!("{at}.reaction"),
+                span: None,
+            });
+            return None;
+        };
+        rungs.push((name.clone(), path.clone()));
+        last_requires = m.decl.requires.clone();
+    }
+    let Some((_, terminal)) = rungs.last().cloned() else {
+        diags.push(Diagnostic {
+            rule_id: "ladder-unterminated".to_string(),
+            severity: Severity::Error,
+            message: format!(
+                "hazard '{}': mode '{reaction_name}' has no `fallback:` ladder, so losing it \
+                 reaches no safe state",
+                h.name
+            ),
+            path: format!("{at}.reaction"),
+            span: None,
+        });
+        return None;
+    };
+    // The floor must survive the fault. A last rung that requires anything
+    // this hazard guards is not a floor: losing the guard takes the whole
+    // ladder with it.
+    let guarded: HashSet<&str> = h
+        .guards
+        .iter()
+        .flat_map(|g| g.members.iter().map(String::as_str))
+        .collect();
+    let named: HashSet<&str> = h
+        .decl
+        .guards
+        .iter()
+        .flat_map(|g| g.members.iter().map(String::as_str))
+        .collect();
+    let doomed: Vec<&str> = last_requires
+        .iter()
+        .map(String::as_str)
+        .filter(|r| guarded.contains(r) || named.contains(r))
+        .collect();
+    if !doomed.is_empty() {
+        diags.push(Diagnostic {
+            rule_id: "ladder-unterminated".to_string(),
+            severity: Severity::Error,
+            message: format!(
+                "hazard '{}': the last fallback rung requires {doomed:?}, which this hazard's own \
+                 guards can take away — there is no floor. The bottom of a ladder must require \
+                 nothing the fault can remove",
+                h.name
+            ),
+            path: format!("{at}.reaction"),
+            span: None,
+        });
+    }
+    Some((rungs, terminal))
+}
+
 /// Phase 71 rules. Everything numeric here is DERIVED from facts the contract
 /// already carries; the only authored number is the hazard's `ftti`.
 fn check_fault_reaction(
@@ -1249,6 +1380,7 @@ fn check_fault_reaction(
     let topics = index.topics.clone();
     let node_paths = index.node_paths.clone();
     let scope_paths = index.scope_paths.clone();
+    let modes = index.modes.clone();
 
     // --- per-subscriber: the reaction edge must name a real path that the
     //     subscription triggers, and its budget must fit `within`.
@@ -1456,16 +1588,65 @@ fn check_fault_reaction(
             }
             continue;
         };
+        // Phase 75 — the reaction may name a MODE, and then the ladder is
+        // the reaction. Every rung is checked in its own right
+        // (`ladder-rung-budget`); the LAST rung is what
+        // `fault-reaction-budget` measures, because it is the floor the
+        // system is guaranteed to reach. Phase 71's single-path form is the
+        // one-rung case, unchanged.
+        let Some((rungs, terminal)) = resolve_ladder(h, reaction_name, &modes, &mut diags, &at)
+        else {
+            continue;
+        };
+        for (rung_name, rung_path) in rungs.iter().take(rungs.len().saturating_sub(1)) {
+            let Some(rp) = scope_paths
+                .iter()
+                .find(|p| p.scope_id == h.scope_id && &p.path_name == rung_path)
+            else {
+                continue;
+            };
+            let sinks: HashSet<&str> = rp.output_topics.iter().map(String::as_str).collect();
+            let guards: Vec<String> = h.guards.iter().flat_map(|g| g.members.clone()).collect();
+            let route = walk_reaction(&guards, &sinks, &topics, &node_paths, graph)
+                .map(|w| (w.route_ms, w.settle_ms))
+                .or_else(|| rp.path.max_latency.map(|d| (d.as_millis_f64(), None)));
+            let (Some((route_ms, settle)), Some(ftti), Some((fdti, _))) = (
+                route,
+                h.decl.ftti.map(|d| d.as_millis_f64()),
+                fdti_worst.clone(),
+            ) else {
+                continue;
+            };
+            let total = fdti + route_ms + settle.unwrap_or(0.0);
+            if total > ftti {
+                diags.push(Diagnostic {
+                    rule_id: "ladder-rung-budget".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "hazard '{}': fallback rung '{rung_name}' cannot make the \
+                         fault-tolerant time interval — detection {fdti:.2}ms + reaction \
+                         {route_ms:.2}ms + settle {:.2}ms = {total:.2}ms against {ftti:.2}ms. A \
+                         graded reaction is a promise in its own right, not only a step on the \
+                         way to the floor",
+                        h.name,
+                        settle.unwrap_or(0.0)
+                    ),
+                    path: format!("{at}.reaction"),
+                    span: None,
+                });
+            }
+        }
+
         let Some(reaction) = scope_paths
             .iter()
-            .find(|p| p.scope_id == h.scope_id && &p.path_name == reaction_name)
+            .find(|p| p.scope_id == h.scope_id && p.path_name == terminal)
         else {
             diags.push(Diagnostic {
                 rule_id: "reaction-unreachable".to_string(),
                 severity: Severity::Error,
                 message: format!(
-                    "hazard '{}' names reaction '{reaction_name}', which is not a scope path in \
-                     its scope",
+                    "hazard '{}' names reaction '{terminal}', which is not a scope path in its \
+                     scope",
                     h.name
                 ),
                 path: format!("{at}.reaction"),
@@ -1629,8 +1810,173 @@ fn check_fault_reaction(
         }
     }
 
+    check_modes(index, graph, &mut diags);
+
     diags.sort_by(|a, b| a.path.cmp(&b.path).then(a.rule_id.cmp(&b.rule_id)));
     index.merge_diagnostics.extend(diags);
+}
+
+/// Phase 75 mode rules that do not depend on a hazard.
+///
+/// - **`mode-requires-unguarded`**: a mode requires a function no subscriber
+///   of which declares an `on_violation`. Nothing would notice the function
+///   was lost, so the mode can never be declared unavailable and the ladder
+///   below it can never be taken — a mode that cannot fall is not a mode.
+/// - **`override-target-missing`**: a `modes.<m>.overrides` entry naming no
+///   requirement that exists. An override pins a value over a declaration;
+///   with none it pins nothing and would be silently ignored.
+fn check_modes(
+    index: &ManifestIndex,
+    graph: &super::manifest_graph::GlobalDataflowGraph,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for m in &index.modes {
+        let at = format!("modes.{}", m.name);
+        let ns = index
+            .manifests
+            .get(&m.scope_id)
+            .map(|r| r.ns.clone())
+            .unwrap_or_default();
+        for req in &m.decl.requires {
+            let members: Vec<String> = index
+                .functions
+                .iter()
+                .find(|f| f.scope_id == m.scope_id && &f.name == req)
+                .map(|f| f.group.members.clone())
+                .unwrap_or_else(|| vec![qualify_name(&ns, req)]);
+            let watched = members.iter().any(|t| {
+                index.topics.get(t).is_some_and(|topic| {
+                    topic.subscribers.iter().any(|s| {
+                        split_endpoint_ref_for_check(s).is_some_and(|(n, e)| {
+                            graph
+                                .nodes
+                                .get(&n)
+                                .and_then(|nn| nn.subscribers.get(&e))
+                                .is_some_and(|p| p.on_violation.is_some())
+                        })
+                    })
+                })
+            });
+            if !watched {
+                diags.push(Diagnostic {
+                    rule_id: "mode-requires-unguarded".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "mode '{}' requires '{req}', but no subscriber of it declares an \
+                         `on_violation` — nothing would notice it lost, so this mode can never \
+                         be declared unavailable and the ladder below it can never be taken",
+                        m.name
+                    ),
+                    path: format!("{at}.requires"),
+                    span: None,
+                });
+            }
+        }
+        for ov in &m.decl.overrides {
+            if !override_target_exists(index, m.scope_id, &ov.target) {
+                diags.push(Diagnostic {
+                    rule_id: "override-target-missing".to_string(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "mode '{}' overrides '{}', which is not a requirement this contract \
+                         declares. An override pins a value over a declaration; with none it \
+                         pins nothing and would be silently ignored",
+                        m.name, ov.target
+                    ),
+                    path: format!("{at}.overrides"),
+                    span: None,
+                });
+            }
+        }
+    }
+}
+
+/// Does `target` (a dotted contract path like `paths.<n>.max_latency` or
+/// `nodes.<n>.sub.<e>.min_rate_hz`) name a requirement this scope's manifest
+/// declares?
+///
+/// Checked against the DECLARATION, not the merged index: an override pins a
+/// value over what an author wrote, so the author's own file is where the
+/// target must exist.
+fn override_target_exists(index: &ManifestIndex, scope_id: usize, target: &str) -> bool {
+    let Some(m) = index.manifests.get(&scope_id) else {
+        return false;
+    };
+    // A NAME may contain dots — scope paths in this corpus are called
+    // `safety.stop`, `system.emergency_stop` — so the target cannot be split
+    // into fixed positions. Read the section off the front and the field off
+    // the back; whatever is between is the name, dots and all. Splitting
+    // positionally reported the good case as missing, which is the shape of
+    // this mistake: a rule that fires on a correct contract.
+    let Some((section, rest)) = target.split_once('.') else {
+        return false;
+    };
+    let Some((middle, field)) = rest.rsplit_once('.') else {
+        return false;
+    };
+    match section {
+        "paths" => m
+            .manifest
+            .paths
+            .get(middle)
+            .is_some_and(|p| path_field_declared(p, field)),
+        "topics" => m.manifest.topics.get(middle).is_some_and(|t| match field {
+            "rate_hz" => t.rate_hz.is_some(),
+            "max_transport" => t.max_transport.is_some(),
+            _ => false,
+        }),
+        "nodes" => {
+            // `<node>.<pub|sub|paths>.<name>`: the infix is the only fixed
+            // token, and a node name may hold dots as readily as a path.
+            for infix in ["pub", "sub", "paths"] {
+                let pat = format!(".{infix}.");
+                let Some(at) = middle.rfind(&pat) else {
+                    continue;
+                };
+                let node = &middle[..at];
+                let name = &middle[at + pat.len()..];
+                let Some(n) = m.manifest.nodes.get(node) else {
+                    continue;
+                };
+                return match infix {
+                    "paths" => n
+                        .paths
+                        .get(name)
+                        .is_some_and(|p| path_field_declared(p, field)),
+                    "pub" => n
+                        .publishers
+                        .get(name)
+                        .is_some_and(|e| endpoint_field_declared(e, field)),
+                    _ => n
+                        .subscribers
+                        .get(name)
+                        .is_some_and(|e| endpoint_field_declared(e, field)),
+                };
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn path_field_declared(p: &ros_launch_manifest_types::PathDecl, field: &str) -> bool {
+    match field {
+        "max_latency" => p.max_latency.is_some(),
+        "min_latency" => p.min_latency.is_some(),
+        "max_jitter" => p.max_jitter.is_some(),
+        "tolerance" => p.tolerance.is_some(),
+        _ => false,
+    }
+}
+
+fn endpoint_field_declared(e: &ros_launch_manifest_types::EndpointProps, field: &str) -> bool {
+    match field {
+        "min_rate_hz" => e.min_rate_hz.is_some(),
+        "max_rate_hz" => e.max_rate_hz.is_some(),
+        "max_age" => e.max_age.is_some(),
+        "max_transport" => e.max_transport.is_some(),
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1680,7 +2026,12 @@ fn derive_criticality_from_hazards(
             .get(&h.scope_id)
             .filter(|m| !m.manifest.severity_levels.is_empty())
             .map(|m| m.manifest.severity_levels.clone())
-            .unwrap_or_else(|| DEFAULT_SEVERITY_SCALE.iter().map(|s| s.to_string()).collect());
+            .unwrap_or_else(|| {
+                DEFAULT_SEVERITY_SCALE
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect()
+            });
         let Some(rank) = scale.iter().position(|s| s.eq_ignore_ascii_case(level)) else {
             diags.push(Diagnostic {
                 rule_id: "severity-unknown".to_string(),
@@ -1802,7 +2153,8 @@ fn derive_criticality_from_hazards(
                     d.role,
                     d.hazard,
                     d.level,
-                    bucket.map_or("no criticality".to_string(), |b| format!("{b:?}").to_lowercase())
+                    bucket.map_or("no criticality".to_string(), |b| format!("{b:?}")
+                        .to_lowercase())
                 ),
                 path: format!("nodes.{node}.criticality"),
                 span: None,
@@ -3300,17 +3652,59 @@ fn resolve_scope_paths(manifest: &Manifest, scope: &ScopeEntry, index: &mut Mani
 /// Resolve hazard declarations: guard topics are topic names, relative or
 /// absolute, qualified the way scope-path ends are.
 fn resolve_hazards(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
-    for (name, decl) in &manifest.hazards {
-        let guards = decl
-            .guards
-            .iter()
-            .map(|g| ros_launch_manifest_types::GuardGroup {
-                members: g
+    use ros_launch_manifest_types::GuardGroup;
+
+    for (name, group) in &manifest.functions {
+        index.functions.push(ResolvedFunction {
+            scope_id: scope.id,
+            name: name.clone(),
+            group: GuardGroup {
+                members: group
                     .members
                     .iter()
                     .map(|t| qualify_name(&scope.ns, t))
                     .collect(),
-                all_of: g.all_of,
+                all_of: group.all_of,
+            },
+        });
+    }
+    for (name, decl) in &manifest.modes {
+        index.modes.push(ResolvedMode {
+            scope_id: scope.id,
+            name: name.clone(),
+            decl: decl.clone(),
+        });
+    }
+
+    for (name, decl) in &manifest.hazards {
+        // A guard is a topic OR the name of a function declared in this
+        // scope (phase 75). Resolved here rather than at parse time: the
+        // parser sees one manifest, this sees the scope.
+        let guards = decl
+            .guards
+            .iter()
+            .map(|g| {
+                if !g.all_of
+                    && g.members.len() == 1
+                    && let Some(f) = manifest.functions.get(&g.members[0])
+                {
+                    return GuardGroup {
+                        members: f
+                            .members
+                            .iter()
+                            .map(|t| qualify_name(&scope.ns, t))
+                            .collect(),
+                        all_of: f.all_of,
+                    };
+                }
+                GuardGroup {
+                    members: g
+                        .members
+                        .iter()
+                        .map(|t| qualify_name(&scope.ns, t))
+                        .collect(),
+                    all_of: g.all_of,
+                }
             })
             .collect();
         index.hazards.push(ResolvedHazard {

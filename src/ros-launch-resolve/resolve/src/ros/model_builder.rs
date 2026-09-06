@@ -169,7 +169,10 @@ fn pub_contract(p: &EndpointProps, topic_qos: Option<&QosDecl>) -> Option<model:
 /// The endpoint's effective QoS (topic default overlaid with the endpoint's
 /// own), lowered — `None` when neither side declares anything. Phase 74:
 /// this is what `up` applies to the node and what the live observer reads.
-fn effective_qos(topic_qos: Option<&QosDecl>, endpoint_qos: Option<&QosDecl>) -> Option<model::Qos> {
+fn effective_qos(
+    topic_qos: Option<&QosDecl>,
+    endpoint_qos: Option<&QosDecl>,
+) -> Option<model::Qos> {
     if topic_qos.is_none() && endpoint_qos.is_none() {
         return None;
     }
@@ -959,7 +962,11 @@ pub fn build_system_model(
             };
             let key = |policy: &str| format!("qos_overrides.{topic}.{entity}.{policy}");
             if let Some(ms) = qos.deadline_ms {
-                planned.push((node.to_string(), key("deadline"), model::ParamValue::Int((ms * 1e6) as i64)));
+                planned.push((
+                    node.to_string(),
+                    key("deadline"),
+                    model::ParamValue::Int((ms * 1e6) as i64),
+                ));
             }
             if let Some(ms) = qos.lease_duration_ms {
                 planned.push((
@@ -969,7 +976,11 @@ pub fn build_system_model(
                 ));
             }
             if let Some(l) = &qos.liveliness {
-                planned.push((node.to_string(), key("liveliness"), model::ParamValue::Str(l.clone())));
+                planned.push((
+                    node.to_string(),
+                    key("liveliness"),
+                    model::ParamValue::Str(l.clone()),
+                ));
             }
         };
         for (ep_ref, c) in &contracts.pub_endpoints {
@@ -1003,6 +1014,38 @@ pub fn build_system_model(
             "{derived_overrides} QoS override parameter(s) derived from contract deadline/liveliness \
              declarations (applied where the node opted in via QosOverridingOptions)"
         ));
+    }
+
+    // Functions and modes (phase 75), keyed the way scope paths are.
+    for f in &index.functions {
+        contracts.functions.insert(
+            fqn(&scope_key(Some(f.scope_id)), &f.name),
+            model::GuardContract {
+                members: f.group.members.clone(),
+                all_of: f.group.all_of,
+            },
+        );
+    }
+    for m in &index.modes {
+        let key = |n: &str| fqn(&scope_key(Some(m.scope_id)), n);
+        contracts.modes.insert(
+            key(&m.name),
+            model::ModeContract {
+                description: m.decl.description.clone(),
+                requires: m.decl.requires.iter().map(|r| key(r)).collect(),
+                fallback: m.decl.fallback.iter().map(|r| key(r)).collect(),
+                reaction: m.decl.reaction.as_ref().map(|r| key(r)),
+                overrides: m
+                    .decl
+                    .overrides
+                    .iter()
+                    .map(|o| model::ModeOverrideContract {
+                        target: o.target.clone(),
+                        value: o.value.clone(),
+                    })
+                    .collect(),
+            },
+        );
     }
 
     // Hazards (phase 71): guards already resolved to topic FQNs by the
