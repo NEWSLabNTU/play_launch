@@ -811,6 +811,12 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
     // against the hazard's FTTI.
     check_fault_reaction(index, &graph);
 
+    // Phase 75 W3's second half: the requirement checks again, once per
+    // mode that pins different values. LAST, and outside `check_fault_reaction`
+    // — it re-runs that function on a probe, and calling it from inside would
+    // recurse until the stack ran out.
+    check_each_mode(index);
+
     // Phase 72: criticality is a consequence of the hazards that reach a
     // node. Derived here; `sched_derive` reads it before any label.
     derive_criticality_from_hazards(index, &graph);
@@ -1814,6 +1820,258 @@ fn check_fault_reaction(
 
     diags.sort_by(|a, b| a.path.cmp(&b.path).then(a.rule_id.cmp(&b.rule_id)));
     index.merge_diagnostics.extend(diags);
+}
+
+/// Re-run the requirement checks once per mode whose `overrides:` pin
+/// different values, and report what only that mode breaks (phase 75 W3).
+///
+/// A mode's overrides are not decoration: `max_latency: 200ms` in a degraded
+/// mode is a DIFFERENT contract, and the arithmetic that clears the default
+/// one says nothing about it. Until now the override was parsed, lowered and
+/// its target validated — and never applied to anything.
+///
+/// The pass clones the index, applies the mode's overrides to both the
+/// declaration and the resolved copies the checks actually read, re-runs
+/// them, and DIFFS against the default run. Only diagnostics the mode
+/// introduces are reported, tagged with it: one a mode fixes is the point of
+/// a relaxation, and one both share has already been reported once.
+///
+/// A mode with no overrides is skipped — its requirements are the defaults,
+/// and re-running would report every default finding a second time.
+fn check_each_mode(index: &mut ManifestIndex) {
+    let modes: Vec<ResolvedMode> = index
+        .modes
+        .iter()
+        .filter(|m| !m.decl.overrides.is_empty())
+        .cloned()
+        .collect();
+    if modes.is_empty() {
+        return;
+    }
+    // The default verdict, as a set of (rule, path, message) — the message
+    // is included because a rule can fire on one path with different numbers
+    // and the numbers are what a mode changes.
+    let baseline: HashSet<(String, String, String)> = index
+        .merge_diagnostics
+        .iter()
+        .map(|d| (d.rule_id.clone(), d.path.clone(), d.message.clone()))
+        .collect();
+
+    let mut extra: Vec<Diagnostic> = Vec::new();
+    for m in &modes {
+        let mut probe = index.clone();
+        probe.merge_diagnostics.clear();
+        let applied = apply_mode_overrides(&mut probe, m.scope_id, &m.decl.overrides);
+        if applied == 0 {
+            continue; // every target missing; `override-target-missing` said so
+        }
+        // The same requirement checks, on the modified contract.
+        let graph = super::manifest_graph::build_global_graph(&probe);
+        check_scope_path_critical_path(&mut probe, &graph);
+        check_sync_window_budget(&mut probe);
+        check_cross_scope_rate_hierarchy(&mut probe, &graph);
+        check_lifespan_against_age(&mut probe, &graph);
+        check_fault_reaction(&mut probe, &graph);
+
+        for d in probe.merge_diagnostics {
+            let key = (d.rule_id.clone(), d.path.clone(), d.message.clone());
+            if baseline.contains(&key) {
+                continue;
+            }
+            extra.push(Diagnostic {
+                rule_id: format!("mode:{}", d.rule_id),
+                severity: d.severity,
+                message: format!("in mode '{}': {}", m.name, d.message),
+                path: d.path,
+                span: None,
+            });
+        }
+    }
+    extra.sort_by(|a, b| a.path.cmp(&b.path).then(a.rule_id.cmp(&b.rule_id)));
+    index.merge_diagnostics.extend(extra);
+}
+
+/// Apply a mode's overrides to a cloned index, returning how many landed.
+///
+/// Both halves are written: the DECLARATION in `manifests[scope]`, which the
+/// per-manifest checker and `override_target_exists` read, and the RESOLVED
+/// copies in `node_paths` / `scope_paths` / `topics`, which every cross-scope
+/// check reads. Writing only the first would apply nothing where it matters —
+/// the same shape as phase 74's overrides that never left the model.
+fn apply_mode_overrides(
+    index: &mut ManifestIndex,
+    scope_id: usize,
+    overrides: &[ros_launch_manifest_types::ModeOverride],
+) -> usize {
+    use ros_launch_manifest_types::duration::Duration;
+
+    let mut applied = 0usize;
+    for ov in overrides {
+        // An override pins a value OVER a declaration. Where there is none,
+        // `override-target-missing` has already said so, and applying it
+        // anyway would give one override two answers: rejected by the rule,
+        // honoured by the arithmetic — and a mode-tagged finding about a
+        // requirement the author never wrote.
+        if !override_target_exists(index, scope_id, &ov.target) {
+            continue;
+        }
+        let Some((section, rest)) = ov.target.split_once('.') else {
+            continue;
+        };
+        let Some((middle, field)) = rest.rsplit_once('.') else {
+            continue;
+        };
+        let dur = || ov.value.parse::<Duration>().ok();
+        let num = || ov.value.parse::<f64>().ok();
+
+        match section {
+            "paths" => {
+                if let Some(m) = index.manifests.get_mut(&scope_id)
+                    && let Some(p) = m.manifest.paths.get_mut(middle)
+                    && set_path_field(p, field, &dur)
+                {
+                    applied += 1;
+                }
+                for sp in index
+                    .scope_paths
+                    .iter_mut()
+                    .filter(|p| p.scope_id == scope_id && p.path_name == middle)
+                {
+                    set_path_field(&mut sp.path, field, &dur);
+                }
+            }
+            "topics" => {
+                let fqn = {
+                    let ns = index
+                        .manifests
+                        .get(&scope_id)
+                        .map(|m| m.ns.clone())
+                        .unwrap_or_default();
+                    qualify_name(&ns, middle)
+                };
+                if let Some(m) = index.manifests.get_mut(&scope_id)
+                    && let Some(t) = m.manifest.topics.get_mut(middle)
+                {
+                    match field {
+                        "rate_hz" => {
+                            if let Some(v) = num() {
+                                t.rate_hz = Some(v);
+                                applied += 1;
+                            }
+                        }
+                        "max_transport" => {
+                            if let Some(v) = dur() {
+                                t.max_transport = Some(v);
+                                applied += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(t) = index.topics.get_mut(&fqn) {
+                    match field {
+                        "rate_hz" => t.rate_hz = num(),
+                        "max_transport" => t.max_transport_ms = dur().map(|d| d.as_millis_f64()),
+                        _ => {}
+                    }
+                }
+            }
+            "nodes" => {
+                for infix in ["paths", "pub", "sub"] {
+                    let pat = format!(".{infix}.");
+                    let Some(at) = middle.rfind(&pat) else {
+                        continue;
+                    };
+                    let (node, name) = (&middle[..at], &middle[at + pat.len()..]);
+                    let ns = index
+                        .manifests
+                        .get(&scope_id)
+                        .map(|m| m.ns.clone())
+                        .unwrap_or_default();
+                    let node_fqn = qualify_name(&ns, node);
+                    if let Some(m) = index.manifests.get_mut(&scope_id)
+                        && let Some(n) = m.manifest.nodes.get_mut(node)
+                    {
+                        let hit = match infix {
+                            "paths" => n
+                                .paths
+                                .get_mut(name)
+                                .is_some_and(|p| set_path_field(p, field, &dur)),
+                            "pub" => n
+                                .publishers
+                                .get_mut(name)
+                                .is_some_and(|e| set_endpoint_field(e, field, &dur, &num)),
+                            _ => n
+                                .subscribers
+                                .get_mut(name)
+                                .is_some_and(|e| set_endpoint_field(e, field, &dur, &num)),
+                        };
+                        if hit {
+                            applied += 1;
+                        }
+                    }
+                    if infix == "paths" {
+                        for np in index
+                            .node_paths
+                            .iter_mut()
+                            .filter(|p| p.node_fqn == node_fqn && p.path_name == name)
+                        {
+                            set_path_field(&mut np.path, field, &dur);
+                        }
+                    }
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    applied
+}
+
+fn set_path_field(
+    p: &mut ros_launch_manifest_types::PathDecl,
+    field: &str,
+    dur: &dyn Fn() -> Option<ros_launch_manifest_types::duration::Duration>,
+) -> bool {
+    let Some(v) = dur() else {
+        return false;
+    };
+    match field {
+        "max_latency" => p.max_latency = Some(v),
+        "min_latency" => p.min_latency = Some(v),
+        "max_jitter" => p.max_jitter = Some(v),
+        "tolerance" => p.tolerance = Some(v),
+        _ => return false,
+    }
+    true
+}
+
+fn set_endpoint_field(
+    e: &mut ros_launch_manifest_types::EndpointProps,
+    field: &str,
+    dur: &dyn Fn() -> Option<ros_launch_manifest_types::duration::Duration>,
+    num: &dyn Fn() -> Option<f64>,
+) -> bool {
+    match field {
+        "min_rate_hz" => match num() {
+            Some(v) => e.min_rate_hz = Some(v),
+            None => return false,
+        },
+        "max_rate_hz" => match num() {
+            Some(v) => e.max_rate_hz = Some(v),
+            None => return false,
+        },
+        "max_age" => match dur() {
+            Some(v) => e.max_age = Some(v),
+            None => return false,
+        },
+        "max_transport" => match dur() {
+            Some(v) => e.max_transport = Some(v),
+            None => return false,
+        },
+        _ => return false,
+    }
+    true
 }
 
 /// Phase 75 mode rules that do not depend on a hazard.

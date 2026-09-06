@@ -50,6 +50,33 @@ taken — a mode that cannot fall is not a mode.
 requirement. Checked against the **declaration**, not the merged index: an
 override pins a value over what an author wrote.
 
+**The checker runs per mode.** For each mode whose `overrides:` pin
+different values, the pass clones the index, applies them to **both** the
+declaration and the resolved copies the cross-scope checks actually read,
+re-runs the requirement checks (critical path, sync budget, rate hierarchy,
+lifespan-age, fault reaction) and **diffs against the default run**. Only
+what the mode introduces is reported, tagged `mode:<rule>` and `in mode
+'<m>'`: a finding the mode *fixes* is the point of a relaxation, and one
+both share has been reported once already. A mode with no overrides is
+skipped — its requirements are the defaults.
+
+Two things this had to get right, and did not at first:
+
+- **The re-run must not be called from inside `check_fault_reaction`**,
+  which it re-runs on the probe. It was, and that recursion had no floor.
+  It now runs last, from the cross-scope driver.
+- **An override the rule rejects must not reach the arithmetic.**
+  `override-target-missing` says an override on an undeclared requirement
+  pins nothing; the apply set it anyway, so one override got two answers —
+  rejected by the rule and honoured by the checker, producing a mode-tagged
+  finding about a requirement the author never wrote. The apply is gated on
+  the same predicate now.
+
+Measured on the fixtures: `degraded` relaxes 100 ms to 200 ms and
+introduces nothing; `restricted` pins 20 ms below the derived route and is
+the only mode that fails, which is the entire reason to run the checks more
+than once.
+
 **A defect the good fixture found immediately.** The first
 `override-target-missing` fired on a *correct* contract. Targets are dotted,
 and scope-path names in this corpus contain dots (`safety.stop`,
@@ -111,6 +138,7 @@ mode transition   mode 'driving': LOST — falling to 'stopped'
 - **Commanded vs inferred mode.** `system_modes`'s central check needs the
   commanded mode from a stack-specific topic. The observer infers; nothing
   compares that to a command yet.
-- **The checker does not yet RUN per mode.** `overrides:` is parsed,
-  lowered, and its target validated; running the full rule set once per
-  mode with the override applied is the remaining half of W3.
+- **Only the requirement checks re-run per mode**, not the whole
+  per-manifest rule set (`qos-match`, `dangling-entity`, the causal DAG).
+  Those read structure, which an override cannot change; if an override
+  ever targets structure, this list grows with it.

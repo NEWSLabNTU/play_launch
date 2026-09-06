@@ -1081,6 +1081,10 @@ fn modes_resolve_and_a_correct_ladder_is_quiet() {
     for rule in ["ladder-unterminated", "ladder-rung-budget", "mode-requires-unguarded", "override-target-missing"] {
         assert!(!out.contains(rule), "`{rule}` must not fire on a correct contract:\n{out}");
     }
+    // W3's second half: `degraded` RELAXES the budget, so running the checks
+    // in that mode introduces nothing. A mode-tagged finding here would mean
+    // the per-mode pass reports what the default run already said.
+    assert!(!out.contains("[mode:"), "a relaxing override must introduce nothing:\n{out}");
 }
 
 /// And the four mode rules on a contract built to break each one.
@@ -1094,7 +1098,19 @@ fn mode_rules_fire_on_a_broken_ladder() {
         "rung 'degraded'",
         "error[mode-requires-unguarded]",
         "error[override-target-missing]",
+        // W3's second half: `restricted` TIGHTENS the budget below the
+        // derived route. The default contract's 100ms is fine, so only the
+        // per-mode run sees this — which is the whole reason to run them.
+        "warning[mode:scope-budget]",
+        "in mode 'restricted'",
     ] {
         assert!(out.contains(needle), "expected `{needle}` on contract_modes_bad:\n{out}");
     }
+    // An override the rule REJECTS must not reach the arithmetic: `stopped`
+    // pins a max_jitter the path never declares, and gets exactly one
+    // answer — the rejection — not a mode-tagged jitter finding too.
+    assert!(
+        !out.contains("in mode 'stopped'"),
+        "a rejected override must not be applied:\n{out}"
+    );
 }

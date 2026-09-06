@@ -609,7 +609,15 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   otherwise read a mode-shaped reaction as no reaction at all. **Autoware**:
   the real four-mode ladder proves `comfortable_stop` cannot cover a 2 s
   interval (500 + 4000 = 4500 ms) that the emergency floor beneath it can.
-  Roadmap: `docs/roadmap/phase-75-operational-modes.md`.
+  **The checker runs per mode**: for each mode whose `overrides:` differ,
+  the pass clones the index, applies them to the declaration AND the
+  resolved copies the checks read, re-runs the requirement checks and DIFFS
+  against the default — only what a mode introduces is reported
+  (`mode:<rule>`). Two corrections: the re-run must not be called from
+  inside the function it re-runs (that recursion had no floor), and an
+  override `override-target-missing` rejects must not reach the arithmetic,
+  or one override gets two answers. Roadmap:
+  `docs/roadmap/phase-75-operational-modes.md`.
 
 - **2026-09-06**: Phase 74 — **the contract's QoS reaches the running
   node** (manifest `v0.1.31` → **`v0.1.32`**). `contract-axes.md` §4 ruled

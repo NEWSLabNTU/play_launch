@@ -18,6 +18,9 @@ version: 1
 #     declares no on_violation -> mode-requires-unguarded
 #   * an override names a requirement nothing declares
 #                                                  -> override-target-missing
+#   * `restricted` pins a 20ms budget the derived route cannot meet; the
+#     default contract's 100ms is fine, so only the per-mode run sees it
+#                                                  -> mode:scope-budget
 #   * `degraded` is a rung whose own ROUTE cannot make the 500ms interval:
 #     it ends at /safety/status, reached through a 900ms path, while the
 #     floor `stopped` ends at /safety/brake_cmd in 7ms. Two rungs, two
@@ -38,10 +41,22 @@ modes:
     reaction: safety.stop
     overrides:
       paths:
-        safety.stop: { max_jitter: 5ms }   # the path declares no max_jitter
+        # The path declares no max_jitter, so this pins nothing: reported,
+        # and NOT applied — an override the rule rejects must not reach the
+        # arithmetic, or one declaration gets two answers.
+        safety.stop: { max_jitter: 5ms }
   blind_mode:
     requires: [/safety/brake_cmd]
     reaction: safety.stop
+  # A mode that TIGHTENS: 20ms is below the route the graph derives, so the
+  # requirement checks fail in this mode and pass in every other. That is
+  # the whole point of running them per mode.  -> mode:scope-budget
+  restricted:
+    requires: []
+    reaction: safety.stop
+    overrides:
+      paths:
+        safety.stop: { max_latency: 20ms }
 
 hazards:
   drive_blind:
