@@ -75,18 +75,26 @@ constraint deserves re-testing rather than inheriting.
 ```
 BACKEND                    VERDICT    CHILD REACHED          DETAIL
 ──────────────────────────────────────────────────────────────────────────
-rmw_cyclonedds_cpp         SEGV       —                      crashed - rerun under gdb
+rmw_cyclonedds_cpp         EXIT 134   —                      double free or corruption (out)
 rmw_fastrtps_cpp           PASS       entered spin()         clean through shutdown
+rmw_zenoh_cpp              PASS       entered spin()         clean through shutdown
 ```
 
 (`run_matrix.sh` output, verbatim. Cyclone reports no stage because the child
 dies before the parent's first report; the gdb invocation below names the frame.)
 
+**Two of the three work.** `rmw_zenoh_cpp` 0.1.9 behaves exactly as
+`rmw_fastrtps_cpp` does, on every axis measured — both children deliver, both
+cancel, shutdown returns, and a SIGSEGV kills only the child that raised it.
+It needs its router (`rmw_zenohd`) running, like any Zenoh deployment; that is
+unrelated to CLONE_VM, and a run without one fails in the ordinary way with
+`Unable to connect to a Zenoh router`.
+
 **FastRTPS works, completely.** The node is built in the parent (exactly as a
 container does), the child spins it, the parent publishes, the child's callback
 fires, `cancel()` brings the child home, `rclcpp::shutdown()` returns. Exit 0.
 
-**CycloneDDS segfaults**, and the stack names the reason precisely:
+**CycloneDDS dies**, and the stack names the reason precisely:
 
 ```
 #0  _dl_tlsdesc_dynamic ()              at ../sysdeps/aarch64/dl-tlsdesc.S:164
@@ -107,10 +115,19 @@ descriptor rather than a fixed offset; resolving it walks the DTV of the calling
 thread. The DTV in a `_dl_allocate_tls()` block is not in a state that resolver
 accepts, and it faults on first touch.
 
+Note the verdict column above says `EXIT 134` — SIGABRT, "double free or
+corruption" — where an earlier run of the same binary reported a SIGSEGV in the
+frame below. **That the symptom moves between runs is itself the signature.** A
+TLS block whose DTV the resolver will not accept does not fail the same way
+twice: sometimes the resolver faults, sometimes it returns a wrong pointer and
+the corruption surfaces later in the allocator. Do not chase the specific
+symptom; the cause is the same either way.
+
 This is the real answer to "it gets stuck in the RMW backend library": it is not
 RMW as a layer, it is **one backend's use of dynamic TLS**. Anything that reads a
 `thread_local` from a shared object the loader resolved lazily is exposed;
-anything using initial-exec TLS, or none, is not.
+anything using initial-exec TLS, or none, is not — and two of the three shipped
+backends are in the second group.
 
 ### 4. Teardown must be `cancel()`, never a signal
 
@@ -150,12 +167,17 @@ SIGSEGV to child0, as designed     dead     dead     dead      exit 139
 + PR_SET_DUMPABLE(0), RLIMIT_CORE 0 alive   Z        S         ISOLATION HOLDS
 ```
 
-and again end to end through `play_launch --container-mode clone-vm`:
+and again end to end through `play_launch --container-mode clone-vm`, on
+FastRTPS and on Zenoh alike:
 
 ```
 before   container S   child1 S   child2 S
 after    container S   child1 Z   child2 S
 ```
+
+The coredump zap is a property of the kernel, not of any backend: it reproduces
+identically under both working RMWs, and suppressing the dump fixes it under
+both.
 
 Two calls in the child, before it ever spins, are the whole fix:
 
@@ -173,8 +195,10 @@ container that survives one.
 
 `--container-mode clone-vm`, hidden from `--help` (`#[value(hide = true)]`) and
 implemented by `CloneVmComponentManager`. It refuses to start under
-`rmw_cyclonedds_cpp` with the reason above rather than segfaulting on the first
-message, warns on any backend that is neither, and stops children only with
+`rmw_cyclonedds_cpp` with the reason above rather than dying on the first
+message, treats `rmw_fastrtps_cpp` and `rmw_zenoh_cpp` as measured-good, warns
+on anything else rather than blocking the evaluation it exists for, and stops
+children only with
 `executor->cancel()` — never a signal. A child that does not exit within the
 grace period has its stack and TLS **deliberately leaked**, because unmapping a
 stack a running child is executing on is worse than the leak.
@@ -199,10 +223,15 @@ what the run is measuring:
 `run_matrix.sh` discovers the installed backends from the ament index rather
 than hardcoding them, so an added `rmw_zenoh_cpp` is picked up with no edit.
 
-**Only `rmw_fastrtps_cpp` and `rmw_cyclonedds_cpp` are installed on this
-machine.** `rmw_zenoh_cpp` is not packaged for Humble and would have to be built
-from source before it can be measured; nothing here should be read as a claim
-about it.
+`rmw_zenoh_cpp` needs its router up before any of this means anything:
+
+```bash
+ros2 run rmw_zenoh_cpp rmw_zenohd &
+```
+
+Without it the probe fails at `rclcpp::init` with `Unable to connect to a Zenoh
+router`, which is an ordinary Zenoh misconfiguration and says nothing about
+CLONE_VM.
 
 For a SEGV, the frame is named by running under gdb:
 
