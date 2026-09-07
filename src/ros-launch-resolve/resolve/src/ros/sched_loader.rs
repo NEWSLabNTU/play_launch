@@ -57,6 +57,10 @@ pub struct ScheduledRecord {
     /// The record's bare (unqualified) name, as declared in the launch file
     /// — matches the key manifests use for `nodes.<name>` contract entries.
     pub bare_name: String,
+    /// The launch file's own `(from, to)` remaps for this node (phase 76).
+    /// The only statement of wiring a launch file makes, and until now the
+    /// only consumer was the spawn path.
+    pub remaps: Vec<(String, String)>,
 }
 
 /// Effective namespace: the record's own namespace if non-empty, else the scope's ns.
@@ -206,6 +210,7 @@ pub fn scheduled_records_from_dump(dump: &LaunchDump) -> Vec<ScheduledRecord> {
             scope_ns,
             scope_id: n.scope,
             bare_name: bare,
+            remaps: n.remaps.clone(),
         });
     }
 
@@ -219,6 +224,7 @@ pub fn scheduled_records_from_dump(dump: &LaunchDump) -> Vec<ScheduledRecord> {
             scope_ns,
             scope_id: c.scope,
             bare_name: c.name.clone(),
+            remaps: c.remaps.clone(),
         });
     }
 
@@ -232,6 +238,7 @@ pub fn scheduled_records_from_dump(dump: &LaunchDump) -> Vec<ScheduledRecord> {
             scope_ns,
             scope_id: lc.scope,
             bare_name: lc.node_name.clone(),
+            remaps: lc.remaps.clone(),
         });
     }
 
@@ -2430,6 +2437,7 @@ mod tests {
             index.topics.insert(
                 topic.to_string(),
                 ResolvedTopic {
+                    derived_from_remaps: false,
                     fqn: topic.to_string(),
                     msg_type: "std_msgs/msg/String".to_string(),
                     qos: None,
@@ -2519,6 +2527,7 @@ mod tests {
         index.topics.insert(
             "/link_topic".to_string(),
             ResolvedTopic {
+                derived_from_remaps: false,
                 fqn: "/link_topic".to_string(),
                 msg_type: "std_msgs/msg/String".to_string(),
                 qos: None,
@@ -2535,6 +2544,7 @@ mod tests {
         index.topics.insert(
             "/sink_topic".to_string(),
             ResolvedTopic {
+                derived_from_remaps: false,
                 fqn: "/sink_topic".to_string(),
                 msg_type: "std_msgs/msg/String".to_string(),
                 qos: None,
@@ -3533,6 +3543,7 @@ nodes = ["fast_node"]
             index.topics.insert(
                 topic.to_string(),
                 ResolvedTopic {
+                    derived_from_remaps: false,
                     fqn: topic.to_string(),
                     msg_type: "std_msgs/msg/String".to_string(),
                     qos: None,
@@ -3879,6 +3890,7 @@ overrides:
             index.topics.insert(
                 topic.to_string(),
                 ResolvedTopic {
+                    derived_from_remaps: false,
                     fqn: topic.to_string(),
                     msg_type: "std_msgs/msg/String".to_string(),
                     qos: None,

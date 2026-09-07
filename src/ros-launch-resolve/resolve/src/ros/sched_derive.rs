@@ -605,6 +605,7 @@ mod tests {
         index.topics.insert(
             "/chatter".to_string(),
             ResolvedTopic {
+                derived_from_remaps: false,
                 fqn: "/chatter".to_string(),
                 msg_type: "std_msgs/msg/String".to_string(),
                 qos: None,
@@ -950,6 +951,7 @@ mod tests {
         index.topics.insert(
             "/chatter".to_string(),
             ResolvedTopic {
+                derived_from_remaps: false,
                 fqn: "/chatter".to_string(),
                 msg_type: "std_msgs/msg/String".to_string(),
                 qos: None,
@@ -965,6 +967,7 @@ mod tests {
         index.topics.insert(
             "/reaction".to_string(),
             ResolvedTopic {
+                derived_from_remaps: false,
                 fqn: "/reaction".to_string(),
                 msg_type: "std_msgs/msg/String".to_string(),
                 qos: None,

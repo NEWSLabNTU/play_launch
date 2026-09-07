@@ -167,6 +167,11 @@ pub struct ResolvedManifest {
 pub struct ResolvedTopic {
     /// Fully-qualified topic name (with namespace prefix).
     pub fqn: String,
+    /// Wiring inferred from launch REMAPS rather than declared in a contract
+    /// (phase 76). An inferred topic's counterpart side may simply be a
+    /// remap whose direction could not be read, so its absence is not a
+    /// finding — `dangling-entity` skips these.
+    pub derived_from_remaps: bool,
     /// Message type (must agree across all declaring scopes).
     pub msg_type: String,
     /// QoS declaration (must agree across all declaring scopes if declared).
@@ -629,6 +634,10 @@ pub fn load_manifests(
         loaded += 1;
     }
 
+    // Phase 76 — the wiring the launch file already states. Runs after every
+    // contract is merged, so a declared topic always wins.
+    derive_topics_from_remaps(launch_dump, &mut index);
+
     // Cross-scope post-merge checks
     run_cross_scope_checks(&mut index);
 
@@ -701,6 +710,12 @@ fn run_cross_scope_checks(index: &mut ManifestIndex) {
 
     // Dangling topic: 0 publishers across the merged tree
     for (fqn, topic) in &index.topics {
+        // Phase 76 — a derived topic's missing side is a gap in the
+        // inference (a remap whose direction could not be read), not a
+        // system with nothing on that end.
+        if topic.derived_from_remaps {
+            continue;
+        }
         let ext = index.externals.get(fqn).copied();
         if topic.publishers.is_empty() && !topic.subscribers.is_empty() {
             if matches!(ext, Some(ExternalSide::Pub | ExternalSide::Both)) {
@@ -3531,6 +3546,7 @@ fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestI
             index.topics.insert(
                 fqn.clone(),
                 ResolvedTopic {
+                    derived_from_remaps: false,
                     fqn,
                     msg_type: topic_decl.msg_type.clone(),
                     qos: topic_decl.qos.clone(),
@@ -3552,6 +3568,130 @@ fn resolve_topics(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestI
 
 /// Merge a new topic declaration into an existing ResolvedTopic entry.
 /// Validates contract fields agree, unions endpoint lists, emits diagnostics.
+/// Which side of a remap this is, when the launch file says so.
+///
+/// A remap is a NAME MAPPING and carries no direction: `~/input/scan ->
+/// /sensing/scan` names the topic, not whether the node reads or writes it.
+/// What it does carry is a convention every ROS package in reach follows —
+/// `~/input/…`, `~/output/…` — read here and NOWHERE else, so there is one
+/// place to correct when it is wrong.
+///
+/// Anything outside the convention is left UNDECIDED rather than guessed. A
+/// wrong direction invents a causal edge that never existed and every graph
+/// rule downstream inherits it; a missing one only leaves the graph as
+/// sparse as it already was. Measured on Autoware: the convention decides
+/// 296 of 371 remaps.
+fn remap_direction(from: &str) -> Option<bool> {
+    let s = from.trim_start_matches('~').trim_start_matches('/');
+    let head = s.split('/').next().unwrap_or("");
+    match head {
+        "input" | "in" => Some(false),
+        "output" | "out" => Some(true),
+        // Every node that remaps `/diagnostics` publishes it; the one kind
+        // that reads it — an aggregator — names it something else.
+        "diagnostics" if s == "diagnostics" => Some(true),
+        _ => None,
+    }
+}
+
+/// Derive topic wiring from the launch file's remaps (phase 76).
+///
+/// Measured before writing: the Autoware model resolves to 119 nodes and
+/// **0 topics**, because `structure.topics` comes from contracts and four
+/// scopes of eighty-three have one — while 62 nodes carry 371 remaps that
+/// describe the wiring and nothing read them. Every graph rule we have
+/// (criticality propagation, `scope-budget`, the fault-reaction walk) was
+/// therefore working on almost nothing.
+///
+/// Three rules keep this honest:
+///
+/// - **A contract always wins.** A topic a contract declares is never
+///   touched: that is a fact an author wrote, this is an inference from a
+///   naming convention.
+/// - **Undecidable remaps are counted, not guessed** (see
+///   [`remap_direction`]).
+/// - **Derived topics carry provenance** and `dangling-entity` skips them: a
+///   derived topic with no publisher usually means the publisher's remap was
+///   one of the undecidable ones — a gap in the inference, not a defect in
+///   the system.
+fn derive_topics_from_remaps(dump: &LaunchDump, index: &mut ManifestIndex) {
+    let mut ambiguous = 0usize;
+    let mut derived_topics = 0usize;
+    let mut derived_ends = 0usize;
+
+    for record in scheduled_records_from_dump(dump) {
+        for (from, to) in &record.remaps {
+            // A remap whose target is not a topic path cannot be wired.
+            if !to.starts_with('/') {
+                continue;
+            }
+            let Some(is_pub) = remap_direction(from) else {
+                ambiguous += 1;
+                continue;
+            };
+            // The endpoint name is the remap's own key: what the node calls
+            // this stream, and the closest thing to an endpoint identity a
+            // launch file has.
+            let ep = from
+                .trim_start_matches('~')
+                .trim_start_matches('/')
+                .replace('/', "_");
+            let ep_ref = format!("{}/{ep}", record.fqn);
+            let fqn = to.clone();
+            let is_new = !index.topics.contains_key(&fqn);
+            let entry = index
+                .topics
+                .entry(fqn.clone())
+                .or_insert_with(|| ResolvedTopic {
+                    fqn,
+                    derived_from_remaps: true,
+                    msg_type: String::new(),
+                    qos: None,
+                    publishers: Vec::new(),
+                    subscribers: Vec::new(),
+                    rate_hz: None,
+                    derived_rate_hz: None,
+                    max_transport_ms: None,
+                    drop: None,
+                    scope_ids: record.scope_id.into_iter().collect(),
+                });
+            if is_new {
+                derived_topics += 1;
+            }
+            // A contract declared this topic: its wiring is authored, and an
+            // inference must not add to it.
+            if !entry.derived_from_remaps {
+                continue;
+            }
+            let side = if is_pub {
+                &mut entry.publishers
+            } else {
+                &mut entry.subscribers
+            };
+            if !side.contains(&ep_ref) {
+                side.push(ep_ref);
+                derived_ends += 1;
+            }
+        }
+    }
+
+    if derived_topics > 0 || ambiguous > 0 {
+        index.merge_diagnostics.push(Diagnostic {
+            rule_id: "graph-from-remaps".to_string(),
+            severity: Severity::Info,
+            message: format!(
+                "{derived_topics} topic(s) and {derived_ends} endpoint(s) derived from launch \
+                 remaps that no contract declares; {ambiguous} remap(s) name a topic but not a \
+                 direction and were left out. A derived edge is an inference from the \
+                 `~/input/`–`~/output/` convention, not a declaration: it fills the graph the \
+                 causal rules walk, and a contract always overrides it"
+            ),
+            path: "topics".to_string(),
+            span: None,
+        });
+    }
+}
+
 fn merge_topic(
     existing: &mut ResolvedTopic,
     scope: &ScopeEntry,

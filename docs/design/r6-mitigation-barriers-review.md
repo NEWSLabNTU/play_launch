@@ -120,6 +120,12 @@ wiring and nothing lowers them into one.
 Deriving the topic graph from remaps is, because R6, phase 72's criticality,
 `scope-budget` and every other graph rule are all only as good as it.
 
+> **Done, 2026-09-08** — phase 76. Autoware now resolves to 110 topics, 48
+> wired both sides, 114 edges, and a 19-node ancestor closure for
+> `vehicle_cmd_gate`. It confirms this section mechanically: AEB shares all
+> 19 of its ancestors with the pipeline, and `vehicle_cmd_gate` is itself an
+> ancestor of `mrm_emergency_stop_operator`.
+
 ## F5 — three smaller holes
 
 - **Nothing requires the channel to reach the hazard's control action.** A

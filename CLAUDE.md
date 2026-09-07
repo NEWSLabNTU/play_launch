@@ -586,6 +586,28 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-08**: Phase 76 — **the topic graph the launch file already
+  states.** Found while reviewing R6: the Autoware model resolved to 119
+  nodes and **0 topics**, because `structure.topics` came only from
+  contracts (four scopes of eighty-three) while **62 nodes carried 371
+  remaps** nothing read. Every graph rule — criticality propagation,
+  `scope-budget`, the fault-reaction walk — was computing over an empty
+  graph and reporting clean. A remap carries no direction, but it carries a
+  convention: `remap_direction` reads `input`/`in`, `output`/`out` and a
+  bare `/diagnostics` in ONE place. A contract always wins, undecidable
+  remaps are COUNTED not guessed (a wrong direction invents a causal edge
+  every rule inherits; a missing one only leaves the graph sparse), and
+  derived topics carry provenance so `dangling-entity` skips them.
+  **Autoware: 0 → 110 topics, 48 wired both sides, 114 edges, a 19-node
+  ancestor closure for `vehicle_cmd_gate`.** It immediately proved the R6
+  review mechanically: `autonomous_emergency_braking` shares all 19 of its
+  ancestors with the pipeline it would bound, and `vehicle_cmd_gate` is
+  itself an ancestor of `mrm_emergency_stop_operator`. Ground truth for
+  direction already exists in `interception/events.jsonl` and is the next
+  step. Roadmap: `docs/roadmap/phase-76-graph-from-remaps.md`.
+  Also: nano-ros PR #601 merged, so `node_concurrency` left the census
+  baseline — the census noticed, because it fails in both directions.
+
 - **2026-09-07**: Phase 75 — **operational modes**, the axis deferred in
   phases 67, 68 and 71 (manifest `v0.1.32` → **`v0.1.33`**). `functions.<f>`
   names a guard group; `modes.<m>` carries `requires` (fact), `fallback`

@@ -1344,6 +1344,7 @@ mod tests {
             index.topics.insert(
                 fqn.to_string(),
                 ResolvedTopic {
+                    derived_from_remaps: false,
                     fqn: fqn.to_string(),
                     msg_type: "std_msgs/msg/String".to_string(),
                     qos: None,

@@ -329,3 +329,39 @@ fn strip_ansi(s: &str) -> String {
     }
     out
 }
+
+/// Phase 76: the launch file's own remaps become a topic graph. Before this
+/// the Autoware model resolved to 119 nodes and ZERO topics, so every graph
+/// rule — criticality propagation, scope-budget, the fault-reaction walk —
+/// was computing over nothing and reporting clean.
+#[test]
+fn test_autoware_topic_graph_derived_from_remaps() {
+    let (model, _tmp) = resolve_autoware("rust");
+    let topics = model["structure"]["topics"]
+        .as_object()
+        .expect("structure.topics");
+    assert!(
+        topics.len() > 80,
+        "expected the remap-derived graph, got {} topics",
+        topics.len()
+    );
+    let both = topics
+        .values()
+        .filter(|t| {
+            !t["pub"].as_array().is_none_or(|a| a.is_empty())
+                && !t["sub"].as_array().is_none_or(|a| a.is_empty())
+        })
+        .count();
+    assert!(
+        both > 30,
+        "a graph needs edges, not just endpoints: {both} topics wired on both sides"
+    );
+    // The wiring is real: the command gate reads the trajectory follower.
+    let gate_in = topics["/control/trajectory_follower/control_cmd"]["sub"]
+        .as_array()
+        .expect("sub side");
+    assert!(
+        gate_in.iter().any(|s| s.as_str().is_some_and(|s| s.contains("vehicle_cmd_gate"))),
+        "{gate_in:?}"
+    );
+}

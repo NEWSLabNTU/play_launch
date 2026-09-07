@@ -411,6 +411,7 @@ mod tests {
         index.topics.insert(
             "/a/points".to_string(),
             ros_launch_resolve::ros::manifest_loader::ResolvedTopic {
+                derived_from_remaps: false,
                 fqn: "/a/points".to_string(),
                 msg_type: "sensor_msgs/msg/PointCloud2".to_string(),
                 qos: None,

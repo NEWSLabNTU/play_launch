@@ -225,6 +225,13 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 76** — ✅ the topic graph the launch file already states. The
+    Autoware model had 119 nodes and **0 topics**, so every graph rule was
+    computing over nothing; 371 remaps described the wiring and nothing read
+    them. Direction comes from the `~/input/`–`~/output/` convention, read in
+    one place, counted where undecidable, and always beaten by a contract.
+    0 → 110 topics, 114 edges — and it proves the R6 review mechanically.
+    [phase-76-graph-from-remaps.md](./phase-76-graph-from-remaps.md).
   - **Phase 75** — ✅ operational modes, the axis deferred three times. A
     function is a named guard group, a mode is what it requires plus an
     ordered fallback ladder, and per-mode requirement values are `overrides:`

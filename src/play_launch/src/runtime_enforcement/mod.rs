@@ -1592,6 +1592,7 @@ mod tests {
         index.topics.insert(
             fqn.clone(),
             ResolvedTopic {
+                derived_from_remaps: false,
                 fqn: fqn.clone(),
                 msg_type: "std_msgs/msg/String".to_string(),
                 publishers: vec!["/test/pub_node/out".to_string()],
@@ -1748,6 +1749,7 @@ mod tests {
         index.topics.insert(
             "/chatter".to_string(),
             ResolvedTopic {
+                derived_from_remaps: false,
                 fqn: "/chatter".to_string(),
                 msg_type: "std_msgs/msg/String".to_string(),
                 publishers: vec!["/talker/chatter".to_string()],
@@ -1823,6 +1825,7 @@ mod tests {
         index.topics.insert(
             fqn.clone(),
             ResolvedTopic {
+                derived_from_remaps: false,
                 fqn: fqn.clone(),
                 msg_type: "std_msgs/msg/String".to_string(),
                 publishers: vec!["/talker/out".to_string()],
@@ -1911,6 +1914,7 @@ mod tests {
         index.topics.insert(
             fqn.clone(),
             ResolvedTopic {
+                derived_from_remaps: false,
                 fqn: fqn.clone(),
                 msg_type: "std_msgs/msg/String".to_string(),
                 publishers: vec![],

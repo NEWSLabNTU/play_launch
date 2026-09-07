@@ -21,16 +21,16 @@
 #
 # These cross a repository boundary, so no census confined to one repo can
 # judge them. nano-ros builds its `MapperPath` from the MODEL, never from the
-# manifest — and as of 2026-09-05 nothing on any of its branches mentions
-# `node_concurrency` or `srv_endpoints`. Its real reads are `node_paths`,
-# `pub_endpoints` and `sub_endpoints`.
+# manifest. Its reads as of 2026-09-07 are `node_paths`, `pub_endpoints`,
+# `sub_endpoints` and — since PR #601 — `node_concurrency`, `max_jitter_ms`
+# and `miss`. The three below are what it still does not read.
 
-node_concurrency   # Contracts. Phase 68 W5 carried it across specifically for
-                   # nano-ros's `PlanCallbackGroup` inference. Absent is not
-                   # empty here: no entry means everything serialises, an
-                   # entry with an empty `exclusive` claims full concurrency.
-                   # Until it is read, both toolchains keep picking opposite
-                   # defaults in silence.
+# `node_concurrency` was here until 2026-09-07. nano-ros PR #601 (their
+# phase 434) merged and reads it: the record a model produces carries the
+# relation now, and a node with no entry gets ONE mutually-exclusive group
+# instead of a `reentrant` singleton per callback. The seam phase 68 W5
+# opened is closed on both sides — and the census is what noticed, because
+# it fails in BOTH directions for exactly this case.
 
 srv_endpoints      # Contracts. Lowered and counted in `resolve`'s summary
                    # line; nothing reads the endpoints themselves.
