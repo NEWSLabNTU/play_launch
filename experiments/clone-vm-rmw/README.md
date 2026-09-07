@@ -220,89 +220,88 @@ with
 grace period has its stack and TLS **deliberately leaked**, because unmapping a
 stack a running child is executing on is worse than the leak.
 
-## It does not survive a real stack
+## The real stack: what broke, and why it now works
 
-Everything above was measured on a two-node fixture. Run against the golf cart's
-Autoware stack — 142 nodes, 16 containers, 82 composables, perception off, the
-two modes differing in nothing but `--container-mode` — clone-vm fails:
+Against the golf cart's Autoware stack — 142 nodes, 16 containers, 82
+composables, perception off, the two modes differing in nothing but
+`--container-mode` — clone-vm first failed hard: 14 of 16 containers died and
+only 28 of 82 composables loaded. Two defects, and the second was created by
+fixing the first.
 
-| | observable | clone-vm |
-|---|---|---|
-| composables loaded | **62** of 82 | **28** of 82 |
-| containers asserting | 0 | **14** of 16 |
+### 1. `_dl_allocate_tls` leaves `struct pthread` uninitialised
 
-```
-component_container: pthread_mutex_lock.c:94: ___pthread_mutex_lock:
-    Assertion `mutex->__data.__owner == 0' failed.
-```
+It allocates through `__libc_memalign` and clears only the TCB — 16 bytes at the
+thread pointer, holding the DTV. The `struct pthread` **below** the thread
+pointer keeps whatever the allocator last had there. `pthread_create` never sees
+that: it takes its stack from a fresh mmap, so a real thread starts zeroed.
 
-glibc is checking, on the *normal* mutex path, that a mutex it just acquired
-records no owner. A non-zero owner there means that memory was written by
-something that believed it was a different kind of mutex: shared-state
-corruption. `observable` on the same stack asserts zero times.
-
-**The CPU and memory figures from these pairs are void** and are deliberately
-not reproduced. clone-vm did draw less host CPU than observable, while running
-under half the composables. A mode that crashes most of the stack always looks
-cheap.
-
-### One real cause, found and fixed — and it is not the whole story
-
-`_dl_allocate_tls` allocates through `__libc_memalign` and clears only the TCB —
-16 bytes at the thread pointer, holding the DTV. The `struct pthread` **below**
-the thread pointer is left as whatever the allocator last had there.
-`pthread_create` never sees that: it takes its stack from a fresh mmap, so a real
-thread's `struct pthread` starts zeroed. A clone child built the naive way
-inherits garbage in every field `start_thread` would have set.
-
-Loading one real Autoware composable by hand into a bare container showed it
-immediately:
+Loading one real Autoware composable by hand showed it immediately:
 
 ```
 node 1: spinning in clone-vm child pid 845369
 malloc(): unsorted double linked list corrupted
 ```
 
-Zeroing that region before the clone turns the same load clean, and takes the
-full stack from 18 to 28 of 82 composables. It is a real defect and a real fix.
-It does not make the mode work.
+Zeroing the region below the thread pointer fixes that load — and took the stack
+from 18 to 28 of 82. It also made things worse, which is the interesting part.
 
-### What the failures do NOT have in common
+### 2. A zeroed `struct pthread` tells glibc the child is single-threaded
 
-The obvious hypotheses are all disproven by the run itself:
+`header.multiple_threads` is at **offset 0**. glibc reads it to decide whether
+the process is single-threaded and takes an unlocked fast path when it is:
+`__libc_malloc` calls `_int_malloc` **without the arena lock** under
+`SINGLE_THREAD_P`. So a child with a freshly zeroed `struct pthread` concludes it
+is alone and allocates unlocked while every thread in the parent allocates too.
 
-| container | executor | declared | loaded | children spun | asserts |
-|---|---|---|---|---|---|
-| `map_container` | MT | 4 | 4 | **4** | **no** |
-| `parking_container` | MT | 3 | 0 | 0 | **no** |
-| `container_2` | MT | 19 | 0 | **0** | yes |
-| `container_3` | MT | 1 | 0 | **0** | yes |
-| `pointcloud_container` | MT | 6 | 5 | 5 | yes |
-| `mrm_emergency_stop_operator_container` | single | 1 | 1 | 1 | yes |
-| …10 more | mixed | 1–16 | 1–6 | 1–6 | yes |
+Measured on this glibc, which is where the offset comes from:
 
-* **Not the executor.** Multi-threaded and single-threaded containers both fail,
-  and a multi-threaded one survives.
-* **Not the composable count.** Containers declaring 1 fail; one declaring 4
-  survives; one declaring 19 fails having loaded none.
-* **Not the clone children.** The container that actually ran four clone children
-  is one of the two that is clean, while two containers that never cloned
-  anything assert anyway — `container_2` and `container_3` have exactly two lines
-  in their logs, the startup banner and the assertion.
-* **Not a bad TLS offset.** All sixteen containers discovered the same layout,
-  `TP-1984, tid at +208`.
+```
+before any thread     *(int *) pthread_self() = 0   __libc_single_threaded = 1
+after pthread_create  *(int *) pthread_self() = 1   __libc_single_threaded = 0
+```
 
-A bare `component_container --clone-vm`, with and without
-`--use_multi_threaded_executor` and with no composables loaded at all, runs
-indefinitely without asserting. So it is not the manager's construction on its
-own either.
+Before the zeroing, that field held garbage that was usually non-zero, so the
+child usually looked multi-threaded by accident. Zeroing made it reliably 0 —
+which is why container failures went from 11 of 16 to 14 of 16. **The two fixes
+belong together.**
 
-That is as far as the run data goes. The next step is a backtrace of the
-assertion, which this machine currently cannot produce:
-`/proc/sys/kernel/yama/ptrace_scope` is `1` and the core limit is `0`, so gdb
-cannot attach to a running container and no core is written. Relaxing either is
-the prerequisite for going further, and until then any account of the mechanism
-would be a guess.
+The race shows up as whatever it happens to break. All three of these came out
+of the same build:
+
+```
+malloc.c:4302: _int_malloc: Assertion `(size) >= (nb)' failed
+malloc(): unsorted double linked list corrupted
+pthread_mutex_lock.c:94: Assertion `mutex->__data.__owner == 0' failed
+```
+
+which is why chasing the symptom went nowhere. It is one race with three faces,
+and the mutex assertion that started the hunt was the least informative of them.
+The commonality analysis is worth keeping for the same reason: the casualties
+shared no executor type, no composable count, and not even whether they had ever
+cloned a child — because the corruption was in the shared heap, not in any
+container's own structure.
+
+### With both fixes: identical behaviour, measurably cheaper
+
+Same stack, same run pair, 62 of 82 composables loaded in **both** modes, zero
+assertions and zero heap corruption in both:
+
+| | observable | clone-vm | delta |
+|---|---|---|---|
+| host CPU, steady state | 85.6% | **72.8%** | **−12.8 points** |
+| host CPU, whole run | 84.4% | 74.9% | −9.5 |
+| host CPU, peak | 99.9% | 100.0% | — |
+| threads | 768 | **673** | −95 |
+| host memory, peak | 18.7 GB | 18.8 GB | +0.1 |
+
+On a 12-core Orin, 12.8 points is about **1.5 cores**, for the same work, while
+keeping the per-node SIGSEGV boundary. Memory is unchanged, which is expected:
+the address space is shared either way, and the saving is threads and DDS
+participants rather than pages.
+
+**One run per mode.** Treat the size as indicative, not settled: `ublox`
+respawned 39 and 37 times respectively across the two runs (the receiver is not
+attached), which is noise present on both sides but not identical.
 
 ## Running it
 
