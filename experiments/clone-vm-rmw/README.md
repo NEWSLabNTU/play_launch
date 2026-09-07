@@ -228,39 +228,81 @@ two modes differing in nothing but `--container-mode` — clone-vm fails:
 
 | | observable | clone-vm |
 |---|---|---|
-| composables loaded | **62** of 82 | **18** of 82 |
-| containers aborting during the run | 0 | **11** of 16 |
-| `pthread_mutex_lock` assertions | 0 | **11** |
+| composables loaded | **62** of 82 | **28** of 82 |
+| containers asserting | 0 | **14** of 16 |
 
 ```
 component_container: pthread_mutex_lock.c:94: ___pthread_mutex_lock:
     Assertion `mutex->__data.__owner == 0' failed.
 ```
 
-fired seconds after the first clone child began spinning, in eleven containers
-including `pointcloud_container`. `observable` produced no such assertion; its
-only aborts were nine at one identical timestamp, which is glog's signal handler
-at the SIGINT that ended the run.
+glibc is checking, on the *normal* mutex path, that a mutex it just acquired
+records no owner. A non-zero owner there means that memory was written by
+something that believed it was a different kind of mutex: shared-state
+corruption. `observable` on the same stack asserts zero times.
 
-That assertion is glibc checking, on the *normal* mutex path, that a mutex it
-just acquired records no owner. A non-zero owner there means the mutex's memory
-was written by something that believed it was a different kind of mutex — that
-is shared-state corruption across the address space, which is Risk 1 and Risk 2
-of the archived design arriving on their own rather than because a signal was
-sent.
+**The CPU and memory figures from these pairs are void** and are deliberately
+not reproduced. clone-vm did draw less host CPU than observable, while running
+under half the composables. A mode that crashes most of the stack always looks
+cheap.
 
-**The CPU and memory figures from that pair are void** and are deliberately not
-reproduced here. clone-vm did appear to use 54.2% of the host against
-observable's 72.8%, but it was running less than a third of the composables. A
-mode that crashes two thirds of the stack will always look cheap.
+### One real cause, found and fixed — and it is not the whole story
 
-So: the model is sound in isolation and the reproducer passes on all three RMWs,
-but **`--container-mode clone-vm` is not usable for Autoware today.** The next
-thing to find out is what those eleven containers have in common — the survivors
-loaded 0-2 composables each and so did most of the casualties, so it is not
-simply a count — and whether the corruption is in rclcpp's shared state, in the
-allocator, or in the children's `struct pthread` still not being what glibc
-expects.
+`_dl_allocate_tls` allocates through `__libc_memalign` and clears only the TCB —
+16 bytes at the thread pointer, holding the DTV. The `struct pthread` **below**
+the thread pointer is left as whatever the allocator last had there.
+`pthread_create` never sees that: it takes its stack from a fresh mmap, so a real
+thread's `struct pthread` starts zeroed. A clone child built the naive way
+inherits garbage in every field `start_thread` would have set.
+
+Loading one real Autoware composable by hand into a bare container showed it
+immediately:
+
+```
+node 1: spinning in clone-vm child pid 845369
+malloc(): unsorted double linked list corrupted
+```
+
+Zeroing that region before the clone turns the same load clean, and takes the
+full stack from 18 to 28 of 82 composables. It is a real defect and a real fix.
+It does not make the mode work.
+
+### What the failures do NOT have in common
+
+The obvious hypotheses are all disproven by the run itself:
+
+| container | executor | declared | loaded | children spun | asserts |
+|---|---|---|---|---|---|
+| `map_container` | MT | 4 | 4 | **4** | **no** |
+| `parking_container` | MT | 3 | 0 | 0 | **no** |
+| `container_2` | MT | 19 | 0 | **0** | yes |
+| `container_3` | MT | 1 | 0 | **0** | yes |
+| `pointcloud_container` | MT | 6 | 5 | 5 | yes |
+| `mrm_emergency_stop_operator_container` | single | 1 | 1 | 1 | yes |
+| …10 more | mixed | 1–16 | 1–6 | 1–6 | yes |
+
+* **Not the executor.** Multi-threaded and single-threaded containers both fail,
+  and a multi-threaded one survives.
+* **Not the composable count.** Containers declaring 1 fail; one declaring 4
+  survives; one declaring 19 fails having loaded none.
+* **Not the clone children.** The container that actually ran four clone children
+  is one of the two that is clean, while two containers that never cloned
+  anything assert anyway — `container_2` and `container_3` have exactly two lines
+  in their logs, the startup banner and the assertion.
+* **Not a bad TLS offset.** All sixteen containers discovered the same layout,
+  `TP-1984, tid at +208`.
+
+A bare `component_container --clone-vm`, with and without
+`--use_multi_threaded_executor` and with no composables loaded at all, runs
+indefinitely without asserting. So it is not the manager's construction on its
+own either.
+
+That is as far as the run data goes. The next step is a backtrace of the
+assertion, which this machine currently cannot produce:
+`/proc/sys/kernel/yama/ptrace_scope` is `1` and the core limit is `0`, so gdb
+cannot attach to a running container and no core is written. Relaxing either is
+the prerequisite for going further, and until then any account of the mechanism
+would be a guess.
 
 ## Running it
 
