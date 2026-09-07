@@ -199,7 +199,14 @@ normally a manual argument in a safety case.**
 **R5 — Unreachable is QM**, but a node the author declared critical that
 reaches no control action is a *finding*, never a silent downgrade.
 
-**R6 — A mitigation barrier attenuates severity upstream of it.** This is the
+**R6 — A mitigation barrier attenuates severity upstream of it.**
+> **2026-09-08: reviewed before implementing, and NOT implemented as
+> written** — see `r6-mitigation-barriers-review.md`. Three specifics are
+> wrong (the relation is dominance, not "upstream"; `residual` must come
+> from ISO 26262's decomposition table, not free choice; disjoint ancestors
+> is necessary but not sufficient), and the graph it needs is absent on the
+> one real stack in reach.
+ This is the
 rule the cross-domain survey demands, and the one that keeps a real stack from
 collapsing into a single ASIL D class.
 

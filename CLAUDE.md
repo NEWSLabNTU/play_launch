@@ -1553,6 +1553,14 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   - `system-model.md` — the SystemModel artifact: layout, layers, producer/consumer split
   - `criticality-from-hazards.md` — deriving criticality (and reservations)
     from declared hazards instead of a `high|medium|low` label
+  - `r6-mitigation-barriers-review.md` — R6 verified BEFORE implementing and
+    sent back: "upstream of the barrier" is not a graph relation (it is
+    dominance), a free `residual` produces decompositions ISO 26262 does not
+    permit, and disjoint data ancestors is necessary but not sufficient
+    (same container, same cgroup, same host). Measured: neither Autoware
+    candidate barrier is independent, and the Autoware model has **119 nodes
+    and 0 topics** — the graph R6 attenuates over does not exist. Deriving
+    the topic graph from the 371 remaps is the prerequisite
   - `operational-modes.md` — **proposed**: the axis deferred in phases 67,
     68 and 71. A function is a named guard group, a mode is the functions it
     requires plus a fallback ladder, per-mode requirement values are
