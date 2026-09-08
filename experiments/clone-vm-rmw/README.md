@@ -299,9 +299,39 @@ keeping the per-node SIGSEGV boundary. Memory is unchanged, which is expected:
 the address space is shared either way, and the saving is threads and DDS
 participants rather than pages.
 
-**One run per mode.** Treat the size as indicative, not settled: `ublox`
-respawned 39 and 37 times respectively across the two runs (the receiver is not
-attached), which is noise present on both sides but not identical.
+**One run per mode for the CPU figure.** Treat the size as indicative, not
+settled: `ublox` respawned 39 and 37 times respectively across the two runs (the
+receiver is not attached), which is noise present on both sides but not
+identical.
+
+The *correctness* claim has more behind it, because a heap race that appears once
+in one 200 s run proves very little. Four clone-vm runs of the full stack, the
+original plus three repeats:
+
+```
+rep1: composables=62/82 asserting=0 malloc_corrupt=0
+rep2: composables=62/82 asserting=0 malloc_corrupt=0
+rep3: composables=62/82 asserting=0 malloc_corrupt=0
+```
+
+identical every time. Before the fix the failure was immediate and in every run.
+
+### What is still not initialised
+
+The child sets four things: `multiple_threads`, its tid, the locale, and the
+ctype tables. `start_thread` sets considerably more. That is mostly fine, and for
+a reason worth stating: **zero is the correct initial value for nearly every
+field** — `gscope_flag`, the TSD first block, `cancelhandling` all start zeroed
+in a real thread, which is why zeroing `struct pthread` was the right move.
+`multiple_threads` is the one field whose correct value is not zero, which is
+exactly why zeroing alone made things worse before this was found.
+
+The known gap is `robust_head`, which `start_thread` makes self-referential
+before calling `set_robust_list`. A clone child here has it NULL and never makes
+that syscall, so a robust mutex taken in a child that then dies would not be
+recovered. Latent rather than live: neither `libfastrtps` nor `libddsc` refers to
+the robust-mutex API at all on this install. It becomes real the moment something
+in the stack does — a shared-memory transport is the likely candidate.
 
 ## Running it
 
