@@ -879,16 +879,17 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   `rcl_node_resolve_name`, the one call rcl makes itself, tried for
   already-absolute names too since `-r /a:=/b` is legal and the old
   leading-slash fast path skipped it.
-  **The verdict on phase 76: 230 of 269 inferred edges confirmed, ZERO
-  contradicted.** The convention did not get one direction wrong. Of the 11
-  real misses, **four are services** — `~/output/…/operate` is a service
+  **The verdict on phase 76: 256 of 269 inferred edges confirmed, ZERO
+  contradicted.** The convention did not get one direction wrong. Of the 13
+  real misses, **six are services** — `~/output/…/operate` is a service
   client and Autoware spells a client like a publisher, so the inference
   cannot separate them; the causality is real, only the kind is wrong, which
   errs toward more coupling and is the safe direction for an independence
-  test. The other seven are dangling remaps in Autoware's own launch files.
-  The verifier was checked against a deliberately corrupted model (five topics
-  with their sides swapped gave nine contradictions and exit 1), so
-  `contradicted 0` is a result rather than a rule that cannot fire.
+  test. Four are dangling remaps in Autoware's own launch files, three
+  conditional endpoints the run did not select. The verifier was checked
+  against a deliberately corrupted model (five topics with their sides swapped
+  gave nine contradictions and exit 1), so `contradicted 0` is a result rather
+  than a rule that cannot fire.
   **Then: what does the graph say about Autoware? Nothing, twice, and both
   structural.** `check` returned at "No manifests found" before rendering any
   cross-scope diagnostic — right while the graph was empty, wrong once one
@@ -900,7 +901,13 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   and no vertices and reported clean. `ManifestIndex::derived_nodes` now seeds
   a vertex per derived node, carrying **structure only** — no paths, no
   costs, no concurrency — so cost rules still report incomplete evidence while
-  reachability rules can walk. With both fixed, Autoware's planning simulator
+  reachability rules can walk. A third defect the grading found: the derived
+  graph names an un-named node by the dump's un-numbered FQN while
+  `structure.nodes` keys it from the executable **plus an ordinal** (#0017),
+  so the model's own `structure.topics` named 26 endpoints on nodes absent
+  from its own `structure.nodes` — and they graded as "the node wired
+  nothing", which reads as a node that failed to start. With all three,
+  Autoware's planning simulator
   reports **11 causal cycles from a tree with zero contracts**: six are the
   simulator closing the physical loop (the case the rule's own message calls
   legitimate), two are the service misclassification, and

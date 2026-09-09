@@ -140,7 +140,30 @@ fn resolve_node_ref(nodes: &IndexMap<String, model::NodeInstance>, node_ref: &st
     }
     let bare = node_ref.rsplit('/').next().unwrap_or(node_ref);
     let mut hits = nodes.keys().filter(|k| k.rsplit('/').next() == Some(bare));
-    match (hits.next(), hits.next()) {
+    if let (Some(k), None) = (hits.next(), hits.next()) {
+        return k.clone();
+    }
+
+    // A node the launch file did not name is keyed here from its EXECUTABLE
+    // plus an ordinal (`…/autoware_simple_planning_simulator_node-1`, issue
+    // #0017), while the remap-derived graph refers to it by the un-numbered
+    // name the launch dump carries. Without this the model's own
+    // `structure.topics` names a node absent from its own `structure.nodes`
+    // -- measured on Autoware, every endpoint of every un-named node.
+    //
+    // Ambiguity is refused the same way the bare match refuses it: two
+    // ordinals of the same stem mean the ref does not identify one node, and
+    // guessing would attach a topic to the wrong process.
+    let mut ordinal_hits = nodes.keys().filter(|k| {
+        k.rsplit('/')
+            .next()
+            .and_then(|b| b.strip_prefix(bare))
+            .is_some_and(|rest| {
+                rest.strip_prefix('-')
+                    .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
+            })
+    });
+    match (ordinal_hits.next(), ordinal_hits.next()) {
         (Some(k), None) => k.clone(),
         _ => node_ref.to_string(),
     }
@@ -1169,6 +1192,52 @@ pub fn build_system_model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Phase 77 — an endpoint ref must reach a node the model actually has.
+    ///
+    /// The remap-derived graph names an un-named node by the un-numbered FQN
+    /// the launch dump carries, while `structure.nodes` keys it from the
+    /// executable plus an ordinal (issue #0017). Before this, `structure
+    /// .topics` named nodes absent from `structure.nodes` -- on Autoware,
+    /// every endpoint of every un-named node, 26 of them.
+    #[test]
+    fn an_endpoint_ref_resolves_onto_an_ordinal_suffixed_node_key() {
+        let mut nodes: IndexMap<String, model::NodeInstance> = IndexMap::new();
+        nodes.insert("/sim/simulator_node-1".to_string(), Default::default());
+        nodes.insert("/control/gate".to_string(), Default::default());
+
+        // The un-numbered ref reaches the numbered key.
+        assert_eq!(
+            resolve_endpoint_ref(&nodes, "/sim/simulator_node/input_cmd"),
+            "/sim/simulator_node-1/input_cmd"
+        );
+        // An exact key is untouched, and so is a plain named node.
+        assert_eq!(
+            resolve_endpoint_ref(&nodes, "/sim/simulator_node-1/input_cmd"),
+            "/sim/simulator_node-1/input_cmd"
+        );
+        assert_eq!(
+            resolve_endpoint_ref(&nodes, "/control/gate/output_cmd"),
+            "/control/gate/output_cmd"
+        );
+
+        // Two ordinals of the same stem do not identify one node, so the ref
+        // is left alone rather than attached to whichever came first.
+        nodes.insert("/sim/simulator_node-2".to_string(), Default::default());
+        assert_eq!(
+            resolve_endpoint_ref(&nodes, "/sim/simulator_node/input_cmd"),
+            "/sim/simulator_node/input_cmd"
+        );
+
+        // The suffix must be an ordinal, not any trailing text: a genuinely
+        // different node whose name merely starts with the ref is not it.
+        let mut other: IndexMap<String, model::NodeInstance> = IndexMap::new();
+        other.insert("/sim/simulator_node_backup".to_string(), Default::default());
+        assert_eq!(
+            resolve_endpoint_ref(&other, "/sim/simulator_node/input_cmd"),
+            "/sim/simulator_node/input_cmd"
+        );
+    }
 
     /// Issue 0018 — the same dump must produce the same keys, every time.
     ///

@@ -89,33 +89,35 @@ that the old leading-slash fast path skipped.
 
 ## Measured: the phase 76 inference
 
-Autoware 1.5.0 `planning_simulator.launch.xml`, 100 s, `observable`:
+Autoware 1.5.0 `planning_simulator.launch.xml`, 150 s, `observable`, with
+the sample map present:
 
 | | |
 |---|---|
 | model endpoints, all inferred | 269 |
-| confirmed | **230** |
+| confirmed | **256** |
 | **contradicted** | **0** |
-| unexercised, node wired nothing | 28 |
-| unexercised, node wired other endpoints | 11 |
-| observed endpoints the model does not claim | 752 |
+| unexercised | 13 |
+| observed endpoints the model does not claim | 730 |
 
 **Zero contradictions.** The `~/input/`–`~/output/` convention did not get a
 single direction wrong across 269 edges.
 
-The 11 real misses are two kinds, and both are worth naming:
+The 13 real misses are three kinds, and each is worth naming:
 
-- **Four are services, not topics.** `~/output/mrm/emergency_stop/operate` is
+- **Six are services, not topics.** `~/output/mrm/emergency_stop/operate` is
   a service client, and Autoware spells a client the same way it spells a
   publisher. Nothing in a launch file distinguishes them, so the inference
   cannot; the edge lands in `structure.topics` where it should be
   `structure.services`. The causality it asserts is real — the handler does
   drive the operator — so the ancestor closure errs toward more coupling,
   which is the safe direction for an independence test.
-- **Seven endpoints the running nodes never created**, three of them
-  publishers of `/planning/scenario_planning/status/stop_reasons`. A remap
-  naming a topic the node no longer has is a dangling remap in the launch
-  file, which is a finding about Autoware rather than about us.
+- **Four are dangling remaps in Autoware's own launch files**, three of them
+  publishers of `/planning/scenario_planning/status/stop_reasons` — a topic
+  the nodes no longer have. A finding about Autoware rather than about us.
+- **Three are conditional endpoints** the run's parameters did not select
+  (`actuation_cmd` against `control_cmd` on the simulator, two subscriptions
+  behind feature flags).
 
 The verifier was checked against a deliberately corrupted model — five topics
 with their sides swapped produced nine contradictions and exit 1 — so
@@ -138,6 +140,18 @@ and both were structural.
    that asks `graph.nodes` whether an endpoint exists — `contains_node`, the
    path-graph builder, the cycle DFS — dropped them all. Phase 76 delivered
    edges and no vertices, and reported clean.
+
+3. **The derived graph and the model's node table disagreed on every un-named
+   node.** `structure.nodes` keys a node the launch file did not name from its
+   EXECUTABLE plus an ordinal (`…/autoware_simple_planning_simulator_node-1`,
+   issue #0017), while the remap derivation refers to it by the un-numbered
+   FQN the launch dump carries. `resolve_node_ref` matched on the bare name
+   and the two bare names differ by the suffix, so the model's own
+   `structure.topics` named 26 endpoints on nodes absent from its own
+   `structure.nodes`. Found only by grading: those endpoints showed up as
+   "the node wired nothing at all", which reads as a node that failed to
+   start. Fixing it moved the verdict from 230 confirmed to **256**, and the
+   28 supposedly-dead claims to zero.
 
 `ManifestIndex::derived_nodes` now carries the launch scope of every node the
 remap derivation touched, and `build_global_graph` seeds a vertex for each one
@@ -173,12 +187,13 @@ the cycle came from a contract; it now says so.
   distinguish them is exactly this phase's measurement, so the fix, if it is
   worth one, is to feed a recorded run back into the model rather than to
   guess harder.
-- **Grading needs a run that actually starts.** 28 of the 39 unexercised
-  claims are three nodes that wired nothing; the sample map is absent on this
-  machine, so the simulator never came up. A verification on a system that
-  runs properly would grade those too.
-- **Under-coverage is unmeasured in the other direction.** 752 observed
-  endpoints are absent from the model, 608 of them on topics it has never
+- **A run still only grades what it constructs.** The simulator sits in
+  `waiting initialization...` without an initial pose, so its endpoints exist
+  but almost nothing flows: 80 of 986 endpoints carried a message. That is
+  the argument for grading endpoints rather than traffic, not a limit on the
+  verdict — but a verdict about RATES or latencies would need a driven run.
+- **Under-coverage is unmeasured in the other direction.** 730 observed
+  endpoints are absent from the model, 611 of them on topics it has never
   heard of. A node that does not remap a topic never names it in a launch
   file, so this is the shape of the gap rather than a defect — but it is the
   gap a safety classification fails open through, and nothing yet reports it
