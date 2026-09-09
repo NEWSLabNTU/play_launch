@@ -233,6 +233,16 @@ pub fn setup_child_interception(
             "PLAY_LAUNCH_INTERCEPTION_MEMBER".to_string(),
             node_name.to_string(),
         );
+        // The endpoint sink is a sibling of the identity sink, in the same
+        // run's `interception/` directory, and shares its member name. It is
+        // derived from that path rather than threaded separately because the
+        // two answer halves of the same question -- what this process is, and
+        // what it wired -- and `identity_path` being `Some` is already the
+        // proof that the directory exists.
+        env.insert(
+            "PLAY_LAUNCH_INTERCEPTION_ENDPOINT_FILE".to_string(),
+            path.with_file_name("endpoints.tsv").display().to_string(),
+        );
     }
 
     // Phase 36.7: when blocking is enabled, inject the allowlist path

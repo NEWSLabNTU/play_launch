@@ -32,6 +32,7 @@ mod allowlist;
 mod drop_counter;
 mod event;
 mod introspection;
+mod endpoints;
 mod node_identity;
 mod plugin;
 mod plugin_dispatch;
@@ -76,9 +77,9 @@ struct Originals {
     /// `ros2 topic list` reports. Without this the interceptor would
     /// hash pre-remap names that differ from the manifest's declared
     /// FQNs. Optional — falls back to expansion-only if missing.
-    node_get_options: Option<FnRclNodeGetOptions>,
-    get_global_arguments: Option<FnRclGetGlobalArguments>,
-    remap_topic_name: Option<FnRclRemapTopicName>,
+    /// `rcl_node_resolve_name` — expansion AND remapping in the one call rcl
+    /// makes itself. Optional only because a non-ROS process has no rcl.
+    node_resolve_name: Option<FnRclNodeResolveName>,
     /// RMW-layer originals (Phase 36.1). Optional — resolved separately
     /// from rcl symbols because the rmw symbols live in
     /// `librmw_implementation.so`, which may not be loaded under
@@ -193,28 +194,15 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         }
     };
 
-    // Optional remap support.
-    let node_opts = unsafe { libc::dlsym(source, c"rcl_node_get_options".as_ptr()) };
-    let global_args = unsafe { libc::dlsym(source, c"rcl_get_global_arguments".as_ptr()) };
-    let remap = unsafe { libc::dlsym(source, c"rcl_remap_topic_name".as_ptr()) };
-    let (node_get_options, get_global_arguments, remap_topic_name) =
-        if node_opts.is_null() || global_args.is_null() || remap.is_null() {
-            (None, None, None)
-        } else {
-            unsafe {
-                (
-                    Some(std::mem::transmute::<*mut c_void, FnRclNodeGetOptions>(
-                        node_opts,
-                    )),
-                    Some(std::mem::transmute::<*mut c_void, FnRclGetGlobalArguments>(
-                        global_args,
-                    )),
-                    Some(std::mem::transmute::<*mut c_void, FnRclRemapTopicName>(
-                        remap,
-                    )),
-                )
-            }
-        };
+    // Optional remap support. One symbol, resolved on its own: it is the
+    // whole of what rcl does to a topic name, so nothing else needs to be
+    // present for it to be correct.
+    let resolve = unsafe { libc::dlsym(source, c"rcl_node_resolve_name".as_ptr()) };
+    let node_resolve_name = if resolve.is_null() || alloc.is_null() {
+        None
+    } else {
+        Some(unsafe { std::mem::transmute::<*mut c_void, FnRclNodeResolveName>(resolve) })
+    };
 
     Some(Originals {
         publisher_init: unsafe {
@@ -232,9 +220,7 @@ unsafe fn resolve_from(source: *mut c_void) -> Option<Originals> {
         get_default_allocator,
         string_map_init,
         string_map_fini,
-        node_get_options,
-        get_global_arguments,
-        remap_topic_name,
+        node_resolve_name,
         rmw: None, // resolved separately in try_resolve_originals
     })
 }
@@ -284,7 +270,45 @@ fn record_node_identity(originals: &Originals, node: *const rcl_node_t) {
     node_identity::observe(name.as_ref(), ns.as_ref());
 }
 
+/// Record the endpoint this init call created, for `verify_graph.py`.
+///
+/// Ungated on plugins, for the same reason [`record_node_identity`] is: the
+/// endpoint sink is its own opt-in, and a run with no plugins still wants the
+/// graph it can only learn here. The topic is expanded to the canonical FQN
+/// (remap rules applied) so it names the same string `ros2 topic list` does.
+fn record_endpoint(
+    originals: &Originals,
+    node: *const rcl_node_t,
+    topic_name: *const c_char,
+    direction: &str,
+) {
+    let (Some(get_name), Some(get_ns)) = (originals.node_get_name, originals.node_get_namespace)
+    else {
+        return;
+    };
+    if node.is_null() || topic_name.is_null() {
+        return;
+    }
+    let name_ptr = unsafe { get_name(node) };
+    let ns_ptr = unsafe { get_ns(node) };
+    if name_ptr.is_null() || ns_ptr.is_null() {
+        return;
+    }
+    let name = unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy();
+    let ns = unsafe { CStr::from_ptr(ns_ptr) }.to_string_lossy();
+    let fqn = format!("{}/{}", ns.trim_end_matches('/'), name);
+    let raw = unsafe { CStr::from_ptr(topic_name) }.to_string_lossy();
+    let topic = expand_topic_name(originals, node, raw.as_ref());
+    endpoints::observe(&fqn, direction, &topic);
+}
+
 fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str) -> String {
+    // Strategy 1: ask rcl. This is the only strategy that applies remap rules,
+    // and it is tried for an ALREADY-ABSOLUTE name too -- `-r /a:=/b` is a
+    // legal rule, so returning early on a leading `/` would skip it.
+    if let Some(resolved) = try_rcl_resolve(originals, node, topic) {
+        return resolved;
+    }
     if topic.starts_with('/') {
         return topic.to_string();
     }
@@ -303,12 +327,11 @@ fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str
     let name = unsafe { CStr::from_ptr(name_ptr) }.to_string_lossy();
     let ns = unsafe { CStr::from_ptr(ns_ptr) }.to_string_lossy();
 
-    // Strategy 2: full rcl expansion + remap if all helpers present.
+    // Strategy 2: full rcl expansion, no remapping. Reached only when
+    // `rcl_node_resolve_name` is absent, which no ROS 2 release in support
+    // is; a name that reaches here and had a remap rule is wrong.
     if let Some(expanded) = try_rcl_expand(originals, topic, name.as_ref(), ns.as_ref()) {
-        // Apply launch-time `--remap` rules if available, otherwise
-        // fall back to the bare expansion.
-        return try_rcl_remap(originals, node, &expanded, name.as_ref(), ns.as_ref())
-            .unwrap_or(expanded);
+        return expanded;
     }
 
     // Strategy 3: hand-rolled fallback for the common cases.
@@ -337,75 +360,59 @@ fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str
     }
 }
 
-/// Apply the node's launch-time `--remap` rules to an already-expanded
-/// topic name. Returns `Some(remapped)` only when a rule matched; on
-/// no-match, error, or missing FFI symbols returns `None` (caller
-/// falls back to the expanded form). Mirrors what `rcl_publisher_init`
-/// does internally before handing the name to rmw, so the interceptor
-/// hashes the same canonical FQN that `ros2 topic list` reports.
-fn try_rcl_remap(
+/// Resolve a topic name exactly the way `rcl_publisher_init` does: expand
+/// `~`, the namespace and the `{node}`/`{ns}` substitutions, then apply the
+/// node's local and global remap rules.
+///
+/// Returns `None` when rcl is absent or the call fails, and the caller falls
+/// back to the hand-rolled expansion — which does NOT remap, so a fallback is
+/// a silently wrong name and the reason this function exists.
+///
+/// It replaces an expand-then-remap pair that never ran: its remap half needed
+/// `rcl_get_global_arguments`, a symbol rcl does not export (it appears in
+/// `rcl/remap.h` only inside a doc comment), so the whole group resolved to
+/// `None` on every installation. Measured on Autoware 1.5.0: the interceptor
+/// recorded `/control/control_evaluator/input/odometry` where the running node
+/// was subscribed to `/localization/kinematic_state`. Every plugin keyed by
+/// topic -- frontier, stats, the Chrome trace, `play_launch measure` -- was
+/// therefore naming remapped topics wrongly, and nothing said so.
+fn try_rcl_resolve(
     originals: &Originals,
     node: *const rcl_node_t,
-    expanded: &str,
-    node_name: &str,
-    node_ns: &str,
+    topic: &str,
 ) -> Option<String> {
-    let get_options = originals.node_get_options?;
-    let get_global = originals.get_global_arguments?;
-    let remap = originals.remap_topic_name?;
+    let resolve = originals.node_resolve_name?;
     let get_alloc = originals.get_default_allocator?;
     if node.is_null() {
         return None;
     }
+    let topic_c = std::ffi::CString::new(topic).ok()?;
 
-    let topic_c = std::ffi::CString::new(expanded).ok()?;
-    let name_c = std::ffi::CString::new(node_name).ok()?;
-    let ns_c = std::ffi::CString::new(node_ns).ok()?;
-
-    // SAFETY: all five FFI pointers are dlsym'd rcl/rcutils symbols.
-    // The node pointer is the one passed to rcl_publisher_init by the
-    // application, so it's a valid initialised rcl_node_t. The
-    // allocator is a default rcutils_allocator_t (no state).
-    let result = unsafe {
-        let options = get_options(node);
-        if options.is_null() {
-            return None;
-        }
-        let local_args: *const rcl_arguments_t = &(*options).arguments;
-        let global_args = if (*options).use_global_arguments {
-            get_global()
-        } else {
-            std::ptr::null()
-        };
+    // SAFETY: both pointers are dlsym'd rcl/rcutils symbols. The node pointer
+    // is the one the application passed to `rcl_publisher_init`, so it is a
+    // valid initialised `rcl_node_t`; the allocator is a default
+    // `rcutils_allocator_t` (no state). `only_expand = false` is what asks for
+    // the remap rules; `is_service = false` because these are topics.
+    unsafe {
         let allocator = get_alloc();
         let mut out_ptr: *mut c_char = std::ptr::null_mut();
-        let ret = remap(
-            local_args,
-            global_args,
+        let ret = resolve(
+            node,
             topic_c.as_ptr(),
-            name_c.as_ptr(),
-            ns_c.as_ptr(),
             allocator,
+            false,
+            false,
             &mut out_ptr,
         );
-        if ret == 0 && !out_ptr.is_null() {
-            let remapped = CStr::from_ptr(out_ptr).to_string_lossy().into_owned();
-            if let Some(dealloc) = allocator.deallocate {
-                dealloc(out_ptr as *mut std::ffi::c_void, allocator.state);
-            }
-            // rcl_remap_topic_name returns RCL_RET_OK with the same
-            // string when no rule applied — treat as "no remap" so the
-            // caller uses the cheaper expanded form.
-            if remapped == expanded {
-                None
-            } else {
-                Some(remapped)
-            }
-        } else {
-            None
+        if ret != 0 || out_ptr.is_null() {
+            return None;
         }
-    };
-    result
+        let resolved = CStr::from_ptr(out_ptr).to_string_lossy().into_owned();
+        if let Some(dealloc) = allocator.deallocate {
+            dealloc(out_ptr as *mut std::ffi::c_void, allocator.state);
+        }
+        Some(resolved)
+    }
 }
 
 /// Call `rcl_expand_topic_name` if all the helper symbols are resolved.
@@ -722,6 +729,7 @@ pub unsafe extern "C" fn rcl_publisher_init(
     // sink is its own opt-in, and a run with no plugins still wants it.
     if ret == 0 {
         record_node_identity(&rt.originals, node);
+        record_endpoint(&rt.originals, node, topic_name, "pub");
     }
 
     if ret == 0 && !rt.plugins.is_empty() {
@@ -836,6 +844,7 @@ pub unsafe extern "C" fn rcl_subscription_init(
     // only subscribes is reported here.
     if ret == 0 {
         record_node_identity(&rt.originals, node);
+        record_endpoint(&rt.originals, node, topic_name, "sub");
     }
 
     if ret == 0 && !rt.plugins.is_empty() {

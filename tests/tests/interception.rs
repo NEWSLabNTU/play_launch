@@ -412,3 +412,79 @@ fn test_interception_reports_real_node_names() {
         unnamed.0
     );
 }
+
+/// Phase 77 — the interceptor must name a REMAPPED topic the way the running
+/// system does.
+///
+/// `expand_topic_name` used to expand `chatter` to `/pure_test/chatter` and
+/// then hand it to a remap step that could never run: the step needed
+/// `rcl_get_global_arguments`, which is not a symbol rcl exports (it appears
+/// once in `rcl/remap.h`, inside a doc comment), so the whole optional group
+/// resolved to `None` on every installation and the expanded name was used
+/// unchanged. Every consumer keyed by topic — the frontier and stats plugins,
+/// the Chrome trace, `play_launch measure`, and the graph verification this
+/// test was written alongside — therefore named remapped topics wrongly, and
+/// silently.
+///
+/// It survived because no fixture in the tree had a remap. This one does, and
+/// it asserts BOTH directions: the remapped name present, and the un-remapped
+/// name absent. Asserting only the first would pass on a build that recorded
+/// both.
+#[test]
+fn test_interception_reports_remapped_topic_names() {
+    let config = r#"
+interception:
+  enabled: true
+  stats: true
+"#;
+
+    let work_dir = run_launch_with_config(
+        "launch/remapped_topic.launch.xml",
+        config,
+        Duration::from_secs(6),
+    );
+    let play_log = work_dir.path().join("play_log/latest");
+
+    let endpoints = play_log.join("interception/endpoints.tsv");
+    assert!(
+        wait_for_file(&endpoints, Duration::from_secs(5)),
+        "endpoints.tsv not found at {}",
+        endpoints.display()
+    );
+
+    let body = std::fs::read_to_string(&endpoints).expect("failed to read endpoints.tsv");
+    let rows: Vec<(String, String, String)> = body
+        .lines()
+        .filter_map(|line| {
+            let mut it = line.split('\t');
+            let _member = it.next()?;
+            let _pid = it.next()?;
+            let node = it.next()?;
+            let direction = it.next()?;
+            let topic = it.next()?;
+            Some((node.to_string(), direction.to_string(), topic.to_string()))
+        })
+        .collect();
+    assert!(!rows.is_empty(), "endpoints.tsv had no usable rows");
+
+    let has = |node: &str, direction: &str, topic: &str| {
+        rows.iter()
+            .any(|(n, d, t)| n == node && d == direction && t == topic)
+    };
+
+    assert!(
+        has("/pure_test/talker", "pub", "/renamed_chatter"),
+        "the talker's publisher must be recorded under the REMAPPED name; \
+         rows were {rows:?}"
+    );
+    assert!(
+        has("/pure_test/listener", "sub", "/renamed_chatter"),
+        "the listener's subscription must be recorded under the REMAPPED \
+         name; rows were {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|(_, _, t)| t == "/pure_test/chatter"),
+        "the un-remapped name must not appear at all — the running nodes are \
+         not wired to it; rows were {rows:?}"
+    );
+}

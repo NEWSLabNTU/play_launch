@@ -328,6 +328,17 @@ pub struct ManifestIndex {
     /// Previously the loader silently dropped `actions:` — the model's
     /// `structure.actions` was always empty.
     pub actions: BTreeMap<String, ResolvedService>,
+    /// Nodes that appear ONLY in the remap-derived graph (phase 76): FQN to
+    /// the launch scope the node was declared in. No manifest names them, so
+    /// they carry structure and nothing else -- no paths, no costs, no
+    /// concurrency.
+    ///
+    /// They are vertices all the same. `build_global_graph` used to take its
+    /// vertex set from the manifests only, so on a tree with no contracts it
+    /// built 114 edges between ZERO nodes and every graph rule -- including
+    /// `causal-dag-global`, which needs no requirement to have an opinion --
+    /// iterated an empty set and reported clean.
+    pub derived_nodes: BTreeMap<String, usize>,
     /// All resolved node paths.
     pub node_paths: Vec<ResolvedNodePath>,
     /// Resolved scope-level paths (input/output as resolved topic FQNs).
@@ -3637,6 +3648,12 @@ fn derive_topics_from_remaps(dump: &LaunchDump, index: &mut ManifestIndex) {
                 .trim_start_matches('/')
                 .replace('/', "_");
             let ep_ref = format!("{}/{ep}", record.fqn);
+            if let Some(scope_id) = record.scope_id {
+                index
+                    .derived_nodes
+                    .entry(record.fqn.clone())
+                    .or_insert(scope_id);
+            }
             let fqn = to.clone();
             let is_new = !index.topics.contains_key(&fqn);
             let entry = index

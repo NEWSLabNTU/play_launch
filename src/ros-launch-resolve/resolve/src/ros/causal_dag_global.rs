@@ -68,7 +68,16 @@ pub fn check_causal_dag_global(index: &mut ManifestIndex, graph: &GlobalDataflow
                 }
             }
         }
-        let files_desc = contract_files.into_iter().collect::<Vec<_>>().join(", ");
+        // With the phase 76 graph a cycle can run entirely through nodes no
+        // contract names, and "Contract files: ." reads as a missing value
+        // rather than as the fact that there are none.
+        let files_desc = if contract_files.is_empty() {
+            "none — every node on this cycle was derived from the launch \
+             file's remaps, not declared"
+                .to_string()
+        } else {
+            contract_files.into_iter().collect::<Vec<_>>().join(", ")
+        };
 
         index.merge_diagnostics.push(Diagnostic {
             rule_id: "causal-dag-global".to_string(),

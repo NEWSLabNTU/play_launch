@@ -182,12 +182,22 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // "None found" and "found, but none could be read" are different verdicts.
     // Only the first is a clean exit; conflating them let a contract file that
     // failed to parse report as if the user had shipped no contracts at all.
+    //
+    // Phase 76 added a third case: no manifest, and a topic graph anyway,
+    // derived from the launch file's own remaps. Most rules have nothing to
+    // say without a declared requirement, but `causal-dag-global` does -- a
+    // cycle is a defect whether or not anyone wrote a budget -- and
+    // `graph-from-remaps` reports the graph a later verdict would be computed
+    // over. Returning here dropped both, so a tree with no contracts got the
+    // same silent exit 0 it got when the graph was empty.
     if index.manifests.is_empty() && index.load_diagnostics.is_empty() {
         eprintln!(
             "No manifests found (overlay={:?}, provider={})",
             sources.overlay, sources.provider
         );
-        return Ok(0);
+        if index.merge_diagnostics.is_empty() {
+            return Ok(0);
+        }
     }
 
     // Build the rule filter set (empty = no filter, show all)

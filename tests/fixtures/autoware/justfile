@@ -70,6 +70,55 @@ run-sim: check-autoware
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
 
+# Verify the model's topic graph against a real run
+#
+# Phase 77. The graph is an INFERENCE — from contracts an author wrote, and from the
+# `~/input/`–`~/output/` remap convention (phase 76). This launches the stack
+# with interception on, which records every publisher and subscription the
+# nodes actually create, and grades one against the other.
+#
+# `observable` rather than the default `isolated`: it is the cheaper mode by a
+# wide margin on an edge board (60 processes against 144), and every composable
+# still reports its own node name from inside the shared container process, so
+# nothing about the graph is lost.
+#
+# The verdict that matters is CONTRADICTED — a model edge whose direction the
+# run disagrees with. `missing` is under-coverage (a node that does not remap a
+# topic never names it in a launch file), and `unexercised` on a node that
+# wired nothing says the node did not start, not that the inference was wrong.
+#
+# Grade the model's topic graph against a real run
+verify-graph seconds="100": check-autoware
+    #!/usr/bin/env bash
+    set -e
+    SCRIPT_DIR="{{script_dir}}"
+    REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+    cd "$SCRIPT_DIR"
+
+    source ../../../install/setup.bash
+    source activate_autoware.sh
+    export PATH="$REPO_ROOT/install/play_launch/lib/play_launch:$PATH"
+    export PYTHONPATH="$REPO_ROOT/python:$PYTHONPATH"
+    export PLAY_LAUNCH_INTERCEPTION_SO="$REPO_ROOT/src/play_launch_interception/target/release/libplay_launch_interception.so"
+    export ROS_DOMAIN_ID=$(( 80 + RANDOM % 15 ))
+
+    OUT="$SCRIPT_DIR/out/verify-graph"
+    rm -rf "$OUT" && mkdir -p "$OUT" && cd "$OUT"
+    printf 'interception:\n  enabled: true\n' > cfg.yaml
+
+    play_launch resolve --parser rust -o model.yaml \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="{{map_path}}" > resolve.log 2>&1
+
+    echo "=== running for {{seconds}}s with interception ==="
+    timeout {{seconds}} play_launch launch \
+        autoware_launch planning_simulator.launch.xml \
+        map_path:="{{map_path}}" \
+        --container-mode observable --config cfg.yaml --disable-web-ui \
+        --disable-monitoring --disable-diagnostics > run.log 2>&1 || true
+
+    python3 "$REPO_ROOT/scripts/verify_graph.py" play_log/latest --model model.yaml
+
 # Run Autoware demo (simulator + autonomous test)
 run-demo: check-autoware
     #!/usr/bin/env bash

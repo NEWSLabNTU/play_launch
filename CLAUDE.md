@@ -852,6 +852,62 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   nano-ros's debt. `just check-field-census` still gates. Roadmap:
   `docs/roadmap/phase-70-consumer-census.md` §W2.
 
+- **2026-09-09**: Phase 77 — **the inferred graph, measured; and the
+  interceptor could not see a remap.** Phase 76 filled the topic graph from
+  the launch file's remaps and nothing had checked an edge of it against a
+  running system. `interception/endpoints.tsv` now records every publisher and
+  subscription CREATED (from the two init hooks), and
+  `scripts/verify_graph.py` grades the model against it —
+  `just verify-graph` in the Autoware fixture. Endpoints rather than
+  `events.jsonl` on purpose: that file records MESSAGES, and a subscription on
+  a pipeline whose sensor is absent looks there exactly like one that does not
+  exist. Measured on the same run: **982 endpoints created, 63 carrying a
+  message** — grading by traffic would have called the other 919 missing.
+  **The first thing it found was ours.** `expand_topic_name` expanded
+  `~/input/odometry` and then applied remap rules through
+  `rcl_get_global_arguments`, **a symbol rcl does not export** (it appears once
+  in the whole tree, inside a doc comment in `rcl/remap.h`). The optional group
+  was all-or-nothing, so it was `None` on every installation and the
+  un-remapped expansion was used unchanged: the interceptor recorded
+  `/control/control_evaluator/input/odometry` where `ros2 node info` said
+  `/localization/kinematic_state`. Not just a verification problem — **every
+  consumer keyed by topic** (frontier, stats, the Chrome trace, `measure`) was
+  naming remapped topics wrongly on any launch file that remaps. It survived
+  because **no fixture in the tree had a remap**; one does now, and the test
+  asserts the remapped name present AND the un-remapped name absent (asserting
+  only the first passes on a build that records both). Replacement is
+  `rcl_node_resolve_name`, the one call rcl makes itself, tried for
+  already-absolute names too since `-r /a:=/b` is legal and the old
+  leading-slash fast path skipped it.
+  **The verdict on phase 76: 230 of 269 inferred edges confirmed, ZERO
+  contradicted.** The convention did not get one direction wrong. Of the 11
+  real misses, **four are services** — `~/output/…/operate` is a service
+  client and Autoware spells a client like a publisher, so the inference
+  cannot separate them; the causality is real, only the kind is wrong, which
+  errs toward more coupling and is the safe direction for an independence
+  test. The other seven are dangling remaps in Autoware's own launch files.
+  The verifier was checked against a deliberately corrupted model (five topics
+  with their sides swapped gave nine contradictions and exit 1), so
+  `contradicted 0` is a result rather than a rule that cannot fire.
+  **Then: what does the graph say about Autoware? Nothing, twice, and both
+  structural.** `check` returned at "No manifests found" before rendering any
+  cross-scope diagnostic — right while the graph was empty, wrong once one
+  exists that no manifest produced, because `causal-dag-global` needs no
+  declared requirement to have an opinion. And **`build_global_graph` took its
+  VERTEX set from the manifests only** while step 2 built edges from
+  `index.topics`: 114 edges between **0 vertices**, dropped by every consumer
+  that asks `graph.nodes` whether an endpoint exists. Phase 76 delivered edges
+  and no vertices and reported clean. `ManifestIndex::derived_nodes` now seeds
+  a vertex per derived node, carrying **structure only** — no paths, no
+  costs, no concurrency — so cost rules still report incomplete evidence while
+  reachability rules can walk. With both fixed, Autoware's planning simulator
+  reports **11 causal cycles from a tree with zero contracts**: six are the
+  simulator closing the physical loop (the case the rule's own message calls
+  legitimate), two are the service misclassification, and
+  `vehicle_cmd_gate ↔ external_cmd_converter` is a genuine feedback pair and
+  the candidate for a missing `state: true`. Roadmap:
+  `docs/roadmap/phase-77-graph-verified.md`.
+
 - **2026-09-05**: Phase 70 W1 — **the consumer census: which fields are
   actually read.** Phase 69 made the grammar enumerable, which says what is
   LEGAL; this says what is READ. The four fields retired in phases 67/68

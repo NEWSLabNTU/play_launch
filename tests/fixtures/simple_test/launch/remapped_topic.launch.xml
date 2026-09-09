@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!--
+  A launch file whose only interesting feature is a remap.
+
+  It exists because the interceptor could not see one. `expand_topic_name`
+  expanded `chatter` to `/pure_test/chatter` and then applied the node's remap
+  rules through a symbol rcl does not export, so the remap step silently never
+  ran and every plugin keyed by topic name (frontier, stats, the Chrome trace,
+  `measure`) recorded the un-remapped name. No fixture in the tree had a
+  remap, so nothing failed.
+-->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker" namespace="/pure_test" output="screen">
+    <remap from="chatter" to="/renamed_chatter"/>
+  </node>
+
+  <node pkg="demo_nodes_cpp" exec="listener" name="listener" namespace="/pure_test" output="screen">
+    <remap from="chatter" to="/renamed_chatter"/>
+  </node>
+</launch>

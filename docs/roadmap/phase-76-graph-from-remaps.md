@@ -79,8 +79,10 @@ nodes, from data rather than from reading launch files by hand.
 - **Derived edges carry no message type, QoS, or rate**, so only the rules
   that need pure structure (ancestors, reachability, `causal-dag`) gain from
   them. `qos-match` and the rate rules still need a contract.
-- **Ground truth exists and is not used yet.** `interception/events.jsonl`
-  records `(node, publish|take, topic)` from a real run — exact direction,
-  no convention. That can confirm or contradict every derived edge, and is
-  the obvious next step: infer statically, verify on a running system, the
-  method every phase since 67 has used.
+- **Ground truth existed and was not used yet.** Done in phase 77
+  (`docs/roadmap/phase-77-graph-verified.md`): `interception/endpoints.tsv`
+  records every endpoint a run CREATES, and `scripts/verify_graph.py` grades
+  the model against it. Verdict on this phase: **230 of 269 inferred edges
+  confirmed, zero contradicted.** Grading it turned up two defects of its own
+  — the interceptor had never applied a remap rule, and this phase delivered
+  edges into a graph whose vertex set was still contract-only.

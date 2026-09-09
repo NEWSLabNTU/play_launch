@@ -266,6 +266,30 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
         }
     }
 
+    // Step 1b: seed the vertices a contract never named (phase 76 + phase 77).
+    //
+    // The remap-derived graph supplies edges between nodes no manifest
+    // declares. Without a vertex for them the edge is built and then dropped
+    // by every consumer that asks `graph.nodes` whether the endpoint exists:
+    // measured on Autoware with no contracts, 114 edges between 0 vertices.
+    //
+    // A derived vertex carries STRUCTURE ONLY -- no paths, no subscriber or
+    // publisher properties, no concurrency -- so the rules that need a
+    // declared cost still find nothing and report incomplete evidence, while
+    // the rules that need only reachability (`causal-dag-global`, the
+    // ancestor and route walks) finally have something to walk. A manifest
+    // declaration always wins: this fills gaps, it never overwrites.
+    for (fqn, scope_id) in &index.derived_nodes {
+        graph.nodes.entry(fqn.clone()).or_insert_with(|| GlobalNode {
+            fqn: fqn.clone(),
+            scope_id: *scope_id,
+            paths: Default::default(),
+            subscribers: Default::default(),
+            publishers: Default::default(),
+            concurrency: None,
+        });
+    }
+
     // Step 2: build edges from merged topics.
     // Each topic has publishers and subscribers as endpoint FQNs
     // (e.g. "/perception/cropbox/output"). Extract the node FQN by
