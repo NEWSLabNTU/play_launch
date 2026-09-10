@@ -1,8 +1,10 @@
 # play_launch Roadmap
 
-Started October 2025. 36 phases total; 27 complete, 3 in progress, 6 planned.
+Started October 2025. 79 phases total (1–77, plus 14.5 and 30b); 64 complete, 11 in progress, 3 planned, 1 dropped — as of 2026-09-11.
 
-Completed phase docs are in `archive/`.
+Phase docs through phase 28 are in `archive/`; from phase 29 on, a phase's doc
+stays in this directory whatever its status, and its status line (the first
+few lines of the doc) is what the table and entries below are kept in step with.
 
 ---
 
@@ -26,30 +28,35 @@ Completed phase docs are in `archive/`.
 | 19 | Isolated Component Manager | ✅ | 2026-02-17 |
 | 20 | Web UI Modernization (Preact + SSE) | ✅ | 2026-02-20 |
 | 21 | Build System Optimization | ✅ | 2026-02-18 |
-| 22 | Launch Tree IR & WASM | ✅ 22.1–22.8 | 2026-02-24 |
+| 22 | Launch Tree IR & WASM | 🔄 22.1–22.8 done; 22.9–22.11 remaining | — |
 | 23 | Code Quality (round 2) | ✅ | 2026-02-25 |
 | 24 | Web UI Parameter Control | ✅ | 2026-02-27 |
 | 25 | Runtime Graph & Topic Introspection | 🔄 25.1–25.9 done | — |
 | 26 | Web UI Metrics Dashboard | ✅ | 2026-03-01 |
 | 27 | Runtime Dependency Check | ✅ | 2026-03-03 |
 | 28 | Parser Integration Test Coverage | ✅ | 2026-03-03 |
-| 29 | RCL Interception & Frontier Tracking | ✅ | 2026-03-11 |
+| 29 | [RCL Interception & Frontier Tracking](./phase-29-rcl_interception.md) | ✅ | 2026-03-11 |
 | 30 | Launch Tree Scoping | ✅ | 2026-03-19 |
 | 30b | Group Scopes | ✅ | 2026-03-20 |
-| 31 | Launch Manifest | 📋 Planned | — |
-| 36 | Runtime Enforcement | ✅ 36.1–36.7 | 2026-05-11 |
+| 31 | Launch Manifest | 🔄 31.1–31.5 done (types, checker, fixtures, executor loading, static check CLI) | — |
+| 32 | [Manifest Features (args, conditions, service checks)](./phase-32-manifest_features.md) | ✅ 32.1–32.6 (32.4 dropped) | — |
+| 33 | [Manifest v2](./phase-33-manifest_v2.md) | ✅ | — |
+| 34 | [Manifest Format Redesign (v1 → topic-name format, cross-scope merge)](./phase-34-manifest_redesign.md) | ✅ 34.1–34.8 | — |
+| 35 | [Graph-Aware Budget Checking (critical path over the merged dataflow graph)](./phase-35-graph_aware_budget.md) | ✅ 35.1–35.8 | — |
+| 36 | Runtime Enforcement | ✅ 36.1–36.8 | 2026-05-11 |
+| 37 | Crate Split + Boundary Cleanup | 📋 Planned (37.1–37.7 not started) | — |
 | 38 | Linux RT Scheduling Apply-Layer | ✅ 38.1–38.10 | 2026-07-15 |
 | 39 | RT Example Workspace | ✅ 39.1–39.4 | 2026-07-15 |
 | 40 | Contract Shipping (sidecar + overlay) | ✅ 40.1–40.7 | 2026-07-15 |
 | 41 | RT Config v2 (derived scheduling) | 🔄 41.1–41.5 done, 41.6 gated | — |
-| 42 | Autoware System Model Study | ✅ 42.0–42.6 | 2026-07-17 |
+| 42 | [Autoware System Model Study](./phase-42-autoware_system_model.md) | 🔄 42.1–42.4 (study) done; 42.5–42.6 (proposal/design) pending per its doc | — |
 | 43 | Runtime Consumes the SystemModel | 🔄 43.1–43.3, 43.5 done; 43.4 re-scoped | — |
 | 44 | Vocabulary v2 + Chain-Aware Mapper | 🔄 44.1–44.6, 44.8 done; 44.7 handoff | — |
-| 45 | Scheduling SSoT Unification | ✅ 45.1–45.8 | 2026-07-19 |
+| 45 | Scheduling SSoT Unification | ✅ 45.1/45.7/45.8 + 45.10 shipped; 45.2/45.3 (model embedding) reverted | 2026-07-19 |
 | 46 | Unified SystemModel (one artifact) | ✅ 46.1–46.6 | 2026-07-20 |
-| 47 | CLI cleanup + hard record.json removal | ✅ A1–A2, B1–B6 | 2026-07-20 |
-| 48 | Detangle namespace from scope tree | ✅ minimal + full | 2026-07-20 |
-| 49 | Retire last record.json reader + replay --model degradations | 📋 Planned | — |
+| 47 | [CLI cleanup + hard record.json removal](./phase-47-cli_and_record_hard_removal.md) | ✅ A1–A2, B1–B6 | 2026-07-20 |
+| 48 | [Detangle namespace from scope tree](./phase-48-scope_namespace_detangle.md) | ✅ minimal + full | 2026-07-20 |
+| 49 | [Retire last record.json reader + replay --model degradations](./phase-49-context_model_and_replay_degradations.md) | 🔄 A + B1 shipped; B2/B3 accepted as degradations | 2026-07-21 |
 
 ---
 
@@ -86,9 +93,9 @@ ScopeEntry refactored: `origin: Option<ScopeOrigin>` (null for groups, object fo
 
 See [phase-30b-group_scopes.md](./phase-30b-group_scopes.md).
 
-### Phase 31: Launch Manifest (planned)
+### Phase 31: Launch Manifest (in progress — 31.1–31.5 done)
 
-Per-launch-file manifest system. Describes expected communication graph: topics, services, actions, QoS, timing contracts. Manifest crate, parser integration, executor audit. Uses Phase 30 scope table as the bridge between manifests and record.json.
+Per-launch-file manifest system. Describes expected communication graph: topics, services, actions, QoS, timing contracts. Manifest crate, parser integration, executor audit. Uses Phase 30 scope table as the bridge between manifests and the launch tree (then `record.json`, now the SystemModel's `structure.scopes`). Shipped: types, checker, fixtures, executor loading, integration tests, source spans, static check CLI (110 tests).
 
 See [phase-31-launch_manifest.md](./phase-31-launch_manifest.md).
 Design: `docs/launch-manifest.md` in the `ros-launch-manifest` crate — moved
@@ -96,9 +103,9 @@ there in phase 31, and since phase-55 W2 that crate is a git dependency pinned
 by tag, so the file is no longer in this repo (find it under
 `~/.cargo/git/checkouts/ros-launch-manifest-*/`).
 
-### Phase 36: Runtime Enforcement (in progress)
+### Phase 36: Runtime Enforcement (complete)
 
-Closes the static → runtime contract loop. Extends Phase 29 LD_PRELOAD interception with an RMW-layer hook set (36.1 in progress) and adds a `RuleEngine` consumer that evaluates manifest contracts against live traffic (36.3). Also: QoS-negotiation visibility (36.2), `--enforce-rules` CLI flag (36.4), `GraphPlugin v2` warn-only (36.5), lifecycle-aware gating (36.6), and optional v3 blocking enforcement (36.7).
+Closes the static → runtime contract loop. Extends Phase 29 LD_PRELOAD interception with an RMW-layer hook set (36.1) and adds a `RuleEngine` consumer that evaluates manifest contracts against live traffic (36.3). Also: QoS-negotiation visibility (36.2), `--enforce-rules` CLI flag (36.4), `GraphPlugin v2` warn-only (36.5), lifecycle-aware gating (36.6, transition-event subscriber 36.6.1), v3 blocking enforcement (36.7), and DDS event callbacks (36.8). All done per the phase doc's status line; the `RuleEngine` is what phase 73 later turned into the live fault observer.
 
 See [phase-36-runtime_enforcement.md](./phase-36-runtime_enforcement.md).
 
@@ -138,9 +145,9 @@ Design: [docs/superpowers/specs/2026-07-16-rt-config-v2-design.md](../superpower
 
 ---
 
-### Phase 43: Runtime Consumes the SystemModel (planned)
+### Phase 43: Runtime Consumes the SystemModel (43.1–43.3, 43.5 done; 43.4 re-scoped)
 
-`replay --model system_model.yaml`: the checked artifact from `play_launch resolve` becomes the runtime's single source for identity, contracts (RuleEngine), and scheduling (AppliedTier) — record.json stays the spawn-info companion, bound by sha256 in `meta.inputs` (mismatch refuses). Five stages: model↔record binding, RuleEngine view-struct with `from_model`, sched from `execution.tiers`/`bindings`, web-UI scopes from the model, model-path default for `launch`. Orthogonal to Phase 42 (content vs plumbing).
+`replay --model system_model.yaml`: the checked artifact from `play_launch resolve` becomes the runtime's single source for identity, contracts (RuleEngine), and scheduling (AppliedTier). As planned, record.json stayed the spawn-info companion bound by sha256 in `meta.inputs`; phases 46/47 then made the model the ONE artifact and removed that binding. Landed 2026-07-17: RuleEngine view-struct with `from_model`, sched from `execution.tiers`/`bindings`, web-UI scopes from the model, model-path default for `launch`; 43.4 re-scoped (see the doc). Orthogonal to Phase 42 (content vs plumbing).
 
 See [phase-43-runtime_consumes_system_model.md](./phase-43-runtime_consumes_system_model.md).
 Design: [docs/design/system-model.md](../design/system-model.md) + nano-ros RFC-0050.
@@ -152,9 +159,9 @@ Linux implementation of the Phase 42 designs: additive contract vocabulary (expl
 See [phase-44-vocab_v2_chain_mapper.md](./phase-44-vocab_v2_chain_mapper.md).
 Designs: [vocabulary v2](../superpowers/specs/2026-07-17-contract-vocabulary-v2-design.md) · [chain-aware mapper](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
-### Phase 45: Scheduling SSoT Unification (planned)
+### Phase 45: Scheduling SSoT Unification (45.1/45.7/45.8 + 45.10 shipped; 45.2/45.3 reverted)
 
-Makes the SystemModel the single source of truth for scheduling: `resolve` runs the mapper once and embeds its complete output (resolved chains, per-path ranks, mapper identity) into the model, so runtime apply, `--explain`, analysis, monitoring, and nano-ros all read scheduling from the model instead of re-deriving it. Also unifies the diagnostic renderer (Autoware's 111-line warning flood → ≤3) and the three FQN builders.
+Set out to make the SystemModel the single source of truth for scheduling: `resolve` runs the mapper once and embeds its complete output (resolved chains, per-path ranks, mapper identity) into the model, so runtime apply, `--explain`, analysis, monitoring, and nano-ros all read scheduling from the model instead of re-deriving it. **The embedding (45.2/45.3) landed and was reverted** (2026-07-20): the model carries the applied tiers/bindings, not the resolved plan, so `up --explain` is degraded by design (see `docs/guide/rt-scheduling.md` §1.3). 45.10 split the mapper core so nano-ros consumes it (their phase-296 W5). The diagnostic-renderer unification (Autoware's 111-line warning flood → ≤3) and the three FQN builders shipped.
 
 See [phase-45-sched_ssot_unification.md](./phase-45-sched_ssot_unification.md).
 Design: [docs/design/system-model-sched-ssot.md](../design/system-model-sched-ssot.md).
@@ -174,15 +181,24 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
 - **Future ideas**: [future-considerations.md](./future-considerations.md)
 - **Archived phase docs**: `archive/`
 
-- **Phase 50** — ✅ FQN member identity + full web visibility (issue 0001 resolved, 0006 partial)
-- **Phase 51** — ✅ state ownership refactor: reducer + container split (issues 0002/0003 resolved)
-- **Phase 52** — ✅ timing config + failure surfacing (issues 0004/0005 resolved)
-- **Phase 53** — ✅ web UI organization remainder (issue 0006 resolved)
+- **Phase 50** — ✅ FQN member identity + full web visibility (issue 0001 resolved, 0006 partial; 2026-07-25).
+  [phase-50-fqn-identity-and-web-visibility.md](./phase-50-fqn-identity-and-web-visibility.md).
+- **Phase 51** — ✅ state ownership refactor: reducer + container split (issues 0002/0003 resolved; 2026-07-25).
+  [phase-51-state-ownership-refactor.md](./phase-51-state-ownership-refactor.md).
+- **Phase 52** — ✅ timing config + failure surfacing (issues 0004/0005 resolved; 2026-07-25).
+  [phase-52-config-and-failure-surfacing.md](./phase-52-config-and-failure-surfacing.md).
+- **Phase 53** — ✅ web UI organization remainder (issue 0006 resolved; 2026-07-25).
+  [phase-53-web-ui-organization.md](./phase-53-web-ui-organization.md).
 - **Phase 54** — ✅ ordered parameter sources (issue 0007; the ordering was
-  built then discarded three times before 2026-08-02 completed it end to end)
-- **Phase 55** — 📋 launch toolchain consolidation: fold layer 2 into this
-  repo, keep its workspace separate. **Blocked on nano-ros amending RFC-0060**
-  (Stable, specifies three repositories).
+  built then discarded three times before 2026-08-02 completed it end to end;
+  54.1–54.5 landed 2026-07-27, nano-ros pin bump in that repo).
+  [phase-54-param-source-ordering.md](./phase-54-param-source-ordering.md).
+- **Phase 55** — ✅ launch toolchain consolidation (W0–W3 done, 2026-08-02/03):
+  layer 2 (`src/ros-launch-resolve/`, with the parser inside it) folded into
+  this repo by `git subtree`, its cargo workspace kept separate and gated by
+  `just check-layer2-isolation`; `ros-launch-manifest` became a git dependency
+  pinned by tag (`just bump-manifest`). RFC-0060 amended by nano-ros
+  `9baebb2eb`.
   [phase-55-launch-toolchain-consolidation.md](./phase-55-launch-toolchain-consolidation.md).
   Design: [docs/design/launch-toolchain-topology.md](../design/launch-toolchain-topology.md).
   Counterpart: nano-ros phase-332.
@@ -211,7 +227,8 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   decomposition (W3) and synthesis (W5). Study:
   [docs/research/scheduling-derivation-prior-art.md](../research/scheduling-derivation-prior-art.md).
   [phase-58-scheduling-derivation.md](./phase-58-scheduling-derivation.md).
-- **Phase 66** — 🚧 cgroup-per-container: `isolated` already surrendered
+- **Phase 66** — ✅ cgroup-per-container (W1, W2, W4 shipped; W3 closed by
+    measurement): `isolated` already surrendered
     everything that makes a ROS container a container (shared address space,
     shared executor, one participant); cgroup v2 gives the resource and
     lifecycle half back to separate processes, and gives it back **better** —
@@ -225,6 +242,21 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 77** — ✅ the inferred graph, measured (2026-09-09). Phase 76's
+    edges were all inferences from a naming convention and nothing had checked
+    one against a running system. `interception/endpoints.tsv` now records
+    every publisher and subscription CREATED, and `scripts/verify_graph.py`
+    (`just verify-graph` in the Autoware fixture) grades the model against it:
+    **256 of 269 inferred edges confirmed, zero contradicted**; of the 13
+    misses six are services spelled like publishers, four dangling remaps in
+    Autoware's own launch files, three conditional endpoints the run did not
+    select. The first thing it found was ours: the interceptor could not see a
+    remap (`rcl_get_global_arguments` is not an exported symbol, so every
+    topic-keyed consumer named remapped topics wrongly; fixed with
+    `rcl_node_resolve_name`), and `build_global_graph` had 114 edges between
+    zero vertices. With those fixed, Autoware's planning simulator reports 11
+    causal cycles from a tree with zero contracts.
+    [phase-77-graph-verified.md](./phase-77-graph-verified.md).
   - **Phase 76** — ✅ the topic graph the launch file already states. The
     Autoware model had 119 nodes and **0 topics**, so every graph rule was
     computing over nothing; 371 remaps described the wiring and nothing read
@@ -306,29 +338,37 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     failure silently dropped the whole file at exit 0, and a vacuous test whose
     scope path named topics that did not exist.
     [phase-69-contract-field-table.md](./phase-69-contract-field-table.md).
-  - **Phase 68** — 📋 contract consequences: analysis, mapper, verification,
-    retirement. Makes the checker and mapper read what phase 67 added, then
-    RETIRES the old paths only after a running system agrees. Fixes a silent
-    wrong answer measured on a two-output node — a route that never traverses
-    `masks` is charged for it, `to_tracks` costing **45ms where the truth is
-    30ms**, tracking an unrelated sibling path one-for-one — plus the sampling
+  - **Phase 68** — ✅ contract consequences: analysis, mapper, verification,
+    retirement (W1–W4 done, 2026-08-29; manifest `v0.1.17`). Made the checker
+    and mapper read what phase 67 added, then RETIRED the old paths after a
+    running system agreed. Fixed a silent wrong answer measured on a two-output
+    node — a route that never traverses `masks` was charged for it,
+    `to_tracks` costing **45ms where the truth is 30ms** — plus the sampling
     cost missing from `scope-budget` (**40% of the real total** on
-    `rt_workspace`) and six declared facts no arithmetic reads. Two of the
+    `rt_workspace`) and six declared facts no arithmetic read. Two of the
     mapper's jobs are REFUSALS, not derivations: an exclusive group is one
     schedulable entity rather than N, and a per-thread reservation is refused
-    where exclusive paths span threads. Retirement is gated on `rt_av_demo`
-    reproducing its published 217 -> 9 missed-frame result, not on the checker
-    agreeing with itself.
+    where exclusive paths span threads. **`chains:`/`segments:` are gone** — a
+    route is derived from `trigger:`/`output:` facts and a scope path states
+    two ends and a budget; a contract still carrying `chains:` is a parse
+    error naming the replacement. Equivalence was checked by PROVENANCE, not
+    by the numbers: `rt_workspace` gives the same two priorities under plain
+    budget ranking with no route at all, so a numeric gate passed while the
+    derivation was not being used. The one-release deprecation window was
+    deliberately skipped (0.10.0 was never tagged), recorded rather than
+    glossed.
     [phase-68-contract-consequences.md](./phase-68-contract-consequences.md).
-  - **Phase 67** — 📋 contract primitives: the vocabulary. A contract states
-    what the code does and what it must achieve; anything computable from those
-    is derived. Measured, `rt_workspace`'s three-node contract writes **100 nine
-    times** and is about a third irreducible. Adds jitter as a requirement,
-    deadline-miss handling, path exclusion (from which callback groups derive —
-    nano-ros already keys its tiers on `(node, callback_group)`), and the two
-    ROS 2 QoS policies we describe but never ask for. Strictly ADDITIVE: nothing
-    is removed, nothing is consumed, and the acceptance criterion is that every
-    existing contract resolves BYTE-IDENTICALLY.
+  - **Phase 67** — ✅ contract primitives: the vocabulary (2026-08-29). A
+    contract states what the code does and what it must achieve; anything
+    computable from those is derived. Measured, `rt_workspace`'s three-node
+    contract wrote **100 nine times** and was about a third irreducible. Added
+    jitter as a requirement (`max_jitter`/`min_latency`), deadline-miss
+    handling (`miss:`), path exclusion (`concurrency:`, from which callback
+    groups derive — nano-ros already keys its tiers on
+    `(node, callback_group)`), and the two ROS 2 QoS policies we describe but
+    never ask for. Strictly ADDITIVE: nothing removed, nothing consumed, and
+    the acceptance criterion — every existing contract resolves
+    BYTE-IDENTICALLY — was met.
     [phase-67-contract-primitives.md](./phase-67-contract-primitives.md).
   - **Phase 65** — 📋 mixed isolation granularity: phase 61's W3 made concrete
   after a second vehicle hit the cost. One container, per-composable policy:
@@ -337,18 +377,24 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   that already exist. 93 processes and ~110 DDS participants become ~8 and
   ~34 on the motivating stack.
   [phase-65-mixed-isolation-granularity.md](./phase-65-mixed-isolation-granularity.md).
-- **Phase 64** — 📋 a private load channel for the isolated container:
-  play_launch speaks LoadNode over rmw to its own container binary, and a
-  launch of ~150 fresh processes jams that layer exactly when load status
-  matters — one AutoSDV launch produced 14 spurious 30s LoadNode timeouts and
-  8 ComponentEvent waits, all false alarms confirmed loaded by ListNodes.
-  Both ends of the conversation are ours; a per-container unix socket retires
-  five timeout-and-fallback mechanisms on the default path, and LoadNode
-  remains for stock containers, which have no other interface.
+- **Phase 64** — ✅ a private load channel for the isolated container
+  (implemented 2026-08-22): play_launch spoke LoadNode over rmw to its own
+  container binary, and a launch of ~150 fresh processes jams that layer
+  exactly when load status matters — one AutoSDV launch produced 14 spurious
+  30s LoadNode timeouts and 8 ComponentEvent waits, all false alarms confirmed
+  loaded by ListNodes. Both ends of the conversation are ours; a
+  `socketpair(2)` per container (W1) retires five timeout-and-fallback
+  mechanisms on the default path, and W2 adds `query`/`status`/`cancel` so a
+  lost load is asked about rather than inferred from silence. LoadNode
+  remains for stock containers, which have no other interface. Measured A/B
+  on the reporting stack: the three alarm classes went 18 / 18 / 5 → 0 / 0 / 0.
   [phase-64-isolated-container-ipc.md](./phase-64-isolated-container-ipc.md).
-- **Phase 63** — 📋 the duration type campaign: executing Phase 59 as a type
+- **Phase 63** — 🚧 the duration type campaign: executing Phase 59 as a type
   change rather than a parser change, across ~455 Rust sites in two tag-pinned
-  repositories. W1 (the `Duration` type, deprecated-name aliases) is built.
+  repositories. W1–W5 landed (the `Duration` type, the migration of both
+  repos and every contract on disk); W6 (sunset of the deprecated names) is
+  blocked on nano-ros and Autoware — though phase 70 W4 has since retired the
+  `_ms` spellings as parse errors on this side.
   Chosen over the cheap parse-only option because that leaves every consumer
   holding a bare `f64` whose unit lives in a field name — the shape of the bug
   where a *deadline* was substituted for a *cost*.
@@ -397,5 +443,15 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
   Two defects found on the way: `max_concurrent_load_node_spawn` was dead
   config, and `Startup complete` fired before anything had started
   (issue #0016). Also unblocked the reporter's project: 0.9.0 could not parse
-  `<arg><choice>` at all.
+  `<arg><choice>` at all. **W2 done**: staged startup (`startup.order` glob
+  groups hold producers until their consumers are in the ROS graph; off by
+  default). W3, per-node isolation granularity, is not started and became
+  phase 65.
   [phase-61-edge-startup-storm.md](./phase-61-edge-startup-storm.md).
+- **Phase 62** — ✅ diagnostics observability (W1–W3 done). Four hours of a
+  golf-cart Autoware stack produced 405,480 diagnostic statuses and not one
+  WARNING or STALE — a monitor that could not represent the states in
+  between. W1 fixed four registry and transport defects (the registry
+  hoarded every status it ever saw behind a `get_history` with zero
+  callers); W2 added node-card badges; W3 a level-over-time strip.
+  [phase-62-diagnostics-observability.md](./phase-62-diagnostics-observability.md).

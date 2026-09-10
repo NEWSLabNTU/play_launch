@@ -1,6 +1,12 @@
 # Phase 67 — contract primitives: the vocabulary
 
-Status: **planned.**
+Status: **complete** (2026-08-29, with phase 68). The acceptance criterion
+below — every existing contract resolves to a byte-identical model — was met;
+phase 68 then consumed the vocabulary and retired `chains:`/`segments:`
+(manifest crate `v0.1.17`). The grammar has moved on since — phases 68–70
+retired write-only fields and the `_ms` spellings — so this doc is the record
+of the wave, not the current grammar, which is the manifest crate's generated
+`docs/format-reference.md`.
 
 Design of record:
 [docs/design/contract-primitives.md](../design/contract-primitives.md) (the
