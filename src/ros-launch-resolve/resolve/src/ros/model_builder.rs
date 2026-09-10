@@ -1140,12 +1140,15 @@ pub fn build_system_model(
     // The declared parameters (nano-ros phase 446), keyed by node FQN the way
     // `node_concurrency` is. Presence is the declaration again: a node with no
     // `params:` gets no entry, and `param_check` leaves its launch values
-    // alone -- today's behaviour.
+    // alone -- today's behaviour. `params: {}` (phase 446 F1) is a statement
+    // that the node declares none, so it gets an EMPTY entry: a consumer
+    // sizing a store from every node's declarations can tell it from a node
+    // that stated nothing, and every launch value for it is undeclared.
     for resolved in index.manifests.values() {
         for (node_name, node) in &resolved.manifest.nodes {
-            if node.params.is_empty() {
+            let Some(params) = &node.params else {
                 continue;
-            }
+            };
             let node_fqn = super::manifest_loader::resolve_node_fqn(
                 index,
                 resolved.scope_id,
@@ -1156,7 +1159,7 @@ pub fn build_system_model(
                 .node_params
                 .entry(node_fqn)
                 .or_default()
-                .extend(node.params.iter().map(|(name, d)| {
+                .extend(params.iter().map(|(name, d)| {
                     (
                         name.clone(),
                         model::ParamContract {
@@ -1301,6 +1304,77 @@ mod tests {
         let yaml = model.to_yaml_string().expect("serializes");
         assert!(yaml.contains("node_params:"), "{yaml}");
         println!("{yaml}");
+    }
+
+    /// nano-ros phase 446 F1 -- `params: {}` says the node declares no
+    /// parameters, and that reaches the model as an EMPTY entry, distinct
+    /// from a node with no `params:` (no entry). Every launch value for the
+    /// empty one is then undeclared.
+    #[test]
+    fn an_empty_params_reaches_the_model_as_an_empty_entry() {
+        let dump: LaunchDump = serde_json::from_value(serde_json::json!({
+            "node": [
+                {"executable": "mrm_handler_node", "package": "autoware_mrm_handler",
+                 "name": "mrm_handler", "namespace": "/system", "params_files": [],
+                 "cmd": [], "scope": 0},
+                {"executable": "stop_node", "package": "autoware_stop", "name": "stop",
+                 "namespace": "/system", "params_files": [], "cmd": [], "scope": 0,
+                 "params": [["update_rate", "10"]]},
+                {"executable": "talker", "package": "demo_nodes_cpp", "name": "talker",
+                 "namespace": "/system", "params_files": [], "cmd": [], "scope": 0}
+            ],
+            "container": [], "load_node": [], "lifecycle_node": [],
+            "file_data": {}, "variables": {},
+            "scopes": [{"id": 0, "ns": "/system", "parent": null}]
+        }))
+        .expect("hand-built dump");
+        let manifest = ros_launch_manifest_types::parse_manifest_str(
+            "nodes:\n  mrm_handler:\n    params:\n      update_rate: { type: integer }\n  \
+             stop:\n    params: {}\n  \
+             talker:\n    pub: [chatter]\n",
+        )
+        .expect("contract parses");
+        let mut index = ManifestIndex::default();
+        index.manifests.insert(
+            0,
+            crate::ros::manifest_loader::ResolvedManifest {
+                scope_id: 0,
+                pkg: None,
+                file: "island.launch.xml".to_string(),
+                ns: "/system".to_string(),
+                channel: crate::ros::manifest_loader::ContractChannel::Provider,
+                contract_path: PathBuf::from("island.contract.yaml"),
+                manifest,
+                source: String::new(),
+                diagnostics: vec![],
+            },
+        );
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        let p = &model.contracts.node_params;
+        assert_eq!(
+            p.keys().collect::<Vec<_>>(),
+            ["/system/mrm_handler", "/system/stop"]
+        );
+        assert_eq!(p.get("/system/stop"), Some(&BTreeMap::new()));
+        assert!(!p.contains_key("/system/talker"));
+
+        let yaml = model.to_yaml_string().expect("serializes");
+        assert!(yaml.contains("/system/stop: {}"), "{yaml}");
+        let back = model::SystemModel::from_yaml_str(&yaml).expect("parses back");
+        assert_eq!(back.contracts.node_params, *p);
+
+        // The inline `<param>` on the node that declares none is refused.
+        let f = crate::ros::param_check::check_declared_params(&model);
+        assert!(f.warnings.is_empty(), "{f:?}");
+        assert_eq!(f.errors.len(), 1, "{f:?}");
+        assert!(
+            f.errors[0].contains("node `/system/stop`")
+                && f.errors[0].contains("parameter `update_rate`")
+                && f.errors[0].contains("declares no parameters"),
+            "{f:?}"
+        );
     }
 
     /// Phase 77 — an endpoint ref must reach a node the model actually has.

@@ -20,7 +20,10 @@
 //!   runtime, far from the file that set it.
 //!
 //! A node with no `params:` in its contract is not checked: presence of
-//! `contracts.node_params.<fqn>` is the declaration.
+//! `contracts.node_params.<fqn>` is the declaration. A node whose contract
+//! says `params: {}` (phase 446 F1) has an EMPTY entry: it declares no
+//! parameters, so every launch value for it is undeclared, under the same
+//! rules (the implicit and `qos_overrides.*` exemptions still apply).
 
 use ros_launch_manifest_model::{
     ParamSource, ParamType, ParamValue, SystemModel, param_file_values,
@@ -156,8 +159,15 @@ pub fn check_declared_params(model: &SystemModel) -> ParamFindings {
                 )),
                 None => findings.errors.push(format!(
                     "node `{fqn}`: parameter `{name}`, set by {source}, is not declared in \
-                     {contract}; it declares: {}",
-                    declared.keys().cloned().collect::<Vec<_>>().join(", ")
+                     {contract}; {}",
+                    if declared.is_empty() {
+                        "it declares no parameters (`params: {}`)".to_string()
+                    } else {
+                        format!(
+                            "it declares: {}",
+                            declared.keys().cloned().collect::<Vec<_>>().join(", ")
+                        )
+                    }
                 )),
                 Some(ty) => {
                     if let Err(found) = ty.check(&value) {
@@ -395,6 +405,52 @@ mod tests {
         assert!(f.warnings.is_empty(), "{f:?}");
         assert_eq!(f.errors.len(), 1, "{f:?}");
         assert!(f.errors[0].contains("parameter `upate_rate`"), "{f:?}");
+    }
+
+    /// `params: {}` declares no parameters (phase 446 F1): a value addressed
+    /// to the node by name is undeclared, and an error that says so.
+    #[test]
+    fn an_inline_value_on_an_empty_declaration_is_refused() {
+        let mut m = model_with(vec![inline("update_rate", ParamValue::Int(10))]);
+        m.contracts
+            .node_params
+            .insert(NODE.to_string(), BTreeMap::new());
+        let f = check_declared_params(&m);
+        assert!(f.warnings.is_empty(), "{f:?}");
+        assert_eq!(f.errors.len(), 1, "{f:?}");
+        let e = &f.errors[0];
+        for part in [
+            "node `/system/mrm_handler`",
+            "parameter `update_rate`",
+            "launch file island.launch.xml",
+            "not declared",
+            "it declares no parameters (`params: {}`)",
+        ] {
+            assert!(e.contains(part), "missing `{part}` in: {e}");
+        }
+    }
+
+    /// The same node under a wildcard key only warns, and the exemptions
+    /// hold: an empty declaration is the option-B rule with nothing declared.
+    #[test]
+    fn a_wildcard_value_on_an_empty_declaration_warns() {
+        let mut m = model_with(vec![
+            file("/**:\n  ros__parameters:\n    wheel_base: 2.7\n    use_sim_time: true\n"),
+            inline(
+                "qos_overrides./out.publisher.deadline",
+                ParamValue::Int(100),
+            ),
+        ]);
+        m.contracts
+            .node_params
+            .insert(NODE.to_string(), BTreeMap::new());
+        let f = check_declared_params(&m);
+        assert!(f.errors.is_empty(), "{f:?}");
+        assert_eq!(f.warnings.len(), 1, "{f:?}");
+        let w = &f.warnings[0];
+        for part in ["parameter `wheel_base`", "wildcard key `/**`", "ignores it"] {
+            assert!(w.contains(part), "missing `{part}` in: {w}");
+        }
     }
 
     /// A declared parameter of the wrong type is wrong wherever it came from.

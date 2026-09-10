@@ -30,6 +30,12 @@ exempt. A node with no `params:` is not checked. A file value is attributed
 to its section key and the launch file that loaded it; the model keeps a
 parameter file's content, not its path.
 
+`params: {}` (nano-ros phase 446 F1, manifest `v0.1.35`) says the node
+declares no parameters, and it reaches the model as an empty entry,
+`node_params: { /<fqn>: {} }`, where a missing `params:` still gives no
+entry. Every launch value for such a node is undeclared under the rules
+above: by name an error, through a wildcard key a warning.
+
 ## 0.10.0 — 2026-08-27
 
 Two themes: the contract vocabulary stops carrying consequences, and a
