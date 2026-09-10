@@ -2,12 +2,22 @@
 //! (nano-ros phase 446 W2).
 //!
 //! A node whose contract carries a `params:` section declares every
-//! parameter it has, by name and ROS 2 type. A launch value for a name it
-//! does not declare, or one that does not parse as the declared type, is a
-//! resolution error naming the node, the parameter and where the value came
-//! from. Left alone, the first reaches a node that ignores an undeclared
-//! override in silence, and the second throws only when the code declares
-//! the parameter -- at runtime, far from the file that set it.
+//! parameter it has, by name and ROS 2 type. What happens to a launch value
+//! that disagrees depends on how the value reached the node:
+//!
+//! - A value addressed to the node BY NAME -- an inline `<param>`, a global
+//!   parameter, or a parameter-file section whose key is the node's FQN or
+//!   bare name -- that names an undeclared parameter is an ERROR. Someone
+//!   meant this node, so `upate_rate` is a typo, and left alone it reaches a
+//!   node that ignores it in silence.
+//! - The same value reaching the node through a WILDCARD key (`/**`, `/*`,
+//!   `/**/foo`, any key with a `*`) is a WARNING. rclcpp ignores an
+//!   undeclared override, and shared files (Autoware's
+//!   `vehicle_info.param.yaml`) are loaded into many nodes that each read a
+//!   subset of them.
+//! - A value for a DECLARED parameter that does not parse as the declared
+//!   type is an ERROR whatever the key: it throws at declare time, at
+//!   runtime, far from the file that set it.
 //!
 //! A node with no `params:` in its contract is not checked: presence of
 //! `contracts.node_params.<fqn>` is the declaration.
@@ -30,10 +40,63 @@ const IMPLICIT: &[(&str, ParamType)] = &[
 /// parameter declarations.
 const QOS_OVERRIDES_PREFIX: &str = "qos_overrides.";
 
+/// What the check found: `errors` refuse the model, `warnings` go into
+/// `meta.diagnostics`. One line each.
+#[derive(Debug, Default, PartialEq)]
+pub struct ParamFindings {
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// One launch value and where it came from.
+struct Value {
+    name: String,
+    value: ParamValue,
+    /// `set by ...`, for the message.
+    source: String,
+    /// It reached the node through a wildcard param-file key.
+    wildcard: bool,
+}
+
+/// The values one parameter file gives `fqn`, each tagged with the section
+/// key that matched. Section matching is the manifest crate's own
+/// (`param_file_values`), applied to one section at a time, so this cannot
+/// disagree with what a spawn or a bake would apply.
+fn file_values(content: &str, fqn: &str, launch: &str, out: &mut Vec<Value>) {
+    let Ok(serde_yaml_ng::Value::Mapping(sections)) =
+        serde_yaml_ng::from_str::<serde_yaml_ng::Value>(content)
+    else {
+        return;
+    };
+    for (key, body) in sections {
+        let Some(k) = key.as_str().map(str::to_string) else {
+            continue;
+        };
+        let mut one = serde_yaml_ng::Mapping::new();
+        one.insert(key, body);
+        let Ok(section) = serde_yaml_ng::to_string(&one) else {
+            continue;
+        };
+        let wildcard = k.contains('*');
+        let kind = if wildcard { "wildcard key" } else { "key" };
+        let source = format!("{kind} `{k}` of a parameter file loaded by launch file {launch}");
+        out.extend(
+            param_file_values(&section, fqn)
+                .into_iter()
+                .map(|(name, value)| Value {
+                    name,
+                    value,
+                    source: source.clone(),
+                    wildcard,
+                }),
+        );
+    }
+}
+
 /// Every disagreement between a declaring node's launch values and its
-/// declarations, one line each. `Ok` when there is none.
-pub fn check_declared_params(model: &SystemModel) -> Result<(), Vec<String>> {
-    let mut errors = Vec::new();
+/// declarations.
+pub fn check_declared_params(model: &SystemModel) -> ParamFindings {
+    let mut findings = ParamFindings::default();
     for (fqn, declared) in &model.contracts.node_params {
         let Some(inst) = model.structure.nodes.get(fqn) else {
             continue;
@@ -47,40 +110,38 @@ pub fn check_declared_params(model: &SystemModel) -> Result<(), Vec<String>> {
             .map(|m| format!("its contract ({m})"))
             .unwrap_or_else(|| "its contract".to_string());
 
-        let inline = format!("launch file {launch}");
-        let file = format!("a parameter file loaded by launch file {launch}");
-        let mut values: Vec<(String, ParamValue, &str)> = Vec::new();
+        let inline = |name: &String, value: &ParamValue| Value {
+            name: name.clone(),
+            value: value.clone(),
+            source: format!("launch file {launch}"),
+            wildcard: false,
+        };
+        let mut values: Vec<Value> = Vec::new();
         // The ordered list is authoritative when present (phase 54); older
         // models carry only the legacy split views.
         if inst.param_sources.is_empty() {
             for content in &inst.params_files {
-                values.extend(
-                    param_file_values(content, fqn)
-                        .into_iter()
-                        .map(|(n, v)| (n, v, file.as_str())),
-                );
+                file_values(content, fqn, &launch, &mut values);
             }
-            values.extend(
-                inst.params
-                    .iter()
-                    .map(|(n, v)| (n.clone(), v.clone(), inline.as_str())),
-            );
+            values.extend(inst.params.iter().map(|(n, v)| inline(n, v)));
         } else {
             for src in &inst.param_sources {
                 match src {
-                    ParamSource::Inline { name, value } => {
-                        values.push((name.clone(), value.clone(), inline.as_str()));
+                    ParamSource::Inline { name, value } => values.push(inline(name, value)),
+                    ParamSource::File { content } => {
+                        file_values(content, fqn, &launch, &mut values)
                     }
-                    ParamSource::File { content } => values.extend(
-                        param_file_values(content, fqn)
-                            .into_iter()
-                            .map(|(n, v)| (n, v, file.as_str())),
-                    ),
                 }
             }
         }
 
-        for (name, value, source) in values {
+        for Value {
+            name,
+            value,
+            source,
+            wildcard,
+        } in values
+        {
             if name.starts_with(QOS_OVERRIDES_PREFIX) {
                 continue;
             }
@@ -89,14 +150,18 @@ pub fn check_declared_params(model: &SystemModel) -> Result<(), Vec<String>> {
                 .map(|d| d.ty)
                 .or_else(|| IMPLICIT.iter().find(|(n, _)| *n == name).map(|(_, t)| *t));
             match ty {
-                None => errors.push(format!(
+                None if wildcard => findings.warnings.push(format!(
+                    "param-undeclared: node `{fqn}`: parameter `{name}`, set by {source}, is \
+                     not declared in {contract}; the node ignores it"
+                )),
+                None => findings.errors.push(format!(
                     "node `{fqn}`: parameter `{name}`, set by {source}, is not declared in \
                      {contract}; it declares: {}",
                     declared.keys().cloned().collect::<Vec<_>>().join(", ")
                 )),
                 Some(ty) => {
                     if let Err(found) = ty.check(&value) {
-                        errors.push(format!(
+                        findings.errors.push(format!(
                             "node `{fqn}`: parameter `{name}`, set by {source}, is declared \
                              `{ty}` in {contract} but {found}"
                         ));
@@ -105,11 +170,7 @@ pub fn check_declared_params(model: &SystemModel) -> Result<(), Vec<String>> {
             }
         }
     }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
-    }
+    findings
 }
 
 #[cfg(test)]
@@ -159,6 +220,19 @@ mod tests {
         m
     }
 
+    /// The errors, asserting there are some.
+    fn errors_of(m: &SystemModel) -> Vec<String> {
+        let f = check_declared_params(m);
+        assert!(!f.errors.is_empty(), "expected errors, got {f:?}");
+        f.errors
+    }
+
+    fn file(content: &str) -> ParamSource {
+        ParamSource::File {
+            content: content.to_string(),
+        }
+    }
+
     fn inline(name: &str, value: ParamValue) -> ParamSource {
         ParamSource::Inline {
             name: name.to_string(),
@@ -179,13 +253,13 @@ mod tests {
                 ParamValue::Int(100),
             ),
         ]);
-        assert_eq!(check_declared_params(&m), Ok(()));
+        assert_eq!(check_declared_params(&m), ParamFindings::default());
     }
 
     #[test]
     fn an_undeclared_name_is_refused_naming_node_parameter_and_file() {
         let m = model_with(vec![inline("update_rat", ParamValue::Int(10))]);
-        let errors = check_declared_params(&m).unwrap_err();
+        let errors = errors_of(&m);
         assert_eq!(errors.len(), 1, "{errors:?}");
         let e = &errors[0];
         for part in [
@@ -205,7 +279,7 @@ mod tests {
         let m = model_with(vec![ParamSource::File {
             content: "/system/mrm_handler:\n  ros__parameters:\n    timeout: 5\n".to_string(),
         }]);
-        let errors = check_declared_params(&m).unwrap_err();
+        let errors = errors_of(&m);
         assert_eq!(errors.len(), 1, "{errors:?}");
         let e = &errors[0];
         for part in [
@@ -226,7 +300,7 @@ mod tests {
         let m = model_with(vec![ParamSource::File {
             content: "/system/other:\n  ros__parameters:\n    anything: true\n".to_string(),
         }]);
-        assert_eq!(check_declared_params(&m), Ok(()));
+        assert_eq!(check_declared_params(&m), ParamFindings::default());
     }
 
     /// The legacy split views (models that predate the ordered list) are
@@ -237,7 +311,7 @@ mod tests {
         let inst = m.structure.nodes.get_mut(NODE).unwrap();
         inst.params
             .insert("update_rate".to_string(), ParamValue::Str("fast".into()));
-        let errors = check_declared_params(&m).unwrap_err();
+        let errors = errors_of(&m);
         assert!(errors[0].contains("got a string (\"fast\")"), "{errors:?}");
     }
 
@@ -246,6 +320,98 @@ mod tests {
     fn a_node_without_declarations_is_not_checked() {
         let mut m = model_with(vec![inline("whatever", ParamValue::Int(1))]);
         m.contracts.node_params.clear();
-        assert_eq!(check_declared_params(&m), Ok(()));
+        assert_eq!(check_declared_params(&m), ParamFindings::default());
+    }
+
+    /// Option B: a shared file's undeclared key reaches the node through a
+    /// wildcard, and rclcpp ignores it -- a warning, not a refusal.
+    #[test]
+    fn an_undeclared_name_under_a_wildcard_key_is_a_warning() {
+        for key in ["/**", "/**/mrm_handler", "/*/mrm_handler"] {
+            let m = model_with(vec![file(&format!(
+                "{key}:\n  ros__parameters:\n    wheel_base: 2.7\n    timeout: 0.5\n"
+            ))]);
+            let f = check_declared_params(&m);
+            assert!(f.errors.is_empty(), "{key}: {f:?}");
+            assert_eq!(f.warnings.len(), 1, "{key}: {f:?}");
+            let w = &f.warnings[0];
+            for part in [
+                "node `/system/mrm_handler`",
+                "parameter `wheel_base`",
+                &format!("wildcard key `{key}`"),
+                "launch file island.launch.xml",
+                "not declared",
+                "island.contract.yaml",
+                "ignores it",
+            ] {
+                assert!(w.contains(part), "missing `{part}` in: {w}");
+            }
+        }
+    }
+
+    /// The same key under the node's own name is addressed to it: a typo.
+    #[test]
+    fn an_undeclared_name_under_the_nodes_own_key_is_refused() {
+        for key in ["/system/mrm_handler", "mrm_handler"] {
+            let m = model_with(vec![file(&format!(
+                "{key}:\n  ros__parameters:\n    upate_rate: 10\n"
+            ))]);
+            let f = check_declared_params(&m);
+            assert!(f.warnings.is_empty(), "{key}: {f:?}");
+            assert_eq!(f.errors.len(), 1, "{key}: {f:?}");
+            let e = &f.errors[0];
+            for part in [
+                "node `/system/mrm_handler`",
+                "parameter `upate_rate`",
+                &format!("key `{key}`"),
+                "launch file island.launch.xml",
+                "not declared",
+                "timeout, update_rate",
+            ] {
+                assert!(e.contains(part), "missing `{part}` in: {e}");
+            }
+            assert!(!e.contains("wildcard"), "{e}");
+        }
+    }
+
+    /// One file, two sections: each value is judged by its own key.
+    #[test]
+    fn each_section_of_one_file_is_judged_by_its_own_key() {
+        let m = model_with(vec![file(
+            "/**:\n  ros__parameters:\n    shared: 1\n\
+             /system/mrm_handler:\n  ros__parameters:\n    upate_rate: 10\n",
+        )]);
+        let f = check_declared_params(&m);
+        assert_eq!((f.errors.len(), f.warnings.len()), (1, 1), "{f:?}");
+        assert!(f.errors[0].contains("`upate_rate`"), "{f:?}");
+        assert!(f.warnings[0].contains("`shared`"), "{f:?}");
+    }
+
+    /// An inline `<param>` on the node is addressed to it by name.
+    #[test]
+    fn an_undeclared_inline_name_is_refused() {
+        let m = model_with(vec![inline("upate_rate", ParamValue::Int(10))]);
+        let f = check_declared_params(&m);
+        assert!(f.warnings.is_empty(), "{f:?}");
+        assert_eq!(f.errors.len(), 1, "{f:?}");
+        assert!(f.errors[0].contains("parameter `upate_rate`"), "{f:?}");
+    }
+
+    /// A declared parameter of the wrong type is wrong wherever it came from.
+    #[test]
+    fn a_mistyped_value_under_a_wildcard_key_is_refused() {
+        let m = model_with(vec![file("/**:\n  ros__parameters:\n    timeout: 5\n")]);
+        let f = check_declared_params(&m);
+        assert!(f.warnings.is_empty(), "{f:?}");
+        assert_eq!(f.errors.len(), 1, "{f:?}");
+        let e = &f.errors[0];
+        for part in [
+            "parameter `timeout`",
+            "wildcard key `/**`",
+            "declared `double`",
+            "5.0",
+        ] {
+            assert!(e.contains(part), "missing `{part}` in: {e}");
+        }
     }
 }

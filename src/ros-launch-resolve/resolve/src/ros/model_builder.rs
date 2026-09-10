@@ -1295,7 +1295,7 @@ mod tests {
         );
         assert_eq!(
             crate::ros::param_check::check_declared_params(&model),
-            Ok(())
+            Default::default()
         );
 
         let yaml = model.to_yaml_string().expect("serializes");

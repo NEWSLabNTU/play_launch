@@ -8,6 +8,28 @@ allowance heavily.
 
 ## Unreleased
 
+### A contract's `params:` holds the launch to it
+
+A node whose contract declares `params:` (nano-ros phase 446 W2) has its
+launch parameter values checked at resolve time, and how a disagreement is
+treated depends on how the value reached the node:
+
+- **Undeclared name, addressed to the node by name** -- an inline `<param>`,
+  a global parameter, or a parameter-file section keyed by the node's FQN or
+  bare name: an **error**. Someone meant this node, so `upate_rate` is a typo.
+- **Undeclared name, through a wildcard key** (`/**`, `/*`, `/**/foo`, any
+  key with a `*`): a **warning** in `meta.diagnostics`
+  (`param-undeclared: ...; the node ignores it`). rclcpp ignores an
+  undeclared override, and shared files such as Autoware's
+  `vehicle_info.param.yaml` are loaded into many nodes that each read a subset.
+- **Declared name, wrong type**: an **error** whatever the key (an integer
+  is not a double; the message suggests `5.0` for `5`).
+
+`use_sim_time`, `start_type_description_service` and `qos_overrides.*` are
+exempt. A node with no `params:` is not checked. A file value is attributed
+to its section key and the launch file that loaded it; the model keeps a
+parameter file's content, not its path.
+
 ## 0.10.0 — 2026-08-27
 
 Two themes: the contract vocabulary stops carrying consequences, and a

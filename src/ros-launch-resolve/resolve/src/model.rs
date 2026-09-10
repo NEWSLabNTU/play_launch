@@ -190,15 +190,23 @@ pub fn build_checked_model(
     );
 
     // nano-ros phase 446 W2 -- a node whose contract declares its parameters
-    // is held to them: an undeclared name or a mistyped value refuses the
-    // model instead of reaching a node that would ignore the one in silence
-    // and throw on the other only at declare time.
-    if let Err(errors) = crate::ros::param_check::check_declared_params(&model) {
+    // is held to them: an undeclared name addressed to the node by name, or
+    // a mistyped value from anywhere, refuses the model instead of reaching a
+    // node that would ignore the one in silence and throw on the other only
+    // at declare time. An undeclared name that arrived through a wildcard
+    // param-file key is only a warning: rclcpp ignores it, and shared files
+    // are loaded into many nodes that each read a subset.
+    let params = crate::ros::param_check::check_declared_params(&model);
+    if !params.errors.is_empty() {
         eyre::bail!(
             "{} launch parameter value(s) disagree with the contract's declarations:\n  {}",
-            errors.len(),
-            errors.join("\n  ")
+            params.errors.len(),
+            params.errors.join("\n  ")
         );
+    }
+    for w in params.warnings {
+        eprintln!("warning: {w}");
+        model.meta.diagnostics.push(w);
     }
 
     // nano-ros issue 0320 — a residual absolute path in `meta.inputs` is a
