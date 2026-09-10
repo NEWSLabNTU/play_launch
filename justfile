@@ -1034,6 +1034,12 @@ check:
     echo "=== play_launch_parser (clippy + rustfmt) ==="
     (cd src/ros-launch-resolve/parser && just check)
 
+    # The resolve/cli workspace had no rustfmt gate, and nine files drifted
+    # from the nightly style its rustfmt.toml asks for.
+    echo ""
+    echo "=== ros-launch-resolve (rustfmt) ==="
+    (cd src/ros-launch-resolve && cargo +nightly fmt --check)
+
     echo ""
     echo "=== Python (ruff) ==="
     python3 -m ruff check python/
@@ -1120,6 +1126,7 @@ format:
     #!/usr/bin/env bash
     (cd src/play_launch && cargo +nightly fmt)
     (cd src/ros-launch-resolve/parser && cargo +nightly fmt)
+    (cd src/ros-launch-resolve && cargo +nightly fmt)
     ruff format python/
     ament_clang_format --reformat {{cpp_packages}}
 

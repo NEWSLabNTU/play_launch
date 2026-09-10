@@ -2481,9 +2481,8 @@ mod tests {
     /// between the scope path's two ends is DERIVED, exercising both
     /// `ChainElement` kinds (Phase 44.4) the way phase 68 W4 leaves them.
     fn index_with_chain() -> ManifestIndex {
-        use crate::ros::manifest_loader::ResolvedScopePath;
         use crate::ros::manifest_loader::{
-            ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedTopic,
+            ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedScopePath, ResolvedTopic,
         };
         use ros_launch_manifest_types::{Manifest, NodeDecl, PathDecl, Trigger};
 

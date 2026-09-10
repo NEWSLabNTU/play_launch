@@ -11,8 +11,7 @@ use std::path::PathBuf;
 use eyre::Result;
 use tracing::info;
 
-use crate::verbs::ParserBackend;
-use crate::verbs::resolve::ResolveInputs;
+use crate::verbs::{ParserBackend, resolve::ResolveInputs};
 
 /// Everything `dump` reads. Owned plain values — see [`crate::verbs`].
 pub struct DumpInputs {

@@ -6,13 +6,14 @@
 //! Refuses to emit when the checker reports Error severity — a SystemModel
 //! in hand is always a checked one. Warnings embed in `meta.diagnostics`.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use eyre::{Context, Result};
 
-use crate::model::{ModelBuildInputs, build_checked_model};
-use crate::verbs::ParserBackend;
+use crate::{
+    model::{ModelBuildInputs, build_checked_model},
+    verbs::ParserBackend,
+};
 
 /// Everything `resolve` reads. Owned plain values — see [`crate::verbs`].
 pub struct ResolveInputs {

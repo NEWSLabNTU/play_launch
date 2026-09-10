@@ -16,12 +16,16 @@
 //!
 //! JSON schema is documented in `docs/design/causal-graph-export.md`.
 
-use super::manifest_graph::{self, GlobalDataflowGraph};
-use super::manifest_loader::ManifestIndex;
+use super::{
+    manifest_graph::{self, GlobalDataflowGraph},
+    manifest_loader::ManifestIndex,
+};
 use eyre::Result;
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 /// Schema version. Bump on breaking JSON shape changes; additive fields
 /// (new optional keys) don't require a bump.
@@ -506,8 +510,10 @@ pub fn export_to_file(index: &ManifestIndex, path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ros::launch_dump::{LaunchDump, ScopeEntry, ScopeOrigin};
-    use crate::ros::manifest_loader::ContractSources;
+    use crate::ros::{
+        launch_dump::{LaunchDump, ScopeEntry, ScopeOrigin},
+        manifest_loader::ContractSources,
+    };
     use std::collections::HashMap;
 
     /// Load a synthetic system through the real `load_manifests` pipeline

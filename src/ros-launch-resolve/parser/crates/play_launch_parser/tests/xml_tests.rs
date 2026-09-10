@@ -1733,7 +1733,10 @@ fn test_eval_with_escaped_quotes_selects_the_branch_ros2_launch_selects() {
     // Default pose_source=ndt: the `unless` branch only.
     let default = names(HashMap::new());
     assert!(default.contains(&"not_aruco".to_string()), "{default:?}");
-    assert!(!default.contains(&"only_for_aruco".to_string()), "{default:?}");
+    assert!(
+        !default.contains(&"only_for_aruco".to_string()),
+        "{default:?}"
+    );
 
     // pose_source=aruco: the `if` branch only.
     let mut args = HashMap::new();

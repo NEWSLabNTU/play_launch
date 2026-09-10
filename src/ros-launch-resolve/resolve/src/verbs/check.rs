@@ -22,8 +22,7 @@
 //! a non-zero status (both CLIs do, via `main`'s `Result`) reproduces the
 //! original behaviour byte for byte.
 
-use std::collections::HashSet;
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use eyre::Result;
 use ros_launch_manifest_check::{

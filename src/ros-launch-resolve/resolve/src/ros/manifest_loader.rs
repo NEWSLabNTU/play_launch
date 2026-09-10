@@ -5,8 +5,10 @@
 //! static checks, and builds a resolved index with fully-qualified
 //! topic/node names.
 
-use super::launch_dump::{LaunchDump, ScopeEntry};
-use super::sched_loader::scheduled_records_from_dump;
+use super::{
+    launch_dump::{LaunchDump, ScopeEntry},
+    sched_loader::scheduled_records_from_dump,
+};
 use ros_launch_manifest_check::{Diagnostic, Severity, run_checks_with_spans};
 use ros_launch_manifest_types::{
     EffectiveTrigger, Manifest, filter_manifest, parse_manifest_with_spans, resolve_args,

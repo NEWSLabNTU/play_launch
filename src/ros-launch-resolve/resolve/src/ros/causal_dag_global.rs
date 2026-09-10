@@ -25,8 +25,10 @@
 //! and sufficient at Autoware scale (74 nodes, 171 sub edges as of the
 //! Phase 42 study).
 
-use super::manifest_graph::{GlobalDataflowGraph, GlobalEdge};
-use super::manifest_loader::ManifestIndex;
+use super::{
+    manifest_graph::{GlobalDataflowGraph, GlobalEdge},
+    manifest_loader::ManifestIndex,
+};
 use ros_launch_manifest_check::{Diagnostic, Severity};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -206,8 +208,10 @@ fn find_causal_edge<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ros::manifest_graph::GlobalNode;
-    use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest};
+    use crate::ros::{
+        manifest_graph::GlobalNode,
+        manifest_loader::{ContractChannel, ResolvedManifest},
+    };
     use std::path::PathBuf;
 
     fn node(fqn: &str, scope_id: usize) -> GlobalNode {

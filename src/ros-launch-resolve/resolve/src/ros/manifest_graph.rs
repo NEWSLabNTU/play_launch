@@ -280,14 +280,17 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
     // ancestor and route walks) finally have something to walk. A manifest
     // declaration always wins: this fills gaps, it never overwrites.
     for (fqn, scope_id) in &index.derived_nodes {
-        graph.nodes.entry(fqn.clone()).or_insert_with(|| GlobalNode {
-            fqn: fqn.clone(),
-            scope_id: *scope_id,
-            paths: Default::default(),
-            subscribers: Default::default(),
-            publishers: Default::default(),
-            concurrency: None,
-        });
+        graph
+            .nodes
+            .entry(fqn.clone())
+            .or_insert_with(|| GlobalNode {
+                fqn: fqn.clone(),
+                scope_id: *scope_id,
+                paths: Default::default(),
+                subscribers: Default::default(),
+                publishers: Default::default(),
+                concurrency: None,
+            });
     }
 
     // Step 2: build edges from merged topics.
