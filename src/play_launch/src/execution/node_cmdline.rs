@@ -1755,4 +1755,54 @@ mod tests {
         assert_eq!(unquote_repr_scalar("'quoted'"), Some("quoted"));
         assert_eq!(unquote_repr_scalar("'"), None);
     }
+
+    /// The value that killed autoware_pose_initializer_node on a golf-cart replay
+    /// (2026-09-10, play_launch 0.8.2): `output_pose_covariance` from a params file
+    /// loaded with `allow_substs`, recorded as its bracketed form. Written back as a
+    /// quoted string it retyped a `double_array` to `string`, and the statically
+    /// typed node terminated with "Wrong parameter type". Every element must stay a
+    /// real, and the count must survive.
+    #[test]
+    fn a_recorded_covariance_matrix_stays_a_double_array() {
+        let recorded = "[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, \
+                        0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, \
+                        0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2]";
+        let Yaml::Array(items) = str_to_yaml(recorded) else {
+            panic!("expected a sequence, got a scalar");
+        };
+        assert_eq!(items.len(), 36);
+        assert!(items.iter().all(|item| matches!(item, Yaml::Real(_))));
+        assert_eq!(items[0], Yaml::Real("1.0".to_string()));
+        assert_eq!(items[35], Yaml::Real("0.2".to_string()));
+    }
+
+    /// Its neighbour in the same file, `user_defined_initial_pose`, recorded as a
+    /// Python repr with a nested list. The node declares `user_defined_initial_pose.enable`
+    /// and `.pose` statically, so the params file must carry a real mapping with those
+    /// keys, typed: a bool and a double array, not one string.
+    #[test]
+    fn a_recorded_repr_mapping_becomes_a_typed_nested_mapping() {
+        let recorded = "{'enable': False, 'pose': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]}";
+        let Yaml::Hash(map) = str_to_yaml(recorded) else {
+            panic!("expected a mapping, got a scalar");
+        };
+        assert_eq!(map[&Yaml::String("enable".to_string())], Yaml::Boolean(false));
+        let Yaml::Array(pose) = &map[&Yaml::String("pose".to_string())] else {
+            panic!("pose should be a sequence");
+        };
+        assert_eq!(pose.len(), 7);
+        assert_eq!(pose[6], Yaml::Real("1.0".to_string()));
+    }
+
+    /// The Python recorder now serialises non-string values as YAML rather than repr
+    /// (`dump_yaml` in dump/utils.py), so the same parameter can also arrive in flow
+    /// style with bare keys and lower-case booleans. Both spellings must land in the
+    /// same mapping.
+    #[test]
+    fn a_yaml_flow_mapping_is_accepted_like_the_repr_form() {
+        let flow = "{enable: false, pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]}";
+        let repr = "{'enable': False, 'pose': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]}";
+        assert_eq!(str_to_yaml(flow), str_to_yaml(repr));
+        assert!(matches!(str_to_yaml(flow), Yaml::Hash(_)));
+    }
 }
