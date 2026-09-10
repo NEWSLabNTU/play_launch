@@ -1702,3 +1702,43 @@ fn extra_args_reach_the_record() {
     let loaded = by_name("loaded");
     assert_eq!(loaded["extra_args"]["use_intra_process_comms"], "false");
 }
+
+/// `$(eval '\'$(var x)\' == \'y\'')`: a single-quoted template whose Python
+/// expression carries escaped inner quotes. The frontend grammar consumes the
+/// outer quotes as delimiters and `replace_escaped_characters` turns `\'` back
+/// into `'`, so Python evaluates `'ndt' == 'aruco'`. Getting those two steps in
+/// the wrong order evaluates `''ndt' == 'aruco''`, a SyntaxError — which is
+/// what play_launch 0.8.2 did to every Autoware-style `pose_source` dispatch
+/// (fixed in e1fdc731; this pins the XML path end to end, both branches, the
+/// way `ros2 launch` was measured to behave).
+#[test]
+fn test_eval_with_escaped_quotes_selects_the_branch_ros2_launch_selects() {
+    // `$(eval)` is Python by definition; the parser evaluates nothing without a
+    // backend, so give it the one the binary ships with, as python_tests.rs does.
+    play_launch_parser_pyexec::register();
+    let fixture = get_fixture_path("test_eval_escaped_quotes.launch.xml");
+    assert!(fixture.exists(), "Fixture file should exist: {:?}", fixture);
+
+    let names = |args: HashMap<String, String>| -> Vec<String> {
+        let result = parse_launch_file(&fixture, args).expect("the escaped eval must parse");
+        let json = serde_json::to_value(result).unwrap();
+        json["node"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|n| n["name"].as_str().map(str::to_string))
+            .collect()
+    };
+
+    // Default pose_source=ndt: the `unless` branch only.
+    let default = names(HashMap::new());
+    assert!(default.contains(&"not_aruco".to_string()), "{default:?}");
+    assert!(!default.contains(&"only_for_aruco".to_string()), "{default:?}");
+
+    // pose_source=aruco: the `if` branch only.
+    let mut args = HashMap::new();
+    args.insert("pose_source".to_string(), "aruco".to_string());
+    let aruco = names(args);
+    assert!(aruco.contains(&"only_for_aruco".to_string()), "{aruco:?}");
+    assert!(!aruco.contains(&"not_aruco".to_string()), "{aruco:?}");
+}

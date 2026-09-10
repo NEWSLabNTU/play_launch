@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="pose_source" default="ndt"/>
+  <group if="$(eval '\'$(var pose_source)\' == \'aruco\'')">
+    <node pkg="demo_nodes_cpp" exec="talker" name="only_for_aruco"/>
+  </group>
+  <group unless="$(eval '\'$(var pose_source)\' == \'aruco\'')">
+    <node pkg="demo_nodes_cpp" exec="listener" name="not_aruco"/>
+  </group>
+</launch>

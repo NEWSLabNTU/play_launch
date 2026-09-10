@@ -17,6 +17,11 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0028** — the Rust parser dies with `KeyError: 'rear_overhang'` on the golf-cart
+stack, from an Autoware `.launch.py` reading the vehicle-info dictionary; the Python
+parser resolves the same launch. Neither file nor line is named. This, not #0027, is
+what keeps the golf-cart replays on `--parser python`. See `0028-*`.
+
 **#0024** — `play_launch run` cannot spawn a node when play_launch is itself
 inside a `systemd-run --user --scope`: `Unable to start: Operation not permitted
 (os error 1)`, empty node logs, no process. The same wrapper is fine for
@@ -37,6 +42,13 @@ declared-vs-loaded reconciliation first; the drop itself is not diagnosable
 until then. See `0023-*`.
 
 ## Resolved
+
+**#0027** — the Rust parser rejected `$(eval '\'$(var x)\' == \'y\'')`, the
+escaped-quote template every Autoware-style `pose_source` dispatch uses, evaluating
+`''ndt' == 'aruco''`. Fixed in `e1fdc731` (delimiter decision made escape-aware,
+unescape afterwards) before this was written up; written up because two stale binaries
+(pip 0.8.2, a resolver built 2026-08-13) reproduced it in September and briefly read as
+"still broken". Adds the XML-path fixture test that was missing. See `0027-*`.
 
 **#0026** — a `Node` with no package (an absolute `executable`, which launch_ros
 allows) made the dump die with a bare `TypeError: 'NoneType' object is not
