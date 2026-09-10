@@ -229,3 +229,64 @@ fn loads_and_evaluates_across_the_boundary() {
         interpreter.version
     );
 }
+
+/// ABI 4 (play_launch issue 0028): a global parameter the HOST already holds
+/// — an XML `<set_parameter>`, or a `SetParameter` an earlier `.launch.py`
+/// returned — reaches the next file's `OpaqueFunction` as
+/// `launch_configurations['global_params']`, through the real object and the
+/// real request. This is the Autoware shape: `global_params.launch.py` loads
+/// `vehicle_info.param.yaml` in one call, and every sensor pipeline reads
+/// `gp["rear_overhang"]` in a later one. The in-process backend cannot catch a
+/// regression here, because it shares the host's thread-local context; only
+/// the dlopen'ed object has a context of its own.
+#[test]
+fn a_global_parameter_set_by_the_host_reaches_the_next_file_across_the_boundary() {
+    let Some(pyexec) = build_pyexec() else {
+        eprintln!("could not build the Python half; skipping the load test");
+        return;
+    };
+    let interpreter = match play_launch_parser_pyload::find_interpreter() {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("no usable interpreter here: {e}");
+            return;
+        }
+    };
+    let loaded = play_launch_parser_pyload::Loaded::open(interpreter, &pyexec)
+        .expect("the Python half should load against a discovered interpreter");
+
+    let dir = std::env::temp_dir().join("pyload_abi_0028_gp");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("reader.launch.py");
+    std::fs::write(
+        &file,
+        "from launch import LaunchDescription\n\
+         from launch.actions import OpaqueFunction\n\
+         from launch_ros.actions import Node\n\
+         def launch_setup(context, *args, **kwargs):\n\
+         \x20   gp = dict(context.launch_configurations.get('global_params', {}))\n\
+         \x20   ro = gp['rear_overhang']\n\
+         \x20   return [Node(package='p', executable='e',\n\
+         \x20                name='ro_%d' % round(ro * 1000))]\n\
+         def generate_launch_description():\n\
+         \x20   return LaunchDescription([OpaqueFunction(function=launch_setup)])\n",
+    )
+    .unwrap();
+
+    use play_launch_parser::python_backend::PythonBackend;
+    let mut ctx = play_launch_parser::substitution::context::LaunchContext::new();
+    ctx.set_global_parameter("rear_overhang".to_string(), "0.821".to_string());
+    let names: Vec<String> = {
+        let _guard = play_launch_parser::bridge::LaunchContextGuard::new(&mut ctx);
+        loaded
+            .exec_file(file.to_str().unwrap())
+            .expect("the reader must find the global parameter the host holds");
+        play_launch_parser::bridge::with_launch_context(|c| {
+            c.captured_nodes()
+                .iter()
+                .filter_map(|n| n.name.clone())
+                .collect()
+        })
+    };
+    assert_eq!(names, vec!["ro_821".to_string()]);
+}

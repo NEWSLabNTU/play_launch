@@ -57,6 +57,18 @@ struct Request {
     /// present on both sides under different names.
     #[serde(default)]
     namespace_stack: Vec<String>,
+    /// The caller's global parameters (ABI 4): everything a `<set_parameter>`
+    /// or an earlier `.launch.py`'s `SetParameter` put in the launch scope,
+    /// as `(name, value)` in the order they were set. `launch_ros` stores
+    /// these as `context.launch_configurations['global_params']`, and
+    /// Autoware's sensor pipelines read them back with
+    /// `dict(context.launch_configurations.get("global_params", {}))` and
+    /// index `gp["rear_overhang"]`. Without this field the vehicle-info
+    /// loader's parameters stayed in the context of the call that ran it,
+    /// and the next file's `OpaqueFunction` died with a KeyError
+    /// (play_launch issue 0028).
+    #[serde(default)]
+    global_parameters: Vec<(String, String)>,
 }
 
 #[derive(serde::Serialize)]
@@ -205,6 +217,13 @@ unsafe fn call_inner(req: *const c_char) -> Response {
             if !req.namespace_stack.is_empty() {
                 ctx.set_namespace_stack(req.namespace_stack.clone());
             }
+            // Same reason as `configs`: `global_params` is read from THIS
+            // context, so what the caller already holds has to be seeded here
+            // before the file runs. They come back out in `captures` with
+            // whatever the file added; `merge_into` re-setting them is a no-op.
+            for (k, v) in &req.global_parameters {
+                ctx.set_global_parameter(k.clone(), v.clone());
+            }
             let r = {
                 let _guard = play_launch_parser::bridge::LaunchContextGuard::new(&mut ctx);
                 backend.exec_file(&req.arg)
@@ -276,7 +295,12 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // request and answer it wrong — every Python-declared node at `/`, every
     // Python include dropped — which is exactly the silent shape a version
     // exists to refuse.
-    3
+    //
+    // 4: the request carries the caller's `global_parameters`. A v3 object
+    // accepts a v4 request (serde-defaulted) and answers it wrong — every
+    // `OpaqueFunction` that reads `global_params` sees none — which is the
+    // KeyError of issue 0028 back again, silently. Hence the bump.
+    4
 }
 
 #[cfg(test)]
@@ -441,7 +465,51 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 3);
+        assert_eq!(play_launch_py_abi_version(), 4);
+    }
+
+    /// ABI 4: global parameters the caller already holds — from an XML
+    /// `<set_parameter>`, or a `SetParameter` an EARLIER `.launch.py` returned —
+    /// reach this file's `OpaqueFunction` as `launch_configurations['global_params']`,
+    /// the way `launch_ros` stores them. Without it every Autoware sensor
+    /// pipeline that does `dict(context.launch_configurations.get("global_params", {}))`
+    /// and indexes `gp["rear_overhang"]` dies with a KeyError, because the
+    /// vehicle-info loader ran in a previous call and its parameters stayed in a
+    /// context that died with it (play_launch issue 0028).
+    #[test]
+    fn exec_file_sees_the_global_parameters_it_was_sent() {
+        let dir = std::env::temp_dir().join("pyexec_abi_0028_gp");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("gp.launch.py");
+        std::fs::write(
+            &file,
+            "from launch import LaunchDescription\n\
+             from launch.actions import OpaqueFunction\n\
+             from launch_ros.actions import Node\n\
+             def launch_setup(context, *args, **kwargs):\n\
+             \x20   gp = dict(context.launch_configurations.get('global_params', {}))\n\
+             \x20   ro = gp['rear_overhang']\n\
+             \x20   return [Node(package='p', executable='e',\n\
+             \x20                name='ro_%d' % round(ro * 1000))]\n\
+             def generate_launch_description():\n\
+             \x20   return LaunchDescription([OpaqueFunction(function=launch_setup)])\n",
+        )
+        .unwrap();
+
+        let req = serde_json::json!({
+            "op": "exec_file",
+            "arg": file.to_str().unwrap(),
+            "global_parameters": [["rear_overhang", "0.821"], ["wheel_base", "2.061"]],
+        })
+        .to_string();
+        let v = call(&req);
+        assert_eq!(v["ok"], true, "{v}");
+        let nodes = v["captures"]["nodes"].as_array().expect("nodes");
+        assert_eq!(nodes.len(), 1, "{v}");
+        assert_eq!(
+            nodes[0]["name"], "ro_821",
+            "the global parameter must reach Python, typed, through the request: {v}"
+        );
     }
 
     /// ABI 3: the namespace the caller is in reaches the nodes Python

@@ -151,7 +151,13 @@ impl std::error::Error for LoadError {}
 /// serde-defaulted) and answers it wrong — every node a `.launch.py` declares
 /// lands at `/`, every include it makes is dropped — so this is the version
 /// that turns that pairing into a refusal.
-const ABI_VERSION: u32 = 3;
+///
+/// 4: the request carries the caller's `global_parameters` (play_launch
+/// issue 0028). A v3 object accepts a v4 request and gives every
+/// `OpaqueFunction` an empty `global_params`, so Autoware's vehicle-info
+/// consumers die with `KeyError: 'rear_overhang'` — again silently as to
+/// cause, hence the bump.
+const ABI_VERSION: u32 = 4;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]
@@ -249,13 +255,26 @@ pub fn find_interpreter() -> Result<Interpreter, LoadError> {
 
 /// A loaded Python half, and the interpreter it is bound to.
 ///
-/// Holds both libraries open: dropping either would unload code the
-/// parser may still be inside. The `libpython` handle is deliberately
-/// never used after loading — it exists to keep the library resident and
-/// its symbols visible.
+/// Holds both libraries open, and NEVER closes them: `ManuallyDrop`, so
+/// dropping `Loaded` leaks the handles rather than `dlclose`ing. Unloading
+/// is not merely "code the parser may still be inside": the object
+/// registers thread-local destructors of its own (its copy of
+/// `play_launch_parser`'s `CURRENT_LAUNCH_CONTEXT`, PyO3's state), and a
+/// thread-local destructor is an address inside the object. After `dlclose`
+/// that address is unmapped, and the NEXT thread to exit dies in
+/// `__nptl_deallocate_tsd` with a SIGSEGV that names no Rust frame at all.
+/// The driver never saw it only because it returns from `main` without
+/// running any thread's destructors; every test that called `exec_file`
+/// from a test thread did (play_launch issue 0028, the loader test).
+/// A CPython interpreter cannot be safely unloaded either. Both stay
+/// resident for the life of the process, which is what a plugin with
+/// thread-locals is.
+///
+/// The `libpython` handle is deliberately never used after loading — it
+/// exists to keep the library resident and its symbols visible.
 pub struct Loaded {
-    _libpython: libloading::Library,
-    pyexec: libloading::Library,
+    _libpython: std::mem::ManuallyDrop<libloading::Library>,
+    pyexec: std::mem::ManuallyDrop<libloading::Library>,
     pub interpreter: Interpreter,
 }
 
@@ -321,8 +340,8 @@ impl Loaded {
             interpreter.version
         );
         Ok(Self {
-            _libpython: libpython,
-            pyexec: obj,
+            _libpython: std::mem::ManuallyDrop::new(libpython),
+            pyexec: std::mem::ManuallyDrop::new(obj),
             interpreter,
         })
     }
@@ -338,6 +357,7 @@ impl Loaded {
         arg: &str,
         configs: std::collections::BTreeMap<String, String>,
         namespace_stack: Vec<String>,
+        global_parameters: Vec<(String, String)>,
     ) -> Result<serde_json::Value, String> {
         use std::ffi::{CStr, CString};
         let req = serde_json::json!({
@@ -345,6 +365,7 @@ impl Loaded {
             "arg": arg,
             "configs": configs,
             "namespace_stack": namespace_stack,
+            "global_parameters": global_parameters,
         })
         .to_string();
         let req = CString::new(req).map_err(|e| format!("request contains a NUL byte: {e}"))?;
@@ -397,15 +418,22 @@ impl play_launch_parser::python_backend::PythonBackend for Loaded {
     fn exec_file(&self, path: &str) -> Result<(), String> {
         use play_launch_parser::bridge::{ExecCaptures, with_launch_context};
 
-        let (configs, namespace_stack): (std::collections::BTreeMap<String, String>, Vec<String>) =
-            with_launch_context(|ctx| {
-                (
-                    ctx.configurations().into_iter().collect(),
-                    ctx.namespace_stack(),
-                )
-            });
+        // Configurations, the namespace stack, and (ABI 4) the global
+        // parameters: three things a `.launch.py` reads from the context it
+        // runs in, and this object's context is not the caller's.
+        let (configs, namespace_stack, global_parameters): (
+            std::collections::BTreeMap<String, String>,
+            Vec<String>,
+            Vec<(String, String)>,
+        ) = with_launch_context(|ctx| {
+            (
+                ctx.configurations().into_iter().collect(),
+                ctx.namespace_stack(),
+                ctx.global_parameters().into_iter().collect(),
+            )
+        });
 
-        let response = self.call("exec_file", path, configs, namespace_stack)?;
+        let response = self.call("exec_file", path, configs, namespace_stack, global_parameters)?;
 
         // Absent `captures` means the object predates this contract. The ABI
         // version already refuses that pairing at load; this is the belt to
@@ -427,7 +455,7 @@ impl play_launch_parser::python_backend::PythonBackend for Loaded {
         // Self-contained: the expression is the whole input, the string is the
         // whole output. This is why `$(eval …)` kept working while `exec_file`
         // did not.
-        self.call("eval_expr", expr, Default::default(), Vec::new())
+        self.call("eval_expr", expr, Default::default(), Vec::new(), Vec::new())
             .map(|v| v["value"].as_str().unwrap_or_default().to_string())
     }
 }

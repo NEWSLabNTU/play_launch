@@ -8,6 +8,18 @@ allowance heavily.
 
 ## Unreleased
 
+### Global parameters reach `.launch.py` files under the Rust parser
+
+An XML `<set_parameter>`, or a `SetParameter` returned by an earlier
+`.launch.py`, is now visible to the next file's `OpaqueFunction` as
+`launch_configurations['global_params']`. Since the Python half became a
+`dlopen`ed object it ran each file in a context seeded from the request, and
+the request never carried the global parameters — so Autoware's vehicle-info
+loader ran, its parameters stayed behind, and every sensor pipeline that reads
+`gp["rear_overhang"]` died with a `KeyError`, which made the Rust parser
+unusable on an Autoware stack. **Python ABI 3 → 4**; a v3 object paired with
+this loader is refused rather than answered wrong. (#0028)
+
 ### A contract's `params:` holds the launch to it
 
 A node whose contract declares `params:` (nano-ros phase 446 W2) has its

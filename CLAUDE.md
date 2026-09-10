@@ -776,6 +776,16 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   which is why `just test-all` runs it. Three boundary tests in
   `pyexec/src/c_abi.rs` pin it.
 
+- **2026-09-11**: issue #0028 — the same boundary, third gap: the request
+  carried no **`global_parameters`**, so an XML `<set_parameter>` or a
+  `SetParameter` from an earlier `.launch.py` (Autoware's vehicle-info loader)
+  was invisible to the next file's `OpaqueFunction`, and every Autoware sensor
+  pipeline died with `KeyError: 'rear_overhang'` — the golf-cart stack could
+  not use the Rust parser at all. **ABI 3 → 4.** Pinned over the wire in
+  `c_abi.rs` and through the real loader in `pyload/tests`; the in-process
+  backend shares the host context and cannot see this class of bug, which is
+  why the loader test exists.
+
 - **2026-09-06**: Phase 70 W4 — **the leftovers** (manifest `v0.1.26` →
   **`v0.1.29`**; `v0.1.27` ships with one failing test, use `.28`+).
   **`kind` column** on `field_table.rs`: `Meta | Fact | Requirement |

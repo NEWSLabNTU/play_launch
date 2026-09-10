@@ -17,11 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0028** — the Rust parser dies with `KeyError: 'rear_overhang'` on the golf-cart
-stack, from an Autoware `.launch.py` reading the vehicle-info dictionary; the Python
-parser resolves the same launch. Neither file nor line is named. This, not #0027, is
-what keeps the golf-cart replays on `--parser python`. See `0028-*`.
-
 **#0024** — `play_launch run` cannot spawn a node when play_launch is itself
 inside a `systemd-run --user --scope`: `Unable to start: Operation not permitted
 (os error 1)`, empty node logs, no process. The same wrapper is fine for
@@ -42,6 +37,16 @@ declared-vs-loaded reconciliation first; the drop itself is not diagnosable
 until then. See `0023-*`.
 
 ## Resolved
+
+**#0028** — the Rust parser died with `KeyError: 'rear_overhang'` on the golf-cart
+stack. Not the vehicle-info file: the `global_params` dictionary was EMPTY in every
+`.launch.py`, because since 0897 the Python half runs in a `dlopen`ed object with its
+own context, and the `exec_file` request carried `configs` and `namespace_stack` but
+never the global parameters — so an XML `<set_parameter>`, or the vehicle-info loader's
+`SetParameter`s from a previous call, were invisible to the next file's
+`OpaqueFunction`. The in-process backend every parser test uses shares the host context,
+which is why no fixture caught it. Request gains `global_parameters`, **ABI 3 → 4**,
+pinned on the object side and through the real loader. See `0028-*`.
 
 **#0027** — the Rust parser rejected `$(eval '\'$(var x)\' == \'y\'')`, the
 escaped-quote template every Autoware-style `pose_source` dispatch uses, evaluating
