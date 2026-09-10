@@ -17,6 +17,11 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0029** — the Rust parser satisfies an include's REQUIRED argument (an `<arg>` with
+no default in the included file) from the parent scope; `ros2 launch` and the Python
+parser refuse the same include. Lenient-direction parity gap: a file play_launch
+resolves fails under the stock tool. Found on the golf-cart aruco sim. See `0029-*`.
+
 **#0024** — `play_launch run` cannot spawn a node when play_launch is itself
 inside a `systemd-run --user --scope`: `Unable to start: Operation not permitted
 (os error 1)`, empty node logs, no process. The same wrapper is fine for
