@@ -189,6 +189,18 @@ pub fn build_checked_model(
         input_base,
     );
 
+    // nano-ros phase 446 W2 -- a node whose contract declares its parameters
+    // is held to them: an undeclared name or a mistyped value refuses the
+    // model instead of reaching a node that would ignore the one in silence
+    // and throw on the other only at declare time.
+    if let Err(errors) = crate::ros::param_check::check_declared_params(&model) {
+        eyre::bail!(
+            "{} launch parameter value(s) disagree with the contract's declarations:\n  {}",
+            errors.len(),
+            errors.join("\n  ")
+        );
+    }
+
     // nano-ros issue 0320 — a residual absolute path in `meta.inputs` is a
     // non-portable model that reproduces on exactly one checkout. It was
     // previously silent; embed a checker-style warning so the leak is visible

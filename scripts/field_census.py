@@ -74,6 +74,7 @@ CONSUMING_PATTERNS = [
     (r"resolve/src/ros/manifest_graph\.rs$", "dataflow arithmetic"),
     (r"resolve/src/ros/sched_derive\.rs$", "mapper input"),
     (r"resolve/src/ros/sched_loader\.rs$", "scheduling derivation"),
+    (r"resolve/src/ros/param_check\.rs$", "parameter check"),
     (r"sched/src/", "scheduling"),
     (r"check/src/graph\.rs$", "dataflow graph"),
     # The executor. A field the runtime acts on — spawning, scheduling,

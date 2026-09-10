@@ -212,6 +212,21 @@ fn fault_kind(k: ros_launch_manifest_types::FaultKind) -> model::FaultKind {
     }
 }
 
+fn param_type(t: ros_launch_manifest_types::ParamType) -> model::ParamType {
+    use ros_launch_manifest_types::ParamType as T;
+    match t {
+        T::Bool => model::ParamType::Bool,
+        T::Integer => model::ParamType::Integer,
+        T::Double => model::ParamType::Double,
+        T::String => model::ParamType::String,
+        T::ByteArray => model::ParamType::ByteArray,
+        T::BoolArray => model::ParamType::BoolArray,
+        T::IntegerArray => model::ParamType::IntegerArray,
+        T::DoubleArray => model::ParamType::DoubleArray,
+        T::StringArray => model::ParamType::StringArray,
+    }
+}
+
 fn on_violation_contract(
     node_fqn: &str,
     ov: &ros_launch_manifest_types::OnViolation,
@@ -1122,6 +1137,36 @@ pub fn build_system_model(
         }
     }
 
+    // The declared parameters (nano-ros phase 446), keyed by node FQN the way
+    // `node_concurrency` is. Presence is the declaration again: a node with no
+    // `params:` gets no entry, and `param_check` leaves its launch values
+    // alone -- today's behaviour.
+    for resolved in index.manifests.values() {
+        for (node_name, node) in &resolved.manifest.nodes {
+            if node.params.is_empty() {
+                continue;
+            }
+            let node_fqn = super::manifest_loader::resolve_node_fqn(
+                index,
+                resolved.scope_id,
+                &resolved.ns,
+                node_name,
+            );
+            contracts
+                .node_params
+                .entry(node_fqn)
+                .or_default()
+                .extend(node.params.iter().map(|(name, d)| {
+                    (
+                        name.clone(),
+                        model::ParamContract {
+                            ty: param_type(d.ty),
+                        },
+                    )
+                }));
+        }
+    }
+
     // --- execution ---------------------------------------------------------
     let mut execution = model::Execution::default();
     if let Some(s) = sched {
@@ -1192,6 +1237,71 @@ pub fn build_system_model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// nano-ros phase 446 W2 -- a contract's `params:` reaches the model per
+    /// node FQN, next to the node's other contract facts, and a node whose
+    /// contract has none gets no entry.
+    #[test]
+    fn declared_params_reach_the_model_per_node() {
+        let dump: LaunchDump = serde_json::from_value(serde_json::json!({
+            "node": [
+                {"executable": "mrm_handler_node", "package": "autoware_mrm_handler",
+                 "name": "mrm_handler", "namespace": "/system", "params_files": [],
+                 "cmd": [], "scope": 0},
+                {"executable": "talker", "package": "demo_nodes_cpp", "name": "talker",
+                 "namespace": "/system", "params_files": [], "cmd": [], "scope": 0}
+            ],
+            "container": [], "load_node": [], "lifecycle_node": [],
+            "file_data": {}, "variables": {},
+            "scopes": [{"id": 0, "ns": "/system", "parent": null}]
+        }))
+        .expect("hand-built dump");
+        let manifest = ros_launch_manifest_types::parse_manifest_str(
+            "nodes:\n  mrm_handler:\n    params:\n      update_rate: { type: integer }\n      \
+             turning_hazard_on.emergency: { type: bool }\n      \
+             timeout_operation_mode_availability: { type: double }\n  \
+             talker:\n    pub: [chatter]\n",
+        )
+        .expect("contract parses");
+        let mut index = ManifestIndex::default();
+        index.manifests.insert(
+            0,
+            crate::ros::manifest_loader::ResolvedManifest {
+                scope_id: 0,
+                pkg: None,
+                file: "island.launch.xml".to_string(),
+                ns: "/system".to_string(),
+                channel: crate::ros::manifest_loader::ContractChannel::Provider,
+                contract_path: PathBuf::from("island.contract.yaml"),
+                manifest,
+                source: String::new(),
+                diagnostics: vec![],
+            },
+        );
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        let p = &model.contracts.node_params;
+        assert_eq!(p.keys().collect::<Vec<_>>(), ["/system/mrm_handler"]);
+        let mrm = &p["/system/mrm_handler"];
+        assert_eq!(mrm["update_rate"].ty, model::ParamType::Integer);
+        assert_eq!(
+            mrm["turning_hazard_on.emergency"].ty,
+            model::ParamType::Bool
+        );
+        assert_eq!(
+            mrm["timeout_operation_mode_availability"].ty,
+            model::ParamType::Double
+        );
+        assert_eq!(
+            crate::ros::param_check::check_declared_params(&model),
+            Ok(())
+        );
+
+        let yaml = model.to_yaml_string().expect("serializes");
+        assert!(yaml.contains("node_params:"), "{yaml}");
+        println!("{yaml}");
+    }
 
     /// Phase 77 — an endpoint ref must reach a node the model actually has.
     ///
