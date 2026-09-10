@@ -17,11 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0029** — the Rust parser satisfies an include's REQUIRED argument (an `<arg>` with
-no default in the included file) from the parent scope; `ros2 launch` and the Python
-parser refuse the same include. Lenient-direction parity gap: a file play_launch
-resolves fails under the stock tool. Found on the golf-cart aruco sim. See `0029-*`.
-
 **#0024** — `play_launch run` cannot spawn a node when play_launch is itself
 inside a `systemd-run --user --scope`: `Unable to start: Operation not permitted
 (os error 1)`, empty node logs, no process. The same wrapper is fine for
@@ -42,6 +37,14 @@ declared-vs-loaded reconciliation first; the drop itself is not diagnosable
 until then. See `0023-*`.
 
 ## Resolved
+
+**#0029** — the Rust parser satisfied an include's REQUIRED argument (an `<arg>` with
+no default in the included file) from the parent scope, where `ros2 launch` and the
+Python parser refuse the include: a file play_launch resolved failed under the stock
+tool. Now checked before the included XML or YAML file is traversed, the way launch's
+`get_launch_arguments` does it — unconditional declarations only, nested includes
+answer for themselves — and refused with launch's own message. Found on the golf-cart
+aruco sim. See `0029-*`.
 
 **#0028** — the Rust parser died with `KeyError: 'rear_overhang'` on the golf-cart
 stack. Not the vehicle-info file: the `global_params` dictionary was EMPTY in every

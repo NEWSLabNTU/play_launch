@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!-- The parent DECLARES `required` but does not pass it on the include. ros2
+     launch refuses this: an included description's required argument must be
+     in the include's own launch_arguments; the parent's configurations do not
+     count (issue 0029). -->
+<launch>
+  <arg name="required" default="from_parent_scope"/>
+  <include file="$(dirname)/test_required_arg_inner.launch.xml"/>
+</launch>

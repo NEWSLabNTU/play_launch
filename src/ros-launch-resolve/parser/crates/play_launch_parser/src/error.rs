@@ -65,6 +65,24 @@ pub enum ParseError {
 
     #[error("Python error: {0}")]
     PythonError(String),
+
+    /// An `<include>` did not pass an argument the included file declares
+    /// without a default. Mirrors `launch`'s `IncludeLaunchDescription.execute`,
+    /// which checks the include's OWN launch arguments — a value that merely
+    /// exists in the parent's scope does not count — and reads
+    /// `Included launch description missing required argument 'x'
+    /// (description: 'y'), given: [a, b]`. Issue 0029.
+    #[error(
+        "Included launch description missing required argument '{name}' (description: '{description}'), given: [{given}] — in {file}"
+    )]
+    MissingIncludeArgument {
+        name: String,
+        description: String,
+        /// The include's own argument names, comma-separated, in order.
+        given: String,
+        /// The included file.
+        file: String,
+    },
 }
 
 // `impl From<pyo3::PyErr>` used to live here. It was the last pyo3 reference in

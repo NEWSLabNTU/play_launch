@@ -1,0 +1,11 @@
+launch:
+  - arg:
+      name: required
+      description: must be passed on the include
+  - arg:
+      name: optional
+      default: "1"
+  - node:
+      pkg: demo_nodes_cpp
+      exec: talker
+      name: $(var required)

@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="required" default="from_parent_scope"/>
+  <include file="$(dirname)/test_required_arg_inner.launch.yaml"/>
+</launch>

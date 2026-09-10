@@ -8,6 +8,16 @@ allowance heavily.
 
 ## Unreleased
 
+### An include must pass the included file's required arguments
+
+An `<include>` of a file that declares an `<arg>` without a default is refused
+unless the include names that argument itself, with `launch`'s own message —
+`Included launch description missing required argument 'x' (description: 'y'),
+given: [...]`. The Rust parser used to take the value from the parent's scope,
+which `ros2 launch` never does, so a launch file it resolved could fail under
+the stock tool. Declarations under a condition and inside nested includes are
+not demanded, as in launch. XML and YAML included files. (#0029)
+
 ### Global parameters reach `.launch.py` files under the Rust parser
 
 An XML `<set_parameter>`, or a `SetParameter` returned by an earlier

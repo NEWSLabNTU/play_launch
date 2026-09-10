@@ -4,7 +4,7 @@ use crate::{
     error::{ParseError, Result},
     file_cache::read_file_cached,
     record::{canonicalize_path, extract_package_from_path},
-    substitution::resolve_substitutions,
+    substitution::{resolve_substitutions, types::Substitution},
     xml,
 };
 use std::path::Path;
@@ -213,6 +213,11 @@ impl LaunchTraverser {
                     let prev_scope_id = self.current_scope_id;
                     self.current_scope_id = child_scope_id;
 
+                    // Same rule as the XML branch below (issue 0029), read off
+                    // the YAML `launch:` list before it is processed.
+                    let required = yaml_required_args(&resolved_path)?;
+                    check_required_include_args(&required, &include.args, &resolved_path)?;
+
                     let result = self.process_yaml_launch_file(&resolved_path);
 
                     // Update scope args with all resolved configurations
@@ -250,6 +255,15 @@ impl LaunchTraverser {
         let content = read_file_cached(&resolved_path)?;
         let doc = roxmltree::Document::parse(&content)?;
         let root = xml::XmlEntity::new(doc.root_element());
+
+        // What launch demands of an include (issue 0029): every `<arg>` the
+        // included file declares without a default, outside any condition and
+        // outside any nested `<include>` (whose own include answers for it),
+        // must be named among THIS include's `<arg>`s. The parent's scope does
+        // not count, so this is checked before the file is traversed with a
+        // context that would happily supply the value.
+        let required = xml_required_args(&root);
+        check_required_include_args(&required, &include.args, &resolved_path)?;
 
         // Create temporary traverser for included file with extended include chain
         let mut child_chain = self.include_chain.clone();
@@ -340,4 +354,125 @@ impl LaunchTraverser {
 
         Ok(())
     }
+}
+
+/// `(name, description)` of every argument an included file declares without a
+/// default and unconditionally — what `launch` calls a required argument of the
+/// included description.
+///
+/// Walks the tree the way `launch`'s `get_launch_arguments` does: a
+/// declaration under an element carrying `if=` or `unless=` is *conditionally
+/// included* and not demanded at include time (it is checked when and if it
+/// executes); a nested `<include>` is its own description, and its arguments
+/// are that include's to satisfy.
+fn xml_required_args(root: &xml::XmlEntity) -> Vec<(String, String)> {
+    use crate::xml::Entity;
+    let mut out = Vec::new();
+    fn walk(entity: &xml::XmlEntity, out: &mut Vec<(String, String)>) {
+        for child in entity.children() {
+            let conditional = matches!(child.optional_attr_str("if"), Ok(Some(_)))
+                || matches!(child.optional_attr_str("unless"), Ok(Some(_)));
+            match child.type_name() {
+                "arg" => {
+                    if conditional {
+                        continue;
+                    }
+                    let name = match child.optional_attr_str("name") {
+                        Ok(Some(name)) => name,
+                        _ => continue,
+                    };
+                    let has_default = matches!(child.optional_attr_str("default"), Ok(Some(_)));
+                    if !has_default {
+                        let description = child
+                            .optional_attr_str("description")
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| "no description given".to_string());
+                        out.push((name, description));
+                    }
+                }
+                "include" => {}
+                _ => {
+                    if !conditional {
+                        walk(&child, out);
+                    }
+                }
+            }
+        }
+    }
+    walk(root, &mut out);
+    out
+}
+
+/// The YAML frontend's equivalent of [`xml_required_args`]: `- arg:` entries
+/// of the `launch:` list without a `default`, recursing into `group:` children
+/// that carry no `if`/`unless`, and never into an `include:`.
+fn yaml_required_args(path: &Path) -> Result<Vec<(String, String)>> {
+    use serde_yaml_ng::Value;
+    let content = read_file_cached(path)?;
+    let yaml: Value = serde_yaml_ng::from_str(&content)
+        .map_err(|e| ParseError::InvalidSubstitution(format!("Invalid YAML: {}", e)))?;
+    let mut out = Vec::new();
+    fn walk(items: &[Value], out: &mut Vec<(String, String)>) {
+        for item in items {
+            let Some(map) = item.as_mapping() else { continue };
+            let Some((key, body)) = map.iter().next() else { continue };
+            let Some(body) = body.as_mapping() else { continue };
+            let conditional = body.contains_key(Value::String("if".into()))
+                || body.contains_key(Value::String("unless".into()));
+            match key.as_str() {
+                Some("arg") => {
+                    if conditional || body.contains_key(Value::String("default".into())) {
+                        continue;
+                    }
+                    let Some(name) = body.get(Value::String("name".into())).and_then(Value::as_str)
+                    else {
+                        continue;
+                    };
+                    let description = body
+                        .get(Value::String("description".into()))
+                        .and_then(Value::as_str)
+                        .unwrap_or("no description given");
+                    out.push((name.to_string(), description.to_string()));
+                }
+                Some("group") => {
+                    if !conditional
+                        && let Some(children) = body
+                            .get(Value::String("children".into()))
+                            .and_then(Value::as_sequence)
+                    {
+                        walk(children, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(list) = yaml.get("launch").and_then(Value::as_sequence) {
+        walk(list, &mut out);
+    }
+    Ok(out)
+}
+
+/// Refuse the include if any required argument is not among its own `<arg>`s.
+fn check_required_include_args(
+    required: &[(String, String)],
+    given: &[(String, Vec<Substitution>)],
+    file: &Path,
+) -> Result<()> {
+    for (name, description) in required {
+        if !given.iter().any(|(given_name, _)| given_name == name) {
+            return Err(ParseError::MissingIncludeArgument {
+                name: name.clone(),
+                description: description.clone(),
+                given: given
+                    .iter()
+                    .map(|(n, _)| n.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                file: file.display().to_string(),
+            });
+        }
+    }
+    Ok(())
 }

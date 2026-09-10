@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<launch>
+  <include file="$(dirname)/test_required_arg_inner.launch.xml">
+    <arg name="required" value="passed"/>
+  </include>
+</launch>

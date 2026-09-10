@@ -1745,3 +1745,50 @@ fn test_eval_with_escaped_quotes_selects_the_branch_ros2_launch_selects() {
     assert!(aruco.contains(&"only_for_aruco".to_string()), "{aruco:?}");
     assert!(!aruco.contains(&"not_aruco".to_string()), "{aruco:?}");
 }
+
+/// Issue 0029. `launch`'s `IncludeLaunchDescription.execute` demands every
+/// `DeclareLaunchArgument` of the included description that has no default and
+/// is not conditionally declared, and it looks only at the include's OWN
+/// launch_arguments: a value that merely exists in the parent's scope does not
+/// satisfy it. The Rust parser used to resolve such an include from the parent
+/// scope, so a launch file it accepted failed under `ros2 launch`.
+#[test]
+fn test_required_include_arg_missing_is_an_error_even_if_the_parent_declares_it() {
+    let fixture = get_fixture_path("test_required_arg_outer_missing.launch.xml");
+    let err = parse_launch_file(&fixture, HashMap::new())
+        .err()
+        .expect("the include must be refused: `required` was never passed");
+    let msg = err.to_string();
+    assert!(msg.contains("missing required argument 'required'"), "{msg}");
+    assert!(msg.contains("must be passed on the include"), "{msg}");
+    assert!(msg.contains("test_required_arg_inner.launch.xml"), "{msg}");
+    // Conditionally declared: not demanded, and not named as missing either.
+    assert!(!msg.contains("conditional_required"), "{msg}");
+}
+
+#[test]
+fn test_required_include_arg_passed_on_the_include_resolves() {
+    let fixture = get_fixture_path("test_required_arg_outer_passing.launch.xml");
+    let result = parse_launch_file(&fixture, HashMap::new()).expect("passed explicitly");
+    let json = serde_json::to_value(result).unwrap();
+    let names: Vec<&str> = json["node"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|n| n["name"].as_str())
+        .collect();
+    assert_eq!(names, vec!["passed"]);
+}
+
+/// The YAML frontend declares arguments the same way; an included `.launch.yaml`
+/// is held to the same rule.
+#[test]
+fn test_required_include_arg_missing_is_an_error_for_a_yaml_include() {
+    let fixture = get_fixture_path("test_required_arg_outer_missing_yaml.launch.xml");
+    let err = parse_launch_file(&fixture, HashMap::new())
+        .err()
+        .expect("the YAML include must be refused: `required` was never passed");
+    let msg = err.to_string();
+    assert!(msg.contains("missing required argument 'required'"), "{msg}");
+    assert!(msg.contains("test_required_arg_inner.launch.yaml"), "{msg}");
+}

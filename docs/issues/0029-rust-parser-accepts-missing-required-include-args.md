@@ -1,7 +1,7 @@
 ---
 id: 29
 title: "Rust parser satisfies an include's required argument from the parent scope; ros2 launch and the Python parser refuse"
-status: open
+status: resolved
 type: parity
 severity: low
 ---
@@ -11,6 +11,7 @@ severity: low
 **Repo:** `play_launch` (`src/ros-launch-resolve/parser`, include handling)
 **Affects:** the Rust parser (the default) on any `<include>` of a file that declares
 an `<arg>` without a default
+**Resolved:** 2026-09-11
 
 ## What happens
 
@@ -40,12 +41,31 @@ of the included description that has no default and is not `conditionally_declar
 must appear in the include's own `launch_arguments`; the parent's launch
 configurations do not count.
 
-## Suggested fix
+## Fix
 
-In the include traverser, after loading the included file, collect its `<arg>`
-declarations without `default=` and error unless each is named in the include's
-`<arg>` list, with the same message shape as launch's. Fixture: a two-file pair, the
-inner declaring `<arg name="required"/>`, the outer declaring `required` at top level
-and including without passing it; assert the Rust parser errors and names the
-argument. The differential attribute tests already know how to run the same file
-through `ros2 launch` as the oracle.
+`traverser/include.rs`: before an included XML or YAML file is traversed, its
+required arguments are collected — every `<arg>` (or `- arg:`) without a default,
+walking into elements that carry no `if`/`unless` and never into a nested `<include>`,
+which is launch's `get_launch_arguments` rule: a declaration under a condition is
+*conditionally included* and checked only if it executes, and a nested include is its
+own description. Each must be named among the include's own `<arg>`s; the parent's
+scope is not consulted, because launch does not consult it. The error is
+`ParseError::MissingIncludeArgument`, worded as launch words it:
+
+```
+Included launch description missing required argument 'required' (description: 'must be passed on the include'), given: [] — in .../test_required_arg_inner.launch.xml
+```
+
+Fixtures `test_required_arg_{inner,outer_missing,outer_passing}.launch.xml` and
+`test_required_arg_inner.launch.yaml` with `test_required_arg_outer_missing_yaml.launch.xml`;
+three tests in `xml_tests.rs` cover missing (with the parent declaring the name,
+which must not rescue it), passed, and the YAML frontend. The conditionally declared
+argument in the inner fixture is asserted absent from the message.
+
+Verified on the golf cart: the pre-fix `aruco_planning_sim.launch.xml` (before
+`c584b5b`) is refused with the message above naming `perception/enable_detection_failure`,
+the fixed one and every other entry point resolve as before.
+
+Not covered: a `.launch.py` include. Its `IncludeLaunchDescription` runs inside the
+embedded launch API mocks, which do not implement this check either; a separate item
+if it bites.

@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!-- Included by test_required_arg_outer_*.launch.xml. `required` has no default,
+     so an include of this file must pass it. `conditional_required` sits under a
+     condition: launch marks such declarations conditionally included and does
+     not demand them at include time. -->
+<launch>
+  <arg name="required" description="must be passed on the include"/>
+  <arg name="optional" default="1"/>
+  <arg name="run_extra" default="false"/>
+  <group if="$(var run_extra)">
+    <arg name="conditional_required"/>
+  </group>
+  <node pkg="demo_nodes_cpp" exec="talker" name="$(var required)"/>
+</launch>
