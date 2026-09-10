@@ -433,7 +433,13 @@ impl play_launch_parser::python_backend::PythonBackend for Loaded {
             )
         });
 
-        let response = self.call("exec_file", path, configs, namespace_stack, global_parameters)?;
+        let response = self.call(
+            "exec_file",
+            path,
+            configs,
+            namespace_stack,
+            global_parameters,
+        )?;
 
         // Absent `captures` means the object predates this contract. The ABI
         // version already refuses that pairing at load; this is the belt to
@@ -455,8 +461,14 @@ impl play_launch_parser::python_backend::PythonBackend for Loaded {
         // Self-contained: the expression is the whole input, the string is the
         // whole output. This is why `$(eval …)` kept working while `exec_file`
         // did not.
-        self.call("eval_expr", expr, Default::default(), Vec::new(), Vec::new())
-            .map(|v| v["value"].as_str().unwrap_or_default().to_string())
+        self.call(
+            "eval_expr",
+            expr,
+            Default::default(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .map(|v| v["value"].as_str().unwrap_or_default().to_string())
     }
 }
 
