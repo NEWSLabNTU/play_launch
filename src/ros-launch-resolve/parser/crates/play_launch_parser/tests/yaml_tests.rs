@@ -1,5 +1,9 @@
 use play_launch_parser::parse_launch_file;
-use std::{collections::HashMap, io::Write, path::PathBuf};
+use std::{
+    collections::HashMap,
+    io::Write,
+    path::{Path, PathBuf},
+};
 use tempfile::NamedTempFile;
 
 /// Helper to get fixture path from crate tests directory
@@ -1764,22 +1768,27 @@ fn test_yaml_fixture_dirname() {
         .expect("Should have deep_node");
     assert_eq!(deep["namespace"].as_str().unwrap(), "/level1/level2");
 
-    // Check dirname resolves to fixtures dir, not /tmp
+    // $(dirname) is the directory of the launch file itself, not of some
+    // copy of it (a temp dir, the cwd). Compared as paths, so the test holds
+    // wherever the checkout lives -- including under /tmp.
     let params = deep["params"].as_array().unwrap();
     let config_path = params
         .iter()
         .find(|p| p[0].as_str() == Some("config_path"))
         .expect("Should have config_path param");
-    let value = config_path[1].as_str().unwrap();
-    assert!(
-        value.contains("tests/fixtures/launch"),
-        "$(dirname) should resolve to fixtures dir, got: {}",
-        value
+    let value = Path::new(config_path[1].as_str().unwrap());
+    assert_eq!(
+        value.file_name().and_then(|f| f.to_str()),
+        Some("config.yaml"),
+        "$(dirname)/config.yaml should end in config.yaml, got: {}",
+        value.display()
     );
-    assert!(
-        !value.contains("/tmp"),
-        "$(dirname) should not resolve to /tmp, got: {}",
-        value
+    let resolved_dir = std::fs::canonicalize(value.parent().unwrap())
+        .unwrap_or_else(|e| panic!("{}: {e}", value.display()));
+    let fixture_dir = std::fs::canonicalize(fixture.parent().unwrap()).unwrap();
+    assert_eq!(
+        resolved_dir, fixture_dir,
+        "$(dirname) should resolve to the fixture's own directory"
     );
 
     let mid = nodes
