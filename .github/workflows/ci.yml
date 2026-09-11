@@ -104,5 +104,31 @@ jobs:
         # be testing. Miss cleanly and let `npm ci` rebuild it.
         key: node-modules-${{ runner.os }}-node22-${{ hashFiles('package-lock.json') }}
 
+    # `just check` ends with the contract field census, which grades a field by
+    # who READS it — and nano-ros is a reader that lives in another repository
+    # (it builds its `MapperPath` from the model). Without this tree a field
+    # only nano-ros consumes, `node_concurrency` say, grades as write-only and
+    # the gate goes red for a defect that does not exist; and the script
+    # refuses (exit 2) rather than skips when `CI` is set and no nano-ros was
+    # named, because a gate that skips on CI is a green tick nobody reads.
+    # This step is why the gate had failed on every push since 2026-08-29: the
+    # script hard-required sibling checkouts of nano-ros AND ros-launch-manifest
+    # that the runner never had. The manifest now comes from cargo's checkout
+    # of the tag the lockfiles pin, so only the consumer needs providing.
+    #
+    # Inside the workspace because actions/checkout refuses a `path:` outside
+    # $GITHUB_WORKSPACE; under gitignored `external/` because every other step
+    # of `just check` is pinned to explicit paths and never sees it. Default
+    # branch, unpinned, on purpose: the census measures the consumer as it IS,
+    # and a nano-ros change that starts or stops reading a field is MEANT to
+    # turn this gate red — the baseline fails in both directions.
+    - name: Check out nano-ros (a consumer the field census must see)
+      uses: actions/checkout@v5
+      with:
+        repository: NEWSLabNTU/nano-ros
+        path: external/nano-ros
+
     - name: Run checks
+      env:
+        PLAY_LAUNCH_FIELD_CENSUS_NANO_ROS: external/nano-ros
       run: just check

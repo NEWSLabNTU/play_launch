@@ -1786,7 +1786,10 @@ mod tests {
         let Yaml::Hash(map) = str_to_yaml(recorded) else {
             panic!("expected a mapping, got a scalar");
         };
-        assert_eq!(map[&Yaml::String("enable".to_string())], Yaml::Boolean(false));
+        assert_eq!(
+            map[&Yaml::String("enable".to_string())],
+            Yaml::Boolean(false)
+        );
         let Yaml::Array(pose) = &map[&Yaml::String("pose".to_string())] else {
             panic!("pose should be a sequence");
         };
