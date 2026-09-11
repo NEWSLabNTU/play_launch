@@ -1759,7 +1759,10 @@ fn test_required_include_arg_missing_is_an_error_even_if_the_parent_declares_it(
         .err()
         .expect("the include must be refused: `required` was never passed");
     let msg = err.to_string();
-    assert!(msg.contains("missing required argument 'required'"), "{msg}");
+    assert!(
+        msg.contains("missing required argument 'required'"),
+        "{msg}"
+    );
     assert!(msg.contains("must be passed on the include"), "{msg}");
     assert!(msg.contains("test_required_arg_inner.launch.xml"), "{msg}");
     // Conditionally declared: not demanded, and not named as missing either.
@@ -1789,6 +1792,78 @@ fn test_required_include_arg_missing_is_an_error_for_a_yaml_include() {
         .err()
         .expect("the YAML include must be refused: `required` was never passed");
     let msg = err.to_string();
-    assert!(msg.contains("missing required argument 'required'"), "{msg}");
+    assert!(
+        msg.contains("missing required argument 'required'"),
+        "{msg}"
+    );
     assert!(msg.contains("test_required_arg_inner.launch.yaml"), "{msg}");
+}
+
+/// Issue 0030, the Python frontend. Same rule as 0029 through a `.launch.py`:
+/// the include's OWN arguments must cover every non-default declaration that
+/// launch's include-time walk can see, and a declaration inside an
+/// `OpaqueFunction` is not one it can see.
+#[test]
+fn test_required_py_include_arg_missing_is_an_error_even_if_the_parent_declares_it() {
+    play_launch_parser_pyexec::register();
+    let fixture = get_fixture_path("test_required_py_outer_missing.launch.xml");
+    let err = parse_launch_file(&fixture, HashMap::new())
+        .err()
+        .expect("the include must be refused: `required` was never passed");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("missing required argument 'required'"),
+        "{msg}"
+    );
+    assert!(msg.contains("must be passed on the include"), "{msg}");
+    assert!(!msg.contains("opaque_required"), "{msg}");
+}
+
+#[test]
+fn test_required_py_include_arg_passed_on_the_include_resolves() {
+    play_launch_parser_pyexec::register();
+    let fixture = get_fixture_path("test_required_py_outer_passing.launch.xml");
+    let result = parse_launch_file(&fixture, HashMap::new()).expect("passed explicitly");
+    let json = serde_json::to_value(result).unwrap();
+    let names: Vec<&str> = json["node"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|n| n["name"].as_str())
+        .collect();
+    assert_eq!(names, vec!["passed"]);
+}
+
+/// Python including Python: `IncludeLaunchDescription` without
+/// `launch_arguments` while the value sits in the outer file's scope.
+#[test]
+fn test_required_py_to_py_include_arg_missing_is_an_error() {
+    play_launch_parser_pyexec::register();
+    let fixture = get_fixture_path("test_required_py_outer.launch.py");
+    let err = parse_launch_file(&fixture, HashMap::new())
+        .err()
+        .expect("the Python include must be refused: `required` was never passed");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("missing required argument 'required'"),
+        "{msg}"
+    );
+}
+
+/// A root `.launch.py` whose required argument nobody set: launch's
+/// `DeclareLaunchArgument.execute` raises, worded like this.
+#[test]
+fn test_required_py_root_arg_unset_is_an_error_naming_it() {
+    play_launch_parser_pyexec::register();
+    let fixture = get_fixture_path("test_required_py_root_unset.launch.py");
+    let err = parse_launch_file(&fixture, HashMap::new())
+        .err()
+        .expect("an unset required argument must be refused");
+    let msg = err.to_string();
+    assert!(
+        msg.contains(
+            "Required launch argument 'required' (description: 'nobody set me') was not provided"
+        ),
+        "{msg}"
+    );
 }

@@ -83,6 +83,17 @@ pub enum ParseError {
         /// The included file.
         file: String,
     },
+
+    /// A `.launch.py` declared an argument with no default that nothing set.
+    /// Worded as launch's `DeclareLaunchArgument.execute` words it. Issue 0030.
+    #[error(
+        "Required launch argument '{name}' (description: '{description}') was not provided — in {file}"
+    )]
+    RequiredArgumentNotProvided {
+        name: String,
+        description: String,
+        file: String,
+    },
 }
 
 // `impl From<pyo3::PyErr>` used to live here. It was the last pyo3 reference in

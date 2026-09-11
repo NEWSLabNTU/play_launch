@@ -7,11 +7,15 @@ use crate::{
 use std::{collections::HashMap, path::Path};
 
 impl LaunchTraverser {
+    /// Run a `.launch.py` and hand back what it declared (issue 0030), so an
+    /// include of it can be held to launch's required-argument rule. Before
+    /// returning, a declaration with no default whose name is still unset is
+    /// refused the way `DeclareLaunchArgument.execute` refuses it.
     pub(crate) fn execute_python_file(
         &mut self,
         path: &Path,
         args: &HashMap<String, String>,
-    ) -> Result<()> {
+    ) -> Result<Vec<crate::captures::DeclaredArgumentCapture>> {
         // The backend, resolved BEFORE any context is published: if there is
         // no Python half in this build, say so while we can still name the
         // file, rather than failing somewhere inside the executor.
@@ -69,6 +73,23 @@ impl LaunchTraverser {
         // Propagate execution errors
         exec_result.map_err(ParseError::PythonError)?;
 
+        // Take this file's declarations out of the context so a later file's
+        // do not mix with them (issue 0030), then apply launch's execute-time
+        // rule: no default and nothing set is an error naming the argument.
+        let declared = std::mem::take(self.context.captured_declarations_mut());
+        for d in &declared {
+            if !d.has_default && self.context.get_configuration(&d.name).is_none() {
+                return Err(ParseError::RequiredArgumentNotProvided {
+                    name: d.name.clone(),
+                    description: d
+                        .description
+                        .clone()
+                        .unwrap_or_else(|| "no description given".to_string()),
+                    file: path.display().to_string(),
+                });
+            }
+        }
+
         // Python API stores captures directly in self.context via thread-local
         // (SetParameter also writes global params directly to context via thread-local)
         log::debug!("After Python execution:");
@@ -106,7 +127,14 @@ impl LaunchTraverser {
                 include.ros_namespace
             );
 
-            // Convert args to HashMap
+            // Two argument sets, kept apart on purpose (issue 0030). What a
+            // `.launch.py` target EXECUTES with is the scope plus the include's
+            // arguments, as before. What an XML or YAML target is GIVEN is the
+            // include's own arguments only: the child context inherits the
+            // scope for substitution anyway, and launch's required-argument
+            // check looks at what was passed, never at what was in scope.
+            let own_names: Vec<String> = include.args.iter().map(|(k, _)| k.clone()).collect();
+            let own_args: HashMap<String, String> = include.args.iter().cloned().collect();
             let mut include_args = args.clone();
             for (key, value) in include.args {
                 include_args.insert(key, value);
@@ -190,8 +218,15 @@ impl LaunchTraverser {
                             if let Some(ref ns) = ros_ns {
                                 self.context.push_namespace(ns.clone());
                             }
-                            let result =
-                                self.execute_python_file(&resolved_include_path, &include_args);
+                            let result = self
+                                .execute_python_file(&resolved_include_path, &include_args)
+                                .and_then(|declared| {
+                                    super::include::check_required_include_args(
+                                        &super::include::py_required_args(&declared),
+                                        &own_names,
+                                        &resolved_include_path,
+                                    )
+                                });
                             self.context.restore_scope(scope);
 
                             // Stamp scope on new captures/records
@@ -241,7 +276,7 @@ impl LaunchTraverser {
                             // For XML includes, pass namespace directly
                             self.process_xml_include_with_namespace(
                                 &resolved_include_path,
-                                &include_args,
+                                &own_args,
                                 ros_ns.clone(),
                             )
                         }
@@ -266,7 +301,24 @@ impl LaunchTraverser {
                             let prev_scope_id = self.current_scope_id;
                             self.current_scope_id = child_scope_id;
 
-                            let result = self.process_yaml_launch_file(&resolved_include_path);
+                            // Issue 0030: the include's own arguments were
+                            // never applied on this path (only recorded in the
+                            // scope table); apply them, and hold the file to the
+                            // required-argument rule against them.
+                            let result = super::include::yaml_required_args(&resolved_include_path)
+                                .and_then(|required| {
+                                    super::include::check_required_include_args(
+                                        &required,
+                                        &own_names,
+                                        &resolved_include_path,
+                                    )
+                                })
+                                .and_then(|()| {
+                                    for (k, v) in &own_args {
+                                        self.context.set_configuration(k.clone(), v.clone());
+                                    }
+                                    self.process_yaml_launch_file(&resolved_include_path)
+                                });
 
                             // Update scope args with all resolved configurations
                             let final_args = self.context.configurations();
@@ -295,6 +347,6 @@ impl LaunchTraverser {
             result?;
         }
 
-        Ok(())
+        Ok(declared)
     }
 }

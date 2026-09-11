@@ -4,7 +4,9 @@
 //! It combines substitution resolution (scope chain) with entity capture storage.
 
 use crate::{
-    captures::{ContainerCapture, IncludeCapture, LoadNodeCapture, NodeCapture},
+    captures::{
+        ContainerCapture, DeclaredArgumentCapture, IncludeCapture, LoadNodeCapture, NodeCapture,
+    },
     substitution::{
         parser::parse_substitutions,
         types::{Substitution, resolve_substitutions},
@@ -110,6 +112,11 @@ pub struct LaunchContext {
     captured_containers: Vec<ContainerCapture>,
     captured_load_nodes: Vec<LoadNodeCapture>,
     captured_includes: Vec<IncludeCapture>,
+    /// `DeclareLaunchArgument`s a `.launch.py` constructed (issue 0030).
+    captured_declarations: Vec<DeclaredArgumentCapture>,
+    /// How many `OpaqueFunction` executions are on the stack; a declaration
+    /// captured while this is non-zero is opaque to launch's include check.
+    opaque_depth: usize,
 }
 
 impl LaunchContext {
@@ -127,6 +134,8 @@ impl LaunchContext {
             captured_containers: Vec::new(),
             captured_load_nodes: Vec::new(),
             captured_includes: Vec::new(),
+            captured_declarations: Vec::new(),
+            opaque_depth: 0,
         }
     }
 
@@ -158,6 +167,8 @@ impl LaunchContext {
             captured_containers: Vec::new(),
             captured_load_nodes: Vec::new(),
             captured_includes: Vec::new(),
+            captured_declarations: Vec::new(),
+            opaque_depth: 0,
         }
     }
 
@@ -678,6 +689,30 @@ impl LaunchContext {
     }
 
     /// Get mutable reference to captured includes
+    pub fn capture_declaration(&mut self, declaration: DeclaredArgumentCapture) {
+        self.captured_declarations.push(declaration);
+    }
+
+    pub fn captured_declarations(&self) -> &[DeclaredArgumentCapture] {
+        &self.captured_declarations
+    }
+
+    pub fn captured_declarations_mut(&mut self) -> &mut Vec<DeclaredArgumentCapture> {
+        &mut self.captured_declarations
+    }
+
+    pub fn enter_opaque_function(&mut self) {
+        self.opaque_depth += 1;
+    }
+
+    pub fn leave_opaque_function(&mut self) {
+        self.opaque_depth = self.opaque_depth.saturating_sub(1);
+    }
+
+    pub fn in_opaque_function(&self) -> bool {
+        self.opaque_depth > 0
+    }
+
     pub fn captured_includes_mut(&mut self) -> &mut Vec<IncludeCapture> {
         &mut self.captured_includes
     }

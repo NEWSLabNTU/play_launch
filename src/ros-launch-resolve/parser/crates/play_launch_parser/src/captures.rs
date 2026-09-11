@@ -71,6 +71,20 @@ pub struct LoadNodeCapture {
     pub scope_id: Option<usize>,
 }
 
+/// A `DeclareLaunchArgument` a `.launch.py` constructed (issue 0030).
+///
+/// The two flags are what launch's include-time check turns on: an argument
+/// with a default is never demanded, and one declared inside an
+/// `OpaqueFunction` cannot be seen by `get_launch_arguments` and so is not
+/// demanded at include time either (it is checked when it executes).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DeclaredArgumentCapture {
+    pub name: String,
+    pub description: Option<String>,
+    pub has_default: bool,
+    pub opaque: bool,
+}
+
 /// Captured include data from Python or XML parsing
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IncludeCapture {

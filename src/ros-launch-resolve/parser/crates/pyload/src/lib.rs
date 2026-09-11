@@ -157,7 +157,11 @@ impl std::error::Error for LoadError {}
 /// `OpaqueFunction` an empty `global_params`, so Autoware's vehicle-info
 /// consumers die with `KeyError: 'rear_overhang'` — again silently as to
 /// cause, hence the bump.
-const ABI_VERSION: u32 = 4;
+///
+/// 5: the captures carry `declared_arguments` (play_launch issue 0030), so an
+/// include of a `.launch.py` can be held to launch's required-argument rule.
+/// A v4 object reports none and the rule is satisfied by silence.
+const ABI_VERSION: u32 = 5;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]

@@ -8,6 +8,19 @@ allowance heavily.
 
 ## Unreleased
 
+### Required arguments are checked through the Python frontend too
+
+A `.launch.py` on either side of an include is now held to the same rule as
+XML and YAML: the include must pass every argument the included file declares
+without a default, and a declaration that nothing set is refused with
+launch's `Required launch argument 'x' (description: 'y') was not provided`.
+Before, the replay of a Python `IncludeLaunchDescription` handed the parent's
+whole scope over as if it were the include's own arguments, and the
+`DeclareLaunchArgument` stand-in never raised. Declarations now cross the
+loader boundary (`declared_arguments` in the captures), which is **Python
+ABI 4 → 5**. A declaration inside an `OpaqueFunction` is not demanded at
+include time, as in launch. (#0030)
+
 ### An include must pass the included file's required arguments
 
 An `<include>` of a file that declares an `<arg>` without a default is refused

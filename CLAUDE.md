@@ -786,6 +786,20 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   backend shares the host context and cannot see this class of bug, which is
   why the loader test exists.
 
+- **2026-09-11**: issues #0029 and #0030 — **required include arguments.**
+  launch's `IncludeLaunchDescription.execute` demands every no-default,
+  non-conditional, non-opaque declaration of the included file among the
+  include's OWN arguments; the parent's scope never counts. The Rust parser
+  took values from the parent scope (0029, XML/YAML targets) and, on the
+  Python path, handed the parent's whole scope over as the include's
+  arguments while the `DeclareLaunchArgument` stand-in never raised for an
+  unset argument (0030). Both now refuse with launch's own messages.
+  Declarations cross the boundary in `ExecCaptures.declared_arguments`,
+  **ABI 4 → 5**, with the executor stamping `opaque` around `OpaqueFunction`.
+  One stated ordering difference: an included `.launch.py` whose required
+  argument is neither passed nor in scope reports the `DeclareLaunchArgument`
+  message, where launch reports the include's; both name the argument.
+
 - **2026-09-06**: Phase 70 W4 — **the leftovers** (manifest `v0.1.26` →
   **`v0.1.29`**; `v0.1.27` ships with one failing test, use `.28`+).
   **`kind` column** on `field_table.rs`: `Meta | Fact | Requirement |

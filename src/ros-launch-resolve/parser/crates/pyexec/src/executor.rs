@@ -412,8 +412,14 @@ fn visit_entity(py: Python, entity: &Py<PyAny>) -> PyResult<()> {
 
         "OpaqueFunction" => {
             log::debug!("Executing OpaqueFunction");
-            // Call execute() to run the function and get returned entities
-            let result = entity.call_method0(py, "execute")?;
+            // Call execute() to run the function and get returned entities.
+            // Anything declared while it runs is opaque to launch's
+            // include-time argument check (issue 0030); the bridge stamps that
+            // onto each capture from this flag.
+            play_launch_parser::bridge::enter_opaque_function();
+            let result = entity.call_method0(py, "execute");
+            play_launch_parser::bridge::leave_opaque_function();
+            let result = result?;
 
             // Result should be a list of entities or None
             if !result.is_none(py)

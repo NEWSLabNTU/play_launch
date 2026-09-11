@@ -82,6 +82,13 @@ impl LaunchTraverser {
         let doc = roxmltree::Document::parse(&content)?;
         let root = xml::XmlEntity::new(doc.root_element());
 
+        // Issues 0029/0030: `include_args` is the include's OWN argument set
+        // (the caller no longer folds the scope into it), so it is exactly
+        // what launch's required-argument check compares against.
+        let required = super::include::xml_required_args(&root);
+        let given: Vec<String> = include_args.keys().cloned().collect();
+        super::include::check_required_include_args(&required, &given, resolved_path)?;
+
         // Push a new scope for this XML include (from Python)
         let include_file_name = resolved_path
             .file_name()

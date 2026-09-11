@@ -300,7 +300,11 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // accepts a v4 request (serde-defaulted) and answers it wrong — every
     // `OpaqueFunction` that reads `global_params` sees none — which is the
     // KeyError of issue 0028 back again, silently. Hence the bump.
-    4
+    //
+    // 5: the captures carry `declared_arguments` (issue 0030). A v4 object
+    // reports none, and the required-argument rule an include is held to is
+    // then satisfied by silence. Same shape, same answer.
+    5
 }
 
 #[cfg(test)]
@@ -465,7 +469,56 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 4);
+        assert_eq!(play_launch_py_abi_version(), 5);
+    }
+
+    /// ABI 5 (issue 0030): every `DeclareLaunchArgument` a file constructs comes
+    /// back in `captures.declared_arguments` with whether it had a default and
+    /// whether it was constructed inside an `OpaqueFunction` — the two facts
+    /// launch's include-time check turns on. The traverser holds the include to
+    /// them; without them over the wire it has nothing to hold it to.
+    #[test]
+    fn exec_file_returns_its_declared_arguments_over_the_wire() {
+        let dir = std::env::temp_dir().join("pyexec_abi_0030_decl");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("decl.launch.py");
+        std::fs::write(
+            &file,
+            "from launch import LaunchDescription\n\
+             from launch.actions import DeclareLaunchArgument, OpaqueFunction\n\
+             def launch_setup(context, *args, **kwargs):\n\
+             \x20   return [DeclareLaunchArgument('opaque', description='inside')]\n\
+             def generate_launch_description():\n\
+             \x20   return LaunchDescription([\n\
+             \x20       DeclareLaunchArgument('required', description='must be passed'),\n\
+             \x20       DeclareLaunchArgument('optional', default_value='1'),\n\
+             \x20       OpaqueFunction(function=launch_setup)])\n",
+        )
+        .unwrap();
+
+        let req = serde_json::json!({
+            "op": "exec_file",
+            "arg": file.to_str().unwrap(),
+            "configs": { "required": "x", "opaque": "y" },
+        })
+        .to_string();
+        let v = call(&req);
+        assert_eq!(v["ok"], true, "{v}");
+        let decl = v["captures"]["declared_arguments"]
+            .as_array()
+            .expect("declared_arguments");
+        let find = |name: &str| {
+            decl.iter()
+                .find(|d| d["name"] == name)
+                .unwrap_or_else(|| panic!("{name} missing from {v}"))
+                .clone()
+        };
+        assert_eq!(find("required")["has_default"], false, "{v}");
+        assert_eq!(find("required")["opaque"], false, "{v}");
+        assert_eq!(find("required")["description"], "must be passed", "{v}");
+        assert_eq!(find("optional")["has_default"], true, "{v}");
+        assert_eq!(find("opaque")["has_default"], false, "{v}");
+        assert_eq!(find("opaque")["opaque"], true, "{v}");
     }
 
     /// ABI 4: global parameters the caller already holds — from an XML

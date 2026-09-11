@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<!-- Declares both names, passes neither: `required` must be refused; `opaque_required`
+     is supplied by scope and declared opaquely, so it is not demanded (issue 0030). -->
+<launch>
+  <arg name="required" default="from_parent_scope"/>
+  <arg name="opaque_required" default="from_parent_scope"/>
+  <include file="$(dirname)/test_required_py_inner.launch.py"/>
+</launch>

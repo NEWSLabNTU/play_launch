@@ -85,6 +85,19 @@ impl DeclareLaunchArgument {
             });
         }
 
+        // Issue 0030: the traverser holds includes and root files to launch's
+        // required-argument rules, and can only do so knowing what was
+        // declared. Recorded whether or not a default exists; the bridge stamps
+        // whether an OpaqueFunction is executing.
+        play_launch_parser::bridge::capture_declaration(
+            play_launch_parser::captures::DeclaredArgumentCapture {
+                name: name.clone(),
+                description: description.clone(),
+                has_default: default_str.is_some(),
+                opaque: false,
+            },
+        );
+
         Ok(Self {
             name,
             default_value: default_str,

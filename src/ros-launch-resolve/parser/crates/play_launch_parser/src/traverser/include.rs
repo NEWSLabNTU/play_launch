@@ -142,7 +142,18 @@ impl LaunchTraverser {
                     let prev_cap_containers = self.context.captured_containers().len();
                     let prev_cap_load_nodes = self.context.captured_load_nodes().len();
 
-                    let result = self.execute_python_file(&resolved_path, &python_args);
+                    // Issue 0030: the file's own declarations are what the
+                    // include has to have passed; they come back with the
+                    // execution, so the check follows it.
+                    let result = self
+                        .execute_python_file(&resolved_path, &python_args)
+                        .and_then(|declared| {
+                            check_required_include_args(
+                                &py_required_args(&declared),
+                                &given_names(&include.args),
+                                &resolved_path,
+                            )
+                        });
 
                     // Stamp scope on records added during this Python execution.
                     // XML records created via process_xml_include_with_namespace
@@ -216,7 +227,11 @@ impl LaunchTraverser {
                     // Same rule as the XML branch below (issue 0029), read off
                     // the YAML `launch:` list before it is processed.
                     let required = yaml_required_args(&resolved_path)?;
-                    check_required_include_args(&required, &include.args, &resolved_path)?;
+                    check_required_include_args(
+                        &required,
+                        &given_names(&include.args),
+                        &resolved_path,
+                    )?;
 
                     let result = self.process_yaml_launch_file(&resolved_path);
 
@@ -263,7 +278,7 @@ impl LaunchTraverser {
         // not count, so this is checked before the file is traversed with a
         // context that would happily supply the value.
         let required = xml_required_args(&root);
-        check_required_include_args(&required, &include.args, &resolved_path)?;
+        check_required_include_args(&required, &given_names(&include.args), &resolved_path)?;
 
         // Create temporary traverser for included file with extended include chain
         let mut child_chain = self.include_chain.clone();
@@ -365,7 +380,7 @@ impl LaunchTraverser {
 /// included* and not demanded at include time (it is checked when and if it
 /// executes); a nested `<include>` is its own description, and its arguments
 /// are that include's to satisfy.
-fn xml_required_args(root: &xml::XmlEntity) -> Vec<(String, String)> {
+pub(crate) fn xml_required_args(root: &xml::XmlEntity) -> Vec<(String, String)> {
     use crate::xml::Entity;
     let mut out = Vec::new();
     fn walk(entity: &xml::XmlEntity, out: &mut Vec<(String, String)>) {
@@ -407,7 +422,7 @@ fn xml_required_args(root: &xml::XmlEntity) -> Vec<(String, String)> {
 /// The YAML frontend's equivalent of [`xml_required_args`]: `- arg:` entries
 /// of the `launch:` list without a `default`, recursing into `group:` children
 /// that carry no `if`/`unless`, and never into an `include:`.
-fn yaml_required_args(path: &Path) -> Result<Vec<(String, String)>> {
+pub(crate) fn yaml_required_args(path: &Path) -> Result<Vec<(String, String)>> {
     use serde_yaml_ng::Value;
     let content = read_file_cached(path)?;
     let yaml: Value = serde_yaml_ng::from_str(&content)
@@ -415,9 +430,15 @@ fn yaml_required_args(path: &Path) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     fn walk(items: &[Value], out: &mut Vec<(String, String)>) {
         for item in items {
-            let Some(map) = item.as_mapping() else { continue };
-            let Some((key, body)) = map.iter().next() else { continue };
-            let Some(body) = body.as_mapping() else { continue };
+            let Some(map) = item.as_mapping() else {
+                continue;
+            };
+            let Some((key, body)) = map.iter().next() else {
+                continue;
+            };
+            let Some(body) = body.as_mapping() else {
+                continue;
+            };
             let conditional = body.contains_key(Value::String("if".into()))
                 || body.contains_key(Value::String("unless".into()));
             match key.as_str() {
@@ -425,7 +446,9 @@ fn yaml_required_args(path: &Path) -> Result<Vec<(String, String)>> {
                     if conditional || body.contains_key(Value::String("default".into())) {
                         continue;
                     }
-                    let Some(name) = body.get(Value::String("name".into())).and_then(Value::as_str)
+                    let Some(name) = body
+                        .get(Value::String("name".into()))
+                        .and_then(Value::as_str)
                     else {
                         continue;
                     };
@@ -454,25 +477,47 @@ fn yaml_required_args(path: &Path) -> Result<Vec<(String, String)>> {
     Ok(out)
 }
 
+/// What an included `.launch.py` requires of its include (issue 0030): the
+/// declarations it constructed without a default, outside any
+/// `OpaqueFunction` — the ones launch's `get_launch_arguments` can see.
+pub(crate) fn py_required_args(
+    declared: &[crate::captures::DeclaredArgumentCapture],
+) -> Vec<(String, String)> {
+    declared
+        .iter()
+        .filter(|d| !d.has_default && !d.opaque)
+        .map(|d| {
+            (
+                d.name.clone(),
+                d.description
+                    .clone()
+                    .unwrap_or_else(|| "no description given".to_string()),
+            )
+        })
+        .collect()
+}
+
 /// Refuse the include if any required argument is not among its own `<arg>`s.
-fn check_required_include_args(
+/// `given` is the include's own argument names, in order, and nothing else.
+pub(crate) fn check_required_include_args(
     required: &[(String, String)],
-    given: &[(String, Vec<Substitution>)],
+    given: &[String],
     file: &Path,
 ) -> Result<()> {
     for (name, description) in required {
-        if !given.iter().any(|(given_name, _)| given_name == name) {
+        if !given.iter().any(|given_name| given_name == name) {
             return Err(ParseError::MissingIncludeArgument {
                 name: name.clone(),
                 description: description.clone(),
-                given: given
-                    .iter()
-                    .map(|(n, _)| n.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                given: given.join(", "),
                 file: file.display().to_string(),
             });
         }
     }
     Ok(())
+}
+
+/// The include's own argument names, from a substitution-typed arg list.
+pub(crate) fn given_names(args: &[(String, Vec<Substitution>)]) -> Vec<String> {
+    args.iter().map(|(n, _)| n.clone()).collect()
 }

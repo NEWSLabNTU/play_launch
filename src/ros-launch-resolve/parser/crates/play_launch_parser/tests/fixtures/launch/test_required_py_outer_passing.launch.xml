@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="opaque_required" default="from_parent_scope"/>
+  <include file="$(dirname)/test_required_py_inner.launch.py">
+    <arg name="required" value="passed"/>
+  </include>
+</launch>

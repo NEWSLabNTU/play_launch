@@ -387,6 +387,12 @@ pub struct ExecCaptures {
     /// `composable: Rust=59 Python=70`.
     #[serde(default)]
     pub includes: Vec<crate::captures::IncludeCapture>,
+    /// Every `DeclareLaunchArgument` the file constructed (ABI 5, issue 0030),
+    /// so the traverser can hold an include to launch's required-argument
+    /// rule. A v4 object reports none, and the rule is then satisfied by
+    /// silence — the version is what refuses that pairing.
+    #[serde(default)]
+    pub declared_arguments: Vec<crate::captures::DeclaredArgumentCapture>,
 }
 
 impl ExecCaptures {
@@ -402,6 +408,7 @@ impl ExecCaptures {
                 .into_iter()
                 .collect::<Vec<(String, String)>>(),
             includes: ctx.captured_includes().to_vec(),
+            declared_arguments: ctx.captured_declarations().to_vec(),
         }
     }
 
@@ -418,6 +425,8 @@ impl ExecCaptures {
             ctx.set_global_parameter(k, v);
         }
         ctx.captured_includes_mut().extend(self.includes);
+        ctx.captured_declarations_mut()
+            .extend(self.declared_arguments);
     }
 }
 
@@ -577,4 +586,22 @@ pub fn capture_load_node(load_node: LoadNodeCapture) {
 /// Capture an include to LaunchContext
 pub fn capture_include(include: IncludeCapture) {
     with_launch_context(|ctx| ctx.capture_include(include));
+}
+
+/// Record a `DeclareLaunchArgument` (issue 0030), stamped with whether an
+/// `OpaqueFunction` is executing right now — the one fact the executor knows
+/// and the stand-in does not.
+pub fn capture_declaration(mut declaration: crate::captures::DeclaredArgumentCapture) {
+    with_launch_context(|ctx| {
+        declaration.opaque = ctx.in_opaque_function();
+        ctx.capture_declaration(declaration);
+    });
+}
+
+pub fn enter_opaque_function() {
+    with_launch_context(|ctx| ctx.enter_opaque_function());
+}
+
+pub fn leave_opaque_function() {
+    with_launch_context(|ctx| ctx.leave_opaque_function());
 }

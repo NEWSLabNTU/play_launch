@@ -135,7 +135,9 @@ impl LaunchTraverser {
             match ext {
                 "py" => {
                     log::debug!("Executing Python launch file: {}", path.display());
-                    return self.execute_python_file(path, &self.context.configurations());
+                    return self
+                        .execute_python_file(path, &self.context.configurations())
+                        .map(|_declared| ());
                 }
                 "yaml" | "yml" => {
                     // YAML files in traverse_file are always launch files

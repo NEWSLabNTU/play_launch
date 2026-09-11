@@ -17,6 +17,7 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+
 **#0024** — `play_launch run` cannot spawn a node when play_launch is itself
 inside a `systemd-run --user --scope`: `Unable to start: Operation not permitted
 (os error 1)`, empty node logs, no process. The same wrapper is fine for
@@ -37,6 +38,13 @@ declared-vs-loaded reconciliation first; the drop itself is not diagnosable
 until then. See `0023-*`.
 
 ## Resolved
+
+**#0030** — required arguments through the Python frontend: the replay of a Python
+`IncludeLaunchDescription` handed the parent's whole scope over as the include's own
+arguments, and the `DeclareLaunchArgument` stand-in never raised. Declarations now
+cross the loader boundary (**ABI 4 → 5**) with an `opaque` flag stamped around
+`OpaqueFunction`; includes of `.launch.py` are held to #0029's rule, and an unset
+required argument is refused with launch's message. See `0030-*`.
 
 **#0029** — the Rust parser satisfied an include's REQUIRED argument (an `<arg>` with
 no default in the included file) from the parent scope, where `ros2 launch` and the
