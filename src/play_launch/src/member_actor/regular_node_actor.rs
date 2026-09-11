@@ -173,13 +173,21 @@ impl RegularNodeActor {
                 // `permit` is a local, so both early returns below drop it and
                 // hand the slot straight to the next queued node — a failed
                 // spawn must not cost the launch a settle window.
-                error!("[{}] Unable to start: {}", log_name, err);
+                //
+                // `err` is only the child's errno. If the child got as far as
+                // its own pre-exec steps, it named the one that failed in the
+                // `err` file (issue #0024); say it here too, so the actor log
+                // and the bundle tell the same story.
+                let detail = crate::execution::node_cmdline::spawn_failure_detail(&output_dir)
+                    .map(|d| format!(" — {d}"))
+                    .unwrap_or_default();
+                error!("[{}] Unable to start: {}{}", log_name, err, detail);
                 error!("Check {}", output_dir.display());
 
                 if !self.config.respawn_enabled {
-                    self.transition_to_failed(format!("Spawn failed: {}", err))
+                    self.transition_to_failed(format!("Spawn failed: {}{}", err, detail))
                         .await?;
-                    return Err(err.into());
+                    return Err(eyre::eyre!("{err}{detail}"));
                 }
 
                 // Transition to Respawning on spawn failure

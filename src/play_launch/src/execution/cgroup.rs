@@ -627,18 +627,34 @@ impl CgroupHandle {
     /// which removes the only step that would have needed integer formatting in
     /// a post-fork context.
     ///
-    /// Silent on failure by design. The child is mid-spawn with no way to
-    /// report, and losing its group costs accounting, never correctness.
-    pub fn join(&self) {
+    /// Losing the group costs accounting, never correctness, so the caller
+    /// treats a failure as best-effort — but it is REPORTED, not swallowed:
+    /// the errno comes back and `node_cmdline`'s hook writes a line naming
+    /// this step and this path to the child's stderr (issue #0024 — a silent
+    /// child-side failure is a bare errno with nothing to pull on).
+    pub fn join(&self) -> Result<(), i32> {
+        // SAFETY: open/write/close on a path prepared before the fork;
+        // reading errno is async-signal-safe.
         unsafe {
             let fd = libc::open(self.0.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
             if fd < 0 {
-                return;
+                return Err(*libc::__errno_location());
             }
             let buf = b"0\n";
-            libc::write(fd, buf.as_ptr() as *const libc::c_void, buf.len());
+            let n = libc::write(fd, buf.as_ptr() as *const libc::c_void, buf.len());
+            let result = if n < 0 {
+                Err(*libc::__errno_location())
+            } else {
+                Ok(())
+            };
             libc::close(fd);
+            result
         }
+    }
+
+    /// The `cgroup.procs` path this handle writes, for the failure report.
+    pub fn path_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
     }
 }
 

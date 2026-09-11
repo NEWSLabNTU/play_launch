@@ -426,7 +426,16 @@ async fn run_direct(
         // Log web UI URL before spawning (addr will be moved)
         info!("Web UI available at http://{}:{}", addr, port);
 
-        let (_shutdown_tx, web_shutdown) = tokio::sync::watch::channel(false);
+        // The run's own shutdown channel, as `up` wires it. This used to be
+        // a throwaway `watch::channel` whose sender died at the end of this
+        // block, so the server observed "sender gone", logged `Web server
+        // shutting down...` a millisecond after `Web UI available at`, and
+        // returned — which the loop below reads as the run being over: it
+        // broke, signalled shutdown, the anchor was reaped, and a node still
+        // being spawned failed `setpgid(0, pgid)` with a bare EPERM (issue
+        // #0024). It also meant `run` never had a web UI or monitoring past
+        // its first millisecond.
+        let web_shutdown = shutdown_rx.clone();
 
         // Spawn web server task
         let web_server_task = tokio::spawn(async move {

@@ -184,11 +184,18 @@ impl ContainerActor {
             // flag was down, and each leaked copy holds the socket open so the
             // supervisor would never see EOF when the container died.
             //
-            // Async-signal-safe: one `fcntl`, no allocation.
+            // Async-signal-safe: one `fcntl`, no allocation — the fd's
+            // decimal text is rendered here, before the fork, so a failure
+            // report in the child is borrowed slices only (issue #0024:
+            // every child-side step names itself).
+            let fd_text = crate::execution::node_cmdline::ascii_i32(fd);
             unsafe {
                 command.pre_exec(move || {
                     if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
-                        return Err(std::io::Error::last_os_error());
+                        return Err(crate::execution::node_cmdline::pre_exec_failure(
+                            crate::execution::node_cmdline::PreExecStep::InheritControlFd,
+                            &fd_text.0[..fd_text.1],
+                        ));
                     }
                     Ok(())
                 });
@@ -205,9 +212,15 @@ impl ContainerActor {
             .admit(&self.name, self.config.startup_stage)
             .await;
 
-        let child = command
-            .spawn()
-            .context("Failed to spawn container process")?;
+        // `spawn()` carries only the child's errno; the child names the
+        // pre-exec step that failed in its `err` file (issue #0024).
+        let child = command.spawn().map_err(|err| {
+            let detail =
+                crate::execution::node_cmdline::spawn_failure_detail(&exec_context.output_dir)
+                    .map(|d| format!(" — {d}"))
+                    .unwrap_or_default();
+            eyre::eyre!("Failed to spawn container process: {err}{detail}")
+        })?;
 
         // On the error path above, `permit` drops and the slot is returned
         // immediately, which is what a failed spawn deserves.

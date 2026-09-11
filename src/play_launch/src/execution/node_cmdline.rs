@@ -846,42 +846,25 @@ impl NodeCommandLine {
             command.env("AMENT_PREFIX_PATH", ament_prefix_path);
         }
 
-        // Set process group: join shared PGID if provided, otherwise create new process group
+        // Everything the child does between fork() and exec() is one hook
+        // with NAMED steps — see [`PreExec`]. The process group used to be
+        // std's `process_group()`, which runs before any `pre_exec` closure
+        // and reports a failure as a bare errno: issue #0024 was exactly that
+        // syscall failing (`setpgid(0, pgid)` after the anchor holding the
+        // group had been reaped), surfacing as `Unable to start: Operation
+        // not permitted` with an empty node log and nothing to pull on. Doing
+        // it here instead costs nothing — with a closure installed std forks
+        // and execs either way — and lets the child say which step failed.
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
-            if let Some(pgid) = pgid {
-                command.process_group(pgid);
-            } else {
-                command.process_group(0);
-            }
-
-            // Set parent death signal to prevent orphan processes
-            // When play_launch dies (even with SIGKILL), kernel sends SIGKILL to all children
-            //
-            // Phase 61 adds a second thing to the same hook: raise the child's
-            // OOM badness so that if the machine does run out of memory, the
-            // kernel kills a node rather than whatever else the operator was
-            // running. The report that prompted this had the OOM killer take
-            // the user's GNOME session while a launch was starting — the
-            // desktop was simply the largest thing on the box, and nothing
-            // told the kernel that the 144 processes which had just appeared
-            // were the ones that could be sacrificed.
+            let hook = PreExec::new(pgid, cgroup);
             unsafe {
-                command.pre_exec(move || {
-                    nix::sys::prctl::set_pdeathsig(nix::sys::signal::Signal::SIGKILL)
-                        .map_err(std::io::Error::other)?;
-                    // Phase 66: join this member's cgroup before exec. Placement
-                    // must happen at birth — moving a running process into a
-                    // sibling group is EPERM (the common-ancestor rule).
-                    if let Some(cg) = &cgroup {
-                        cg.join();
-                    }
-                    bias_oom_score();
-                    Ok(())
-                });
+                command.pre_exec(move || hook.run());
             }
         }
+        #[cfg(not(unix))]
+        let _ = (pgid, cgroup);
 
         command
     }
@@ -919,71 +902,308 @@ const DEFAULT_OOM_SCORE_ADJ: i32 = 300;
 /// restore the pre-Phase-61 behaviour of leaving children at the kernel default.
 const OOM_SCORE_ADJ_ENV: &str = "PLAY_LAUNCH_OOM_SCORE_ADJ";
 
-/// Make this process a preferred OOM victim. Called from `pre_exec`, i.e.
-/// between fork and exec in the CHILD.
+/// The OOM bias to apply, read from the environment ONCE in the parent.
 ///
-/// Everything here is async-signal-safe by construction: one `open`, one
-/// `write`, one `close`, no allocation. A failure is swallowed rather than
-/// propagated — refusing to start a node because a hint could not be written
-/// would trade a real capability for a preference.
-#[cfg(unix)]
-fn bias_oom_score() {
-    // `std::env::var` allocates, which is not something to do between fork and
-    // exec. Read it once in the parent instead; `OnceLock` is initialised on
-    // the first `to_command` call, long before any fork.
+/// `std::env::var` allocates, which is not something to do between fork and
+/// exec; the `OnceLock` is initialised on the first `to_command` call, long
+/// before any fork.
+fn oom_score_adj() -> i32 {
     static ADJ: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
-    let adj = *ADJ.get_or_init(|| {
+    *ADJ.get_or_init(|| {
         std::env::var(OOM_SCORE_ADJ_ENV)
             .ok()
             .and_then(|v| v.trim().parse::<i32>().ok())
             .map(|v| v.clamp(-1000, 1000))
             .unwrap_or(DEFAULT_OOM_SCORE_ADJ)
-    });
+    })
+}
 
-    if adj == 0 {
-        return;
+/// Every line the child writes about itself starts with this, so the parent
+/// can find it in the node's `err` file after a failed `spawn()` — see
+/// [`spawn_failure_detail`].
+pub const PRE_EXEC_REPORT_PREFIX: &str = "play_launch: pre_exec: ";
+
+/// The steps the child runs between `fork()` and `exec()`, in order.
+///
+/// Named because `spawn()` carries only an errno back from the child: without
+/// a name, `Operation not permitted` from `setpgid` and from a cgroup write
+/// read identically, and both look like the executable being rejected
+/// (issue #0024). Two steps are load-bearing and end the spawn on failure;
+/// two are preferences that report and continue — refusing to start a node
+/// because a hint could not be written would trade a capability for a
+/// preference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreExecStep {
+    /// `setpgid(0, pgid)` — join the run's process group (or start one).
+    SetPgid,
+    /// `prctl(PR_SET_PDEATHSIG, SIGKILL)` — die with play_launch.
+    SetPdeathsig,
+    /// Phase 66: write `0` to the member's `cgroup.procs`. Placement must
+    /// happen at birth — moving a running process into a sibling group is
+    /// EPERM (the common-ancestor rule).
+    JoinCgroup,
+    /// Phase 61: raise `oom_score_adj` so the kernel picks a node over the
+    /// operator's desktop.
+    BiasOomScore,
+    /// Phase 64, containers only: clear `FD_CLOEXEC` on the control-channel
+    /// fd so the container inherits it (`process_lifecycle.rs`).
+    InheritControlFd,
+}
+
+impl PreExecStep {
+    pub const ALL: [PreExecStep; 5] = [
+        PreExecStep::SetPgid,
+        PreExecStep::SetPdeathsig,
+        PreExecStep::JoinCgroup,
+        PreExecStep::BiasOomScore,
+        PreExecStep::InheritControlFd,
+    ];
+
+    /// Whether a failure ends the spawn. The other two report and continue.
+    pub fn is_fatal(self) -> bool {
+        matches!(
+            self,
+            PreExecStep::SetPgid | PreExecStep::SetPdeathsig | PreExecStep::InheritControlFd
+        )
     }
 
-    // Format into a fixed stack buffer — no allocator between fork and exec.
-    let mut buf = [0u8; 8];
+    /// The report's text around its subject (a pgid, a path, a value):
+    /// `<head><subject><tail> failed: ...`.
+    fn phrasing(self) -> (&'static [u8], &'static [u8]) {
+        match self {
+            PreExecStep::SetPgid => (b"setpgid(0, ", b")"),
+            PreExecStep::SetPdeathsig => (b"prctl(PR_SET_PDEATHSIG, SIGKILL)", b""),
+            PreExecStep::JoinCgroup => (b"joining cgroup ", b""),
+            PreExecStep::BiasOomScore => (b"writing oom_score_adj ", b""),
+            PreExecStep::InheritControlFd => (b"clearing FD_CLOEXEC on control fd ", b""),
+        }
+    }
+}
+
+/// A decimal rendering that needs no allocator: `-2147483648` is 11 bytes.
+pub type Ascii = ([u8; 12], usize);
+
+/// Render `n` in decimal into a stack buffer — in the PARENT, so a child-side
+/// report only borrows.
+pub fn ascii_i32(n: i32) -> Ascii {
+    let mut out = [0u8; 12];
     let mut len = 0;
-    let negative = adj < 0;
-    let mut n = adj.unsigned_abs();
-    let mut digits = [0u8; 4];
+    let mut digits = [0u8; 10];
     let mut ndigits = 0;
+    let mut rest = n.unsigned_abs();
     loop {
-        digits[ndigits] = b'0' + (n % 10) as u8;
+        digits[ndigits] = b'0' + (rest % 10) as u8;
         ndigits += 1;
-        n /= 10;
-        if n == 0 {
+        rest /= 10;
+        if rest == 0 {
             break;
         }
     }
-    if negative {
-        buf[len] = b'-';
+    if n < 0 {
+        out[len] = b'-';
         len += 1;
     }
     while ndigits > 0 {
         ndigits -= 1;
-        buf[len] = digits[ndigits];
+        out[len] = digits[ndigits];
         len += 1;
     }
+    (out, len)
+}
 
+/// The symbolic name for the errnos a child-side step can plausibly meet.
+/// `strerror` is not async-signal-safe; a table is.
+fn errno_name(errno: i32) -> &'static [u8] {
+    match errno {
+        libc::EPERM => b"EPERM",
+        libc::ENOENT => b"ENOENT",
+        libc::ESRCH => b"ESRCH",
+        libc::EINTR => b"EINTR",
+        libc::EIO => b"EIO",
+        libc::EBADF => b"EBADF",
+        libc::EAGAIN => b"EAGAIN",
+        libc::ENOMEM => b"ENOMEM",
+        libc::EACCES => b"EACCES",
+        libc::EBUSY => b"EBUSY",
+        libc::EEXIST => b"EEXIST",
+        libc::ENOTDIR => b"ENOTDIR",
+        libc::EINVAL => b"EINVAL",
+        libc::ENOSPC => b"ENOSPC",
+        libc::EROFS => b"EROFS",
+        libc::ENOSYS => b"ENOSYS",
+        _ => b"E?",
+    }
+}
+
+/// The child-side hook, prepared in the PARENT so that between `fork()` and
+/// `exec()` nothing allocates or formats: every subject (the pgid, the
+/// cgroup path, the OOM value) is rendered before the fork, and a failure
+/// report is a single `writev(2)` of borrowed slices to the child's stderr —
+/// which std has already pointed at the node's `err` file by the time the
+/// hook runs, so the line lands where a bundle read later will find it.
+#[cfg(unix)]
+struct PreExec {
+    /// `0` starts a new group (std's `process_group(0)` semantics).
+    pgid: i32,
+    pgid_text: Ascii,
+    cgroup: Option<super::cgroup::CgroupHandle>,
+    oom_adj: i32,
+    oom_text: Ascii,
+}
+
+#[cfg(unix)]
+impl PreExec {
+    fn new(pgid: Option<i32>, cgroup: Option<super::cgroup::CgroupHandle>) -> Self {
+        let pgid = pgid.unwrap_or(0);
+        let oom_adj = oom_score_adj();
+        PreExec {
+            pgid,
+            pgid_text: ascii_i32(pgid),
+            cgroup,
+            oom_adj,
+            oom_text: ascii_i32(oom_adj),
+        }
+    }
+
+    /// Run every step in order. Call only between `fork()` and `exec()`.
+    fn run(&self) -> std::io::Result<()> {
+        // SAFETY: plain syscalls on the calling process; async-signal-safe.
+        let rc = unsafe { libc::setpgid(0, self.pgid) };
+        if rc != 0 {
+            return Err(self.fail(PreExecStep::SetPgid, &self.pgid_text.0[..self.pgid_text.1]));
+        }
+
+        let rc = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
+        if rc != 0 {
+            return Err(self.fail(PreExecStep::SetPdeathsig, b""));
+        }
+
+        if let Some(cg) = &self.cgroup
+            && let Err(errno) = cg.join()
+        {
+            // Best-effort: losing the group costs accounting, never
+            // correctness — but it must not be silent (issue #0024).
+            report(PreExecStep::JoinCgroup, cg.path_bytes(), errno);
+        }
+
+        if self.oom_adj != 0
+            && let Err(errno) = bias_oom_score(&self.oom_text.0[..self.oom_text.1])
+        {
+            report(
+                PreExecStep::BiasOomScore,
+                &self.oom_text.0[..self.oom_text.1],
+                errno,
+            );
+        }
+        Ok(())
+    }
+
+    /// Report a fatal step and turn the errno into the error `spawn()` will
+    /// carry back.
+    fn fail(&self, step: PreExecStep, subject: &[u8]) -> std::io::Error {
+        pre_exec_failure(step, subject)
+    }
+}
+
+/// For a child-side step that lives outside this hook (the container's
+/// control fd): report `step` with the errno of the syscall that just
+/// failed, and return the error `spawn()` will carry back.
+/// `from_raw_os_error` does not allocate. Call only between `fork()` and
+/// `exec()`, immediately after the failing syscall.
+#[cfg(unix)]
+pub fn pre_exec_failure(step: PreExecStep, subject: &[u8]) -> std::io::Error {
+    let errno = last_errno();
+    report(step, subject, errno);
+    std::io::Error::from_raw_os_error(errno)
+}
+
+/// `errno` after a failed syscall, without going through `std::io::Error`.
+#[cfg(unix)]
+fn last_errno() -> i32 {
+    // SAFETY: reading the thread's errno location is async-signal-safe.
+    unsafe { *libc::__errno_location() }
+}
+
+/// Write `<prefix><head><subject><tail> failed: <ERRNO> (errno <n>)\n` to
+/// the child's stderr in one `writev(2)`. Nothing here allocates.
+#[cfg(unix)]
+fn report(step: PreExecStep, subject: &[u8], errno: i32) {
+    let (head, tail) = step.phrasing();
+    let digits = ascii_i32(errno);
+    let parts: [&[u8]; 8] = [
+        PRE_EXEC_REPORT_PREFIX.as_bytes(),
+        head,
+        subject,
+        tail,
+        b" failed: ",
+        errno_name(errno),
+        b" (errno ",
+        &digits.0[..digits.1],
+    ];
+    let closing: &[u8] = b")\n";
+    let mut iov = [libc::iovec {
+        iov_base: std::ptr::null_mut(),
+        iov_len: 0,
+    }; 9];
+    for (slot, part) in iov
+        .iter_mut()
+        .zip(parts.iter().chain(std::iter::once(&closing)))
+    {
+        slot.iov_base = part.as_ptr() as *mut libc::c_void;
+        slot.iov_len = part.len();
+    }
+    // SAFETY: every iovec borrows a slice that outlives the call.
+    unsafe {
+        libc::writev(libc::STDERR_FILENO, iov.as_ptr(), iov.len() as libc::c_int);
+    }
+}
+
+/// Make this process a preferred OOM victim. Called from `pre_exec`, i.e.
+/// between fork and exec in the CHILD: one `open`, one `write`, one `close`,
+/// no allocation. `text` is the value already rendered in the parent.
+#[cfg(unix)]
+fn bias_oom_score(text: &[u8]) -> Result<(), i32> {
     unsafe {
         let fd = libc::open(
             c"/proc/self/oom_score_adj".as_ptr(),
             libc::O_WRONLY | libc::O_CLOEXEC,
         );
         if fd < 0 {
-            return;
+            return Err(last_errno());
         }
-        libc::write(fd, buf.as_ptr() as *const libc::c_void, len);
+        let n = libc::write(fd, text.as_ptr() as *const libc::c_void, text.len());
+        let result = if n < 0 { Err(last_errno()) } else { Ok(()) };
         libc::close(fd);
+        result
     }
 }
 
-#[cfg(not(unix))]
-fn bias_oom_score() {}
+/// What the child said about itself before `spawn()` failed, read back from
+/// the node's `err` file. `None` when the child left nothing — a failure
+/// before any step ran (std's own `dup2`/`chdir`), or in `exec` itself,
+/// where the errno already names the problem (`No such file or directory`).
+///
+/// This is the parent-side half of the report: the child cannot hand the
+/// parent anything but an errno, but it CAN write to the file the parent
+/// opened for it, and the parent reads it back here.
+pub fn spawn_failure_detail(output_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(output_dir.join("err")).ok()?;
+    let lines: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("play_launch: "))
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let mut detail = lines.join("; ");
+    if detail.contains("setpgid(") {
+        detail.push_str(
+            " — the process group play_launch spawns into no longer exists in this session \
+             (its anchor was reaped, or it belongs to another session)",
+        );
+    }
+    Some(detail)
+}
 
 #[cfg(test)]
 mod tests {
@@ -1807,5 +2027,123 @@ mod tests {
         let repr = "{'enable': False, 'pose': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]}";
         assert_eq!(str_to_yaml(flow), str_to_yaml(repr));
         assert!(matches!(str_to_yaml(flow), Yaml::Hash(_)));
+    }
+
+    /// A command line for a plain executable, for exercising the child-side
+    /// hook with no ROS involved.
+    fn plain_cmdline(program: &str) -> NodeCommandLine {
+        NodeCommandLine {
+            command: vec![program.to_string()],
+            user_args: vec![],
+            remaps: HashMap::new(),
+            params: HashMap::new(),
+            params_files: HashSet::new(),
+            ordered_params_files: Vec::new(),
+            overrides_file: None,
+            log_level: None,
+            log_config_file: None,
+            rosout_logs: None,
+            stdout_logs: None,
+            enclave: None,
+            env: HashMap::new(),
+        }
+    }
+
+    /// Issue #0024: a step that fails between `fork()` and `exec()` surfaced
+    /// as a bare `Operation not permitted` with an EMPTY node log, because
+    /// `spawn()` carries only the child's errno back and nothing in the
+    /// child said what it was doing. Every child-side step now names itself
+    /// on the child's stderr — which is the node's `err` file — before the
+    /// errno travels up.
+    ///
+    /// Process group 1 is init's, in another session, so `setpgid(0, 1)` is
+    /// EPERM on every Linux host: the same syscall and errno the issue
+    /// reported, provoked deterministically.
+    #[cfg(unix)]
+    #[test]
+    fn a_pre_exec_failure_names_the_step_in_the_child_stderr() {
+        let dir = tempfile::tempdir().unwrap();
+        let err_path = dir.path().join("err");
+        let err_file = std::fs::File::create(&err_path).unwrap();
+
+        let mut command = plain_cmdline("true").to_command(false, Some(1), None);
+        command.stdin(std::process::Stdio::null());
+        command.stdout(std::process::Stdio::null());
+        command.stderr(err_file);
+
+        let err = command
+            .spawn()
+            .expect_err("joining init's process group must be refused");
+        assert_eq!(err.raw_os_error(), Some(libc::EPERM), "{err}");
+
+        let recorded = std::fs::read_to_string(&err_path).unwrap();
+        assert!(
+            recorded.contains("play_launch: pre_exec: setpgid(0, 1) failed: EPERM"),
+            "the child must say which step failed; err file holds: {recorded:?}"
+        );
+    }
+
+    /// Every step the child runs has a distinct phrasing, and the split
+    /// between "ends the spawn" and "reports and continues" is the one the
+    /// doc comments promise: the two placements that decide teardown and
+    /// the fd a container cannot work without are fatal; the cgroup and the
+    /// OOM hint are preferences.
+    #[test]
+    fn every_child_side_step_is_named_and_classified() {
+        let mut heads = std::collections::HashSet::new();
+        for step in PreExecStep::ALL {
+            let (head, _) = step.phrasing();
+            assert!(!head.is_empty(), "{step:?} has no phrasing");
+            assert!(
+                heads.insert(head),
+                "{step:?} shares its phrasing with another step"
+            );
+        }
+        assert_eq!(PreExecStep::ALL.len(), 5);
+        assert!(PreExecStep::SetPgid.is_fatal());
+        assert!(PreExecStep::SetPdeathsig.is_fatal());
+        assert!(PreExecStep::InheritControlFd.is_fatal());
+        assert!(!PreExecStep::JoinCgroup.is_fatal());
+        assert!(!PreExecStep::BiasOomScore.is_fatal());
+    }
+
+    /// The parent-side half: what the child wrote is read back from the
+    /// `err` file, the noise around it is dropped, a `setpgid` failure gets
+    /// the one hint that would have saved the reporter half an hour, and an
+    /// empty file — an `exec` failure, where the errno is already the
+    /// message — adds nothing.
+    #[test]
+    fn spawn_failure_detail_reads_the_child_report_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = dir.path().join("err");
+
+        std::fs::write(
+            &err,
+            "some node output\nplay_launch: pre_exec: setpgid(0, 7) failed: EPERM (errno 1)\n",
+        )
+        .unwrap();
+        let detail = spawn_failure_detail(dir.path()).expect("the report must be found");
+        assert!(
+            detail.starts_with("pre_exec: setpgid(0, 7) failed: EPERM (errno 1)"),
+            "{detail}"
+        );
+        assert!(
+            detail.contains("anchor"),
+            "the setpgid hint is missing: {detail}"
+        );
+
+        std::fs::write(&err, "").unwrap();
+        assert_eq!(spawn_failure_detail(dir.path()), None);
+        assert_eq!(spawn_failure_detail(&dir.path().join("absent")), None);
+    }
+
+    /// The decimal renderer the child borrows from: it must cover the whole
+    /// `i32` range, because a pgid and an errno both pass through it.
+    #[test]
+    fn ascii_i32_renders_the_whole_range() {
+        for n in [0, 1, -1, 300, -1000, i32::MAX, i32::MIN] {
+            let (buf, len) = ascii_i32(n);
+            assert_eq!(std::str::from_utf8(&buf[..len]).unwrap(), n.to_string());
+        }
     }
 }
