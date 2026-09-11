@@ -6,7 +6,207 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
-## Unreleased
+## 0.10.0 — 2026-09-11
+
+172 commits over 0.9.0. Four themes. The
+contract vocabulary stops carrying consequences — a route, a rate, a deadline
+and a criticality are now derived from the facts a contract states, and the
+copies people used to write by hand are refused. A contract can say what
+happens when a requirement is violated, and how fast, and the running system
+is watched against it. The topic graph is read off the launch file's own
+remaps, so a system with no contracts still has one to check. And a
+container's resource and lifecycle behaviour becomes something you choose
+rather than inherit.
+
+Manifest crate `v0.1.11` → `v0.1.35`. `just test-all` green: 418 parser,
+325 play_launch, 199 resolver, 165 integration.
+
+### Breaking: contract spellings that are now errors
+
+A contract still using any of these fails to parse with a message naming the
+replacement; models written by earlier releases still load.
+
+- **`chains:` / `segments:` / `via:`** — a route is derived, never written. State
+  the requirement as a top-level `paths.<name>` with `trigger: { input: [...] }`,
+  `output: [...]` and `max_latency:`; the route between the two ends comes from
+  the nodes' own `trigger`/`output` facts. `chain-link`, `chain-budget`,
+  `chain-shape` and `chain-sampling-feasibility` are replaced by `scope-budget`
+  and `scope-sampling-feasibility`. The guide (`docs/guide/rt-scheduling.md`
+  §1.7) shows the migration.
+- **The nine `_ms` spellings** (`max_latency_ms`, `max_age_ms`, `jitter_ms`,
+  `lifespan_ms`, `max_interval_ms`, `max_response_ms`, `max_transport_ms`,
+  `timeout_ms`, `tolerance_ms`) — units live on the value:
+  `max_latency: 12ms`. A bare number has no unit and is refused too.
+- **Unknown keys are errors.** The parser had no unknown-key rejection
+  anywhere: `max_latencyy: 5ms` silently deleted a budget, and `rate_hzz: 100`
+  deleted the very declaration whose diagnostic would have pointed at the
+  typo, while `check` reported `1 clean`. Measured across 42 contract files
+  before choosing a hard error: exactly one key was dead. A "did you mean"
+  suggestion is budgeted by key length, so `min_latency`/`max_latency` and
+  `pub`/`sub` are never confused for each other.
+- **Wrong types are errors.** `max_count: 5` as an integer, `rate_hz: "100"`
+  as a string, `lifecycle: "true"`, a bare-scalar `output:` — each used to
+  delete the declaration in silence. A quoted number gets its own wording.
+- **Retired as write-only**, each parsed and copied and read by nothing:
+  `semantics: age` on a chain (nothing ever branched on it), an endpoint's
+  `jitter` (jitter is a path spread, `paths.<n>.max_jitter`), `exclude_patterns`
+  (three mentions in the codebase, suppressed nothing; `external:` is the read
+  way) and `correlation` (`sync:` present or absent is the same statement).
+- **`criticality` is closed** to `high | medium | low`; `urgent` used to
+  schedule a node as if nothing had been declared, via a debug log.
+- A manifest that fails to parse now **fails `check`** (exit 1, no model
+  emitted). It used to be a `warn!` that dropped the file whole and left every
+  contract in it unchecked at exit 0.
+
+### The route, the rates and the deadlines are derived
+
+- **Topic rates propagate from timers.** A timer path publishes at its own
+  rate; an input-triggered path at the SUM of its inputs' rates without
+  `sync:` and the MIN with it. Any unknown contributor — `once`,
+  `spontaneous`, an external publisher, a cycle — makes the answer `Unknown`
+  with a reason, never zero. `rate-mismatch` (warning) when the author's number
+  disagrees, `derivable-rate` (info) when it agrees; the same for a
+  publisher's `min_rate_hz` (`derivable-min-rate` / `min-rate-mismatch`).
+  Measured on `rt_workspace`: eight of the file's nine copies of `100` were
+  consequences of the one timer, and deleting them leaves the derived
+  schedule byte-identical.
+- **`srv.<e>.max_response` is a deadline** and joins scheduling; a node
+  declaring only that used to get `SCHED_OTHER` priority 0.
+  `response-blocking` (warning) rules out a 5 ms promise beside a 20 ms
+  callback in the same mutually-exclusive group.
+- **The contract grammar is one table.** `field_table.rs` (102 rows, 18
+  contexts) is what the parser consults and what the manifest crate's
+  `docs/format-reference.md` is generated from, with a test that fails on
+  drift. Before, six of 66 fields appeared nowhere in the 1752-line
+  specification.
+- **Which fields are actually read.** `scripts/field_census.py` classifies
+  every read of every contract field as transport or consuming and gates
+  `just check` against a baseline that fails in both directions; 166 fields,
+  163 consumed, 3 write-only kept for nano-ros.
+  `scripts/derivation_census.py` counts how often an authored number agrees
+  with the derived one (24 authored topic rates: 10 agree, 0 genuinely
+  disagree, 11 underivable because an external publisher is the only source).
+- **`rate-hierarchy` checks the upper bounds** (`pub.max_rate_hz ≥
+  topic.rate_hz ≥ sub.max_rate_hz`); `qos-match` applies the DDS matrix to
+  `liveliness` and `lease_duration`, cross-scope too; `jitter-range` checks
+  `max_latency − min_latency > max_jitter` when both bounds are declared and
+  reports an absent floor as unverifiable rather than zero.
+- **`play_launch measure` produces the floor** (`min_latency`) beside the
+  budget, and `just jitter` in `examples/rt_av_demo` verifies the jitter
+  vocabulary on a running system whose true spread is known by construction
+  (observed 6.03 ms against 6.0).
+
+### Fault detection and reaction
+
+The contract could say a rate must hold and not what happens when it does
+not. ISO 26262's number is the fault-tolerant time interval, and its three
+supervision kinds are the three things a contract already declares.
+
+- **`hazards.<h>`** with `ftti`, `severity`, `guards` (composed `all_of`) and a
+  closed `on: omission | late | loss | reported`; **`sub.<e>.on_violation:
+  { on, reaction, within, mechanism }`** on the subscriber that detects; and
+  **`paths.<p>.safe_state: { emits, settle }`** on the reaction path. FDTI
+  (the fastest detector among a guard's subscribers that react) and FRTI (a
+  walk over reaction edges plus the sink's settle) are derived;
+  `fault-reaction-budget` names every term. Verified on `rt_av_demo` with the
+  lidar killed mid-run: 104 ms observed against 107 derived. On Autoware's
+  real MRM chain, 1.5.0's own parameter numbers derive 500 + 244 + 1200 =
+  1944 ms — fits a 2 s interval, fails 1.5 s, and nothing performed that sum
+  before. `check --emit diagnostics-params` prints `diagnostic_updater`
+  parameters from declared bounds: the adoption path for a system with no
+  hazard analysis.
+- **Criticality is a consequence of the hazards.** A node that feeds, detects
+  or reacts for a hazard takes its severity (max over hazards).
+  `severity_levels:` declares the scale (default ISO 26262's
+  `[QM, ASIL_A..ASIL_D]`). `derivable-criticality` / `criticality-mismatch`
+  compare the label to the derivation; a node no hazard reaches keeps its
+  label. `rt_av_demo`'s three labels all derive; schedule byte-identical.
+- **The fault observer runs live.** The rule engine watches every hazard's
+  guards and sinks on the interception stream — DDS liveliness/deadline events
+  or a silence tick detect, a provenance-free sink publish is the reaction —
+  and writes `hazard-detected` / `hazard-reaction` / `hazard-recovered` to
+  `runtime_violations.jsonl` while the system runs. Live and post-hoc agree to
+  0.00 ms on `just fault`.
+- **The contract's QoS reaches the running node.** `qos.deadline`,
+  `liveliness` and `lease_duration` become rclcpp `qos_overrides.*` parameters
+  on the model, applied where the node opted in and verified by VALUE at
+  startup. `just fault`: DDS reports the lapse 99.3 ms after the last publish,
+  from a number in the contract, no watchdog code in the detection path.
+- **Operational modes.** `functions.<f>` names a guard group; `modes.<m>`
+  carries `requires`, an ordered `fallback` ladder, `reaction` and
+  `overrides`. A hazard's `reaction:` may name a mode, and then the ladder is
+  the reaction: `ladder-rung-budget` (each rung against the FTTI in its own
+  right), `ladder-unterminated` (a last rung requiring something the hazard's
+  own guards remove is not a floor), `mode-requires-unguarded`. The checker
+  runs once per mode whose overrides differ and reports only what the mode
+  introduces (`mode:<rule>`). Runtime: `mode 'driving': LOST — falling to
+  'stopped'`. On Autoware, `comfortable_stop` is proved unable to cover a 2 s
+  interval the emergency floor beneath it can.
+
+### The topic graph the launch file already states
+
+The Autoware model resolved to 119 nodes and **0 topics** — `structure.topics`
+came only from contracts, while 62 nodes carried 371 remaps nothing read.
+Every graph rule was computing over an empty graph and reporting clean.
+
+- **Derived from remaps.** `~/input/…` / `~/output/…` and a bare
+  `/diagnostics` give a direction; a contract always wins; undecidable remaps
+  are counted, not guessed. Autoware: 0 → 110 topics, 114 edges, and a
+  19-node ancestor closure for `vehicle_cmd_gate`.
+- **Verified on a running system.** `interception/endpoints.tsv` records every
+  publisher and subscription CREATED; `scripts/verify_graph.py`
+  (`just verify-graph`) grades the model against it: **256 of 269 inferred
+  edges confirmed, 0 contradicted**; the 13 misses are six services Autoware
+  spells like publishers, four dangling remaps in its own launch files, three
+  conditional endpoints. `check` no longer returns early at "No manifests
+  found" when a derived graph exists, and the global graph now has vertices
+  for derived nodes (it had 114 edges between 0 vertices).
+- **The interceptor could not see a remap.** `expand_topic_name` applied
+  remap rules through a symbol rcl does not export, so on every installation
+  the un-remapped expansion was used: `frontier_summary.json`,
+  `stats_summary.json`, the Chrome trace and `measure` all named remapped
+  topics wrongly on any launch file that remaps. Replaced with
+  `rcl_node_resolve_name`; a fixture with a remap now asserts the remapped
+  name present AND the un-remapped one absent.
+
+### The Python half is loaded at runtime, not linked
+
+The shipped resolver no longer pins a CPython. The parser core is pyo3-free at
+the source level; the Python half is a separate `cdylib`
+(`libplay_launch_parser_pyexec.so`, stable ABI) that the driver discovers and
+`dlopen`s against whatever interpreter the machine has, and a panic on either
+side of the boundary is caught at the C ABI rather than aborting the loader's
+process. The two halves version their protocol (**Python ABI 5** at this
+release); a mismatched object is refused rather than answered wrong — which is
+how three gaps were found and closed in-release: the caller's namespace stack
+and the includes a `.launch.py` returns (composables in an Autoware stack
+landed at `/component_state_monitor/…` instead of
+`/system/component_state_monitor/…`), the global parameters (#0028), and the
+declared arguments (#0030).
+
+### Other fixes
+
+- **`on_exit=Shutdown()` is honoured** (#0025). It was detected at dump time
+  and discarded, so a required node's exit never ended the launch; one
+  scenario-test interpreter was found still spinning 40 hours after its
+  scenario passed. Handlers cross the dump and get the same teardown the
+  signal path uses.
+- **A `Node` with no package** — an absolute `executable`, which launch_ros
+  allows — made the dump die with a bare `TypeError` (#0026). A package-less
+  node is a raw executable and gets no `--ros-args` at all; an empty
+  `--ros-args` section is trimmed for every node (`/bin/sleep 3600 --ros-args`
+  exits 1).
+- String array parameters kept their Python `repr` quotes.
+- `external:` on a service is honoured, and a client-only tree is no longer
+  refused.
+- `--container-mode clone-vm` (hidden, experimental): `clone(CLONE_VM)` per
+  composable, measured 12.8 points cheaper on the golf cart stack than
+  `isolated`; not a supported mode yet.
+- CI's `just check` step had failed on every push since 2026-08-29 (the
+  field census wanted sibling checkouts the runner lacked) while build, tests
+  and parity passed beneath it; it now reads the pinned manifest from cargo's
+  checkout and CI provides nano-ros.
+
 
 ### The bundle records the launcher, and names a load shortfall (#0023)
 
@@ -96,11 +296,7 @@ declares no parameters, and it reaches the model as an empty entry,
 entry. Every launch value for such a node is undeclared under the rules
 above: by name an error, through a wildcard key a warning.
 
-## 0.10.0 — 2026-08-27
 
-Two themes: the contract vocabulary stops carrying consequences, and a
-container's resource and lifecycle behaviour becomes something you can choose
-rather than something you inherit.
 
 ### Contracts state facts and requirements, never consequences
 
@@ -111,8 +307,9 @@ fact, three times as topic rates propagating from it, five as identical
 `min_rate_hz` — plus five lines of `segments:` restating a route the graph
 already defines.
 
-**New vocabulary**, all optional; nothing removed, and every existing contract
-resolves to a byte-identical model:
+**New vocabulary**, all optional (the retirements are listed under
+"Breaking" above; every contract that used none of the retired spellings
+resolves to a byte-identical model):
 
 - `paths.<n>.max_jitter` and `min_latency` — jitter is a *spread*, and it is
   the one requirement that needs a best case as well as a worst one.
@@ -150,9 +347,11 @@ thread-group leader cannot cover callbacks that may run elsewhere), and a
 to what CBS happens to do. `SCHED_FLAG_DL_OVERRUN` — wired since 0.9.0 and
 always off — now turns on when a contract declares miss handling.
 
-`chains:`/`segments:` are **deprecated but still work** (`derivable-chain`,
-Info). The mapper now derives the same schedule from a scope path, verified by
-provenance rather than by the numbers agreeing.
+`chains:`/`segments:` are **gone** (see "Breaking"). The mapper derives the
+same schedule from a scope path, verified by provenance rather than by the
+numbers agreeing: `rt_workspace`'s three-node system yields the same two
+priorities under plain budget ranking with no chain at all, so a numeric
+comparison passes while the derivation is not being used.
 
 ### cgroup per node and per container
 
@@ -204,8 +403,6 @@ rather than unlikely.
 - `<choice>` as a child of `<arg>` failed to parse — a regression against
   0.5.1 that made a real vehicle launch unreadable.
 - Parameter values are serialised as YAML, not Python `repr`.
-
-### Diagnostics
 
 ### Diagnostics
 
