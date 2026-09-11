@@ -1756,8 +1756,7 @@ fn test_eval_with_escaped_quotes_selects_the_branch_ros2_launch_selects() {
 fn test_required_include_arg_missing_is_an_error_even_if_the_parent_declares_it() {
     let fixture = get_fixture_path("test_required_arg_outer_missing.launch.xml");
     let err = parse_launch_file(&fixture, HashMap::new())
-        .err()
-        .expect("the include must be refused: `required` was never passed");
+        .expect_err("the include must be refused: `required` was never passed");
     let msg = err.to_string();
     assert!(
         msg.contains("missing required argument 'required'"),
@@ -1789,8 +1788,7 @@ fn test_required_include_arg_passed_on_the_include_resolves() {
 fn test_required_include_arg_missing_is_an_error_for_a_yaml_include() {
     let fixture = get_fixture_path("test_required_arg_outer_missing_yaml.launch.xml");
     let err = parse_launch_file(&fixture, HashMap::new())
-        .err()
-        .expect("the YAML include must be refused: `required` was never passed");
+        .expect_err("the YAML include must be refused: `required` was never passed");
     let msg = err.to_string();
     assert!(
         msg.contains("missing required argument 'required'"),
@@ -1808,8 +1806,7 @@ fn test_required_py_include_arg_missing_is_an_error_even_if_the_parent_declares_
     play_launch_parser_pyexec::register();
     let fixture = get_fixture_path("test_required_py_outer_missing.launch.xml");
     let err = parse_launch_file(&fixture, HashMap::new())
-        .err()
-        .expect("the include must be refused: `required` was never passed");
+        .expect_err("the include must be refused: `required` was never passed");
     let msg = err.to_string();
     assert!(
         msg.contains("missing required argument 'required'"),
@@ -1841,8 +1838,7 @@ fn test_required_py_to_py_include_arg_missing_is_an_error() {
     play_launch_parser_pyexec::register();
     let fixture = get_fixture_path("test_required_py_outer.launch.py");
     let err = parse_launch_file(&fixture, HashMap::new())
-        .err()
-        .expect("the Python include must be refused: `required` was never passed");
+        .expect_err("the Python include must be refused: `required` was never passed");
     let msg = err.to_string();
     assert!(
         msg.contains("missing required argument 'required'"),
@@ -1857,8 +1853,7 @@ fn test_required_py_root_arg_unset_is_an_error_naming_it() {
     play_launch_parser_pyexec::register();
     let fixture = get_fixture_path("test_required_py_root_unset.launch.py");
     let err = parse_launch_file(&fixture, HashMap::new())
-        .err()
-        .expect("an unset required argument must be refused");
+        .expect_err("an unset required argument must be refused");
     let msg = err.to_string();
     assert!(
         msg.contains(
