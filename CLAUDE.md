@@ -590,6 +590,55 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-11**: Issues #0023 and #0024 resolved — **a bundle can now say
+  why a launch failed, and `run` no longer loses a race with itself.**
+  (#0023) play_launch wrote no log of its own into `log_dir`, so the golf
+  cart bundle in which six of 84 composable loads vanished could not answer
+  what happened; every witness line was terminal-only. Every run verb now
+  writes `play_log/<ts>/play_launch.log` (header: version, argv, config;
+  then `play_launch=debug,ros_launch_resolve=debug` regardless of the
+  terminal's `RUST_LOG` — measured ~30 KB a run; `PLAY_LAUNCH_LOG_FILE`
+  overrides) plus `run_info.json` and a copy of `--config`; lines logged
+  before the directory exists are buffered (4 MiB cap) and land first —
+  chosen over creating the directory earlier, which would leave an empty
+  bundle and a moved `latest` behind every failed parse. At
+  startup-complete `commands/startup_reconcile.rs` compares DECLARED against
+  `Loaded` per container and reports a shortfall at `error` naming the
+  container and every missing FQN; `all nodes ready` prints only when there
+  is none (exit code unchanged: `--on-startup-failure exit` already covers
+  a Failed composable). The drop itself is not reproducible on `main` — the
+  vehicle ran 0.9.0, before phase 64, and the request died inside DDS
+  between `client.call()` and the service — but the seven places on the
+  socket path where a frame or outcome could go missing with only a
+  `debug!` (or nothing: `send_load` returned `Ok(seq)` for a frame the
+  writer task never got) now warn or fail by name. Found on the way:
+  **stall detection was inert for the case it exists for** — `note_report`
+  took its first CPU sample only when `cpu_ms > 0`, and a constructor that
+  SLEEPS reads `utime=0 stime=0` for its whole life, so `check_for_stalls`
+  never ran; a `constructing` frame with a pid now counts as a sample.
+  (#0024) `play_launch run` inside `systemd-run --user --scope` failed at
+  spawn with a bare `Operation not permitted`. Not the scope and not
+  `pre_exec`: strace shows std's own `setpgid(0, pgid)` in the child racing
+  `wait4(anchor)` in the parent — `run` wired its web server to a throwaway
+  shutdown channel, the server ended a millisecond after starting, `run`'s
+  main loop read any finished background task as end-of-run, shutdown
+  reaped the anchor zombie holding the process group, and a node still
+  being spawned found no group (EPERM, not ESRCH, for a group with no
+  member in the caller's session). `launch` hands its web server the real
+  channel and was never affected; every `run` test used `--disable-all`,
+  which has the same effect, so the suite was green. Reproduced 1/31 on an
+  idle host, 3/3 with a 20 ms delay injected on `setpgid`; the reporter's
+  loaded machine lost the race every time. Fixed three ways: the anchor is
+  no longer reaped at shutdown (the group outlives every spawn; the sweep's
+  `waitpid(-pgid)` reaps it), `run`'s web server is on the run's shutdown
+  channel, and every child-side step (`setpgid`, `PR_SET_PDEATHSIG`, cgroup
+  join, OOM bias, the container's control fd) names itself in the node's
+  `err` file with one allocation-free `writev` rendered before the fork,
+  which the parent reads back into `Unable to start: … — pre_exec:
+  setpgid(0, N) failed: EPERM (errno 1)`. Still open, same family: `run`
+  hangs on SIGTERM because nothing in `run.rs` signals the coordinator's
+  own shutdown. Issues: `docs/issues/archived/0023-*`, `archived/0024-*`.
+
 - **2026-09-08**: Phase 76 — **the topic graph the launch file already
   states.** Found while reviewing R6: the Autoware model resolved to 119
   nodes and **0 topics**, because `structure.topics` came only from

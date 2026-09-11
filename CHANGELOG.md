@@ -8,6 +8,31 @@ allowance heavily.
 
 ## Unreleased
 
+### The bundle records the launcher, and names a load shortfall (#0023)
+
+Every run verb now writes `play_log/<ts>/play_launch.log` — a header with the
+play_launch version, argv and config, then the launcher's own log at debug
+level regardless of the terminal's `RUST_LOG` (about 30 KB a run) — plus
+`run_info.json` and a copy of `--config`. A bundle from a failed launch can
+now say why it failed; before, every witness line lived only in the terminal
+that ran it. At startup-complete the launcher compares the composables each
+container DECLARED against the ones confirmed loaded and reports a shortfall
+as an error naming the container and every missing node; `all nodes ready` is
+printed only when there is none. Also fixed: stall detection never fired for a
+constructor that sleeps (zero CPU was read as "no sample yet").
+
+### `run` works inside a systemd user scope (#0024)
+
+`play_launch run` under `systemd-run --user --scope` failed at spawn with a
+bare `Operation not permitted`. It was a race, not the scope: `run` wired its
+web server to a throwaway shutdown channel, treated the server's immediate
+exit as the end of the run, and reaped the process-group anchor while a node
+was still being spawned — the child's `setpgid` then named a group that no
+longer existed. The anchor now outlives every spawn, `run`'s web server uses
+the run's real shutdown channel (so `run` has a working web UI and monitoring
+again), and any child-side step that fails now names itself in the node's
+`err` file and in the `Unable to start:` message.
+
 ### Required arguments are checked through the Python frontend too
 
 A `.launch.py` on either side of an include is now held to the same rule as
