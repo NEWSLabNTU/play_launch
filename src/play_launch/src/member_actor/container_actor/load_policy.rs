@@ -98,6 +98,22 @@ fn decide(
     }
 }
 
+/// Does this report carry a CPU reading worth recording as a sample?
+///
+/// A `constructing` frame (or a `status` answered in that phase) reports the
+/// child's `utime+stime`; an `accepted` or a `loaded` carries no CPU figure
+/// and must not overwrite the last real one. The old gate was `cpu_ms > 0`,
+/// which reads "has a figure" as "has a non-zero figure" — and a constructor
+/// that SLEEPS reads `0` ticks from `/proc/<pid>/stat` for its whole life
+/// (measured on the `slow_construct_60s` fixture: `utime=0 stime=0` at 20 s
+/// and at 35 s), so the first sample was never taken and `check_for_stalls`,
+/// which needs one, never fired. The detector was inert for exactly the case
+/// it exists for. Zero CPU is a reading, not the absence of one; once a
+/// sample exists every later report updates it, as before.
+fn carries_cpu_sample(phase: Option<LoadPhase>, pid: i32, already_sampled: bool) -> bool {
+    already_sampled || (phase == Some(LoadPhase::Constructing) && pid > 0)
+}
+
 /// The fields of a `Status` frame, after the supervisor has resolved which
 /// pending load it answers.
 ///
@@ -257,7 +273,7 @@ impl ComposableSupervisor {
             if pid > 0 {
                 t.pid = pid;
             }
-            if cpu_ms > 0 || t.cpu_sampled_at.is_some() {
+            if carries_cpu_sample(phase, pid, t.cpu_sampled_at.is_some()) {
                 t.prev_cpu_ms = t.cpu_ms;
                 t.cpu_ms = cpu_ms;
                 t.cpu_sampled_at = Some(now);
@@ -686,6 +702,25 @@ mod tests {
                 unanswered: 0
             }
         );
+    }
+
+    /// A sleeping constructor reports 0 CPU ticks from its first frame to its
+    /// last. That is a reading, and the first one must be taken, or the stall
+    /// check never has the two samples it needs — which is how
+    /// `stall_action` was silently inert on an idle machine.
+    #[test]
+    fn a_zero_cpu_constructing_report_is_still_a_sample() {
+        assert!(carries_cpu_sample(
+            Some(LoadPhase::Constructing),
+            4242,
+            false
+        ));
+        // Frames that carry no CPU figure do not start the series…
+        assert!(!carries_cpu_sample(Some(LoadPhase::Queued), 0, false));
+        assert!(!carries_cpu_sample(Some(LoadPhase::Loaded), 4242, false));
+        assert!(!carries_cpu_sample(None, 4242, false));
+        // …but once it exists every report updates it, as before.
+        assert!(carries_cpu_sample(Some(LoadPhase::Queued), 0, true));
     }
 
     /// A cancel is already the question; nothing else may be asked until it is
