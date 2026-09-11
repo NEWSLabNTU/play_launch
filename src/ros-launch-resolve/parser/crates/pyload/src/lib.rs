@@ -285,6 +285,14 @@ pub struct Loaded {
 type CallFn = unsafe extern "C" fn(*const std::ffi::c_char) -> *mut std::ffi::c_char;
 type FreeFn = unsafe extern "C" fn(*mut std::ffi::c_char);
 type AbiFn = unsafe extern "C" fn() -> u32;
+/// What `exec_file` reads off the caller's launch context and sends across
+/// the loader boundary: configurations, the namespace stack, and (ABI 4) the
+/// global parameters — in that order.
+type ExecContextFacts = (
+    std::collections::BTreeMap<String, String>,
+    Vec<String>,
+    Vec<(String, String)>,
+);
 
 impl Loaded {
     /// `dlopen` a `libpython`, then the Python half against it.
@@ -425,17 +433,14 @@ impl play_launch_parser::python_backend::PythonBackend for Loaded {
         // Configurations, the namespace stack, and (ABI 4) the global
         // parameters: three things a `.launch.py` reads from the context it
         // runs in, and this object's context is not the caller's.
-        let (configs, namespace_stack, global_parameters): (
-            std::collections::BTreeMap<String, String>,
-            Vec<String>,
-            Vec<(String, String)>,
-        ) = with_launch_context(|ctx| {
-            (
-                ctx.configurations().into_iter().collect(),
-                ctx.namespace_stack(),
-                ctx.global_parameters().into_iter().collect(),
-            )
-        });
+        let (configs, namespace_stack, global_parameters): ExecContextFacts =
+            with_launch_context(|ctx| {
+                (
+                    ctx.configurations().into_iter().collect(),
+                    ctx.namespace_stack(),
+                    ctx.global_parameters().into_iter().collect(),
+                )
+            });
 
         let response = self.call(
             "exec_file",
