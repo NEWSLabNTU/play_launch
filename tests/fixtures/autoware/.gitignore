@@ -4,3 +4,5 @@
 /record_rust.json
 /system_model.yaml
 /out/
+model_rust.yaml
+model_python.yaml
