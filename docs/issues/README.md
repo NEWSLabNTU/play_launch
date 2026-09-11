@@ -63,7 +63,7 @@ missing with only a `debug!` (or nothing — `send_load` returned `Ok(seq)` for 
 frame the writer task never got) now warn or fail by name. What happened on the
 vehicle is unrecoverable — the request left `client.call()` and never reached
 the service, which is inside DDS — and every witness line was terminal-only.
-See `0023-*`.
+See `archived/0023-*`.
 
 **#0029** — the Rust parser satisfied an include's REQUIRED argument (an `<arg>` with
 no default in the included file) from the parent scope, where `ros2 launch` and the
