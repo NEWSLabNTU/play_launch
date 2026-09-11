@@ -26,17 +26,6 @@ and cgroup `mkdir` inside the scope succeeds, so the per-member group is not the
 blocker. A `pre_exec` error surfaces exactly this way. The message names nothing
 (no cgroup, scope or `pre_exec`), which is the expensive part. See `0024-*`.
 
-**#0023** — six of 84 composable load requests never reached their container on
-a golf cart `isolated` run, and no log anywhere records it: the container never
-printed `Accepted load request`, so the loss is on play_launch's side of the
-service call, and play_launch writes no log of its own into `log_dir`. Not the
-global cap (a sibling container accepted 19 in the same window) and not #0019
-(nothing was accepted, so nothing was killed). The six were five diagnostic
-graph leaves plus `component_state_monitor/component` — the launch dropped
-exactly the nodes that would have noticed. Fix the launcher log and the
-declared-vs-loaded reconciliation first; the drop itself is not diagnosable
-until then. See `0023-*`.
-
 ## Resolved
 
 **#0030** — required arguments through the Python frontend: the replay of a Python
@@ -45,6 +34,24 @@ arguments, and the `DeclareLaunchArgument` stand-in never raised. Declarations n
 cross the loader boundary (**ABI 4 → 5**) with an `opaque` flag stamped around
 `OpaqueFunction`; includes of `.launch.py` are held to #0029's rule, and an unset
 required argument is refused with launch's message. See `0030-*`.
+
+**#0023** — six of 84 composable loads never reached their container on a golf
+cart `isolated` run (v0.9.0), and the bundle could not say why: play_launch
+wrote no log of its own into `log_dir`, and nothing compared the 16 a container
+DECLARED against the 10 it loaded. Now every run verb writes
+`play_log/<ts>/play_launch.log` (header with version/argv/config, then
+`play_launch=debug` regardless of `RUST_LOG` — measured at ~30 KB a run) plus
+`run_info.json` and a copy of `--config`; lines logged before the directory
+exists are buffered and land first. At startup-complete the launcher reconciles
+declared vs loaded PER CONTAINER and reports a shortfall at `error`, naming the
+container and every missing FQN; `all nodes ready` is printed only when there
+is none. The drop itself: on `main` our container takes loads over the phase 64
+socket, and the seven places on that path where a frame or an outcome could go
+missing with only a `debug!` (or nothing — `send_load` returned `Ok(seq)` for a
+frame the writer task never got) now warn or fail by name. What happened on the
+vehicle is unrecoverable — the request left `client.call()` and never reached
+the service, which is inside DDS — and every witness line was terminal-only.
+See `0023-*`.
 
 **#0029** — the Rust parser satisfied an include's REQUIRED argument (an `<arg>` with
 no default in the included file) from the parent scope, where `ros2 launch` and the

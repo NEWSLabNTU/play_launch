@@ -45,10 +45,17 @@ impl ComposableSupervisor {
             }
             ContainerMsg::Accepted { seq, unique_id } => {
                 let Some(name) = control.take_pending(seq) else {
-                    debug!(
-                        "{}: control channel accepted seq {} we no longer track",
+                    // The container has assigned an id — and will fork a
+                    // process — for a request no entry is waiting on. That is
+                    // a child nobody supervises, which is worth more than a
+                    // debug line (issue #0023).
+                    warn!(
+                        "{}: the container accepted load seq {} (unique_id {}) that this \
+                         supervisor no longer tracks — a composable may be constructing with \
+                         no entry to report it to",
                         self.name(),
-                        seq
+                        seq,
+                        unique_id
                     );
                     return;
                 };

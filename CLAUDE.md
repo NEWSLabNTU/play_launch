@@ -395,6 +395,10 @@ Build: `just build-interception` (requires ROS environment). Design: `docs/roadm
 
 ```
 play_log/<timestamp>/
+├── play_launch.log                 # the launcher's OWN log (#0023): header (version, argv,
+│                                   #   config), then play_launch=debug regardless of RUST_LOG
+├── run_info.json                   # version, argv, cwd, pid, config path — what produced the bundle
+├── config.yaml                     # copy of --config, when one was given
 ├── params_files/
 ├── interception/                   # when interception enabled
 │   ├── frontier_summary.json       # per-topic frontier state

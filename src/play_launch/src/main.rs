@@ -35,10 +35,28 @@ fn logs_to_stderr(command: &Command) -> bool {
     )
 }
 
+/// Does this verb create a `play_log/<ts>/` directory and supervise
+/// processes? Those are the runs whose account must survive the terminal
+/// (issue #0023): they get a second, file-backed layer that buffers until the
+/// directory exists (`util::run_log`). The launch-tree verbs write no
+/// directory and get no buffer to hold.
+fn writes_run_log(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Launch(_) | Command::Run(_) | Command::Up(_) | Command::Replay(_)
+    )
+}
+
 /// Initialize the tracing subscriber. `RUST_LOG` takes precedence for
 /// development/debugging; INFO otherwise (the `--verbose` flag controls
 /// detail, not level).
 fn init_tracing(command: &Command) {
+    use tracing_subscriber::{
+        EnvFilter,
+        layer::{Layer, SubscriberExt},
+        util::SubscriberInitExt,
+    };
+
     let use_env_filter = std::env::var("RUST_LOG").is_ok();
     // Show the emitting module ONLY when the user asked for `RUST_LOG` — i.e.
     // is debugging. Left on by default, every ordinary `play_launch dump` run
@@ -46,28 +64,55 @@ fn init_tracing(command: &Command) {
     // naming the developer-only binary on the happy path. A target is a
     // developer's routing key, not part of a user-facing message.
     let with_target = use_env_filter;
-    // `fmt()`'s builder needs the writer chosen before `.init()`, and the two
-    // writer types differ, so the branch is duplicated rather than factored.
-    if logs_to_stderr(command) {
-        let builder = tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
-            .with_target(with_target);
-        if use_env_filter {
-            builder
-                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-                .init();
-        } else {
-            builder.with_max_level(tracing::Level::INFO).init();
-        }
+    let terminal_filter = if use_env_filter {
+        EnvFilter::from_default_env()
     } else {
-        let builder = tracing_subscriber::fmt().with_target(with_target);
-        if use_env_filter {
-            builder
-                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-                .init();
-        } else {
-            builder.with_max_level(tracing::Level::INFO).init();
-        }
+        EnvFilter::new("info")
+    };
+
+    // The file layer is independent of the terminal's filter on purpose: the
+    // bundle is where the detail is wanted AFTER a run went wrong, which is
+    // exactly when nobody had set `RUST_LOG` beforehand. It carries the
+    // target always — a file is read by whoever is debugging.
+    //
+    // Generic over the subscriber it stacks on: a `Filtered` layer is typed
+    // by the subscriber beneath it, and the two terminal writers below build
+    // different ones, so one value cannot serve both branches.
+    fn file_layer<S>(enabled: bool) -> Option<impl Layer<S>>
+    where
+        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    {
+        enabled.then(|| {
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_target(true)
+                .with_writer(play_launch::util::run_log::RunLogWriter)
+                .with_filter(play_launch::util::run_log::file_filter())
+        })
+    }
+    let to_file = writes_run_log(command);
+
+    // The two terminal writers are different types, so the branch is
+    // duplicated rather than factored.
+    if logs_to_stderr(command) {
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_target(with_target)
+                    .with_filter(terminal_filter),
+            )
+            .with(file_layer(to_file))
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_target(with_target)
+                    .with_filter(terminal_filter),
+            )
+            .with(file_layer(to_file))
+            .init();
     }
 }
 

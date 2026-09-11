@@ -1,7 +1,7 @@
 ---
 id: 23
 title: "Six of 84 composable load requests never reached the container, and nothing anywhere recorded it"
-status: open
+status: resolved
 type: correctness
 severity: high
 ---
@@ -150,3 +150,129 @@ against `composable_node_count` per container. On the golf cart stack that is
 The version of play_launch installed on the vehicle
 (`/home/ubuntu/.local/lib/python3.10/site-packages/play_launch/`) is not
 recorded in the bundle, which is a second thing worth writing into `log_dir`.
+
+## Resolution
+
+Worked in the issue's own order, on `main` after phase 64 — which is
+**not** the code the vehicle ran. The wheel on the golf cart was `v0.9.0`
+(tagged 2026-08-18): it carried #0019's fix, so `Loaded` already required
+ListNodes confirmation, but **not** phase 64, so every one of the 84 loads
+went through the rmw `LoadNode` service. That matters for part 3 below.
+
+### 1. The launcher writes its own log into the bundle
+
+`play_log/<ts>/` now holds three new files, from all three run verbs
+(`launch`, `up`, `run`):
+
+- **`play_launch.log`** — play_launch's own tracing output. It opens with a
+  header (`# play_launch <version>`, start time, pid, cwd, argv quoted so it
+  can be pasted back, the config path, the filter), and then carries
+  **`play_launch=debug,ros_launch_resolve=debug,info` regardless of the
+  terminal's `RUST_LOG`** (`PLAY_LAUNCH_LOG_FILE` overrides it with `RUST_LOG`
+  syntax). Measured on the `container_events` fixture with the web UI,
+  monitoring and diagnostics all on, 20 s: INFO alone is ~21 lines,
+  `play_launch=debug` 174 lines / 30 KB, a global `debug` 179 lines / 31 KB.
+  Debug is ~8x the lines of INFO and still tens of kilobytes a run — nothing
+  beside the per-node `out`/`err` already there — and it is the level at
+  which the load path narrates every dispatch, acceptance and timeout, which
+  is precisely what this bundle lacked. Crate-scoped rather than global so a
+  chatty dependency can never turn the file into its own log; `EnvFilter`
+  matches by prefix, so `play_launch=` covers the parser too.
+- **`run_info.json`** — version, argv, cwd, pid, start time, config path,
+  and the name of the config copy. The version was the second thing this
+  bundle could not answer.
+- **`config.yaml`** — a verbatim copy of `--config`, when one was given.
+
+The subscriber is installed in `main()` long before `play_log/<ts>/` exists
+— `launch` parses the launch file first, `up` loads and validates the model
+— and those early lines are worth keeping (a parser warning is diagnostic).
+Rather than create the directory earlier (which would move `create_log_dir`
+out of the shared `play()` engine into three callers and leave an empty
+timestamped directory plus a moved `latest` symlink behind every failed
+parse), the file layer is registered at startup with a writer that
+**buffers** (`util::run_log`, 4 MiB cap, overflow counted and noted) until
+`attach` is called right after the directory is created; the buffer drains
+into the file ahead of everything that follows. The integration test pins
+that ordering: `Step 1/3: Parsing launch file` precedes `Log directory
+created` in the file. A log that cannot be opened is a warning, never a
+failed run.
+
+### 2. Declared against loaded, per container, at startup-complete
+
+`commands::startup_reconcile::composable_shortfall` walks the member list
+and, per container, counts the composables the launch declared for it and
+the ones that reached `Loaded`; everything else is missing, with its FQN and
+its state. At startup-complete the launcher now prints, at **`error`**, one
+line per short container:
+
+```
+Startup shortfall in /shortfall_container: 1/2 composables loaded — 1 MISSING: /system/ghost (failed: ...)
+```
+
+and `STARTUP_SUMMARY` carries a `composable_shortfall` array with the same
+facts. `Startup complete: all nodes ready` is printed only when the
+shortfall is empty AND nothing failed. The comparison is against the
+**declaration**, not the failure count: a composable that is blocked because
+its container never came up, or still loading, is missing too, where
+`HealthSummary` counts it as nothing at all. Related gap closed on the way:
+a container that fails to spawn leaves its composables `Blocked`, which
+never settles, so startup never completed and the periodic line named
+nothing — the "still incomplete after Ns" report now names blocked
+composables with their reason, at `error`.
+
+**Exit behaviour is deliberately unchanged.** At startup-complete a missing
+composable is a `Failed` member (the completion test requires every
+composable to be loaded or failed), so `--on-startup-failure exit` already
+exits on a shortfall; a second knob would decide the same thing twice.
+
+### 3. The drop
+
+**Could the drop the vehicle saw still happen on `main`?** Not on the path
+our own container uses. On `main`, `isolated` loads go over the phase 64
+socketpair: the frame is written to a stream that is ordered and lossless,
+the container answers `accepted` with the id, and phase 64 W2's ack timer
+turns silence into a *question* (`query` → `status`) rather than a guess.
+The rmw `LoadNode` path where the six requests plausibly died is now only
+the fallback (stock containers, an old container binary, `control_socket:
+false`). Every place on the socket path where a request could be lost
+without a log line was walked, and each now says so:
+
+| Where | Before | Now |
+|---|---|---|
+| `ControlChannel::send` — enqueue to the writer task fails | swallowed; `send_load` returned `Ok(seq)`, entry went `Loading` with a tracking record for a frame that never existed | `send` returns `Err`; `send_load` propagates it and the entry is marked `Failed` with `control-channel: …` (unit test: a channel whose peer is gone must answer `Err`, not a seq) |
+| `write_loop` — the socket write fails | `debug!`, and every frame still queued behind it vanished uncounted | `warn!` naming the container and the number of abandoned frames |
+| `read_loop` — an unparsable frame from the container | `debug!` | `warn!` with the first 200 bytes — if it was an `accepted` or a `loaded`, this line is the only trace of where that fact went |
+| `send_query`/`send_cancel` — the probe itself cannot be sent | silent | `warn!` |
+| `send_load_over_socket` — a name the supervisor does not know | silent `return` | `warn!` naming the composable |
+| `Accepted` for a seq no entry is waiting on | `debug!` | `warn!` — the container will fork a child nobody supervises |
+| LoadNode path: `let _ = tx.send(LoadCompletion)` | outcome discarded when the actor is gone | `warn!` naming the composable and the outcome it had |
+
+Also examined and found sound: a load queued before the hello handshake
+(`negotiate_control_channel` settles before `handle_load_all_composables`,
+and `await_hello` buffers anything that arrives early); the fallback engaging
+mid-dispatch (`closed` flips only when the peer's end is gone, which
+`child.wait()` sees too, and a tracked entry that then falls to the
+ListNodes sweeps is named by the `rescue_lost_loads` "left alone" warning);
+and `emit()` to the coordinator, which already logs at `error` when its
+receiver is gone.
+
+**What actually happened on 2026-08-25 cannot be recovered**, and the
+current code makes that loss the last of its kind rather than explaining it.
+On v0.9.0 the request left `client.call()` and never reached the container's
+service — the `Accepted` count says so — which puts the loss inside DDS,
+where play_launch has no witness: a request published before the service's
+reader has matched the client's writer is simply not delivered, and
+`service_is_ready()` plus the warmup delay narrow that window without
+closing it (the issue's first candidate; `container` had the longest
+start-to-first-accept gap in the table). Thirty seconds later that version
+would have logged `LoadNode service call timed out … deferring to
+ComponentEvent`, then `rescue_lost_loads`' verdict — every one of those
+lines to the terminal only. The bundle now carries them.
+
+**Still open**: the rmw fallback path keeps its ambiguity for our own
+container — a load accepted (id known) that ListNodes then reports absent
+stays `Loading` (`check_loading_timeouts` cannot tell "constructing" from
+"gone"), named only by the periodic "waiting on" line; phase 64's answer is
+to not use that path. And `docs/issues/README.md` says resolved issues move
+to `archived/`, but no such directory exists and none of #0007–#0029 was
+ever moved, so this file stays where its predecessors are.

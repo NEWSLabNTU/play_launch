@@ -14,6 +14,7 @@ pub mod plot;
 pub mod resolve;
 pub mod run;
 pub(crate) mod signal_handler;
+pub mod startup_reconcile;
 pub mod up;
 
 // Re-export command handlers

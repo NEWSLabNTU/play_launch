@@ -135,6 +135,11 @@ async fn run_direct(
     info!("Creating log directories...");
     let log_dir = create_log_dir(&common.log_dir)?;
     info!("Log directory created: {}", log_dir.display());
+    // Issue #0023: the launcher's own log joins the bundle (see `up::play`).
+    crate::util::run_log::attach_or_warn(
+        &log_dir,
+        crate::util::run_log::RunInfo::capture(common.config.as_deref()),
+    );
 
     let node_log_dir = log_dir.join("node");
     fs::create_dir(&node_log_dir)?;

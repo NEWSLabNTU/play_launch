@@ -453,6 +453,26 @@ async fn pending_member_names(
         .collect()
 }
 
+/// Composables that cannot load because their container is not running,
+/// with the reason. Issue #0023: these count as neither pending nor loaded
+/// nor failed, so a container that failed to spawn left its composables
+/// unnamed in every progress line — and startup never completed, because a
+/// blocked composable never settles.
+async fn blocked_member_names(
+    member_handle: &std::sync::Arc<crate::member_actor::MemberHandle>,
+) -> Vec<String> {
+    use crate::member_actor::model::MemberState;
+    member_handle
+        .list_members()
+        .await
+        .into_iter()
+        .filter_map(|m| match m.state {
+            MemberState::Blocked { reason } => Some(format!("{} ({:?})", m.id, reason)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Print periodic startup progress (every 10s while loading, immediate completion message).
 ///
 /// Phase-52.3: on startup-complete-with-failures, names the failed members,
@@ -519,6 +539,17 @@ pub(crate) async fn print_periodic_statistics(
                                 pending.join(", ")
                             );
                         }
+                        let blocked = blocked_member_names(&member_handle).await;
+                        if !blocked.is_empty() {
+                            error!(
+                                "Startup still incomplete after {}s: {} composable(s) are BLOCKED \
+                                 because their container is not running, and will not load \
+                                 until it is: {}",
+                                started.elapsed().as_secs(),
+                                blocked.len(),
+                                blocked.join(", ")
+                            );
+                        }
                     }
                 }
                 // If complete, the completion_check will handle printing the message
@@ -532,7 +563,16 @@ pub(crate) async fn print_periodic_statistics(
                     // Print completion message immediately
                     let total_failures = health.nodes_failed + health.containers_failed + health.composable_failed;
 
-                    if total_failures == 0 {
+                    // Issue #0023: reconcile what each container was DECLARED
+                    // to load against what reached `Loaded`. The health
+                    // summary's totals cannot say which container lost which
+                    // composable, and a launch that drops the diagnostic
+                    // graph's own leaves and then prints "all nodes ready"
+                    // has removed the thing that would have noticed.
+                    let members = member_handle.list_members().await;
+                    let shortfall = super::startup_reconcile::composable_shortfall(&members);
+
+                    if total_failures == 0 && shortfall.is_empty() {
                         info!(
                             "Startup complete: all nodes ready (nodes {}/{}, containers {}/{}, composable {}/{})",
                             health.nodes_running,
@@ -556,19 +596,42 @@ pub(crate) async fn print_periodic_statistics(
                             health.composable_total
                         );
 
+                        // Issue #0023: per container, LOUDLY. An `error!`,
+                        // because a missing composable is a node the launch
+                        // promised and did not deliver, whatever the exit
+                        // code says. The exit code itself is unchanged —
+                        // `--on-startup-failure exit` already treats every
+                        // Failed composable as a failed member, and at
+                        // startup-complete a missing one IS Failed (the
+                        // completion test requires every composable to be
+                        // loaded or failed), so the existing flag covers the
+                        // shortfall without a second knob.
+                        for c in &shortfall {
+                            error!("Startup shortfall in {}", c.describe());
+                        }
+
                         // Phase-52.3: name the failed members + machine-readable summary
-                        let failed: Vec<String> = member_handle
-                            .list_members()
-                            .await
-                            .into_iter()
+                        let failed: Vec<String> = members
+                            .iter()
                             .filter(|m| {
                                 matches!(m.state, crate::member_actor::MemberState::Failed { .. })
                             })
-                            .map(|m| m.id)
+                            .map(|m| m.id.clone())
                             .collect();
                         for id in &failed {
                             warn!("Failed member: {}", id);
                         }
+                        let shortfall_json: Vec<serde_json::Value> = shortfall
+                            .iter()
+                            .map(|c| {
+                                serde_json::json!({
+                                    "container": c.container,
+                                    "declared": c.declared,
+                                    "loaded": c.loaded,
+                                    "missing": c.missing.iter().map(|m| m.fqn.clone()).collect::<Vec<_>>(),
+                                })
+                            })
+                            .collect();
                         info!(
                             "STARTUP_SUMMARY {}",
                             serde_json::json!({
@@ -580,6 +643,7 @@ pub(crate) async fn print_periodic_statistics(
                                 "composable_loaded": health.composable_loaded,
                                 "composable_total": health.composable_total,
                                 "failed_members": failed,
+                                "composable_shortfall": shortfall_json,
                             })
                         );
 

@@ -292,6 +292,13 @@ pub(crate) async fn play(
     debug!("Creating log directories...");
     let log_dir = create_log_dir(&common.log_dir)?;
     debug!("Log directory created: {}", log_dir.display());
+    // Issue #0023: from here on, play_launch's own account of the run lives
+    // in the bundle too — everything logged before this line was buffered
+    // and lands in the file first.
+    crate::util::run_log::attach_or_warn(
+        &log_dir,
+        crate::util::run_log::RunInfo::capture(common.config.as_deref()),
+    );
 
     let params_files_dir = log_dir.join("params_files");
     fs::create_dir(&params_files_dir)?;

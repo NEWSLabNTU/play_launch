@@ -263,6 +263,16 @@ impl ComposableSupervisor {
         use crate::ipc::container_protocol::ControlParam;
 
         let Some(entry) = self.composable_nodes.get(name) else {
+            // Issue #0023: a load request for a composable this supervisor
+            // does not know is a request that goes nowhere. It cannot
+            // happen through the coordinator, which only routes names it
+            // registered — which is exactly why a silent return here would
+            // be the last place anyone looked.
+            warn!(
+                "{}: asked to load '{}' over the control channel, but no such composable is \
+                 registered with this container — the request is dropped",
+                self.container_name, name
+            );
             return;
         };
         let meta = &entry.metadata;
@@ -366,6 +376,7 @@ impl ComposableSupervisor {
             let tx = self.load_completion_tx.clone();
             let composable_name = request.composable_name.clone();
             let container_name = self.container_name.clone();
+            let container_name_for_log = self.container_name.clone();
             let load_client = clients.load_client.clone();
             let list_client = clients.list_client.clone();
             let has_event_sub = clients.has_event_sub();
@@ -417,10 +428,26 @@ impl ComposableSupervisor {
                     start_time,
                 )
                 .await;
-                let _ = tx.send(LoadCompletion {
-                    composable_name,
+                // The receiver lives as long as the container actor, so this
+                // fails only when the actor is already gone — but a load
+                // outcome that nobody will ever read is still an outcome, and
+                // issue #0023 is about outcomes that left no trace.
+                if let Err(e) = tx.send(LoadCompletion {
+                    composable_name: composable_name.clone(),
                     result,
-                });
+                }) {
+                    warn!(
+                        "{}: load outcome for '{}' could not be delivered — the container actor \
+                         is gone ({})",
+                        container_name_for_log,
+                        composable_name,
+                        match &e.0.result {
+                            Ok(r) if r.success => "it had succeeded".to_string(),
+                            Ok(r) => format!("it had failed: {}", r.error_message),
+                            Err(err) => format!("it had failed: {err}"),
+                        }
+                    );
+                }
             });
         }
     }

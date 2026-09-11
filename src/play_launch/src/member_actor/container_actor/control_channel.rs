@@ -108,7 +108,7 @@ impl ControlChannel {
         channel.send(&SupervisorMsg::Hello {
             protocol: CONTROL_PROTOCOL_VERSION,
             supervisor_pid: std::process::id(),
-        });
+        })?;
 
         Ok((channel, ChildEnd(child_fd)))
     }
@@ -197,7 +197,12 @@ impl ControlChannel {
         }
         let seq = self.next_seq;
         self.next_seq += 1;
-        self.pending.insert(seq, composable_name.to_string());
+        // Issue #0023: a frame that could not even be handed to the writer
+        // task is a load the container will never see. This used to be
+        // swallowed inside `send` and reported here as `Ok(seq)`, which put
+        // the composable into `Loading` with a tracking record for a request
+        // that did not exist — the exact shape of a load lost without a
+        // trace. The caller marks it Failed and says so.
         self.send(&SupervisorMsg::Load {
             seq,
             package: msg_fields.package,
@@ -208,7 +213,8 @@ impl ControlChannel {
             parameters: msg_fields.parameters,
             extra_arguments: msg_fields.extra_arguments,
             log_dir: msg_fields.log_dir,
-        });
+        })?;
+        self.pending.insert(seq, composable_name.to_string());
         Ok(seq)
     }
 
@@ -227,28 +233,43 @@ impl ControlChannel {
     /// Ask the container what state a load is in. Either key: `seq` before the
     /// load was acknowledged, `unique_id` after.
     pub(super) fn send_query(&mut self, seq: Option<u64>, unique_id: Option<u64>) {
-        self.send(&SupervisorMsg::Query { seq, unique_id });
+        if let Err(e) = self.send(&SupervisorMsg::Query { seq, unique_id }) {
+            warn!(
+                "could not ask the container about a load (seq {:?}, id {:?}): {}",
+                seq, unique_id, e
+            );
+        }
     }
 
     /// Ask the container to stop a load and destroy what it created. The
     /// answer — `LoadFailed { cancelled: true }`, or a `Status` saying nothing
     /// is running — is the precondition for a resend.
     pub(super) fn send_cancel(&mut self, unique_id: u64, reason: &str) {
-        self.send(&SupervisorMsg::Cancel {
+        if let Err(e) = self.send(&SupervisorMsg::Cancel {
             unique_id,
             reason: reason.to_string(),
-        });
+        }) {
+            warn!("could not send cancel for load id {}: {}", unique_id, e);
+        }
     }
 
-    fn send(&mut self, msg: &SupervisorMsg) {
-        match encode_frame(msg) {
-            Ok(frame) => {
-                if self.outbound.send(frame).is_err() {
-                    self.closed = true;
-                }
-            }
-            Err(e) => warn!("failed to encode container control frame: {e}"),
+    /// Hand a frame to the writer task. `Err` means it was NOT handed over —
+    /// the channel was already closed, the writer task is gone, or the frame
+    /// could not be encoded — and the caller owns saying so; a frame that was
+    /// queued and later fails to WRITE is reported by `write_loop` instead.
+    fn send(&mut self, msg: &SupervisorMsg) -> Result<()> {
+        if self.closed {
+            return Err(eyre!("container control channel is closed"));
         }
+        let frame = encode_frame(msg)
+            .map_err(|e| eyre!("failed to encode container control frame: {e}"))?;
+        if self.outbound.send(frame).is_err() {
+            self.closed = true;
+            return Err(eyre!(
+                "container control channel writer is gone (the container closed its end)"
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -296,9 +317,12 @@ async fn read_loop(
             Err(e) => {
                 // A frame we cannot parse is not a reason to tear down a
                 // working launch: a newer container may have added a message
-                // kind. Skip it and keep reading — framing is intact.
-                debug!(
-                    "{}: unrecognised control frame ({}): {}",
+                // kind. Skip it and keep reading — framing is intact. But say
+                // so at `warn`, not `debug` (issue #0023): if the frame was
+                // an `accepted` or a `loaded`, this line is the only trace of
+                // where that fact went.
+                warn!(
+                    "{}: unrecognised control frame from the container, skipped ({}): {}",
                     container_name,
                     e,
                     String::from_utf8_lossy(&payload[..payload.len().min(200)])
@@ -316,9 +340,84 @@ async fn write_loop(
 ) {
     while let Some(frame) = rx.recv().await {
         if let Err(e) = writer.write_all(&frame).await {
-            debug!("{}: control channel write failed: {}", container_name, e);
+            // Issue #0023: this frame, and every frame still queued behind
+            // it, will never reach the container. Count them and say so — a
+            // `Load` lost here is a composable the container never heard
+            // of, which the supervisor's ack timer will only ever be able to
+            // report as "unanswered".
+            rx.close();
+            let mut abandoned = 1usize;
+            while rx.try_recv().is_ok() {
+                abandoned += 1;
+            }
+            warn!(
+                "{}: control channel write failed ({}); {} frame(s) to the container were \
+                 abandoned — loads still in flight will be reported as unanswered",
+                container_name, e, abandoned
+            );
             break;
         }
     }
     let _ = writer.shutdown().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fields() -> LoadFields {
+        LoadFields {
+            package: "composition".into(),
+            plugin: "composition::Talker".into(),
+            node_name: "talker".into(),
+            node_namespace: "/".into(),
+            remap_rules: vec![],
+            parameters: vec![],
+            extra_arguments: vec![],
+            log_dir: String::new(),
+        }
+    }
+
+    /// Issue #0023: a load that could not be handed to the container must be
+    /// an `Err`, never an `Ok(seq)` the supervisor then waits on. With the
+    /// container's end closed the writer task ends on its first failed write
+    /// and every later hand-over fails; before this change `send` swallowed
+    /// that and `send_load` reported success.
+    #[tokio::test]
+    async fn a_load_that_cannot_reach_the_container_is_an_error_not_a_seq() {
+        let (mut channel, child_end) = ControlChannel::new("test_container").unwrap();
+        assert!(!channel.is_closed());
+        drop(child_end);
+
+        // The Hello write, or the first Load write, fails with EPIPE once the
+        // peer is gone; the writer task then drops its receiver. Which write
+        // fails depends on scheduling, so poll until the hand-over itself
+        // fails.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut handed_over = 0usize;
+        let outcome = loop {
+            match channel.send_load("composable:/talker", fields()) {
+                Err(e) => break Ok(e),
+                Ok(_) if tokio::time::Instant::now() >= deadline => {
+                    break Err("send_load kept returning Ok after the container's end was closed");
+                }
+                Ok(_) => {
+                    handed_over += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            }
+        };
+        let err = outcome.expect("send_load must fail once the writer is gone");
+        assert!(
+            err.to_string().contains("writer is gone") || err.to_string().contains("closed"),
+            "{err:#}"
+        );
+        assert!(channel.is_closed());
+        assert!(!channel.loads_over_socket());
+        // Only the hand-overs that succeeded are filed as pending — the
+        // failed one is not, because nothing will ever answer for it. (The
+        // ones that were queued and then abandoned by the writer are the
+        // `write_loop` warning's business.)
+        assert_eq!(channel.pending.len(), handed_over);
+    }
 }

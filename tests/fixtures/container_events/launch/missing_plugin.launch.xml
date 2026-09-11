@@ -1,0 +1,12 @@
+<!-- Issue #0023: one composable that loads and one whose plugin does not
+     exist, so the container reports a load_failed and startup completes with
+     a shortfall the launcher must name — container and FQN — not just count. -->
+<launch>
+  <node_container pkg="play_launch_container" exec="component_container"
+                  name="shortfall_container" namespace="">
+    <composable_node pkg="composition" plugin="composition::Talker"
+                     name="talker" namespace=""/>
+    <composable_node pkg="composition" plugin="composition::DoesNotExist"
+                     name="ghost" namespace="/system"/>
+  </node_container>
+</launch>
