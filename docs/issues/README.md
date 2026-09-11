@@ -18,15 +18,27 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 ## Open
 
 
-**#0024** — `play_launch run` cannot spawn a node when play_launch is itself
-inside a `systemd-run --user --scope`: `Unable to start: Operation not permitted
-(os error 1)`, empty node logs, no process. The same wrapper is fine for
-`launch` — 89 component_nodes alive in one scope while `run` failed in another —
-and cgroup `mkdir` inside the scope succeeds, so the per-member group is not the
-blocker. A `pre_exec` error surfaces exactly this way. The message names nothing
-(no cgroup, scope or `pre_exec`), which is the expensive part. See `0024-*`.
 
 ## Resolved
+
+**#0024** — `play_launch run` inside a `systemd-run --user --scope` failed at
+spawn with a bare `Operation not permitted` and an empty node log. Not the
+scope, and not `pre_exec`: it was std's own `setpgid(0, pgid)` in the child,
+naming a process group that had just been reaped — `run` wired its web server
+to a throwaway shutdown channel, so the server ended a millisecond after
+starting, the main loop read that as the end of the run, shutdown reaped the
+anchor zombie holding the group, and a node still being spawned lost the race
+(`strace`: `setpgid` unfinished, `wait4(anchor)`, `setpgid … = -1 EPERM`).
+`launch` hands its web server the real channel and was never affected; the
+reporter's loaded machine lost the race every time and an idle one wins it.
+Fixed three ways: the anchor is no longer reaped at shutdown (the group outlives
+every spawn), `run`'s web server is on the run's shutdown channel (so `run`
+also has a web UI and monitoring past its first millisecond), and every
+child-side step — `setpgid`, `PR_SET_PDEATHSIG`, the cgroup join, the OOM
+bias, the container's control fd — now names itself in the node's `err` file
+with an allocation-free `writev`, which the parent reads back into
+`Unable to start: … — pre_exec: setpgid(0, N) failed: EPERM (errno 1)`.
+See `archived/0024-*`.
 
 **#0030** — required arguments through the Python frontend: the replay of a Python
 `IncludeLaunchDescription` handed the parent's whole scope over as the include's own
