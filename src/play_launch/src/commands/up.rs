@@ -1113,8 +1113,23 @@ pub(crate) async fn play(
             p.for_fqn(&fqn).cloned()
         });
 
+        // A `<timer>` around this `<composable_node>` delays its LoadNode
+        // request, not a process: the container actor holds the load back
+        // until this instant and then issues it (see
+        // `ComposableNodeMetadata::start_after`). Measured against the SAME
+        // launch epoch as every node and container above, so a `<timer>` that
+        // encloses a mix of them starts all of them together.
+        let composable_start_after =
+            crate::execution::start_delay::deadline(launch_epoch, context.record.start_delay_secs);
+
         // Auto-load enabled by default for all composable nodes
-        builder.add_composable_node(member_name, context, true, composable_tier);
+        builder.add_composable_node(
+            member_name,
+            context,
+            true,
+            composable_tier,
+            composable_start_after,
+        );
     }
 
     // Now spawn all actors at once and get handle + runner

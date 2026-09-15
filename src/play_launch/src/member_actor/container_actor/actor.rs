@@ -351,6 +351,13 @@ impl ContainerActor {
         loading_timeout_interval.tick().await;
 
         loop {
+            // Re-armed from the CURRENT composable map on every pass: a load
+            // that completed, failed or was cancelled since the last one
+            // changes which deadline is next, and taking it here rather than
+            // inside the `select!` also keeps the arm from borrowing
+            // `self.supervisor` while another arm holds its receiver.
+            let start_delay_wakeup = self.supervisor.next_start_delay_wakeup();
+
             tokio::select! {
                 status = child.wait() => {
                     let exit_code = status.ok().and_then(|s| s.code());
@@ -435,6 +442,30 @@ impl ContainerActor {
                             .handle_container_msg(msg, &self.config, channel)
                             .await;
                     }
+                }
+
+                // A launch `<timer>` around a `<composable_node>`. The
+                // container is up; these loads are not due yet. Sleeping to
+                // the earliest deadline — rather than checking on the 5 s
+                // liveness tick below — keeps the delay the launch file's
+                // number instead of rounding it up to this actor's period.
+                //
+                // `handle_load_all_composables` is the same pass that ran when
+                // the container reached Running: it re-selects whatever is now
+                // due and leaves the rest, so one arm covers any number of
+                // deadlines without holding state between them.
+                _ = async {
+                    match start_delay_wakeup {
+                        Some(at) => tokio::time::sleep_until(at).await,
+                        // Nothing is waiting: never wake on this arm. `select!`
+                        // still polls it, so it must be a future that is simply
+                        // never ready rather than one that is ready at once.
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    self.supervisor
+                        .handle_load_all_composables(&self.clients, self.control.as_mut())
+                        .await;
                 }
 
                 _ = loading_timeout_interval.tick() => {

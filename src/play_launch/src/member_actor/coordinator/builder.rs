@@ -45,6 +45,9 @@ struct ComposableNodeDefinition {
     metadata: MemberMetadata,
     /// Phase 38.9: resolved posix scheduling for this composable (None = no tier).
     sched: Option<crate::execution::sched_apply::AppliedTier>,
+    /// The launch `<timer>` deadline for this composable's load, if one
+    /// enclosed it (`crate::execution::start_delay::deadline`).
+    start_after: Option<tokio::time::Instant>,
 }
 
 /// Does `member_name` name one of the members declared `on_exit=Shutdown()`?
@@ -202,6 +205,7 @@ impl MemberCoordinatorBuilder {
         context: crate::execution::context::ComposableNodeContext,
         auto_load: bool,
         sched: Option<crate::execution::sched_apply::AppliedTier>,
+        start_after: Option<tokio::time::Instant>,
     ) {
         let target_container_name = context.record.target_container_name.clone();
 
@@ -228,6 +232,7 @@ impl MemberCoordinatorBuilder {
             target_container_name,
             metadata,
             sched,
+            start_after,
         });
     }
 
@@ -477,6 +482,7 @@ impl MemberCoordinatorBuilder {
                             auto_load: def.auto_load,
                             output_dir: def.context.output_dir.clone(),
                             sched: def.sched.clone(),
+                            start_after: def.start_after,
                         };
 
                     // Add composable node to container (keyed by canonical id;

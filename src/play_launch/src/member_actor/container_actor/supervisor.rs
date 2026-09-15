@@ -19,7 +19,7 @@ use std::{
     time::Instant,
 };
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Metadata for a composable node (Phase 12)
 #[derive(Debug, Clone)]
@@ -44,6 +44,22 @@ pub struct ComposableNodeMetadata {
     pub output_dir: PathBuf,
     /// Phase 38.9: resolved posix scheduling for this composable (None = no tier).
     pub sched: Option<crate::execution::sched_apply::AppliedTier>,
+    /// The launch `<timer>` deadline: this composable's LoadNode request is
+    /// not issued before this instant. `None` — the usual case — means no
+    /// enclosing timer.
+    ///
+    /// The container's own `ActorConfig::start_after` delays the PROCESS; this
+    /// delays one load into an already-running process, which is what a
+    /// `<timer>` around a `<composable_node>` (rather than around the
+    /// `<node_container>`) actually says. The two compose: a composable is
+    /// never loaded before its container exists, whichever deadline is later.
+    ///
+    /// Absolute, and for the same reasons as the node case — see
+    /// [`crate::execution::start_delay`]: one epoch per launch, so two
+    /// composables under one `<timer period="6.0">` load together however much
+    /// bookkeeping separated them, and a deadline already in the past costs
+    /// nothing when a container respawn re-loads everything.
+    pub start_after: Option<tokio::time::Instant>,
 }
 
 /// Everything phase 64 W2 tracks about a load in flight over the control
@@ -129,6 +145,11 @@ pub(super) struct ComposableNodeEntry {
     pub(super) retry_after: Option<Instant>,
     /// Crashes seen since this composable last loaded successfully.
     pub(super) crash_count: u32,
+    /// Whether the "waiting N seconds" line has already been printed for this
+    /// composable's launch `<timer>`. The deferral is re-evaluated on every
+    /// wake-up of the auto-load pass, and an operator needs to be told once,
+    /// not once per composable that is still ahead of it in the queue.
+    pub(super) start_delay_announced: bool,
 }
 
 /// Supervises the composable nodes of one container: composable map,
@@ -199,6 +220,7 @@ impl ComposableSupervisor {
             tracking: None,
             retry_after: None,
             crash_count: 0,
+            start_delay_announced: false,
         };
 
         self.composable_nodes.insert(name, entry);
@@ -764,6 +786,79 @@ impl ComposableSupervisor {
         }
     }
 
+    /// Split the auto-loadable composables into the ones due NOW and the ones
+    /// a launch `<timer>` is still holding back, as `(due, (held, remaining))`.
+    ///
+    /// A `<timer>` around a `<composable_node>` — as opposed to one around the
+    /// whole `<node_container>` — delays THIS load and nothing else: the
+    /// container process is up, its other composables are loading, and only
+    /// this one waits. A held-back entry keeps its `Unloaded` state, which
+    /// already says exactly the truth ("container running, load not
+    /// attempted"), and the actor calls this pass again at
+    /// [`Self::next_start_delay_wakeup`].
+    ///
+    /// The container's own delay is NOT re-checked here: it was waited out in
+    /// `handle_pending` before the process was spawned, and nothing calls this
+    /// until the process exists.
+    ///
+    /// `now` is a parameter so the decision is testable on tokio's paused
+    /// clock; the second half of each held-back pair is only for the log line,
+    /// and a composable is named there at most once (`start_delay_announced`)
+    /// — three composables at 2 s, 4 s and 6 s would otherwise print six lines
+    /// for three facts.
+    fn select_auto_loads(
+        &mut self,
+        now: tokio::time::Instant,
+    ) -> (Vec<String>, Vec<(String, std::time::Duration)>) {
+        let mut due: Vec<String> = Vec::new();
+        let mut held: Vec<(String, std::time::Duration)> = Vec::new();
+        for (name, entry) in self.composable_nodes.iter_mut() {
+            if !entry.metadata.auto_load
+                || !matches!(
+                    entry.state,
+                    ComposableState::Unloaded | ComposableState::Failed { .. }
+                )
+            {
+                continue;
+            }
+            match entry.metadata.start_after {
+                Some(at) if at > now => {
+                    if !entry.start_delay_announced {
+                        entry.start_delay_announced = true;
+                        held.push((name.clone(), at.duration_since(now)));
+                    }
+                }
+                _ => due.push(name.clone()),
+            }
+        }
+        (due, held)
+    }
+
+    /// The earliest launch-`<timer>` deadline that still holds an auto-load
+    /// back, or `None` when nothing is waiting on one.
+    ///
+    /// The container actor sleeps on this instead of polling: the 5 s
+    /// reconciliation tick is a liveness sweep with a period chosen for
+    /// liveness, and rounding a `<timer period="3.0">` up to it would make the
+    /// delay the runtime's number rather than the launch file's.
+    pub(super) fn next_start_delay_wakeup(&self) -> Option<tokio::time::Instant> {
+        let now = tokio::time::Instant::now();
+        self.composable_nodes
+            .values()
+            // The same predicate `handle_load_all_composables` selects on, so
+            // a wake-up always has something to do and a load is never left
+            // without a wake-up.
+            .filter(|entry| {
+                entry.metadata.auto_load
+                    && matches!(
+                        entry.state,
+                        ComposableState::Unloaded | ComposableState::Failed { .. }
+                    )
+            })
+            .filter_map(|entry| entry.metadata.start_after.filter(|at| *at > now))
+            .min()
+    }
+
     /// Handle LoadAllComposables control event.
     pub(super) async fn handle_load_all_composables(
         &mut self,
@@ -795,19 +890,19 @@ impl ComposableSupervisor {
             self.container_name, total_nodes, state_summary
         );
 
-        // Collect names of nodes to load (to avoid borrowing issues)
-        let nodes_to_load: Vec<String> = self
-            .composable_nodes
-            .iter()
-            .filter(|(_, entry)| {
-                entry.metadata.auto_load
-                    && matches!(
-                        entry.state,
-                        ComposableState::Unloaded | ComposableState::Failed { .. }
-                    )
-            })
-            .map(|(name, _)| name.clone())
-            .collect();
+        let (nodes_to_load, deferred) = self.select_auto_loads(tokio::time::Instant::now());
+
+        // At `info`, for the same reason `execution::start_delay` logs there:
+        // a node that is not there yet is the most confusing thing a staged
+        // launch does, and this is the answer to the question that follows.
+        for (name, remaining) in deferred {
+            info!(
+                "{}: Waiting {:.1}s before loading '{}' (launch <timer>)",
+                self.container_name,
+                remaining.as_secs_f64(),
+                name
+            );
+        }
 
         if nodes_to_load.is_empty() {
             debug!(
@@ -1033,5 +1128,225 @@ impl ComposableSupervisor {
                 );
             }
         }
+    }
+}
+
+/// The launch `<timer>` around a `<composable_node>`.
+///
+/// A composable has no process of its own: it is loaded into an already
+/// running container by a request this supervisor issues. So the delay is a
+/// deferred LOAD, decided here, where the node and container cases are a
+/// deferred spawn decided in `execution::start_delay`. These tests cover the
+/// decision; `tests/start_delay.rs` covers the wall clock.
+#[cfg(test)]
+mod start_delay_tests {
+    use super::*;
+    use crate::member_actor::container_actor::timing::LoadTimings;
+    use std::time::Duration;
+
+    fn supervisor() -> ComposableSupervisor {
+        let (state_tx, rx) = mpsc::channel(64);
+        // Held for the lifetime of the supervisor: a closed receiver would
+        // make every `emit` fail, which is not what is under test here.
+        std::mem::forget(rx);
+        ComposableSupervisor::new(
+            "container:/test_container".to_string(),
+            state_tx,
+            LoadTimings::default(),
+            std::sync::Arc::new(crate::execution::startup_governor::StartupGovernor::disabled()),
+        )
+    }
+
+    fn metadata(start_after: Option<tokio::time::Instant>) -> ComposableNodeMetadata {
+        ComposableNodeMetadata {
+            package: "composition".to_string(),
+            plugin: "composition::Talker".to_string(),
+            node_name: "talker".to_string(),
+            namespace: "/test".to_string(),
+            remap_rules: Vec::new(),
+            parameters: Vec::new(),
+            extra_args: Vec::new(),
+            auto_load: true,
+            output_dir: PathBuf::new(),
+            sched: None,
+            start_after,
+        }
+    }
+
+    /// Adds a composable already in the state the container reaches when its
+    /// process is up: `Unloaded`, waiting for the auto-load pass.
+    fn add(sup: &mut ComposableSupervisor, name: &str, start_after: Option<tokio::time::Instant>) {
+        sup.add_composable_node(name.to_string(), metadata(start_after));
+        sup.composable_nodes.get_mut(name).unwrap().state = ComposableState::Unloaded;
+    }
+
+    /// The case this exists for: same container, same instant, one composable
+    /// behind a `<timer>` and one not. The undelayed one loads with the
+    /// container; the delayed one is held back and NAMED, so the operator is
+    /// told rather than left looking at a container that is up and a node that
+    /// is not.
+    #[tokio::test(start_paused = true)]
+    async fn a_timer_holds_one_composable_back_and_not_its_neighbour() {
+        let epoch = tokio::time::Instant::now();
+        let mut sup = supervisor();
+        add(&mut sup, "prompt", None);
+        add(
+            &mut sup,
+            "delayed",
+            crate::execution::start_delay::deadline(epoch, Some(5.0)),
+        );
+
+        let (due, held) = sup.select_auto_loads(tokio::time::Instant::now());
+        assert_eq!(due, vec!["prompt".to_string()]);
+        assert_eq!(held.len(), 1, "{held:?}");
+        assert_eq!(held[0].0, "delayed");
+        assert_eq!(held[0].1, Duration::from_secs(5));
+    }
+
+    /// The deadline is the launch file's, not the actor's cadence: once it
+    /// passes, the same pass that held the composable back issues it — no
+    /// state carried between the two calls.
+    #[tokio::test(start_paused = true)]
+    async fn the_held_composable_is_due_once_its_deadline_passes() {
+        let epoch = tokio::time::Instant::now();
+        let mut sup = supervisor();
+        add(
+            &mut sup,
+            "delayed",
+            crate::execution::start_delay::deadline(epoch, Some(5.0)),
+        );
+
+        let (due, _) = sup.select_auto_loads(tokio::time::Instant::now());
+        assert!(due.is_empty(), "loaded before the <timer> elapsed");
+
+        tokio::time::sleep(Duration::from_millis(4_999)).await;
+        let (due, _) = sup.select_auto_loads(tokio::time::Instant::now());
+        assert!(due.is_empty(), "loaded a millisecond early");
+
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let (due, _) = sup.select_auto_loads(tokio::time::Instant::now());
+        assert_eq!(due, vec!["delayed".to_string()]);
+    }
+
+    /// What the actor's `select!` arm sleeps on: the EARLIEST deadline still
+    /// holding something back, and nothing at all once they have all passed —
+    /// the arm must go quiet rather than spin.
+    #[tokio::test(start_paused = true)]
+    async fn the_wakeup_is_the_earliest_deadline_still_ahead() {
+        let epoch = tokio::time::Instant::now();
+        let mut sup = supervisor();
+        add(&mut sup, "prompt", None);
+        for (name, secs) in [("late", 11.0), ("early", 3.0), ("middle", 6.0)] {
+            add(
+                &mut sup,
+                name,
+                crate::execution::start_delay::deadline(epoch, Some(secs)),
+            );
+        }
+
+        assert_eq!(
+            sup.next_start_delay_wakeup(),
+            Some(epoch + Duration::from_secs(3))
+        );
+
+        // The container's own auto-load pass: only the undelayed one goes.
+        let (due, _) = sup.select_auto_loads(tokio::time::Instant::now());
+        assert_eq!(due, vec!["prompt".to_string()]);
+        sup.composable_nodes.get_mut("prompt").unwrap().state =
+            ComposableState::Loaded { unique_id: 1 };
+
+        // Let the first deadline come due and take it, as the actor's arm does.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let (due, _) = sup.select_auto_loads(tokio::time::Instant::now());
+        assert_eq!(due, vec!["early".to_string()]);
+        sup.composable_nodes.get_mut("early").unwrap().state =
+            ComposableState::Loaded { unique_id: 2 };
+
+        assert_eq!(
+            sup.next_start_delay_wakeup(),
+            Some(epoch + Duration::from_secs(6)),
+            "the wake-up did not move on to the next deadline"
+        );
+
+        // Past every deadline, nothing is waiting and the arm must never fire.
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        assert_eq!(sup.next_start_delay_wakeup(), None);
+    }
+
+    /// A container respawn re-runs the whole auto-load pass. The deadline is
+    /// absolute, so a composable that already waited it out does not wait
+    /// again — the same property that makes a node's respawn free.
+    #[tokio::test(start_paused = true)]
+    async fn a_reload_after_the_deadline_is_not_delayed_again() {
+        let epoch = tokio::time::Instant::now();
+        let mut sup = supervisor();
+        add(
+            &mut sup,
+            "delayed",
+            crate::execution::start_delay::deadline(epoch, Some(5.0)),
+        );
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        assert_eq!(
+            sup.select_auto_loads(tokio::time::Instant::now()).0.len(),
+            1
+        );
+
+        // The container died and came back: everything is Unloaded again.
+        sup.composable_nodes.get_mut("delayed").unwrap().state = ComposableState::Unloaded;
+        assert_eq!(sup.next_start_delay_wakeup(), None);
+        assert_eq!(
+            sup.select_auto_loads(tokio::time::Instant::now()).0,
+            vec!["delayed".to_string()]
+        );
+    }
+
+    /// `auto_load=false` is the operator saying "not automatically"; a
+    /// `<timer>` on such a composable must not resurrect it, and must not
+    /// leave the actor waking up for a load it will not issue.
+    #[tokio::test(start_paused = true)]
+    async fn a_delayed_composable_that_does_not_auto_load_is_never_woken_for() {
+        let epoch = tokio::time::Instant::now();
+        let mut sup = supervisor();
+        add(
+            &mut sup,
+            "manual",
+            crate::execution::start_delay::deadline(epoch, Some(5.0)),
+        );
+        sup.composable_nodes
+            .get_mut("manual")
+            .unwrap()
+            .metadata
+            .auto_load = false;
+
+        assert_eq!(sup.next_start_delay_wakeup(), None);
+        let (due, held) = sup.select_auto_loads(tokio::time::Instant::now());
+        assert!(due.is_empty());
+        assert!(held.is_empty());
+    }
+
+    /// The log line is per composable, not per wake-up: a second pass over a
+    /// composable that is still waiting says nothing more about it.
+    #[tokio::test(start_paused = true)]
+    async fn a_held_composable_is_announced_once() {
+        let epoch = tokio::time::Instant::now();
+        let mut sup = supervisor();
+        add(
+            &mut sup,
+            "delayed",
+            crate::execution::start_delay::deadline(epoch, Some(11.0)),
+        );
+
+        assert_eq!(
+            sup.select_auto_loads(tokio::time::Instant::now()).1.len(),
+            1
+        );
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        assert!(
+            sup.select_auto_loads(tokio::time::Instant::now())
+                .1
+                .is_empty(),
+            "the same wait was announced twice"
+        );
     }
 }

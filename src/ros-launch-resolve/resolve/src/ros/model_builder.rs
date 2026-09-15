@@ -1223,23 +1223,14 @@ pub fn build_system_model(
         }
     }
 
-    // `<timer period="N">` around a `<composable_node>`. Every delay reaches
-    // the model as `NodeInstance::start_delay_secs` now, and `play_launch up`
-    // waits it out before spawning a node or a container — but a composable
-    // has no spawn of its own: it is loaded into its container by a LoadNode
-    // call the container actor makes once the container is up, and that path
-    // does not defer individual loads. So this one delay is carried in the
-    // model and NOT honoured by this repo's runtime, which is worth saying
-    // out loud; the rest are, and say nothing.
-    for (fqn, delay) in delayed_composables(dump) {
-        diagnostics.push(format!(
-            "structure: composable node {fqn} is delayed {delay}s by a <timer>; the delay is \
-             carried in the model, but play_launch loads a composable with its container \
-             rather than deferring the LoadNode call, so it will be loaded as soon as its \
-             container is ready"
-        ));
-    }
-
+    // A `<timer>` says nothing here any more. Every delay — node, container
+    // and composable alike — reaches the model as
+    // `NodeInstance::start_delay_secs` and is honoured by `play_launch up`:
+    // a node or a container waits before it is spawned, and a composable,
+    // which has no spawn of its own, has its LoadNode request held back by
+    // the container actor until the same deadline. The diagnostic that used
+    // to name every delayed composable was true for exactly as long as that
+    // last case was missing.
     let inputs = hash_inputs(input_paths, input_base, &mut diagnostics);
 
     model::SystemModel {
@@ -1265,23 +1256,6 @@ pub fn build_system_model(
         contracts,
         execution,
     }
-}
-
-/// Every COMPOSABLE node the launch file delayed with a `<timer>`, as
-/// `(FQN, seconds)`, in model order.
-///
-/// Nodes and containers are deliberately absent: their delay is carried in
-/// `NodeInstance::start_delay_secs` and honoured at spawn, so a diagnostic
-/// about them would only be noise. See the call site for why a composable is
-/// different.
-fn delayed_composables(dump: &LaunchDump) -> Vec<(String, f64)> {
-    dump.load_node
-        .iter()
-        .filter_map(|l| {
-            l.start_delay_secs
-                .map(|d| (fqn(&l.namespace, &l.node_name), d))
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -1933,6 +1907,11 @@ mod tests {
     /// node, a container and a composable alike — the field `up` waits on.
     /// Before it existed the value had nowhere to go and every delayed member
     /// spawned at once, which is the whole point of the field.
+    ///
+    /// And the model says nothing about any of them: all three kinds are
+    /// honoured at runtime now, so a diagnostic would be noise. The composable
+    /// used to be named here because its load could not be deferred; the
+    /// container actor defers it.
     #[test]
     fn a_timer_delay_reaches_the_model() {
         let mut dump = dump_with_launch_fields();
@@ -1958,18 +1937,15 @@ mod tests {
             Some(20.0)
         );
 
-        // The composable is the one whose delay this repo's runtime cannot
-        // honour (it loads with its container), so it — and only it — is
-        // named in the diagnostics.
+        // Nothing is reported: the value is carried AND acted on for every
+        // one of the three, so there is nothing a consumer needs warning of.
         let said: Vec<&String> = model
             .meta
             .diagnostics
             .iter()
             .filter(|d| d.contains("<timer>"))
             .collect();
-        assert_eq!(said.len(), 1, "diagnostics: {:?}", model.meta.diagnostics);
-        assert!(said[0].contains("/perception/tracker"), "{}", said[0]);
-        assert!(said[0].contains("20"), "{}", said[0]);
+        assert!(said.is_empty(), "diagnostics: {:?}", model.meta.diagnostics);
     }
 
     /// An undelayed launch says nothing about timers, and leaves the field

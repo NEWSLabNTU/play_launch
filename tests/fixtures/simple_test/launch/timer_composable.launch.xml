@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!--
+  A launch `<timer>` around a COMPOSABLE node.
+
+  A composable has no process of its own: the container is one process and
+  every composable is loaded into it. So the timer here delays a LoadNode
+  request, not a spawn — a different mechanism from `timer_delay.launch.xml`,
+  and the reason this fixture exists next to it.
+
+  Both composables are `composition::Talker` in the same container, declared
+  the same way; the only difference between them is the `<timer>`. A test that
+  measures the gap between their loads is measuring the timer and nothing
+  else.
+-->
+<launch>
+  <node_container pkg="rclcpp_components" exec="component_container"
+                  name="timer_container" namespace="/timer_comp">
+    <composable_node pkg="composition" plugin="composition::Talker"
+                     name="prompt" namespace="/timer_comp">
+      <param name="msg_prefix" value="prompt"/>
+    </composable_node>
+  </node_container>
+
+  <timer period="5.0">
+    <load_composable_node target="/timer_comp/timer_container">
+      <composable_node pkg="composition" plugin="composition::Talker"
+                       name="delayed" namespace="/timer_comp">
+        <param name="msg_prefix" value="delayed"/>
+      </composable_node>
+    </load_composable_node>
+  </timer>
+</launch>

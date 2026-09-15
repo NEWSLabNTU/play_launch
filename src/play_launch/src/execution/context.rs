@@ -605,9 +605,10 @@ pub fn prepare_composable_node_contexts_from_model(
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             env,
-            // Carried so the record and the model agree; `up` does not defer
-            // an individual LoadNode call, and `model_builder` emits a
-            // diagnostic naming any composable this leaves unhonoured.
+            // The launch `<timer>` delay. For a composable this is the wait
+            // before its LoadNode request, which the container actor holds
+            // back (`ComposableNodeMetadata::start_after`) rather than a wait
+            // before a spawn — a composable has no process of its own.
             start_delay_secs: inst.start_delay_secs,
             scope: None,
         };

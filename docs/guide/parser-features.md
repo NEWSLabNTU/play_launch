@@ -58,13 +58,21 @@ than starting those nodes early in silence; `--parser rust` on the XML/YAML
 frontends carries the delay end to end.
 
 A timer's delay reaches the SystemModel as
-`structure.nodes.<fqn>.start_delay_secs` (seconds before the FIRST spawn,
+`structure.nodes.<fqn>.start_delay_secs` (seconds before the FIRST start,
 accumulated across nested timers, distinct from `respawn_delay`), and
-`play_launch up` waits it out before spawning that member. The one case it
-does not cover is a `<timer>` around a `<composable_node>`: the delay is
-carried in the model, but a composable is loaded with its container rather
-than on a deferred LoadNode call, and the model's `meta.diagnostics` says so
-by name.
+`play_launch up` honours it for every kind of member. A node or a container
+waits out the deadline before it is spawned. A composable node has no process
+of its own, so its container holds back that one LoadNode request until the
+same deadline and issues it then — the container itself, and its undelayed
+composables, come up on the usual path meanwhile. Nothing about a `<timer>` is
+reported in `meta.diagnostics` any more; the note that used to name every
+delayed composable was there for exactly as long as that last case was
+unhonoured.
+
+Every deadline is measured from ONE instant per launch, as ROS measures a
+`TimerAction`, so members sharing a `<timer>` start together however much
+startup bookkeeping separated them — and a respawn or a container restart does
+not wait the delay a second time.
 
 ### Substitution types (shared across formats)
 
