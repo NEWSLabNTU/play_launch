@@ -403,6 +403,7 @@ impl CommandGenerator {
         )?;
 
         Ok(NodeRecord {
+            start_delay_secs: None,
             // The Rust parser does not model on_exit handlers; only the Python
             // dump path carries them (see NodeRecord::on_exit_shutdown).
             on_exit_shutdown: None,
@@ -572,6 +573,7 @@ impl CommandGenerator {
         };
 
         Ok(NodeRecord {
+            start_delay_secs: None,
             // The Rust parser does not model on_exit handlers; only the Python
             // dump path carries them (see NodeRecord::on_exit_shutdown).
             on_exit_shutdown: None,

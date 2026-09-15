@@ -67,6 +67,7 @@ impl NodeCapture {
             remaps: self.remappings.clone(),
             respawn: None,
             respawn_delay: None,
+            start_delay_secs: self.start_delay_secs,
             ros_args: (!self.ros_arguments.is_empty()).then(|| self.ros_arguments.clone()),
             scope: None,
         })
@@ -203,6 +204,7 @@ impl ContainerCapture {
             remaps: Vec::new(),
             respawn: Some(false),
             respawn_delay: None,
+            start_delay_secs: self.start_delay_secs,
             ros_args: (!self.ros_arguments.is_empty()).then(|| self.ros_arguments.clone()),
             scope: None,
         })
@@ -243,6 +245,7 @@ impl LoadNodeCapture {
         );
 
         Ok(LoadNodeRecord {
+            start_delay_secs: self.start_delay_secs,
             package: self.package.clone(),
             plugin: self.plugin.clone(),
             target_container_name: self.target_container_name.clone(),
@@ -393,6 +396,14 @@ pub struct ExecCaptures {
     /// silence — the version is what refuses that pairing.
     #[serde(default)]
     pub declared_arguments: Vec<crate::captures::DeclaredArgumentCapture>,
+    /// Actions the Python half recognised but could not model, as
+    /// `(action, detail)` — ABI 6. `TimerAction` is the one that motivated
+    /// it: the nodes inside it are captured (Python constructs them before
+    /// the timer sees them) but the DELAY has nowhere to go, and without
+    /// this the fact died with the object's context and `check` reported
+    /// the file clean.
+    #[serde(default)]
+    pub unsupported: Vec<(String, Option<String>)>,
 }
 
 impl ExecCaptures {
@@ -409,6 +420,7 @@ impl ExecCaptures {
                 .collect::<Vec<(String, String)>>(),
             includes: ctx.captured_includes().to_vec(),
             declared_arguments: ctx.captured_declarations().to_vec(),
+            unsupported: ctx.take_unsupported_actions(),
         }
     }
 
@@ -427,6 +439,9 @@ impl ExecCaptures {
         ctx.captured_includes_mut().extend(self.includes);
         ctx.captured_declarations_mut()
             .extend(self.declared_arguments);
+        for (action, detail) in self.unsupported {
+            ctx.note_unsupported_action(action, detail);
+        }
     }
 }
 
@@ -581,6 +596,15 @@ pub fn capture_container(container: ContainerCapture) {
 /// Capture a load_node to LaunchContext
 pub fn capture_load_node(load_node: LoadNodeCapture) {
     with_launch_context(|ctx| ctx.capture_load_node(load_node));
+}
+
+/// Report an action the Python frontend recognised but could not model.
+///
+/// The Python half has no record of its own; this is how a mock action says
+/// "the thing I was asked to represent is not in the output". `detail` says
+/// WHAT was lost when it is not the whole subtree.
+pub fn note_unsupported_action(action: &str, detail: Option<String>) {
+    with_launch_context(|ctx| ctx.note_unsupported_action(action.to_string(), detail));
 }
 
 /// Capture an include to LaunchContext

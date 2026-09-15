@@ -81,6 +81,12 @@ pub struct LaunchTraverser {
     pub(crate) scope_table: record::ScopeTable,
     /// Current scope ID (set when entering a launch file, used to stamp records)
     pub(crate) current_scope_id: usize,
+    /// Actions this parser recognised but does not implement, and therefore
+    /// dropped along with everything nested under them. Surfaced on
+    /// [`record::RecordJson::dropped_actions`] so `check` can refuse on them
+    /// — a `log::warn!` was the only trace before, which is why a `<timer>`
+    /// could delete a whole subtree and still exit 0.
+    pub(crate) dropped_actions: Vec<record::DroppedAction>,
 }
 
 impl LaunchTraverser {
@@ -105,6 +111,7 @@ impl LaunchTraverser {
             load_nodes: Vec::new(),
             scope_table: record::ScopeTable::new(),
             current_scope_id: 0,
+            dropped_actions: Vec::new(),
         }
     }
 

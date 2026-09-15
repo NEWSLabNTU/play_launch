@@ -313,6 +313,7 @@ impl LaunchTraverser {
             load_nodes: Vec::new(),
             scope_table: std::mem::take(&mut self.scope_table),
             current_scope_id: child_scope_id,
+            dropped_actions: Vec::new(),
         };
         included_traverser.traverse_entity(&root)?;
 
@@ -325,6 +326,11 @@ impl LaunchTraverser {
         self.scope_table.update_args(child_scope_id, final_args);
 
         // Merge records from included file into current records
+        // An action dropped inside an included file is dropped from THIS
+        // launch too — the parent is what `check` inspects.
+        for dropped in std::mem::take(&mut included_traverser.dropped_actions) {
+            self.note_dropped(dropped);
+        }
         self.records.extend(included_traverser.records);
         self.containers.extend(included_traverser.containers);
         self.load_nodes.extend(included_traverser.load_nodes);

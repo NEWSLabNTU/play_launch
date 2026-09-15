@@ -1,3 +1,4 @@
+mod delay;
 mod entity;
 mod include;
 #[cfg(feature = "ir")]

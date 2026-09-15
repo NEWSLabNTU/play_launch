@@ -190,6 +190,7 @@ impl ComposableNode {
         };
 
         let capture = LoadNodeCapture {
+            start_delay_secs: None,
             package: self.package.clone(),
             plugin: self.plugin.clone(),
             target_container_name,

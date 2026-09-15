@@ -30,6 +30,12 @@ pub struct NodeCapture {
     pub env_vars: Vec<(String, String)>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
+    /// Seconds to wait after launch start before this member is spawned,
+    /// accumulated from the enclosing `<timer period="N">` actions. `None`
+    /// for the ordinary (undelayed) case. Stamped by the traverser after the
+    /// timer body has been walked — see `traverser::delay`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_delay_secs: Option<f64>,
 }
 
 /// Captured container data from Python or XML parsing
@@ -47,6 +53,12 @@ pub struct ContainerCapture {
     pub ros_arguments: Vec<String>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
+    /// Seconds to wait after launch start before this member is spawned,
+    /// accumulated from the enclosing `<timer period="N">` actions. `None`
+    /// for the ordinary (undelayed) case. Stamped by the traverser after the
+    /// timer body has been walked — see `traverser::delay`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_delay_secs: Option<f64>,
 }
 
 /// Captured composable node data from Python or XML parsing
@@ -69,6 +81,12 @@ pub struct LoadNodeCapture {
     pub extra_args: std::collections::HashMap<String, String>,
     /// Scope ID from the launch tree (set by traverser after capture)
     pub scope_id: Option<usize>,
+    /// Seconds to wait after launch start before this member is spawned,
+    /// accumulated from the enclosing `<timer period="N">` actions. `None`
+    /// for the ordinary (undelayed) case. Stamped by the traverser after the
+    /// timer body has been walked — see `traverser::delay`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_delay_secs: Option<f64>,
 }
 
 /// A `DeclareLaunchArgument` a `.launch.py` constructed (issue 0030).

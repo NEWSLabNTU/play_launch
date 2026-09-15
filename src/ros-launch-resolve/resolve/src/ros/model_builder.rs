@@ -1210,6 +1210,28 @@ pub fn build_system_model(
         }
     }
 
+    // `<timer period="N">` — the launch file says these members start late,
+    // and the SystemModel schema has nowhere to record it: `NodeInstance`
+    // (ros-launch-manifest v0.1.35) carries `respawn_delay` but no START
+    // delay. The parser and the launch record both carry the value now; what
+    // is missing is the one model field to lower it into, which lives in
+    // another repository.
+    //
+    // Naming it here is the honest half of the fix. `play_launch up` spawns
+    // from `structure.nodes`, so until that field exists these members start
+    // immediately — which is still strictly better than the old behaviour,
+    // where a `<timer>` was an unsupported action and its whole subtree was
+    // absent from the model, but it is not the launch file's semantics and a
+    // reader of the model deserves to be told so rather than to find out from
+    // a race.
+    for (fqn, delay) in delayed_members(dump) {
+        diagnostics.push(format!(
+            "structure: {fqn} is delayed {delay}s by a <timer>; the SystemModel schema has \
+             no start-delay field, so a consumer spawning from this model will start it \
+             immediately"
+        ));
+    }
+
     let inputs = hash_inputs(input_paths, input_base, &mut diagnostics);
 
     model::SystemModel {
@@ -1235,6 +1257,37 @@ pub fn build_system_model(
         contracts,
         execution,
     }
+}
+
+/// Every member the launch file delayed with a `<timer>`, as
+/// `(FQN, seconds)`, in model order.
+///
+/// Separate from [`build_system_model`] only to keep that function's body
+/// readable; it exists because the delay has nowhere else to go — see the
+/// call site.
+fn delayed_members(dump: &LaunchDump) -> Vec<(String, f64)> {
+    let mut out = Vec::new();
+    for n in &dump.node {
+        if let Some(d) = n.start_delay_secs {
+            let name = n
+                .name
+                .as_deref()
+                .or(n.exec_name.as_deref())
+                .unwrap_or("unknown");
+            out.push((fqn(n.namespace.as_deref().unwrap_or("/"), name), d));
+        }
+    }
+    for c in &dump.container {
+        if let Some(d) = c.start_delay_secs {
+            out.push((fqn(&c.namespace, &c.name), d));
+        }
+    }
+    for l in &dump.load_node {
+        if let Some(d) = l.start_delay_secs {
+            out.push((fqn(&l.namespace, &l.node_name), d));
+        }
+    }
+    out
 }
 
 #[cfg(test)]

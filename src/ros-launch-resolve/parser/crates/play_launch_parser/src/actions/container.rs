@@ -213,6 +213,7 @@ impl ContainerAction {
         let global_params = if gp.is_empty() { None } else { Some(gp) };
 
         Ok(ComposableNodeContainerRecord {
+            start_delay_secs: None,
             args: arguments,
             cmd,
             env: None,
@@ -298,6 +299,7 @@ impl ContainerAction {
         );
 
         Ok(NodeRecord {
+            start_delay_secs: None,
             // The Rust parser does not model on_exit handlers; only the Python
             // dump path carries them (see NodeRecord::on_exit_shutdown).
             on_exit_shutdown: None,
@@ -570,6 +572,7 @@ impl ComposableNodeAction {
         );
 
         LoadNodeRecord {
+            start_delay_secs: None,
             package,
             plugin,
             target_container_name,

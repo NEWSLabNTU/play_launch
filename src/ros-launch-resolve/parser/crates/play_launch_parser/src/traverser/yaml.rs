@@ -164,8 +164,15 @@ impl LaunchTraverser {
                             self.process_yaml_load_composable_node(map)?;
                         }
                     }
+                    "timer" => {
+                        if let Some(map) = action_map {
+                            self.process_yaml_timer(map, path)?;
+                        }
+                    }
                     other => {
-                        log::warn!("Unsupported YAML action type: {}", other);
+                        // Recorded, not just warned: see
+                        // `LaunchTraverser::note_dropped_action`.
+                        self.note_dropped_action(other);
                     }
                 }
             }
@@ -301,6 +308,36 @@ impl LaunchTraverser {
         };
 
         self.context.restore_scope(scope);
+        result
+    }
+
+    /// `timer: { period: N, children: [...] }` — the YAML spelling of
+    /// `<timer>`. Children nest under `children:`, the same key
+    /// `process_yaml_group` reads (real ROS 2's `launch_yaml` `Entity`
+    /// reserves it for nested sub-entities).
+    ///
+    /// Unlike a group this pushes NO scope: a timer delays its children, it
+    /// does not scope them.
+    fn process_yaml_timer(&mut self, map: &Mapping, path: &Path) -> Result<()> {
+        let period_str = yaml_str(map, "period").ok_or_else(|| ParseError::MissingAttribute {
+            element: "timer".to_string(),
+            attribute: "period".to_string(),
+        })?;
+        let period_subs = parse_substitutions(period_str)?;
+        let period = resolve_substitutions(&period_subs, &self.context)
+            .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+        let period = crate::actions::timer::parse_period_secs(&period)?;
+
+        let mark = self.delay_mark();
+        let result = if let Some(children) = map
+            .get(Value::String("children".to_string()))
+            .and_then(|v| v.as_sequence())
+        {
+            self.process_yaml_actions(children, path)
+        } else {
+            Ok(())
+        };
+        self.apply_start_delay(mark, period);
         result
     }
 

@@ -161,7 +161,12 @@ impl std::error::Error for LoadError {}
 /// 5: the captures carry `declared_arguments` (play_launch issue 0030), so an
 /// include of a `.launch.py` can be held to launch's required-argument rule.
 /// A v4 object reports none and the rule is satisfied by silence.
-const ABI_VERSION: u32 = 5;
+/// 6: the captures carry `unsupported`, so an action the Python half could
+/// not model (a `TimerAction`'s delay) reaches the record instead of dying
+/// with the object's own context. A v5 object reports none and `check` then
+/// passes a launch file whose delays were silently discarded — the same
+/// serde-defaulted-field trap ABI 3 was bumped for.
+const ABI_VERSION: u32 = 6;
 
 /// What `sysconfig` says about an interpreter.
 #[derive(Debug, Clone)]

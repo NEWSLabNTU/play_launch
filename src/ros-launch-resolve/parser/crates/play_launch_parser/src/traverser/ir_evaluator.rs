@@ -266,6 +266,11 @@ impl LaunchTraverser {
         self.scope_table = std::mem::take(&mut child_traverser.scope_table);
 
         // Merge records
+        // An action dropped inside an included file is dropped from THIS
+        // launch too — the parent is what `check` inspects.
+        for dropped in std::mem::take(&mut child_traverser.dropped_actions) {
+            self.note_dropped(dropped);
+        }
         self.records.extend(child_traverser.records);
         self.containers.extend(child_traverser.containers);
         self.load_nodes.extend(child_traverser.load_nodes);

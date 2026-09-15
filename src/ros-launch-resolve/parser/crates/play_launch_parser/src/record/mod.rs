@@ -8,6 +8,6 @@ pub use generator::{
     resolve_exec_path,
 };
 pub use types::{
-    ComposableNodeContainerRecord, LoadNodeRecord, NodeRecord, RecordJson, ScopeEntry, ScopeOrigin,
-    ScopeTable, canonicalize_path, extract_package_from_path,
+    ComposableNodeContainerRecord, DroppedAction, LoadNodeRecord, NodeRecord, RecordJson,
+    ScopeEntry, ScopeOrigin, ScopeTable, canonicalize_path, extract_package_from_path,
 };

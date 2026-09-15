@@ -263,6 +263,7 @@ impl ComposableNodeContainer {
         log::trace!("Container capture: full_namespace: '{}'", full_namespace);
 
         let capture = ContainerCapture {
+            start_delay_secs: None,
             name: container.name.clone(),
             namespace: full_namespace.clone(),
             package: Some(container.package.clone()),

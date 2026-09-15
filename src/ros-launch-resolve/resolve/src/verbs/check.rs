@@ -12,6 +12,7 @@
 //! | outcome                                            | [`run`] returns |
 //! |----------------------------------------------------|-----------------|
 //! | parse / manifest-load / sched-validation failure    | `Err(..)`       |
+//! | an action was DROPPED (unsupported), strict         | `Ok(1)`         |
 //! | no manifests found at all                           | `Ok(0)`         |
 //! | manifests checked, no Error-severity diagnostic     | `Ok(0)`         |
 //! | at least one Error-severity diagnostic (post-filter)| `Ok(1)`         |
@@ -56,6 +57,10 @@ pub struct CheckInputs {
     pub explain: bool,
     /// Export the declared causal graph to this path (`.json` or `.dot`).
     pub export_graph: Option<PathBuf>,
+    /// Downgrade dropped (unsupported) launch actions from an error to a
+    /// warning. Off by default — see [`report_dropped_actions`] for why
+    /// strict is the default.
+    pub allow_unsupported_actions: bool,
     /// Emit a derived artifact instead of running the checks. Today:
     /// `diagnostics-params` — `diagnostic_updater` parameters restated from
     /// the declared endpoint bounds (phase 71 W5).
@@ -111,6 +116,13 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
         dump.container.len(),
         dump.load_node.len(),
     );
+
+    // Gate 1 — actions this parser dropped. Evaluated BEFORE manifests
+    // because it is independent of them: the launch trees this catches
+    // typically have no contracts at all, and the no-manifest path below
+    // returns `Ok(0)` early, which is precisely how a `<timer>` could delete
+    // a subtree and still be reported clean.
+    let dropped_is_error = report_dropped_actions(&dump, inputs.allow_unsupported_actions);
 
     // Load and check manifests: overlay > provider sidecar. The provider
     // channel is on by default, so `check` works with no manifest flags at
@@ -195,7 +207,7 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
             sources.overlay, sources.provider
         );
         if index.merge_diagnostics.is_empty() {
-            return Ok(0);
+            return Ok(if dropped_is_error { 1 } else { 0 });
         }
     }
 
@@ -219,11 +231,64 @@ pub fn run(inputs: CheckInputs) -> Result<i32> {
     // Summary
     print_summary(&index, rule_filter.as_ref());
 
-    if has_filtered_errors(&index, rule_filter.as_ref()) {
+    if has_filtered_errors(&index, rule_filter.as_ref()) || dropped_is_error {
         return Ok(1);
     }
 
     Ok(0)
+}
+
+/// Print the actions the parser dropped, and say whether that is fatal.
+///
+/// # Why strict is the default
+///
+/// A dropped action takes its whole subtree with it. `<timer period="3">`
+/// around four nodes did not mean "those four start three seconds late", it
+/// meant those four nodes were absent from the model — and `check` exited 0,
+/// so nothing in CI could be pointed at the failure. A checker that cannot
+/// fail on "I did not understand a third of this file" is not a gate.
+///
+/// The escape hatch is `--allow-unsupported-actions`, for a launch tree that
+/// knowingly uses an action this parser does not implement and wants the
+/// contract verdict anyway. It downgrades to a warning; it never hides the
+/// finding.
+fn report_dropped_actions(dump: &crate::ros::launch_dump::LaunchDump, allow: bool) -> bool {
+    if dump.dropped_actions.is_empty() {
+        return false;
+    }
+    let level = if allow { "warning" } else { "error" };
+    for d in &dump.dropped_actions {
+        let where_ = match &d.file {
+            Some(f) => format!(" in {f}"),
+            None => String::new(),
+        };
+        // `detail` exists because not every drop loses the same thing: the
+        // Python frontend keeps a `TimerAction`'s nodes and loses only the
+        // delay, and saying "everything nested inside it is missing" there
+        // would send the reader looking for nodes that are present.
+        let what = d.detail.clone().unwrap_or_else(|| {
+            "it and everything nested inside it is MISSING from the model".to_string()
+        });
+        eprintln!(
+            "{level}: unsupported launch action `{}`{where_} — {what}",
+            d.action
+        );
+    }
+    if allow {
+        eprintln!(
+            "note: --allow-unsupported-actions is set, so the {} dropped action(s) above \
+             do not fail this check",
+            dump.dropped_actions.len()
+        );
+        false
+    } else {
+        eprintln!(
+            "note: pass --allow-unsupported-actions to downgrade the {} dropped action(s) \
+             above to a warning",
+            dump.dropped_actions.len()
+        );
+        true
+    }
 }
 
 /// Apply the rule filter to a slice of diagnostics.
@@ -571,4 +636,62 @@ fn print_diagnostics_json(
         .collect();
     println!("{}", serde_json::to_string_pretty(&diags)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod dropped_action_tests {
+    use super::report_dropped_actions;
+    use crate::ros::launch_dump::{DroppedAction, LaunchDump};
+
+    fn dump_with(actions: Vec<DroppedAction>) -> LaunchDump {
+        let mut d = LaunchDump::empty();
+        d.dropped_actions = actions;
+        d
+    }
+
+    fn dropped(action: &str) -> DroppedAction {
+        DroppedAction {
+            action: action.to_string(),
+            file: Some("/tmp/x.launch.xml".to_string()),
+            detail: None,
+        }
+    }
+
+    /// The default. `check` exits 0 on a clean parse, as it always has.
+    #[test]
+    fn nothing_dropped_is_not_an_error() {
+        assert!(!report_dropped_actions(&dump_with(Vec::new()), false));
+        assert!(!report_dropped_actions(&dump_with(Vec::new()), true));
+    }
+
+    /// The bug this exists for: `check` exited 0 on a launch file whose
+    /// nodes the parser had thrown away, so no CI gate could catch it.
+    #[test]
+    fn a_dropped_action_is_an_error_by_default() {
+        assert!(report_dropped_actions(
+            &dump_with(vec![dropped("timer")]),
+            false
+        ));
+    }
+
+    /// The escape hatch downgrades, and only downgrades — the finding is
+    /// still printed either way.
+    #[test]
+    fn allow_unsupported_actions_downgrades_to_a_warning() {
+        assert!(!report_dropped_actions(
+            &dump_with(vec![dropped("timer")]),
+            true
+        ));
+    }
+
+    /// A drop with no known file is still a drop.
+    #[test]
+    fn a_drop_without_a_file_still_fails() {
+        let d = DroppedAction {
+            action: "log".to_string(),
+            file: None,
+            detail: None,
+        };
+        assert!(report_dropped_actions(&dump_with(vec![d]), false));
+    }
 }

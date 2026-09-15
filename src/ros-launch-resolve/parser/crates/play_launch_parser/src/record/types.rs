@@ -213,6 +213,34 @@ pub fn extract_package_from_path(path: &Path) -> Option<String> {
     None
 }
 
+/// One launch action the parser recognised as an action but does not
+/// implement, and therefore DROPPED — it and everything under it is absent
+/// from this record.
+///
+/// Before this existed the only trace was a `log::warn!` line, which no
+/// caller could see and no exit status reflected: `play_launch check`
+/// returned 0 on a launch file whose nodes it had silently thrown away
+/// (`<timer>` was the motivating case — an entire delayed subtree vanished
+/// and `check` called the result clean). Carrying them in the record makes
+/// the loss a VALUE, so `check` can refuse on it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DroppedAction {
+    /// The frontend tag / YAML key that was dropped (`"timer"`, `"log"`, …).
+    pub action: String,
+    /// Launch file it appeared in, as an absolute path when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// What was actually lost, when it is not the default "this action and
+    /// everything nested inside it is missing". The Python frontend needs
+    /// this: there, a `TimerAction`'s child `Node(...)` objects construct
+    /// themselves (and so are captured) before the timer sees them, so the
+    /// NODES survive and only the DELAY is discarded — a materially
+    /// different failure, and one that reads as success if described with
+    /// the same sentence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 /// Root structure for record.json
 /// Fields ordered to match Python output
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,6 +258,12 @@ pub struct RecordJson {
     /// Parent references form the include tree.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<ScopeEntry>,
+    /// Actions this parser recognised but does not implement, and dropped
+    /// along with everything nested under them. Empty in the ordinary case;
+    /// `check` refuses a launch file with any entry here unless explicitly
+    /// told not to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped_actions: Vec<DroppedAction>,
 }
 
 impl RecordJson {
@@ -242,6 +276,7 @@ impl RecordJson {
             node: Vec::new(),
             variables: HashMap::new(),
             scopes: Vec::new(),
+            dropped_actions: Vec::new(),
         }
     }
 
@@ -310,6 +345,14 @@ pub struct NodeRecord {
     /// Scope ID referencing the scopes table (launch file origin)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<usize>,
+    /// `<timer period="N">` — seconds to wait after launch start before this
+    /// member is spawned (ROS 2's `TimerAction`, frontend tag `timer`).
+    /// Nested timers ADD: a `<timer period="2">` inside a `<timer period="3">`
+    /// yields `5.0`, which is when the inner action actually fires.
+    /// `None` = no enclosing timer, i.e. start immediately. Additive and
+    /// defaulted so records written before this field still deserialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_delay_secs: Option<f64>,
 }
 
 /// Composable node container record
@@ -341,6 +384,14 @@ pub struct ComposableNodeContainerRecord {
     /// Scope ID referencing the scopes table (launch file origin)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<usize>,
+    /// `<timer period="N">` — seconds to wait after launch start before this
+    /// member is spawned (ROS 2's `TimerAction`, frontend tag `timer`).
+    /// Nested timers ADD: a `<timer period="2">` inside a `<timer period="3">`
+    /// yields `5.0`, which is when the inner action actually fires.
+    /// `None` = no enclosing timer, i.e. start immediately. Additive and
+    /// defaulted so records written before this field still deserialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_delay_secs: Option<f64>,
 }
 
 /// Load node record (for composable nodes)
@@ -360,6 +411,14 @@ pub struct LoadNodeRecord {
     /// Scope ID referencing the scopes table (launch file origin)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<usize>,
+    /// `<timer period="N">` — seconds to wait after launch start before this
+    /// member is spawned (ROS 2's `TimerAction`, frontend tag `timer`).
+    /// Nested timers ADD: a `<timer period="2">` inside a `<timer period="3">`
+    /// yields `5.0`, which is when the inner action actually fires.
+    /// `None` = no enclosing timer, i.e. start immediately. Additive and
+    /// defaulted so records written before this field still deserialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_delay_secs: Option<f64>,
 }
 
 #[cfg(test)]
@@ -407,6 +466,7 @@ mod tests {
     #[test]
     fn test_serialize_node_record() {
         let node = NodeRecord {
+            start_delay_secs: None,
             on_exit_shutdown: None,
             args: None,
             cmd: vec![
@@ -440,6 +500,7 @@ mod tests {
     #[test]
     fn test_tuple_serialization() {
         let node = NodeRecord {
+            start_delay_secs: None,
             on_exit_shutdown: None,
             args: None,
             cmd: vec![],

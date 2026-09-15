@@ -191,6 +191,7 @@ impl LifecycleNode {
 
         let params_files_count = params_files.len();
         let capture = NodeCapture {
+            start_delay_secs: None,
             package: self.package.clone(),
             executable: self.executable.clone(),
             name: self.name.clone(),

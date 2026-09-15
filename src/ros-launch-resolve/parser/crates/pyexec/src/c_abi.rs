@@ -304,7 +304,12 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // 5: the captures carry `declared_arguments` (issue 0030). A v4 object
     // reports none, and the required-argument rule an include is held to is
     // then satisfied by silence. Same shape, same answer.
-    5
+    //
+    // 6: the captures carry `unsupported` — what this half recognised but
+    // could not model, `TimerAction`'s delay first among them. A v5 object
+    // reports none, so `check` passes a `.launch.py` whose delays were
+    // discarded. Serde-defaulted, hence silent, hence a version bump.
+    6
 }
 
 #[cfg(test)]
@@ -469,7 +474,7 @@ mod tests {
     /// launch tree that silently resolves to nothing.
     #[test]
     fn the_abi_version_moved_with_the_contract() {
-        assert_eq!(play_launch_py_abi_version(), 5);
+        assert_eq!(play_launch_py_abi_version(), 6);
     }
 
     /// ABI 5 (issue 0030): every `DeclareLaunchArgument` a file constructs comes

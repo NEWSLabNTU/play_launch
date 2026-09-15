@@ -3075,3 +3075,81 @@ fn test_dotted_submodule_attribute_access() {
     assert!(execs.contains(&"add_two_ints_server"), "{execs:?}");
     assert!(execs.contains(&"add_two_ints_client"), "{execs:?}");
 }
+
+/// `TimerAction` in a `.launch.py` is the dangerous half of the `<timer>`
+/// bug: Python constructs a `Node(...)` — and the parser captures it — before
+/// the enclosing `TimerAction` ever sees it, so the nodes SURVIVE and only
+/// the delay is discarded. The model then looks correct and the nodes race.
+///
+/// The delay is not recovered here (nothing in the Python frontend can say
+/// which captures belong to which timer without guessing, and a delay
+/// attached to the wrong node is worse than one reported missing). What is
+/// guaranteed is that the loss is reported instead of silent.
+#[test]
+fn a_python_timer_action_reports_its_discarded_delay() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import TimerAction
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(package='demo_nodes_cpp', executable='talker', name='plain_node'),
+        TimerAction(period=3.0, actions=[
+            Node(package='demo_nodes_cpp', executable='listener', name='timed_node'),
+        ]),
+    ])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+
+    // Both nodes are present — that was never the Python path's problem.
+    assert_eq!(record.node.len(), 2, "{:?}", record.node);
+
+    // The delay is not: say so, rather than let it pass for correct.
+    let dropped = record
+        .dropped_actions
+        .iter()
+        .find(|d| d.action == "timer")
+        .expect("the discarded TimerAction delay must be reported");
+    let detail = dropped
+        .detail
+        .as_deref()
+        .expect("a Python timer drop must say WHAT was lost");
+    assert!(
+        detail.contains("delay is discarded"),
+        "the detail must name the delay, not claim the nodes are missing: {detail}"
+    );
+    assert!(dropped.file.is_some(), "the drop must name its launch file");
+}
+
+/// A `.launch.py` with no unsupported action reports none — the gate must
+/// not fire on every Python launch file.
+#[test]
+fn a_plain_python_launch_file_reports_no_dropped_actions() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(package='demo_nodes_cpp', executable='talker', name='plain_node'),
+    ])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+    assert_eq!(record.node.len(), 1);
+    assert!(
+        record.dropped_actions.is_empty(),
+        "got {:?}",
+        record.dropped_actions
+    );
+}

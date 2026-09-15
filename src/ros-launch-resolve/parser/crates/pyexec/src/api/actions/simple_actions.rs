@@ -301,6 +301,31 @@ impl TimerAction {
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         log::debug!("Python Launch TimerAction: period={}s", period);
+
+        // The Python frontend captures a `Node(...)` the moment it is
+        // CONSTRUCTED, and Python evaluates `actions=[Node(...)]` before this
+        // constructor runs — so by now those nodes are already in the record,
+        // indistinguishable from any other node, and the only thing this
+        // action carries that the record does not is the delay.
+        //
+        // Nothing here guesses which captures belong to this timer. It could
+        // only be done by assuming they are the last N pushed, which is wrong
+        // the moment a node is built outside the list and passed in by name —
+        // and a delay silently attached to the wrong node is worse than a
+        // delay that is reported missing. So: report it, and let `check`
+        // refuse. The XML/YAML frontends model this properly (the traverser
+        // walks the timer body and knows exactly what came out of it); this
+        // is the gap that remains.
+        play_launch_parser::bridge::note_unsupported_action(
+            "timer",
+            Some(format!(
+                "TimerAction(period={period}) in a Python launch file: its {} action(s) ARE \
+                 modelled, but the {period}s delay is discarded and they will start \
+                 immediately. Express the delay in XML/YAML `<timer>`, which is modelled.",
+                actions.len()
+            )),
+        );
+
         Self { period, actions }
     }
 

@@ -136,6 +136,8 @@ const CANDIDATES: &[&str] = &[
     "zzz_bogus",
     "on_exit",
     "node-name",
+    // `<timer period=…>` — ROS 2's `TimerAction.parse` reads it (required).
+    "period",
     "allow_substs",
 ];
 

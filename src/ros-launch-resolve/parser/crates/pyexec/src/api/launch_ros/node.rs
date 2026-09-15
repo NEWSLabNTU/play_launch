@@ -250,6 +250,7 @@ impl Node {
 
         let params_files_count = params_files.len();
         let capture = NodeCapture {
+            start_delay_secs: None,
             package: node.package.clone(),
             executable: node.executable.clone(),
             name: node.name.clone(),

@@ -86,6 +86,12 @@ pub struct LaunchDump {
     /// Present when the parser is run with scope tracking enabled.
     #[serde(default)]
     pub scopes: Vec<ScopeEntry>,
+    /// Actions the parser dropped. `check` refuses a launch file with any
+    /// entry here unless `--allow-unsupported-actions` is given: before this
+    /// existed the loss was a `log::warn!` line and `check` exited 0 on a
+    /// launch tree whose nodes it had thrown away.
+    #[serde(default)]
+    pub dropped_actions: Vec<DroppedAction>,
 }
 
 impl LaunchDump {
@@ -104,8 +110,23 @@ impl LaunchDump {
             file_data: HashMap::new(),
             variables: HashMap::new(),
             scopes: Vec::new(),
+            dropped_actions: Vec::new(),
         }
     }
+}
+
+/// One launch action the parser recognised but does not implement, and
+/// therefore dropped along with everything nested under it. Mirrors the
+/// parser's `record::DroppedAction`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct DroppedAction {
+    pub action: String,
+    #[serde(default)]
+    pub file: Option<String>,
+    /// What was lost, when it is not the whole subtree — see the parser's
+    /// `record::DroppedAction::detail`.
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 /// The serialization format for a node container record.
@@ -139,6 +160,12 @@ pub struct NodeContainerRecord {
     /// Scope ID referencing the scopes table (launch file origin)
     #[serde(default)]
     pub scope: Option<usize>,
+    /// `<timer period="N">` — seconds after launch start before this member
+    /// is spawned, accumulated across nested timers. Mirrors the parser's
+    /// `record::NodeRecord::start_delay_secs`; absent on records dumped
+    /// before `<timer>` was supported.
+    #[serde(default)]
+    pub start_delay_secs: Option<f64>,
 }
 
 /// phase-54 (issue 0007) — one parameter source in ROS's ordered model.
@@ -190,6 +217,12 @@ pub struct NodeRecord {
     /// Scope ID referencing the scopes table (launch file origin)
     #[serde(default)]
     pub scope: Option<usize>,
+    /// `<timer period="N">` — seconds after launch start before this member
+    /// is spawned, accumulated across nested timers. Mirrors the parser's
+    /// `record::NodeRecord::start_delay_secs`; absent on records dumped
+    /// before `<timer>` was supported.
+    #[serde(default)]
+    pub start_delay_secs: Option<f64>,
 }
 
 /// The serialization format for a composable node record.
@@ -221,6 +254,12 @@ pub struct ComposableNodeRecord {
     /// Scope ID referencing the scopes table (launch file origin)
     #[serde(default)]
     pub scope: Option<usize>,
+    /// `<timer period="N">` — seconds after launch start before this member
+    /// is spawned, accumulated across nested timers. Mirrors the parser's
+    /// `record::NodeRecord::start_delay_secs`; absent on records dumped
+    /// before `<timer>` was supported.
+    #[serde(default)]
+    pub start_delay_secs: Option<f64>,
 }
 
 /// Read an deserialize the launch record dump.

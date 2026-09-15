@@ -12,6 +12,7 @@ pub mod node;
 pub mod set_env;
 pub mod set_parameter;
 pub mod set_remap;
+pub mod timer;
 
 pub use arg::ArgAction;
 pub use container::{ComposableNodeAction, ContainerAction};
@@ -25,6 +26,7 @@ pub use node::{NodeAction, Parameter, Remapping};
 pub use set_env::{SetEnvAction, UnsetEnvAction};
 pub use set_parameter::SetParameterAction;
 pub use set_remap::SetRemapAction;
+pub use timer::TimerAction;
 
 // --- From impls for converting action types to IR ActionKind ---
 

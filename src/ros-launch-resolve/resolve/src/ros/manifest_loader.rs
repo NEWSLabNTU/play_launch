@@ -4296,6 +4296,7 @@ mod tests {
 
     fn make_dump(scopes: Vec<ScopeEntry>) -> LaunchDump {
         LaunchDump {
+            dropped_actions: Vec::new(),
             node: vec![],
             load_node: vec![],
             container: vec![],
@@ -4699,6 +4700,7 @@ mod tests {
         ]);
         // Only add a node to scope 0, scope 1 has no entities
         dump.node.push(NodeRecord {
+            start_delay_secs: None,
             on_exit_shutdown: None,
             executable: "talker".to_string(),
             package: Some("demo_nodes_cpp".to_string()),
@@ -4745,6 +4747,7 @@ mod tests {
             None,
         )]);
         dump.node.push(NodeRecord {
+            start_delay_secs: None,
             on_exit_shutdown: None,
             executable: "cropbox".to_string(),
             package: Some("manifest_pipeline".to_string()),
@@ -4863,6 +4866,7 @@ mod tests {
             },
         ]);
         dump.node.push(NodeRecord {
+            start_delay_secs: None,
             on_exit_shutdown: None,
             executable: "cropbox".to_string(),
             package: Some("manifest_pipeline".to_string()),

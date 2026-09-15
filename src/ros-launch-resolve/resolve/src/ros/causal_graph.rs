@@ -592,6 +592,7 @@ paths:
         std::fs::write(dest_dir.join("synthetic.contract.yaml"), yaml).unwrap();
 
         let dump = LaunchDump {
+            dropped_actions: Vec::new(),
             node: vec![],
             load_node: vec![],
             container: vec![],

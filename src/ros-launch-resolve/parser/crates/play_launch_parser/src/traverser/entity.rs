@@ -3,7 +3,7 @@ use crate::{
     actions::{
         ArgAction, ContainerAction, DeclareArgumentAction, ExecutableAction, GroupAction,
         IncludeAction, LetAction, LoadComposableNodeAction, NodeAction, SetEnvAction,
-        SetParameterAction, SetRemapAction, UnsetEnvAction,
+        SetParameterAction, SetRemapAction, TimerAction, UnsetEnvAction, timer::parse_period_secs,
     },
     condition::should_process_entity,
     error::{ParseError, Result},
@@ -276,9 +276,41 @@ impl LaunchTraverser {
                     self.context.capture_load_node(capture);
                 }
             }
+            "timer" => {
+                // `<timer period="N">` — ROS 2's `TimerAction`. Its children
+                // are ordinary actions; the only thing the timer contributes
+                // is WHEN they start, so they are traversed exactly as a
+                // `<group>` body is and the delay is stamped afterwards on
+                // whatever they produced (`traverser::delay`). Traversing
+                // them is the half that matters most: the old fall-through
+                // to `Unsupported action type` dropped the timer AND every
+                // node beneath it, so a 17-node launch resolved to 7 and
+                // `check` still exited 0.
+                //
+                // No scope push: `TimerAction` is not a scoping action —
+                // `<push-ros-namespace>` or a `<let>` inside one is visible
+                // to its siblings afterwards, exactly as in an unscoped
+                // group. Only the start time changes.
+                let timer = TimerAction::from_entity(entity)?;
+                let period = resolve_substitutions(&timer.period, &self.context)
+                    .map_err(|e| ParseError::InvalidSubstitution(e.to_string()))?;
+                let period = parse_period_secs(&period)?;
+
+                let mark = self.delay_mark();
+                let result = entity
+                    .children()
+                    .try_for_each(|child| self.traverse_entity(&child));
+                // Stamp before propagating a child's error, mirroring the
+                // `<group>` arm's restore-then-`?` ordering.
+                self.apply_start_delay(mark, period);
+                result?;
+            }
             other => {
-                log::warn!("Unsupported action type: {}", other);
-                // For MVP: skip unknown actions
+                // Not a warning any more: an action this parser drops takes
+                // its whole subtree with it, so the loss is recorded on the
+                // record and `check` refuses on it (see
+                // `LaunchTraverser::note_dropped_action`).
+                self.note_dropped_action(other);
             }
         }
         Ok(())

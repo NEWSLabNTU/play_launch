@@ -29,6 +29,7 @@ pub fn handle_check(args: &CheckArgs) -> Result<()> {
         sched: args.sched.clone(),
         target: args.target.clone(),
         format: args.format.clone(),
+        allow_unsupported_actions: args.allow_unsupported_actions,
         rule: args.rule.clone(),
         explain: args.explain,
         export_graph: args.export_graph.clone(),

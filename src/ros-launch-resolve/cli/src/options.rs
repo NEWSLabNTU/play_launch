@@ -607,6 +607,14 @@ pub struct CheckArgs {
     #[arg(long, default_value = "posix")]
     pub target: String,
 
+    /// Do not fail on launch actions this parser does not implement.
+    /// An unsupported action is DROPPED together with everything nested
+    /// inside it, so by default `check` exits non-zero and names it; this
+    /// downgrades that to a warning for a launch tree that knowingly uses
+    /// one and wants the contract verdict anyway.
+    #[arg(long)]
+    pub allow_unsupported_actions: bool,
+
     /// Output format: terminal (default, with source excerpts) or json
     #[arg(long, default_value = "terminal")]
     pub format: String,

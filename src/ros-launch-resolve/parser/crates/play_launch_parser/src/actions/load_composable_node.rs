@@ -117,6 +117,7 @@ impl LoadComposableNodeAction {
                     remappings: node.remappings.clone(),
                     extra_args: node.extra_args.clone(),
                     scope_id: None,
+                    start_delay_secs: None,
                 }
             })
             .collect();
@@ -185,6 +186,7 @@ impl LoadComposableNodeAction {
 
                 // Build LoadNodeRecord
                 LoadNodeRecord {
+                    start_delay_secs: None,
                     package,
                     plugin,
                     target_container_name: normalized_target.clone(),

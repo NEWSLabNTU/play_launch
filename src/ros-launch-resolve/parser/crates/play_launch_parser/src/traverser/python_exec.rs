@@ -90,6 +90,17 @@ impl LaunchTraverser {
             }
         }
 
+        // Anything the Python frontend could not model. Stamped with THIS
+        // file, which is the one thing the mock action could not know.
+        for (action, detail) in self.context.take_unsupported_actions() {
+            log::warn!("Unsupported action type: {action} (in {})", path.display());
+            self.note_dropped(crate::record::DroppedAction {
+                action,
+                file: Some(path.display().to_string()),
+                detail,
+            });
+        }
+
         // Python API stores captures directly in self.context via thread-local
         // (SetParameter also writes global params directly to context via thread-local)
         log::debug!("After Python execution:");

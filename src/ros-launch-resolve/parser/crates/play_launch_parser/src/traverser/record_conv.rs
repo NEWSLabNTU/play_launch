@@ -128,6 +128,7 @@ impl LaunchTraverser {
             file_data: HashMap::new(),
             variables: self.context.configurations(),
             scopes: self.scope_table.into_entries(),
+            dropped_actions: self.dropped_actions,
         })
     }
 }

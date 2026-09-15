@@ -117,6 +117,9 @@ pub struct LaunchContext {
     /// How many `OpaqueFunction` executions are on the stack; a declaration
     /// captured while this is non-zero is opaque to launch's include check.
     opaque_depth: usize,
+    /// Actions the Python frontend recognised but could not model, as
+    /// `(action, detail)`. Drained by `execute_python_file`.
+    unsupported_actions: Vec<(String, Option<String>)>,
 }
 
 impl LaunchContext {
@@ -134,6 +137,7 @@ impl LaunchContext {
             captured_containers: Vec::new(),
             captured_load_nodes: Vec::new(),
             captured_includes: Vec::new(),
+            unsupported_actions: Vec::new(),
             captured_declarations: Vec::new(),
             opaque_depth: 0,
         }
@@ -167,6 +171,7 @@ impl LaunchContext {
             captured_containers: Vec::new(),
             captured_load_nodes: Vec::new(),
             captured_includes: Vec::new(),
+            unsupported_actions: Vec::new(),
             captured_declarations: Vec::new(),
             opaque_depth: 0,
         }
@@ -633,6 +638,21 @@ impl LaunchContext {
 
     // ========== Entity Capture Methods ==========
 
+    /// Record an action the PYTHON frontend recognised but could not model.
+    ///
+    /// The Python half runs inside the interpreter with only a thread-local
+    /// pointer back here, so this is its one channel for saying "I saw
+    /// something I could not represent". The traverser drains it in
+    /// `execute_python_file` and stamps the launch file onto each entry.
+    pub fn note_unsupported_action(&mut self, action: String, detail: Option<String>) {
+        self.unsupported_actions.push((action, detail));
+    }
+
+    /// Take (and clear) what the Python frontend could not model.
+    pub fn take_unsupported_actions(&mut self) -> Vec<(String, Option<String>)> {
+        std::mem::take(&mut self.unsupported_actions)
+    }
+
     /// Capture a node definition
     pub fn capture_node(&mut self, node: NodeCapture) {
         self.captured_nodes.push(node);
@@ -1037,6 +1057,7 @@ mod tests {
         let mut context = LaunchContext::new();
 
         let node = NodeCapture {
+            start_delay_secs: None,
             package: "pkg".to_string(),
             executable: "exec".to_string(),
             name: Some("node1".to_string()),
@@ -1061,6 +1082,7 @@ mod tests {
         let mut context = LaunchContext::new();
 
         context.capture_node(NodeCapture {
+            start_delay_secs: None,
             package: "pkg1".to_string(),
             executable: "exec1".to_string(),
             name: None,
@@ -1076,6 +1098,7 @@ mod tests {
         });
 
         context.capture_node(NodeCapture {
+            start_delay_secs: None,
             package: "pkg2".to_string(),
             executable: "exec2".to_string(),
             name: None,
@@ -1098,6 +1121,7 @@ mod tests {
         let mut context = LaunchContext::new();
 
         context.capture_container(ContainerCapture {
+            start_delay_secs: None,
             name: "my_container".to_string(),
             namespace: "/ns".to_string(),
             package: Some("rclcpp_components".to_string()),
@@ -1116,6 +1140,7 @@ mod tests {
         let mut context = LaunchContext::new();
 
         context.capture_load_node(LoadNodeCapture {
+            start_delay_secs: None,
             package: "pkg".to_string(),
             plugin: "pkg::MyNode".to_string(),
             target_container_name: "/my_container".to_string(),
@@ -1154,6 +1179,7 @@ mod tests {
 
         // Add captures to parent
         context.capture_node(NodeCapture {
+            start_delay_secs: None,
             package: "parent_pkg".to_string(),
             executable: "parent_exec".to_string(),
             name: None,

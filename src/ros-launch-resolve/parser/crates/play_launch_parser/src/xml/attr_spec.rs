@@ -241,6 +241,16 @@ static SPECS: &[AttrSpec] = &[
         children: &[],
     },
     AttrSpec {
+        element: "timer",
+        // `TimerAction.parse` reads exactly `period` (required) plus the
+        // conditions every action carries.
+        supported: &["if", "unless", "period"],
+        known_unsupported: &[],
+        // A timer contains arbitrary actions; the YAML frontend nests them
+        // under `children:`, the same reserved key `<group>` uses.
+        children: &["children"],
+    },
+    AttrSpec {
         element: "group",
         supported: &["if", "unless", "scoped", "forwarding"],
         // ROS 2 rejects both (measured); this parser reads them. Warn rather
