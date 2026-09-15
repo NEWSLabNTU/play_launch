@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -75,13 +76,48 @@ def main():
     # of the wait, dumping a Python traceback over the launcher's own shutdown
     # messages. Loop so a second or third Ctrl-C (force-terminate) is equally
     # quiet.
+    #
+    # But group delivery is a terminal behaviour, not a general one. Under
+    # `systemd`, `KillMode=mixed` -- the default for a simple service -- signals
+    # only the MainPID, which is THIS wrapper, not the binary it spawned. With
+    # nothing forwarding, the Rust binary never learns it should shut down: the
+    # unit sits until TimeoutStopSec, gets SIGKILLed, and ends in `failed`.
+    # Measured on an aarch64 robot: every `systemctl --user stop` took the full
+    # 90 s and the nodes were killed rather than asked to exit, which for a
+    # vehicle means skipping the shutdown path that stops its motors.
+    #
+    # So forward explicitly instead of relying on the group. Forwarding is
+    # idempotent with group delivery -- in a terminal the binary gets the signal
+    # twice, and its staged shutdown already treats a repeat as
+    # "force-terminate", which is what a second Ctrl-C means anyway.
     proc = subprocess.Popen([binary] + sys.argv[1:], env=env)
-    while True:
+
+    def _forward(signum, _frame):
         try:
-            rc = proc.wait()
-            break
-        except KeyboardInterrupt:
-            continue
+            proc.send_signal(signum)
+        except (ProcessLookupError, OSError):
+            pass  # already gone; nothing to forward to
+
+    previous = {}
+    for _sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        try:
+            previous[_sig] = signal.signal(_sig, _forward)
+        except (ValueError, OSError):
+            pass  # not the main thread, or the platform lacks it
+
+    try:
+        while True:
+            try:
+                rc = proc.wait()
+                break
+            except KeyboardInterrupt:
+                continue
+    finally:
+        for _sig, _handler in previous.items():
+            try:
+                signal.signal(_sig, _handler)
+            except (ValueError, OSError):
+                pass
     # A child killed by signal N reports -N; map it to the conventional
     # 128+N shell exit status rather than passing a negative to sys.exit().
     sys.exit(128 - rc if rc < 0 else rc)
