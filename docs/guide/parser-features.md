@@ -251,3 +251,46 @@ The parser is validated against the full Autoware planning_simulator stack:
 - AutoSDV `logging_simulation.launch.yaml`: 44 nodes, 15 containers, 84 load_nodes
 
 Test workspaces under `tests/fixtures/`: `autoware/`, `simple_test/`, `sequential_loading/`, `concurrent_loading/`, `container_events/`, `parallel_loading/`.
+
+## Where this parser accepts more than `ros2 launch` does
+
+`play_launch` is meant to be a drop-in for `ros2 launch`, so a divergence in
+either direction matters. This one runs the dangerous way round: a launch file
+that `resolve`, `dump` and `check` all accept can still fail under `ros2 launch`.
+
+`respawn_delay` is the known case. ROS 2's own XML frontend parses it eagerly as
+a float, so a substitution reaches `float()` as a `Substitution` object and the
+launch dies at start-up:
+
+```xml
+<arg name="d" default="2.0"/>
+<node pkg="demo_nodes_cpp" exec="talker" name="t"
+      respawn="true" respawn_delay="$(var d)"/>
+```
+
+```
+$ ros2 launch gap.launch.xml
+[ERROR] [launch]: Caught exception in launch (see debug for traceback):
+ - TypeError: '<' not supported between instances of 'str' and 'float'
+
+$ play_launch dump launch gap.launch.xml
+SystemModel: system_model.yaml (1 nodes, 0 topics, 0 tier(s), 0 warning(s))
+  respawn_delay: 2.0        # evaluated correctly, as a float
+
+$ play_launch check gap.launch.xml ; echo $?
+0
+```
+
+This parser evaluates the substitution first and then converts, which is the
+behaviour one would want — but it means `check` passing is **not** sufficient
+evidence that `ros2 launch` will start the file. Note `respawn` itself takes a
+substitution under both parsers; it is only the typed numeric attribute that
+diverges.
+
+Consequence for anyone using `check` as a CI gate: it verifies this parser can
+resolve the tree, not that every other launch implementation can. Where a
+project must run under both, it is worth keeping a `ros2 launch --show-args`
+or a real start-up in the same gate.
+
+Found while migrating a robot's launch tree to `play_launch`, where the file
+dumped clean seventeen nodes and then failed to start.
