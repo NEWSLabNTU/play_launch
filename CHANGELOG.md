@@ -6,6 +6,174 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.11.0 — 2026-09-16
+
+Seven commits over 0.10.0, and all of them are `<timer>`. A launch `<timer>`
+used to delete its own subtree at parse time; once that was fixed it still
+started every delayed member at once. So a launch tree whose bring-up order is
+expressed as a stagger came up in the wrong order — on this repository's own
+nav2 bringup, ten of seventeen nodes, including the three lifecycle managers
+whose 3 s / 6 s / 11 s spacing is the entire reason the tree works — and
+`check` called that clean. `<timer>` is now carried end to end: parsed on the
+XML, YAML and Python frontends, honoured at spawn for nodes, containers and
+composables alike, and a delay this parser cannot attribute fails `check` by
+name instead of vanishing.
+
+Upgrading from 0.10.0 needs no changes to a launch file. Read the breaking
+section if you point CI at `check`.
+
+### Breaking: a dropped action fails `check`
+
+An action the parser does not implement used to be a `log::warn!` and exit 0.
+It is a `dropped_actions` value on the record now, and `check` exits non-zero
+on it. `--allow-unsupported-actions` downgrades it to a warning for a tree that
+knowingly uses such an action; it never hides the finding. The gate runs before
+the manifest load, because the no-manifest path returns `Ok(0)` early and that
+is precisely the route `timer` took.
+
+This can turn a green CI gate red, which is the point: the old exit 0 was
+reported against a launch file the checker had mostly thrown away. The minimal
+`<timer>` case resolved to one node instead of two, a real 17-node tree to 7,
+and `check` passed on both.
+
+### `<timer>` reaches the runtime
+
+The parser records what a timer adds as `start_delay_secs` on every member its
+body produced, after the fact rather than by threading a current delay through
+each record constructor — which is what lets `<include>`, `<node_container>`
+and the capture-based paths inherit it with no second implementation to keep in
+sync. Nested timers accumulate, matching ROS 2, where the inner timer starts
+when the outer fires. `period` takes substitutions. A timer does not scope its
+body, because `TimerAction` is not a `GroupAction`.
+
+`up` then waits the delay out. Two choices in `execution::start_delay` are
+load-bearing:
+
+- **It is not a gate in `startup_governor`.** That module's gates are policy —
+  a memory floor, a runnable ceiling, a concurrency limit — and each has a
+  deliberate bypass so a launch degrades rather than deadlocks. A `<timer>` is
+  the launch file's semantics: bypassing it under memory pressure is not a
+  degraded start, it is the wrong start. A member waits its deadline first and
+  asks for admission second, so it holds no concurrency permit while waiting,
+  and a member that is both delayed and in a later `startup.order` stage starts
+  when both say it may.
+- **The deadline is an absolute instant** taken once per launch, not a duration
+  slept inside each actor. ROS measures a `TimerAction` from the start of the
+  launch, so two nodes under one `<timer period="6.0">` must start together
+  however much bookkeeping separated their construction. A duration would bias
+  every delay by exactly the startup cost it is meant to be independent of, and
+  would make each respawn of a delayed node wait the delay again; a deadline in
+  the past costs nothing.
+
+Requires `ros-launch-manifest` v0.1.36, which adds `NodeInstance::
+start_delay_secs` (additive, skipped when absent). `commands/run.rs`, which had
+not compiled since `dropped_actions` and `start_delay_secs` were added, builds
+both by hand and is fixed with them empty — `run` has no launch file.
+
+### A composable node under a `<timer>`
+
+A `<timer>` around a `<composable_node>` has no process to defer: the composable
+is loaded into a container that is already running. The deferral therefore sits
+where the load is decided, in the container actor's composable supervisor.
+`ComposableNodeMetadata` gains `start_after`, an absolute instant from the same
+launch epoch as every node and container, and `select_auto_loads` splits the
+auto-loadable composables into those due now and those a timer still holds.
+Held entries keep their `Unloaded` state — "container running, load not
+attempted" was already the exact truth — and one `select!` arm sleeps to the
+earliest deadline still holding something back and runs the same pass again, so
+one arm covers any number of deadlines with no state carried between them.
+
+The wake-up is a `sleep_until` rather than a check on the existing 5 s
+reconciliation tick: rounding a `<timer period="3.0">` up to a period chosen
+for liveness sweeps would make the delay this runtime's number rather than the
+launch file's. A container restart is free, because the whole auto-load pass
+runs again on respawn.
+
+The cases compose. A `<timer>` around the `<node_container>` delays the process
+and its composables ride along; a `<timer>` around one `<composable_node>`
+delays that load alone, while the container and its other composables come up
+meanwhile. `model_builder` says nothing about a `<timer>` any more — that
+diagnostic was true for exactly as long as this case was missing.
+
+### A Python `TimerAction`'s delay, by object identity
+
+A `.launch.py` timer's children were modelled and its delay was not, so the
+record looked right and everything started at once. 0.10.0 called this
+unrecoverable, reasoning that the only handle is capture order — assume a
+timer's children are the last N captures — which breaks the moment a node is
+built outside the argument list and passed in by name.
+
+That is right about capture order and wrong that capture order is the only
+handle: `TimerAction.__new__` is handed the actual mock objects. Each capturing
+mock (`Node`, `LifecycleNode`, `ComposableNodeContainer`, `LoadComposableNodes`)
+now takes a mark around its own capture call and stores the index span it
+appended — the traverser's own argument, scoped to one constructor, where
+nothing else can run in between. The timer walks its `actions` by identity,
+through `GroupAction`, nested timers, helper functions and plain lists, and
+stamps exactly those. `visit_entity` descends into a timer, so an
+`OpaqueFunction` under one executes and whatever it captures is stamped too;
+those nodes used to be missing from the model outright. `launch_ros`'s
+`RosTimer` gets the same treatment — it discarded its period with no diagnostic
+at all, and a non-float period raised `TypeError` and failed the file.
+
+Four shapes still cannot be attributed and are named rather than guessed at:
+one action object in two unrelated timers, or in a timer and started directly
+(`ros2 launch` starts it twice, the model holds it once); a period that is not
+a number when the file is read; and a child this parser cannot see into, such
+as an `IncludeLaunchDescription`. Each names the nodes that lost a delay and
+what the file should do instead, and `check` refuses on them.
+
+Measured on a `demo_nodes_cpp` file shaped so any order-based rule gets it
+backwards — the delayed node is captured first. Real `ros2 launch` starts the
+three at +0.00 / +3.91 / +4.98 s; the model now says `None` / 4.0 / 5.0 with no
+dropped actions, where before it said `None` / `None` / `None` and reported
+three discarded delays. Loader ABI stays at 6. Analysis, including what remains
+unsound, in `docs/design/python-timer-delay-attribution.md`.
+
+### Fixed: the wheel's entry point forwards signals
+
+`play_launch` from the wheel is a Python wrapper that spawns the Rust binary
+and waits. It assumed signal delivery reached the binary on its own, which its
+comment asserted as fact: "Ctrl-C delivers SIGINT to the whole foreground
+process group". That is a terminal behaviour, not a general one. Under systemd,
+`KillMode=mixed` — the default for a simple service — signals only the MainPID,
+which is the wrapper. Nothing was forwarded, the Rust binary never learned it
+should shut down, and the unit sat until `TimeoutStopSec` and was SIGKILLed.
+
+Measured on an aarch64 robot running the launcher as a systemd user service:
+every `systemctl --user stop` took the full 90 s and the nodes were killed
+rather than asked to exit. For a vehicle that means skipping the shutdown path
+that stops its motors.
+
+SIGINT, SIGTERM and SIGHUP are now forwarded with `proc.send_signal()`,
+handlers restored afterwards, and `ProcessLookupError` swallowed for a child
+already gone. Forwarding is idempotent with group delivery: in a terminal the
+binary receives the signal twice, and its staged shutdown already treats a
+repeat as force-terminate, which is what a second Ctrl-C means. Installing a
+handler is skipped where the platform or thread disallows it rather than
+failing the run.
+
+### Two places this parser accepts more than `ros2 launch`
+
+Both run the dangerous way round for a drop-in replacement — a file that
+`resolve`, `dump` and `check` all accept can still fail under `ros2 launch` —
+and both are documented rather than changed.
+
+- **`respawn_delay` with a substitution.** ROS 2's XML frontend parses it
+  eagerly as a float, so a substitution reaches `float()` as a `Substitution`
+  and the launch dies at start-up with `TypeError: '<' not supported between
+  instances of 'str' and 'float'`. This parser evaluates first and converts
+  afterwards. Found while migrating a robot's launch tree, where the file
+  dumped seventeen nodes cleanly and then failed to start.
+- **A lazily-evaluated timer period.** `TimerAction` resolves `period` when the
+  timer fires, not when the launch description is built. If it is a
+  substitution defined by an `<arg>` in an included file, that scope has
+  usually been popped by then and `_wait_to_fire_event()` raises
+  `SubstitutionFailure`; asyncio swallows it, `ros2 launch` reports success,
+  and the children never start. This parser models them as present, which a
+  static model cannot do better — but it means `dump` and `check` agreeing is
+  not evidence the nodes will start.
+
 ## 0.10.0 — 2026-09-11
 
 172 commits over 0.9.0. Four themes. The
