@@ -294,3 +294,45 @@ or a real start-up in the same gate.
 
 Found while migrating a robot's launch tree to `play_launch`, where the file
 dumped clean seventeen nodes and then failed to start.
+
+### A second case: a lazily-evaluated `<timer period>` in an included file
+
+Related, and worse, because nothing reports it at all.
+
+`TimerAction` in ROS 2 resolves `period` when the timer *fires*, not when the
+launch description is built. If the period is a substitution defined by an
+`<arg>` in an included file, that file's scope has usually been popped by then:
+
+```xml
+<!-- navigation.launch.xml, included from a parent -->
+<arg name="server_delay" default="6.0"/>
+<timer period="$(var server_delay)">
+  <node pkg="nav2_controller" exec="controller_server" name="controller_server"/>
+</timer>
+```
+
+```
+$ ros2 launch parent.launch.xml
+Task exception was never retrieved
+future: <Task finished coro=<TimerAction._wait_to_fire_event() ...>
+launch.substitutions.substitution_failure.SubstitutionFailure:
+    launch configuration 'server_delay' does not exist
+```
+
+asyncio swallows the exception, `ros2 launch` reports success, and the timer's
+children never start — indefinitely. The same file launched directly works,
+because its scope is still alive.
+
+This parser models those children as present, which is defensible: the launch
+file does declare them, and a static model cannot know the scope will be gone
+at fire time. But the consequence for a user is that `dump` and `check` agreeing
+is **not** evidence the nodes will start.
+
+Two things would help, neither implemented here:
+
+- A diagnostic when a `<timer period>` is a substitution referring to a
+  configuration declared in the same included file — the shape that fails.
+- A note in `check`'s output that timer children are modelled statically.
+
+Found on a robot where the model showed seventeen nodes, `check` exited 0, and
+eight of them never started.
