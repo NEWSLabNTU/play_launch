@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod conditions;
+pub mod delay;
 pub mod event_handlers;
 pub mod launch;
 pub mod launch_description_sources;

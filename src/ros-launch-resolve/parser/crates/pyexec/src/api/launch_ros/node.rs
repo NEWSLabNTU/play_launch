@@ -1,6 +1,7 @@
 //! Mock Node class for launch_ros.actions
 
 use super::helpers::is_yaml_file;
+use crate::api::delay::CaptureSpan;
 use play_launch_parser::{
     bridge::{capture_node, get_current_ros_namespace},
     captures::NodeCapture,
@@ -41,6 +42,11 @@ pub struct Node {
     env_vars: Vec<(String, String)>,
     #[allow(dead_code)] // Used for condition evaluation, not stored in captures
     condition: Option<Py<PyAny>>,
+    /// Which capture this constructor appended, so a `TimerAction` holding
+    /// THIS object can attribute its delay to exactly it — see
+    /// `crate::api::delay`. Empty when the node's condition kept it out of
+    /// the model, which is also the right answer for a timer around it.
+    span: CaptureSpan,
 }
 
 #[pymethods]
@@ -117,7 +123,8 @@ impl Node {
 
         log::debug!("Node::new: name={:?}, namespace={:?}", name, namespace);
 
-        let node = Self {
+        let mut node = Self {
+            span: CaptureSpan::default(),
             package: package.clone(),
             executable: executable.clone(),
             name: name.clone(),
@@ -138,8 +145,11 @@ impl Node {
         };
 
         if should_capture {
-            // Capture this node immediately
+            // Capture this node immediately, bracketed so the node remembers
+            // WHICH capture is its own.
+            let mark = crate::api::delay::open_span();
             Self::capture_node(&node);
+            node.span = mark.close();
         } else {
             log::debug!(
                 "Skipping node capture due to condition: {} / {}",
@@ -162,6 +172,11 @@ impl Node {
 }
 
 impl Node {
+    /// What this node's constructor appended to the capture lists.
+    pub(crate) fn capture_span(&self) -> CaptureSpan {
+        self.span
+    }
+
     /// Evaluate a condition object
     ///
     /// Calls the evaluate() method on the condition if it exists

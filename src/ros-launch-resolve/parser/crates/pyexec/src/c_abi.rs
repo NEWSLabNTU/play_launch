@@ -309,6 +309,13 @@ pub extern "C" fn play_launch_py_abi_version() -> u32 {
     // could not model, `TimerAction`'s delay first among them. A v5 object
     // reports none, so `check` passes a `.launch.py` whose delays were
     // discarded. Serde-defaulted, hence silent, hence a version bump.
+    //
+    // STILL 6 now that a Python `TimerAction` attributes its delay (see
+    // `api::delay`). The field that carries it, `start_delay_secs` on each
+    // capture, predates this channel, and the pairing that would matter — a
+    // new loader with a v6 object that cannot attribute — is not silent: such
+    // an object reports every timer in `unsupported`, so `check` still
+    // refuses. A bump would only break a working installed pair.
     6
 }
 

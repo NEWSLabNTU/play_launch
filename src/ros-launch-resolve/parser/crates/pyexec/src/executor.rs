@@ -132,6 +132,10 @@ if not _ok:
                 .map_err(py_err)?;
             globals.set_item("__name__", "__main__").map_err(py_err)?;
 
+            // Capture indices are meaningful only within the run that
+            // produced them, so the delay registry starts each file empty.
+            crate::api::delay::reset();
+
             // CRITICAL: Run isolation AGAIN right before executing the file
             // This ensures any modifications to sys.modules/sys.path by previous files are reset
             py.run(&isolation_cstr, None, None).map_err(py_err)?;
@@ -173,6 +177,11 @@ if not _ok:
 
             // Visit all entities in the launch description
             visit_launch_description(py, &launch_desc).map_err(py_err)?;
+
+            // A timer whose `OpaqueFunction` the walk never reached still
+            // owes its nodes a delay; that is the one thing the walk can
+            // report only once it is over.
+            crate::api::delay::report_unvisited_deferred();
 
             // Re-resolve any containers/load_nodes with unresolved substitutions
             // This handles cases where containers are created before DeclareLaunchArgument
@@ -386,16 +395,22 @@ fn visit_launch_description(py: Python, launch_desc: &Py<PyAny>) -> PyResult<()>
         entities_list.len()
     );
 
-    // Visit each entity
+    // Visit each entity. Nothing at the top of a launch description is
+    // inside a timer — that is what `false` says here.
     for entity in entities_list.iter() {
-        visit_entity(py, entity)?;
+        visit_entity(py, entity, false)?;
     }
 
     Ok(())
 }
 
-/// Visit a single entity
-fn visit_entity(py: Python, entity: &Py<PyAny>) -> PyResult<()> {
+/// Visit a single entity.
+///
+/// `under_timer` says whether this entity was reached THROUGH a timer. It is
+/// what distinguishes "this node is delayed" from "this node is started
+/// immediately as well as by a timer", which is a shape the model cannot
+/// hold (see `crate::api::delay::note_immediate_start`).
+fn visit_entity(py: Python, entity: &Py<PyAny>, under_timer: bool) -> PyResult<()> {
     // Get entity type
     let entity_class = entity.getattr(py, "__class__")?;
     let entity_type = entity_class
@@ -408,6 +423,9 @@ fn visit_entity(py: Python, entity: &Py<PyAny>) -> PyResult<()> {
         "Node" | "LifecycleNode" | "ComposableNodeContainer" | "LoadComposableNodes" => {
             // Already captured during construction
             log::debug!("Entity {} already captured", entity_type);
+            if !under_timer {
+                crate::api::delay::note_immediate_start(py, entity);
+            }
         }
 
         "OpaqueFunction" => {
@@ -426,8 +444,40 @@ fn visit_entity(py: Python, entity: &Py<PyAny>) -> PyResult<()> {
                 && let Ok(entities) = result.extract::<Vec<Py<PyAny>>>(py)
             {
                 for entity in entities {
-                    visit_entity(py, &entity)?;
+                    visit_entity(py, &entity, under_timer)?;
                 }
+            }
+        }
+
+        "TimerAction" | "RosTimer" => {
+            // The timer's constructor has already delayed every child that
+            // existed when it ran. What it could NOT delay is anything an
+            // `OpaqueFunction` under it has yet to build — so visit the body
+            // and delay whatever the visit appends. Everything captured
+            // between the mark and here is, by construction, from inside this
+            // timer: the same argument the XML traverser makes.
+            let bound = entity.bind(py);
+            let body = if let Ok(t) = bound.cast::<crate::api::actions::TimerAction>() {
+                let t = t.borrow();
+                Some((t.seq, t.period_secs, t.actions.clone()))
+            } else if let Ok(t) = bound.cast::<crate::api::launch_ros::RosTimer>() {
+                let t = t.borrow();
+                Some((t.seq, t.period_secs, t.actions.clone()))
+            } else {
+                None
+            };
+            let Some((seq, period_secs, actions)) = body else {
+                log::trace!("{entity_type} is not this parser's own mock; skipping");
+                return Ok(());
+            };
+            crate::api::delay::mark_visited(seq);
+            let mark = crate::api::delay::open_span();
+            for sub in &actions {
+                visit_entity(py, sub, true)?;
+            }
+            let span = mark.close();
+            if let Some(secs) = period_secs {
+                crate::api::delay::accumulate(&span.refs(), secs);
             }
         }
 
@@ -443,7 +493,7 @@ fn visit_entity(py: Python, entity: &Py<PyAny>) -> PyResult<()> {
             let sub_list: Vec<Py<PyAny>> = sub_entities.extract(py)?;
             log::debug!("GroupAction contains {} sub-actions", sub_list.len());
             for sub in sub_list {
-                visit_entity(py, &sub)?;
+                visit_entity(py, &sub, under_timer)?;
             }
         }
 

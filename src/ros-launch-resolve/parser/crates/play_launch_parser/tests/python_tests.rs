@@ -3076,17 +3076,52 @@ fn test_dotted_submodule_attribute_access() {
     assert!(execs.contains(&"add_two_ints_client"), "{execs:?}");
 }
 
-/// `TimerAction` in a `.launch.py` is the dangerous half of the `<timer>`
-/// bug: Python constructs a `Node(...)` — and the parser captures it — before
-/// the enclosing `TimerAction` ever sees it, so the nodes SURVIVE and only
-/// the delay is discarded. The model then looks correct and the nodes race.
-///
-/// The delay is not recovered here (nothing in the Python frontend can say
-/// which captures belong to which timer without guessing, and a delay
-/// attached to the wrong node is worse than one reported missing). What is
-/// guaranteed is that the loss is reported instead of silent.
+// ===================================================================
+// `TimerAction` on the Python frontend (see `pyexec`'s `api::delay`).
+//
+// Python evaluates `actions=[Node(...)]` BEFORE `TimerAction.__new__` runs,
+// so the children are captured before the timer exists. The delay used to be
+// discarded here and merely reported, on the reasoning that the only way to
+// recover it was to assume the timer's children are the last N captures —
+// which is wrong the moment a node is built outside the argument list. The
+// delay is attributed now, but by OBJECT IDENTITY, not by order; the tests
+// below are written so that anything order-based fails them.
+// ===================================================================
+
+/// Find a node's start delay by name. `None` is "starts immediately", which
+/// is a real answer, so the node itself must exist for the assertion to mean
+/// anything.
+fn start_delay(record: &play_launch_parser::record::RecordJson, name: &str) -> Option<f64> {
+    record
+        .node
+        .iter()
+        .find(|n| n.name.as_deref() == Some(name))
+        .unwrap_or_else(|| {
+            panic!(
+                "node `{name}` missing from the record; got {:?}",
+                record
+                    .node
+                    .iter()
+                    .map(|n| n.name.clone())
+                    .collect::<Vec<_>>()
+            )
+        })
+        .start_delay_secs
+}
+
+fn timer_drops(record: &play_launch_parser::record::RecordJson) -> Vec<String> {
+    record
+        .dropped_actions
+        .iter()
+        .filter(|d| d.action == "timer")
+        .map(|d| d.detail.clone().unwrap_or_default())
+        .collect()
+}
+
+/// The base case: the delayed node carries the period and the plain one does
+/// not, and nothing is reported as lost.
 #[test]
-fn a_python_timer_action_reports_its_discarded_delay() {
+fn a_python_timer_action_delays_its_children() {
     let _guard = python_test_guard();
     let f = write_temp_launch_file(
         r#"
@@ -3107,24 +3142,512 @@ def generate_launch_description():
 
     let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
 
-    // Both nodes are present — that was never the Python path's problem.
     assert_eq!(record.node.len(), 2, "{:?}", record.node);
-
-    // The delay is not: say so, rather than let it pass for correct.
-    let dropped = record
-        .dropped_actions
-        .iter()
-        .find(|d| d.action == "timer")
-        .expect("the discarded TimerAction delay must be reported");
-    let detail = dropped
-        .detail
-        .as_deref()
-        .expect("a Python timer drop must say WHAT was lost");
+    assert_eq!(start_delay(&record, "plain_node"), None);
+    assert_eq!(start_delay(&record, "timed_node"), Some(3.0));
     assert!(
-        detail.contains("delay is discarded"),
-        "the detail must name the delay, not claim the nodes are missing: {detail}"
+        timer_drops(&record).is_empty(),
+        "an attributable timer must report nothing: {:?}",
+        timer_drops(&record)
     );
-    assert!(dropped.file.is_some(), "the drop must name its launch file");
+}
+
+/// THE adversarial case the previous analysis stopped at: the timer's child
+/// is built OUTSIDE the argument list and passed in by name, and is captured
+/// BEFORE the node that is not delayed. Any rule of the form "the timer's
+/// children are the last N captures" attaches the 3 s to `immediate_node`,
+/// which is worse than reporting the loss. Identity gets it right.
+#[test]
+fn a_timer_child_built_outside_the_argument_list_is_still_the_one_delayed() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import TimerAction
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    # Captured FIRST, delayed.
+    delayed = Node(package='demo_nodes_cpp', executable='listener', name='delayed_node')
+    # Captured SECOND, not delayed.
+    immediate = Node(package='demo_nodes_cpp', executable='talker', name='immediate_node')
+    return LaunchDescription([
+        immediate,
+        TimerAction(period=3.0, actions=[delayed]),
+    ])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+
+    assert_eq!(record.node.len(), 2, "{:?}", record.node);
+    assert_eq!(
+        start_delay(&record, "delayed_node"),
+        Some(3.0),
+        "the node the timer actually holds is the one that waits"
+    );
+    assert_eq!(
+        start_delay(&record, "immediate_node"),
+        None,
+        "the LAST-captured node is not in the timer and must not be delayed"
+    );
+    assert!(
+        timer_drops(&record).is_empty(),
+        "{:?}",
+        timer_drops(&record)
+    );
+}
+
+/// A timer whose children come back from a helper function. The helper runs
+/// before the plain node is built, so once again the timer's children are
+/// NOT the last captures.
+#[test]
+fn a_timers_children_may_be_built_by_a_helper_function() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import TimerAction
+from launch_ros.actions import Node
+
+
+def build_delayed():
+    return [
+        Node(package='demo_nodes_cpp', executable='listener', name='helper_a'),
+        Node(package='demo_nodes_cpp', executable='listener', name='helper_b'),
+    ]
+
+
+def generate_launch_description():
+    delayed = build_delayed()
+    plain = Node(package='demo_nodes_cpp', executable='talker', name='plain_node')
+    return LaunchDescription([plain, TimerAction(period=2.5, actions=delayed)])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+
+    assert_eq!(record.node.len(), 3, "{:?}", record.node);
+    assert_eq!(start_delay(&record, "helper_a"), Some(2.5));
+    assert_eq!(start_delay(&record, "helper_b"), Some(2.5));
+    assert_eq!(start_delay(&record, "plain_node"), None);
+    assert!(
+        timer_drops(&record).is_empty(),
+        "{:?}",
+        timer_drops(&record)
+    );
+}
+
+/// Nested timers ADD, the same as `<timer>` inside `<timer>`: ROS 2 starts
+/// the inner timer when the outer one fires.
+#[test]
+fn nested_python_timers_add_their_periods() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import TimerAction
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(package='demo_nodes_cpp', executable='talker', name='plain_node'),
+        TimerAction(period=3.0, actions=[
+            Node(package='demo_nodes_cpp', executable='listener', name='outer_only'),
+            TimerAction(period=2.0, actions=[
+                Node(package='demo_nodes_cpp', executable='listener', name='inner'),
+            ]),
+        ]),
+    ])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+
+    assert_eq!(record.node.len(), 3, "{:?}", record.node);
+    assert_eq!(start_delay(&record, "plain_node"), None);
+    assert_eq!(start_delay(&record, "outer_only"), Some(3.0));
+    assert_eq!(
+        start_delay(&record, "inner"),
+        Some(5.0),
+        "2 s inside 3 s fires at 5 s"
+    );
+    assert!(
+        timer_drops(&record).is_empty(),
+        "{:?}",
+        timer_drops(&record)
+    );
+}
+
+/// A `GroupAction` between the timer and its nodes changes nothing — the walk
+/// follows containers of actions.
+#[test]
+fn a_timer_delays_nodes_nested_in_a_group_action() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import GroupAction, TimerAction
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(package='demo_nodes_cpp', executable='talker', name='plain_node'),
+        TimerAction(period=4.0, actions=[
+            GroupAction([
+                Node(package='demo_nodes_cpp', executable='listener', name='grouped'),
+            ]),
+        ]),
+    ])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+    assert_eq!(start_delay(&record, "grouped"), Some(4.0));
+    assert_eq!(start_delay(&record, "plain_node"), None);
+    assert!(
+        timer_drops(&record).is_empty(),
+        "{:?}",
+        timer_drops(&record)
+    );
+}
+
+/// The genuinely ambiguous shape: ONE action object in TWO unrelated timers.
+/// `ros2 launch` starts it twice, at 2 s and at 5 s; this model holds the
+/// node once, so only one of those delays can be represented. Summing them
+/// would be nonsense and silently picking one is the failure this whole
+/// change is about — so the second timer is refused and named.
+#[test]
+fn a_node_shared_by_two_timers_is_reported_not_guessed_at() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import TimerAction
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    shared = Node(package='demo_nodes_cpp', executable='listener', name='shared_node')
+    return LaunchDescription([
+        TimerAction(period=2.0, actions=[shared]),
+        TimerAction(period=5.0, actions=[shared]),
+    ])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+
+    assert_eq!(
+        start_delay(&record, "shared_node"),
+        Some(2.0),
+        "the first timer's delay stands; the second is NOT summed onto it"
+    );
+    let drops = timer_drops(&record);
+    let detail = drops
+        .iter()
+        .find(|d| d.contains("shares an action object"))
+        .unwrap_or_else(|| panic!("the shared node must be reported: {drops:?}"));
+    assert!(
+        detail.contains("shared_node"),
+        "the diagnostic must NAME the node that lost a delay: {detail}"
+    );
+    assert!(
+        detail.contains('5'),
+        "the diagnostic must say WHICH delay was discarded: {detail}"
+    );
+}
+
+/// The other side of sharing: one object both inside a timer and started
+/// directly. `ros2 launch` starts it at t=0 AND when the timer fires; the
+/// model keeps the delayed start and says so rather than letting the
+/// immediate one vanish silently.
+#[test]
+fn a_node_both_delayed_and_started_directly_is_reported() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import TimerAction
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    both = Node(package='demo_nodes_cpp', executable='listener', name='both_node')
+    return LaunchDescription([both, TimerAction(period=4.0, actions=[both])])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+    let drops = timer_drops(&record);
+    let detail = drops
+        .iter()
+        .find(|d| d.contains("started"))
+        .unwrap_or_else(|| panic!("the double start must be reported: {drops:?}"));
+    assert!(detail.contains("both_node"), "{detail}");
+}
+
+/// A timer's `period` may be a substitution, as it may be in XML. It is
+/// resolved while the file is read, so the nodes carry a real number.
+#[test]
+fn a_python_timer_period_may_be_a_launch_configuration() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, TimerAction
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument('startup_delay', default_value='7.5'),
+        TimerAction(period=LaunchConfiguration('startup_delay'), actions=[
+            Node(package='demo_nodes_cpp', executable='listener', name='timed_node'),
+        ]),
+    ])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+    assert_eq!(start_delay(&record, "timed_node"), Some(7.5));
+    assert!(
+        timer_drops(&record).is_empty(),
+        "{:?}",
+        timer_drops(&record)
+    );
+}
+
+/// A period that is not a number when the file is read cannot be attributed.
+/// That is reported, with the nodes named, instead of a zero delay passing
+/// for "starts immediately".
+#[test]
+fn an_unresolvable_python_timer_period_is_reported_with_its_nodes_named() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import TimerAction
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        TimerAction(period=['not', 'a', 'number'], actions=[
+            Node(package='demo_nodes_cpp', executable='listener', name='timed_node'),
+        ]),
+    ])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+    assert_eq!(
+        start_delay(&record, "timed_node"),
+        None,
+        "no delay is better than a made-up one"
+    );
+    let drops = timer_drops(&record);
+    let detail = drops
+        .iter()
+        .find(|d| d.contains("not a number"))
+        .unwrap_or_else(|| panic!("an unresolvable period must be reported: {drops:?}"));
+    assert!(
+        detail.contains("timed_node"),
+        "the diagnostic must name the node: {detail}"
+    );
+}
+
+/// An `OpaqueFunction` under a timer builds its nodes long after the timer
+/// was constructed, so identity cannot reach them — the executor's walk
+/// delays whatever the function appends instead. Before this the walk did not
+/// enter a timer at all, so these nodes were missing from the model outright.
+#[test]
+fn a_timer_delays_the_nodes_an_opaque_function_builds() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import OpaqueFunction, TimerAction
+from launch_ros.actions import Node
+
+
+def build(context):
+    return [Node(package='demo_nodes_cpp', executable='listener', name='opaque_child')]
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(package='demo_nodes_cpp', executable='talker', name='plain_node'),
+        TimerAction(period=6.0, actions=[OpaqueFunction(function=build)]),
+    ])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+    assert_eq!(record.node.len(), 2, "{:?}", record.node);
+    assert_eq!(start_delay(&record, "opaque_child"), Some(6.0));
+    assert_eq!(start_delay(&record, "plain_node"), None);
+    assert!(
+        timer_drops(&record).is_empty(),
+        "{:?}",
+        timer_drops(&record)
+    );
+}
+
+/// A child this parser cannot see into is named, rather than passed over. An
+/// `IncludeLaunchDescription` under a timer is replayed by the traverser from
+/// its own context, outside any timer, so its nodes do not get the delay.
+#[test]
+fn a_timer_over_an_include_says_what_it_could_not_delay() {
+    let _guard = python_test_guard();
+    let dir = tempfile::tempdir().unwrap();
+    let inner = dir.path().join("inner.launch.py");
+    std::fs::write(
+        &inner,
+        r#"
+from launch import LaunchDescription
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(package='demo_nodes_cpp', executable='listener', name='included_node'),
+    ])
+"#,
+    )
+    .unwrap();
+    let outer = dir.path().join("outer.launch.py");
+    std::fs::write(
+        &outer,
+        format!(
+            r#"
+from launch import LaunchDescription
+from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        TimerAction(period=8.0, actions=[
+            IncludeLaunchDescription(PythonLaunchDescriptionSource({:?})),
+        ]),
+    ])
+"#,
+            inner.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+
+    let record = parse_launch_file(&outer, HashMap::new()).expect("parse should succeed");
+    let drops = timer_drops(&record);
+    let detail = drops
+        .iter()
+        .find(|d| d.contains("IncludeLaunchDescription"))
+        .unwrap_or_else(|| panic!("an unattributable child must be named: {drops:?}"));
+    assert!(detail.contains('8'), "and the delay it lost: {detail}");
+}
+
+/// `launch_ros`'s `RosTimer` is the ROS-clock spelling of the same action. It
+/// used to discard its period with no diagnostic at all.
+#[test]
+fn a_ros_timer_delays_its_children_too() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch_ros.actions import Node, RosTimer
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        Node(package='demo_nodes_cpp', executable='talker', name='plain_node'),
+        RosTimer(period=1.5, actions=[
+            Node(package='demo_nodes_cpp', executable='listener', name='timed_node'),
+        ]),
+    ])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+    assert_eq!(start_delay(&record, "timed_node"), Some(1.5));
+    assert_eq!(start_delay(&record, "plain_node"), None);
+    assert!(
+        timer_drops(&record).is_empty(),
+        "{:?}",
+        timer_drops(&record)
+    );
+}
+
+/// A timer delays whatever it contains, not only plain nodes: a container and
+/// its composables ride along, exactly as they do under `<timer>`.
+#[test]
+fn a_python_timer_delays_a_container_and_its_composables() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import TimerAction
+from launch_ros.actions import ComposableNodeContainer
+from launch_ros.descriptions import ComposableNode
+
+
+def generate_launch_description():
+    container = ComposableNodeContainer(
+        name='timed_container',
+        namespace='',
+        package='rclcpp_components',
+        executable='component_container',
+        composable_node_descriptions=[
+            ComposableNode(package='demo_nodes_cpp', plugin='demo_nodes_cpp::Talker', name='composed'),
+        ],
+    )
+    return LaunchDescription([TimerAction(period=9.0, actions=[container])])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+    let container = record
+        .container
+        .iter()
+        .find(|c| c.name == "timed_container")
+        .unwrap_or_else(|| panic!("container missing: {:?}", record.container));
+    assert_eq!(container.start_delay_secs, Some(9.0));
+    let load = record
+        .load_node
+        .first()
+        .unwrap_or_else(|| panic!("composable missing: {:?}", record.load_node));
+    assert_eq!(load.start_delay_secs, Some(9.0));
+    assert!(
+        timer_drops(&record).is_empty(),
+        "{:?}",
+        timer_drops(&record)
+    );
+}
+
+/// The same object listed twice in ONE timer is one node delayed once, not a
+/// doubled period.
+#[test]
+fn one_timer_listing_the_same_node_twice_delays_it_once() {
+    let _guard = python_test_guard();
+    let f = write_temp_launch_file(
+        r#"
+from launch import LaunchDescription
+from launch.actions import TimerAction
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    n = Node(package='demo_nodes_cpp', executable='listener', name='twice_node')
+    return LaunchDescription([TimerAction(period=3.0, actions=[n, n])])
+"#,
+    );
+
+    let record = parse_launch_file(f.path(), HashMap::new()).expect("parse should succeed");
+    assert_eq!(start_delay(&record, "twice_node"), Some(3.0));
 }
 
 /// A `.launch.py` with no unsupported action reports none — the gate must

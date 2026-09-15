@@ -49,13 +49,24 @@ These actions are registered in the official ROS 2 frontend but not currently ne
 | `log` / `log_info` / etc. | `launch`      | `Log` / `LogInfo` / etc.    |
 | `shutdown`               | `launch`       | `Shutdown`                  |
 
-¹ **`<timer>` on the Python frontend carries the nodes but not the delay.**
-Python constructs a `Node(...)` — and the parser captures it — before the
-enclosing `TimerAction` ever sees it, so nothing is lost from the model except
-the delay itself, and there is no sound way to recover which captures belong to
-which timer. `check` refuses a Python launch file whose timer was lost rather
-than starting those nodes early in silence; `--parser rust` on the XML/YAML
-frontends carries the delay end to end.
+¹ **`<timer>` on the Python frontend carries the delay too, by object
+identity.** Python constructs a `Node(...)` — and the parser captures it —
+before the enclosing `TimerAction` ever sees it, so the delay cannot be read
+off capture ORDER: a node built outside the argument list and passed in by
+name breaks any "last N captures" rule. It is read off the objects instead.
+Each capturing mock records the span of captures its own constructor
+appended, and the timer walks its `actions` and stamps exactly those, through
+`GroupAction`, nested timers (which add), helper functions and
+`OpaqueFunction`. `launch_ros`'s `RosTimer` is handled the same way; it used
+to discard its period with no diagnostic at all.
+
+Four shapes still cannot be attributed, and each is reported by name in
+`dropped_actions` (so `check` refuses) rather than guessed at: the same action
+object in two unrelated timers, or both in a timer and started directly
+(`ros2 launch` starts it twice, the model holds it once); a `period` that is
+not a number when the file is read; and a child this parser cannot see into,
+such as an `IncludeLaunchDescription`. See
+`docs/design/python-timer-delay-attribution.md`.
 
 A timer's delay reaches the SystemModel as
 `structure.nodes.<fqn>.start_delay_secs` (seconds before the FIRST start,

@@ -32,6 +32,9 @@ pub struct ComposableNodeContainer {
     executable: String,
     composable_nodes: Vec<Py<ComposableNode>>,
     ros_arguments: Vec<String>,
+    /// Which captures this constructor appended (the container AND its
+    /// composables) — see `crate::api::delay`.
+    span: crate::api::delay::CaptureSpan,
 }
 
 #[pymethods]
@@ -106,7 +109,8 @@ impl ComposableNodeContainer {
             executable_str
         );
 
-        let container = Self {
+        let mut container = Self {
+            span: crate::api::delay::CaptureSpan::default(),
             name: name_str.clone(),
             namespace: namespace_str.clone(),
             package: package_str,
@@ -142,8 +146,11 @@ impl ComposableNodeContainer {
         };
 
         if should_capture {
-            // Capture the container
+            // Capture the container and its composables, bracketed so this
+            // object remembers WHICH captures are its own.
+            let mark = crate::api::delay::open_span();
             Self::capture_container(&container);
+            container.span = mark.close();
             log::debug!("Captured ComposableNodeContainer '{}'", name_str);
         } else {
             log::debug!(
@@ -296,6 +303,11 @@ impl ComposableNodeContainer {
                 node.capture_as_load_node(&container.name, &full_ns_opt, &ros_namespace);
             }
         });
+    }
+
+    /// What this container's constructor appended to the capture lists.
+    pub(crate) fn capture_span(&self) -> crate::api::delay::CaptureSpan {
+        self.span
     }
 
     /// Evaluate a condition object (same logic as Node)

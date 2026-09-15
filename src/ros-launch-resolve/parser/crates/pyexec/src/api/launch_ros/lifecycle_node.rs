@@ -23,6 +23,8 @@ use pyo3::{prelude::*, types::PyDict};
 #[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct LifecycleNode {
+    /// Which capture this constructor appended — see `crate::api::delay`.
+    span: crate::api::delay::CaptureSpan,
     package: String,
     executable: String,
     name: Option<String>,
@@ -77,7 +79,8 @@ impl LifecycleNode {
             .map(|obj| Self::pyobject_to_string_static(py, &obj))
             .transpose()?;
 
-        let node = Self {
+        let mut node = Self {
+            span: crate::api::delay::CaptureSpan::default(),
             package: package_str,
             executable: executable_str,
             name: name_str,
@@ -89,8 +92,12 @@ impl LifecycleNode {
             output: output.unwrap_or_else(|| "screen".to_string()),
         };
 
-        // Capture as a regular node (lifecycle management not supported in static parsing)
+        // Capture as a regular node (lifecycle management not supported in
+        // static parsing), bracketed so the node remembers WHICH capture is
+        // its own and a `TimerAction` holding it can find it by identity.
+        let mark = crate::api::delay::open_span();
         Self::capture_node(&node, py)?;
+        node.span = mark.close();
 
         Ok(node)
     }
@@ -122,6 +129,11 @@ impl LifecycleNode {
 
         // Fallback to repr
         Ok(obj.bind(py).str()?.to_string())
+    }
+
+    /// What this node's constructor appended to the capture lists.
+    pub(crate) fn capture_span(&self) -> crate::api::delay::CaptureSpan {
+        self.span
     }
 
     /// Capture the lifecycle node as a regular NodeCapture

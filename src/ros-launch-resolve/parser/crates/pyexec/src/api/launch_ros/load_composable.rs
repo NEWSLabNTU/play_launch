@@ -32,6 +32,8 @@ pub struct LoadComposableNodes {
     #[allow(dead_code)] // Keep for API compatibility
     target_container: Py<PyAny>,
     composable_node_descriptions: Vec<Py<PyAny>>,
+    /// Which captures this constructor appended — see `crate::api::delay`.
+    span: crate::api::delay::CaptureSpan,
 }
 
 #[pymethods]
@@ -45,6 +47,8 @@ impl LoadComposableNodes {
         condition: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
+        let mut span = crate::api::delay::CaptureSpan::default();
+
         // Extract target container name for logging
         let target_str = Self::pyobject_to_string(target_container.bind(py))
             .unwrap_or_else(|_| "<unknown>".to_string());
@@ -84,8 +88,11 @@ impl LoadComposableNodes {
                 node_names
             );
 
-            // Capture the composable nodes
+            // Capture the composable nodes, bracketed so this object
+            // remembers WHICH captures are its own.
+            let mark = crate::api::delay::open_span();
             Self::capture_composable_nodes(py, &target_container, &composable_node_descriptions)?;
+            span = mark.close();
 
             log::debug!(
                 "Python Launch LoadComposableNodes created with {} nodes",
@@ -101,6 +108,7 @@ impl LoadComposableNodes {
         Ok(Self {
             target_container,
             composable_node_descriptions,
+            span,
         })
     }
 
@@ -113,6 +121,11 @@ impl LoadComposableNodes {
 }
 
 impl LoadComposableNodes {
+    /// What this action's constructor appended to the capture lists.
+    pub(crate) fn capture_span(&self) -> crate::api::delay::CaptureSpan {
+        self.span
+    }
+
     /// Capture composable nodes from the descriptions list
     fn capture_composable_nodes(
         py: Python,

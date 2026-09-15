@@ -281,14 +281,33 @@ impl ExecuteLocal {
 /// timer = TimerAction(period=10.0, actions=[action1, action2])
 /// ```
 ///
-/// Executes actions after a delay
+/// Executes actions after a delay.
+///
+/// Python evaluates `actions=[Node(...)]` before this constructor runs, so
+/// the children are already in the capture lists by the time the timer exists
+/// — which is why the delay used to be discarded here, with only a diagnostic
+/// left behind. It is attributed now, by OBJECT IDENTITY rather than by
+/// capture order: each capturing mock records the span of capture indices its
+/// own constructor appended, and this walks `actions` and stamps exactly
+/// those. See `crate::api::delay` for what remains unattributable and how it
+/// is reported.
 #[pyclass(module = "launch.actions", from_py_object)]
 #[derive(Clone)]
 pub struct TimerAction {
-    #[allow(dead_code)] // Keep for future use
-    period: f64,
-    #[allow(dead_code)] // Keep for future use
-    actions: Vec<Py<PyAny>>,
+    pub(crate) actions: Vec<Py<PyAny>>,
+    /// This timer's identity in the per-run registry.
+    pub(crate) seq: u64,
+    /// The captures this timer's children produced — an ENCLOSING timer
+    /// takes these whole, which is how nested periods add.
+    pub(crate) owned: Vec<crate::api::delay::CaptureRef>,
+    /// This timer and every timer nested inside it. A capture already owned
+    /// by one of them is this timer's own; one owned by anything else is the
+    /// genuinely shared case.
+    pub(crate) family: std::collections::HashSet<u64>,
+    /// Whether an `OpaqueFunction` under this timer still owes its nodes.
+    pub(crate) has_deferred: bool,
+    /// The period, if it resolved to a number while reading the file.
+    pub(crate) period_secs: Option<f64>,
 }
 
 #[pymethods]
@@ -296,43 +315,32 @@ impl TimerAction {
     #[new]
     #[pyo3(signature = (*, period, actions, **_kwargs))]
     fn new(
-        period: f64,
+        py: Python,
+        period: Py<PyAny>,
         actions: Vec<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
-        log::debug!("Python Launch TimerAction: period={}s", period);
-
-        // The Python frontend captures a `Node(...)` the moment it is
-        // CONSTRUCTED, and Python evaluates `actions=[Node(...)]` before this
-        // constructor runs — so by now those nodes are already in the record,
-        // indistinguishable from any other node, and the only thing this
-        // action carries that the record does not is the delay.
-        //
-        // Nothing here guesses which captures belong to this timer. It could
-        // only be done by assuming they are the last N pushed, which is wrong
-        // the moment a node is built outside the list and passed in by name —
-        // and a delay silently attached to the wrong node is worse than a
-        // delay that is reported missing. So: report it, and let `check`
-        // refuse. The XML/YAML frontends model this properly (the traverser
-        // walks the timer body and knows exactly what came out of it); this
-        // is the gap that remains.
-        play_launch_parser::bridge::note_unsupported_action(
-            "timer",
-            Some(format!(
-                "TimerAction(period={period}) in a Python launch file: its {} action(s) ARE \
-                 modelled, but the {period}s delay is discarded and they will start \
-                 immediately. Express the delay in XML/YAML `<timer>`, which is modelled.",
-                actions.len()
-            )),
+        let applied = crate::api::delay::apply_timer(py, "TimerAction", &period, &actions);
+        let period_secs = crate::api::delay::resolve_period(py, &period);
+        log::debug!(
+            "Python Launch TimerAction: period={:?}s over {} action(s)",
+            period_secs,
+            actions.len()
         );
-
-        Self { period, actions }
+        Self {
+            actions,
+            seq: applied.seq,
+            owned: applied.owned,
+            family: applied.family,
+            has_deferred: applied.has_deferred,
+            period_secs,
+        }
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "TimerAction(period={}, {} actions)",
-            self.period,
+            "TimerAction(period={:?}, {} actions)",
+            self.period_secs,
             self.actions.len()
         )
     }

@@ -174,10 +174,15 @@ impl SetParametersFromFile {
 #[pyclass(module = "launch_ros.actions", from_py_object)]
 #[derive(Clone)]
 pub struct RosTimer {
-    #[allow(dead_code)] // Keep for future use
-    period: Py<PyAny>,
-    #[allow(dead_code)] // Keep for future use
-    actions: Option<Py<PyAny>>,
+    pub(crate) actions: Vec<Py<PyAny>>,
+    /// The same identity-based delay bookkeeping `TimerAction` carries —
+    /// `RosTimer` is the ROS-clock spelling of the same action, and used to
+    /// discard its period with no diagnostic at all. See `crate::api::delay`.
+    pub(crate) seq: u64,
+    pub(crate) owned: Vec<crate::api::delay::CaptureRef>,
+    pub(crate) family: std::collections::HashSet<u64>,
+    pub(crate) has_deferred: bool,
+    pub(crate) period_secs: Option<f64>,
 }
 
 #[pymethods]
@@ -190,22 +195,50 @@ impl RosTimer {
         actions: Option<Py<PyAny>>,
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> PyResult<Self> {
-        // Convert period to string for logging
-        let period_str = if let Ok(f) = period.extract::<f64>(py) {
-            f.to_string()
-        } else if let Ok(i) = period.extract::<i64>(py) {
-            i.to_string()
-        } else {
-            period.to_string()
+        // `actions` is declared loosely here (any iterable, or absent), so
+        // normalise it to a list before the delay walk sees it. An `actions`
+        // this cannot read is SAID rather than passed over — silence is the
+        // failure mode this whole path was faulted for.
+        let actions: Vec<Py<PyAny>> = match &actions {
+            Some(obj) if !obj.is_none(py) => {
+                obj.extract::<Vec<Py<PyAny>>>(py).unwrap_or_else(|_| {
+                    play_launch_parser::bridge::note_unsupported_action(
+                        "timer",
+                        Some(
+                            "RosTimer(actions=…) in a Python launch file: `actions` is not a \
+                             list this parser can read, so nothing under it carries the \
+                             timer's delay. Pass a list of actions."
+                                .to_string(),
+                        ),
+                    );
+                    Vec::new()
+                })
+            }
+            _ => Vec::new(),
         };
-
-        log::debug!("Python Launch RosTimer: period={}", period_str);
-
-        Ok(Self { period, actions })
+        let applied = crate::api::delay::apply_timer(py, "RosTimer", &period, &actions);
+        let period_secs = crate::api::delay::resolve_period(py, &period);
+        log::debug!(
+            "Python Launch RosTimer: period={:?}s over {} action(s)",
+            period_secs,
+            actions.len()
+        );
+        Ok(Self {
+            actions,
+            seq: applied.seq,
+            owned: applied.owned,
+            family: applied.family,
+            has_deferred: applied.has_deferred,
+            period_secs,
+        })
     }
 
     fn __repr__(&self) -> String {
-        "RosTimer(...)".to_string()
+        format!(
+            "RosTimer(period={:?}, {} actions)",
+            self.period_secs,
+            self.actions.len()
+        )
     }
 }
 
