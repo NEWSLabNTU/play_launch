@@ -36,10 +36,10 @@ eyre = "0.6.12"
 play_launch_msgs = "*"
 play_launch_parser = { path = "../ros-launch-resolve/parser/crates/play_launch_parser" }
 ros-launch-resolve = { path = "../ros-launch-resolve/resolve" }
-ros-launch-manifest-types = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.35" }
-ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.35" }
-ros-launch-manifest-sched = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.35" }
-ros-launch-manifest-model = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.35" }
+ros-launch-manifest-types = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.36" }
+ros-launch-manifest-check = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.36" }
+ros-launch-manifest-sched = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.36" }
+ros-launch-manifest-model = { git = "https://github.com/NEWSLabNTU/ros-launch-manifest.git", tag = "v0.1.36" }
 spsc_shm = { path = "../spsc_shm" }
 futures = "0.3.30"
 glob = "0.3"
@@ -81,6 +81,10 @@ pkg-config = "0.3"
 
 [dev-dependencies]
 tempfile = "3.8"
+# `test-util` is the paused clock: `execution::start_delay`'s waits are
+# measured in seconds of launch time, and a test that spent them for real
+# would cost more than the rest of this crate's unit tests together.
+tokio = { version = "1.40.0", features = ["test-util"] }
 ts-rs = "12"
 
 # Release profile optimization for smaller binary size

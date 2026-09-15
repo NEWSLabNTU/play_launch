@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<!--
+  A launch `<timer>`, minimally. Two identical `demo_nodes_cpp` talkers: one
+  starts at once, the other five seconds later because a `<timer>` encloses it.
+
+  Deliberately the same package and executable for both, so the only
+  difference between them is the timer — a test that measures the gap between
+  their start times is measuring the timer and nothing else.
+-->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker" name="prompt" namespace="/timer_test" output="screen"/>
+
+  <timer period="5.0">
+    <node pkg="demo_nodes_cpp" exec="talker" name="delayed" namespace="/timer_test" output="screen"/>
+  </timer>
+</launch>

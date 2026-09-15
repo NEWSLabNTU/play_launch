@@ -962,6 +962,18 @@ pub(crate) async fn play(
         }
     }
 
+    // One epoch for every launch `<timer>` in this run. A `<timer
+    // period="6.0">` is six seconds after the LAUNCH started, not six seconds
+    // after whichever actor happened to be constructed last, so the instant is
+    // taken once here and every delayed member is measured against it —
+    // `execution::start_delay` has the rest of the reasoning.
+    //
+    // Taken here rather than at the top of `play()` because everything above
+    // is preparation (contexts, log dirs, param files) whose cost should not
+    // be charged against the launch file's declared delay; below this line
+    // actors are built and spawn.
+    let launch_epoch = tokio::time::Instant::now();
+
     // Add regular nodes to builder
     debug!("Adding {} regular nodes", num_pure_nodes);
     for context in pure_node_contexts {
@@ -1005,6 +1017,10 @@ pub(crate) async fn play(
                 .as_deref()
                 .map(|fqn| stage_assignment.stage_for(fqn))
                 .unwrap_or(0),
+            start_after: crate::execution::start_delay::deadline(
+                launch_epoch,
+                context.record.start_delay_secs,
+            ),
         };
 
         builder.add_regular_node(
@@ -1057,6 +1073,10 @@ pub(crate) async fn play(
                 .as_deref()
                 .map(|fqn| stage_assignment.stage_for(fqn))
                 .unwrap_or(0),
+            start_after: crate::execution::start_delay::deadline(
+                launch_epoch,
+                context.node_context.record.start_delay_secs,
+            ),
         };
 
         // Add container (oneshot receiver is ignored since composable nodes will be matched internally)

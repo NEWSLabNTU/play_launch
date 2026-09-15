@@ -23,6 +23,7 @@ All YAML action types below are supported by the official ROS 2 YAML frontend vi
 | `executable`           | `<executable>` T U  | `ExecuteProcess` T | `- executable:` T           | T U       |
 | `node_container`       | `<node_cont>` T U   | `ComposableNC` T   | `- node_container:` T       | T U       |
 | `load_composable_node` | `<load_cn>` T U     | `LoadCN` T         | `- load_composable_node:` T | T U       |
+| `timer`                | `<timer>` T U       | `TimerAction` ¹    | `- timer:` T                | —         |
 | `if`/`unless`          | attrs T U           | `condition=` T     | keys T                      | T         |
 | `OpaqueFunction`       | —                   | `OpaqueFunc` T     | —                           | T         |
 | **Substitutions**      | all 10 types T U    | all types T        | via XML engine              | T U       |
@@ -46,8 +47,24 @@ These actions are registered in the official ROS 2 frontend but not currently ne
 | `reset`                  | `launch`       | `ResetLaunchConfigurations` |
 | `for` / `for_each`       | `launch`       | `ForLoop` / `ForEach`       |
 | `log` / `log_info` / etc. | `launch`      | `Log` / `LogInfo` / etc.    |
-| `timer`                  | `launch`       | `TimerAction`               |
 | `shutdown`               | `launch`       | `Shutdown`                  |
+
+¹ **`<timer>` on the Python frontend carries the nodes but not the delay.**
+Python constructs a `Node(...)` — and the parser captures it — before the
+enclosing `TimerAction` ever sees it, so nothing is lost from the model except
+the delay itself, and there is no sound way to recover which captures belong to
+which timer. `check` refuses a Python launch file whose timer was lost rather
+than starting those nodes early in silence; `--parser rust` on the XML/YAML
+frontends carries the delay end to end.
+
+A timer's delay reaches the SystemModel as
+`structure.nodes.<fqn>.start_delay_secs` (seconds before the FIRST spawn,
+accumulated across nested timers, distinct from `respawn_delay`), and
+`play_launch up` waits it out before spawning that member. The one case it
+does not cover is a `<timer>` around a `<composable_node>`: the delay is
+carried in the model, but a composable is loaded with its container rather
+than on a deferred LoadNode call, and the model's `meta.diagnostics` says so
+by name.
 
 ### Substitution types (shared across formats)
 

@@ -63,6 +63,8 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         cmd,
         respawn: args.common.containers.disable_respawn.then_some(false),
         respawn_delay: Some(0.0),
+        // No launch file, so no `<timer>` to have enclosed this node.
+        start_delay_secs: None,
         scope: None,
     };
 
@@ -74,6 +76,9 @@ pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
         file_data: HashMap::new(),
         variables: HashMap::new(),
         scopes: Vec::new(),
+        // `run` builds its dump by hand from the CLI; there is no launch file
+        // for the parser to have dropped an action from.
+        dropped_actions: Vec::new(),
     };
 
     let runtime = build_tokio_runtime()?;
@@ -384,6 +389,8 @@ async fn run_direct(
             ),
             // One node, so there is no order to impose.
             startup_stage: 0,
+            // `run` builds its one node by hand — no launch file, no <timer>.
+            start_after: None,
         };
 
         // Add to builder

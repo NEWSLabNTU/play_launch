@@ -142,6 +142,23 @@ impl RegularNodeActor {
         let output_dir = exec.output_dir.clone();
         let mut command = exec.command;
 
+        // The launch `<timer>` delay, if this node had one. BEFORE admission,
+        // so a member waiting out six seconds does not sit on a concurrency
+        // permit while it does nothing — see `execution::start_delay` for why
+        // this composes with the governor rather than becoming a gate in it.
+        if crate::execution::start_delay::wait_for_start_delay(
+            &log_name,
+            self.config.start_after,
+            &mut self.shutdown_rx,
+        )
+        .await
+            == crate::execution::start_delay::StartDelay::ShutDown
+        {
+            debug!("[{}] Shutdown while awaiting start delay", self.name);
+            self.transition_to_stopped(None).await?;
+            return Ok(());
+        }
+
         // Phase 61: wait for a startup slot. Without this every actor reaches
         // this line at once — measured on a 12-core Orin, a 144-process launch
         // put 442 tasks in the runnable queue and load1 at 203, so every node

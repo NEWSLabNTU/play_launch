@@ -35,6 +35,27 @@ pub struct ActorConfig {
     /// immediately; a higher stage waits until every member of every lower one
     /// is up (or gone, or the stage timed out).
     pub startup_stage: crate::execution::startup_order::Stage,
+    /// The launch `<timer>` deadline: the actor does not spawn before this
+    /// instant. `None` — the usual case — means no enclosing timer.
+    ///
+    /// An ABSOLUTE instant rather than a duration, for two reasons. A
+    /// `<timer>` is relative to the START OF THE LAUNCH, not to the moment
+    /// this particular actor happens to reach `Pending`, so every member of
+    /// one launch measures from one epoch
+    /// ([`crate::execution::start_delay::deadline`]) and two nodes under
+    /// the same `<timer period="6.0">` start together however long the
+    /// bookkeeping before them took. And it expires: a respawn re-enters
+    /// `Pending`, and a deadline already in the past costs nothing, where a
+    /// duration would make every restart wait the delay again.
+    ///
+    /// Tokio's `Instant`, not `std`'s: the wait runs on the runtime's clock,
+    /// the same one every other timed wait in these actors uses.
+    ///
+    /// Composed with, not a substitute for, the startup machinery: the wait
+    /// happens BEFORE [`Self::startup`] admission, so a delayed member takes
+    /// no concurrency slot while it waits, and a member that is both delayed
+    /// and in a later [`Self::startup_stage`] starts when BOTH say it may.
+    pub start_after: Option<tokio::time::Instant>,
 }
 
 /// State machine for a regular node or container

@@ -605,6 +605,10 @@ pub fn prepare_composable_node_contexts_from_model(
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             env,
+            // Carried so the record and the model agree; `up` does not defer
+            // an individual LoadNode call, and `model_builder` emits a
+            // diagnostic naming any composable this leaves unhonoured.
+            start_delay_secs: inst.start_delay_secs,
             scope: None,
         };
 

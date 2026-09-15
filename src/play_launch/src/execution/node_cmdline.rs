@@ -374,6 +374,11 @@ pub fn node_record_from_instance(fqn: &str, inst: &model::NodeInstance) -> NodeR
         env,
         respawn: inst.respawn,
         respawn_delay: inst.respawn_delay,
+        // `<timer>` start delay. Not a command-line input at all — the
+        // actor waits it out before spawning (`ActorConfig::start_after`) —
+        // but it rides on the record because that is what the spawn path
+        // carries from here to the actor.
+        start_delay_secs: inst.start_delay_secs,
         // Already merged into `params` at model-build time (GAP-4).
         global_params: None,
         // Model-path sched-tier lookups use the already-known model FQN
@@ -441,6 +446,8 @@ impl NodeCommandLine {
             env,
             respawn: _,
             respawn_delay: _,
+            // A start delay changes WHEN the command runs, never what it is.
+            start_delay_secs: _,
             global_params,
             scope: _,
             param_sources,
@@ -1747,6 +1754,7 @@ mod tests {
             raw_cmd: Vec::new(),
             extra_args: Default::default(),
             node_name: Some("detector".to_string()),
+            start_delay_secs: None,
             is_container: false,
         };
 
@@ -1816,6 +1824,7 @@ mod tests {
             raw_cmd: Vec::new(),
             extra_args: Default::default(),
             node_name: Some("talker".to_string()),
+            start_delay_secs: None,
             is_container: false,
         };
         let record = node_record_from_instance("/talker", &inst);
@@ -1857,6 +1866,7 @@ mod tests {
             // name=None: the FQN's last segment came from the exec_name
             // fallback, so node_name is None.
             node_name: None,
+            start_delay_secs: None,
             is_container: false,
         };
         let record = node_record_from_instance("/some_ns/lifecycle_thing", &inst);
@@ -1906,6 +1916,7 @@ mod tests {
             ],
             extra_args: Default::default(),
             node_name: None,
+            start_delay_secs: None,
             is_container: false,
         };
         let record = node_record_from_instance("/unknown", &inst);

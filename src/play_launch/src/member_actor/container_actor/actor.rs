@@ -27,7 +27,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::sync::{mpsc, watch};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 /// Bundled configuration for constructing a [`ContainerActor`].
 ///
@@ -159,6 +159,32 @@ impl ContainerActor {
 
         // Broadcast pending state to composable nodes
         let _ = self.container_state_tx.send(ContainerState::Pending);
+
+        // The launch `<timer>` delay, if one enclosed this container. A
+        // container's composables ride along: they cannot load before the
+        // process that hosts them exists, and they are already Blocked above.
+        // Before `spawn_process`, which is where startup admission happens —
+        // see `execution::start_delay`.
+        if crate::execution::start_delay::wait_for_start_delay(
+            &self.name,
+            self.config.start_after,
+            &mut self.shutdown_rx,
+        )
+        .await
+            == crate::execution::start_delay::StartDelay::ShutDown
+        {
+            info!("{}: Shutdown during start delay", self.name);
+            self.state = NodeState::Stopped { exit_code: None };
+            let _ = self.container_state_tx.send(ContainerState::Stopped);
+            emit(
+                &self.state_tx,
+                StateEvent::Terminated {
+                    name: self.name.clone(),
+                },
+            )
+            .await;
+            return Ok(false); // Stop actor
+        }
 
         match self.spawn_process().await {
             Ok(child) => {

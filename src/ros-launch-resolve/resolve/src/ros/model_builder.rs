@@ -673,6 +673,10 @@ pub fn build_system_model(
                 ros_args: n.ros_args.clone().unwrap_or_default(),
                 respawn: n.respawn,
                 respawn_delay: n.respawn_delay,
+                // `<timer period="N">` — seconds before the FIRST spawn,
+                // accumulated across nested timers by the parser. Unrelated
+                // to `respawn_delay` above; a node may carry both.
+                start_delay_secs: n.start_delay_secs,
                 env: lower_env(n.env.as_deref()),
                 // GAP-2: non-ROS CLI args (prepended before --ros-args).
                 args: n.args.clone().unwrap_or_default(),
@@ -731,6 +735,9 @@ pub fn build_system_model(
                 ros_args: c.ros_args.clone().unwrap_or_default(),
                 respawn: c.respawn,
                 respawn_delay: c.respawn_delay,
+                // A container's own delay. Its composables ride along: they
+                // cannot load before the container process exists.
+                start_delay_secs: c.start_delay_secs,
                 env: lower_env(c.env.as_deref()),
                 args: c.args.clone().unwrap_or_default(),
                 params_files: c.params_files.clone(),
@@ -777,6 +784,12 @@ pub fn build_system_model(
                 ros_args: Vec::new(),
                 respawn: None,
                 respawn_delay: None,
+                // A composable has no respawn policy, but a `<timer>` CAN
+                // enclose one — what it delays there is the LoadNode request,
+                // not a process. Carried because the producer knows it; see
+                // the `delayed_composables` diagnostic below for what
+                // play_launch's runtime does with it today.
+                start_delay_secs: l.start_delay_secs,
                 env: lower_env(l.env.as_deref()),
                 // No non-ROS args / params_files / raw_cmd for composables —
                 // phase-54 / issue 0007 — NOT carried for composable nodes.
@@ -1210,25 +1223,20 @@ pub fn build_system_model(
         }
     }
 
-    // `<timer period="N">` — the launch file says these members start late,
-    // and the SystemModel schema has nowhere to record it: `NodeInstance`
-    // (ros-launch-manifest v0.1.35) carries `respawn_delay` but no START
-    // delay. The parser and the launch record both carry the value now; what
-    // is missing is the one model field to lower it into, which lives in
-    // another repository.
-    //
-    // Naming it here is the honest half of the fix. `play_launch up` spawns
-    // from `structure.nodes`, so until that field exists these members start
-    // immediately — which is still strictly better than the old behaviour,
-    // where a `<timer>` was an unsupported action and its whole subtree was
-    // absent from the model, but it is not the launch file's semantics and a
-    // reader of the model deserves to be told so rather than to find out from
-    // a race.
-    for (fqn, delay) in delayed_members(dump) {
+    // `<timer period="N">` around a `<composable_node>`. Every delay reaches
+    // the model as `NodeInstance::start_delay_secs` now, and `play_launch up`
+    // waits it out before spawning a node or a container — but a composable
+    // has no spawn of its own: it is loaded into its container by a LoadNode
+    // call the container actor makes once the container is up, and that path
+    // does not defer individual loads. So this one delay is carried in the
+    // model and NOT honoured by this repo's runtime, which is worth saying
+    // out loud; the rest are, and say nothing.
+    for (fqn, delay) in delayed_composables(dump) {
         diagnostics.push(format!(
-            "structure: {fqn} is delayed {delay}s by a <timer>; the SystemModel schema has \
-             no start-delay field, so a consumer spawning from this model will start it \
-             immediately"
+            "structure: composable node {fqn} is delayed {delay}s by a <timer>; the delay is \
+             carried in the model, but play_launch loads a composable with its container \
+             rather than deferring the LoadNode call, so it will be loaded as soon as its \
+             container is ready"
         ));
     }
 
@@ -1259,35 +1267,21 @@ pub fn build_system_model(
     }
 }
 
-/// Every member the launch file delayed with a `<timer>`, as
+/// Every COMPOSABLE node the launch file delayed with a `<timer>`, as
 /// `(FQN, seconds)`, in model order.
 ///
-/// Separate from [`build_system_model`] only to keep that function's body
-/// readable; it exists because the delay has nowhere else to go — see the
-/// call site.
-fn delayed_members(dump: &LaunchDump) -> Vec<(String, f64)> {
-    let mut out = Vec::new();
-    for n in &dump.node {
-        if let Some(d) = n.start_delay_secs {
-            let name = n
-                .name
-                .as_deref()
-                .or(n.exec_name.as_deref())
-                .unwrap_or("unknown");
-            out.push((fqn(n.namespace.as_deref().unwrap_or("/"), name), d));
-        }
-    }
-    for c in &dump.container {
-        if let Some(d) = c.start_delay_secs {
-            out.push((fqn(&c.namespace, &c.name), d));
-        }
-    }
-    for l in &dump.load_node {
-        if let Some(d) = l.start_delay_secs {
-            out.push((fqn(&l.namespace, &l.node_name), d));
-        }
-    }
-    out
+/// Nodes and containers are deliberately absent: their delay is carried in
+/// `NodeInstance::start_delay_secs` and honoured at spawn, so a diagnostic
+/// about them would only be noise. See the call site for why a composable is
+/// different.
+fn delayed_composables(dump: &LaunchDump) -> Vec<(String, f64)> {
+    dump.load_node
+        .iter()
+        .filter_map(|l| {
+            l.start_delay_secs
+                .map(|d| (fqn(&l.namespace, &l.node_name), d))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1933,6 +1927,68 @@ mod tests {
         assert_eq!(composable.respawn, None);
         assert_eq!(composable.respawn_delay, None);
         assert!(composable.env.is_empty());
+    }
+
+    /// A `<timer period="N">` reaches `NodeInstance::start_delay_secs` for a
+    /// node, a container and a composable alike — the field `up` waits on.
+    /// Before it existed the value had nowhere to go and every delayed member
+    /// spawned at once, which is the whole point of the field.
+    #[test]
+    fn a_timer_delay_reaches_the_model() {
+        let mut dump = dump_with_launch_fields();
+        dump.node[0].start_delay_secs = Some(6.0);
+        // nested timers: the parser accumulates before we ever see it.
+        dump.container[0].start_delay_secs = Some(11.0);
+        dump.load_node[0].start_delay_secs = Some(20.0);
+
+        let index = ManifestIndex::default();
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        let node = &model.structure.nodes["/perception/detector"];
+        assert_eq!(node.start_delay_secs, Some(6.0));
+        // ... and it is NOT the respawn delay, which this node also carries.
+        assert_eq!(node.respawn_delay, Some(2.5));
+        assert_eq!(
+            model.structure.nodes["/perception/pipeline_container"].start_delay_secs,
+            Some(11.0)
+        );
+        assert_eq!(
+            model.structure.nodes["/perception/tracker"].start_delay_secs,
+            Some(20.0)
+        );
+
+        // The composable is the one whose delay this repo's runtime cannot
+        // honour (it loads with its container), so it — and only it — is
+        // named in the diagnostics.
+        let said: Vec<&String> = model
+            .meta
+            .diagnostics
+            .iter()
+            .filter(|d| d.contains("<timer>"))
+            .collect();
+        assert_eq!(said.len(), 1, "diagnostics: {:?}", model.meta.diagnostics);
+        assert!(said[0].contains("/perception/tracker"), "{}", said[0]);
+        assert!(said[0].contains("20"), "{}", said[0]);
+    }
+
+    /// An undelayed launch says nothing about timers, and leaves the field
+    /// unset rather than writing `0`.
+    #[test]
+    fn no_timer_means_no_delay_and_no_diagnostic() {
+        let dump = dump_with_launch_fields();
+        let index = ManifestIndex::default();
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        for (fqn, inst) in &model.structure.nodes {
+            assert_eq!(inst.start_delay_secs, None, "{fqn}");
+        }
+        assert!(
+            !model.meta.diagnostics.iter().any(|d| d.contains("<timer>")),
+            "{:?}",
+            model.meta.diagnostics
+        );
     }
 
     /// Phase 46.3a — a `LaunchDump` exercising all six spawn-completeness
