@@ -1,0 +1,13 @@
+# The YAML frontend of tests/fixtures/launch/test_dirname_bare_invocation.launch.xml.
+# It exists because `traverse_file` returns on the `yaml`/`yml` branch before
+# the XML one sets the current file (issue 0034), so a fix applied only to the
+# XML path would leave this frontend resolving `$(dirname)` to "".
+launch:
+- node:
+    pkg: demo_nodes_cpp
+    exec: talker
+    name: dirname_probe
+    param:
+    - name: launch_dir
+      value: "$(dirname)"
+    - from: "$(dirname)/../includes/test_dirname_params.yaml"

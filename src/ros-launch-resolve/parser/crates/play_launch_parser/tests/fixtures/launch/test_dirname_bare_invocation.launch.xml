@@ -1,0 +1,16 @@
+<launch>
+  <!-- Issue 0034: `$(dirname)` must be the launch file's own directory,
+       ABSOLUTE, whatever form the file was named in on the command line —
+       `f.launch.xml`, `./f.launch.xml` or an absolute path. `launch` takes
+       os.path.abspath of the location before os.path.dirname, so all three
+       agree there; this parser used to hand back "" for the first form and
+       "." for the second.
+
+       The `<param from=>` is the reported failure verbatim: with an empty
+       `$(dirname)` the path becomes `/../includes/...`, which is
+       `/includes/...` and does not exist, so the parse fails outright. -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="dirname_probe">
+    <param name="launch_dir" value="$(dirname)" />
+    <param from="$(dirname)/../includes/test_dirname_params.yaml" />
+  </node>
+</launch>

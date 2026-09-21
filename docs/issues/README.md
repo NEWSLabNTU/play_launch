@@ -27,9 +27,6 @@ severity, so the `/rosout` graph-deviation WARNING ends a run 57 ms in. See
 **#0033** -- the strict watcher flips the shutdown watch channel only; actors
 wait for a SIGTERM nobody sent and the supervisor never exits. See `0033-*`.
 
-**#0034** -- `$(dirname)` is `""` when the launch file is named without a
-directory, so `$(dirname)/../..` becomes `/../..`. See `0034-*`.
-
 **#0035** -- under `--container-mode observable|stock` a composable's derived
 tier is dropped at LOADED with no message; the co-location warning covers only
 two-plus chain members. See `0035-*`.
@@ -50,6 +47,18 @@ HEAD. See `0038-*`.
 by name where `chain_aware` collapses the tie; design question. See `0039-*`.
 
 ## Resolved
+
+**#0034** -- `$(dirname)` expanded to `""` for a bare launch filename and to
+`"."` for `./f.launch.xml`, where `ros2 launch` gives an absolute directory in
+both cases (`IncludeLaunchDescription._get_launch_file_directory()` takes
+`os.path.abspath` before `os.path.dirname`), so `$(dirname)/../config/x.yaml`
+became `/../config/x.yaml`. The parser now absolutizes the launch file's path
+at `set_current_file` and at the traverser entry, with `abspath` rather than
+`canonicalize` semantics so a `--symlink-install` share/ file still resolves
+inside `install/`. Found on the way: the Python frontend never set a current
+file at all, so `$(dirname)` in a root `.launch.py` was a hard error and in an
+included one silently meant the including XML file's directory. See
+`archived/0034-*`.
 
 **#0024** — `play_launch run` inside a `systemd-run --user --scope` failed at
 spawn with a bare `Operation not permitted` and an empty node log. Not the

@@ -29,20 +29,41 @@ pub fn canonicalize_path(path: &Path) -> String {
     match std::fs::canonicalize(path) {
         Ok(canonical) => canonical.to_string_lossy().into_owned(),
         Err(_) => {
-            let absolute = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                std::env::current_dir()
-                    .map(|cwd| cwd.join(path))
-                    .unwrap_or_else(|_| path.to_path_buf())
-            };
             // Lexically collapse `.`/`..` so the fallback matches Python's
             // os.path.realpath, which normalizes dot-segments even for paths
             // it cannot stat. Without this, a nonexistent include containing
             // `..` would break cross-parser path parity.
-            lexical_normalize(&absolute).to_string_lossy().into_owned()
+            absolute_path(path).to_string_lossy().into_owned()
         }
     }
+}
+
+/// Absolutize `path` the way `os.path.abspath` does: join a relative path onto
+/// the current working directory, then collapse `.`/`..` lexically. Symlinks
+/// are deliberately NOT resolved — that is the difference from
+/// [`canonicalize_path`], and it is the behaviour `launch` has.
+///
+/// This is what backs `$(dirname)`. ROS 2's
+/// `IncludeLaunchDescription._get_launch_file_directory()` takes
+/// `os.path.abspath(location)` FIRST and only then `os.path.dirname()`, so
+/// `$(dirname)` is absolute for every invocation form — a bare filename, a
+/// `./relative` one, or an absolute path. Deriving the directory from the path
+/// as typed instead gives `""` for `f.launch.xml` (issue 0034) and `"."` for
+/// `./f.launch.xml`, neither of which is what `ros2 launch` resolves.
+/// Resolving symlinks here would diverge from `launch` under
+/// `colcon build --symlink-install`, where a launch file installed into
+/// `share/` points back into the source tree.
+///
+/// Never panics; falls back to the path as given if the cwd cannot be read.
+pub fn absolute_path(path: &Path) -> std::path::PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+    lexical_normalize(&absolute)
 }
 
 /// Lexical `.`/`..` collapse (no filesystem access). Mirrors the dot-segment

@@ -16,6 +16,27 @@ impl LaunchTraverser {
         path: &Path,
         args: &HashMap<String, String>,
     ) -> Result<Vec<crate::captures::DeclaredArgumentCapture>> {
+        // The file being executed is the current file for as long as it runs —
+        // the Python path is the one frontend that never said so, which left
+        // `ThisLaunchFileDir()` (captured as `$(dirname)`) resolving against
+        // the INCLUDING XML file's directory, or failing outright for a root
+        // `.launch.py` where nothing had set a current file at all. Saved and
+        // restored because this runs on the parent's own context, not a child.
+        let previous_file = self.context.current_file().cloned();
+        self.context.set_current_file(path.to_path_buf());
+        let result = self.execute_python_file_inner(path, args);
+        match previous_file {
+            Some(prev) => self.context.set_current_file(prev),
+            None => self.context.clear_current_file(),
+        }
+        result
+    }
+
+    fn execute_python_file_inner(
+        &mut self,
+        path: &Path,
+        args: &HashMap<String, String>,
+    ) -> Result<Vec<crate::captures::DeclaredArgumentCapture>> {
         // The backend, resolved BEFORE any context is published: if there is
         // no Python half in this build, say so while we can still name the
         // file, rather than failing somewhere inside the executor.

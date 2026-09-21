@@ -116,6 +116,18 @@ impl LaunchTraverser {
     }
 
     pub fn traverse_file(&mut self, path: &Path) -> Result<()> {
+        // Absolutize the entry path ONCE, before any branch reads it. `launch`
+        // takes `os.path.abspath` of a launch file's location before deriving
+        // anything from it, so a bare `f.launch.xml`, a `./f.launch.xml` and an
+        // absolute path all resolve `$(dirname)` to the same directory (issue
+        // 0034). Every one of the three branches below derives a directory from
+        // this path — the XML one through `set_current_file`, the YAML one
+        // through `process_yaml_launch_file`, and the Python one through
+        // `path.parent()` when it joins a relative include — so absolutizing at
+        // the entry is what keeps them consistent.
+        let absolute = record::absolute_path(path);
+        let path = absolute.as_path();
+
         // Create root scope if the scope table is empty (first file)
         if self.scope_table.is_empty() {
             let file_name = path

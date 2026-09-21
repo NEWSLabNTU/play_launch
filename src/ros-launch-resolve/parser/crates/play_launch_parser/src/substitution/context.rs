@@ -177,8 +177,24 @@ impl LaunchContext {
         }
     }
 
+    /// Record the launch file currently being parsed.
+    ///
+    /// The path is absolutized here — once, at the single place every frontend
+    /// (XML, YAML, IR, the Python-execution path) funnels through — so that
+    /// `$(dirname)`, `$(filename)` and every include resolved against this
+    /// file's directory agree with `launch`, which takes `os.path.abspath` of
+    /// the launch file's location BEFORE `os.path.dirname`
+    /// (`IncludeLaunchDescription._get_launch_file_directory()`). Storing the
+    /// path as typed made `$(dirname)` the empty string for a bare filename
+    /// and `"."` for `./f.launch.xml` (issue 0034).
     pub fn set_current_file(&mut self, path: PathBuf) {
-        self.current_file = Some(path);
+        self.current_file = Some(crate::record::absolute_path(&path));
+    }
+
+    /// Forget the current file — used to restore "no file" after a nested
+    /// execution that set one.
+    pub fn clear_current_file(&mut self) {
+        self.current_file = None;
     }
 
     pub fn current_file(&self) -> Option<&PathBuf> {

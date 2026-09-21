@@ -1,0 +1,7 @@
+/**:
+  ros__parameters:
+    # Loaded through `$(dirname)/../includes/test_dirname_params.yaml`, so the
+    # launch file's `$(dirname)` has to be a real directory one level below
+    # `fixtures/` — the shape that failed in issue 0034, where an empty
+    # `$(dirname)` turned the path into `/../includes/...`.
+    dirname_probe_loaded: true

@@ -1,7 +1,7 @@
 ---
 id: 34
 title: "`$(dirname)` is the empty string when the launch file is given as a bare filename"
-status: open
+status: resolved
 type: correctness
 severity: medium
 ---
@@ -95,3 +95,42 @@ with the same cause (an empty `$(dirname)`).
 Brief C (`brief-C-playlaunch-usage.md`, section 0, "A quirk found while
 capturing"), 2026-09-18; the reproduction above is from 2026-09-21 with the
 same 0.10.0 binary; cause located in the 0.11.0 source at `5eaa3191`.
+
+## Resolution 2026-09-21
+
+Fixed by absolutizing the launch file's path where it enters the parser, which
+is what `launch` does: `IncludeLaunchDescription._get_launch_file_directory()`
+takes `os.path.abspath(location)` FIRST and only then `os.path.dirname`, so
+`$(dirname)` is absolute in ROS 2 for every invocation form. That makes the
+divergence wider than this issue's title - a bare filename gave `""`, and
+`./f.launch.xml` gave `"."` where ROS 2 gives an absolute directory. Both are
+closed.
+
+New `record::absolute_path` (cwd-join plus the existing lexical `.`/`..`
+collapse, sharing one implementation with `canonicalize_path`'s fallback) is
+applied in `LaunchContext::set_current_file` - the choke point every frontend
+funnels through - and once at `LaunchTraverser::traverse_file`, before the
+`.py`/`.yaml`/XML branch split, so the Python path's `path.parent()` include
+joining is absolute too.
+
+`fs::canonicalize` was deliberately NOT used: it resolves symlinks, and under
+`colcon build --symlink-install` a launch file installed into `share/` points
+back into the source tree, so `$(dirname)/../config/x.yaml` would resolve into
+`src/` where `launch` stays in `install/`. `ScopeOrigin.path` keeps its
+canonicalized spelling, so the two now differ under symlink-install; nothing
+compares them today.
+
+Found while fixing, not in the report above: **the Python frontend never set a
+current file at all**. `ThisLaunchFileDir()` is captured as the string
+`$(dirname)` and resolved by the host, so from a root `.launch.py` it was the
+hard error `dirname: no current file set`, and from an included one it silently
+meant the INCLUDING XML file's directory. `execute_python_file` now sets and
+restores the current file around execution. Still open and out of scope: a
+literal `$(dirname)` in a node parameter inside a `.launch.py` reaches the
+record unresolved, because `NodeCapture::to_record` takes no context.
+
+Tests: `tests/dirname_tests.rs`, 7 cases - bare/`./`/absolute for the XML and
+YAML frontends, a root `.launch.py`, and a unit check on `current_dir()`.
+Verified as a negative control by stashing the source change and keeping the
+tests: 6 of 7 fail, the bare-filename XML one with this issue's message
+verbatim. Parser suite 458 passed, 0 failed.
