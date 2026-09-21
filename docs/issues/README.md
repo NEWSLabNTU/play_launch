@@ -17,9 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0031** -- `--enforce-rules warn` is the default and enforces nothing unless
-`--config` sets `interception.enabled: true`; no message says so. See `0031-*`.
-
 **#0032** -- `--enforce-rules strict` trips on the first violation of ANY
 severity, so the `/rosout` graph-deviation WARNING ends a run 57 ms in. See
 `0032-*`.
@@ -45,6 +42,13 @@ HEAD. See `0038-*`.
 by name where `chain_aware` collapses the tie; design question. See `0039-*`.
 
 ## Resolved
+
+**#0031** -- `--enforce-rules warn`, the default, enforced nothing unless a
+`--config` file set `interception.enabled: true`, and nothing said so; a strict
+CI gate passed green on a run that observed nothing. Any mode but `off` now
+implies interception and the log says which input decided; an explicit
+`enabled: false` (or the new `--interception off`) makes a warn run warn that
+no rule can fire and a strict run refuse to start. See `archived/0031-*`.
 
 **#0033** -- under `--enforce-rules strict` the watcher flipped the run-level
 watch channel and nothing else; both actors assumed the group SIGTERM had been

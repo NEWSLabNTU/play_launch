@@ -422,9 +422,14 @@ fn default_stale_after_ms() -> u64 {
 /// without modifying user code.
 #[derive(Debug, Clone, Deserialize)]
 pub struct InterceptionSettings {
-    /// Enable interception (default: false)
+    /// Enable interception. Unset (the default) leaves the decision to
+    /// `--enforce-rules`: any mode but `off` implies interception, because
+    /// the LD_PRELOAD hooks are the only event source the runtime rule
+    /// engine has (issue #0031, phase 79 W1). An explicit `false` wins over
+    /// that and an explicit `true` wins over `--enforce-rules off`;
+    /// `--interception on|off` overrides both.
     #[serde(default)]
-    pub enabled: bool,
+    pub enabled: Option<bool>,
 
     /// Enable frontier tracking (default: true when interception is enabled)
     #[serde(default = "default_true")]
@@ -458,10 +463,55 @@ pub struct InterceptionSettings {
     pub ring_capacity: usize,
 }
 
+/// Why interception is on or off for a run (issue #0031). `up` logs the
+/// reason once so a run that cannot fire a runtime rule says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterceptionDecision {
+    /// Asked for explicitly: `--interception on` or
+    /// `interception.enabled: true` in --config.
+    Configured,
+    /// Not configured either way; `--enforce-rules <mode>` needs an event
+    /// source, so it is on.
+    ImpliedByEnforcement(crate::cli::options::EnforceMode),
+    /// Switched off explicitly while `--enforce-rules <mode>` would have
+    /// wanted it: no runtime rule can fire on this run.
+    RefusedByConfig(crate::cli::options::EnforceMode),
+    /// Off, and nothing asked for it.
+    Off,
+}
+
+impl InterceptionDecision {
+    pub fn enabled(self) -> bool {
+        matches!(
+            self,
+            InterceptionDecision::Configured | InterceptionDecision::ImpliedByEnforcement(_)
+        )
+    }
+}
+
+impl InterceptionSettings {
+    /// Decide whether this run intercepts, from the explicit setting (if
+    /// any) and the enforcement mode. The mode alone decides: a run with
+    /// no contract still intercepts under the default `warn`, so that
+    /// adding a contract later changes what is checked, not what is
+    /// observed.
+    pub fn decide(&self, enforce: crate::cli::options::EnforceMode) -> InterceptionDecision {
+        use crate::cli::options::EnforceMode;
+        let wanted = !matches!(enforce, EnforceMode::Off);
+        match (self.enabled, wanted) {
+            (Some(true), _) => InterceptionDecision::Configured,
+            (Some(false), true) => InterceptionDecision::RefusedByConfig(enforce),
+            (Some(false), false) => InterceptionDecision::Off,
+            (None, true) => InterceptionDecision::ImpliedByEnforcement(enforce),
+            (None, false) => InterceptionDecision::Off,
+        }
+    }
+}
+
 impl Default for InterceptionSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: None,
             frontier: default_true(),
             stats: default_true(),
             trace: false,
@@ -935,6 +985,63 @@ pub fn load_runtime_config(
 mod tests {
     use super::*;
 
+    /// Issue #0031: `--enforce-rules warn` is the default, interception is
+    /// its only event source, and interception used to be off unless a
+    /// --config file said otherwise. The decision table, in full.
+    #[test]
+    fn interception_follows_enforcement_unless_configured() {
+        use crate::cli::options::EnforceMode as M;
+        use InterceptionDecision::*;
+        let unset = InterceptionSettings::default();
+        let on = InterceptionSettings {
+            enabled: Some(true),
+            ..InterceptionSettings::default()
+        };
+        let off = InterceptionSettings {
+            enabled: Some(false),
+            ..InterceptionSettings::default()
+        };
+
+        // The default invocation now intercepts, and says why.
+        assert_eq!(unset.decide(M::Warn), ImpliedByEnforcement(M::Warn));
+        assert_eq!(unset.decide(M::Strict), ImpliedByEnforcement(M::Strict));
+        assert_eq!(
+            unset.decide(M::RecordOnly),
+            ImpliedByEnforcement(M::RecordOnly)
+        );
+        // Only `off` declines.
+        assert_eq!(unset.decide(M::Off), Off);
+        // An explicit `false` is honoured, and named as the reason no rule
+        // can fire when enforcement would have wanted the events.
+        assert_eq!(off.decide(M::Warn), RefusedByConfig(M::Warn));
+        assert_eq!(off.decide(M::Strict), RefusedByConfig(M::Strict));
+        assert_eq!(off.decide(M::Off), Off);
+        // An explicit `true` intercepts even under `off` (`measure` wants
+        // the events with no rule run at all).
+        assert_eq!(on.decide(M::Off), Configured);
+        assert_eq!(on.decide(M::Warn), Configured);
+
+        assert!(ImpliedByEnforcement(M::Warn).enabled());
+        assert!(Configured.enabled());
+        assert!(!RefusedByConfig(M::Warn).enabled());
+        assert!(!Off.enabled());
+    }
+
+    /// `enabled:` left out of the YAML is "unset", not "false" -- the
+    /// distinction the decision above rests on.
+    #[test]
+    fn interception_enabled_is_tristate_in_yaml() {
+        let unset: RuntimeConfig =
+            serde_yaml_ng::from_str("interception:\n  frontier: true\n").unwrap();
+        assert_eq!(unset.interception.enabled, None);
+        let off: RuntimeConfig =
+            serde_yaml_ng::from_str("interception:\n  enabled: false\n").unwrap();
+        assert_eq!(off.interception.enabled, Some(false));
+        let on: RuntimeConfig =
+            serde_yaml_ng::from_str("interception:\n  enabled: true\n").unwrap();
+        assert_eq!(on.interception.enabled, Some(true));
+    }
+
     #[test]
     fn test_default_config() {
         let config = RuntimeConfig::default();
@@ -962,7 +1069,7 @@ mod tests {
         assert_eq!(config.container_readiness.service_poll_interval_ms, 500);
 
         // Test interception defaults
-        assert!(!config.interception.enabled);
+        assert_eq!(config.interception.enabled, None);
         assert!(config.interception.frontier);
         assert!(config.interception.stats);
         assert_eq!(config.interception.ring_capacity, 65536);

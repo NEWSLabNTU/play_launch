@@ -3,7 +3,8 @@
 //! Spawns a real ROS 2 launch under `play_launch` with a `--contracts`
 //! overlay tree and `--enforce-rules=warn`, then verifies that the
 //! RuleEngine wrote `runtime_violations.jsonl` and that the expected rule
-//! fired.
+//! fired. No test writes a `--config` file to switch interception on: the
+//! enforcement mode implies it (issue #0031), which is itself under test.
 
 use play_launch_tests::{fixtures, process::ManagedProcess};
 use std::{
@@ -119,21 +120,22 @@ impl StrictRun {
 }
 
 /// Spawn `play_launch launch` on `pure_nodes.launch.xml` with an overlay
-/// contract tree + enforce-rules and hand the running process back.
+/// contract tree and `--enforce-rules <enforce>`, and hand the running
+/// process back. No --config file: since issue #0031 the mode itself
+/// switches interception on.
 fn spawn_with_manifest(overlay_root: &Path, enforce: &str, extra_args: &[&str]) -> StrictRun {
+    let mut args = vec!["--enforce-rules", enforce];
+    args.extend_from_slice(extra_args);
+    spawn_launch(overlay_root, None, &args)
+}
+
+/// Spawn `play_launch launch` on `pure_nodes.launch.xml` with an overlay
+/// contract tree. `config_yaml`, if given, is written to a file and passed
+/// as `--config`; `args` follow the fixed flags.
+fn spawn_launch(overlay_root: &Path, config_yaml: Option<&str>, args: &[&str]) -> StrictRun {
     let env = fixtures::install_env();
     let work_dir = tempfile::TempDir::new().expect("tempdir");
     let so_path = interception_so_path();
-
-    // Interception isn't enabled by default; the runtime rules feed
-    // off interception SPSC events so we need it on. Write a minimal
-    // config YAML and pass it via `--config`.
-    let config_path = work_dir.path().join("interception_on.yaml");
-    std::fs::write(
-        &config_path,
-        "interception:\n  enabled: true\n  frontier: true\n  stats: true\n  ring_capacity: 4096\n",
-    )
-    .expect("write config");
 
     let mut cmd = play_launch_cmd_with_cargo(&env);
     cmd.current_dir(work_dir.path());
@@ -144,14 +146,19 @@ fn spawn_with_manifest(overlay_root: &Path, enforce: &str, extra_args: &[&str]) 
         "--disable-diagnostics",
         "--container-mode",
         "stock",
-        "--config",
-        config_path.to_str().unwrap(),
         "--contracts",
         overlay_root.to_str().unwrap(),
-        "--enforce-rules",
-        enforce,
     ]);
-    for a in extra_args {
+    if let Some(yaml) = config_yaml {
+        let config_path = work_dir.path().join("config.yaml");
+        std::fs::write(
+            &config_path,
+            format!("{yaml}  frontier: true\n  stats: true\n  ring_capacity: 4096\n"),
+        )
+        .expect("write config");
+        cmd.arg("--config").arg(&config_path);
+    }
+    for a in args {
         cmd.arg(a);
     }
     // Use the simple_test fixture launch — pure_nodes.launch.xml runs
@@ -390,13 +397,6 @@ fn qos_match_runtime_fires_on_dds_incompatibility() {
     )
     .expect("write contract");
 
-    let config_path = work_dir.path().join("interception_on.yaml");
-    std::fs::write(
-        &config_path,
-        "interception:\n  enabled: true\n  frontier: true\n  stats: true\n  ring_capacity: 4096\n",
-    )
-    .expect("write config");
-
     let mut cmd = play_launch_cmd_with_cargo(&env);
     cmd.current_dir(work_dir.path());
     cmd.args([
@@ -406,8 +406,6 @@ fn qos_match_runtime_fires_on_dds_incompatibility() {
         "--disable-diagnostics",
         "--container-mode",
         "stock",
-        "--config",
-        config_path.to_str().unwrap(),
         "--contracts",
         overlay_root.to_str().unwrap(),
         "--enforce-rules",
@@ -725,5 +723,103 @@ fn strict_mode_ends_the_run_non_zero_and_stops_the_nodes() {
     assert!(
         survivors.is_empty(),
         "nodes still running after the strict shutdown: {survivors:?}"
+    );
+}
+
+/// Issue #0031: the default invocation -- no --config, no --enforce-rules --
+/// with a contract beside the launch file must enforce that contract. Before
+/// the fix `--enforce-rules warn` (the default) had no event source unless a
+/// --config file switched interception on, so this run wrote no
+/// `runtime_violations.jsonl` and exited 0 with nothing on the terminal.
+#[test]
+fn default_invocation_intercepts_once_a_contract_resolves() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+    let work_dir = tempfile::TempDir::new().expect("tempdir");
+    let overlay_root = write_rate_1000_contract(work_dir.path());
+
+    let run = spawn_launch(&overlay_root, None, &[]);
+    let play_log = run.play_log();
+    fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
+    // The rate rule re-checks a slow topic every ~5 s after its first
+    // 0.5 s window.
+    let viol_path = play_log.join("runtime_violations.jsonl");
+    assert!(
+        wait_for_file(&viol_path, Duration::from_secs(15)),
+        "runtime_violations.jsonl not written: the default run has no event source; stderr:\n{}",
+        run.output()
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut violations = read_violations(&viol_path);
+    while std::time::Instant::now() < deadline
+        && !violations
+            .iter()
+            .any(|v| v["rule_id"] == "rate-hierarchy-runtime")
+    {
+        std::thread::sleep(Duration::from_millis(500));
+        violations = read_violations(&viol_path);
+    }
+    // The decision is logged at info, which the terminal filter of these
+    // tests (`play_launch=warn`) hides; the bundle's own log keeps it.
+    let bundle_log = std::fs::read_to_string(play_log.join("play_launch.log")).unwrap_or_default();
+    drop(run);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v["rule_id"] == "rate-hierarchy-runtime"),
+        "expected rate-hierarchy-runtime from the default invocation, got: {violations:?}"
+    );
+    assert!(
+        bundle_log.contains("implied by --enforce-rules"),
+        "the run must say what switched interception on; play_launch.log:\n{bundle_log}"
+    );
+}
+
+/// Issue #0031, the other half: a strict run whose --config switches
+/// interception OFF cannot measure anything, so it must refuse to start
+/// rather than pass green. A warn run says so and continues.
+#[test]
+fn strict_refuses_to_start_without_an_event_source() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+    let work_dir = tempfile::TempDir::new().expect("tempdir");
+    let overlay_root = write_rate_1000_contract(work_dir.path());
+
+    let mut run = spawn_launch(
+        &overlay_root,
+        Some("interception:\n  enabled: false\n"),
+        &["--enforce-rules", "strict"],
+    );
+    let status = run.proc.wait_with_timeout(Duration::from_secs(30));
+    let stderr = run.output();
+    assert!(
+        !status.success(),
+        "strict with interception off must not run; status {status:?}, stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("no event source"),
+        "the refusal must name the missing event source; stderr:\n{stderr}"
+    );
+
+    let run = spawn_launch(
+        &overlay_root,
+        Some("interception:\n  enabled: false\n"),
+        &["--enforce-rules", "warn"],
+    );
+    fixtures::wait_for_processes(&run.play_log(), 2, Duration::from_secs(15));
+    let stderr = run.output();
+    assert!(
+        pid_is_alive(run.proc.id()),
+        "a warn run with interception off should still run; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("no event source"),
+        "a warn run with interception off must warn that no rule can fire; stderr:\n{stderr}"
     );
 }

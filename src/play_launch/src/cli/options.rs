@@ -745,9 +745,19 @@ pub struct ContractOptions {
     /// Contracts come from any channel (overlay/provider); with no
     /// contracts resolved the engine has nothing to enforce. Off: no runtime
     /// checks. Warn: log violations. Strict: exit non-zero on first
-    /// violation. RecordOnly: collect events without evaluating rules.
+    /// error-severity violation. RecordOnly: collect events without
+    /// evaluating rules. The event source is LD_PRELOAD interception: any
+    /// mode but Off turns it on, unless --config sets
+    /// `interception.enabled: false` or `--interception off` is given
+    /// (Strict then refuses to start rather than pass with no measurement).
     #[arg(long, value_enum, default_value = "warn")]
     pub enforce_rules: EnforceMode,
+
+    /// Force LD_PRELOAD interception on or off for this run without a
+    /// --config file. Overrides `interception.enabled` in --config; unset
+    /// leaves the decision to --enforce-rules (issue #0031).
+    #[arg(long, value_enum, value_name = "on|off")]
+    pub interception: Option<Switch>,
 
     /// Phase 36.7: block unauthorized publisher/subscription creation
     /// at the rcl layer. The set of allowed topic FQNs is written from the
@@ -794,6 +804,19 @@ pub enum OnStartupFailure {
     Continue,
     /// Initiate shutdown and exit non-zero, naming the failed members.
     Exit,
+}
+
+/// A plain on/off switch for a feature that also has a config-file key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Switch {
+    On,
+    Off,
+}
+
+impl Switch {
+    pub fn is_on(self) -> bool {
+        matches!(self, Switch::On)
+    }
 }
 
 /// Runtime enforcement mode for manifest contracts.
@@ -852,6 +875,7 @@ impl Default for ContractOptions {
             contracts: None,
             no_provider_contracts: false,
             enforce_rules: EnforceMode::Warn,
+            interception: None,
             block_unauthorized_endpoints: false,
         }
     }

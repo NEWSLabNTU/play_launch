@@ -96,12 +96,15 @@ pub fn handle_up(args: &cli::options::UpArgs) -> eyre::Result<()> {
     }
 
     // Load runtime configuration to check service readiness settings
-    let runtime_config = cli::config::load_runtime_config(
+    let mut runtime_config = cli::config::load_runtime_config(
         args.common.config.as_deref(),
         args.common.is_monitoring_enabled(),
         args.common.features.monitor_interval_ms,
         args.common.is_diagnostics_enabled(),
     )?;
+    if let Some(switch) = args.common.contract_opts.interception {
+        runtime_config.interception.enabled = Some(switch.is_on());
+    }
 
     // Print configuration summary
     info!("Configuration:");
@@ -143,10 +146,10 @@ pub fn handle_up(args: &cli::options::UpArgs) -> eyre::Result<()> {
     }
     info!(
         "  Interception: {}",
-        if runtime_config.interception.enabled {
-            "enabled"
-        } else {
-            "disabled"
+        match runtime_config.interception.enabled {
+            Some(true) => "enabled",
+            Some(false) => "disabled",
+            None => "decided by --enforce-rules once the contract resolves",
         }
     );
 
@@ -226,12 +229,15 @@ pub(crate) async fn play(
 
     // Load runtime configuration
     debug!("Loading runtime configuration...");
-    let runtime_config = load_runtime_config(
+    let mut runtime_config = load_runtime_config(
         common.config.as_deref(),
         common.is_monitoring_enabled(),
         common.features.monitor_interval_ms,
         common.is_diagnostics_enabled(),
     )?;
+    if let Some(switch) = common.contract_opts.interception {
+        runtime_config.interception.enabled = Some(switch.is_on());
+    }
 
     // Phase 66 W2 — compile the limit globs once, rather than per member.
     // Inert without a cgroup tree, so a config written for a delegated run
@@ -287,6 +293,58 @@ pub(crate) async fn play(
         std::sync::Arc::new(crate::runtime_enforcement::ContractView::from_model(
             &system_model,
         ));
+
+    // Issue #0031 (phase 79 W1): interception is the only event source the
+    // runtime rule engine has, and it used to be switchable only from the
+    // --config YAML, so the default `--enforce-rules warn` enforced nothing
+    // and said so nowhere. Decide it here, from the mode, and say which
+    // input decided.
+    let interception_decision = runtime_config
+        .interception
+        .decide(common.contract_opts.enforce_rules);
+    {
+        use crate::cli::{config::InterceptionDecision, options::EnforceMode};
+        match interception_decision {
+            InterceptionDecision::Configured => info!(
+                "Interception: enabled ({})",
+                if common.contract_opts.interception.is_some() {
+                    "--interception on"
+                } else {
+                    "interception.enabled: true in --config"
+                }
+            ),
+            InterceptionDecision::ImpliedByEnforcement(mode) => info!(
+                "Interception: enabled, implied by --enforce-rules {mode:?} ({} declared \
+                 topics, {} externals to check against; set `interception.enabled: false` \
+                 in --config or `--interception off` to opt out)",
+                contract_view.topics.len(),
+                contract_view.externals.len()
+            ),
+            InterceptionDecision::RefusedByConfig(EnforceMode::Strict) => {
+                return Err(eyre::eyre!(
+                    "--enforce-rules strict has no event source: interception is switched off \
+                     ({}); a strict run that measures nothing would pass trivially. Enable \
+                     interception or use --enforce-rules off",
+                    if common.contract_opts.interception.is_some() {
+                        "--interception off"
+                    } else {
+                        "interception.enabled: false in --config"
+                    }
+                ));
+            }
+            InterceptionDecision::RefusedByConfig(mode) => warn!(
+                "--enforce-rules {mode:?} has no event source: interception is switched off \
+                 ({}); no runtime rule can fire on this run",
+                if common.contract_opts.interception.is_some() {
+                    "--interception off"
+                } else {
+                    "interception.enabled: false in --config"
+                }
+            ),
+            InterceptionDecision::Off => debug!("Interception: off (nothing asked for it)"),
+        }
+    }
+    runtime_config.interception.enabled = Some(interception_decision.enabled());
 
     // Prepare directories
     debug!("Creating log directories...");
@@ -604,7 +662,7 @@ pub(crate) async fn play(
 
     // Setup interception if enabled (Phase 29)
     let mut interception_consumers: Vec<crate::interception::ChildConsumer> = Vec::new();
-    let _interception_so_path = if runtime_config.interception.enabled {
+    let _interception_so_path = if interception_decision.enabled() {
         match crate::interception::find_interception_so() {
             Some(so_path) => {
                 info!("Interception enabled (so: {})", so_path.display());
@@ -667,7 +725,8 @@ pub(crate) async fn play(
             }
             None => {
                 warn!(
-                    "Interception enabled but libplay_launch_interception.so not found — disabling"
+                    "Interception enabled but libplay_launch_interception.so not found -- \
+                     disabling; no runtime rule (--enforce-rules) can fire on this run"
                 );
                 None
             }
