@@ -14,7 +14,7 @@ use std::{
 };
 
 use ros_launch_manifest_model as model;
-use ros_launch_manifest_sched::{DEFAULT_TIER, TierDef, TierPlatformSpec};
+use ros_launch_manifest_sched::{DEFAULT_TIER, EffectiveTrigger, TierDef, TierPlatformSpec};
 use ros_launch_manifest_types::{DropSpec, EndpointProps, QosDecl};
 use sha2::{Digest, Sha256};
 
@@ -44,6 +44,19 @@ fn fqn(ns: &str, name: &str) -> String {
     } else {
         format!("/{ns}/{name}")
     }
+}
+
+/// The key of a scope-scoped contract entry (a scope path, a hazard, a
+/// function, a mode): `"<scope id>/<name>"`, the shape the model documents
+/// for all four maps and the one `ros-launch-manifest-derive` splits at the
+/// last `/` to find the scope. This used to go through [`fqn`], which
+/// prepends a slash the scope id does not carry (`/bringup.launch.xml/e2e`
+/// for a scope keyed `bringup.launch.xml`), so a reader looking the scope up
+/// found nothing and resolved no chain (rlm CHANGELOG v0.1.37, seam 1). A
+/// scope id may itself contain `/` (`pkg/file.launch.xml`); a name never
+/// does, so the last `/` is always the split.
+fn scope_scoped_key(scope: &str, name: &str) -> String {
+    format!("{scope}/{name}")
 }
 
 /// The nearest enclosing FILE scope for `scope_id`, walking up through any
@@ -259,6 +272,7 @@ fn sub_contract(
         && qos.is_none()
         && !state
         && !required
+        && p.buffer.is_none()
     {
         return None;
     }
@@ -273,6 +287,12 @@ fn sub_contract(
             .on_violation
             .as_ref()
             .map(|ov| on_violation_contract(node_fqn, ov)),
+        // The discipline of a `state: true` subscription (design issue #52):
+        // a second toolchain sizes the queue it allocates from this.
+        buffer: p.buffer.map(|b| match b {
+            ros_launch_manifest_types::Buffer::Latest => model::BufferContract::Latest,
+            ros_launch_manifest_types::Buffer::Queue => model::BufferContract::Queue,
+        }),
     })
 }
 
@@ -303,6 +323,9 @@ fn path_contract(
     // How `safe_state.emits` (an endpoint name on a node path, a topic on a
     // scope path) becomes a model key.
     emits_key: &dyn Fn(&str) -> String,
+    // The trigger fact for a node path; `None` for a scope path, which the
+    // model documents as carrying none.
+    trigger: Option<EffectiveTrigger>,
 ) -> model::PathContract {
     model::PathContract {
         safe_state: decl.safe_state.as_ref().map(|s| model::SafeStateContract {
@@ -311,7 +334,25 @@ fn path_contract(
         }),
         input,
         output,
+        // Design issue #52, row 1. `input` alone said nothing about what
+        // fires a path: a timer, a `once` loader, a `spontaneous` server and
+        // an unclassified path all lowered to `input: []`, and a consumer
+        // reading "empty = periodic" rebuilt the timer's rate from a
+        // publisher's `min_rate_hz` promise. The rate lives here now.
+        trigger,
+        sync: decl.sync.as_ref().map(|sy| model::SyncContract {
+            policy: match sy.policy {
+                ros_launch_manifest_types::SyncPolicy::Exact => model::SyncPolicy::Exact,
+                ros_launch_manifest_types::SyncPolicy::Approximate => {
+                    model::SyncPolicy::Approximate
+                }
+                ros_launch_manifest_types::SyncPolicy::TimeoutAny => model::SyncPolicy::TimeoutAny,
+            },
+            max_interval_ms: sy.max_interval.map(|d| d.as_millis_f64()),
+            timeout_ms: sy.timeout.map(|d| d.as_millis_f64()),
+        }),
         max_latency_ms: decl.max_latency.map(|d| d.as_millis_f64()),
+        min_latency_ms: decl.min_latency.map(|d| d.as_millis_f64()),
         tolerance_ms: decl.tolerance.map(|d| d.as_millis_f64()),
         drop: decl.drop.as_ref().map(drop_contract),
         // Phase 67 added these to the contract and to the sched crate's
@@ -323,6 +364,24 @@ fn path_contract(
         // `contract-axes.md` §5 names.
         max_jitter_ms: decl.max_jitter.map(|d| d.as_millis_f64()),
         miss: decl.miss.as_ref().map(super::sched_derive::convert_miss),
+    }
+}
+
+/// Translate a `types::EffectiveTrigger` into the sched crate's
+/// dependency-free mirror (the sched crate has no dependency on
+/// `ros_launch_manifest_types`). Moved here from `sched_derive.rs` in
+/// phase 78 W1: the model is where the fact is lowered, and the mapper's
+/// input is derived from the model (`ros-launch-manifest-derive`), so the
+/// conversion belongs to the producer. `sched_derive` keeps calling it
+/// until W3 deletes that derivation.
+pub(crate) fn convert_trigger(t: ros_launch_manifest_types::EffectiveTrigger) -> EffectiveTrigger {
+    use ros_launch_manifest_types::EffectiveTrigger as T;
+    match t {
+        T::Timer { rate_hz } => EffectiveTrigger::Timer { rate_hz },
+        T::Input(eps) => EffectiveTrigger::Input(eps),
+        T::Once => EffectiveTrigger::Once,
+        T::Spontaneous => EffectiveTrigger::Spontaneous,
+        T::Unclassified => EffectiveTrigger::Unclassified,
     }
 }
 
@@ -951,12 +1010,24 @@ pub fn build_system_model(
         // a path into the model as if it were periodic — erasing the only
         // record of what causes its output. `effective_trigger` also covers
         // the legacy form, so this is a superset of the old behaviour.
-        let input = match p.path.effective_trigger() {
+        //
+        // The trigger itself is lowered whole (phase 78 W1): a timer with its
+        // rate, `once`, `spontaneous`, `unclassified`. Endpoint names inside
+        // an `Input` trigger are qualified the way `input` is, so the two
+        // agree on the wire.
+        let effective = p.path.effective_trigger();
+        let input = match &effective {
             ros_launch_manifest_types::EffectiveTrigger::Input(endpoints) => endpoints
                 .iter()
                 .map(|e| format!("{node_fqn}/{e}"))
                 .collect(),
             _ => Vec::new(),
+        };
+        let trigger = match effective {
+            ros_launch_manifest_types::EffectiveTrigger::Input(_) => {
+                EffectiveTrigger::Input(input.clone())
+            }
+            other => convert_trigger(other),
         };
         let output = p
             .path
@@ -966,17 +1037,24 @@ pub fn build_system_model(
             .collect();
         contracts.node_paths.insert(
             format!("{node_fqn}/{}", p.path_name),
-            path_contract(&p.path, input, output, &|e| format!("{node_fqn}/{e}")),
+            path_contract(
+                &p.path,
+                input,
+                output,
+                &|e| format!("{node_fqn}/{e}"),
+                Some(trigger),
+            ),
         );
     }
     for p in &index.scope_paths {
         contracts.scope_paths.insert(
-            fqn(&scope_key(Some(p.scope_id)), &p.path_name),
+            scope_scoped_key(&scope_key(Some(p.scope_id)), &p.path_name),
             path_contract(
                 &p.path,
                 p.input_topics.clone(),
                 p.output_topics.clone(),
                 &|t| t.to_string(),
+                None,
             ),
         );
     }
@@ -1070,7 +1148,7 @@ pub fn build_system_model(
     // Functions and modes (phase 75), keyed the way scope paths are.
     for f in &index.functions {
         contracts.functions.insert(
-            fqn(&scope_key(Some(f.scope_id)), &f.name),
+            scope_scoped_key(&scope_key(Some(f.scope_id)), &f.name),
             model::GuardContract {
                 members: f.group.members.clone(),
                 all_of: f.group.all_of,
@@ -1078,7 +1156,7 @@ pub fn build_system_model(
         );
     }
     for m in &index.modes {
-        let key = |n: &str| fqn(&scope_key(Some(m.scope_id)), n);
+        let key = |n: &str| scope_scoped_key(&scope_key(Some(m.scope_id)), n);
         contracts.modes.insert(
             key(&m.name),
             model::ModeContract {
@@ -1103,7 +1181,7 @@ pub fn build_system_model(
     // loader; the reaction is keyed the way `scope_paths` is.
     for h in &index.hazards {
         contracts.hazards.insert(
-            fqn(&scope_key(Some(h.scope_id)), &h.name),
+            scope_scoped_key(&scope_key(Some(h.scope_id)), &h.name),
             model::HazardContract {
                 severity: h.decl.severity.clone(),
                 guards: h
@@ -1120,7 +1198,7 @@ pub fn build_system_model(
                     .decl
                     .reaction
                     .as_ref()
-                    .map(|r| fqn(&scope_key(Some(h.scope_id)), r)),
+                    .map(|r| scope_scoped_key(&scope_key(Some(h.scope_id)), r)),
             },
         );
     }
@@ -1148,6 +1226,56 @@ pub fn build_system_model(
                 },
             );
         }
+    }
+
+    // The EFFECTIVE criticality (design issue #52; phase 72's rule): the
+    // hazards decide first, the authored label only where no hazard reaches
+    // the node. `NodeInstance.criticality` keeps the raw label for
+    // dashboards; this map is what a mapper ranks by, in the sched crate's
+    // own `Criticality` so both toolchains read one spelling. A node with a
+    // derived entry that buckets to nothing (the scale's no-requirement
+    // level) has no criticality fact, label or not -- the same answer
+    // `sched_derive::extract_criticality` gives today.
+    for resolved in index.manifests.values() {
+        for (node_name, node) in &resolved.manifest.nodes {
+            let Some(label) = node.criticality.as_deref() else {
+                continue;
+            };
+            let Some(c) = super::sched_derive::parse_criticality_label(label) else {
+                continue;
+            };
+            let node_fqn = super::manifest_loader::resolve_node_fqn(
+                index,
+                resolved.scope_id,
+                &resolved.ns,
+                node_name,
+            );
+            contracts.node_criticality.insert(node_fqn, c);
+        }
+    }
+    for (node_fqn, d) in &index.derived_criticality {
+        match d.bucket() {
+            Some(c) => {
+                contracts.node_criticality.insert(node_fqn.clone(), c);
+            }
+            None => {
+                contracts.node_criticality.remove(node_fqn);
+            }
+        }
+    }
+    // The severity scale those entries were derived on. The loader reads
+    // each hazard's scale from its own manifest; the model has one field, so
+    // the first declared scale in scope order is carried, and an empty one
+    // means every manifest used the ISO 26262 default.
+    let mut scoped: Vec<&super::manifest_loader::ResolvedManifest> =
+        index.manifests.values().collect();
+    scoped.sort_by_key(|m| m.scope_id);
+    if let Some(scale) = scoped
+        .iter()
+        .map(|m| &m.manifest.severity_levels)
+        .find(|s| !s.is_empty())
+    {
+        contracts.severity_levels = scale.clone();
     }
 
     // The declared parameters (nano-ros phase 446), keyed by node FQN the way
@@ -1261,6 +1389,9 @@ pub fn build_system_model(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedNodePath};
+    use ros_launch_manifest_sched::Criticality;
+    use ros_launch_manifest_types::{Manifest, duration::Duration};
 
     /// nano-ros phase 446 W2 -- a contract's `params:` reaches the model per
     /// node FQN, next to the node's other contract facts, and a node whose
@@ -1761,7 +1892,10 @@ mod tests {
         );
     }
 
-    /// A timer-triggered path has no input, and must not acquire one.
+    /// A timer-triggered path has no input, and must not acquire one. Its
+    /// RATE reaches the model as the trigger fact (phase 78 W1): before, the
+    /// path lowered to `input: []` and nothing else, and a consumer had to
+    /// guess the period from a publisher's promise.
     #[test]
     fn timer_trigger_lowers_to_no_inputs() {
         let dump = dump_with_launch_fields();
@@ -1781,10 +1915,11 @@ mod tests {
         let model =
             build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
 
-        assert!(
-            model.contracts.node_paths["/perception/detector/sample"]
-                .input
-                .is_empty()
+        let path = &model.contracts.node_paths["/perception/detector/sample"];
+        assert!(path.input.is_empty());
+        assert_eq!(
+            path.trigger,
+            Some(EffectiveTrigger::Timer { rate_hz: 50.0 })
         );
     }
 
@@ -2281,5 +2416,434 @@ mod tests {
         assert_eq!(child.parent.as_deref(), Some("root_pkg/root.launch.xml"));
         assert_eq!(child.package.as_deref(), Some("dep_pkg"));
         assert_eq!(child.file.as_deref(), Some("child.launch.xml"));
+    }
+
+    fn node_path(name: &str, path: ros_launch_manifest_types::PathDecl) -> ResolvedNodePath {
+        ResolvedNodePath {
+            node_fqn: "/perception/detector".to_string(),
+            path_name: name.to_string(),
+            path,
+            scope_id: 0,
+        }
+    }
+
+    fn resolved_manifest(scope_id: usize, ns: &str, manifest: Manifest) -> ResolvedManifest {
+        ResolvedManifest {
+            scope_id,
+            pkg: None,
+            file: "bringup.launch.xml".to_string(),
+            ns: ns.to_string(),
+            channel: ContractChannel::Provider,
+            contract_path: std::path::PathBuf::new(),
+            manifest,
+            source: String::new(),
+            diagnostics: vec![],
+        }
+    }
+
+    /// Design issue #52, row 1. Every kind of trigger reaches the model as
+    /// itself: a `once` map loader and a `spontaneous` server used to lower
+    /// to the same `input: []` as a timer, and a consumer reading "empty =
+    /// periodic" made timers of both. `Input` carries the qualified endpoint
+    /// refs, the same strings `input` carries.
+    #[test]
+    fn every_trigger_kind_reaches_the_model() {
+        use ros_launch_manifest_types::{PathDecl, Trigger};
+        let dump = dump_with_launch_fields();
+        let mut index = ManifestIndex::default();
+        let out = || vec!["objects".to_string()];
+        index.node_paths.push(node_path(
+            "tick",
+            PathDecl {
+                trigger: Some(Trigger::Timer { rate_hz: 10.0 }),
+                output: out(),
+                ..Default::default()
+            },
+        ));
+        index.node_paths.push(node_path(
+            "load",
+            PathDecl {
+                trigger: Some(Trigger::Once),
+                output: out(),
+                ..Default::default()
+            },
+        ));
+        index.node_paths.push(node_path(
+            "serve",
+            PathDecl {
+                trigger: Some(Trigger::Spontaneous),
+                output: out(),
+                ..Default::default()
+            },
+        ));
+        index.node_paths.push(node_path(
+            "mystery",
+            PathDecl {
+                output: out(),
+                ..Default::default()
+            },
+        ));
+        index.node_paths.push(node_path(
+            "fuse",
+            PathDecl {
+                trigger: Some(Trigger::Input(vec![
+                    "points".to_string(),
+                    "image".to_string(),
+                ])),
+                output: out(),
+                ..Default::default()
+            },
+        ));
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        let paths = &model.contracts.node_paths;
+        let trigger = |n: &str| paths[&format!("/perception/detector/{n}")].trigger.clone();
+        assert_eq!(
+            trigger("tick"),
+            Some(EffectiveTrigger::Timer { rate_hz: 10.0 })
+        );
+        assert_eq!(trigger("load"), Some(EffectiveTrigger::Once));
+        assert_eq!(trigger("serve"), Some(EffectiveTrigger::Spontaneous));
+        assert_eq!(trigger("mystery"), Some(EffectiveTrigger::Unclassified));
+        let fuse = &paths["/perception/detector/fuse"];
+        assert_eq!(
+            fuse.trigger,
+            Some(EffectiveTrigger::Input(vec![
+                "/perception/detector/points".to_string(),
+                "/perception/detector/image".to_string(),
+            ]))
+        );
+        assert_eq!(
+            fuse.input,
+            vec![
+                "/perception/detector/points".to_string(),
+                "/perception/detector/image".to_string(),
+            ]
+        );
+        // None of the non-input kinds acquires an input.
+        for n in ["tick", "load", "serve", "mystery"] {
+            assert!(
+                paths[&format!("/perception/detector/{n}")].input.is_empty(),
+                "{n}"
+            );
+        }
+        // The model's own reader agrees with what was written.
+        assert_eq!(
+            paths["/perception/detector/tick"].effective_trigger(),
+            EffectiveTrigger::Timer { rate_hz: 10.0 }
+        );
+    }
+
+    /// The wire form is the adjacent `kind`/`value` shape the sched crate
+    /// serializes, which is what Gates 3 of phase 78 reads off the island's
+    /// model: `trigger: { kind: timer, value: { rate_hz: 10.0 } }`.
+    #[test]
+    fn a_timer_trigger_serializes_as_kind_and_value() {
+        use ros_launch_manifest_types::{PathDecl, Trigger};
+        let dump = dump_with_launch_fields();
+        let mut index = ManifestIndex::default();
+        index.node_paths.push(node_path(
+            "tick",
+            PathDecl {
+                trigger: Some(Trigger::Timer { rate_hz: 10.0 }),
+                output: vec!["objects".to_string()],
+                ..Default::default()
+            },
+        ));
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+        let yaml = model.to_yaml_string().expect("serialize");
+        let doc: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).expect("parse");
+        let t = &doc["contracts"]["node_paths"]["/perception/detector/tick"]["trigger"];
+        assert_eq!(t["kind"].as_str(), Some("timer"), "{yaml}");
+        assert_eq!(t["value"]["rate_hz"].as_f64(), Some(10.0), "{yaml}");
+    }
+
+    /// `sync` and `min_latency` were declared, checked, and lowered nowhere
+    /// (design issue #52, "not lowered at all").
+    #[test]
+    fn sync_and_min_latency_reach_the_model() {
+        use ros_launch_manifest_types::{PathDecl, Sync, SyncPolicy, Trigger};
+        let dump = dump_with_launch_fields();
+        let mut index = ManifestIndex::default();
+        index.node_paths.push(node_path(
+            "fuse",
+            PathDecl {
+                trigger: Some(Trigger::Input(vec![
+                    "points".to_string(),
+                    "image".to_string(),
+                ])),
+                output: vec!["objects".to_string()],
+                sync: Some(Sync {
+                    policy: SyncPolicy::Approximate,
+                    max_interval: Some(Duration::from_millis_f64(20.0)),
+                    timeout: None,
+                }),
+                min_latency: Some(Duration::from_millis_f64(2.5)),
+                max_latency: Some(Duration::from_millis_f64(15.0)),
+                ..Default::default()
+            },
+        ));
+        index.node_paths.push(node_path(
+            "plain",
+            PathDecl {
+                trigger: Some(Trigger::Input(vec!["points".to_string()])),
+                output: vec!["objects".to_string()],
+                ..Default::default()
+            },
+        ));
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        let fuse = &model.contracts.node_paths["/perception/detector/fuse"];
+        assert_eq!(
+            fuse.sync,
+            Some(model::SyncContract {
+                policy: model::SyncPolicy::Approximate,
+                max_interval_ms: Some(20.0),
+                timeout_ms: None,
+            })
+        );
+        assert_eq!(fuse.min_latency_ms, Some(2.5));
+        assert_eq!(fuse.max_latency_ms, Some(15.0));
+        let plain = &model.contracts.node_paths["/perception/detector/plain"];
+        assert_eq!(plain.sync, None);
+        assert_eq!(plain.min_latency_ms, None);
+    }
+
+    /// A `state: true` subscription's buffering discipline reaches the
+    /// model; a second toolchain sizes the queue it allocates from it.
+    #[test]
+    fn a_state_subscription_carries_its_buffer() {
+        use ros_launch_manifest_types::{Buffer, EndpointProps, NodeDecl};
+        let dump = dump_with_launch_fields();
+        let mut index = ManifestIndex::default();
+        let mut node = NodeDecl::default();
+        node.subscribers.insert(
+            "map".to_string(),
+            EndpointProps {
+                state: Some(true),
+                buffer: Some(Buffer::Queue),
+                ..Default::default()
+            },
+        );
+        node.subscribers.insert(
+            "points".to_string(),
+            EndpointProps {
+                state: Some(true),
+                ..Default::default()
+            },
+        );
+        let mut manifest = Manifest::default();
+        manifest.nodes.insert("detector".to_string(), node);
+        index
+            .manifests
+            .insert(0, resolved_manifest(0, "/perception", manifest));
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        let subs = &model.contracts.sub_endpoints;
+        assert_eq!(
+            subs["/perception/detector/map"].buffer,
+            Some(model::BufferContract::Queue)
+        );
+        assert!(subs["/perception/detector/map"].state);
+        assert_eq!(subs["/perception/detector/points"].buffer, None);
+    }
+
+    /// `Contracts.node_criticality` is the EFFECTIVE value (phase 72's rule,
+    /// the one `sched_derive::extract_criticality` applies): the hazards
+    /// decide first, the label only where none reaches; a derived entry that
+    /// buckets to nothing removes the label's claim. `NodeInstance.criticality`
+    /// keeps the raw label either way.
+    #[test]
+    fn node_criticality_is_the_effective_value() {
+        use crate::ros::manifest_loader::DerivedCriticality;
+        use ros_launch_manifest_types::NodeDecl;
+        let dump = dump_with_launch_fields();
+        let mut index = ManifestIndex::default();
+        let mut manifest = Manifest::default();
+        manifest.nodes.insert(
+            "detector".to_string(),
+            NodeDecl {
+                criticality: Some("Medium".to_string()),
+                ..Default::default()
+            },
+        );
+        manifest.nodes.insert(
+            "tracker".to_string(),
+            NodeDecl {
+                criticality: Some("low".to_string()),
+                ..Default::default()
+            },
+        );
+        manifest.nodes.insert(
+            "pipeline_container".to_string(),
+            NodeDecl {
+                criticality: Some("high".to_string()),
+                ..Default::default()
+            },
+        );
+        manifest.severity_levels = vec!["none".to_string(), "sil1".to_string(), "sil2".to_string()];
+        index
+            .manifests
+            .insert(0, resolved_manifest(0, "/perception", manifest));
+        let derived = |level: &str, rank: usize| DerivedCriticality {
+            level: level.to_string(),
+            rank,
+            scale_len: 3,
+            hazard: "h".to_string(),
+            role: "reacts to",
+        };
+        // ASIL-D-like top of a three-level scale: High, overriding `low`.
+        index
+            .derived_criticality
+            .insert("/perception/tracker".to_string(), derived("sil2", 2));
+        // The no-requirement level: no fact at all, overriding `high`.
+        index.derived_criticality.insert(
+            "/perception/pipeline_container".to_string(),
+            derived("none", 0),
+        );
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        let c = &model.contracts.node_criticality;
+        assert_eq!(c.get("/perception/detector"), Some(&Criticality::Medium));
+        assert_eq!(c.get("/perception/tracker"), Some(&Criticality::High));
+        assert_eq!(c.get("/perception/pipeline_container"), None);
+        assert_eq!(c.len(), 2, "{c:?}");
+        assert_eq!(
+            model.contracts.severity_levels,
+            vec!["none".to_string(), "sil1".to_string(), "sil2".to_string()]
+        );
+    }
+
+    /// Every scope-scoped key -- scope path, hazard, function, mode -- and
+    /// every reference between them is `"<scope id>/<name>"` with no leading
+    /// slash, the shape the model documents and `ros-launch-manifest-derive`
+    /// splits at the last `/`. The reaction of a hazard is a key of
+    /// `scope_paths`, so a consumer's `scope_paths.get(&reaction)` finds it.
+    #[test]
+    fn scope_scoped_keys_carry_no_leading_slash() {
+        use crate::ros::manifest_loader::{ResolvedHazard, ResolvedScopePath};
+        use ros_launch_manifest_types::{HazardDecl, PathDecl};
+        let json = serde_json::json!({
+            "node": [{
+                "executable": "a_node", "exec_name": "a_node",
+                "package": "p", "name": "a", "namespace": "/robot",
+                "cmd": ["/bin/a"], "params_files": [], "scope": 0
+            }],
+            "load_node": [], "container": [], "lifecycle_node": [], "file_data": {},
+            "scopes": [
+                {"id": 0, "ns": "/", "parent": null,
+                 "origin": {"pkg": "root_pkg", "file": "bringup.launch.xml"}}
+            ]
+        });
+        let dump: LaunchDump = serde_json::from_value(json).expect("valid LaunchDump");
+        let mut index = ManifestIndex::default();
+        index.scope_paths.push(ResolvedScopePath {
+            scope_id: 0,
+            path_name: "points_to_cmd".to_string(),
+            input_topics: vec!["/perception/points_raw".to_string()],
+            output_topics: vec!["/control/cmd".to_string()],
+            path: PathDecl {
+                max_latency: Some(Duration::from_millis_f64(30.0)),
+                ..Default::default()
+            },
+        });
+        index.hazards.push(ResolvedHazard {
+            scope_id: 0,
+            name: "lost_points".to_string(),
+            guards: vec![],
+            decl: HazardDecl {
+                reaction: Some("points_to_cmd".to_string()),
+                ..Default::default()
+            },
+        });
+        let model =
+            build_system_model(&dump, &index, None, BTreeMap::new(), &BTreeSet::new(), None);
+
+        let key = "root_pkg/bringup.launch.xml/points_to_cmd";
+        assert!(
+            model
+                .structure
+                .scopes
+                .contains_key("root_pkg/bringup.launch.xml")
+        );
+        let sp =
+            model.contracts.scope_paths.get(key).unwrap_or_else(|| {
+                panic!("scope path keyed {key}: {:?}", model.contracts.scope_paths)
+            });
+        // A scope path carries no trigger fact; the model documents `None`.
+        assert_eq!(sp.trigger, None);
+        assert_eq!(sp.max_latency_ms, Some(30.0));
+        let (scope, name) = key.rsplit_once('/').expect("split");
+        assert_eq!(
+            (scope, name),
+            ("root_pkg/bringup.launch.xml", "points_to_cmd")
+        );
+        let hazard = &model.contracts.hazards["root_pkg/bringup.launch.xml/lost_points"];
+        assert_eq!(hazard.reaction.as_deref(), Some(key));
+        assert!(
+            model
+                .contracts
+                .scope_paths
+                .contains_key(hazard.reaction.as_ref().unwrap())
+        );
+    }
+
+    /// A model written by a resolver before the trigger fact existed (0.11.0
+    /// and earlier) still loads with the new fields absent, and its paths
+    /// read as `Unclassified` -- never as a timer.
+    #[test]
+    fn a_model_written_before_the_trigger_fact_still_loads() {
+        let yaml = r#"
+meta:
+  version: 1
+  resolver:
+    tool: play_launch
+    version: 0.11.0
+structure:
+  nodes:
+    /perception/detector:
+      scope: bringup.launch.xml
+      package: p
+      executable: detector
+contracts:
+  node_paths:
+    /perception/detector/tick:
+      output:
+      - /perception/detector/objects
+      max_latency_ms: 15.0
+  scope_paths:
+    /bringup.launch.xml/e2e:
+      input:
+      - /sensing/points
+      output:
+      - /perception/objects
+      max_latency_ms: 80.0
+  sub_endpoints:
+    /perception/detector/map:
+      state: true
+"#;
+        let model = model::SystemModel::from_yaml_str(yaml).expect("an 0.11.0 model loads");
+        let tick = &model.contracts.node_paths["/perception/detector/tick"];
+        assert_eq!(tick.trigger, None);
+        assert_eq!(tick.effective_trigger(), EffectiveTrigger::Unclassified);
+        assert_eq!(tick.sync, None);
+        assert_eq!(tick.min_latency_ms, None);
+        assert_eq!(
+            model.contracts.sub_endpoints["/perception/detector/map"].buffer,
+            None
+        );
+        assert!(model.contracts.node_criticality.is_empty());
+        assert!(model.contracts.severity_levels.is_empty());
+        assert!(
+            model
+                .contracts
+                .scope_paths
+                .contains_key("/bringup.launch.xml/e2e")
+        );
     }
 }

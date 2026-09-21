@@ -30,8 +30,8 @@
 use std::collections::BTreeMap;
 
 use ros_launch_manifest_sched::{
-    ChainElement, ChainSemantics, Criticality, EffectiveTrigger, MapperInput, MapperNode,
-    MapperPath, ResolvedChain, SystemSched,
+    ChainElement, ChainSemantics, Criticality, MapperInput, MapperNode, MapperPath, ResolvedChain,
+    SystemSched,
 };
 
 use crate::ros::{
@@ -39,6 +39,10 @@ use crate::ros::{
     manifest_loader::ManifestIndex,
     sched_loader::{ScheduledRecord, scheduled_records_from_dump},
 };
+// The tests below still spell the mirror type; the production code reads it
+// through `model_builder::convert_trigger` since phase 78 W1.
+#[cfg(test)]
+use ros_launch_manifest_sched::EffectiveTrigger;
 
 /// Build the mapper's input from a launch dump and (optionally) a resolved
 /// contract index. `legacy` is threaded straight through to
@@ -105,7 +109,7 @@ fn build_mapper_node(
 /// Every declared causal path this node owns (Phase 44.4 §2), translated
 /// from `ros_launch_manifest_types::PathDecl`/`EffectiveTrigger` (W1) into
 /// the sched crate's dependency-free mirror types
-/// ([`ros_launch_manifest_sched::MapperPath`]/[`EffectiveTrigger`]).
+/// ([`ros_launch_manifest_sched::MapperPath`]/[`ros_launch_manifest_sched::EffectiveTrigger`]).
 /// `inputs` uses the *effective* trigger's endpoint list (matching the same
 /// source-of-truth fix `chain_checks::resolve_segment` applies — the raw
 /// `path.input` field is empty whenever the author used the explicit
@@ -146,7 +150,7 @@ fn extract_paths(
             };
             MapperPath {
                 name: p.path_name.clone(),
-                effective_trigger: convert_trigger(effective),
+                effective_trigger: super::model_builder::convert_trigger(effective),
                 max_latency_ms: p.path.max_latency.map(|d| d.as_millis_f64()),
                 // Cost, from the platform file's declared `budget` for this
                 // node. The comment that used to sit here said the vocabulary
@@ -221,20 +225,6 @@ fn claims_concurrency(node: &ros_launch_manifest_types::NodeDecl) -> bool {
     !groups
         .iter()
         .any(|g| node.paths.keys().all(|p| g.contains(p.as_str())))
-}
-
-/// Translate a `types::EffectiveTrigger` (W1) into the sched crate's
-/// dependency-free mirror ([`chain.rs` module doc][crate root] — the sched
-/// crate has no dependency on `ros_launch_manifest_types`).
-fn convert_trigger(t: ros_launch_manifest_types::EffectiveTrigger) -> EffectiveTrigger {
-    use ros_launch_manifest_types::EffectiveTrigger as T;
-    match t {
-        T::Timer { rate_hz } => EffectiveTrigger::Timer { rate_hz },
-        T::Input(eps) => EffectiveTrigger::Input(eps),
-        T::Once => EffectiveTrigger::Once,
-        T::Spontaneous => EffectiveTrigger::Spontaneous,
-        T::Unclassified => EffectiveTrigger::Unclassified,
-    }
 }
 
 /// Build `ResolvedChain`s from **derived** routes rather than from authored
