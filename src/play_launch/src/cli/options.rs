@@ -759,6 +759,14 @@ pub struct ContractOptions {
     #[arg(long, value_enum, value_name = "on|off")]
     pub interception: Option<Switch>,
 
+    /// The severity at which a violation ends a `--enforce-rules strict`
+    /// run. `error` (the default): warnings such as `graph-deviation-runtime`
+    /// are recorded and the run goes on, because that class exists for
+    /// claims a launch tree cannot settle. `warning`: any violation ends the
+    /// run (issue #0032).
+    #[arg(long, value_enum, default_value = "error")]
+    pub strict_on: StrictOn,
+
     /// Phase 36.7: block unauthorized publisher/subscription creation
     /// at the rcl layer. The set of allowed topic FQNs is written from the
     /// merged ManifestIndex (any contract channel) and passed to every child
@@ -819,6 +827,15 @@ impl Switch {
     }
 }
 
+/// The severity threshold of `--enforce-rules strict` (`--strict-on`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum StrictOn {
+    /// Any violation ends the run.
+    Warning,
+    /// Only an error-severity violation ends the run (default).
+    Error,
+}
+
 /// Runtime enforcement mode for manifest contracts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum EnforceMode {
@@ -876,6 +893,7 @@ impl Default for ContractOptions {
             no_provider_contracts: false,
             enforce_rules: EnforceMode::Warn,
             interception: None,
+            strict_on: StrictOn::Error,
             block_unauthorized_endpoints: false,
         }
     }

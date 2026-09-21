@@ -17,11 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0032** -- `--enforce-rules strict` trips on the first violation of ANY
-severity, so the `/rosout` graph-deviation WARNING ends a run 57 ms in. See
-`0032-*`.
-
-
 **#0035** -- under `--container-mode observable|stock` a composable's derived
 tier is dropped at LOADED with no message; the co-location warning covers only
 two-plus chain members. See `0035-*`.
@@ -42,6 +37,14 @@ HEAD. See `0038-*`.
 by name where `chain_aware` collapses the tie; design question. See `0039-*`.
 
 ## Resolved
+
+**#0032** -- `--enforce-rules strict` tripped on the first violation of ANY
+severity, so the `graph-deviation-runtime` WARNING every node's `/rosout`
+publisher raises ended a run 57 ms in, before the rate ERROR the contract was
+written for could be measured. Strict now trips at a threshold, `error` by
+default (`--strict-on warning` for the other reading), the exit names the
+violation that tripped it, and the three rcl-internal topics are implicitly
+external so they are not deviations at all. See `archived/0032-*`.
 
 **#0031** -- `--enforce-rules warn`, the default, enforced nothing unless a
 `--config` file set `interception.enabled: true`, and nothing said so; a strict

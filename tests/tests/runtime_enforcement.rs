@@ -714,6 +714,17 @@ fn strict_mode_ends_the_run_non_zero_and_stops_the_nodes() {
         "the exit must name the violation as its cause; output:\n{stderr}"
     );
 
+    // Issue #0032: the run got past the `/rosout` and `/parameter_events`
+    // graph-deviation WARNINGS every node raises at startup, and ended on
+    // the rate ERROR the contract was written for.
+    let violations = read_violations(&run.play_log().join("runtime_violations.jsonl"));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v["rule_id"] == "rate-hierarchy-runtime" && v["severity"] == "error"),
+        "the strict run must end on the rate error, not a warning; got: {violations:?}"
+    );
+
     // The nodes were signalled, not abandoned: none of the pids the actors
     // recorded is still alive once the supervisor has exited.
     let pids = node_pids(&run.play_log());
@@ -821,5 +832,59 @@ fn strict_refuses_to_start_without_an_event_source() {
     assert!(
         stderr.contains("no event source"),
         "a warn run with interception off must warn that no rule can fire; stderr:\n{stderr}"
+    );
+}
+
+/// Issue #0032: a strict run whose only violations are warnings keeps
+/// running. With no `topics:` block every endpoint is a
+/// `graph-deviation-runtime` WARNING (`/rosout` and `/parameter_events`
+/// included), and before the fix the first of them ended the run 57 ms in.
+#[test]
+fn strict_mode_keeps_running_on_warning_severity_violations() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+    let work_dir = tempfile::TempDir::new().expect("tempdir");
+    let overlay_root = make_overlay_contracts(work_dir.path(), "");
+
+    let run = spawn_with_manifest(&overlay_root, "strict", &[]);
+    let play_log = run.play_log();
+    fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
+    let viol_path = play_log.join("runtime_violations.jsonl");
+    assert!(
+        wait_for_file(&viol_path, Duration::from_secs(10)),
+        "runtime_violations.jsonl not written"
+    );
+    std::thread::sleep(Duration::from_secs(3));
+    let violations = read_violations(&viol_path);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v["rule_id"] == "graph-deviation-runtime" && v["severity"] == "warning"),
+        "expected graph-deviation warnings; got: {violations:?}"
+    );
+    // The rcl-internal topics every node creates are not deviations from
+    // any launch tree.
+    assert!(
+        !violations
+            .iter()
+            .any(|v| v["fqn"] == "/rosout" || v["fqn"] == "/parameter_events"),
+        "/rosout and /parameter_events must not be reported; got: {violations:?}"
+    );
+    let stderr = run.output();
+    assert!(
+        pid_is_alive(run.proc.id()),
+        "warnings alone must not end a strict run; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("Strict enforcement violated"),
+        "the strict watcher fired on a warning; stderr:\n{stderr}"
+    );
+    let pids = node_pids(&play_log);
+    assert!(
+        !pids.is_empty() && pids.iter().all(|&p| pid_is_alive(p)),
+        "the nodes must still be running: {pids:?}"
     );
 }

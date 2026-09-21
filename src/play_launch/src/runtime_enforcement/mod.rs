@@ -23,7 +23,7 @@ use std::{
     io::{BufWriter, Write},
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -57,6 +57,22 @@ pub enum Severity {
     Warning,
     Error,
 }
+
+impl Severity {
+    /// `Warning < Error`, the static checker's order.
+    pub fn at_least(self, threshold: Severity) -> bool {
+        match (self, threshold) {
+            (_, Severity::Warning) | (Severity::Error, Severity::Error) => true,
+            (Severity::Warning, Severity::Error) => false,
+        }
+    }
+}
+
+/// Topics rcl creates for every node before user code runs. Seeded into
+/// the runtime view as implicitly external, so `graph-deviation-runtime`
+/// reports only topics an author could plausibly have declared (issue
+/// #0032). `ContractView::externals` stays exactly what the contracts say.
+pub const RCL_INTERNAL_TOPICS: &[&str] = &["/rosout", "/rosout_agg", "/parameter_events"];
 
 /// Live state of one hazard (phase 73).
 #[derive(Debug, Default)]
@@ -173,13 +189,21 @@ pub struct RuleEngine {
     /// Output sink for violations. Lazily created on first write.
     violations_out: Option<BufWriter<File>>,
     violations_path: PathBuf,
-    /// Count of violations seen. In `Strict` mode, the first violation
-    /// flips `strict_violated`.
+    /// Count of violations seen, of every severity.
     pub violation_count: u64,
-    /// Shared flag flipped on first violation in Strict mode. Owners
-    /// hold a `clone()` of the `Arc` and poll it to trigger shutdown.
-    /// Even outside Strict mode the flag tracks "any violation seen".
+    /// Shared flag flipped on the first violation at or above
+    /// `strict_threshold` in Strict mode. Owners hold a `clone()` of the
+    /// `Arc` and poll it to trigger shutdown. Below the threshold a
+    /// violation is logged and recorded but does not end a strict run
+    /// (issue #0032).
     pub strict_violated: Arc<AtomicBool>,
+    /// The severity at which a violation trips `strict_violated`. Default
+    /// `Error`: the warning class exists for claims the launch tree cannot
+    /// settle (`graph-deviation-runtime`). `--strict-on warning` lowers it.
+    strict_threshold: Severity,
+    /// `"<rule_id> on <fqn>"` of the first violation that tripped strict
+    /// mode, for the exit message.
+    first_strict_violation: Arc<Mutex<Option<String>>>,
     /// Tracked once per `rule_id+fqn` to suppress repeated identical
     /// violations from spamming the log.
     seen: HashMap<(String, String), u64>,
@@ -224,6 +248,14 @@ impl RuleEngine {
                 .entry(fnv1a(fqn.as_bytes()))
                 .or_insert_with(|| fqn.clone());
         }
+        // Issue #0032: every node's `/rosout` and `/parameter_events`
+        // publishers exist before user code runs; they are not deviations
+        // from any launch tree.
+        for fqn in RCL_INTERNAL_TOPICS {
+            topic_hash_to_fqn
+                .entry(fnv1a(fqn.as_bytes()))
+                .or_insert_with(|| fqn.to_string());
+        }
 
         // Lifecycle nodes (Phase 36.6): rate/age/latency rules gate on
         // observed lifecycle state.
@@ -251,6 +283,8 @@ impl RuleEngine {
             violations_path: log_dir.join("runtime_violations.jsonl"),
             violation_count: 0,
             strict_violated: Arc::new(AtomicBool::new(false)),
+            strict_threshold: Severity::Error,
+            first_strict_violation: Arc::new(Mutex::new(None)),
             seen: HashMap::new(),
             topic_name_chunks: HashMap::new(),
             discovered_names: HashMap::new(),
@@ -295,6 +329,19 @@ impl RuleEngine {
     /// mode and shutdown should be triggered.
     pub fn strict_violated_handle(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.strict_violated)
+    }
+
+    /// Shared handle to the name of the first violation that tripped
+    /// strict mode (`"<rule_id> on <fqn>"`), `None` until one has.
+    pub fn first_strict_violation_handle(&self) -> Arc<Mutex<Option<String>>> {
+        Arc::clone(&self.first_strict_violation)
+    }
+
+    /// Lower (or restate) the severity at which a violation ends a strict
+    /// run: `--strict-on warning|error`.
+    pub fn with_strict_threshold(mut self, threshold: Severity) -> Self {
+        self.strict_threshold = threshold;
+        self
     }
 
     /// Observe one interception event. Cheap and non-blocking — runs
@@ -847,6 +894,22 @@ impl RuleEngine {
         );
     }
 
+    /// Issue #0032: strict mode acts on the engine's own severity
+    /// vocabulary. Only a violation at or above the threshold (default
+    /// `Error`) ends the run; the rest are logged and written to
+    /// `runtime_violations.jsonl` like any other violation. The first one
+    /// that trips is remembered by name for the exit message.
+    fn trip_strict(&self, rule_id: &str, fqn: &str, severity: Severity) {
+        if matches!(self.mode, EnforceMode::Strict) && severity.at_least(self.strict_threshold) {
+            if let Ok(mut first) = self.first_strict_violation.lock()
+                && first.is_none()
+            {
+                *first = Some(format!("{rule_id} on {fqn}"));
+            }
+            self.strict_violated.store(true, Ordering::Release);
+        }
+    }
+
     /// Emit a violation. Idempotent — duplicate `(rule_id, fqn)` pairs
     /// are silently suppressed after the first occurrence.
     fn emit(
@@ -863,9 +926,7 @@ impl RuleEngine {
         }
         self.seen.insert(key, timestamp_ns);
         self.violation_count += 1;
-        if matches!(self.mode, EnforceMode::Strict) {
-            self.strict_violated.store(true, Ordering::Release);
-        }
+        self.trip_strict(&rule_id, &fqn, severity);
 
         let v = RuntimeViolation {
             rule_id,
@@ -907,9 +968,7 @@ impl RuleEngine {
         timestamp_ns: u64,
     ) {
         self.violation_count += 1;
-        if matches!(self.mode, EnforceMode::Strict) {
-            self.strict_violated.store(true, Ordering::Release);
-        }
+        self.trip_strict(&rule_id, &fqn, severity);
         let v = RuntimeViolation {
             rule_id,
             severity,
@@ -1965,11 +2024,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    /// Issue #0032: strict mode trips on `Severity::Error` only. The
+    /// `graph-deviation-runtime` WARNING that every node's `/rosout`
+    /// publisher raises is logged and recorded but leaves the flag alone;
+    /// the `rate-hierarchy-runtime` ERROR the contract was written for
+    /// sets it.
     #[test]
-    fn strict_mode_trips_atomic_flag() {
+    fn strict_mode_trips_on_error_severity_only() {
         use crate::interception::{EventKind, InterceptionEvent};
+        use ros_launch_manifest_types::{Manifest, NodeDecl};
+        use ros_launch_resolve::ros::manifest_loader::{ResolvedManifest, ResolvedTopic};
 
-        let index = ManifestIndex::default();
+        // A plain (non-lifecycle) talker publishing /chatter with a declared
+        // min_rate_hz of 30.
+        let mut nodes = std::collections::BTreeMap::new();
+        let mut talker = NodeDecl::default();
+        talker.publishers.insert(
+            "chatter".to_string(),
+            ros_launch_manifest_types::EndpointProps {
+                min_rate_hz: Some(30.0),
+                ..Default::default()
+            },
+        );
+        nodes.insert("talker".to_string(), talker);
+        let resolved = ResolvedManifest {
+            scope_id: 0,
+            pkg: None,
+            file: String::new(),
+            ns: "/".to_string(),
+            channel: ros_launch_resolve::ros::manifest_loader::ContractChannel::Provider,
+            contract_path: std::path::PathBuf::new(),
+            manifest: Manifest {
+                version: 1,
+                nodes,
+                ..Default::default()
+            },
+            source: String::new(),
+            diagnostics: vec![],
+        };
+        let mut index = ManifestIndex::default();
+        index.manifests.insert(0, resolved);
+        index.topics.insert(
+            "/chatter".to_string(),
+            ResolvedTopic {
+                derived_from_remaps: false,
+                fqn: "/chatter".to_string(),
+                msg_type: "std_msgs/msg/String".to_string(),
+                publishers: vec!["/talker/chatter".to_string()],
+                subscribers: vec![],
+                rate_hz: None,
+                derived_rate_hz: None,
+                qos: None,
+                max_transport_ms: None,
+                drop: None,
+                scope_ids: vec![0],
+            },
+        );
+
         let tmp =
             std::env::temp_dir().join(format!("play_launch_strict_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
@@ -1981,7 +2092,8 @@ mod tests {
         let handle = re.strict_violated_handle();
         assert!(!handle.load(Ordering::Acquire));
 
-        // Fire a graph-deviation by feeding an unknown topic init.
+        // A graph deviation: an unknown topic's publisher is created.
+        // Warning severity -- recorded, not fatal.
         re.observe(&InterceptionEvent {
             kind: EventKind::PublisherInit,
             _pad: [0; 3],
@@ -1994,11 +2106,131 @@ mod tests {
             tid: 0,
             _pad2: [0; 4],
         });
+        assert_eq!(re.violation_count, 1, "the warning is still a violation");
+        assert!(
+            !handle.load(Ordering::Acquire),
+            "a warning-severity violation must not end a strict run"
+        );
+
+        // The talker at 1 Hz for eight seconds: the rate check (every ~5 s
+        // on a slow topic, over at least a 0.5 s window) finds 1 Hz < 30
+        // and emits rate-hierarchy-runtime at Error severity.
+        let topic_hash = fnv1a("/chatter".as_bytes());
+        for i in 0..8u64 {
+            re.observe(&InterceptionEvent {
+                kind: EventKind::Publish,
+                _pad: [0; 3],
+                topic_hash,
+                stamp_sec: 0,
+                stamp_nanosec: 0,
+                handle: 0xA,
+                monotonic_ns: 2_000_000 + i * 1_000_000_000,
+                cpu_ns: 0,
+                tid: 0,
+                _pad2: [0; 4],
+            });
+        }
         re.flush();
         assert!(
             handle.load(Ordering::Acquire),
-            "strict mode should trip the flag on first violation"
+            "an error-severity violation must trip the strict flag"
         );
+        assert_eq!(
+            re.first_strict_violation_handle()
+                .lock()
+                .unwrap()
+                .as_deref(),
+            Some("rate-hierarchy-runtime on /chatter"),
+            "the exit names the violation that tripped strict mode"
+        );
+        let contents = std::fs::read_to_string(tmp.join("runtime_violations.jsonl")).unwrap();
+        assert!(contents.contains("graph-deviation-runtime"), "{contents}");
+        assert!(contents.contains("rate-hierarchy-runtime"), "{contents}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// `--strict-on warning`: the other reading, as a threshold. The same
+    /// graph deviation that the default leaves alone ends the run.
+    #[test]
+    fn strict_on_warning_makes_a_warning_fatal() {
+        use crate::interception::{EventKind, InterceptionEvent};
+
+        let index = ManifestIndex::default();
+        let tmp = std::env::temp_dir().join(format!(
+            "play_launch_strict_on_warning_test_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let mut re = RuleEngine::new(
+            Arc::new(ContractView::from_manifest_index(&index)),
+            EnforceMode::Strict,
+            &tmp,
+        )
+        .with_strict_threshold(Severity::Warning);
+        let handle = re.strict_violated_handle();
+        re.observe(&InterceptionEvent {
+            kind: EventKind::PublisherInit,
+            _pad: [0; 3],
+            topic_hash: 0xCAFE,
+            stamp_sec: 0,
+            stamp_nanosec: 0,
+            handle: 0x1,
+            monotonic_ns: 1_000_000,
+            cpu_ns: 0,
+            tid: 0,
+            _pad2: [0; 4],
+        });
+        assert!(handle.load(Ordering::Acquire));
+        assert_eq!(
+            re.first_strict_violation_handle()
+                .lock()
+                .unwrap()
+                .as_deref(),
+            Some("graph-deviation-runtime on (unknown hash 0xcafe)")
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Issue #0032: `/rosout`, `/rosout_agg` and `/parameter_events` exist
+    /// for every node before user code runs. They are not graph deviations,
+    /// whatever the contract says.
+    #[test]
+    fn rcl_internal_topics_are_not_graph_deviations() {
+        use crate::interception::{EventKind, InterceptionEvent};
+
+        let index = ManifestIndex::default();
+        let tmp = std::env::temp_dir().join(format!(
+            "play_launch_rcl_internal_test_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let view = ContractView::from_manifest_index(&index);
+        assert!(
+            view.externals.is_empty(),
+            "the contract view is not touched"
+        );
+        let mut re = RuleEngine::new(Arc::new(view), EnforceMode::Strict, &tmp);
+        for fqn in RCL_INTERNAL_TOPICS {
+            re.observe(&InterceptionEvent {
+                kind: EventKind::PublisherInit,
+                _pad: [0; 3],
+                topic_hash: fnv1a(fqn.as_bytes()),
+                stamp_sec: 0,
+                stamp_nanosec: 0,
+                handle: 0x1,
+                monotonic_ns: 1_000_000,
+                cpu_ns: 0,
+                tid: 0,
+                _pad2: [0; 4],
+            });
+        }
+        assert_eq!(
+            re.violation_count, 0,
+            "rcl-internal topics are implicitly external"
+        );
+        assert!(!re.strict_violated_handle().load(Ordering::Acquire));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

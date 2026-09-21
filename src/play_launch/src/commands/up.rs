@@ -1232,10 +1232,11 @@ pub(crate) async fn play(
 
     // Setup periodic statistics output task (runs every 10 seconds)
     let startup_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    // Issue #0033: set by the strict watcher when a runtime contract violation
-    // ended the run, so `play()` can return non-zero the way
-    // `--on-startup-failure exit` does.
-    let strict_violated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Issue #0033: set by the strict watcher to the violation that ended the
+    // run (`"<rule_id> on <fqn>"`), so `play()` can return non-zero naming it,
+    // the way `--on-startup-failure exit` does.
+    let strict_violation: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     // Reuse the staged-startup budget: it is already this system's answer to
     // "how long is too long to be waiting on one member".
     let startup_exception_after_secs = runtime_config.startup.stage_timeout_secs;
@@ -1464,11 +1465,21 @@ pub(crate) async fn play(
             common.contract_opts.enforce_rules,
             crate::cli::options::EnforceMode::Off
         ) {
-            Some(crate::runtime_enforcement::RuleEngine::new(
-                contract_view.clone(),
-                common.contract_opts.enforce_rules,
-                &log_dir,
-            ))
+            Some(
+                crate::runtime_enforcement::RuleEngine::new(
+                    contract_view.clone(),
+                    common.contract_opts.enforce_rules,
+                    &log_dir,
+                )
+                .with_strict_threshold(match common.contract_opts.strict_on {
+                    crate::cli::options::StrictOn::Warning => {
+                        crate::runtime_enforcement::Severity::Warning
+                    }
+                    crate::cli::options::StrictOn::Error => {
+                        crate::runtime_enforcement::Severity::Error
+                    }
+                }),
+            )
         } else {
             None
         };
@@ -1643,13 +1654,18 @@ pub(crate) async fn play(
                 common.contract_opts.enforce_rules,
                 crate::cli::options::EnforceMode::Strict
             )
-            .then(|| re.strict_violated_handle())
+            .then(|| {
+                (
+                    re.strict_violated_handle(),
+                    re.first_strict_violation_handle(),
+                )
+            })
         });
-        if let Some(handle) = strict_handle {
+        if let Some((handle, first_violation)) = strict_handle {
             let shutdown_tx_strict = shutdown_tx.clone();
             let mut shutdown_rx_strict = shutdown_signal.clone();
             let member_handle_strict = member_handle.clone();
-            let strict_flag = strict_violated.clone();
+            let strict_slot = strict_violation.clone();
             let strict_watch_task = tokio::spawn(async move {
                 let poll_interval = tokio::time::Duration::from_millis(100);
                 loop {
@@ -1664,11 +1680,18 @@ pub(crate) async fn play(
                         }
                     }
                     if handle.load(std::sync::atomic::Ordering::Acquire) {
+                        let reason = first_violation
+                            .lock()
+                            .ok()
+                            .and_then(|first| first.clone())
+                            .unwrap_or_else(|| "a runtime rule".to_string());
                         error!(
-                            "[runtime] Strict enforcement violated -- shutting down \
-                             (--enforce-rules strict)"
+                            "[runtime] Strict enforcement violated by {reason} -- shutting \
+                             down (--enforce-rules strict)"
                         );
-                        strict_flag.store(true, std::sync::atomic::Ordering::Release);
+                        if let Ok(mut slot) = strict_slot.lock() {
+                            *slot = Some(reason);
+                        }
                         // Issue #0033: the full teardown, not just the watch
                         // channel. The actors wait for children that only a
                         // group SIGTERM ever stops.
@@ -1766,9 +1789,10 @@ pub(crate) async fn play(
     }
     // Issue #0033: so does a strict runtime-enforcement violation. The
     // violations themselves are in `runtime_violations.jsonl` under the run.
-    if strict_violated.load(std::sync::atomic::Ordering::Acquire) {
+    if let Some(reason) = strict_violation.lock().ok().and_then(|slot| slot.clone()) {
         return Err(eyre::eyre!(
-            "runtime contract violated (--enforce-rules strict); see runtime_violations.jsonl"
+            "runtime contract violated by {reason} (--enforce-rules strict); see \
+             runtime_violations.jsonl"
         ));
     }
 
