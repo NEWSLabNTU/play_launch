@@ -26,6 +26,7 @@ indexmap = { version = "2", features = ["serde"] }
 ros-launch-manifest-types = { workspace = true }
 ros-launch-manifest-model = { workspace = true }
 ros-launch-manifest-sched = { workspace = true }
+ros-launch-manifest-derive = { workspace = true }
 ros-launch-manifest-check = { workspace = true }
 play_launch_parser = { workspace = true }
 # The Python half of the parser (nano-ros issue 0897 W2b). Depending
