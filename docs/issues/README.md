@@ -17,7 +17,37 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0031** -- `--enforce-rules warn` is the default and enforces nothing unless
+`--config` sets `interception.enabled: true`; no message says so. See `0031-*`.
 
+**#0032** -- `--enforce-rules strict` trips on the first violation of ANY
+severity, so the `/rosout` graph-deviation WARNING ends a run 57 ms in. See
+`0032-*`.
+
+**#0033** -- the strict watcher flips the shutdown watch channel only; actors
+wait for a SIGTERM nobody sent and the supervisor never exits. See `0033-*`.
+
+**#0034** -- `$(dirname)` is `""` when the launch file is named without a
+directory, so `$(dirname)/../..` becomes `/../..`. See `0034-*`.
+
+**#0035** -- under `--container-mode observable|stock` a composable's derived
+tier is dropped at LOADED with no message; the co-location warning covers only
+two-plus chain members. See `0035-*`.
+
+**#0036** -- `setcap --help` says RT needs root, the guide says
+`sched_setscheduler` and "DEADLINE not applied", no user guide for
+`--enforce-rules`, two specs superseded without saying so. See `0036-*`.
+
+**#0037** -- rlm: in-crate `dangling-entity` ignores topic `external:`,
+`service-wiring` ignores service `external: server`, `consistency` is a
+registered no-op. See `0037-*`.
+
+**#0038** -- rlm: hand-written docs teach `max_drop_rate`, `_ms` spellings,
+scope `pub:/sub:` blocks and chain rules that are parse errors or deleted at
+HEAD. See `0038-*`.
+
+**#0039** -- rlm: `rate_monotonic` spreads equal periods to unequal priorities
+by name where `chain_aware` collapses the tie; design question. See `0039-*`.
 
 ## Resolved
 
