@@ -19,6 +19,12 @@ use tracing::{debug, error, info, warn};
 /// Graceful shutdown timeout before escalating to SIGKILL.
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long the Running-state shutdown branch waits for the child to
+/// leave on its own (the group SIGTERM the shutdown protocol sends first)
+/// before signalling it directly. Issue #0033.
+#[cfg(unix)]
+const SHUTDOWN_SIGNAL_GRACE: Duration = Duration::from_secs(2);
+
 /// Send SIGTERM, wait up to 5s for graceful exit, then SIGKILL + wait.
 #[cfg(unix)]
 async fn graceful_kill(child: &mut tokio::process::Child, pid: u32, name: &str) {
@@ -369,17 +375,32 @@ impl RegularNodeActor {
                 if *self.shutdown_rx.borrow() {
                     debug!("[{}] Shutdown signal received in Running state", self.name);
 
-                    // On Unix, kill_process_group() already sent SIGTERM to all processes
-                    // We just need to wait for this child to exit
+                    // On Unix the shutdown protocol sends SIGTERM to the whole
+                    // process group before flipping this channel, so the child
+                    // is normally already on its way out. Issue #0033: do not
+                    // bet the run on it. If the child is still alive after a
+                    // short grace, signal it directly rather than wait forever
+                    // on a healthy process.
                     #[cfg(unix)]
                     {
-                        debug!("[{}] Waiting for child to exit (killed by PGID)", self.name);
-                        match child.wait().await {
-                            Ok(status) => {
+                        debug!("[{}] Waiting for child to exit", self.name);
+                        match tokio::time::timeout(SHUTDOWN_SIGNAL_GRACE, child.wait()).await {
+                            Ok(Ok(status)) => {
                                 debug!("[{}] Process exited with status: {:?}", self.name, status);
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 warn!("[{}] Failed to wait for process: {}", self.name, e);
+                            }
+                            Err(_elapsed) => {
+                                warn!(
+                                    "[{}] Still running {}s after shutdown began; stopping pid {} directly",
+                                    self.name,
+                                    SHUTDOWN_SIGNAL_GRACE.as_secs(),
+                                    pid
+                                );
+                                // The ladder the Stop/Restart control events
+                                // already use: SIGTERM, five seconds, SIGKILL.
+                                graceful_kill(&mut child, pid, &self.name).await;
                             }
                         }
                     }

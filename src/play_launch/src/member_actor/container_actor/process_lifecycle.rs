@@ -395,12 +395,44 @@ impl ContainerActor {
             .transition_all_composables_to_blocked(BlockReason::Shutdown)
             .await;
 
-        // On Unix, kill_process_group() already sent SIGTERM to all processes
-        // We just need to wait for this child to exit
+        // On Unix the shutdown protocol sends SIGTERM to the whole process
+        // group before flipping the channel, so the container is normally
+        // already on its way out. Issue #0033: do not bet the run on it. If
+        // it is still alive after a short grace, signal it directly.
         #[cfg(unix)]
         {
-            debug!("{}: Waiting for child to exit (killed by PGID)", self.name);
-            let _ = child.wait().await;
+            debug!("{}: Waiting for child to exit", self.name);
+            let grace = std::time::Duration::from_secs(2);
+            if tokio::time::timeout(grace, child.wait()).await.is_err() {
+                warn!(
+                    "{}: Still running {}s after shutdown began; stopping pid {} directly",
+                    self.name,
+                    grace.as_secs(),
+                    pid
+                );
+                // The ladder the node actor's Stop/Restart events use:
+                // SIGTERM, five seconds, SIGKILL.
+                if let Err(e) = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid as i32),
+                    nix::sys::signal::Signal::SIGTERM,
+                ) {
+                    warn!(
+                        "{}: Failed to send SIGTERM to pid {}: {}",
+                        self.name, pid, e
+                    );
+                }
+                if tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+                    .await
+                    .is_err()
+                {
+                    warn!(
+                        "{}: pid {} ignored SIGTERM for 5s; sending SIGKILL",
+                        self.name, pid
+                    );
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                }
+            }
         }
         #[cfg(not(unix))]
         {

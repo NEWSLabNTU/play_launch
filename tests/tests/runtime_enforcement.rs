@@ -94,15 +94,33 @@ nodes:
     overlay_root
 }
 
-/// Spawn `play_launch launch demo_nodes_cpp talker_listener.launch.xml`
-/// with an overlay contract tree + enforce-rules, run for `duration`,
-/// then SIGTERM.
-fn run_with_manifest(
-    overlay_root: &Path,
-    enforce: &str,
-    extra_args: &[&str],
-    duration: Duration,
-) -> tempfile::TempDir {
+/// A `play_launch launch` of the simple_test fixture with an overlay
+/// contract tree and `--enforce-rules <enforce>`, still running. The
+/// supervisor's stdout and stderr go to `stdout.log` / `stderr.log`
+/// under the work dir (a pipe nobody drains would stall the child).
+struct StrictRun {
+    work_dir: tempfile::TempDir,
+    proc: ManagedProcess,
+}
+
+impl StrictRun {
+    fn play_log(&self) -> PathBuf {
+        self.work_dir.path().join("play_log/latest")
+    }
+    /// stdout then stderr: the tracing lines go to stdout, a `main` error
+    /// to stderr.
+    fn output(&self) -> String {
+        format!(
+            "{}{}",
+            std::fs::read_to_string(self.work_dir.path().join("stdout.log")).unwrap_or_default(),
+            std::fs::read_to_string(self.work_dir.path().join("stderr.log")).unwrap_or_default()
+        )
+    }
+}
+
+/// Spawn `play_launch launch` on `pure_nodes.launch.xml` with an overlay
+/// contract tree + enforce-rules and hand the running process back.
+fn spawn_with_manifest(overlay_root: &Path, enforce: &str, extra_args: &[&str]) -> StrictRun {
     let env = fixtures::install_env();
     let work_dir = tempfile::TempDir::new().expect("tempdir");
     let so_path = interception_so_path();
@@ -142,17 +160,89 @@ fn run_with_manifest(
     cmd.arg(launch.to_str().unwrap());
     cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", &so_path);
     cmd.env("RUST_LOG", "play_launch=warn");
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
+    cmd.stdout(Stdio::from(
+        std::fs::File::create(work_dir.path().join("stdout.log")).expect("stdout file"),
+    ));
+    cmd.stderr(Stdio::from(
+        std::fs::File::create(work_dir.path().join("stderr.log")).expect("stderr file"),
+    ));
 
     let proc = ManagedProcess::spawn(&mut cmd).expect("spawn play_launch");
-    let play_log = work_dir.path().join("play_log/latest");
-    fixtures::wait_for_processes(&play_log, 2, Duration::from_secs(15));
+    StrictRun { work_dir, proc }
+}
+
+/// Spawn as `spawn_with_manifest`, wait for both nodes, run for
+/// `duration`, then SIGTERM.
+fn run_with_manifest(
+    overlay_root: &Path,
+    enforce: &str,
+    extra_args: &[&str],
+    duration: Duration,
+) -> tempfile::TempDir {
+    let run = spawn_with_manifest(overlay_root, enforce, extra_args);
+    fixtures::wait_for_processes(&run.play_log(), 2, Duration::from_secs(15));
     std::thread::sleep(duration);
+    let StrictRun { work_dir, proc } = run;
     drop(proc);
     // Give the listener task time to flush jsonl + interception summaries.
     std::thread::sleep(Duration::from_millis(800));
     work_dir
+}
+
+/// The pids the run's node actors wrote under `play_log/latest/node/*/pid`.
+fn node_pids(play_log: &Path) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir(play_log.join("node")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|e| std::fs::read_to_string(e.path().join("pid")).ok())
+        .filter_map(|s| s.trim().parse::<u32>().ok())
+        .collect()
+}
+
+/// Is `pid` a live (non-zombie) process on this host?
+fn pid_is_alive(pid: u32) -> bool {
+    match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => {
+            // "<pid> (<comm>) <state> ..." -- comm may contain spaces, so
+            // take the state from after the closing paren.
+            stat.rsplit(')')
+                .next()
+                .and_then(|rest| rest.split_whitespace().next())
+                .map(|state| state != "Z" && state != "X")
+                .unwrap_or(false)
+        }
+        Err(_) => false,
+    }
+}
+
+/// The overlay contract that any run of the fixture violates: the
+/// demo_nodes_cpp talker publishes at 1 Hz and the contract demands 1000.
+fn write_rate_1000_contract(work_dir: &Path) -> PathBuf {
+    let overlay_root = work_dir.join("contracts");
+    let launch_dir = overlay_root.join("_/launch");
+    std::fs::create_dir_all(&launch_dir).expect("create overlay launch dir");
+    std::fs::write(
+        launch_dir.join("pure_nodes.contract.yaml"),
+        r#"version: 1
+nodes:
+  talker:
+    pub:
+      chatter:
+        min_rate_hz: 1000
+  listener:
+    sub:
+      chatter: {}
+topics:
+  /pure_test/chatter:
+    type: std_msgs/msg/String
+    pub: [talker/chatter]
+    sub: [listener/chatter]
+"#,
+    )
+    .expect("write contract");
+    overlay_root
 }
 
 /// Read every line of `runtime_violations.jsonl` as a `serde_json::Value`.
@@ -586,5 +676,54 @@ topics:
     assert!(
         offending.is_empty(),
         "compliant contract must not trip rate/type/age rules, got: {offending:?}"
+    );
+}
+
+/// Issue #0033: `--enforce-rules strict` must END the run on a violation.
+/// The supervisor exits non-zero within seconds of the violation and its
+/// nodes go with it. Before the fix the strict watcher flipped the
+/// run-level watch channel and nothing else, so every actor sat in
+/// `child.wait()` on a healthy child, the nodes kept running with their
+/// output no longer forwarded, and play_launch lived until an outside
+/// SIGINT (a CI job timeout, in practice).
+#[test]
+fn strict_mode_ends_the_run_non_zero_and_stops_the_nodes() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+    let work_dir = tempfile::TempDir::new().expect("tempdir");
+    let overlay_root = write_rate_1000_contract(work_dir.path());
+
+    let mut run = spawn_with_manifest(&overlay_root, "strict", &[]);
+    // The rate rule needs a 0.5 s window and re-checks a slow topic every
+    // ~5 s, so the violation lands 5-6 s after the talker's first publish;
+    // the budget covers node startup on a loaded host on top of that.
+    let status = run.proc.wait_with_timeout(Duration::from_secs(40));
+    assert!(
+        !status.success(),
+        "a strict violation must end the run non-zero, got {status:?}"
+    );
+
+    let stderr = run.output();
+    assert!(
+        stderr.contains("Strict enforcement violated"),
+        "the run ended, but not because of the strict watcher; output:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("runtime contract violated"),
+        "the exit must name the violation as its cause; output:\n{stderr}"
+    );
+
+    // The nodes were signalled, not abandoned: none of the pids the actors
+    // recorded is still alive once the supervisor has exited.
+    let pids = node_pids(&run.play_log());
+    assert!(!pids.is_empty(), "the run recorded no node pids");
+    std::thread::sleep(Duration::from_millis(500));
+    let survivors: Vec<u32> = pids.into_iter().filter(|&p| pid_is_alive(p)).collect();
+    assert!(
+        survivors.is_empty(),
+        "nodes still running after the strict shutdown: {survivors:?}"
     );
 }

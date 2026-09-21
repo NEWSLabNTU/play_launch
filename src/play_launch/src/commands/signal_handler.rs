@@ -19,6 +19,32 @@ const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10
 /// Interval for checking if all nodes have finished loading
 const COMPLETION_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// Begin the shutdown of a run, whatever asked for it: the first
+/// SIGINT/SIGTERM, `--on-startup-failure exit`, a node declared
+/// `on_exit=Shutdown()`, or a strict runtime-enforcement violation.
+///
+/// Three levers, always pulled together, because each reaches a different
+/// party: the process GROUP gets SIGTERM (on Unix the actors wait for their
+/// child to exit rather than killing it themselves), the run-level watch
+/// channel stops the background tasks, and `member_handle.shutdown()`
+/// reaches the actors on the separate channel the builder created. Issue
+/// #0033 was one caller pulling the middle lever only: every node stayed
+/// up, the output forwarders went quiet, and the supervisor sat in
+/// `child.wait()` on healthy children until an outside signal arrived.
+pub(crate) fn initiate_shutdown(
+    pgid: i32,
+    shutdown_tx: &tokio::sync::watch::Sender<bool>,
+    member_handle: &crate::member_actor::MemberHandle,
+) {
+    #[cfg(unix)]
+    crate::process::kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+    #[cfg(not(unix))]
+    let _ = pgid;
+    debug!("Sending shutdown signal to background tasks...");
+    let _ = shutdown_tx.send(true);
+    let _ = member_handle.shutdown();
+}
+
 /// Context for completion waiting -- shared between Unix and Windows paths.
 pub(crate) struct CompletionContext {
     pub(crate) shutdown_tx: tokio::sync::watch::Sender<bool>,
@@ -110,11 +136,7 @@ pub(crate) async fn wait_for_completion_unix<F>(
                         info!("Shutting down gracefully (SIGTERM)...");
                         info!("Press Ctrl-C again to force terminate");
                         last_signal_sent = std::time::Instant::now();
-                        kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
-                        debug!("Sending shutdown signal to background tasks...");
-                        let _ = ctx.shutdown_tx.send(true);
-                        debug!("Shutdown signal sent");
-                        let _ = ctx.member_handle.shutdown();
+                        initiate_shutdown(pgid, &ctx.shutdown_tx, &ctx.member_handle);
                         // Continue looping to handle more signals
                     }
                     2 => {
@@ -653,21 +675,7 @@ pub(crate) async fn print_periodic_statistics(
                                 failed.len()
                             );
                             startup_failed.store(true, std::sync::atomic::Ordering::Release);
-                            // Mirror the signal path EXACTLY: the replay-level
-                            // watch stops background tasks, member_handle
-                            // .shutdown() reaches the ACTORS (separate channel
-                            // created in the builder), and the process GROUP
-                            // gets SIGTERM (on Unix actors wait for their
-                            // child to exit rather than killing it).
-                            let _ = shutdown_tx.send(true);
-                            let _ = member_handle.shutdown();
-                            #[cfg(unix)]
-                            crate::process::kill_process_group(
-                                pgid,
-                                nix::sys::signal::Signal::SIGTERM,
-                            );
-                            #[cfg(not(unix))]
-                            let _ = pgid;
+                            initiate_shutdown(pgid, &shutdown_tx, &member_handle);
                         }
                     }
 

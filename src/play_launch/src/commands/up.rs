@@ -1142,18 +1142,14 @@ pub(crate) async fn play(
     debug!("All actors spawned successfully");
 
     // A node declared `on_exit=Shutdown()` is required: when it exits, the launch is
-    // over. Mirror the signal path EXACTLY, as `--on-startup-failure exit` does — the
-    // replay-level watch stops the background tasks, `member_handle.shutdown()` reaches
-    // the ACTORS, and the process GROUP gets SIGTERM. Pulling only the actor lever
-    // leaves every launched process running, which is the whole bug this fixes.
+    // over. Same teardown as a signal (`signal_handler::initiate_shutdown`): pulling
+    // only the actor lever leaves every launched process running, which is the
+    // whole bug this fixes.
     {
         let hook_shutdown_tx = shutdown_tx.clone();
         let hook_member_handle = member_handle.clone();
         member_runner.set_shutdown_hook(std::sync::Arc::new(move || {
-            let _ = hook_shutdown_tx.send(true);
-            let _ = hook_member_handle.shutdown();
-            #[cfg(unix)]
-            crate::process::kill_process_group(pgid, nix::sys::signal::Signal::SIGTERM);
+            signal_handler::initiate_shutdown(pgid, &hook_shutdown_tx, &hook_member_handle);
         }));
     }
 
@@ -1177,6 +1173,10 @@ pub(crate) async fn play(
 
     // Setup periodic statistics output task (runs every 10 seconds)
     let startup_failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Issue #0033: set by the strict watcher when a runtime contract violation
+    // ended the run, so `play()` can return non-zero the way
+    // `--on-startup-failure exit` does.
+    let strict_violated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     // Reuse the staged-startup budget: it is already this system's answer to
     // "how long is too long to be waiting on one member".
     let startup_exception_after_secs = runtime_config.startup.stage_timeout_secs;
@@ -1588,13 +1588,36 @@ pub(crate) async fn play(
         });
         if let Some(handle) = strict_handle {
             let shutdown_tx_strict = shutdown_tx.clone();
+            let mut shutdown_rx_strict = shutdown_signal.clone();
+            let member_handle_strict = member_handle.clone();
+            let strict_flag = strict_violated.clone();
             let strict_watch_task = tokio::spawn(async move {
                 let poll_interval = tokio::time::Duration::from_millis(100);
                 loop {
-                    tokio::time::sleep(poll_interval).await;
+                    tokio::select! {
+                        _ = tokio::time::sleep(poll_interval) => {}
+                        // The run is ending for another reason; nothing
+                        // left to watch for.
+                        _ = shutdown_rx_strict.changed() => {
+                            if *shutdown_rx_strict.borrow() {
+                                break;
+                            }
+                        }
+                    }
                     if handle.load(std::sync::atomic::Ordering::Acquire) {
-                        warn!("[runtime] Strict enforcement violated — initiating shutdown");
-                        let _ = shutdown_tx_strict.send(true);
+                        error!(
+                            "[runtime] Strict enforcement violated -- shutting down \
+                             (--enforce-rules strict)"
+                        );
+                        strict_flag.store(true, std::sync::atomic::Ordering::Release);
+                        // Issue #0033: the full teardown, not just the watch
+                        // channel. The actors wait for children that only a
+                        // group SIGTERM ever stops.
+                        signal_handler::initiate_shutdown(
+                            pgid,
+                            &shutdown_tx_strict,
+                            &member_handle_strict,
+                        );
                         break;
                     }
                 }
@@ -1680,6 +1703,13 @@ pub(crate) async fn play(
     if startup_failed.load(std::sync::atomic::Ordering::Acquire) {
         return Err(eyre::eyre!(
             "startup completed with failed members (--on-startup-failure exit)"
+        ));
+    }
+    // Issue #0033: so does a strict runtime-enforcement violation. The
+    // violations themselves are in `runtime_violations.jsonl` under the run.
+    if strict_violated.load(std::sync::atomic::Ordering::Acquire) {
+        return Err(eyre::eyre!(
+            "runtime contract violated (--enforce-rules strict); see runtime_violations.jsonl"
         ));
     }
 

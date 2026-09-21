@@ -24,8 +24,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 severity, so the `/rosout` graph-deviation WARNING ends a run 57 ms in. See
 `0032-*`.
 
-**#0033** -- the strict watcher flips the shutdown watch channel only; actors
-wait for a SIGTERM nobody sent and the supervisor never exits. See `0033-*`.
 
 **#0035** -- under `--container-mode observable|stock` a composable's derived
 tier is dropped at LOADED with no message; the co-location warning covers only
@@ -47,6 +45,16 @@ HEAD. See `0038-*`.
 by name where `chain_aware` collapses the tie; design question. See `0039-*`.
 
 ## Resolved
+
+**#0033** -- under `--enforce-rules strict` the watcher flipped the run-level
+watch channel and nothing else; both actors assumed the group SIGTERM had been
+sent and sat in `child.wait()` on healthy children, so the nodes kept running
+with their output no longer forwarded and the supervisor lived until an outside
+signal. One `signal_handler::initiate_shutdown` now serves the signal path, the
+startup-failure exit, the `on_exit=Shutdown()` hook and the strict watcher; a
+strict violation ends the run non-zero; an actor still waiting 2 s after
+shutdown began stops its child itself (SIGTERM, 5 s, SIGKILL). See
+`archived/0033-*`.
 
 **#0040** -- `cargo test -p play_launch_parser --features ir` did not compile on
 `main`: `dropped_actions` was added to `LaunchTraverser` by the `<timer>` work
