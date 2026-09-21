@@ -242,6 +242,15 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 78** - planned: one derivation of the mapper input, two
+    consumers (2026-09-21). The resolver lowers every non-input trigger to
+    `input: []` and drops the rate, so nano-ros rebuilds a timer's rate from
+    the first output's `min_rate_hz` and the two toolchains agree on the
+    island only because a redundant promise is present. The model gains the
+    checker's per-path facts (`trigger`, `sync`, `min_latency_ms`, `buffer`,
+    `severity_levels`, effective `node_criticality`) and `sched_derive`'s
+    derivation moves to rlm's new `derive` crate, which both consumers call.
+    [phase-78-one-derivation-two-consumers.md](./phase-78-one-derivation-two-consumers.md).
   - **Phase 77** — ✅ the inferred graph, measured (2026-09-09). Phase 76's
     edges were all inferences from a naming convention and nothing had checked
     one against a running system. `interception/endpoints.tsv` now records
