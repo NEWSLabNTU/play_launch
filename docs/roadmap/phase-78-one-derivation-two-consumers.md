@@ -5,6 +5,80 @@ seams, and phase 45 section 45.10, which chose to leave this one open. Design
 of record: ros-launch-manifest `docs/design-issues.md` #52; consumer side:
 nano-ros `docs/roadmap/phase-457-consume-the-shared-derivation.md`.
 
+## Parallel plan
+
+Four waves, each a branch and a PR, so that separate sessions can take one
+each. This repository has no claim tool (nano-ros has `just claim
+phase-NNN-Wk`): the claim is the branch named below, pushed with an early
+draft PR, so a second session sees it before it starts. The `Status:` line
+under a wave is edited in the PR that lands it. Upstream: rlm
+`docs/design-issues.md` #52, whose units R1 (model fields), R2 (the `derive`
+crate), R3 (parity tests and snapshot) and R4 (tag v0.1.37) precede W1.
+Downstream: nano-ros phase-457 W1 depends on W4 here, the 0.12.0 tag it
+bumps its gitlink to.
+
+| wave | depends on | owns | gate | starts now? | branch |
+|---|---|---|---|---|---|
+| W1 pin and lower | rlm #52 R1 and R2, through the v0.1.37 tag R4 cuts | the four `tag = "v0.1.36"` pins in `src/ros-launch-resolve/Cargo.toml` and `src/play_launch/Cargo.toml`, plus the new `ros-launch-manifest-derive` line; `src/ros-launch-resolve/resolve/src/ros/model_builder.rs` (`path_contract` :299, the `input: []` lowering :954-960); `src/ros-launch-resolve/resolve/src/ros/sched_derive.rs` only to move `convert_trigger` (:229) out; golden models `tests/fixtures/rt_workspace/launch/bringup.system.posix.yaml`, `.../bringup.system.zephyr.yaml`, `tests/fixtures/rt_workspace/contracts/rt_demo/launch/bringup.system.posix.yaml`, `tests/fixtures/contract_derived_chain/launch/bringup.system.posix.yaml` | `cargo test -p ros-launch-resolve`; `tests/tests/resolve_launch_fields.rs`; Gates 3 (`trigger` on every timer path); an 0.11.0 model still loads | no: the first act is the pin bump, which needs the tag | `phase-78-W1` |
+| W2 the transition gate | W1 | the `tests` module of `src/ros-launch-resolve/resolve/src/ros/sched_derive.rs` (the parity test); `src/ros-launch-resolve/resolve/src/ros/manifest_loader.rs` only if walking every `tests/fixtures/contract_*` needs a helper | `cargo test -p ros-launch-resolve sched_derive` on every `tests/fixtures/contract_*`, `contract_derived_chain` included (Gates 1) | no | `phase-78-W2` |
+| W3 delete the copy | W2 | `src/ros-launch-resolve/resolve/src/ros/sched_derive.rs` (the listed functions go), `src/ros-launch-resolve/resolve/src/ros/manifest_graph.rs` (the route copy, as used by chains), `src/ros-launch-resolve/resolve/src/ros/sched_loader.rs` (`derive_sched_plan` :704 builds the model and calls the shared function), and its two callers `src/ros-launch-resolve/resolve/src/model.rs` (:138) and `src/play_launch/src/execution/sched_plan.rs` (:149) if the signature moves | W2's test stays green with the shim gone; Gates 2 (`--explain` diff on `rt_workspace` and `contract_w1d`); Gates 4 (`git grep min_rate_hz` on `sched_*`) | no | `phase-78-W3` |
+| W4 release | W3 | `CHANGELOG.md`, `version` in `src/play_launch/Cargo.toml`, the status line of this doc and its entry in `docs/roadmap/README.md`, the `v0.12.0` tag | workspace tests and `just check` on the fixtures green on the tagged commit; nano-ros phase-457 W1 bumps its gitlink to the tag | no | `phase-78-W4` |
+
+Nothing here starts before rlm cuts v0.1.37: W1's first act is the pin
+bump, and the field lowering has nothing to lower into until then. A session
+may open W1's draft PR early against a `rev =` pin to R1's branch head to
+get the golden re-emission ready, but it merges only on the tag. W2, W3 and
+W4 are strictly sequential: each edits `sched_derive.rs` after the previous
+one, which is why it is the one file three waves own.
+
+**W1 - pin and lower.** The Cargo pins move from `v0.1.36` to `v0.1.37`
+and `ros-launch-manifest-derive` joins them; `model_builder::path_contract`
+lowers the six fields listed under "What this repository emits";
+`convert_trigger` moves out of `sched_derive.rs`; the four golden models
+are re-emitted, and a test loads one written before the fields.
+
+Claim: `phase-78-W1`. Depends on: rlm #52 R1, R2 (tag v0.1.37, R4). Owns:
+the rlm pins in `src/ros-launch-resolve/Cargo.toml` and
+`src/play_launch/Cargo.toml`; `model_builder.rs`; `convert_trigger` in
+`sched_derive.rs`; the four golden `*.system.*.yaml` fixtures. Gate: `cargo
+test -p ros-launch-resolve`; `tests/tests/resolve_launch_fields.rs`; Gates
+3. Status: not started.
+
+**W2 - the transition gate.** The parity test over every
+`tests/fixtures/contract_*` workspace, `from_dump == from_model` and
+`resolve_chains_derived == resolve_chains`, as specified under Waves. It
+lands green with the private copy still in place; a red row is a fact the
+model failed to carry (fix in W1's files, or in rlm R1) or a rule the port
+got wrong (fix in rlm R2), never a tolerance.
+
+Claim: `phase-78-W2`. Depends on: W1. Owns: the `tests` module of
+`sched_derive.rs`; `manifest_loader.rs` only for a fixture-walk helper.
+Gate: `cargo test -p ros-launch-resolve sched_derive` on every contract
+fixture (Gates 1). Status: not started.
+
+**W3 - delete the copy.** `derive_sched_plan` builds the checked model and
+calls `mapper_input_from_model` and `resolve_chains`; `mapper_input_from_dump`
+and the functions listed under "What this repository stops doing" are
+deleted, together with `manifest_graph`'s chain route. The check-side
+derivations in `manifest_graph.rs` stay. Last, because W2's gate is what
+says the deletion changed nothing.
+
+Claim: `phase-78-W3`. Depends on: W2. Owns: `sched_derive.rs`,
+`manifest_graph.rs` (chain route only), `sched_loader.rs`, and the
+`derive_sched_plan` call sites in `model.rs` and
+`src/play_launch/src/execution/sched_plan.rs`. Gate: W2's test green with
+the shim gone; Gates 2 and 4. Status: not started.
+
+**W4 - release.** 0.12.0: the CHANGELOG entry, the version bump, this doc's
+status line and the README entry, the tag. nano-ros phase-457 W1 bumps its
+gitlink from `07f0461e` (v0.9.0-158) to the tag.
+
+Claim: `phase-78-W4`. Depends on: W3. Owns: `CHANGELOG.md`,
+`src/play_launch/Cargo.toml` (`version`), this doc's status line,
+`docs/roadmap/README.md` (the phase 78 entry), the `v0.12.0` tag. Gate:
+workspace tests and `just check` green on the tagged commit; nano-ros
+phase-457 W1 resolves the tag. Status: not started.
+
 ## Why
 
 Phase 45.10 reverted the embedding of the resolved schedule into the model
