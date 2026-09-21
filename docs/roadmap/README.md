@@ -1,6 +1,6 @@
 # play_launch Roadmap
 
-Started October 2025. 79 phases total (1–77, plus 14.5 and 30b); 64 complete, 11 in progress, 3 planned, 1 dropped — as of 2026-09-11.
+Started October 2025. 82 phases total (1–80, plus 14.5 and 30b); 64 complete, 11 in progress, 6 planned, 1 dropped — as of 2026-09-21.
 
 Phase docs through phase 28 are in `archive/`; from phase 29 on, a phase's doc
 stays in this directory whatever its status, and its status line (the first
@@ -242,6 +242,31 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     over-counts shared pages **2.4x**. Explicitly no performance claim: process
     count, thread count and runqueue depth are untouched.
     [phase-66-cgroup-per-container.md](./phase-66-cgroup-per-container.md).
+  - **Phase 80** - planned: the plan and what was applied (2026-09-21). A
+    composable's derived tier is printed by `check --sched --explain`, written
+    into the model's `execution.bindings`, and then dropped for every
+    composable under `--container-mode observable|stock` with no message
+    anywhere - the guard at `component_events.rs:189-191` is correct (there is
+    no pid to schedule) and silent. The one warning that covers a slice of it
+    needs two or more chain members in a container AND a plan carrying
+    `chain_member_nodes`, which `SchedPlan::from_model` never does
+    (`sched_plan.rs:44-51`) - and since 47.B3 that is `up`'s only plan source,
+    so it cannot fire on a user path at all. The refusal moves to where the
+    container mode is known, before anything is spawned. Issue #0035.
+    [phase-80-the-plan-and-what-was-applied.md](./phase-80-the-plan-and-what-was-applied.md).
+  - **Phase 79** - planned: runtime enforcement is a gate, or it says it is
+    not (2026-09-21). Three breaks compose into a CI mode that passes with no
+    measurement behind it: interception is the rule engine's only event source
+    and cannot be turned on from the CLI, so the default `--enforce-rules
+    warn` enforces nothing and says so nowhere (#0031); `emit` flips
+    `strict_violated` before reading `severity`, so a `/rosout`
+    graph-deviation WARNING ends a run 57 ms in and the error-class rules are
+    never evaluated (#0032); and the strict watcher sends the shutdown watch
+    channel only, one of the three steps the signal path sends, so the actors
+    wait for a SIGTERM nobody sent and the supervisor hangs with its nodes
+    still driving (#0033). W4 writes the `--enforce-rules` guide that has
+    never existed (#0036 item 4).
+    [phase-79-runtime-enforcement-is-a-gate.md](./phase-79-runtime-enforcement-is-a-gate.md).
   - **Phase 78** - planned: one derivation of the mapper input, two
     consumers (2026-09-21). The resolver lowers every non-input trigger to
     `input: []` and drops the rate, so nano-ros rebuilds a timer's rate from

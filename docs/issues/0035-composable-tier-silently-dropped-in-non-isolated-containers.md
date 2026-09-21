@@ -90,3 +90,21 @@ them. Autoware runs almost everything as composables.
 
 Brief C (`brief-C-playlaunch-usage.md`, section 4.1 step 4), 2026-09-18;
 re-verified against the 0.11.0 source at `5eaa3191` on 2026-09-21.
+
+## Update 2026-09-21 - the co-location warning cannot fire at all
+
+Stronger than "covers a narrower case". `up.rs:693-704` builds the plan with
+`SchedPlan::from_model` and, since 47.B3, that is the ONLY plan source `up`
+has ("there is no legacy record-only replay path left to consult them from").
+`sched_plan.rs:44-51` documents `chain_member_nodes` as "Empty for
+`SchedPlan::from_model`". `chain_colocation_warnings_for_plan` at `:714`
+therefore walks an empty set on every user path, so no composable co-location
+warning has ever reached a user - the narrow case is not narrow, it is
+unreachable.
+
+The comment directly above that call (`up.rs:705-711`) asserts the opposite:
+"both carry their own `chain_member_nodes` directly now - no ManifestIndex
+re-parse fallback needed on either path". Two comments in one call chain
+contradicting each other is why an always-silent warning read as a working
+one. Planned as phase 80
+(`docs/roadmap/phase-80-the-plan-and-what-was-applied.md`).

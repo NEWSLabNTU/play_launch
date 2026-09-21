@@ -85,3 +85,13 @@ Brief C (`brief-C-playlaunch-usage.md`, section 2.5, observation 1), runs of
 2026-09-18 with the 0.10.0 binary at `155ed78b`; captures under
 `scratchpad/playlaunch/runtime/{warn,strict,strict2}/`. Re-verified against
 the 0.11.0 source at `5eaa3191` on 2026-09-21.
+
+## Update 2026-09-21 - the behaviour is pinned by a unit test
+
+`runtime_enforcement/mod.rs:1968-2002`, `strict_mode_trips_atomic_flag`, fires
+a graph-deviation (an unknown topic at `PublisherInit`, `Severity::Warning`)
+and asserts `handle.load(Ordering::Acquire)` with the message "strict mode
+should trip the flag on first violation". So the defect is protected by a test
+that reads as correct: any fix must split that test into a warning case that
+must NOT trip the flag and an error case that must. Planned as phase 79 W2
+(`docs/roadmap/phase-79-runtime-enforcement-is-a-gate.md`).

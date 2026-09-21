@@ -40,6 +40,22 @@ The parser evaluates conditions during parsing and processes only the selected p
 - **`<let>` statements**: sequential parse-time resolution — values resolved immediately, stored in record.json
 - **Runtime fallback**: unresolved `$(var ...)` in executable names resolved at replay time (`src/execution/node_cmdline.rs`)
 - **YAML params**: substitutions in YAML files resolved and typed before passing to nodes (`src/params.rs::load_and_resolve_param_file()`)
+- **`$(dirname)` is ABSOLUTE, for every invocation form** (#0034). `launch`
+  takes `os.path.abspath` of the launch file's location and only then
+  `os.path.dirname` (`IncludeLaunchDescription._get_launch_file_directory()`),
+  so the parser absolutizes at `LaunchContext::set_current_file` — the choke
+  point every frontend funnels through — and once at `traverse_file` before the
+  `.py`/`.yaml`/XML split. Deriving the directory from the path as typed gave
+  `""` for a bare `f.launch.xml` (turning `$(dirname)/../config/x.yaml` into
+  `/../config/x.yaml`, a parse error naming a path nobody wrote) and `"."` for
+  `./f.launch.xml`. It is `abspath`, NOT `fs::canonicalize`: canonicalizing
+  resolves symlinks, and under `colcon build --symlink-install` a launch file
+  in `share/` points back into the source tree, so `$(dirname)/../config/`
+  would resolve into `src/` where `launch` stays in `install/`.
+  `ScopeOrigin.path` keeps its canonicalized spelling, so the two differ under
+  symlink-install. The Python frontend set no current file AT ALL until this
+  fix, so `$(dirname)` in a root `.launch.py` was a hard error and in an
+  included one silently meant the INCLUDING file's directory.
 
 Implementation: `src/python/api/utils.rs` (substitution handling), `src/params.rs` (YAML resolution)
 
@@ -59,7 +75,7 @@ The parser tracks which launch file each node originates from via a **scope tabl
 
 ### Launch IR (feature-gated)
 
-The parser includes an optional IR layer (`--features ir` on the parser crate) that preserves the full launch structure (conditions, substitution expressions, groups, includes) without evaluating. IR types: `src/play_launch_parser/.../ir.rs`. IR tests: `cargo test -p play_launch_parser --features ir`.
+The parser includes an optional IR layer (`--features ir` on the parser crate) that preserves the full launch structure (conditions, substitution expressions, groups, includes) without evaluating. IR types: `src/play_launch_parser/.../ir.rs`. IR tests: `just test-ir` (43 tests). The recipe exists because nothing ran them: the feature is off by default, so both IR files sat uncompilable on `main` from the `<timer>` work until issue #0040 — one of them having already been given the loop that READS the field its own initializer was never given. `just test-all` runs it.
 
 ### Scheduling Spec
 
@@ -569,7 +585,7 @@ just test-parity       # Cross-parser parity gates alone (Rust vs Python SystemM
 just test-unit         # Parser unit tests only
 just test-cpp          # Container C++ unit tests (control-channel JSON codec)
 just test-integration  # All integration tests (simple + Autoware)
-cargo test -p play_launch_parser --features ir  # IR tests (42 tests, not included in default)
+just test-ir           # Parser IR suite (--features ir, 43 tests; run by test-all)
 just compare-scopes <pkg> <launch> [args...]    # Cross-parser scope comparison
 play_launch context system_model.yaml --tree    # Launch tree inspection
 ```
@@ -589,6 +605,39 @@ scroll past), so an Autoware-less machine gets a visible skip rather than a red
 gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising RT scheduling + contract shipping; tests in `tests/tests/rt_workspace.rs` (excluded from `just test`, run by `just test-all`). **`just test-all` now builds `rt_workspace` and `io_stress` itself**, because a guarded test that skips still reports as PASSED — 27 of 108 integration tests were silently skipping on unbuilt fixtures, concealing 4 real failures. `test-all` also prints a "Silently-skipped tests" summary so a guard that starts always-skipping is visible rather than green.
 
 ## Key Recent Changes
+
+- **2026-09-21**: **`$(dirname)` was not what `ros2 launch` resolves, and the
+  IR feature had stopped compiling.** (#0034) `$(dirname)` came from
+  `Path::parent()` on the launch path as typed, so a bare `f.launch.xml` gave
+  `""` and `./f.launch.xml` gave `"."`. The first turned
+  `$(dirname)/../config/x.yaml` into `/../config/x.yaml` and failed the parse
+  naming a path the user never wrote — the natural thing to type from inside a
+  `launch/` directory, and Autoware-style trees use `$(dirname)/../config/`
+  pervasively. The oracle settles the shape of the fix: `launch` takes
+  `os.path.abspath` FIRST and only then `os.path.dirname`, so `$(dirname)` is
+  absolute for EVERY form, which makes the `"."` case a divergence too.
+  Deliberately `abspath` and not `fs::canonicalize` — see the parser bullet
+  above for why symlink resolution would break `--symlink-install`. Found on
+  the way: the Python frontend never set a current file at all. Verified as a
+  negative control (stash the source change, keep the tests: 6 of 7 fail, one
+  with the reporter's message verbatim) rather than by the tests merely
+  passing after.
+  (#0040) `cargo test -p play_launch_parser --features ir` had not compiled
+  since the `<timer>` work added `dropped_actions` to `LaunchTraverser`: three
+  of five struct literals were updated and the two behind `--features ir` were
+  not, because no default build compiles them. `ir_evaluator.rs` had even been
+  given the loop that READS the field while its initializer never got it — a
+  half-finished edit in a file nothing builds. **Nothing ran the suite**: no
+  justfile recipe, no CI job, only a command in this file. So the fix ships
+  with `just test-ir`, called by `just test-all`. 501 tests, 501 passed (458
+  default + 43 IR). Same family as the stale-submodule misdiagnosis and #0020:
+  the artifact looks right because the thing that would go red is never built.
+  Planned with them: **phase 79** (runtime enforcement is a gate, or says it is
+  not — #0031/#0032/#0033) and **phase 80** (the plan and what was applied —
+  #0035). Phase 80's premise sharpened on verification: the composable
+  co-location warning cannot fire on any user path, because `up` has only
+  `SchedPlan::from_model` since 47.B3 and that leaves `chain_member_nodes`
+  empty — while the comment above the call claims the opposite.
 
 - **2026-09-11**: Issues #0023 and #0024 resolved — **a bundle can now say
   why a launch failed, and `run` no longer loses a race with itself.**

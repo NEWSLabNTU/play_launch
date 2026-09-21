@@ -99,3 +99,14 @@ Brief C (`brief-C-playlaunch-usage.md`, section 2.5, observation 2), runs of
 2026-09-18 with the 0.10.0 binary at `155ed78b`; re-verified against the
 0.11.0 source at `5eaa3191` on 2026-09-21 (the cited lines are unchanged
 between the two).
+
+## Update 2026-09-21 - the teardown is written out three times, not two
+
+Besides the signal path at `signal_handler.rs:109-118`, the
+`--on-startup-failure exit` path at `signal_handler.rs:658-671` carries its own
+copy under a comment reading "Mirror the signal path EXACTLY" - and it sends
+the three steps in a different ORDER (`shutdown_tx`, `member_handle.shutdown()`,
+then `kill_process_group`, where the signal path kills first). Two hand-copies
+that already disagree on ordering, plus the strict watcher's one-line copy, is
+the argument for `initiate_shutdown(reason)` rather than a fourth copy. Planned
+as phase 79 W3 (`docs/roadmap/phase-79-runtime-enforcement-is-a-gate.md`).
