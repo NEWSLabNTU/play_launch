@@ -528,6 +528,7 @@ impl LaunchTraverser {
             load_nodes: Vec::new(),
             scope_table: crate::record::ScopeTable::new(),
             current_scope_id: 0,
+            dropped_actions: Vec::new(),
         };
 
         match child_traverser.build_ir_file(&resolved_path) {

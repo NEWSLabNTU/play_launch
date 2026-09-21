@@ -600,6 +600,9 @@ test-all:
     echo "=== C++ unit tests ==="
     just test-cpp
     echo ""
+    echo "=== Parser IR suite (--features ir) ==="
+    just test-ir
+    echo ""
     echo "=== Fixture workspaces (guarded tests skip silently without these) ==="
     # A test that skips still reports as PASSED, so an unbuilt fixture hides
     # its whole suite behind a green summary. 27 of 108 integration tests
@@ -713,6 +716,24 @@ test-unit:
     set -e
     cd src/ros-launch-resolve/parser
     cargo nextest run -p play_launch_parser --no-fail-fast --failure-output final
+
+# Run the parser's IR suite (`--features ir`, 43 tests not built by default).
+#
+# It has its own recipe because nothing ran it: the feature is off by default,
+# so `cargo test -p play_launch_parser` never compiles `ir_builder.rs` or
+# `ir_evaluator.rs`, and both sat uncompilable on `main` for as long as it took
+# someone to add a field to `LaunchTraverser` (`dropped_actions`, the `<timer>`
+# work). One of the two files had even been updated to READ the new field while
+# its initializer was never given one — a half-finished edit that no default
+# build could see. `test-all` calls this so a feature-gated module cannot rot
+# behind a green summary again.
+#
+# Run the parser IR suite (`--features ir`, 43 tests, off by default)
+test-ir:
+    #!/usr/bin/env bash
+    set -e
+    cd src/ros-launch-resolve/parser
+    cargo nextest run -p play_launch_parser --features ir --no-fail-fast --failure-output final
 
 # Bump the pinned `ros-launch-manifest` tag everywhere it is named.
 #

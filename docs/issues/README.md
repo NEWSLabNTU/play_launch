@@ -48,6 +48,14 @@ by name where `chain_aware` collapses the tie; design question. See `0039-*`.
 
 ## Resolved
 
+**#0040** -- `cargo test -p play_launch_parser --features ir` did not compile on
+`main`: `dropped_actions` was added to `LaunchTraverser` by the `<timer>` work
+and the two struct literals behind `--features ir` were never updated, one of
+them having already been given the loop that READS the field. No justfile
+recipe and no CI job built the feature, so 43 tests had stopped running while
+every default build stayed green. Fixed, with `just test-ir` and a `test-all`
+call so it cannot rot again. See `archived/0040-*`.
+
 **#0034** -- `$(dirname)` expanded to `""` for a bare launch filename and to
 `"."` for `./f.launch.xml`, where `ros2 launch` gives an absolute directory in
 both cases (`IncludeLaunchDescription._get_launch_file_directory()` takes
