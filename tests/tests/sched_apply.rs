@@ -75,6 +75,20 @@ fn spawn_sched_launch_for(
     launch: &std::path::Path,
     mode: &str,
 ) -> (ManagedProcess, std::path::PathBuf, std::path::PathBuf) {
+    spawn_sched_launch_in_mode(env, work_dir, sched_path, launch, mode, None)
+}
+
+/// [`spawn_sched_launch_for`] with an explicit `--container-mode` (phase 80):
+/// the flag decides whether a composable is a process of its own, and
+/// therefore whether the tier the model binds to it can be applied at all.
+fn spawn_sched_launch_in_mode(
+    env: &std::collections::HashMap<String, String>,
+    work_dir: &std::path::Path,
+    sched_path: &std::path::Path,
+    launch: &std::path::Path,
+    mode: &str,
+    container_mode: Option<&str>,
+) -> (ManagedProcess, std::path::PathBuf, std::path::PathBuf) {
     let stdout_path = work_dir.join("stdout.log");
     let stderr_path = work_dir.join("stderr.log");
     let stdout_file = std::fs::File::create(&stdout_path).expect("failed to create stdout file");
@@ -91,8 +105,11 @@ fn spawn_sched_launch_for(
         sched_path.to_str().unwrap(),
         "--sched-apply",
         mode,
-        launch.to_str().unwrap(),
     ]);
+    if let Some(cm) = container_mode {
+        cmd.args(["--container-mode", cm]);
+    }
+    cmd.arg(launch.to_str().unwrap());
     cmd.stdout(Stdio::from(stdout_file));
     cmd.stderr(Stdio::from(stderr_file));
     // The success-path evidence ("applied tier '<name>'") is logged at
@@ -305,6 +322,232 @@ fn composable_scheduling_engages_on_isolated_container() {
     eprintln!(
         "matched composable apply line: {}",
         composable_line.unwrap()
+    );
+
+    // _proc dropped here — ManagedProcess::drop kills the process group.
+}
+
+// ── Phase 80 / issue #0035: a tier the container mode cannot apply ──
+//
+// `resolve --sched` derives a tier for every node carrying a timing fact,
+// composables included, and `check --explain` prints it. Under
+// `--container-mode observable` or `stock` a composable is a thread pool
+// inside the container's process, so the LOADED handler is handed pid 0 and
+// correctly declines to apply the tier — and used to decline in complete
+// silence, leaving the model's `execution.bindings` promising a priority
+// that `ps -eLo tid,cls,rtprio` would never show.
+//
+// The fixture is `container_events` (1 container, 2 composables: talker,
+// listener) with the same root-scope `system.toml` the tests above use, so
+// every node — composables included — is bound to the `rt` tier.
+
+/// The composable FQNs the `container_events` fixture resolves to. Both
+/// declare `namespace=""`, so they sit at the root.
+const FIXTURE_COMPOSABLES: [&str; 2] = ["/talker", "/listener"];
+
+/// Under `--container-mode stock` every tiered composable must be named,
+/// once, before anything is spawned.
+#[test]
+fn composable_tier_unapplied_under_stock_is_named() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("container_events")
+        .join("launch/container_events.launch.xml");
+
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let sched_path = write_sched_toml(tmp.path());
+
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let (_proc, stdout_path, stderr_path) = spawn_sched_launch_in_mode(
+        &env,
+        work_tmp.path(),
+        &sched_path,
+        &launch,
+        "warn",
+        Some("stock"),
+    );
+
+    // The decision is made before spawning, so this lands early; the wait is
+    // headroom for parser + model build.
+    // `launch` writes its tracing output to stdout (`main.rs`'s
+    // `logs_to_stderr` is false for it); the refusal in the strict test below
+    // is an eyre error and goes to stderr instead.
+    let named = wait_for_pattern(
+        &stdout_path,
+        &["scheduling: composable"],
+        FIXTURE_COMPOSABLES.len(),
+        Duration::from_secs(30),
+    );
+    assert_eq!(
+        named,
+        FIXTURE_COMPOSABLES.len(),
+        "expected one warning per tiered composable, found {named}"
+    );
+
+    let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    let combined = format!("{stdout}\n{stderr}");
+
+    for fqn in FIXTURE_COMPOSABLES {
+        let named = combined.lines().find(|l| {
+            l.contains("scheduling: composable") && l.contains(&format!("composable '{fqn}'"))
+        });
+        assert!(
+            named.is_some(),
+            "expected a pre-spawn warning naming composable '{fqn}' under \
+             --container-mode stock, in:\n{combined}"
+        );
+        let line = named.unwrap();
+        // The message has to carry the three things a user needs: the tier it
+        // was given, the mode that dropped it, and the mode that would not.
+        assert!(line.contains("'rt'"), "tier not named: {line}");
+        assert!(
+            line.contains("--container-mode stock"),
+            "mode not named: {line}"
+        );
+        assert!(
+            line.contains("--container-mode isolated"),
+            "remedy not named: {line}"
+        );
+    }
+
+    // And it is recorded, not just printed: `measure` reads run_info.json.
+    let run_info_path = work_tmp.path().join("play_log/latest/run_info.json");
+    let run_info: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&run_info_path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", run_info_path.display())),
+    )
+    .expect("run_info.json is valid JSON");
+    let rows = run_info["sched_unapplied"]
+        .as_array()
+        .unwrap_or_else(|| panic!("run_info.json carries no sched_unapplied: {run_info}"));
+    assert_eq!(rows.len(), 2, "{run_info}");
+    let nodes: Vec<&str> = rows.iter().filter_map(|r| r["node"].as_str()).collect();
+    for fqn in FIXTURE_COMPOSABLES {
+        assert!(nodes.contains(&fqn), "{run_info}");
+    }
+
+    // _proc dropped here — ManagedProcess::drop kills the process group.
+}
+
+/// `--sched-apply strict` under a mode that cannot apply a composable's tier
+/// refuses at the start boundary — non-zero exit, and no node directory ever
+/// written. Unlike the CAP_SYS_NICE strict test above, this one does not
+/// depend on host privilege: the refusal is decided from the container mode
+/// and the plan alone, before the privilege check is reached.
+#[test]
+fn composable_tier_strict_refuses_before_spawn_under_stock() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("container_events")
+        .join("launch/container_events.launch.xml");
+
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let sched_path = write_sched_toml(tmp.path());
+
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let (mut proc, _stdout_path, stderr_path) = spawn_sched_launch_in_mode(
+        &env,
+        work_tmp.path(),
+        &sched_path,
+        &launch,
+        "strict",
+        Some("stock"),
+    );
+
+    let status = proc.wait_with_timeout(Duration::from_secs(30));
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+
+    assert!(
+        !status.success(),
+        "expected --sched-apply strict to refuse a run whose composable tiers \
+         cannot be applied (exit status: {status:?})\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--sched-apply strict") && stderr.contains("composable"),
+        "expected the refusal to name the composable tiers:\n{stderr}"
+    );
+    for fqn in FIXTURE_COMPOSABLES {
+        assert!(
+            stderr.contains(&format!("composable '{fqn}'")),
+            "expected '{fqn}' in the refusal:\n{stderr}"
+        );
+    }
+
+    // Before spawn means before spawn: no node directory carries a cmdline.
+    let play_log = work_tmp.path().join("play_log/latest");
+    let spawned = fixtures::count_cmdline_files(&play_log);
+    assert_eq!(
+        spawned,
+        0,
+        "strict must refuse BEFORE any node is spawned, found {spawned} \
+         cmdline files under {}",
+        play_log.display()
+    );
+}
+
+/// The assertion that stops the silent regression coming back from the other
+/// side: under `--container-mode isolated` — the default, and the path
+/// almost every user takes — the same model must produce NO such warning,
+/// because every composable is fork+exec'd and its tier IS applied.
+/// `composable_scheduling_engages_on_isolated_container` above asserts the
+/// apply itself; this asserts the absence of the report, and that
+/// `run_info.json` says "asked, none" rather than staying silent.
+#[test]
+fn composable_tier_silent_under_isolated() {
+    let env = fixtures::install_env();
+    let launch = fixtures::test_workspace_path("container_events")
+        .join("launch/container_events.launch.xml");
+
+    let tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let sched_path = write_sched_toml(tmp.path());
+
+    let work_tmp = tempfile::TempDir::new().expect("failed to create tempdir");
+    let (_proc, stdout_path, stderr_path) = spawn_sched_launch_in_mode(
+        &env,
+        work_tmp.path(),
+        &sched_path,
+        &launch,
+        "warn",
+        Some("isolated"),
+    );
+
+    // Wait for the composables to load, so the run has demonstrably passed
+    // the point at which a stock run would have complained.
+    let loaded = wait_for_pattern(
+        &stdout_path,
+        &[
+            "ComponentEvent LOADED",
+            "LoadSucceeded",
+            "control channel LOADED",
+        ],
+        2,
+        Duration::from_secs(30),
+    );
+
+    let stdout = std::fs::read_to_string(&stdout_path).unwrap_or_default();
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    let combined = format!("{stdout}\n{stderr}");
+
+    assert!(
+        loaded >= 2,
+        "expected 2 composables to load under isolated, found {loaded}\n{combined}"
+    );
+    assert!(
+        !combined.contains("scheduling: composable"),
+        "isolated applies every composable tier — no unapplied-tier warning \
+         may be printed:\n{combined}"
+    );
+
+    // Asked, and the answer was none. Absent would mean never asked.
+    let run_info_path = work_tmp.path().join("play_log/latest/run_info.json");
+    let run_info: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&run_info_path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", run_info_path.display())),
+    )
+    .expect("run_info.json is valid JSON");
+    assert_eq!(
+        run_info["sched_unapplied"].as_array().map(Vec::len),
+        Some(0),
+        "isolated must record an EMPTY unapplied set, not no set: {run_info}"
     );
 
     // _proc dropped here — ManagedProcess::drop kills the process group.

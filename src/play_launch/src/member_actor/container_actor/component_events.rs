@@ -186,6 +186,28 @@ impl ComposableSupervisor {
             .composable_nodes
             .get(&composable_name)
             .and_then(|e| e.metadata.sched.clone());
+        // Phase 80 (issue #0035): pid 0 with a tier present is not a failure
+        // and not a surprise — under `observable`/`stock` a composable has no
+        // process of its own — but it used to be entirely silent. It stays
+        // silent for the USER, because `commands::up` already refused or
+        // warned about exactly this set before anything was spawned, where
+        // the container mode is knowable and one message covers every
+        // composable. This line is for the log only, and names that decision
+        // so the two are not read as one: a warning HERE would mean the late
+        // path had discovered something the early one missed.
+        if config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
+            && pid == 0
+            && let Some(tier) = sched_tier.as_ref()
+        {
+            debug!(
+                "{}: composable '{}' reported no pid of its own; tier '{}' not applied here \
+                 (either a non-isolated container, reported before spawn by the \
+                 `scheduling: composable ...` warning, or a failure report)",
+                self.name(),
+                composable_name,
+                tier.tier_name
+            );
+        }
         if config.sched_mode != crate::execution::sched_apply::SchedApplyMode::Off
             && pid > 0
             && let Some(tier) = sched_tier.as_ref()

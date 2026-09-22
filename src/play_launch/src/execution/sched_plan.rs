@@ -461,6 +461,127 @@ pub fn chain_container_colocation_warnings(
         .collect()
 }
 
+/// The `--container-mode` value as it is spelled on the command line, so a
+/// message can tell the user what to type. `{mode:?}` prints the Rust variant
+/// (`CloneVm`), which is not a flag value.
+pub fn container_mode_flag(mode: ContainerMode) -> &'static str {
+    match mode {
+        ContainerMode::Observable => "observable",
+        ContainerMode::Isolated => "isolated",
+        ContainerMode::Stock => "stock",
+        ContainerMode::CloneVm => "clone-vm",
+    }
+}
+
+/// The tier's policy as its `sched_class` spelling, so a report names what a
+/// platform file would have written.
+fn policy_name(policy: SchedPolicy) -> &'static str {
+    match policy {
+        SchedPolicy::Fifo => "SCHED_FIFO",
+        SchedPolicy::Rr => "SCHED_RR",
+        SchedPolicy::Other => "SCHED_OTHER",
+        SchedPolicy::Batch => "SCHED_BATCH",
+        SchedPolicy::Idle => "SCHED_IDLE",
+        SchedPolicy::Deadline => "SCHED_DEADLINE",
+    }
+}
+
+/// One composable node whose derived tier the container mode in force cannot
+/// apply (issue #0035, phase 80).
+///
+/// Serialized into `run_info.json` so a later reader — `play_launch measure`
+/// above all — can tell a priority that was set on a thread from one that was
+/// only ever derived. The model's `execution.bindings` still binds the tier;
+/// this is the record of what happened to it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct UnappliedComposableTier {
+    /// The composable's model FQN — the same key `execution.bindings` uses.
+    pub node: String,
+    /// The container it is loaded into, as an FQN when one matched, else the
+    /// target name the launch file wrote.
+    pub container: String,
+    pub tier: String,
+    /// `sched_class` spelling of the tier's policy.
+    pub policy: String,
+    pub priority: i32,
+    /// The `--container-mode` value in force, as spelled on the command line.
+    pub container_mode: String,
+}
+
+impl UnappliedComposableTier {
+    /// The one line the user reads. Names the node, the tier it was given, the
+    /// container that swallows it, the mode that decided this, and the mode
+    /// that would not.
+    pub fn message(&self) -> String {
+        format!(
+            "scheduling: composable '{}' has tier '{}' ({} priority {}) but is loaded into \
+             container '{}' under --container-mode {} — a composable there is a thread pool \
+             inside the container's process, not a process of its own, so the tier is NOT \
+             applied (the container's own tier is what its threads run at); use \
+             --container-mode isolated to schedule it independently",
+            self.node, self.tier, self.policy, self.priority, self.container, self.container_mode
+        )
+    }
+}
+
+/// Every composable that carries a tier the container mode in force cannot
+/// apply — the decision made BEFORE anything is spawned (issue #0035).
+///
+/// This is the general case of [`chain_container_colocation_warnings`], which
+/// fires only for two-or-more CHAIN MEMBERS sharing a container and therefore
+/// never fires at all on the path `up` takes: its input,
+/// `plan.chain_member_nodes`, is empty by construction for
+/// [`SchedPlan::from_model`], the only plan source `up` has had since 47.B3.
+/// The two are kept apart rather than merged because they answer different
+/// questions — that one is about distinct priorities WITHIN a chain, this one
+/// is about a priority being applied at all — and because deleting a warning
+/// is a separate decision from adding the one that covers the user's path.
+///
+/// Container membership resolution mirrors `builder.rs`'s composable-node
+/// target matching: exact FQN first, then a suffix match for a relative
+/// target. A target that matches no container is still reported, naming the
+/// target as written: the tier is dropped either way, and an unresolvable
+/// target is its own problem rather than a reason to say nothing.
+///
+/// `composables` is `(model FQN, target container name)` per composable, in
+/// spawn order; `container_fqns` is every container's model FQN.
+pub fn composable_tiers_not_applied(
+    plan: &SchedPlan,
+    container_mode: ContainerMode,
+    composables: &[(String, String)],
+    container_fqns: &[String],
+) -> Vec<UnappliedComposableTier> {
+    // `isolated` fork+execs every composable into its own process, so every
+    // tier reaches a pid. Nothing to report.
+    if container_mode == ContainerMode::Isolated {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for (fqn, target) in composables {
+        let Some(tier) = plan.for_fqn(fqn) else {
+            continue;
+        };
+        let target = target.trim();
+        let suffix = format!("/{}", target.trim_start_matches('/'));
+        let container = container_fqns
+            .iter()
+            .find(|c| c.as_str() == target)
+            .or_else(|| container_fqns.iter().find(|c| c.ends_with(&suffix)))
+            .cloned()
+            .unwrap_or_else(|| target.to_string());
+        out.push(UnappliedComposableTier {
+            node: fqn.clone(),
+            container,
+            tier: tier.tier_name.clone(),
+            policy: policy_name(tier.policy).to_string(),
+            priority: tier.priority,
+            container_mode: container_mode_flag(container_mode).to_string(),
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -936,5 +1057,137 @@ mod model_tests {
         let model = model_with_binding(true);
         let plan = SchedPlan::from_model(&model, "posix", SchedApplyMode::Warn).expect("plan");
         assert!(plan.chain_member_nodes.is_empty());
+    }
+
+    // ── Phase 80 / issue #0035: a tier the container mode cannot apply ──
+
+    /// Two composables and a bystander with no tier, all in one container.
+    fn model_with_composable_bindings() -> ros_launch_manifest_model::SystemModel {
+        let mut m = ros_launch_manifest_model::SystemModel::default();
+        let mut tier = ros_launch_manifest_sched::TierDef {
+            class: Some("real_time".to_string()),
+            ..Default::default()
+        };
+        tier.posix = Some(ros_launch_manifest_sched::TierPlatformSpec {
+            priority: 39,
+            stack_bytes: None,
+            core: None,
+            sched_class: Some("SCHED_FIFO".to_string()),
+            preempt_threshold: None,
+            deadline: None,
+            budget: None,
+            period: None,
+            time_slice: None,
+        });
+        m.execution.tiers.insert("rt".to_string(), tier);
+        for fqn in ["/perception/chain_a", "/perception/chain_b"] {
+            m.execution
+                .bindings
+                .insert(fqn.to_string(), "rt".to_string());
+        }
+        m
+    }
+
+    fn composables() -> Vec<(String, String)> {
+        vec![
+            (
+                "/perception/chain_a".to_string(),
+                "shared_container".to_string(),
+            ),
+            (
+                "/perception/chain_b".to_string(),
+                "shared_container".to_string(),
+            ),
+            // No binding — must not be reported.
+            (
+                "/perception/bystander".to_string(),
+                "shared_container".to_string(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn unapplied_composable_tiers_named_under_stock() {
+        let plan = SchedPlan::from_model(
+            &model_with_composable_bindings(),
+            "posix",
+            SchedApplyMode::Warn,
+        )
+        .expect("plan");
+        let containers = vec!["/perception/shared_container".to_string()];
+        let mut got =
+            composable_tiers_not_applied(&plan, ContainerMode::Stock, &composables(), &containers);
+        got.sort_by(|a, b| a.node.cmp(&b.node));
+        assert_eq!(got.len(), 2, "got: {got:?}");
+        assert_eq!(got[0].node, "/perception/chain_a");
+        // Suffix match resolved the relative target to the container's FQN.
+        assert_eq!(got[0].container, "/perception/shared_container");
+        assert_eq!(got[0].tier, "rt");
+        assert_eq!(got[0].policy, "SCHED_FIFO");
+        assert_eq!(got[0].priority, 39);
+        assert_eq!(got[0].container_mode, "stock");
+        assert!(
+            got.iter().all(|u| u.node != "/perception/bystander"),
+            "a composable with no tier has nothing to drop: {got:?}"
+        );
+        let msg = got[0].message();
+        assert!(msg.contains("/perception/chain_a"), "{msg}");
+        assert!(msg.contains("--container-mode isolated"), "{msg}");
+    }
+
+    /// The single-composable case the co-location warning misses by design
+    /// (`members.len() >= 2`) — this one must still report it.
+    #[test]
+    fn unapplied_composable_tiers_report_a_lone_composable() {
+        let plan = SchedPlan::from_model(
+            &model_with_composable_bindings(),
+            "posix",
+            SchedApplyMode::Warn,
+        )
+        .expect("plan");
+        let got = composable_tiers_not_applied(
+            &plan,
+            ContainerMode::Observable,
+            &composables()[..1],
+            &["/perception/shared_container".to_string()],
+        );
+        assert_eq!(got.len(), 1, "got: {got:?}");
+        assert_eq!(got[0].container_mode, "observable");
+    }
+
+    /// Under `isolated` every composable is fork+exec'd and gets its tier, so
+    /// there is nothing to report. This is the assertion that stops the
+    /// silent regression: a future change that warns here would warn on the
+    /// default path, for a tier that IS applied.
+    #[test]
+    fn unapplied_composable_tiers_empty_under_isolated() {
+        let plan = SchedPlan::from_model(
+            &model_with_composable_bindings(),
+            "posix",
+            SchedApplyMode::Warn,
+        )
+        .expect("plan");
+        let got = composable_tiers_not_applied(
+            &plan,
+            ContainerMode::Isolated,
+            &composables(),
+            &["/perception/shared_container".to_string()],
+        );
+        assert!(got.is_empty(), "got: {got:?}");
+    }
+
+    /// A target that resolves to no container is still reported — the tier is
+    /// dropped either way — naming the target as the launch file wrote it.
+    #[test]
+    fn unapplied_composable_tiers_report_unresolvable_target() {
+        let plan = SchedPlan::from_model(
+            &model_with_composable_bindings(),
+            "posix",
+            SchedApplyMode::Warn,
+        )
+        .expect("plan");
+        let got = composable_tiers_not_applied(&plan, ContainerMode::Stock, &composables(), &[]);
+        assert_eq!(got.len(), 2, "got: {got:?}");
+        assert_eq!(got[0].container, "shared_container");
     }
 }

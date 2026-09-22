@@ -765,11 +765,19 @@ pub(crate) async fn play(
         // Phase 44.4 §4: chain-member composable nodes co-located in a
         // non-isolated container can't receive distinct priorities —
         // best-effort warning, computed here (not at `check` time) since
-        // `--container-mode` is a runtime replay flag. Works on BOTH
-        // scheduling sources: the legacy plan and the model plan (Phase
-        // 45.5) both carry their own `chain_member_nodes` directly now — no
-        // ManifestIndex re-parse fallback needed on either path. See
-        // `chain_colocation_warnings_for_plan`'s doc comment.
+        // `--container-mode` is a runtime replay flag.
+        //
+        // Issue #0035 / phase 80: on THIS path it can never fire. The plan
+        // comes from `SchedPlan::from_model`, which leaves
+        // `chain_member_nodes` empty by its own doc comment, and since 47.B3
+        // that is the only plan source `up` has — so the loop below walks an
+        // empty set on every user path. (An older comment here claimed both
+        // sources carry their chain membership "directly now"; the model one
+        // does not, and never has.) It is kept because
+        // `SchedPlan::build` still populates the set for any caller that has
+        // one, and because it answers a different question from the walk that
+        // follows it: distinct priorities WITHIN a chain, rather than a
+        // priority being applied at all.
         for msg in crate::execution::sched_plan::chain_colocation_warnings_for_plan(
             &launch_dump,
             common.containers.container_mode,
@@ -777,6 +785,74 @@ pub(crate) async fn play(
         ) {
             tracing::warn!("{msg}");
             plan.warnings.push(msg);
+        }
+
+        // Phase 80 (issue #0035) — decide BEFORE spawning whether the
+        // container mode in force can apply the tiers the model binds to
+        // composables. Under `observable`/`stock`/`clone-vm` a composable is
+        // a thread pool inside the container's process, so the LOADED handler
+        // is handed pid 0 and correctly declines to apply; it used to decline
+        // in silence, leaving `--explain` promising a priority that
+        // `ps -eLo tid,cls,rtprio` would never show. `--container-mode` is
+        // fixed on the command line, so the decision is knowable here, once
+        // per composable, rather than a message per LOADED event interleaved
+        // with startup after the fact.
+        let unapplied = crate::execution::sched_plan::composable_tiers_not_applied(
+            &plan,
+            common.containers.container_mode,
+            &load_node_contexts
+                .iter()
+                .map(|ctx| {
+                    let fqn = ctx.model_fqn.clone().unwrap_or_else(|| {
+                        ros_launch_resolve::ros::sched_loader::fqn_for(
+                            &launch_dump,
+                            Some(&ctx.record.namespace),
+                            &ctx.record.node_name,
+                            ctx.record.scope,
+                        )
+                    });
+                    (fqn, ctx.record.target_container_name.clone())
+                })
+                .collect::<Vec<_>>(),
+            &container_contexts
+                .iter()
+                .filter_map(|ctx| ctx.node_context.model_fqn.clone())
+                .collect::<Vec<_>>(),
+        );
+        if common.sched_opts.sched_apply != crate::execution::sched_apply::SchedApplyMode::Off
+            && !unapplied.is_empty()
+        {
+            // Strict refuses at the start boundary, the way a missing
+            // CAP_SYS_NICE does below — before a single node is spawned,
+            // because the run cannot deliver the scheduling it was asked for
+            // and finding that out node by node is worse than not starting.
+            if common.sched_opts.sched_apply
+                == crate::execution::sched_apply::SchedApplyMode::Strict
+            {
+                let lines: Vec<String> = unapplied.iter().map(|u| u.message()).collect();
+                eyre::bail!(
+                    "--sched-apply strict: {} composable tier(s) cannot be applied under \
+                     --container-mode {}:\n  {}",
+                    unapplied.len(),
+                    crate::execution::sched_plan::container_mode_flag(
+                        common.containers.container_mode
+                    ),
+                    lines.join("\n  ")
+                );
+            }
+            for u in &unapplied {
+                let msg = u.message();
+                tracing::warn!("{msg}");
+                plan.warnings.push(msg);
+            }
+        }
+        // Recorded whenever a plan exists, empty set included: absent means
+        // the question was never asked, `[]` means it was asked and the
+        // answer was none. `play_launch measure` reads this to avoid
+        // attributing a priority that was never set on any thread.
+        match serde_json::to_value(&unapplied) {
+            Ok(v) => crate::util::run_log::record_sched_unapplied(v),
+            Err(e) => tracing::warn!("could not record the unapplied scheduling set: {e}"),
         }
 
         let (sched_helper, sched_helper_join) = if common.sched_opts.sched_apply

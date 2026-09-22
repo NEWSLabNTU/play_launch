@@ -178,6 +178,21 @@ pub struct RunInfo {
     pub config_copy: Option<String>,
     /// The filter the log file was written under.
     pub log_filter: String,
+    /// Composable nodes whose derived scheduling tier the container mode in
+    /// force could not apply (issue #0035, phase 80), as
+    /// `execution::sched_plan::UnappliedComposableTier` rows.
+    ///
+    /// Absent means the question was never asked (no scheduling layer in the
+    /// model, or the run never got that far); `[]` means it was asked and the
+    /// answer was none — the `--container-mode isolated` case. A reader that
+    /// treats absent and empty as the same thing gets `measure`'s original
+    /// defect back, so the distinction is deliberate.
+    ///
+    /// Typed as a `Value` rather than the execution layer's own struct on
+    /// purpose: this module is `util`, below `execution`, and a run-identity
+    /// record should not pull the scheduler's types down with it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sched_unapplied: Option<serde_json::Value>,
 }
 
 impl RunInfo {
@@ -197,6 +212,7 @@ impl RunInfo {
             config_copy: None,
             log_filter: std::env::var(FILE_FILTER_ENV)
                 .unwrap_or_else(|_| DEFAULT_FILE_FILTER.to_string()),
+            sched_unapplied: None,
         }
     }
 
@@ -285,14 +301,56 @@ pub fn attach(log_dir: &Path, mut info: RunInfo) -> io::Result<PathBuf> {
     }
 
     let info_path = log_dir.join(RUN_INFO_FILE_NAME);
-    if let Err(e) = serde_json::to_string_pretty(&info)
-        .map_err(io::Error::other)
-        .and_then(|json| std::fs::write(&info_path, json))
-    {
-        tracing::warn!("could not write {}: {}", info_path.display(), e);
-    }
+    write_run_info(&info_path, &info);
+    *run_info().lock().unwrap_or_else(|e| e.into_inner()) = Some((info_path, info));
 
     Ok(log_path)
+}
+
+/// What [`attach`] captured and where it put it, kept so a fact learned later
+/// in the run can be added to `run_info.json` without re-reading and
+/// re-parsing what was written.
+static RUN_INFO: OnceLock<Mutex<Option<(PathBuf, RunInfo)>>> = OnceLock::new();
+
+fn run_info() -> &'static Mutex<Option<(PathBuf, RunInfo)>> {
+    RUN_INFO.get_or_init(|| Mutex::new(None))
+}
+
+/// Serialize `info` over `path`. Best-effort, like everything here: a run
+/// whose identity record could not be written is a run with a warning.
+fn write_run_info(path: &Path, info: &RunInfo) {
+    if let Err(e) = serde_json::to_string_pretty(info)
+        .map_err(io::Error::other)
+        .and_then(|json| std::fs::write(path, json))
+    {
+        tracing::warn!("could not write {}: {}", path.display(), e);
+    }
+}
+
+/// Record the composable tiers the container mode could not apply (issue
+/// #0035) in `run_info.json`, rewriting the file in full.
+///
+/// A SECOND write rather than a deferred single one. `attach` cannot wait:
+/// it also writes the log header and drains everything buffered before the
+/// directory existed, and that has to happen as early as possible — hundreds
+/// of lines before a `SchedPlan` exists. And the plan cannot be passed into
+/// `RunInfo::capture`, which runs at the same early point. So the file is
+/// written once for identity and rewritten once more when the scheduling
+/// decision is known; because the whole document is re-serialized from the
+/// remembered [`RunInfo`], there is no partial JSON to merge and no parse of
+/// our own output.
+///
+/// Silently does nothing when `attach` never ran or failed: there is no
+/// bundle to record into, and that has already been reported once.
+pub fn record_sched_unapplied(rows: serde_json::Value) {
+    let guard = run_info();
+    let mut slot = guard.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((path, info)) = slot.as_mut() else {
+        tracing::debug!("no run_info.json to record the unapplied scheduling set into");
+        return;
+    };
+    info.sched_unapplied = Some(rows);
+    write_run_info(path, info);
 }
 
 /// [`attach`], reporting rather than propagating: the log directory exists
@@ -339,6 +397,7 @@ mod tests {
             config_path: None,
             config_copy: None,
             log_filter: DEFAULT_FILE_FILTER.into(),
+            sched_unapplied: None,
         };
         let path = attach(dir.path(), info).unwrap();
         assert_eq!(path, dir.path().join(LOG_FILE_NAME));
@@ -367,6 +426,18 @@ mod tests {
         .unwrap();
         assert_eq!(info["version"], "9.9.9-test");
         assert_eq!(info["argv"][2], "a b");
+        // Nothing has been recorded yet, and absent is not empty.
+        assert!(info.get("sched_unapplied").is_none(), "{info}");
+
+        // The second write (issue #0035): the file is rewritten in full,
+        // keeping everything `attach` captured.
+        record_sched_unapplied(serde_json::json!([{ "node": "/a/b", "tier": "rt" }]));
+        let info: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.path().join(RUN_INFO_FILE_NAME)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(info["version"], "9.9.9-test", "identity survives: {info}");
+        assert_eq!(info["sched_unapplied"][0]["node"], "/a/b", "{info}");
     }
 
     #[test]
