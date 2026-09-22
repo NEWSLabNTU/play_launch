@@ -74,7 +74,13 @@ Claim: `phase-78-W3`. Depends on: W2. Owns: `sched_derive.rs`,
 `manifest_graph.rs` (chain route only), `sched_loader.rs`, and the
 `derive_sched_plan` call sites in `model.rs` and
 `src/play_launch/src/execution/sched_plan.rs`. Gate: W2's test green with
-the shim gone; Gates 2 and 4. Status: not started.
+the shim gone; Gates 2 and 4. Status: landed on main as f7adf641 (2026-09-22); the dump-side derivation
+deleted (571 lines), `mapper_input_via_model` the one entry; manifest_graph's
+route kept for the checker; W2's parity gate replaced by the committed-plan
+snapshot over 13 fixture launches plus the rlm snapshot; `--explain`
+byte-identical on contract_derived_chain and rt_workspace; resolve gate 215
+passed. Stale names remain in CLAUDE.md, docs/design/contract-axes.md and two
+model_builder.rs comments; W4 sweeps them.
 
 **W4 - release.** 0.12.0: the CHANGELOG entry, the version bump, this doc's
 status line and the README entry, the tag. nano-ros phase-457 W1 bumps its
