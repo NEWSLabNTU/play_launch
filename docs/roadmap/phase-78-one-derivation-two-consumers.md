@@ -1,6 +1,6 @@
 # Phase 78 - one derivation of the mapper input, two consumers
 
-Status: **planned** (2026-09-21). Follows phase 70's census, which found the
+Status: **complete** (2026-09-22): W1 a2e2baf9, W2 07be64dd, W3 f7adf641, W4 decadea4 (v0.12.0). Was planned 2026-09-21. Follows phase 70's census, which found the
 seams, and phase 45 section 45.10, which chose to leave this one open. Design
 of record: ros-launch-manifest `docs/design-issues.md` #52; consumer side:
 nano-ros `docs/roadmap/phase-457-consume-the-shared-derivation.md`.
@@ -90,7 +90,11 @@ Claim: `phase-78-W4`. Depends on: W3. Owns: `CHANGELOG.md`,
 `src/play_launch/Cargo.toml` (`version`), this doc's status line,
 `docs/roadmap/README.md` (the phase 78 entry), the `v0.12.0` tag. Gate:
 workspace tests and `just check` green on the tagged commit; nano-ros
-phase-457 W1 resolves the tag. Status: not started.
+phase-457 W1 resolves the tag. Status: landed on main as decadea4 (2026-09-22); tag v0.12.0 on that commit;
+docs sweep af796e3e replaced the deleted sched_derive names in CLAUDE.md,
+contract-axes.md, model_builder.rs and the rt-scheduling guide; resolve gate
+215 passed, play_launch lib 341 passed (cpuset host test excepted); nano-ros
+phase-457 W1 pins the tag.
 
 ## Why
 

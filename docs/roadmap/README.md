@@ -267,7 +267,7 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     still driving (#0033). W4 writes the `--enforce-rules` guide that has
     never existed (#0036 item 4).
     [phase-79-runtime-enforcement-is-a-gate.md](./phase-79-runtime-enforcement-is-a-gate.md).
-  - **Phase 78** - planned: one derivation of the mapper input, two
+  - **Phase 78** - complete (0.12.0): one derivation of the mapper input, two
     consumers (2026-09-21). The resolver lowers every non-input trigger to
     `input: []` and drops the rate, so nano-ros rebuilds a timer's rate from
     the first output's `min_rate_hz` and the two toolchains agree on the
