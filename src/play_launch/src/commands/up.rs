@@ -343,6 +343,34 @@ pub(crate) async fn play(
             ),
             InterceptionDecision::Off => debug!("Interception: off (nothing asked for it)"),
         }
+
+        // The same ruling, one step further along: interception can be
+        // decided ON and still have no event source, because the library
+        // itself is not on disk. That case used to be a `warn!` at the spawn
+        // site (`find_interception_so()` returning `None`), which is AFTER
+        // the log directory exists and which never refuses -- so a strict run
+        // on a broken install passed trivially, exactly the shape #0031 is
+        // about. It is judged here instead, beside the config-level ruling
+        // and before `create_log_dir`, so a refusal leaves no half-written
+        // bundle and no moved `latest` (issue #0023). The probe cannot
+        // disagree with the later lookup: `find_interception_so()` reads only
+        // the environment, `current_exe()` and the cwd, none of which change
+        // in between.
+        if interception_decision.enabled()
+            && !matches!(common.contract_opts.enforce_rules, EnforceMode::Off)
+            && crate::interception::find_interception_so().is_none()
+        {
+            let detail = "libplay_launch_interception.so was not found (searched                           $PLAY_LAUNCH_INTERCEPTION_SO, the directory of the running                           binary, and ../lib beside it); build it with                           `just build-interception`";
+            if matches!(common.contract_opts.enforce_rules, EnforceMode::Strict) {
+                return Err(eyre::eyre!(
+                    "--enforce-rules strict has no event source: {detail}. A strict run                      that measures nothing would pass trivially."
+                ));
+            }
+            warn!(
+                "--enforce-rules {:?} has no event source: {detail}; no runtime rule can                  fire on this run",
+                common.contract_opts.enforce_rules
+            );
+        }
     }
     runtime_config.interception.enabled = Some(interception_decision.enabled());
 

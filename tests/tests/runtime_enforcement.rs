@@ -888,3 +888,84 @@ fn strict_mode_keeps_running_on_warning_severity_violations() {
         "the nodes must still be running: {pids:?}"
     );
 }
+
+/// The gap W1's report surfaced, same class as #0031 one layer down.
+///
+/// `--enforce-rules strict` now IMPLIES interception, so the config-level
+/// precondition check passes — and then `find_interception_so()` returns
+/// `None` on an install where the library was never built. That used to log
+/// one `warn!`, construct a `RuleEngine` with nothing feeding it, evaluate
+/// zero rules and exit 0: a trivially green gate on a broken install, which
+/// is the worst shape a gate can have.
+///
+/// `PLAY_LAUNCH_INTERCEPTION_SO` is checked for existence before use, so a
+/// nonexistent path falls through the remaining candidates; the run's cwd is
+/// this tempdir, so the repo-relative development paths find nothing either.
+#[test]
+fn strict_without_the_interception_library_fails_before_spawn() {
+    let env = fixtures::install_env();
+    if env.is_empty() {
+        eprintln!("skip: ROS env not available");
+        return;
+    }
+
+    let work_dir = tempfile::TempDir::new().expect("tempdir");
+    let overlay_root = make_overlay_contracts(work_dir.path(), "");
+    let missing_so = work_dir.path().join("no_such_interception.so");
+
+    let mut cmd = play_launch_cmd_with_cargo(&env);
+    cmd.current_dir(work_dir.path());
+    cmd.args([
+        "launch",
+        "--disable-web-ui",
+        "--disable-monitoring",
+        "--disable-diagnostics",
+        "--container-mode",
+        "stock",
+        "--contracts",
+        overlay_root.to_str().unwrap(),
+        "--enforce-rules",
+        "strict",
+    ]);
+    let launch = fixtures::test_workspace_path("simple_test").join("launch/pure_nodes.launch.xml");
+    cmd.arg(launch.to_str().unwrap());
+    cmd.env("PLAY_LAUNCH_INTERCEPTION_SO", &missing_so);
+    cmd.env("RUST_LOG", "play_launch=warn");
+    let stdout_path = work_dir.path().join("stdout.log");
+    let stderr_path = work_dir.path().join("stderr.log");
+    cmd.stdout(Stdio::from(
+        std::fs::File::create(&stdout_path).expect("stdout file"),
+    ));
+    cmd.stderr(Stdio::from(
+        std::fs::File::create(&stderr_path).expect("stderr file"),
+    ));
+
+    let mut proc = ManagedProcess::spawn(&mut cmd).expect("spawn play_launch");
+    let status = proc.wait_with_timeout(Duration::from_secs(60));
+    let combined = format!(
+        "{}{}",
+        std::fs::read_to_string(&stdout_path).unwrap_or_default(),
+        std::fs::read_to_string(&stderr_path).unwrap_or_default()
+    );
+
+    assert!(
+        !status.success(),
+        "strict with no interception library must exit non-zero; got {status:?}\n{combined}"
+    );
+    assert!(
+        combined.contains("has no event source"),
+        "the refusal must name the precondition; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("libplay_launch_interception.so"),
+        "the refusal must name the missing library, not just the mode; got:\n{combined}"
+    );
+    // Decided beside W1's other precondition, ahead of `create_log_dir`, so
+    // the run leaves no bundle and no moved `latest` behind — the same
+    // guarantee `strict_with_interception_disabled_fails_before_spawn`
+    // asserts, and the reason the ruling lives in one function.
+    assert!(
+        !work_dir.path().join("play_log").exists(),
+        "a missing interception library must be refused before any spawn (no play_log bundle)"
+    );
+}
