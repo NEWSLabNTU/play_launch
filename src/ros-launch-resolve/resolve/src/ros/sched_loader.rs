@@ -1925,12 +1925,11 @@ fn explain_rows_from_derived(derived: &DerivedSchedPlan) -> Vec<ExplainRow> {
 ///   `min(requirements[fqn].paths[].max_latency_ms)`, which IS embedded in
 ///   the model (`execution.sched.requirements`) — so this reproduces
 ///   `check`'s `"<deadline_us> us deadline → prio <p>"` exactly (Phase 45.6
-///   review, Finding 2). For `rate_monotonic`, the `rate_hz` fact is the max
-///   over the node's topic-level publications / `pub.<ep>.min_rate_hz`
-///   endpoint facts — a genuinely different source than anything in
-///   `requirements` (whose per-path `EffectiveTrigger::Timer{rate_hz}` is
-///   only present for timer-triggered paths and isn't the same aggregate) —
-///   so it is NOT embedded, and this falls back to the same tier-name
+///   review, Finding 2). For `rate_monotonic`, the `rate_hz` fact is the
+///   fastest timer trigger among the node's paths (phase 78, "Rates");
+///   `requirements` carries the per-path `EffectiveTrigger::Timer{rate_hz}`
+///   but not that aggregate, and this row does not re-derive it, so it
+///   falls back to the same tier-name
 ///   description [`describe_derived_fact`] uses for `manual`
 ///   (`"tier '<name>' → prio <p>"`): honest about the applied outcome without
 ///   inventing a fact. That `rate_monotonic` fallback is the one genuine
@@ -2603,10 +2602,10 @@ mod tests {
             "fast_node".to_string(),
             NodeDecl {
                 criticality: Some("high".to_string()),
-                // `build_global_graph` derives the route from the paths on the
-                // manifest's own `NodeDecl`, so a fixture that declares them
-                // only in `index.node_paths` yields a node with no trigger
-                // facts and therefore no route at all.
+                // The model builder lowers a node's paths from
+                // `index.node_paths` and the checker's `build_global_graph`
+                // reads them off the manifest's own `NodeDecl`; the loader
+                // fills the first from the second, so a fixture declares both.
                 paths: BTreeMap::from([(
                     "tick".to_string(),
                     PathDecl {
@@ -3632,7 +3631,7 @@ nodes = ["fast_node"]
         // it here and the assertions below still passed, because two distinct
         // NON-chain nodes also refuse to collapse. The warning was right for
         // the wrong reason, which is no test at all.
-        let reaching = crate::ros::sched_derive::mapper_input_from_dump(
+        let (reaching, _) = crate::ros::sched_derive::mapper_input_via_model(
             &dump,
             Some(&index),
             None,

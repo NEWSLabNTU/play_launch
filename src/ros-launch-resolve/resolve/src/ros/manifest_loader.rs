@@ -4813,11 +4813,10 @@ mod tests {
         // Never the naive scope-qualified identity.
         assert_ne!(main_path.node_fqn, naive_fqn);
 
-        // `sched_derive`'s extraction must key the fact on the same real
-        // FQN a `ScheduledRecord` (built from the launch dump) carries —
-        // this is what actually routes a derived/chain priority to the
-        // real process.
-        let input = crate::ros::sched_derive::mapper_input_from_dump(
+        // The mapper's input, derived from the model, must key the fact on
+        // the same real FQN the launch dump's node carries, which is what
+        // actually routes a derived/chain priority to the real process.
+        let (input, _) = crate::ros::sched_derive::mapper_input_via_model(
             &dump,
             Some(&index),
             None,
@@ -4871,7 +4870,10 @@ mod tests {
             executable: "cropbox".to_string(),
             package: Some("manifest_pipeline".to_string()),
             name: Some("cropbox".to_string()),
-            namespace: None,
+            // The parser stamps the pushed namespace on the record itself;
+            // the model builder qualifies a node by that field alone, so a
+            // record carries it the way a parsed one does (phase 78 W3).
+            namespace: Some("/perception/inner".to_string()),
             exec_name: Some("cropbox".to_string()),
             params: vec![],
             params_files: vec![],
@@ -4916,9 +4918,9 @@ mod tests {
         assert_eq!(main_path.node_fqn, real_fqn);
         assert_ne!(main_path.node_fqn, naive_fqn);
 
-        // The scheduling extraction pipeline agrees: chain/derived facts
-        // route to the real process, not a phantom no process answers to.
-        let input = crate::ros::sched_derive::mapper_input_from_dump(
+        // The scheduling derivation agrees: chain/derived facts route to
+        // the real process, not a phantom no process answers to.
+        let (input, _) = crate::ros::sched_derive::mapper_input_via_model(
             &dump,
             Some(&index),
             None,
