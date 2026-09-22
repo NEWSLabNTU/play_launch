@@ -377,7 +377,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "ros-launch-manifest-check"
 version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.37#bfbe075b6123d2c3bc42f4ce720390f9883541a6"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.38#41d241c0bfbb683ea952a9b2259bf89ff7978580"
 dependencies = [
  "codespan-reporting",
  "petgraph",
@@ -389,7 +389,7 @@ dependencies = [
 [[package]]
 name = "ros-launch-manifest-types"
 version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.37#bfbe075b6123d2c3bc42f4ce720390f9883541a6"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.38#41d241c0bfbb683ea952a9b2259bf89ff7978580"
 dependencies = [
  "serde",
  "serde_json",
@@ -776,6 +776,18 @@ name = "action_msgs"
 version = "1.2.3"
 
 [[patch.unused]]
+name = "action_tutorials_interfaces"
+version = "0.20.9"
+
+[[patch.unused]]
+name = "actionlib_msgs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "actuator_msgs"
+version = "0.0.1"
+
+[[patch.unused]]
 name = "builtin_interfaces"
 version = "1.2.3"
 
@@ -796,8 +808,32 @@ name = "geometry_msgs"
 version = "4.9.2"
 
 [[patch.unused]]
+name = "gps_msgs"
+version = "3.1.0"
+
+[[patch.unused]]
 name = "lifecycle_msgs"
 version = "1.2.3"
+
+[[patch.unused]]
+name = "logging_demo"
+version = "0.20.9"
+
+[[patch.unused]]
+name = "map_msgs"
+version = "2.1.0"
+
+[[patch.unused]]
+name = "nav_msgs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "pcl_msgs"
+version = "1.0.0"
+
+[[patch.unused]]
+name = "pendulum_msgs"
+version = "0.20.9"
 
 [[patch.unused]]
 name = "play_launch_msgs"
@@ -808,7 +844,35 @@ name = "rcl_interfaces"
 version = "1.2.3"
 
 [[patch.unused]]
+name = "rmw_dds_common"
+version = "1.6.0"
+
+[[patch.unused]]
+name = "ros_gz_interfaces"
+version = "0.244.25"
+
+[[patch.unused]]
+name = "ros_ign_interfaces"
+version = "0.244.25"
+
+[[patch.unused]]
+name = "rosbag2_interfaces"
+version = "0.15.16"
+
+[[patch.unused]]
 name = "rosgraph_msgs"
+version = "1.2.3"
+
+[[patch.unused]]
+name = "sensor_msgs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "shape_msgs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "statistics_msgs"
 version = "1.2.3"
 
 [[patch.unused]]
@@ -816,9 +880,37 @@ name = "std_msgs"
 version = "4.9.2"
 
 [[patch.unused]]
-name = "test_msgs"
-version = "1.2.3"
+name = "std_srvs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "stereo_msgs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "tf2_msgs"
+version = "0.25.22"
+
+[[patch.unused]]
+name = "theora_image_transport"
+version = "2.5.5"
+
+[[patch.unused]]
+name = "trajectory_msgs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "turtlesim"
+version = "1.4.3"
 
 [[patch.unused]]
 name = "unique_identifier_msgs"
 version = "2.2.1"
+
+[[patch.unused]]
+name = "visualization_msgs"
+version = "4.9.2"
+
+[[patch.unused]]
+name = "zed_msgs"
+version = "5.3.0"
