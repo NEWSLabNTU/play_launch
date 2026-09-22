@@ -27,8 +27,9 @@
 //! (`name`/`scope` only) — built-in mappers already default fact-less nodes
 //! to the non-RT default tier, so this is not a special case here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use ros_launch_manifest_derive::{DeriveFacts, DeriveReport, mapper_input_from_model};
 use ros_launch_manifest_sched::{
     ChainElement, ChainSemantics, Criticality, MapperInput, MapperNode, MapperPath, ResolvedChain,
     SystemSched,
@@ -44,10 +45,102 @@ use crate::ros::{
 #[cfg(test)]
 use ros_launch_manifest_sched::EffectiveTrigger;
 
+/// Build the mapper's input the way both consumers do since phase 78 W2
+/// (design issue #52): resolve the model of `dump` plus `index` and hand
+/// `ros_launch_manifest_derive::mapper_input_from_model` that model and the
+/// platform file's per-node budgets as [`DeriveFacts`]. This is what
+/// `derive_sched_plan` calls; [`mapper_input_from_dump`] is the derivation
+/// it replaces, kept until W3 deletes it so the `tests` module can hold the
+/// two against each other on every contract fixture.
+///
+/// `legacy` is set afterwards, as the crate documents: only the `.toml`
+/// bridge's `manual` mapper reads it.
+pub fn mapper_input_via_model(
+    dump: &LaunchDump,
+    index: Option<&ManifestIndex>,
+    legacy: Option<SystemSched>,
+    budgets: &BTreeMap<String, u64>,
+) -> (MapperInput, DeriveReport) {
+    let model = pre_sched_model(dump, index);
+    let (mut input, report) = mapper_input_from_model(&model, &derive_facts_from_budgets(budgets));
+    input.legacy = legacy;
+    // `MapperNode::scope` is the NAMESPACE the `manual` mapper's `[[assign]]
+    // scope = "/perception"` selector matches against
+    // (`ros_launch_manifest_sched::resolve::scope_selector_matches`), and the
+    // one the dump-side derivation filled from the record's effective
+    // namespace. The crate copies `NodeInstance::scope`, which is the model's
+    // FILE-SCOPE key (`bringup.launch.xml`), so a `.toml` bridge user's scope
+    // rule would match nothing. Until the crate carries the namespace, it is
+    // read off the node's own key: `structure.nodes` is keyed by FQN, and an
+    // FQN's parent is exactly the effective namespace the record had.
+    for node in &mut input.nodes {
+        node.scope = namespace_of(&node.name);
+    }
+    (input, report)
+}
+
+/// The model the derivation reads: structure and contracts of `dump` under
+/// `index`, with no execution layer. `derive_sched_plan` builds it before the
+/// plan exists, and the plan is what the execution layer is made of; the
+/// caller's full model (provenance, args, execution) is built afterwards by
+/// `build_checked_model`, from the same inputs. A run with no contract index
+/// (`play_launch run`'s synthetic single-node dump) derives from an empty
+/// one, which is the model `resolve` emits for a tree with no contracts.
+pub fn pre_sched_model(
+    dump: &LaunchDump,
+    index: Option<&ManifestIndex>,
+) -> ros_launch_manifest_model::SystemModel {
+    let empty;
+    let index = match index {
+        Some(index) => index,
+        None => {
+            empty = ManifestIndex::default();
+            &empty
+        }
+    };
+    super::model_builder::build_system_model(
+        dump,
+        index,
+        None,
+        BTreeMap::new(),
+        &BTreeSet::new(),
+        None,
+    )
+}
+
+/// The platform file's `budget` overrides as the crate's per-node fact, in
+/// milliseconds. `budgets` already carries every spelling a selector may
+/// take (`posix_budgets`: the selector, its slashed form and its bare name),
+/// and the crate looks a node up by FQN and then by bare name, the same
+/// fallback [`budget_us_for`] applies. No per-path fact exists here: a
+/// platform file speaks of nodes.
+pub fn derive_facts_from_budgets(budgets: &BTreeMap<String, u64>) -> DeriveFacts {
+    DeriveFacts {
+        path_exec_ms: BTreeMap::new(),
+        node_exec_ms: budgets
+            .iter()
+            .map(|(selector, us)| (selector.clone(), *us as f64 / 1000.0))
+            .collect(),
+    }
+}
+
+/// The namespace an FQN lives in: `/perception/sensor_node` -> `/perception`,
+/// `/talker` -> `/`. The inverse of `sched_loader::join_fqn`.
+fn namespace_of(fqn: &str) -> String {
+    match fqn.rsplit_once('/') {
+        Some((ns, _)) if !ns.is_empty() => ns.to_string(),
+        _ => "/".to_string(),
+    }
+}
+
 /// Build the mapper's input from a launch dump and (optionally) a resolved
 /// contract index. `legacy` is threaded straight through to
 /// [`MapperInput::legacy`] — non-`None` only when driving the `manual`
 /// mapper via the `.toml` bridge.
+///
+/// The derivation phase 78 replaces: `derive_sched_plan` calls
+/// [`mapper_input_via_model`] instead, and the `tests` module asserts the two
+/// agree on every contract fixture until W3 deletes this one.
 pub fn mapper_input_from_dump(
     dump: &LaunchDump,
     index: Option<&ManifestIndex>,
@@ -138,12 +231,25 @@ fn extract_paths(
         None
     };
 
-    index
+    // The spellings the model lowers (phase 78 W1) and the shared derivation
+    // carries, so the parity gate can compare the whole input: endpoints as
+    // qualified refs (`<node FQN>/<endpoint>`), inside the trigger and in
+    // `inputs`/`outputs` alike, and a node's paths in name order (the
+    // model's `contracts.node_paths` is a sorted map).
+    let qualify = |e: &String| format!("{}/{e}", record.fqn);
+    let mut paths: Vec<MapperPath> = index
         .node_paths
         .iter()
         .filter(|p| p.node_fqn == record.fqn)
         .map(|p| {
-            let effective = p.path.effective_trigger();
+            let effective = match p.path.effective_trigger() {
+                ros_launch_manifest_types::EffectiveTrigger::Input(eps) => {
+                    ros_launch_manifest_types::EffectiveTrigger::Input(
+                        eps.iter().map(qualify).collect(),
+                    )
+                }
+                other => other,
+            };
             let inputs = match &effective {
                 ros_launch_manifest_types::EffectiveTrigger::Input(eps) => eps.clone(),
                 _ => Vec::new(),
@@ -162,12 +268,14 @@ fn extract_paths(
                 // against.
                 exec_ms: node_exec_ms,
                 inputs,
-                outputs: p.path.output.clone(),
+                outputs: p.path.output.iter().map(qualify).collect(),
                 max_jitter_ms: p.path.max_jitter.map(|d| d.as_millis_f64()),
                 miss: p.path.miss.as_ref().map(convert_miss),
             }
         })
-        .collect()
+        .collect();
+    paths.sort_by(|a, b| a.name.cmp(&b.name));
+    paths
 }
 
 /// Translate the contract's `miss:` into the mapper's mirror of it.
@@ -284,11 +392,28 @@ pub(crate) fn resolve_chains_derived(
             let trigger = decl.map(|d| d.effective_trigger());
             match trigger {
                 Some(T::Timer { rate_hz }) if rate_hz > 0.0 => {
+                    // The one-path rule `extract_paths` applies to
+                    // `MapperPath::exec_ms`, applied to the boundary too
+                    // (phase 78 W2, seam 1). This used to hand a node's
+                    // budget to the boundary whatever the path count, so a
+                    // node with two timer paths and a 2 ms budget was
+                    // counted at period + 2 ms here and at period + 0 on
+                    // the path; the shared crate counts both at zero and
+                    // says so (`ChainFeasibleWithoutWcet`).
+                    let path_count = index
+                        .node_paths
+                        .iter()
+                        .filter(|p| &p.node_fqn == node_fqn)
+                        .count();
+                    let exec_ms = (path_count == 1)
+                        .then(|| budget_us_for(budgets, node_fqn))
+                        .flatten()
+                        .map(|us| us as f64 / 1000.0);
                     elements.push(ChainElement::Boundary {
                         node: node_fqn.clone(),
                         path: path_name.clone(),
                         period_ms: 1000.0 / rate_hz,
-                        exec_ms: budget_us_for(budgets, node_fqn).map(|us| us as f64 / 1000.0),
+                        exec_ms,
                     });
                 }
                 _ => push_segment_node(&mut elements, node_fqn.clone(), path_name.clone()),
@@ -357,9 +482,17 @@ fn push_segment_node(elements: &mut Vec<ChainElement>, node: String, path: Strin
 /// generalized to any node identity (chain segments don't carry a
 /// `ScheduledRecord`, only a resolved `(scope_id, node_fqn)`).
 fn node_criticality(index: &ManifestIndex, scope_id: usize, node_fqn: &str) -> Option<Criticality> {
-    // Phase 72: the hazards decide first; the label only where none reaches.
-    if let Some(d) = index.derived_criticality.get(node_fqn) {
-        return d.bucket();
+    // Phase 72: the hazards decide first; the label where none reaches, and
+    // (phase 78 W2, seam 2) where the one that reaches buckets to the
+    // no-requirement level. The model carries no `node_criticality` entry
+    // for either, so the shared derivation reads the label for both; this
+    // used to return `None` for the second and emit nothing.
+    if let Some(c) = index
+        .derived_criticality
+        .get(node_fqn)
+        .and_then(|d| d.bucket())
+    {
+        return Some(c);
     }
     let bare = node_fqn.rsplit('/').next()?;
     let resolved = index.manifests.get(&scope_id)?;
@@ -397,52 +530,28 @@ fn node_decl<'a>(
     resolved.manifest.nodes.get(&record.bare_name)
 }
 
-/// `<node_fqn>/<ep_name>` -> `Some(node_fqn)`, mirroring
-/// `manifest_loader::split_endpoint_ref_for_check` (private to that module,
-/// reimplemented here rather than exposed — it's a one-line string split).
-fn ep_ref_node_fqn(ep_ref: &str) -> Option<&str> {
-    let pos = ep_ref.rfind('/')?;
-    if pos == 0 {
-        return None;
-    }
-    Some(&ep_ref[..pos])
-}
-
-/// Max declared rate across the node's publications: every topic-level
-/// `rate_hz` where this node is a publisher, plus every one of the node's
-/// own `pub.<ep>.min_rate_hz` declarations.
+/// The fastest timer trigger among the node's declared paths, and nothing
+/// else (phase 78, "Rates"): the rate that would starve first if the node
+/// were under-prioritised. Authored `topics.<t>.rate_hz`, the graph's
+/// derived topic rate and `pub.<ep>.min_rate_hz` are PROMISES the monitors
+/// read; no mapper does. This used to take the max over all three, so a
+/// node two hops downstream of the only timer ranked as if it had a period
+/// of its own, and a node whose only rate fact was a promise ranked at all.
+/// The shared derivation applies this rule, and the parity gate holds this
+/// copy to it until W3 deletes it.
 fn extract_rate_hz(record: &ScheduledRecord, index: &ManifestIndex) -> Option<f64> {
-    let mut best: Option<f64> = None;
-    let mut consider = |v: Option<f64>| {
-        if let Some(v) = v {
-            best = Some(best.map_or(v, |b| b.max(v)));
-        }
-    };
-
-    for topic in index.topics.values() {
-        if topic
-            .publishers
-            .iter()
-            .any(|p| ep_ref_node_fqn(p) == Some(record.fqn.as_str()))
-        {
-            consider(topic.rate_hz);
-            // The derived rate counts too, so a contract that declares only
-            // the timer that drives a chain still gets a rate for every node
-            // along it. Before this, a node two hops downstream of the only
-            // `trigger: { timer: ... }` in the file had no rate at all unless
-            // someone hand-copied one onto each topic — which is the
-            // duplication the derivation exists to remove.
-            consider(topic.derived_rate_hz);
-        }
-    }
-
-    if let Some(decl) = node_decl(record, index) {
-        for props in decl.publishers.values() {
-            consider(props.min_rate_hz);
-        }
-    }
-
-    best
+    use ros_launch_manifest_types::EffectiveTrigger as T;
+    index
+        .node_paths
+        .iter()
+        .filter(|p| p.node_fqn == record.fqn)
+        .filter_map(|p| match p.path.effective_trigger() {
+            T::Timer { rate_hz } if rate_hz > 0.0 => Some(rate_hz),
+            _ => None,
+        })
+        .fold(None, |acc: Option<f64>, v| {
+            Some(acc.map_or(v, |a| a.max(v)))
+        })
 }
 
 /// `(path_budget_ms, deadline_us)`: the tightest (min) `max_latency_ms`
@@ -484,9 +593,15 @@ fn extract_path_facts(
 
 /// `nodes.<name>.criticality`, case-insensitive, ignore-if-absent-or-unrecognized.
 fn extract_criticality(record: &ScheduledRecord, index: &ManifestIndex) -> Option<Criticality> {
-    // Phase 72: derived from hazards where any reaches this node.
-    if let Some(d) = index.derived_criticality.get(&record.fqn) {
-        return d.bucket();
+    // Phase 72: derived from hazards where any reaches this node; the label
+    // where none does or where the bucket is the no-requirement level (phase
+    // 78 W2, seam 2 -- see `node_criticality`).
+    if let Some(c) = index
+        .derived_criticality
+        .get(&record.fqn)
+        .and_then(|d| d.bucket())
+    {
+        return Some(c);
     }
     let raw = node_decl(record, index)?.criticality.as_deref()?;
     parse_criticality(raw)
@@ -526,7 +641,12 @@ mod tests {
             "lifecycle_node": [],
             "file_data": {},
             "scopes": [
-                {"id": 0, "ns": "/", "parent": null}
+                {
+                    "id": 0,
+                    "ns": "/",
+                    "parent": null,
+                    "origin": {"file": "manifest.launch.xml", "path": "/nowhere/manifest.launch.xml"}
+                }
             ]
         });
         serde_json::from_value(json).expect("valid LaunchDump")
@@ -560,10 +680,25 @@ mod tests {
         assert!(input.legacy.is_none());
     }
 
+    /// Phase 78: a node's rate is its fastest timer trigger. The topic's
+    /// authored `rate_hz` (100), its derived rate (80) and the publisher's
+    /// `min_rate_hz` (30) are promises no mapper reads; before this the max
+    /// of the three, 100, was the rate, and a node with no timer at all
+    /// ranked on a promise.
     #[test]
-    fn rate_hz_is_max_of_topic_and_endpoint_facts() {
+    fn rate_hz_is_the_fastest_timer_trigger_and_never_a_promise() {
         let dump = dump_with_two_nodes();
 
+        let tick = PathDecl {
+            trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 50.0 }),
+            output: vec!["chatter".to_string()],
+            ..Default::default()
+        };
+        let slow = PathDecl {
+            trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 5.0 }),
+            output: vec!["chatter".to_string()],
+            ..Default::default()
+        };
         let mut nodes = BTreeMap::new();
         nodes.insert(
             "talker".to_string(),
@@ -572,6 +707,29 @@ mod tests {
                     let mut m = BTreeMap::new();
                     m.insert(
                         "chatter".to_string(),
+                        ros_launch_manifest_types::EndpointProps {
+                            min_rate_hz: Some(30.0),
+                            ..Default::default()
+                        },
+                    );
+                    m
+                },
+                paths: BTreeMap::from([
+                    ("slow".to_string(), slow.clone()),
+                    ("tick".to_string(), tick.clone()),
+                ]),
+                ..Default::default()
+            },
+        );
+        // The listener publishes on a topic that promises a rate, and has no
+        // timer: no rate.
+        nodes.insert(
+            "listener".to_string(),
+            NodeDecl {
+                publishers: {
+                    let mut m = BTreeMap::new();
+                    m.insert(
+                        "echo".to_string(),
                         ros_launch_manifest_types::EndpointProps {
                             min_rate_hz: Some(30.0),
                             ..Default::default()
@@ -592,68 +750,43 @@ mod tests {
         index
             .manifests
             .insert(0, empty_resolved_manifest(0, manifest));
-        index.topics.insert(
-            "/chatter".to_string(),
-            ResolvedTopic {
-                derived_from_remaps: false,
-                fqn: "/chatter".to_string(),
-                msg_type: "std_msgs/msg/String".to_string(),
-                qos: None,
-                publishers: vec!["/talker/chatter".to_string()],
-                subscribers: vec![],
-                rate_hz: Some(100.0),
-                derived_rate_hz: None,
-                max_transport_ms: None,
-                drop: None,
-                scope_ids: vec![0],
-            },
-        );
+        for (name, path) in [("slow", slow), ("tick", tick)] {
+            index.node_paths.push(ResolvedNodePath {
+                node_fqn: "/talker".to_string(),
+                path_name: name.to_string(),
+                path,
+                scope_id: 0,
+            });
+        }
+        for (fqn, publisher) in [("/chatter", "/talker/chatter"), ("/echo", "/listener/echo")] {
+            index.topics.insert(
+                fqn.to_string(),
+                ResolvedTopic {
+                    derived_from_remaps: false,
+                    fqn: fqn.to_string(),
+                    msg_type: "std_msgs/msg/String".to_string(),
+                    qos: None,
+                    publishers: vec![publisher.to_string()],
+                    subscribers: vec![],
+                    rate_hz: Some(100.0),
+                    derived_rate_hz: Some(80.0),
+                    max_transport_ms: None,
+                    drop: None,
+                    scope_ids: vec![0],
+                },
+            );
+        }
 
-        let input = mapper_input_from_dump(&dump, Some(&index), None, &BTreeMap::new());
+        let (input, _) =
+            assert_both_derivations_agree("promised rates", &dump, &index, &BTreeMap::new());
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
-        // topic-level rate_hz (100) beats the endpoint-level min_rate_hz (30).
-        assert_eq!(talker.rate_hz, Some(100.0));
-
+        assert_eq!(
+            talker.rate_hz,
+            Some(50.0),
+            "the fastest timer, not the promise"
+        );
         let listener = input.nodes.iter().find(|n| n.name == "/listener").unwrap();
-        assert_eq!(listener.rate_hz, None);
-    }
-
-    #[test]
-    fn rate_hz_falls_back_to_endpoint_min_rate_hz_when_topic_has_none() {
-        let dump = dump_with_two_nodes();
-
-        let mut nodes = BTreeMap::new();
-        nodes.insert(
-            "talker".to_string(),
-            NodeDecl {
-                publishers: {
-                    let mut m = BTreeMap::new();
-                    m.insert(
-                        "chatter".to_string(),
-                        ros_launch_manifest_types::EndpointProps {
-                            min_rate_hz: Some(30.0),
-                            ..Default::default()
-                        },
-                    );
-                    m
-                },
-                ..Default::default()
-            },
-        );
-        let manifest = Manifest {
-            version: 1,
-            nodes,
-            ..Default::default()
-        };
-
-        let mut index = ManifestIndex::default();
-        index
-            .manifests
-            .insert(0, empty_resolved_manifest(0, manifest));
-        // No topics declared at all — only the endpoint-level fact exists.
-        let input = mapper_input_from_dump(&dump, Some(&index), None, &BTreeMap::new());
-        let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
-        assert_eq!(talker.rate_hz, Some(30.0));
+        assert_eq!(listener.rate_hz, None, "a promise alone is no rate");
     }
 
     #[test]
@@ -836,13 +969,14 @@ mod tests {
         let talker = input.nodes.iter().find(|n| n.name == "/talker").unwrap();
         assert_eq!(talker.paths.len(), 2);
 
+        // Endpoints are qualified refs, the model's spelling (phase 78 W2).
         let publish = talker.paths.iter().find(|p| p.name == "publish").unwrap();
-        assert_eq!(publish.inputs, vec!["in_ep".to_string()]);
-        assert_eq!(publish.outputs, vec!["out_ep".to_string()]);
+        assert_eq!(publish.inputs, vec!["/talker/in_ep".to_string()]);
+        assert_eq!(publish.outputs, vec!["/talker/out_ep".to_string()]);
         assert_eq!(publish.max_latency_ms, Some(12.5));
         assert_eq!(
             publish.effective_trigger,
-            EffectiveTrigger::Input(vec!["in_ep".to_string()])
+            EffectiveTrigger::Input(vec!["/talker/in_ep".to_string()])
         );
 
         let tick = talker.paths.iter().find(|p| p.name == "tick").unwrap();
@@ -1067,6 +1201,458 @@ mod tests {
             other => panic!("expected a Segment, got {other:?}"),
         }
         // max(Low, High) = High.
+        assert_eq!(chain.criticality, Criticality::High);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 78 W2: the transition gate. `mapper_input_from_dump` (this file's
+    // derivation, which W3 deletes) and `mapper_input_via_model` (the shared
+    // crate over the resolved model, which `derive_sched_plan` calls) must
+    // agree on every contract fixture: as a `MapperInput`, as the chains
+    // alone, and as the `RankedPlan` the chain-aware ranker makes of it, byte
+    // for byte on its Debug text. A red row is a fact the model failed to
+    // carry or a rule the port got wrong, never a tolerance.
+    // -----------------------------------------------------------------------
+
+    use ros_launch_manifest_derive::resolve_chains;
+    use ros_launch_manifest_sched::{RankedPlan, chain_aware_rank};
+    use std::path::{Path, PathBuf};
+
+    /// `<repo>/src/ros-launch-resolve/resolve` is this crate.
+    fn repo_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("the repository root")
+            .to_path_buf()
+    }
+
+    fn launch_stem(launch: &Path) -> String {
+        launch
+            .file_name()
+            .expect("a launch file name")
+            .to_string_lossy()
+            .trim_end_matches(".launch.xml")
+            .to_string()
+    }
+
+    /// Every `*.launch.xml` with a contract sidecar next to it under
+    /// `tests/fixtures/contract_*/launch/` and `tests/fixtures/rt_workspace/launch/`,
+    /// in path order. `contract_merge` contributes two (its include is a
+    /// fixture launch of its own).
+    fn contract_fixture_launches() -> Vec<PathBuf> {
+        let fixtures = repo_root().join("tests/fixtures");
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(&fixtures)
+            .unwrap_or_else(|e| panic!("read {}: {e}", fixtures.display()))
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                let name = p.file_name().map(|n| n.to_string_lossy().to_string());
+                name.is_some_and(|n| n.starts_with("contract_") || n == "rt_workspace")
+            })
+            .collect();
+        dirs.sort();
+        let mut out = Vec::new();
+        for dir in dirs {
+            let launch_dir = dir.join("launch");
+            let mut files: Vec<PathBuf> = std::fs::read_dir(&launch_dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.to_string_lossy().ends_with(".launch.xml"))
+                .collect();
+            files.sort();
+            for launch in files {
+                let sidecar = launch_dir.join(format!("{}.contract.yaml", launch_stem(&launch)));
+                if sidecar.is_file() {
+                    out.push(launch);
+                }
+            }
+        }
+        out
+    }
+
+    fn fixture_name(launch: &Path) -> String {
+        launch
+            .strip_prefix(repo_root().join("tests/fixtures"))
+            .unwrap_or(launch)
+            .display()
+            .to_string()
+    }
+
+    /// The launch tree, through the Rust parser, as `resolve` reads it.
+    fn dump_of(launch: &Path) -> LaunchDump {
+        let record = crate::verbs::parse_launch_file(launch, Default::default())
+            .unwrap_or_else(|e| panic!("parse {}: {e}", launch.display()));
+        let json = serde_json::to_string(&record).expect("record as json");
+        serde_json::from_str(&json).expect("a LaunchDump")
+    }
+
+    /// The contract index the provider-sidecar channel resolves for the
+    /// launch, exactly as `check` and `resolve` do without `--contracts`.
+    fn index_of(dump: &LaunchDump, name: &str) -> ManifestIndex {
+        let sources = crate::ros::manifest_loader::ContractSources {
+            overlay: None,
+            provider: true,
+        };
+        crate::ros::manifest_loader::load_manifests(dump, &sources)
+            .unwrap_or_else(|e| panic!("{name}: load manifests: {e}"))
+    }
+
+    /// The per-node budgets of the launch's own posix platform file, when it
+    /// ships one, the way `derive_sched_plan` reads them.
+    fn budgets_of(launch: &Path) -> BTreeMap<String, u64> {
+        let platform = launch.with_file_name(format!("{}.system.posix.yaml", launch_stem(launch)));
+        if !platform.is_file() {
+            return BTreeMap::new();
+        }
+        let file = ros_launch_manifest_sched::parse_platform_file(&platform)
+            .unwrap_or_else(|e| panic!("parse {}: {e}", platform.display()));
+        crate::ros::sched_loader::posix_budgets(&file)
+    }
+
+    /// The one rendering every consumer compares: `{:#?}` plus a trailing
+    /// newline (rlm `derive/tests/parity.rs`).
+    fn render(plan: &RankedPlan) -> String {
+        format!("{plan:#?}\n")
+    }
+
+    /// Both derivations of one dump under one index and one set of budgets,
+    /// asserted equal in every form a consumer reads, and returned so a test
+    /// can look at what they agree on.
+    fn assert_both_derivations_agree(
+        name: &str,
+        dump: &LaunchDump,
+        index: &ManifestIndex,
+        budgets: &BTreeMap<String, u64>,
+    ) -> (MapperInput, String) {
+        let from_dump = mapper_input_from_dump(dump, Some(index), None, budgets);
+        let (from_model, report) = mapper_input_via_model(dump, Some(index), None, budgets);
+        assert!(
+            report.paths_without_trigger.is_empty(),
+            "{name}: the model built in-process carries a trigger on every path: {:?}",
+            report.paths_without_trigger
+        );
+        assert_eq!(from_dump, from_model, "{name}: the mapper input");
+
+        // The chains alone, as the phase doc names the second assertion.
+        let model = pre_sched_model(dump, Some(index));
+        let graph = super::super::manifest_graph::build_global_graph(index);
+        assert_eq!(
+            resolve_chains_derived(index, &graph, budgets),
+            resolve_chains(&model, &derive_facts_from_budgets(budgets)),
+            "{name}: the resolved chains"
+        );
+
+        let plan_from_dump = render(&chain_aware_rank(&from_dump));
+        let plan_from_model = render(&chain_aware_rank(&from_model));
+        assert_eq!(plan_from_dump, plan_from_model, "{name}: the ranked plan");
+        (from_model, plan_from_model)
+    }
+
+    /// Gates 1 of the phase: every contract fixture, `contract_derived_chain`
+    /// included, derives the same input, the same chains and the same ranked
+    /// plan from the dump and from the model.
+    #[test]
+    fn every_contract_fixture_derives_the_same_plan_from_dump_and_from_model() {
+        let launches = contract_fixture_launches();
+        assert!(
+            launches
+                .iter()
+                .any(|l| l.to_string_lossy().contains("contract_derived_chain")),
+            "the fixture walk must reach contract_derived_chain: {launches:?}"
+        );
+        let mut summary = Vec::new();
+        for launch in &launches {
+            let name = fixture_name(launch);
+            let dump = dump_of(launch);
+            let index = index_of(&dump, &name);
+            let budgets = budgets_of(launch);
+            let (input, plan) = assert_both_derivations_agree(&name, &dump, &index, &budgets);
+            summary.push(format!(
+                "{name}: {} node(s), {} chain(s), {} budget selector(s), {} ranked item(s)",
+                input.nodes.len(),
+                input.chains.len(),
+                budgets.len(),
+                plan.matches("RankItem {").count()
+            ));
+        }
+        eprintln!(
+            "phase 78 W2 parity over {} fixture launch(es):\n  {}",
+            launches.len(),
+            summary.join("\n  ")
+        );
+    }
+
+    /// rlm v0.1.37 `derive/tests/snapshots/contract_derived_chain.ranked_plan.txt`,
+    /// verbatim: the Debug text of
+    /// `chain_aware_rank(&mapper_input_from_model(fixture, no facts))` on the
+    /// resolved `contract_derived_chain` model checked in there. Both
+    /// consumers assert their own rank of the same system is this text;
+    /// re-taking it is an rlm change (`UPDATE_RANKED_PLAN_SNAPSHOT=1` there)
+    /// that both gates then move with.
+    const RLM_RANKED_PLAN_SNAPSHOT: &str = r#"RankedPlan {
+    items: [
+        RankItem {
+            node: "/control/control_node",
+            path: "control",
+            fine_group: 0,
+            coarse_group: Some(
+                "points_to_cmd",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: points_to_cmd segment drain 1/2)",
+        },
+        RankItem {
+            node: "/perception/filter_component",
+            path: "filter",
+            fine_group: 0,
+            coarse_group: Some(
+                "points_to_cmd",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: points_to_cmd segment drain 2/2)",
+        },
+        RankItem {
+            node: "/perception/sensor_node",
+            path: "tick",
+            fine_group: 1,
+            coarse_group: Some(
+                "points_to_cmd",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: points_to_cmd boundary RM period=10ms)",
+        },
+    ],
+    warnings: [
+        ChainFeasibleWithoutWcet {
+            chain: "points_to_cmd",
+            boundaries_without_wcet: [
+                "/perception/sensor_node/tick",
+            ],
+        },
+    ],
+}
+"#;
+
+    /// Parity assertion 1 of design issue #52, play_launch's side: the rank
+    /// of `contract_derived_chain` from this repository's own launch, contract
+    /// and platform file is rlm's golden snapshot, from either derivation.
+    #[test]
+    fn contract_derived_chain_ranks_to_rlm_snapshot() {
+        assert!(RLM_RANKED_PLAN_SNAPSHOT.is_ascii());
+        let launch =
+            repo_root().join("tests/fixtures/contract_derived_chain/launch/bringup.launch.xml");
+        let name = fixture_name(&launch);
+        let dump = dump_of(&launch);
+        let index = index_of(&dump, &name);
+        let budgets = budgets_of(&launch);
+        assert!(
+            budgets.is_empty(),
+            "the fixture's platform file pins a priority, never a budget, so the \
+             snapshot's no-facts rank is the rank here: {budgets:?}"
+        );
+        let (input, plan) = assert_both_derivations_agree(&name, &dump, &index, &budgets);
+        if plan != RLM_RANKED_PLAN_SNAPSHOT {
+            let first_diff = plan
+                .lines()
+                .zip(RLM_RANKED_PLAN_SNAPSHOT.lines())
+                .position(|(a, e)| a != e)
+                .map_or(
+                    plan.lines()
+                        .count()
+                        .min(RLM_RANKED_PLAN_SNAPSHOT.lines().count()),
+                    |i| i,
+                )
+                + 1;
+            panic!(
+                "{name}: the rank differs from rlm's snapshot at line {first_diff}\n\
+                 --- expected\n{RLM_RANKED_PLAN_SNAPSHOT}\n--- actual\n{plan}"
+            );
+        }
+        // The facts rlm's parity test pins in words, so a diff reads as a fact.
+        let sensor = input
+            .nodes
+            .iter()
+            .find(|n| n.name == "/perception/sensor_node")
+            .expect("the sensor");
+        assert_eq!(
+            sensor.rate_hz,
+            Some(100.0),
+            "the timer's rate, from the trigger"
+        );
+        assert_eq!(sensor.criticality, None);
+        let control = input
+            .nodes
+            .iter()
+            .find(|n| n.name == "/control/control_node")
+            .expect("the controller");
+        assert_eq!(control.rate_hz, None);
+        assert_eq!(control.deadline_us, Some(10_000));
+        assert_eq!(control.criticality, Some(Criticality::High));
+        assert!(input.nodes.iter().all(|n| !n.claims_concurrency));
+    }
+
+    /// Seam 1, resolved in the crate's favour: the one-path budget rule holds
+    /// on a chain boundary too. `resolve_chains_derived` used to give a node's
+    /// budget to the boundary whatever the path count, while `extract_paths`
+    /// gave it to `MapperPath::exec_ms` only on a one-path node; rlm's
+    /// `a_node_budget_is_not_attributed_to_a_boundary_of_a_multi_path_node`
+    /// pins the number (a 100 Hz boundary with a 2 ms node budget on a
+    /// two-timer node: sampling cost 12 ms here, 10 ms and a
+    /// `ChainFeasibleWithoutWcet` warning there). Here, the same shape in this
+    /// file's own fixture: 50 Hz, 3.5 ms budget, a second timer path added.
+    #[test]
+    fn a_node_budget_reaches_a_boundary_only_on_a_one_path_node_on_both_derivations() {
+        let ms = ros_launch_manifest_types::duration::Duration::from_millis_f64;
+        let mut index = chain_index_for_cost_tests();
+        let diag = PathDecl {
+            trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: 1.0 }),
+            output: vec!["diag".to_string()],
+            max_latency: Some(ms(1.0)),
+            ..Default::default()
+        };
+        let talker = index
+            .manifests
+            .get_mut(&0)
+            .expect("scope 0")
+            .manifest
+            .nodes
+            .get_mut("talker")
+            .expect("talker");
+        talker
+            .publishers
+            .insert("diag".to_string(), Default::default());
+        talker.paths.insert("diag".to_string(), diag.clone());
+        index.node_paths.push(ResolvedNodePath {
+            node_fqn: "/talker".to_string(),
+            path_name: "diag".to_string(),
+            path: diag,
+            scope_id: 0,
+        });
+        index.topics.insert(
+            "/diag".to_string(),
+            ResolvedTopic {
+                derived_from_remaps: false,
+                fqn: "/diag".to_string(),
+                msg_type: "std_msgs/msg/String".to_string(),
+                qos: None,
+                publishers: vec!["/talker/diag".to_string()],
+                subscribers: vec![],
+                rate_hz: None,
+                derived_rate_hz: None,
+                max_transport_ms: None,
+                drop: None,
+                scope_ids: vec![0],
+            },
+        );
+        let budgets = BTreeMap::from([("/talker".to_string(), 3_500u64)]);
+
+        let dump = dump_with_two_nodes();
+        let (input, _) = assert_both_derivations_agree("two-timer talker", &dump, &index, &budgets);
+        let chain = input
+            .chains
+            .iter()
+            .find(|c| c.name == "mixed_chain")
+            .expect("mixed_chain resolves");
+        let sampling_ms: f64 = chain
+            .elements
+            .iter()
+            .filter_map(|e| match e {
+                ChainElement::Boundary {
+                    node,
+                    path,
+                    period_ms,
+                    exec_ms,
+                } => {
+                    assert_eq!((node.as_str(), path.as_str()), ("/talker", "tick"));
+                    assert_eq!(*period_ms, 20.0);
+                    assert_eq!(
+                        *exec_ms, None,
+                        "a node budget is not split over two paths, on the boundary either"
+                    );
+                    Some(period_ms + exec_ms.unwrap_or(0.0))
+                }
+                ChainElement::Segment { .. } => None,
+            })
+            .sum();
+        assert_eq!(sampling_ms, 20.0, "counted at zero, not at 23.5");
+        let talker = input
+            .nodes
+            .iter()
+            .find(|n| n.name == "/talker")
+            .expect("talker");
+        assert_eq!(talker.paths.len(), 2);
+        assert!(talker.paths.iter().all(|p| p.exec_ms.is_none()));
+        assert_eq!(talker.rate_hz, Some(50.0), "the fastest timer");
+        let plan = chain_aware_rank(&input);
+        assert_eq!(
+            plan.warnings,
+            vec![
+                ros_launch_manifest_sched::MapWarning::ChainFeasibleWithoutWcet {
+                    chain: "mixed_chain".to_string(),
+                    boundaries_without_wcet: vec!["/talker/tick".to_string()],
+                }
+            ],
+            "and the verdict says the boundary was counted at zero"
+        );
+    }
+
+    /// Seam 2, resolved in the crate's favour: a node whose derived
+    /// criticality buckets to the no-requirement level keeps its advisory
+    /// label. `extract_criticality` used to emit nothing for it, while the
+    /// model carries no `node_criticality` entry and the crate falls back to
+    /// `NodeInstance::criticality`. A hazard that buckets to a level still
+    /// overrides the label on both.
+    #[test]
+    fn a_hazard_bucketing_to_no_requirement_leaves_the_label_standing_on_both_derivations() {
+        use crate::ros::manifest_loader::DerivedCriticality;
+        let mut index = chain_index_for_cost_tests();
+        // listener is labelled `high`; the hazard that reaches it says QM.
+        index.derived_criticality.insert(
+            "/listener".to_string(),
+            DerivedCriticality {
+                level: "QM".to_string(),
+                rank: 0,
+                scale_len: 5,
+                hazard: "h1".to_string(),
+                role: "reaction",
+            },
+        );
+        // talker is labelled `low`; the hazard that reaches it says ASIL D.
+        index.derived_criticality.insert(
+            "/talker".to_string(),
+            DerivedCriticality {
+                level: "D".to_string(),
+                rank: 4,
+                scale_len: 5,
+                hazard: "h1".to_string(),
+                role: "detector",
+            },
+        );
+        let dump = dump_with_two_nodes();
+        let (input, _) =
+            assert_both_derivations_agree("hazard buckets", &dump, &index, &BTreeMap::new());
+        let of = |name: &str| {
+            input
+                .nodes
+                .iter()
+                .find(|n| n.name == name)
+                .unwrap_or_else(|| panic!("{name}"))
+                .criticality
+        };
+        assert_eq!(of("/listener"), Some(Criticality::High), "the label stands");
+        assert_eq!(
+            of("/talker"),
+            Some(Criticality::High),
+            "the hazard overrides the label"
+        );
+        let chain = input
+            .chains
+            .iter()
+            .find(|c| c.name == "mixed_chain")
+            .expect("mixed_chain resolves");
         assert_eq!(chain.criticality, Criticality::High);
     }
 }

@@ -22,7 +22,7 @@ use crate::{
     ros::{
         launch_dump::LaunchDump,
         manifest_loader::{ManifestIndex, contract_stem},
-        sched_derive::mapper_input_from_dump,
+        sched_derive::mapper_input_via_model,
     },
 };
 
@@ -739,7 +739,21 @@ pub fn derive_sched_plan(
     // before it existed, chain resolution substituted a path's declared
     // deadline, which made every feasibility verdict silently optimistic.
     let budgets = posix_budgets(&file);
-    let input = mapper_input_from_dump(dump, index, file.legacy.clone(), &budgets);
+    // One derivation, two consumers (phase 78 W2): the mapper's input is read
+    // off the resolved model by `ros-launch-manifest-derive`, the same
+    // function nano-ros hands its realizer. The report names what the model
+    // could not say; on a model this resolver built in-process every path
+    // carries a trigger, and a scope path without a budget is skipped by
+    // design, so neither is a warning here.
+    let (input, report) = mapper_input_via_model(dump, index, file.legacy.clone(), &budgets);
+    debug!(
+        "sched: derived {} node(s), {} chain(s) from the model; {} path(s) without a trigger, \
+         {} scope path(s) without a chain",
+        input.nodes.len(),
+        input.chains.len(),
+        report.paths_without_trigger.len(),
+        report.chains_skipped.len()
+    );
 
     // Every node referenced by a resolved `chains:` declaration (44.4) —
     // independent of the selected mapper (only `chain_aware` acts on
@@ -1394,7 +1408,7 @@ fn budget_for(budgets: &std::collections::BTreeMap<String, u64>, node: &str) -> 
 /// Selectors may be a full FQN or a bare node name; both are inserted so a
 /// chain element can match either way, mirroring how `[[assign]].nodes`
 /// selectors have always resolved.
-fn posix_budgets(
+pub(crate) fn posix_budgets(
     file: &ros_launch_manifest_sched::PlatformFile,
 ) -> std::collections::BTreeMap<String, u64> {
     let mut out = std::collections::BTreeMap::new();
@@ -2425,15 +2439,29 @@ mod tests {
         serde_json::from_value(json).expect("valid LaunchDump")
     }
 
-    /// A contract index giving `/fast_node` 100 Hz and `/slow_node` 10 Hz
-    /// (topic-level rate facts on topics each publishes).
+    /// A contract index giving `/fast_node` 100 Hz and `/slow_node` 10 Hz:
+    /// a timer path on each (the one rate fact a mapper reads since phase
+    /// 78) publishing a topic that promises the same rate (what the
+    /// monitors read, and what this fixture used to rate the nodes by).
     fn index_with_rates() -> ManifestIndex {
-        use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedTopic};
+        use crate::ros::manifest_loader::{
+            ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedTopic,
+        };
         let mut index = ManifestIndex::default();
         for (topic, node, rate) in [
             ("/fast_topic", "/fast_node", 100.0),
             ("/slow_topic", "/slow_node", 10.0),
         ] {
+            index.node_paths.push(ResolvedNodePath {
+                node_fqn: node.to_string(),
+                path_name: "tick".to_string(),
+                path: ros_launch_manifest_types::PathDecl {
+                    trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: rate }),
+                    output: vec!["out".to_string()],
+                    ..Default::default()
+                },
+                scope_id: 0,
+            });
             index.topics.insert(
                 topic.to_string(),
                 ResolvedTopic {
@@ -3879,13 +3907,27 @@ overrides:
         serde_json::from_value(json).expect("valid LaunchDump")
     }
 
+    /// `index_with_rates` across two scopes: a timer path per node, and the
+    /// topic promise beside it.
     fn index_with_rates_two_scopes() -> ManifestIndex {
-        use crate::ros::manifest_loader::{ContractChannel, ResolvedManifest, ResolvedTopic};
+        use crate::ros::manifest_loader::{
+            ContractChannel, ResolvedManifest, ResolvedNodePath, ResolvedTopic,
+        };
         let mut index = ManifestIndex::default();
         for (topic, node, rate, scope_id) in [
             ("/fast_topic", "/fast_node", 100.0, 0usize),
             ("/slow_topic", "/slow_node", 10.0, 1usize),
         ] {
+            index.node_paths.push(ResolvedNodePath {
+                node_fqn: node.to_string(),
+                path_name: "tick".to_string(),
+                path: ros_launch_manifest_types::PathDecl {
+                    trigger: Some(ros_launch_manifest_types::Trigger::Timer { rate_hz: rate }),
+                    output: vec!["out".to_string()],
+                    ..Default::default()
+                },
+                scope_id,
+            });
             index.topics.insert(
                 topic.to_string(),
                 ResolvedTopic {
