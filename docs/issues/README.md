@@ -17,6 +17,15 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0041** -- `ThisLaunchFile()` in a `.launch.py` reaches the record, the model
+and the command line as the literal `$(this-launch-file)`, a token the host's
+substitution grammar does not know (it has only `dirname` and `filename`). Same
+family as the `$(dirname)` residual closed in `archived/0034-*`, and the
+parameter-file case has the same silent shape: an unresolved path is stored
+where the file's content belongs. Needs a decision first, since ROS 2's
+`ThisLaunchFile` is a full path and our `$(filename)` is a basename. See
+`0041-*`.
+
 **#0035** -- under `--container-mode observable|stock` a composable's derived
 tier is dropped at LOADED with no message; the co-location warning covers only
 two-plus chain members. See `0035-*`.

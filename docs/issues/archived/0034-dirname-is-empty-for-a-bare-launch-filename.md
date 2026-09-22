@@ -125,9 +125,47 @@ current file at all**. `ThisLaunchFileDir()` is captured as the string
 `$(dirname)` and resolved by the host, so from a root `.launch.py` it was the
 hard error `dirname: no current file set`, and from an included one it silently
 meant the INCLUDING XML file's directory. `execute_python_file` now sets and
-restores the current file around execution. Still open and out of scope: a
-literal `$(dirname)` in a node parameter inside a `.launch.py` reaches the
-record unresolved, because `NodeCapture::to_record` takes no context.
+restores the current file around execution.
+
+## The Python-capture residual, closed the same day
+
+The note here first said a literal `$(dirname)` in a `.launch.py` node
+parameter "reaches the record unresolved" and left it out of scope. Measured
+rather than read, it was wider and worse than that. For a root `.launch.py`,
+EVERY capture carried the literal token into the record AND into `cmd` - the
+spawned command line:
+
+```
+"args":        ["$(dirname)/arg.txt"]
+"params":      [["launch_dir","$(dirname)"], ["config_path","$(dirname)/sub/thing.txt"]]
+"params_files":["$(dirname)/../includes/test_dirname_params.yaml"]
+"remaps":      [["in","$(dirname)/topic"]]
+```
+
+The params-file case is not cosmetic: `NodeCapture::to_record` stores the
+file's CONTENT (`fs::read_to_string(path).unwrap_or(path)`), so the read
+failed silently and the unresolved path was stored where content belongs - the
+parameter file was never loaded, and nothing said so. The oracle
+(`python3 -m play_launch.dump` under `/opt/ros/humble`) gives the absolute
+directory in `params`, `args`, `remaps` and `cmd`.
+
+Fixed in `python_exec.rs`, host-side: after `backend.exec_file()` returns, the
+captures that execution just appended have `$(dirname)`/`$(filename)` - and
+only those two argument-less tokens - rewritten from the context, whose
+current file is that `.launch.py`. Not in `to_record`, because by
+`into_record_json` the context has been restored to the ROOT file, so every
+capture from an INCLUDED `.launch.py` would resolve against the wrong
+directory; a test pins that case. Not in the `pyexec` mock either, because the
+dlopen'd object has its own `LaunchContext` with no current file, so it would
+need ABI 5 -> 6. `$(var ...)` is untouched by construction and a test asserts
+a `LaunchConfiguration` parameter still arrives as `$(var name)`.
+
+Negative control: with the fixed source swapped for HEAD's and the tests kept,
+2 of 3 new tests fail (`got "$(dirname)"`, and `$(dirname): No such file or
+directory`). Parser suite 461 passed, IR suite 504 passed.
+
+Neighbouring gap, filed separately as #0041: `ThisLaunchFile()`'s mock returns
+`$(this-launch-file)`, a token the substitution grammar does not know.
 
 Tests: `tests/dirname_tests.rs`, 7 cases - bare/`./`/absolute for the XML and
 YAML frontends, a root `.launch.py`, and a unit check on `current_dir()`.

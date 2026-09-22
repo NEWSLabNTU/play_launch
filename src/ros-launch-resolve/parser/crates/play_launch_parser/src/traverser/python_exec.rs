@@ -6,6 +6,65 @@ use crate::{
 };
 use std::{collections::HashMap, path::Path};
 
+/// The two launch-file-location substitutions, as they cross the Python
+/// boundary. `ThisLaunchFileDir()` is captured as this literal string by the
+/// `pyexec` mock and resolved by the host — the mock cannot resolve it itself,
+/// since the dlopen'd object has its own `LaunchContext` and is never told the
+/// current file.
+const DIRNAME_TOKEN: &str = "$(dirname)";
+const FILENAME_TOKEN: &str = "$(filename)";
+
+/// The resolved values of `$(dirname)` and `$(filename)` for one launch file.
+struct FileSubstitutions {
+    dirname: Option<String>,
+    filename: Option<String>,
+}
+
+impl FileSubstitutions {
+    fn of(context: &crate::substitution::LaunchContext) -> Self {
+        Self {
+            dirname: context
+                .current_dir()
+                .and_then(|p| p.to_str().map(String::from)),
+            filename: context.current_filename(),
+        }
+    }
+
+    fn is_noop(&self) -> bool {
+        self.dirname.is_none() && self.filename.is_none()
+    }
+
+    /// Rewrite the two file-location tokens, and ONLY those. `$(var ...)` is
+    /// deliberately left standing: it is preserved as a string so replay can
+    /// resolve it with different values (`execution/node_cmdline.rs`), whereas
+    /// `$(dirname)` is fixed at parse time and has no replay-time meaning.
+    fn rewrite(&self, value: &mut String) {
+        if let Some(dir) = &self.dirname
+            && value.contains(DIRNAME_TOKEN)
+        {
+            *value = value.replace(DIRNAME_TOKEN, dir);
+        }
+        if let Some(file) = &self.filename
+            && value.contains(FILENAME_TOKEN)
+        {
+            *value = value.replace(FILENAME_TOKEN, file);
+        }
+    }
+
+    fn rewrite_all(&self, values: &mut [String]) {
+        for value in values {
+            self.rewrite(value);
+        }
+    }
+
+    fn rewrite_pairs(&self, pairs: &mut [(String, String)]) {
+        for (key, value) in pairs {
+            self.rewrite(key);
+            self.rewrite(value);
+        }
+    }
+}
+
 impl LaunchTraverser {
     /// Run a `.launch.py` and hand back what it declared (issue 0030), so an
     /// include of it can be held to launch's required-argument rule. Before
@@ -30,6 +89,49 @@ impl LaunchTraverser {
             None => self.context.clear_current_file(),
         }
         result
+    }
+
+    /// Resolve `$(dirname)` / `$(filename)` in the captures a `.launch.py`
+    /// just produced, against the context's current file (that same file).
+    fn resolve_file_substitutions_in_captures(
+        &mut self,
+        first_node: usize,
+        first_container: usize,
+        first_load_node: usize,
+    ) {
+        let subs = FileSubstitutions::of(&self.context);
+        if subs.is_noop() {
+            return;
+        }
+
+        for capture in &mut self.context.captured_nodes_mut()[first_node..] {
+            subs.rewrite_pairs(&mut capture.parameters);
+            subs.rewrite_all(&mut capture.params_files);
+            subs.rewrite_pairs(&mut capture.remappings);
+            subs.rewrite_all(&mut capture.arguments);
+            subs.rewrite_all(&mut capture.ros_arguments);
+            subs.rewrite_pairs(&mut capture.env_vars);
+            for source in &mut capture.param_sources {
+                match source {
+                    crate::record::types::ParamSource::Inline { value, .. } => subs.rewrite(value),
+                    // File sources hold YAML CONTENT, not a path.
+                    crate::record::types::ParamSource::File { .. } => {}
+                }
+            }
+        }
+
+        for capture in &mut self.context.captured_containers_mut()[first_container..] {
+            subs.rewrite_all(&mut capture.cmd);
+            subs.rewrite_all(&mut capture.ros_arguments);
+        }
+
+        for capture in &mut self.context.captured_load_nodes_mut()[first_load_node..] {
+            subs.rewrite_pairs(&mut capture.parameters);
+            subs.rewrite_pairs(&mut capture.remappings);
+            for value in capture.extra_args.values_mut() {
+                subs.rewrite(value);
+            }
+        }
     }
 
     fn execute_python_file_inner(
@@ -80,6 +182,13 @@ impl LaunchTraverser {
             log::debug!("Added ros_namespace='{}' to context", current_ns);
         }
 
+        // Where this file's own captures will start. Everything appended by
+        // `exec_file` below belongs to THIS file, and is resolved against it
+        // before the include loop runs (each included file resolves its own).
+        let first_node = self.context.captured_nodes().len();
+        let first_container = self.context.captured_containers().len();
+        let first_load_node = self.context.captured_load_nodes().len();
+
         // Set the thread-local context for Python API to access (cleared on guard drop)
         let _ctx_guard = crate::bridge::LaunchContextGuard::new(&mut self.context);
 
@@ -93,6 +202,19 @@ impl LaunchTraverser {
 
         // Propagate execution errors
         exec_result.map_err(ParseError::PythonError)?;
+
+        // Issue 0034 residual: a node's parameters, parameter FILES, arguments
+        // and remappings reached the record — and the spawned command line —
+        // carrying a literal `$(dirname)`, because `NodeCapture::to_record`
+        // takes no context. The include path a few lines below was the only
+        // captured string anything resolved.
+        //
+        // Resolved HERE rather than at conversion time because `$(dirname)` is
+        // a property of the file that DECLARED the node: by `into_record_json`
+        // the context has been restored to the root file, so every capture
+        // from an included `.launch.py` would resolve against the wrong
+        // directory.
+        self.resolve_file_substitutions_in_captures(first_node, first_container, first_load_node);
 
         // Take this file's declarations out of the context so a later file's
         // do not mix with them (issue 0030), then apply launch's execute-time

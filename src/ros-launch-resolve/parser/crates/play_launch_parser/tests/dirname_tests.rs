@@ -186,3 +186,113 @@ fn a_relative_current_file_still_yields_an_absolute_current_dir() {
         );
     }
 }
+
+/// Parse `name` from the fixture directory and return its whole node list.
+fn parsed_nodes(name: &str) -> serde_json::Value {
+    let _cwd = CwdGuard::enter(&fixture_dir());
+    let record = parse_launch_file(Path::new(name), HashMap::new())
+        .unwrap_or_else(|e| panic!("parsing '{name}' should succeed: {e}"));
+    serde_json::to_value(record).unwrap()["node"].clone()
+}
+
+fn node<'a>(nodes: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    nodes
+        .as_array()
+        .expect("node list")
+        .iter()
+        .find(|n| n["name"].as_str() == Some(name))
+        .unwrap_or_else(|| panic!("no node named {name}"))
+}
+
+fn param(node: &serde_json::Value, key: &str) -> String {
+    node["params"]
+        .as_array()
+        .expect("params")
+        .iter()
+        .find(|p| p[0].as_str() == Some(key))
+        .unwrap_or_else(|| panic!("no parameter {key}"))[1]
+        .as_str()
+        .expect("parameter value")
+        .to_string()
+}
+
+/// Issue 0034's residual: `$(dirname)` in a node's OWN fields inside a
+/// `.launch.py`. The include path was the only captured string anything
+/// resolved, so a parameter, a parameter FILE, an argument and a remapping all
+/// carried the literal into the record and into `cmd` — the spawned command
+/// line — and the parameter file was never read.
+#[test]
+fn dirname_resolves_in_every_field_of_a_python_node() {
+    play_launch_parser_pyexec::register();
+    let nodes = parsed_nodes("test_dirname_python_params.launch.py");
+    let probe = node(&nodes, "dirname_param_probe");
+
+    // Case 1: a substitution as a parameter VALUE.
+    assert_is_fixture_dir(&param(probe, "launch_dir"), "Python parameter value");
+    assert_eq!(
+        param(probe, "config_path"),
+        fixture_dir().join("sub/thing.txt").display().to_string(),
+        "a PathJoinSubstitution parameter value must be resolved"
+    );
+
+    // Case 2: a substitution naming a parameter FILE. `to_record` stores the
+    // file's CONTENT, so an unresolved path is not merely ugly — the file is
+    // silently not read and the path is stored in its place.
+    let params_files = probe["params_files"].as_array().expect("params_files");
+    assert_eq!(params_files.len(), 1);
+    let content = params_files[0].as_str().unwrap();
+    assert!(
+        content.contains("dirname_probe_loaded"),
+        "the parameter file must have been READ, got {content:?}"
+    );
+
+    // Case 3: arguments and remappings.
+    let args = probe["args"].as_array().expect("args");
+    assert_eq!(
+        args[0].as_str().unwrap(),
+        fixture_dir().join("arg.txt").display().to_string(),
+    );
+    let remap = probe["remaps"].as_array().expect("remaps")[0][1]
+        .as_str()
+        .unwrap();
+    assert_eq!(remap, fixture_dir().join("topic").display().to_string());
+
+    // Nothing may reach the command line — what actually gets spawned — with
+    // the token still in it.
+    for word in probe["cmd"].as_array().expect("cmd") {
+        let word = word.as_str().unwrap();
+        assert!(
+            !word.contains("$(dirname)"),
+            "unresolved $(dirname) reached the command line: {word:?}"
+        );
+    }
+}
+
+/// The deliberate non-change: `$(var ...)` is preserved for replay-time
+/// resolution (`execution/node_cmdline.rs`), and resolving `$(dirname)` must
+/// not touch it.
+#[test]
+fn a_launch_configuration_parameter_is_still_preserved() {
+    play_launch_parser_pyexec::register();
+    let nodes = parsed_nodes("test_dirname_python_params.launch.py");
+    assert_eq!(
+        param(node(&nodes, "dirname_param_probe"), "replay_var"),
+        "$(var an_unset_argument)",
+    );
+}
+
+/// `$(dirname)` belongs to the file that DECLARED the node, not to the root
+/// launch file — which is why the captures are resolved per execution rather
+/// than at record-conversion time, where the context has been restored to the
+/// root.
+#[test]
+fn an_included_python_file_resolves_dirname_to_its_own_directory() {
+    play_launch_parser_pyexec::register();
+    let nodes = parsed_nodes("test_dirname_python_params.launch.py");
+    let included = param(node(&nodes, "dirname_included_probe"), "launch_dir");
+    assert_eq!(
+        std::fs::canonicalize(&included).unwrap_or_else(|e| panic!("{included}: {e}")),
+        std::fs::canonicalize(fixture_dir().parent().unwrap().join("includes")).unwrap(),
+        "an included .launch.py must resolve $(dirname) to ITS directory"
+    );
+}
