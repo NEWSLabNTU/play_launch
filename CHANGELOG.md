@@ -6,6 +6,139 @@ allowance heavily.
 
 [semantic versioning]: https://semver.org/
 
+## 0.12.0 - 2026-09-22
+
+Eleven commits over 0.11.0, in two phases. Phase 78 moves the derivation of
+the scheduler's input out of this repository: the mapper's facts (a node's
+rate, deadline, effective criticality, paths and chains) are derived from the
+resolved model by ros-launch-manifest's new `derive` crate, the same function
+nano-ros hands its RTOS realizer, and the private copy `sched_derive.rs` had
+carried since Phase 41 is deleted. Phase 79 W1 to W3 make `--enforce-rules`
+a gate that measures something: the documented default enforced nothing, a
+strict run ended on the first `/rosout` warning, and a strict violation left
+the nodes running. Two smaller parser fixes ride along.
+
+Upgrading from 0.11.0 needs no change to a launch file, a contract or a
+platform file. Read the two visible changes below if a consumer reads the
+model's scope-scoped keys or a node's only rate fact is a promise.
+
+### One derivation, two consumers (phase 78 W1 to W3)
+
+The ros-launch-manifest pins move from v0.1.36 to v0.1.37 (types, check,
+sched, model) and `ros-launch-manifest-derive` joins them. The model now
+carries every fact the checker resolves per entity, lowered additively by
+`model_builder::path_contract`: `PathContract.trigger` as the effective
+trigger of every kind (a timer with its rate; `once`, `spontaneous` and
+unclassified paths as themselves, where they used to collapse to `input: []`
+and read as periodic), `sync` and `min_latency_ms`, `SubContract.buffer` for
+a `state: true` subscription, `Contracts.severity_levels`, and
+`Contracts.node_criticality`, the effective value phase 72 computes (the
+hazard bucket where one reaches the node, the label where none does).
+`NodeInstance.criticality` stays the advisory label. A model written by
+0.11.0 still loads; its paths read as unclassified and rank nothing, which
+is the deliberate answer to a stale model.
+
+`derive_sched_plan` builds that model and hands it to
+`ros_launch_manifest_derive::mapper_input_from_model` with the platform
+file's per-node `budget` as `DeriveFacts::node_exec_ms`. `check --sched`,
+`resolve --sched` and `launch --sched` all derive there, so all three give
+the mapper the object nano-ros gives its realizer. W2 held the old
+derivation and the crate against each other on every contract fixture (13
+launches) before W3 deleted the copy: `mapper_input_from_dump`,
+`extract_paths`, `extract_rate_hz`, `extract_path_facts`,
+`extract_criticality`, `claims_concurrency`, `resolve_chains_derived`,
+`budget_us_for` and `push_segment_node`, 571 lines. `mapper_input_via_model`
+is the one entry. `manifest_graph`'s route stays, because the checker's
+cross-scope rules (`scope-budget`, the sampling-cost rule) still walk it.
+The plan the crate makes of every fixture launch is pinned byte for byte in
+`resolve/snapshots/contract_fixtures.ranked_plans.txt`, and
+`contract_derived_chain`'s section is asserted to be rlm's own snapshot
+verbatim. `check --sched --explain` on `contract_derived_chain` and
+`rt_workspace` is byte-identical to 0.11.0's.
+
+Two rules the copy applied differently were resolved in the crate's favour: a
+node's budget reaches a chain boundary only on a one-path node, as it already
+reached a path; and a hazard that buckets to the no-requirement level leaves
+the advisory label standing instead of removing it. `MapperNode::scope` keeps
+the namespace the `.toml` bridge's `manual` mapper matches on; the crate
+copies the model's file-scope key, and `mapper_input_via_model` corrects it
+until the crate carries the namespace.
+
+### Visible: scope-scoped model keys are `<scope id>/<name>`
+
+The one change in the emitted model. Scope paths, hazards, functions, modes
+and the references between them (a hazard's reaction, a mode's requires,
+fallback and reaction) are keyed `bringup.launch.xml/points_to_cmd`, the
+shape the model documents and the derive crate splits at the last `/`. This
+resolver used to write `/bringup.launch.xml/points_to_cmd` through `fqn`, and
+a consumer that split it found no scope and resolved no chain. A reader that
+matched the old spelling must drop the leading slash; `resolve_merge`'s
+assertion is inverted to match.
+
+### Visible: `rate_hz` is a timer's rate, never a promise
+
+`MapperNode.rate_hz` is the fastest timer trigger among the node's paths and
+nothing else. A topic's `rate_hz` and a publisher's `min_rate_hz` stay in the
+contract and the model as promises: `measure` and the runtime monitors read
+them, `rate-mismatch` and `min-rate-mismatch` still warn when they disagree
+with the timers, `derivable-rate` and `derivable-min-rate` stay infos. The
+old derivation took the maximum over the topic's authored rate, the graph's
+propagated rate and the publisher's promise, so a node two hops downstream of
+the only timer ranked as if it had a period. Under `rate_monotonic` a node
+whose only rate fact is a promise now lands on the default tier, where
+`chain_aware` already put it. On the fixtures and the safety-island model
+the schedule is unchanged, because every promise there equals the timer it
+was copied from.
+
+### Runtime enforcement is a gate (phase 79 W1 to W3)
+
+- `--enforce-rules` implies interception (#0031). LD_PRELOAD interception
+  is the rule engine's only event source and could only be switched on from
+  the `--config` YAML, so the documented `warn` default observed nothing and
+  a `strict` CI gate passed green on it. `interception.enabled` is now
+  tristate; the mode implies it when the config does not decide, `up` logs
+  which input decided ("Interception: enabled, implied by --enforce-rules
+  Warn"), and `--interception on|off` switches it without a config file. An
+  explicit `enabled: false` under `strict` refuses to start rather than pass
+  with no measurement; under `warn` the run warns once that no rule can
+  fire.
+- Strict mode trips at a severity threshold, error by default (#0032). It
+  used to end the run on the first violation of any severity, in practice
+  the `graph-deviation-runtime` warning every node's `/rosout` publisher
+  raises 57 ms in, before the error the contract was written for could
+  collect its window. `--strict-on warning|error` sets the threshold;
+  warnings are logged, written to `runtime_violations.jsonl` and counted as
+  before. `/rosout`, `/rosout_agg` and `/parameter_events` are implicitly
+  external, so graph deviation reports only topics an author could have
+  declared. The exit error names the first violation that crossed the
+  threshold ("runtime contract violated by rate-hierarchy-runtime on
+  /pure_test/chatter").
+- A strict violation tears the run down and exits non-zero (#0033). The
+  strict watcher sent the shutdown watch channel only, one of the three
+  steps the signal path sends, so the actors waited for a SIGTERM nobody
+  sent and the supervisor hung with its nodes still driving.
+  `signal_handler::initiate_shutdown` is now the one teardown, shared by
+  Ctrl-C, `--on-startup-failure exit`, the `on_exit=Shutdown()` hook and
+  the watcher; `play()` returns an error so the process exits non-zero; and
+  a Running-state shutdown signals the pid itself (SIGTERM, five seconds,
+  SIGKILL) instead of assuming someone else did. Pinned end to end: a 1 Hz
+  talker against `min_rate_hz: 1000` under `strict` exits non-zero, names
+  the violation, and leaves no node pid alive.
+
+### Parser fixes
+
+- `$(dirname)` is absolute, the way `ros2 launch` resolves it (#0034). A
+  bare `f.launch.xml` gave `""` and `./f.launch.xml` gave `"."`, so
+  `$(dirname)/../config/x.yaml` failed the parse or resolved against the
+  cwd. Every frontend now absolutizes the current file with `abspath`
+  semantics (symlinks kept, so `--symlink-install` trees resolve in
+  `install/`); the Python frontend, which never set a current file, sets and
+  restores it around execution so `ThisLaunchFileDir()` works from a root
+  `.launch.py`.
+- The parser's `ir` feature compiles again (#0040), and `just test-ir` runs
+  its 43 tests under `just test-all` so it cannot rot unnoticed a second
+  time.
+
 ## 0.11.0 — 2026-09-16
 
 Seven commits over 0.10.0, and all of them are `<timer>`. A launch `<timer>`
