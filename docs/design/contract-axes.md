@@ -109,22 +109,28 @@ nodes that most need one.
 ### 1.2 Cost is refused when a node has several paths
 
 ```rust
-let node_exec_ms = if path_count == 1 {
-    budget_us_for(budgets, &record.fqn).map(...)
-} else {
-    None
-};
+// ros_launch_manifest_derive::DeriveFacts::exec_ms_for (rlm v0.1.37)
+if let Some(ms) = self.path_exec_ms.get(&format!("{node_fqn}/{path_name}")) {
+    return Some(*ms);
+}
+if node_path_count != 1 {
+    return None;
+}
+self.node_exec_ms.get(node_fqn).copied().or_else(...)
 ```
 
-The comment is correct about why: *"A declared budget is per NODE, and
-`MapperPath::exec_ms` is per PATH, so the two only line up when the node has
-exactly one path… Absent is the honest answer."* `chain-sampling-feasibility`
+Since phase 78 the rule lives in rlm's `derive` crate, the one derivation both
+consumers call; play_launch fills `node_exec_ms` from the platform file's
+`budget_us`. The comment there is correct about why: *"A per-NODE fact is
+attributed only when the node has exactly one path: where it has several the
+split is unknown... Absent is the honest answer."* `chain-sampling-feasibility`
 then reports "feasible ON INCOMPLETE EVIDENCE" rather than lying.
 
 Honest, and still a hole: the multi-output node — the common shape for a
 perception front-end — is precisely the one whose cost never reaches the mapper.
-The code already names the fix: *"Per-(node, path) cost is the open question a
-`costs:` section would answer."*
+The crate already carries the per-(node, path) key, `DeriveFacts::path_exec_ms`,
+which nano-ros fills from its `[wcet]` profile and nothing on the play_launch
+side fills yet; a `costs:` section is the open question.
 
 **1.1 and 1.2 share one root cause: the graph is node-keyed, the facts are
 path-keyed.** Carrying path identity onto the edge fixes both — the DP charges

@@ -1234,8 +1234,9 @@ pub fn build_system_model(
     // dashboards; this map is what a mapper ranks by, in the sched crate's
     // own `Criticality` so both toolchains read one spelling. A node with a
     // derived entry that buckets to nothing (the scale's no-requirement
-    // level) has no criticality fact, label or not -- the same answer
-    // `sched_derive::extract_criticality` gives today.
+    // level) has no criticality fact, label or not -- and rlm's `derive`
+    // crate, the one derivation both consumers call since phase 78, takes
+    // this map first and the label only where it has no entry.
     for resolved in index.manifests.values() {
         for (node_name, node) in &resolved.manifest.nodes {
             let Some(label) = node.criticality.as_deref() else {
@@ -2653,10 +2654,10 @@ mod tests {
     }
 
     /// `Contracts.node_criticality` is the EFFECTIVE value (phase 72's rule,
-    /// the one `sched_derive::extract_criticality` applies): the hazards
-    /// decide first, the label only where none reaches; a derived entry that
-    /// buckets to nothing removes the label's claim. `NodeInstance.criticality`
-    /// keeps the raw label either way.
+    /// the one rlm's `derive` crate reads through `mapper_input_via_model`):
+    /// the hazards decide first, the label only where none reaches; a derived
+    /// entry that buckets to nothing removes the label's claim.
+    /// `NodeInstance.criticality` keeps the raw label either way.
     #[test]
     fn node_criticality_is_the_effective_value() {
         use crate::ros::manifest_loader::DerivedCriticality;

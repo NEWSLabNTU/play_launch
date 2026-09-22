@@ -789,8 +789,9 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   or **reacts** (the walk to the safe state) takes the hazard's severity,
   max over hazards. `severity_levels:` declares the scale (default ISO
   26262's `[QM, ASIL_A..ASIL_D]`); out-of-scale is `severity-unknown`, not
-  the silent `None` the old parser had. `sched_derive` reads the derivation
-  before any label. `derivable-criticality` (info) / `criticality-mismatch`
+  the silent `None` the old parser had. The model carries it as
+  `Contracts.node_criticality`, and rlm's `derive` crate reads that before
+  any label. `derivable-criticality` (info) / `criticality-mismatch`
   (warning) compare the label to it; a node no hazard reaches keeps its
   label — the underivable case, which is why the key stays live as
   `Kind::Consequence` (the pinned list is now two). `rt_av_demo`'s three
@@ -1238,8 +1239,10 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   `max_response` was the last field carried into the model and read by nothing,
   and the hole was concrete: a node declaring only
   `srv: { lookup: { max_response: 5ms } }` reported `default (no timing facts)`
-  and got `SCHED_OTHER` priority 0. It is a deadline, so it now joins
-  `extract_path_facts`. The companion `response-blocking` rule is a one-line
+  and got `SCHED_OTHER` priority 0. It is a deadline, so it joins the
+  node's deadline fold (since phase 78 in rlm's `derive` crate, which
+  `sched_derive::mapper_input_via_model` calls over the resolved model). The
+  companion `response-blocking` rule is a one-line
   blocking argument, not response-time analysis: callbacks default to one
   MUTUALLY EXCLUSIVE group in both rclcpp and nano-ros, so a 5 ms promise
   beside a 20 ms callback is ruled out by the node's own declarations —
@@ -1600,7 +1603,9 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
   (fork-join needs max-over-branches, feasibility sums); (3) the mapper
   design's fan-in rule ("longest-path-to-sink") has never had an input that
   would distinguish it from declaration order, because `push_segment_node`
-  merges in declaration order and an authored chain never presents a fan-in;
+  (since phase 78 in rlm's `derive` crate, the rule the deleted private copy
+  had) merges in declaration order and an authored chain never presents a
+  fan-in;
   (4) **`sched_setattr(2)` returns EPERM when a thread's affinity mask does
   not include all CPUs** — our per-node affinity and `rt_av_demo`'s `taskset`
   are exactly that condition, so `SCHED_DEADLINE` and the current

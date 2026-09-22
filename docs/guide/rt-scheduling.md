@@ -11,6 +11,14 @@ and deadlines; a small platform file supplies platform facts (the priority
 band, isolated CPUs) and explicit per-node pins. You stop hand-writing every
 priority number — you write the mapper and the exceptions.
 
+Since Phase 78 the mapper's input - each node's timer rate, deadline,
+effective criticality, paths and the routes of the scope paths - is derived
+from the resolved model by ros-launch-manifest's `derive` crate
+(`ros_launch_manifest_derive::mapper_input_from_model`), the same function
+nano-ros hands its RTOS realizer. `play_launch` adds only what the model does
+not carry: the platform file's per-node budgets. One derivation, two
+consumers: the same launch tree and contract rank the same way on both.
+
 ```
 you write                          play_launch resolves          the kernel sees
 ─────────                          ────────────────────          ───────────────
@@ -128,7 +136,7 @@ Built-in mappers:
 
 | mapper | derives from | ordering |
 |---|---|---|
-| `rate_monotonic` | the node's fastest declared rate (`pub`/`sub` `min_rate_hz`, or the topic's own `rate_hz`) | higher rate → higher priority |
+| `rate_monotonic` | the node's fastest timer trigger (`trigger: { timer: { rate_hz } }` on one of its paths); a topic's `rate_hz` or a publisher's `min_rate_hz` is a promise the runtime monitors read, never a rate the mapper ranks by (Phase 78) | higher rate → higher priority |
 | `deadline_monotonic` | the node's tightest declared path `max_latency` | tighter deadline → higher priority |
 | `chain_aware` (Phase 44, routes derived since Phase 68) | the routes **derived** for each scope `paths:` entry (§1.7) plus the same rate/deadline facts as a fallback for everything not on a route | route members ranked by criticality + drain-toward-sink; everything else falls back to criticality-bucketed RM/DM |
 | `manual` | nothing — requires the legacy `system.toml` bridge (§4) | hand-written tiers |
@@ -146,7 +154,7 @@ declared, `chain_aware` degrades to exactly the criticality-RM/DM fallback
 (§1.7) — it's a safe default even before you've stated a budget.
 
 All derived mappers spread ranked nodes linearly across
-`resources.rt_priority_band`; a node with no matching fact (no declared rate
+`resources.rt_priority_band`; a node with no matching fact (no timer path
 for `rate_monotonic`, no declared path for `deadline_monotonic`, not on a
 chain and fact-less for `chain_aware`) falls into the **default tier** —
 `SCHED_OTHER`, unscheduled, reported as such by `--explain`.
@@ -291,8 +299,10 @@ This is a consequence of the model being **input + applied outcome, not the
 resolved plan**: the `execution.sched` embedding landed and was reverted
 (2026-07-20 decision; `docs/design/system-model-sched-ssot.md` describes the
 reverted direction and is superseded). An off-host consumer (nano-ros) reads
-the model's *input* layers (`structure`, `contracts`) and runs its own RTOS
-realizer over the shared ranking core — the PiCAS priority numbers are the
+the model's *input* layers (`structure`, `contracts`), derives the same
+mapper input from them through ros-launch-manifest's `derive` crate (Phase
+78: one derivation, two consumers) and runs its own RTOS realizer over the
+shared ranking core — the PiCAS priority numbers are the
 Linux realization, ignored off-host.
 
 ### 1.4 Shipping channels — auto-apply, no flags needed
@@ -369,7 +379,10 @@ about that node in isolation. An **end-to-end requirement** is stated as a
 naming where the requirement starts, where it ends, and a budget. The
 route between those two ends — which nodes, in which order, through which
 topics — is **derived** from the `trigger:`/`output:` facts the nodes
-already declare, joined through the topic graph. You never write it. The
+already declare, joined through the topic graph. You never write it. Since
+Phase 78 the route the mapper consumes comes from ros-launch-manifest's
+`derive` crate (`resolve_chains`), so nano-ros derives the identical one; the
+`scope-budget` check keeps its own walk in `manifest_graph`. The
 `chain_aware` mapper (§1.1) consumes the derived route: it ranks the
 route's member nodes by their position in the pipeline instead of their
 local facts alone.
