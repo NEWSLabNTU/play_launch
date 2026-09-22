@@ -42,7 +42,10 @@ the rlm pins in `src/ros-launch-resolve/Cargo.toml` and
 `src/play_launch/Cargo.toml`; `model_builder.rs`; `convert_trigger` in
 `sched_derive.rs`; the four golden `*.system.*.yaml` fixtures. Gate: `cargo
 test -p ros-launch-resolve`; `tests/tests/resolve_launch_fields.rs`; Gates
-3. Status: not started.
+3. Status: landed on main as a2e2baf9 (2026-09-22); resolve gate 212 passed; the
+island model carries `trigger: timer` with rates on all four paths; scope-path
+keys are `<scope id>/<name>` and the emission is byte-identical to rlm's
+hand-normalised derive fixture.
 
 **W2 - the transition gate.** The parity test over every
 `tests/fixtures/contract_*` workspace, `from_dump == from_model` and
@@ -54,7 +57,11 @@ got wrong (fix in rlm R2), never a tolerance.
 Claim: `phase-78-W2`. Depends on: W1. Owns: the `tests` module of
 `sched_derive.rs`; `manifest_loader.rs` only for a fixture-walk helper.
 Gate: `cargo test -p ros-launch-resolve sched_derive` on every contract
-fixture (Gates 1). Status: not started.
+fixture (Gates 1). Status: landed on main as 07be64dd (2026-09-22); `derive_sched_plan` calls
+`mapper_input_from_model`; parity gate green on 13 fixture launches, rlm
+snapshot matched from both derivations; seams 1 and 2 resolved in the crate's
+favour; `MapperNode::scope` seam (namespace vs file-scope key) reported to rlm
+#52 and fixed consumer-side. W3 is now only the deletion.
 
 **W3 - delete the copy.** `derive_sched_plan` builds the checked model and
 calls `mapper_input_from_model` and `resolve_chains`; `mapper_input_from_dump`
