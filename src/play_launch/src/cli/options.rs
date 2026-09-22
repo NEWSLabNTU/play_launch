@@ -744,12 +744,20 @@ pub struct ContractOptions {
     /// Runtime enforcement mode for manifest contracts (Phase 36.3).
     /// Contracts come from any channel (overlay/provider); with no
     /// contracts resolved the engine has nothing to enforce. Off: no runtime
-    /// checks. Warn: log violations. Strict: exit non-zero on first
-    /// error-severity violation. RecordOnly: collect events without
-    /// evaluating rules. The event source is LD_PRELOAD interception: any
-    /// mode but Off turns it on, unless --config sets
-    /// `interception.enabled: false` or `--interception off` is given
-    /// (Strict then refuses to start rather than pass with no measurement).
+    /// checks. Warn: log violations to `runtime_violations.jsonl`. Strict:
+    /// same, plus end the run non-zero on the first violation at or above
+    /// `error` severity (phase 79 W2 — a warning is logged and recorded, and
+    /// ends nothing). RecordOnly: evaluate and log rules but write no
+    /// `runtime_violations.jsonl`, for an offline pass over
+    /// `interception/events.jsonl`.
+    ///
+    /// PRECONDITION: the engine's only event source is LD_PRELOAD
+    /// interception, so any mode but `off` turns `--interception` ON unless
+    /// you switch it off explicitly (phase 79 W1, issue #0031 — it used to
+    /// enforce nothing by default and say so nowhere). Turning it off under
+    /// a non-`off` mode warns; under `strict` it is an error before the
+    /// first spawn, because a gate with no event source is green for the
+    /// wrong reason.
     #[arg(long, value_enum, default_value = "warn")]
     pub enforce_rules: EnforceMode,
 
@@ -843,9 +851,11 @@ pub enum EnforceMode {
     Off,
     /// Log violations to `play_log/<ts>/runtime_violations.jsonl`. Never exit early.
     Warn,
-    /// First violation triggers shutdown and non-zero exit (CI mode).
+    /// First violation at or above `error` severity triggers shutdown and
+    /// non-zero exit, naming the rule and the FQN (CI mode).
     Strict,
-    /// Collect events without evaluating rules. For offline analysis.
+    /// Evaluate and log rules, but write no `runtime_violations.jsonl`. For
+    /// offline analysis of `interception/events.jsonl`.
     RecordOnly,
 }
 

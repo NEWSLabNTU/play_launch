@@ -414,8 +414,10 @@ pub struct ContractOptions {
     /// Runtime enforcement mode for manifest contracts (Phase 36.3).
     /// Contracts come from any channel (overlay/provider); with no
     /// contracts resolved the engine has nothing to enforce. Off: no runtime
-    /// checks. Warn: log violations. Strict: exit non-zero on first
-    /// violation. RecordOnly: collect events without evaluating rules.
+    /// checks. Warn: log violations. Strict: end the run non-zero on the
+    /// first violation at or above `error` severity (a warning is logged and
+    /// recorded and ends nothing). RecordOnly: evaluate and log rules, but
+    /// write no `runtime_violations.jsonl`.
     #[arg(long, value_enum, default_value = "warn")]
     pub enforce_rules: EnforceMode,
 
@@ -473,9 +475,12 @@ pub enum EnforceMode {
     Off,
     /// Log violations to `play_log/<ts>/runtime_violations.jsonl`. Never exit early.
     Warn,
-    /// First violation triggers shutdown and non-zero exit (CI mode).
+    /// First violation at or above `error` severity triggers shutdown and a
+    /// non-zero exit naming the rule and FQN (CI mode). A warning-severity
+    /// violation is logged and recorded and ends nothing.
     Strict,
-    /// Collect events without evaluating rules. For offline analysis.
+    /// Evaluate and log rules, but write no `runtime_violations.jsonl`.
+    /// For offline analysis.
     RecordOnly,
 }
 

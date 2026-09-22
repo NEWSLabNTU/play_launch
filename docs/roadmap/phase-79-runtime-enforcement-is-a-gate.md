@@ -218,6 +218,13 @@ seconds, SIGKILL. The reason reaches the exit code the way
 - **A derived tier that is never applied is not addressed here** (#0035). That
   is a scheduling-side silence, on the path between `derive_sched_plan` and the
   apply sweep, and it is phase 80.
-- **`record-only` stays a collector.** It writes no JSONL and evaluates no
-  rules; nothing in this phase gives it an exit code, because the mode's whole
-  purpose is an offline pass over `interception/events.jsonl`.
+- **`record-only` stays a collector**, but only of the JSONL. It writes no
+  `runtime_violations.jsonl` (`emit` and `emit_repeatable` gate the write on
+  `Warn | Strict`) and nothing in this phase gives it an exit code, because the
+  mode's whole purpose is an offline pass over `interception/events.jsonl`.
+  CORRECTION, measured in W4: it does NOT "evaluate no rules", as this line
+  first claimed and as `--help` claimed with it. `observe()` early-returns only
+  on `EnforceMode::Off` and `up` builds a `RuleEngine` for every non-`Off`
+  mode, so `record-only` evaluates every rule and emits every `warn!` line --
+  it simply writes no file. The old wording was accidentally true before W1,
+  when the mode had no event source at all and therefore evaluated nothing.
