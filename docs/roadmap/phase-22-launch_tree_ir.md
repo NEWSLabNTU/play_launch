@@ -1,5 +1,13 @@
 # Phase 22: Launch Tree IR (Intermediate Representation)
 
+> **Status 2026-09-23: dormant, no consumer.** The WASM codegen/runtime crates
+> this IR was built for were deleted (they had been out of the workspace since
+> February with an unresolvable dependency path, and were breaking every
+> `colcon build`). The IR itself is kept — it is coherent, tested and cheap to
+> hold — but nothing enables `--features ir`, so a change here affects no
+> shipped behaviour. `just test-ir` builds it; `just test-all` runs that.
+
+
 **Status**: In Progress
 **Priority**: High (foundation for static analysis, QoS annotation, multi-path reasoning)
 **Dependencies**: Phase 13 (Rust parser), Phase 14 (Python execution)

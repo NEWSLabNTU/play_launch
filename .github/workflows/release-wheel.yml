@@ -96,7 +96,7 @@ jobs:
             source ~/.cargo/env
 
             # Install Python build tools
-            pip3 install 'colcon-cargo-ros2==0.5.1' build 'wheel>=0.40' uv
+            pip3 install 'colcon-cargo-ros2==0.5.1' 'cargo-ament-build>=0.1.11' build 'wheel>=0.40' uv
             # State the toolchain rather than assume it. This pin used to be
             # >=0.4.0, so CI silently tracked whatever PyPI served that day and
             # could differ from any developer machine with no commit to show it.

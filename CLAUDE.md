@@ -73,7 +73,16 @@ The parser tracks which launch file each node originates from via a **scope tabl
 - **API**: `GET /api/launch-tree` returns `{ scopes, node_scopes }` — sourced from the in-memory `LaunchDump` `replay`/`launch` build for the invocation (Phase 47: no `record.json` on disk anywhere). `launch`'s in-memory round-trip passes the real parsed dump, so this stays populated there; standalone `replay --model <path>` (no launch step) has no dump to read and degrades to empty (`{}`), not an error — a documented follow-up is to source it from `model.structure.scopes` instead (`.superpowers/sdd/p46-w5-report.md` §6)
 - **Validation**: `scripts/compare_scopes.py` — self-consistency + cross-parser comparison
 
-### Launch IR (feature-gated)
+### Launch IR (feature-gated, DORMANT — no consumer)
+
+**Nothing enables this feature.** `ir = []` is declared in the parser's own
+`Cargo.toml` and no crate turns it on; `src/ros-launch-resolve` and the Python
+crate both pass `default-features = false`, and there is no CLI flag, config
+key or call into `build_ir_file`/`evaluate_ir` from outside the gated modules.
+Its consumer was the WASM codegen/runtime pair, deleted 2026-09-23 (see below).
+It is kept because it is coherent, tested and cheap to hold, not because
+anything reads it — treat it as a preserved design artifact, and do not assume
+a change there affects the product. It is 1,328 lines plus 43 tests.
 
 The parser includes an optional IR layer (`--features ir` on the parser crate) that preserves the full launch structure (conditions, substitution expressions, groups, includes) without evaluating. IR types: `src/play_launch_parser/.../ir.rs`. IR tests: `just test-ir` (43 tests). The recipe exists because nothing ran them: the feature is off by default, so both IR files sat uncompilable on `main` from the `<timer>` work until issue #0040 — one of them having already been given the loop that READS the field its own initializer was never given. `just test-all` runs it.
 
@@ -1750,6 +1759,25 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 - **2026-03-02**: Split `GraphView.js` (~2300 lines) into 6 modules in `web/assets/js/components/`: `graph-utils.js` (pure helpers), `graph-builders.js` (snapshot→Cytoscape elements), `graph-edges.js` (edge routing + port bundling), `graph-layout.js` (ELK integration + scrollbars), `graph-styles.js` (Cytoscape stylesheet), `GraphView.js` (component + event handlers). Public API unchanged (`export function GraphView`).
 - **2026-03-01**: Phase 25 (Topic Introspection) — graph view animated ELK layout transitions, overlap fix, and SSE rebuild stability. `applyElkPositions` supports `animate` param (300ms slide via `ele.animation()`); initial load instant, subsequent layouts animated. `buildElkGraph` computes leaf/port dimensions from style formula (not stale `layoutDimensions()`). Branch edges use `haystack` curve-style to avoid invalid-endpoint warnings when port nodes overlap leaf nodes. SSE rebuild defers collapse via `setTimeout(0)` after `cy.json()` so expand-collapse extension can register new elements. `[GraphView]` console logs at all lifecycle points (init, update, rebuild, expand/collapse, layout, edges). New file: `GraphPanel.js`.
 - **2026-02-27**: Phase 24 (Web UI Parameter Control) complete. ParameterProxy service client wrapper, ParamValue types with bidirectional ROS conversion, MemberHandle integration with FQN map, GET/POST `/api/nodes/:name/parameters` endpoints, SSE `/parameter_events` subscription, ParametersTab frontend with type-aware inputs (bool toggle, number/string inputs, range constraints), search/filter. New files: `ros/parameter_types.rs`, `ros/parameter_proxy.rs`, `web/assets/js/components/ParametersTab.js`.
+- **2026-09-23**: **The WASM crates are deleted, and they were breaking the
+  build.** `src/play_launch_wasm_{common,codegen,runtime}` were dropped from
+  the workspace in February and kept on disk; nothing had touched them since
+  2026-03-13, and their dependency path
+  (`../play_launch_parser/src/play_launch_parser`) stopped existing when
+  phase-55 moved the parser under `src/ros-launch-resolve/`. They were still
+  colcon packages, so **every `colcon build` walked into them and died** on
+  `current package believes it's in a workspace when it's not` — which is why
+  `just build` did not work on a clean checkout, while reading like a local
+  environment problem. `just build-cpp` passes with them gone. Their removal
+  leaves the Launch IR (phase 22) with no consumer at all; it is kept and
+  marked dormant above rather than deleted.
+  Second, independent cause of the same broken build, fixed with it:
+  `cargo-ament-build` parses `Cargo.toml` itself and 0.1.9 knows no edition
+  past 2021, so on this repository (Rust 2024 since 2026-03-03) it failed with
+  `unknown variant `2024``, which reads as a Rust toolchain problem and is not
+  one. 0.1.11 accepts it; `just install-deps`, both CI workflows and the
+  builder image now pin `cargo-ament-build>=0.1.11`.
+
 - **2026-02-24**: Phase 22 (Launch Tree IR) phases 22.1–22.8 complete. IR preserves full launch structure (conditions, expressions, groups, includes). IR now feature-gated behind `--features ir` in the parser crate; WASM crates removed from workspace (kept on disk).
 - **2026-02-18**: Phase 21 (build optimization) mostly complete: `scripts/bundle_wheel.sh` with artifact manifest, incremental build recipes (`build-cpp`, `build-rust`, `build-wheel`), proper wheel platform tag via `wheel tags`. Phase 20 (web UI modernization) planned: Preact + htm + SSE-driven state, vendored locally (no CDN), zero polling.
 - **2026-02-17**: Phase 19 complete — fork()+exec() isolation, child death monitoring, parallel loading, event-driven container status. PR_SET_CHILD_SUBREAPER added to replay. Subprocess PID cache uses time-based 1s interval.

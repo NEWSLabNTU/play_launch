@@ -1,0 +1,15 @@
+Layer 2 is a separate cargo workspace, deliberately outside colcon.
+
+`just build` builds it with plain cargo, after the colcon step, and says so:
+"it's a standalone cargo workspace outside colcon, so `colcon build` above
+never touches it". That was not true — colcon-cargo discovers any Cargo.toml,
+so it walked into `resolve/` and `cli/` and invoked cargo with both
+`--profile` and `--release`, which cargo refuses:
+
+    error: the argument '--profile <PROFILE-NAME>' cannot be used with '--release'
+
+`parser/` already carried its own COLCON_IGNORE; this one covers the rest of
+the layer, which is what the recipe's comment always assumed.
+
+Building it under colcon would also defeat the layer-2 isolation the root
+manifest's `exclude` exists for (`just check-layer2-isolation`).

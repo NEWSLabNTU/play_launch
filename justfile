@@ -48,6 +48,14 @@ install-deps:
 
     # Install colcon-cargo-ros2
     pip install 'colcon-cargo-ros2==0.5.1'
+    # cargo-ament-build is what colcon actually invokes for an ament_cargo
+    # package, and it parses `Cargo.toml` itself. 0.1.9 knows editions up to
+    # 2021 only, so on this repository — Rust 2024 since 2026-03-03 — every
+    # `colcon build` of `play_launch` dies with `unknown variant `2024`,
+    # expected one of `2015`, `2018`, `2021``, which reads as a Rust toolchain
+    # problem and is not one: the Rust compiler is fine, the build tool's
+    # manifest parser is old. 0.1.11 accepts 2024.
+    pip install 'cargo-ament-build>=0.1.11'
     # `just build` ends in `uv build --wheel`, so uv is a build
     # dependency, not an optional convenience. It was missing here while
     # both CI workflows install it explicitly, so a machine set up purely
