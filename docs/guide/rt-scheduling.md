@@ -412,6 +412,16 @@ upstream ones, so in-flight data flushes to the segment's sink instead of
 being preempted by fresh arrivals at the head), exactly as PiCAS (Choi et
 al., RTAS 2021) prescribes for pure event chains.
 
+> **The same decomposition, drawn.** `ros-launch-manifest` carries three
+> figures for this model, added from the Autoware reference-design deck:
+> `docs/img/chain-anatomy` (a route's segments and boundaries, and the
+> edges a route does not cover), `docs/img/chain-feasibility` (sampling
+> cost against two budgets, the infeasible case, and the resulting
+> sink-to-source order) and `docs/img/mapper-pipeline` (the agnostic core
+> and the two realizers). They are in that repository because the model
+> is the crate's, not this runtime's; the pinned tag in `Cargo.toml` says
+> which revision you have.
+
 So a derived route decomposes into an alternating `Segment` / `Boundary`
 / `Segment` / ... sequence purely from each node path's own `trigger:`
 (no node-kind guessing) — feasibility and priority both fall out of that
