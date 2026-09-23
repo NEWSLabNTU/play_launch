@@ -39,18 +39,12 @@ pub fn mapper_input_via_model(
     let model = pre_sched_model(dump, index);
     let (mut input, report) = mapper_input_from_model(&model, &derive_facts_from_budgets(budgets));
     input.legacy = legacy;
-    // `MapperNode::scope` is the NAMESPACE the `manual` mapper's `[[assign]]
-    // scope = "/perception"` selector matches against
-    // (`ros_launch_manifest_sched::resolve::scope_selector_matches`), and the
-    // one the dump-side derivation filled from the record's effective
-    // namespace. The crate copies `NodeInstance::scope`, which is the model's
-    // FILE-SCOPE key (`bringup.launch.xml`), so a `.toml` bridge user's scope
-    // rule would match nothing. Until the crate carries the namespace, it is
-    // read off the node's own key: `structure.nodes` is keyed by FQN, and an
-    // FQN's parent is exactly the effective namespace the record had.
-    for node in &mut input.nodes {
-        node.scope = namespace_of(&node.name);
-    }
+    // `MapperNode::scope` carries the node's NAMESPACE, which is what the
+    // `manual` mapper's `[[assign]] scope = "/perception"` selector matches
+    // (`ros_launch_manifest_sched::resolve::scope_selector_matches`). It used
+    // to be the model's FILE-SCOPE key, and this function patched it back on
+    // the way out; rlm v0.1.40 (issue 52 R5) derives it in the crate, so the
+    // patch is gone and the derivation is read through unchanged.
     (input, report)
 }
 
@@ -96,15 +90,6 @@ pub fn derive_facts_from_budgets(budgets: &BTreeMap<String, u64>) -> DeriveFacts
             .iter()
             .map(|(selector, us)| (selector.clone(), *us as f64 / 1000.0))
             .collect(),
-    }
-}
-
-/// The namespace an FQN lives in: `/perception/sensor_node` -> `/perception`,
-/// `/talker` -> `/`. The inverse of `sched_loader::join_fqn`.
-fn namespace_of(fqn: &str) -> String {
-    match fqn.rsplit_once('/') {
-        Some((ns, _)) if !ns.is_empty() => ns.to_string(),
-        _ => "/".to_string(),
     }
 }
 
