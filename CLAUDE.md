@@ -615,6 +615,45 @@ gate. `rt_workspace` is a real colcon workspace (`rt_demo` package) exercising R
 
 ## Key Recent Changes
 
+- **2026-09-23**: Phase 81 — **the documentation describes the code that
+  exists** (manifest `v0.1.38` → **`v0.1.39`**). v0.1.38 fixed the hand-written
+  docs' EXAMPLES and left the prose and the arithmetic unverified. A mechanical
+  diff of the generated `format-reference.md` against the spec then found **six
+  live fields the specification never mentioned** (`params:`,
+  `concurrency.exclusive:`, the whole `functions:`/`modes:` vocabulary,
+  `severity_levels:`, a subscriber's `buffer` and `on_violation`).
+  **Two formulas were backwards, both in the direction that reads as correct.**
+  A fan-in publishes at the **SUM** of its input rates without `sync:` — a
+  callback fires once per message on EACH topic it is registered for — and at
+  the min only with it; the docs asserted the min unconditionally, which
+  understates a fan-in node's load by exactly the factor that decides whether
+  it fits. And `sampling_cost_ms` is the sum of sampling PERIODS (what
+  `scope-sampling-feasibility` judges), not of `P_i + C_i` (the traversal cost,
+  what the mapper's feasibility check sums) — two different sums under one
+  name. Claims with no implementation were deleted: a `max_age`-versus-budget
+  consistency check that exists nowhere, `qos-match` "running per satisfiable
+  arg model" when it has no arg logic at all, `consistency` merging three
+  fields when it merges five, and example diagnostics that were invented
+  rather than the strings the rules emit.
+  **The guard could not see a class of example.** `sched/tests/docs_yaml.rs`,
+  added in v0.1.38 precisely to stop this drift, matched a fence with
+  `trim_end()` and no `trim_start()` — so every INDENTED fence was invisible,
+  and three existed, two teaching a spelling the parser rejects. A guard that
+  cannot see a class of input is worse than none, because its count reads as
+  coverage: 40 blocks looked like the whole set and was five short. Now 49
+  blocks, 45 parsed. Same family as the three defects this session found
+  PINNED by tests asserting them and as #0040's uncompilable feature —
+  **a silent behaviour in this tree usually arrives with something that
+  blesses it**, so finding the defect and finding its blessing are one job.
+  `docs/design-issues.md` is now readable as history (bodies and vocabulary
+  untouched; status lines added), which surfaced **#50's reversal — a decision
+  to drop `min_latency` that phase 67 reversed and nobody recorded**. Issues
+  #0042–#0045 filed, of which **#0042** matters: a subscriber's
+  `max_transport` is legal grammar the checker honours, `model::SubContract`
+  has no transport field, so `derive` reads the topic's value alone and the two
+  copies of one derivation disagree on route totals. Roadmap:
+  `docs/roadmap/phase-81-the-docs-describe-the-code.md`.
+
 - **2026-09-21**: **`$(dirname)` was not what `ros2 launch` resolves, and the
   IR feature had stopped compiling.** (#0034) `$(dirname)` came from
   `Path::parent()` on the launch path as typed, so a bare `f.launch.xml` gave

@@ -267,6 +267,23 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     still driving (#0033). W4 writes the `--enforce-rules` guide that has
     never existed (#0036 item 4).
     [phase-79-runtime-enforcement-is-a-gate.md](./phase-79-runtime-enforcement-is-a-gate.md).
+  - **Phase 81** - ✅ the documentation describes the code that exists
+    (2026-09-23, rlm **v0.1.39**). v0.1.38 fixed the docs' EXAMPLES and left
+    their prose and arithmetic unverified; a mechanical diff of the generated
+    format reference against the spec then found **six live fields the
+    specification never mentioned**. Two formulas were stated BACKWARDS, both
+    in the direction that reads as correct: a fan-in publishes at the SUM of
+    its input rates without `sync:` (not the min, which understates the load
+    by exactly the factor that decides whether it fits), and sampling cost is
+    the sum of sampling PERIODS, not of period-plus-computation. Claims with
+    no implementation behind them were removed (a `max_age`-versus-budget
+    check that exists nowhere; `qos-match` "runs per satisfiable arg model",
+    which has no arg logic at all). The finding that outlives it: the doc test
+    added in v0.1.38 to stop this drift matched a fence with `trim_end()` and
+    no `trim_start()`, so every INDENTED fence was invisible — a guard that
+    cannot see a class of input reads as coverage, and its block count was
+    five short. Issues #0042-#0045 filed.
+    [phase-81-the-docs-describe-the-code.md](./phase-81-the-docs-describe-the-code.md).
   - **Phase 78** - complete (0.12.0): one derivation of the mapper input, two
     consumers (2026-09-21). The resolver lowers every non-input trigger to
     `input: []` and drops the rate, so nano-ros rebuilds a timer's rate from

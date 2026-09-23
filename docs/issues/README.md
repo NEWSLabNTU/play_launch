@@ -17,6 +17,27 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0045** -- `--enforce-rules` is on `CommonOptions`, so every verb accepts it,
+but `run` builds no `RuleEngine` and never checks the precondition: a strict
+`run` passes with nothing measured, which is the shape phase 79 removed from
+`launch` and `up`. See `0045-*`.
+
+**#0044** -- the manifest spec documents a capture mode (`--save-manifest-dir`)
+that no binary accepts, which is the answer it gives to "how do I get a first
+contract for a system that has none". See `0044-*`.
+
+**#0043** -- rlm: an `include:` cannot carry a condition in either spelling --
+`IncludeDecl` has no field for one and `filter_manifest` never filters
+includes -- while the prose said carrying per-child conditions is what the
+include entry is for. See `0043-*`.
+
+**#0042** -- a subscriber's `max_transport` is legal grammar and the checker
+honours it (preferring it over the topic's, for the intra-process vs
+cross-network case Issue #44 added it for), but `model::SubContract` has no
+transport field, so the shared `derive` crate reads the topic's value alone.
+The two copies of one derivation therefore compute different route totals
+wherever a contract uses the override, silently. See `0042-*`.
+
 **#0041** -- `ThisLaunchFile()` in a `.launch.py` reaches the record, the model
 and the command line as the literal `$(this-launch-file)`, a token the host's
 substitution grammar does not know (it has only `dirname` and `filename`). Same
