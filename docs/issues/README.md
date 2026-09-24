@@ -17,6 +17,13 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0054** -- four `manifest_check` tests fail against a current binary: three
+assert that a `miss:` declaration reaches the model as `deadline_policy` (it
+does not -- which re-opens the nano-ros seam phase 68 W5 closed, since they
+build `MapperPath` from the model), and one expects a rate-contradiction
+warning between a legacy `system.toml` and a contract that is never emitted.
+Only visible now: the suite has not compiled since `1c27ba5c`. See `0054-*`.
+
 **#0053** -- `--interception on` is inert on `run`: the verb for iterating on a
 single node is the one that cannot produce a bundle `measure` or the capture
 script can read. Unlike contracts, interception needs no launch file, so
