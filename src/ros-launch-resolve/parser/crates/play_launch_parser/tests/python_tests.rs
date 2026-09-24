@@ -2180,12 +2180,14 @@ fn test_utility_substitutions() {
     assert_eq!(node_bool_yes["package"].as_str().unwrap(), "demo_nodes_cpp");
     assert_eq!(node_bool_yes["executable"].as_str().unwrap(), "listener");
 
-    // Note: BooleanSubstitution, FindExecutable, LaunchLogDir, and ThisLaunchFile
-    // return placeholder values in static analysis:
+    // Note: BooleanSubstitution, FindExecutable and LaunchLogDir return
+    // placeholder values in static analysis:
     // - BooleanSubstitution converts values to "true"/"false" strings
     // - FindExecutable returns $(find-exec <name>) placeholder
     // - LaunchLogDir returns $(launch-log-dir) placeholder
-    // - ThisLaunchFile returns $(this-launch-file) placeholder
+    // ThisLaunchFile no longer does: it emits `$(filename)` — ROS 2's own
+    // spelling of it — which the host resolves to the launch file's absolute
+    // path once execution returns (issue 0041, `this_launch_file_tests.rs`).
     // The test verifies that:
     // 1. The substitutions parse correctly without errors
     // 2. All nodes are captured properly

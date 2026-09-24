@@ -1,7 +1,7 @@
 ---
 id: 41
 title: "`ThisLaunchFile()` in a `.launch.py` reaches the record as `$(this-launch-file)`, a token the substitution grammar does not know"
-status: open
+status: resolved
 type: correctness
 severity: medium
 ---
@@ -80,3 +80,62 @@ with the same negative control the 0034 tests use.
 
 Found 2026-09-22 while closing 0034's Python-capture residual; the mock and the
 grammar were read at `3b01e54d`.
+
+## Resolved 2026-09-24 — and this issue's own premise was wrong
+
+The report above, and the decision it framed, assumed `ThisLaunchFile` and
+`$(filename)` are two concepts — a full path versus a basename — and warned
+that redefining `$(filename)` "probably fails on compatibility grounds". That
+is backwards, and checking ROS 2 rather than reasoning about it settles it in
+one line. `/opt/ros/humble/.../launch/substitutions/this_launch_file.py`:
+
+```python
+@expose_substitution('filename')
+class ThisLaunchFile(Substitution):
+    """Substitution that returns the absolute path to the current launch file."""
+```
+
+`$(filename)` in launch XML **is** `ThisLaunchFile`, and it is the ABSOLUTE
+PATH. `perform()` returns `context.locals.current_launch_file_path`. Confirmed
+empirically against a seeded `LaunchContext`, not only read:
+
+```
+filename -> '/abs/dir/probe.launch.xml' | ThisLaunchFile
+dirname  -> '/abs/dir'                  | ThisLaunchFileDir
+```
+
+So there was a SECOND divergence hiding behind this one: this parser's
+`$(filename)` returned the basename on every frontend, XML included. Adding a
+third token would have invented a spelling ROS 2 does not have, unwritable in
+XML, while leaving `$(filename)` permanently wrong and still holding ROS 2's
+name for it.
+
+Fixed as: `Substitution::Filename` resolves from `current_file()` rather than
+`current_filename()`; `ThisLaunchFile`'s stand-in in the Python half returns
+`$(filename)`; and `FileSubstitutions` in `python_exec.rs` — the helper
+0034's residual added — rewrites it with the full path, still after
+`backend.exec_file()` returns, so an INCLUDED `.launch.py` resolves against
+its own file. A test pins that case.
+
+Blast radius checked before the change: `$(filename)` had one resolution site,
+one render site, one rewrite site, and **zero** uses in any fixture or launch
+file in the repository. `docs/guide/parser-features.md:119` already documented
+it as "Path of current launch file", so the implementation was the thing out
+of step with this repo's own documentation.
+
+One pre-existing test asserted the old basename
+(`pyexec/tests/eval_with_via_python.rs::test_filename_substitution`) and was
+corrected — the fourth test this session found pinning a defect.
+
+Non-vacuity: with the three source files reverted and every test kept, 3 of
+the 4 new tests fail (`got "test_this_launch_file.launch.xml"`, `got
+"$(this-launch-file)"`, `$(this-launch-file): No such file or directory`) and
+the `$(var ...)` preservation control passes either way, as a control should.
+Parser 461 -> 465, IR 504 -> 508.
+
+**Narrower than the report claimed:** the silent params-file shape is not
+reachable for a bare `ThisLaunchFile()`. A bare substitution is classified as
+a parameter FILE only when its unresolved string ends in `.yaml`, which
+neither token does, and any `.yaml` path built from it would treat the launch
+file as a directory. It is reachable only through
+`ParameterFile(ThisLaunchFile())`, which is what the fixture uses.

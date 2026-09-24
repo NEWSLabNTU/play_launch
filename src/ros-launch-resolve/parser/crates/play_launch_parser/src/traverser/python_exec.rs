@@ -7,16 +7,24 @@ use crate::{
 use std::{collections::HashMap, path::Path};
 
 /// The two launch-file-location substitutions, as they cross the Python
-/// boundary. `ThisLaunchFileDir()` is captured as this literal string by the
-/// `pyexec` mock and resolved by the host — the mock cannot resolve it itself,
-/// since the dlopen'd object has its own `LaunchContext` and is never told the
-/// current file.
+/// boundary. `ThisLaunchFileDir()` and `ThisLaunchFile()` are captured as these
+/// literal strings by the `pyexec` mock and resolved by the host — the mock
+/// cannot resolve them itself, since the dlopen'd object has its own
+/// `LaunchContext` and is never told the current file.
+///
+/// `ThisLaunchFile()` emits `$(filename)` and not a token of its own, because
+/// in ROS 2 they ARE the same substitution class: `this_launch_file.py` is
+/// `@expose_substitution('filename')`. The mock used to emit
+/// `$(this-launch-file)`, which no grammar on either side knew, so the literal
+/// reached the record, the model and the command line (issue 0041).
 const DIRNAME_TOKEN: &str = "$(dirname)";
 const FILENAME_TOKEN: &str = "$(filename)";
 
 /// The resolved values of `$(dirname)` and `$(filename)` for one launch file.
 struct FileSubstitutions {
     dirname: Option<String>,
+    /// The ABSOLUTE PATH, matching `Substitution::Filename` and ROS 2's
+    /// `ThisLaunchFile` — not `current_filename()`, which is the basename.
     filename: Option<String>,
 }
 
@@ -26,7 +34,9 @@ impl FileSubstitutions {
             dirname: context
                 .current_dir()
                 .and_then(|p| p.to_str().map(String::from)),
-            filename: context.current_filename(),
+            filename: context
+                .current_file()
+                .and_then(|p| p.to_str().map(String::from)),
         }
     }
 

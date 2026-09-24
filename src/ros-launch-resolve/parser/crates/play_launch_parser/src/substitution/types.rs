@@ -59,7 +59,16 @@ pub enum Substitution {
     FindPackageShare(Vec<Substitution>),
     /// $(dirname) - Directory of the current launch file
     Dirname,
-    /// $(filename) - Filename of the current launch file
+    /// $(filename) - ABSOLUTE PATH of the current launch file.
+    ///
+    /// Not the basename, which is what this used to return. In ROS 2 the
+    /// frontend token `filename` is `ThisLaunchFile`
+    /// (`@expose_substitution('filename')` in
+    /// `launch/substitutions/this_launch_file.py`), whose `perform` returns
+    /// `context.locals.current_launch_file_path` — the same absolute path
+    /// `ThisLaunchFile()` gives a `.launch.py`. There is no second concept
+    /// and no `$(this-launch-file)` token to add: the two spellings are one
+    /// substitution class (issue 0041).
     Filename,
     /// $(anon name) - Generate anonymous unique name
     Anon(Vec<Substitution>),
@@ -127,9 +136,14 @@ impl Substitution {
                         "dirname: no current file set".to_string(),
                     )
                 }),
-            Substitution::Filename => context.current_filename().ok_or_else(|| {
-                SubstitutionError::InvalidSubstitution("filename: no current file set".to_string())
-            }),
+            Substitution::Filename => context
+                .current_file()
+                .and_then(|p| p.to_str().map(String::from))
+                .ok_or_else(|| {
+                    SubstitutionError::InvalidSubstitution(
+                        "filename: no current file set".to_string(),
+                    )
+                }),
             Substitution::Anon(name_subs) => {
                 // Generate a unique anonymous name
                 // Format: name_<timestamp>_<random>

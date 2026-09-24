@@ -533,8 +533,17 @@ impl ThisLaunchFile {
     }
 
     fn __str__(&self) -> String {
-        // Return placeholder - actual path would be set during parsing
-        "$(this-launch-file)".to_string()
+        // The host's token for this launch file's absolute path. It is
+        // `$(filename)` and not a token of its own because ROS 2 exposes
+        // `ThisLaunchFile` to the frontends under exactly that name
+        // (`@expose_substitution('filename')`), and its `perform` returns the
+        // full `current_launch_file_path`. The host rewrites it in
+        // `traverser/python_exec.rs` once execution of this file returns; this
+        // object cannot, having its own `LaunchContext` with no current file.
+        // It used to return `$(this-launch-file)`, which nothing knew how to
+        // read, so the literal reached the record and the command line
+        // (issue 0041).
+        "$(filename)".to_string()
     }
 
     fn __repr__(&self) -> String {
@@ -542,6 +551,6 @@ impl ThisLaunchFile {
     }
 
     fn perform(&self, _py: Python, _context: &Bound<'_, PyAny>) -> PyResult<String> {
-        Ok("$(this-launch-file)".to_string())
+        Ok("$(filename)".to_string())
     }
 }

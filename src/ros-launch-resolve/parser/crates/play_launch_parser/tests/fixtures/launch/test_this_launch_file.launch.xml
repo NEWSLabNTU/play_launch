@@ -1,0 +1,15 @@
+<launch>
+  <!-- Issue 0041, the XML half. `$(filename)` is ROS 2's spelling of
+       `ThisLaunchFile` — `this_launch_file.py` carries
+       `@expose_substitution('filename')` and its `perform` returns
+       `current_launch_file_path` — so it is the launch file's ABSOLUTE PATH,
+       not its basename, which is what this parser used to return.
+
+       No `<param from=>` here: the XML frontend PARSES a parameter file as
+       YAML (`params.rs::load_and_resolve_param_file`), so the silent
+       store-the-path-as-content case belongs to the Python fixture, whose
+       `to_record` keeps a parameter file's raw bytes. -->
+  <node pkg="demo_nodes_cpp" exec="talker" name="filename_probe">
+    <param name="launch_file" value="$(filename)" />
+  </node>
+</launch>

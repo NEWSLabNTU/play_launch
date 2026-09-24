@@ -168,8 +168,11 @@ mod escape_tests {
         let mut context = LaunchContext::new();
         context.set_current_file(PathBuf::from("/home/user/launch/test.launch.xml"));
 
+        // The PATH, not the basename: ROS 2's frontend token `filename` is
+        // `ThisLaunchFile`, whose `perform` returns
+        // `current_launch_file_path` (issue 0041).
         let result = sub.resolve(&context).unwrap();
-        assert_eq!(result, "test.launch.xml");
+        assert_eq!(result, "/home/user/launch/test.launch.xml");
     }
 
     #[test]
