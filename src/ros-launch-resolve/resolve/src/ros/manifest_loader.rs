@@ -4444,21 +4444,28 @@ fn resolve_services(manifest: &Manifest, scope: &ScopeEntry, index: &mut Manifes
 /// R1-P2 — resolve + merge `actions:` (mirror of `resolve_services`;
 /// actions share the server/client wiring shape).
 fn resolve_actions(manifest: &Manifest, scope: &ScopeEntry, index: &mut ManifestIndex) {
-    let ns = &scope.ns;
+    let ns = scope.ns.clone();
 
     for (action_name, action_decl) in &manifest.actions {
-        let fqn = qualify_name(ns, action_name);
+        let fqn = qualify_name(&ns, action_name);
 
-        let servers: Vec<String> = action_decl
-            .server
-            .iter()
-            .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
-            .collect();
-        let clients: Vec<String> = action_decl
-            .client
-            .iter()
-            .map(|ep_ref| qualify_endpoint_ref(ns, ep_ref))
-            .collect();
+        // Issue #0055 — reconcile the node part of each ref against the
+        // launch dump, exactly as `resolve_topics` and `resolve_services`
+        // do. This used to call `qualify_endpoint_ref` directly, which
+        // prepends the scope namespace and stops: a ref naming a node the
+        // launch file DID declare, under a namespace of the node's own or
+        // carrying the `-N` ordinal an unnamed node receives (#0017/#0018),
+        // resolved to an FQN that names nothing even though the right
+        // answer was sitting in `index.node_identity`. Worse than #0048,
+        // where the lookup happened and only the miss was silent.
+        let mut servers: Vec<String> = Vec::new();
+        for ep_ref in &action_decl.server {
+            servers.push(resolve_endpoint_ref(index, scope.id, &ns, ep_ref));
+        }
+        let mut clients: Vec<String> = Vec::new();
+        for ep_ref in &action_decl.client {
+            clients.push(resolve_endpoint_ref(index, scope.id, &ns, ep_ref));
+        }
 
         if let Some(existing) = index.actions.get_mut(&fqn) {
             if existing.srv_type != action_decl.action_type {
@@ -4785,9 +4792,12 @@ fn check_contract_node_identity(
 
     // Every contract site whose node part goes through `resolve_node_fqn` /
     // `resolve_endpoint_ref`: the node declarations themselves, and the
-    // endpoint refs on topics and services. (`resolve_actions` qualifies its
-    // refs directly and never consults the identity map at all — a separate
-    // gap, not this one.)
+    // endpoint refs on topics, services and actions. Actions joined this
+    // sweep with issue #0055, when `resolve_actions` stopped qualifying its
+    // refs directly and started reconciling them like its two siblings —
+    // before that the site never called the function that emits this
+    // diagnostic, so an unknown node in an action ref was mis-qualified in
+    // silence.
     let mut sites: Vec<(&str, String)> = Vec::new();
     for name in manifest.nodes.keys() {
         sites.push((name.as_str(), format!("nodes.{name}")));
@@ -4806,6 +4816,15 @@ fn check_contract_node_identity(
             for ep_ref in refs {
                 if let Some(node_part) = endpoint_ref_node_part(ep_ref) {
                     sites.push((node_part, format!("services.{service_name}.{side}")));
+                }
+            }
+        }
+    }
+    for (action_name, decl) in &manifest.actions {
+        for (side, refs) in [("server", &decl.server), ("client", &decl.client)] {
+            for ep_ref in refs {
+                if let Some(node_part) = endpoint_ref_node_part(ep_ref) {
+                    sites.push((node_part, format!("actions.{action_name}.{side}")));
                 }
             }
         }
@@ -7503,5 +7522,110 @@ topics:
         let far = candidate_phrase("gyroscope", &known);
         assert!(!far.contains("Did you mean"), "{far}");
         assert!(far.contains("'talker', 'listener'"), "{far}");
+    }
+
+    // ── Issue #0055: action refs are reconciled like topic and service refs ──
+
+    #[test]
+    fn an_action_ref_resolves_against_the_launch_tree_not_the_scope_namespace() {
+        // #0055's symptom, and worse than #0048's: `resolve_actions` mapped
+        // every ref through `qualify_endpoint_ref`, which prepends the scope
+        // namespace and stops. The scope's namespace here is "" while the
+        // node's own `namespace=` puts it at `/identity_test/talker`, so the
+        // server ref resolved to `/talker/navigate` — a vertex nothing runs —
+        // even though `index.node_identity` held the right answer and the
+        // same ref under `topics:` or `services:` would have found it.
+        let yaml = r#"
+version: 1
+nodes:
+  talker:
+    pub: [chatter]
+actions:
+  navigate:
+    type: nav2_msgs/action/NavigateToPose
+    server: [talker/navigate]
+    client: [talker/navigate_client]
+"#;
+        let index = overlay_index_with(&unnamed_node_dump(true), yaml);
+        assert!(
+            identity_diags(&index).is_empty(),
+            "the node IS in the launch tree; nothing to report: {:?}",
+            identity_diags(&index)
+        );
+        let action = index
+            .actions
+            .get("/navigate")
+            .expect("the action resolves under the scope namespace");
+        assert_eq!(
+            action.servers,
+            vec!["/identity_test/talker/navigate".to_string()],
+            "an action's server ref must resolve through the launch dump's \
+             identity map, exactly as a topic's `pub:` and a service's \
+             `server:` do — `/talker/navigate` is the naive qualification"
+        );
+        assert_eq!(
+            action.clients,
+            vec!["/identity_test/talker/navigate_client".to_string()],
+            "the client side goes through the same reconciliation"
+        );
+    }
+
+    #[test]
+    fn an_action_ref_naming_an_unknown_node_is_reported_at_its_own_path() {
+        // #0048's diagnostic, at the site that never called the function
+        // that emits it. Both sides are named only by the action refs, so
+        // `nodes:` cannot catch either.
+        let yaml = r#"
+version: 1
+nodes:
+  talker:
+    pub: [chatter]
+actions:
+  navigate:
+    type: nav2_msgs/action/NavigateToPose
+    server: [ghost_navigator/navigate]
+    client: [talker/navigate]
+"#;
+        let index = overlay_index_with(&unnamed_node_dump(true), yaml);
+        let diags = identity_diags(&index);
+        assert_eq!(diags.len(), 1, "{:?}", index.merge_diagnostics);
+        assert_eq!(diags[0].severity, Severity::Error);
+        assert_eq!(diags[0].path, "actions.navigate.server");
+        assert!(
+            diags[0].message.contains("'ghost_navigator'"),
+            "{}",
+            diags[0].message
+        );
+        assert!(
+            index.total_errors >= 1,
+            "an Error must reach the tally, or `check` still exits 0"
+        );
+    }
+
+    #[test]
+    fn an_absolute_action_ref_passes_through_verbatim() {
+        // The control: an absolute ref never goes near either the identity
+        // map or the namespace fallback, so it must resolve unchanged and
+        // must not be reported.
+        let yaml = r#"
+version: 1
+actions:
+  navigate:
+    type: nav2_msgs/action/NavigateToPose
+    server: [/identity_test/talker/navigate]
+    client: [/somewhere/else/navigate]
+"#;
+        let index = overlay_index_with(&unnamed_node_dump(true), yaml);
+        assert!(
+            identity_diags(&index).is_empty(),
+            "absolute refs cannot be mis-qualified: {:?}",
+            identity_diags(&index)
+        );
+        let action = index.actions.get("/navigate").expect("resolves");
+        assert_eq!(
+            action.servers,
+            vec!["/identity_test/talker/navigate".to_string()]
+        );
+        assert_eq!(action.clients, vec!["/somewhere/else/navigate".to_string()]);
     }
 }

@@ -1,7 +1,7 @@
 ---
 id: 55
 title: "an action's `server:`/`client:` refs are never reconciled against the launch dump — #0048 without even the fallback"
-status: open
+status: resolved
 type: correctness
 severity: medium
 ---
@@ -82,3 +82,46 @@ diagnostic asserted on a genuinely unknown name.
 
 Found 2026-09-25 while fixing #0048, by the agent that implemented it, and
 confirmed by reading `resolve_actions` at `599f9f1b`.
+
+## Resolution 2026-09-25
+
+`resolve_actions` routes both sides through `resolve_endpoint_ref`, the way
+`resolve_topics` and `resolve_services` always did, and action refs joined
+`check_contract_node_identity`'s site sweep at `actions.<a>.server` /
+`actions.<a>.client` (same dedup rule: one finding per key, `nodes.<k>` first).
+
+**Nothing in the tree declares `actions:`.** A grep for the key across every
+`.yaml`/`.yml`/`.rs` in the repository finds no contract that uses it — only
+the manifest crate's own parser and checker tests, which never reach this
+resolver. So no existing fixture's refs moved, no committed plan or model
+changed, and the defect had no fixture that could have caught it. That is why
+the new tests carry the whole gate.
+
+Three unit tests in `manifest_loader.rs`, on the synthetic `unnamed_node`
+dump #0048 already uses (scope ns `""`, node at `/identity_test/talker` from
+its own `namespace=`):
+
+- the resolution test — `server: [talker/navigate]` must resolve to
+  `/identity_test/talker/navigate`;
+- the #0048 diagnostic on a genuinely unknown name in an action ref;
+- the control — an absolute ref passes through verbatim.
+
+Non-vacuity was checked in both directions. Reverting only the
+`resolve_actions` change fails the resolution test with
+`left: ["/talker/navigate"]` — the naive qualification, i.e. the reported
+symptom. Reverting only the sweep addition fails the diagnostic test with
+`0 findings` where 1 is expected. Each half is load-bearing on its own.
+
+### Found while reading the three siblings
+
+`run_cross_scope_checks` has a `dangling-entity` loop for a service with 0
+servers across the merged tree and **no equivalent for an action**. Same
+shape, same `endpoint_externals` gate already collected for actions
+(`collect_externals` reads `act.external`), and nothing uses it. Filed here
+rather than fixed: it is a new diagnostic on a vocabulary nothing in the tree
+declares yet, which is a separate ruling from this one.
+
+Symmetric, so NOT a gap in actions specifically: `if:`/`unless:` on a
+`topics:`/`services:`/`actions:` declaration is parsed by the manifest crate
+and read by no resolver — `if_condition` and `unless_condition` have zero
+reads in `src/ros-launch-resolve`.
