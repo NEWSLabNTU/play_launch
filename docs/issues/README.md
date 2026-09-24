@@ -17,6 +17,31 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0053** -- `--interception on` is inert on `run`: the verb for iterating on a
+single node is the one that cannot produce a bundle `measure` or the capture
+script can read. Unlike contracts, interception needs no launch file, so
+#0045's reason for refusing does not apply here. See `0053-*`.
+
+**#0052** -- the resolver still computes the subscriber-first transport
+precedence itself, because `TopicView` is `pub(crate)` in `derive` and the
+resolver's graph is built from a `ManifestIndex` before any `SystemModel`
+exists. One derivation, two copies, held together by a test rather than by
+construction. See `0052-*`.
+
+**#0051** -- `manifest_check.rs` spawns the binary with a bare `Command::new`
+instead of `play_launch_cmd()`, so 13 of 27 tests fail on the library path
+unless the shell happened to source `install/setup.bash` -- failures that look
+like product breakage and that mask real ones. See `0051-*`.
+
+**#0050** -- `pyexec`'s `c_abi` tests take no interpreter lock and fail ~1 run
+in 3 in parallel with `KeyError: 'rear_overhang'` -- which is issue #0028's
+exact symptom, so the flake reads as a regression of a shipped fix. See
+`0050-*`.
+
+**#0049** -- the IR builder discards an unsupported action with a `debug!` and
+no `DroppedAction`, which is the shape `<timer>` had before `72a547e9`. Inert
+while the IR has no consumer; a trap if it ever gets one. See `0049-*`.
+
 **#0048** -- a contract node key that matches nothing in the launch dump falls
 back to qualifying the bare name against the SCOPE's namespace, so it resolves
 to a plausible FQN that names no running node -- and `check` reports clean.
