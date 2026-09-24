@@ -488,3 +488,120 @@ interception:
          not wired to it; rows were {rows:?}"
     );
 }
+
+/// Issue #0047 — an endpoint's message TYPE must reach disk even when no
+/// message ever crosses it.
+///
+/// The type is resolved at `rcl_publisher_init` / `rcl_subscription_init`, from
+/// the `type_support` argument, and used to be dropped there: the only place a
+/// type reached disk was `stats_summary.json` / `frontier_summary.json`, which
+/// are keyed by TRAFFIC. So a publisher that was created and never used had no
+/// type anywhere, and `type:` is mandatory in the manifest grammar — which
+/// bounded `scripts/capture_manifest.py` to whatever the run happened to
+/// exercise. Phase 77 measured the gap: 982 endpoints created, 63 carrying a
+/// message, on one Autoware run.
+///
+/// The fixture's `silent_publisher.py` advertises `/silent_topic` and
+/// subscribes `/silent_input` and sends nothing through either, so this test
+/// asserts BOTH halves: the type is on the endpoint record, and the topic is
+/// absent from the traffic summary. Asserting only the first would pass on a
+/// build that had merely learned to copy the summary's answer.
+#[test]
+fn test_endpoints_record_message_type_without_traffic() {
+    let config = r#"
+interception:
+  enabled: true
+  stats: true
+"#;
+
+    let work_dir = run_launch_with_config(
+        "launch/silent_endpoint.launch.xml",
+        config,
+        Duration::from_secs(8),
+    );
+    let play_log = work_dir.path().join("play_log/latest");
+
+    let endpoints = play_log.join("interception/endpoints.tsv");
+    assert!(
+        wait_for_file(&endpoints, Duration::from_secs(5)),
+        "endpoints.tsv not found at {}",
+        endpoints.display()
+    );
+    let body = std::fs::read_to_string(&endpoints).expect("failed to read endpoints.tsv");
+
+    // Every row is six fields. The type field is written even when
+    // introspection cannot answer, precisely so a reader can discriminate the
+    // pre-#0047 five-column format by COLUMN COUNT; a column that appeared
+    // only sometimes would make the two widths ambiguous.
+    for line in body.lines().filter(|l| !l.is_empty()) {
+        assert_eq!(
+            line.split('\t').count(),
+            6,
+            "every endpoint row carries a type field: {line:?}"
+        );
+    }
+
+    let rows: Vec<(String, String, String, String)> = body
+        .lines()
+        .filter_map(|line| {
+            let mut it = line.split('\t');
+            let _member = it.next()?;
+            let _pid = it.next()?;
+            let node = it.next()?;
+            let direction = it.next()?;
+            let topic = it.next()?;
+            let msg_type = it.next()?;
+            Some((
+                node.to_string(),
+                direction.to_string(),
+                topic.to_string(),
+                msg_type.to_string(),
+            ))
+        })
+        .collect();
+    assert!(!rows.is_empty(), "endpoints.tsv had no usable rows");
+
+    let typed = |node: &str, direction: &str, topic: &str| -> Option<String> {
+        rows.iter()
+            .find(|(n, d, t, _)| n == node && d == direction && t == topic)
+            .map(|(_, _, _, ty)| ty.clone())
+    };
+
+    assert_eq!(
+        typed("/silent_pub", "pub", "/silent_topic").as_deref(),
+        Some("std_msgs/msg/String"),
+        "a publisher that never published must still carry its type; rows were {rows:?}"
+    );
+    assert_eq!(
+        typed("/silent_pub", "sub", "/silent_input").as_deref(),
+        Some("std_msgs/msg/Int32"),
+        "a subscription that never received must still carry its type; rows were {rows:?}"
+    );
+    // The exercised topic, for contrast: this one the summaries could also
+    // describe, and it must not have regressed.
+    assert_eq!(
+        typed("/silent_test/talker", "pub", "/silent_test/chatter").as_deref(),
+        Some("std_msgs/msg/String"),
+        "rows were {rows:?}"
+    );
+
+    // The other half of the claim: the silent topics are NOT in the
+    // traffic-keyed summary, so the endpoint record is the only source for
+    // them. If this ever fails the fixture has stopped exercising the case.
+    let stats = play_log.join("interception/stats_summary.json");
+    assert!(
+        wait_for_file(&stats, Duration::from_secs(5)),
+        "stats_summary.json not found at {}",
+        stats.display()
+    );
+    let stats_body = std::fs::read_to_string(&stats).expect("failed to read stats_summary.json");
+    assert!(
+        !stats_body.contains("/silent_topic"),
+        "a topic no message crossed must not appear in the traffic summary — \
+         the fixture is no longer silent: {stats_body}"
+    );
+    assert!(
+        stats_body.contains("/silent_test/chatter"),
+        "the exercised topic should be in the traffic summary: {stats_body}"
+    );
+}

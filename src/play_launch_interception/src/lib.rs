@@ -270,15 +270,28 @@ fn record_node_identity(originals: &Originals, node: *const rcl_node_t) {
     node_identity::observe(name.as_ref(), ns.as_ref());
 }
 
-/// Record the endpoint this init call created, for `verify_graph.py`.
+/// Record the endpoint this init call created, for `verify_graph.py` and
+/// `capture_manifest.py`.
 ///
 /// Ungated on plugins, for the same reason [`record_node_identity`] is: the
 /// endpoint sink is its own opt-in, and a run with no plugins still wants the
 /// graph it can only learn here. The topic is expanded to the canonical FQN
 /// (remap rules applied) so it names the same string `ros2 topic list` does.
-fn record_endpoint(
+///
+/// Issue #0047: `type_support` is resolved here too. It is in scope at both
+/// init hooks and used to be dropped on the floor, which left the message type
+/// reaching disk only through the traffic-keyed summaries — so an endpoint that
+/// was created and never exercised could not be described at all. An
+/// unresolvable type is recorded as an EMPTY field, never a missing one.
+///
+/// # Safety
+///
+/// `type_support` must be null or a valid `rosidl_message_type_support_t` —
+/// i.e. exactly what the caller passed to the real `rcl_*_init`.
+unsafe fn record_endpoint(
     originals: &Originals,
     node: *const rcl_node_t,
+    type_support: *const rosidl_message_type_support_t,
     topic_name: *const c_char,
     direction: &str,
 ) {
@@ -299,7 +312,12 @@ fn record_endpoint(
     let fqn = format!("{}/{}", ns.trim_end_matches('/'), name);
     let raw = unsafe { CStr::from_ptr(topic_name) }.to_string_lossy();
     let topic = expand_topic_name(originals, node, raw.as_ref());
-    endpoints::observe(&fqn, direction, &topic);
+    let msg_type = if type_support.is_null() {
+        None
+    } else {
+        unsafe { introspection::find_type_identity(type_support) }
+    };
+    endpoints::observe(&fqn, direction, &topic, msg_type.as_deref().unwrap_or(""));
 }
 
 fn expand_topic_name(originals: &Originals, node: *const rcl_node_t, topic: &str) -> String {
@@ -729,7 +747,7 @@ pub unsafe extern "C" fn rcl_publisher_init(
     // sink is its own opt-in, and a run with no plugins still wants it.
     if ret == 0 {
         record_node_identity(&rt.originals, node);
-        record_endpoint(&rt.originals, node, topic_name, "pub");
+        unsafe { record_endpoint(&rt.originals, node, type_support, topic_name, "pub") };
     }
 
     if ret == 0 && !rt.plugins.is_empty() {
@@ -844,7 +862,7 @@ pub unsafe extern "C" fn rcl_subscription_init(
     // only subscribes is reported here.
     if ret == 0 {
         record_node_identity(&rt.originals, node);
-        record_endpoint(&rt.originals, node, topic_name, "sub");
+        unsafe { record_endpoint(&rt.originals, node, type_support, topic_name, "sub") };
     }
 
     if ret == 0 && !rt.plugins.is_empty() {

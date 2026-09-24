@@ -28,23 +28,29 @@ What it reads, under `play_log/<ts>/interception/`
 --------------------------------------------------
 
   endpoints.tsv        every publisher and subscription CREATED (phase 77),
-                       with remap-resolved topic names. The wiring comes from
-                       here and only here: an endpoint exists whether or not a
-                       message ever flowed through it, while `events.jsonl`
-                       records MESSAGES and a subscription on a pipeline whose
-                       sensor is absent looks there exactly like one that does
-                       not exist.
+                       with remap-resolved topic names and -- since issue
+                       #0047 -- the message TYPE, read by introspection off the
+                       `type_support` the init hook holds. The wiring comes
+                       from here and only here: an endpoint exists whether or
+                       not a message ever flowed through it, while
+                       `events.jsonl` records MESSAGES and a subscription on a
+                       pipeline whose sensor is absent looks there exactly like
+                       one that does not exist. The type comes from here FIRST
+                       for the same reason: it is the only source that knows
+                       about an endpoint no message crossed.
   node_identity.tsv    model key -> pid -> the REAL ROS node name (issue
                        #0017). A node the launch file did not name is keyed in
                        the model by its EXECUTABLE, which is not its ROS name;
                        the contract has to use the key the launch dump knows.
   stats_summary.json   per topic: `msg_type`, `pub_count`, `take_count`,
-  frontier_summary.json  `avg_pub_rate_hz`. The ONLY place a message type
-                       reaches disk -- `endpoints.tsv` has no type column --
-                       and these files are keyed by traffic, so a topic that
-                       carried no message has no type here and CANNOT be
-                       emitted. Those are listed, with the reason, rather than
-                       dropped.
+  frontier_summary.json  `avg_pub_rate_hz`. Keyed by TRAFFIC -- a topic
+                       appears once a message crossed it -- so the measured
+                       numbers come from here and the type only as a FALLBACK,
+                       for a bundle written before `endpoints.tsv` carried one
+                       (five columns instead of six). A topic whose type is in
+                       neither place still cannot be emitted, because `type:`
+                       is mandatory in the grammar; those are listed, with the
+                       reason, rather than dropped.
 
 Usage:
   scripts/capture_manifest.py <run-dir> --model <model.yaml> [> out.contract.yaml]
@@ -90,12 +96,24 @@ def is_infra(topic):
 
 
 def load_endpoints(path):
-    """`(member, node FQN, direction, topic)` rows a run CREATED.
+    """`(member, node FQN, direction, topic, msg type)` rows a run CREATED.
 
-    One line is `member<TAB>pid<TAB>node FQN<TAB>pub|sub<TAB>topic`. Both names
-    travel because neither alone identifies the node: the member is the model
-    key play_launch spawned the PROCESS under, and under an isolated container
-    every forked composable inherits the container's member.
+    One line is `member<TAB>pid<TAB>node FQN<TAB>pub|sub<TAB>topic` and, since
+    issue #0047, `<TAB>pkg/msg/Name`. Both names travel because neither alone
+    identifies the node: the member is the model key play_launch spawned the
+    PROCESS under, and under an isolated container every forked composable
+    inherits the container's member.
+
+    Both widths are accepted, discriminated by COLUMN COUNT. Five columns is a
+    bundle written before #0047 and its type is unknown (`""` here, which then
+    falls back to the traffic-keyed summaries); six is current, and its sixth
+    field is empty only where introspection could not answer. The count works
+    as a discriminator precisely because the writer always emits the field --
+    an omitted-when-unknown column would make the two widths ambiguous. A
+    header line would be the other option and is deliberately not taken: it
+    would be a format change every reader of this file, in this tree and
+    outside it, would have to learn, and the file is appended to by dozens of
+    processes with no single point at which to write one.
     """
     rows = set()
     malformed = 0
@@ -105,11 +123,12 @@ def load_endpoints(path):
             if not line:
                 continue
             parts = line.split("\t")
-            if len(parts) != 5 or parts[3] not in ("pub", "sub"):
+            if len(parts) not in (5, 6) or parts[3] not in ("pub", "sub"):
                 malformed += 1
                 continue
-            member, _pid, fqn, direction, topic = parts
-            rows.add((member, fqn, direction, topic))
+            member, _pid, fqn, direction, topic = parts[:5]
+            msg_type = parts[5] if len(parts) == 6 else ""
+            rows.add((member, fqn, direction, topic, msg_type))
     return rows, malformed
 
 
@@ -135,9 +154,10 @@ def load_topic_facts(run_interception_dir):
     """`topic name -> {type, pub_count, take_count, rate_hz, duration_ms}`.
 
     Merged from `stats_summary.json` and `frontier_summary.json`, both keyed by
-    topic hash with a `name` and an optional `msg_type`. The type is the load-
-    bearing half: a topic without one cannot be emitted at all, because the
-    manifest grammar requires `type:` on every topic entry.
+    topic hash with a `name` and an optional `msg_type`. Since issue #0047 the
+    type here is a FALLBACK -- `endpoints.tsv` carries one per endpoint, and
+    these files only know about topics that carried a message. The measured
+    counts and rates have no other source and still come from here.
     """
     facts = {}
     for fname in ("stats_summary.json", "frontier_summary.json"):
@@ -343,6 +363,38 @@ def find_cycle(edges):
     return None
 
 
+def resolve_type(topic, endpoint_types, fact):
+    """`(type, note)` for one topic -- the endpoint record first.
+
+    The endpoint record (issue #0047) is preferred over the traffic-keyed
+    summaries because it is the only source that knows about an endpoint no
+    message ever crossed, which is the majority of them: phase 77 measured 982
+    endpoints created and 63 carrying a message on one Autoware run. The
+    summaries remain the fallback, for a bundle recorded before the type column
+    existed.
+
+    Disagreement between endpoints on one topic is reported, not hidden. DDS
+    will not match two endpoints whose types differ, so a topic with more than
+    one is a real finding about the system -- but it is not a reason to refuse
+    the topic, which would lose the wiring too. One is emitted (the summary's,
+    when it is among them, else the first in sorted order) and the rest are
+    named in a comment.
+    """
+    seen = endpoint_types.get(topic) or set()
+    summary = fact.get("type")
+    if not seen:
+        return summary, None
+    if len(seen) == 1:
+        return next(iter(seen)), None
+    chosen = summary if summary in seen else sorted(seen)[0]
+    return chosen, (
+        f"endpoints on this topic reported {len(seen)} different message "
+        f"types: {', '.join(sorted(seen))}. DDS does not match endpoints whose "
+        f"types differ, so this wiring does not all work; `{chosen}` is emitted "
+        f"and the disagreement is yours to resolve."
+    )
+
+
 def yaml_key(name):
     """A topic or node key is a ROS name, which YAML reads as a plain scalar.
 
@@ -382,9 +434,12 @@ def header(run, idir, model_path, counts):
 # has to have the conditions put back by hand. Do not read a diff against a
 # hand-written contract as a disagreement until you have accounted for that.
 #
-# `type:` comes from the interceptor's introspection of a message that actually
-# flowed. An endpoint that was created but never carried one has no type on
-# disk, so its topic could not be emitted; those are listed at the end.
+# `type:` comes from the interceptor's introspection of the type support each
+# publisher and subscription was CREATED with (issue #0047), so a topic nothing
+# ever published on is described here like any other. It falls back to the
+# traffic-keyed summaries for a bundle recorded before that column existed; a
+# topic whose type is in neither place could not be emitted at all -- the
+# grammar requires one -- and those are listed at the end.
 #
 # Node keys below are ABSOLUTE FQNs, which the checker passes through verbatim.
 # That is the only spelling guaranteed to name the node the run observed: a bare
@@ -507,9 +562,15 @@ def main():
     # 1. Join every observed endpoint onto a model node key.
     observed = defaultdict(set)   # node key -> {(direction, topic)}
     real_names = {}               # node key -> registered ROS FQN, when different
-    for member, fqn, direction, topic in rows:
+    endpoint_types = defaultdict(set)  # topic -> {type reported at an endpoint}
+    for member, fqn, direction, topic, msg_type in rows:
         if is_infra(topic) and not args.include_infra:
             continue
+        # The type is a property of the TOPIC, so it is collected before the
+        # node join: an endpoint on a node the contract may not claim still
+        # tells you what the topic carries.
+        if msg_type:
+            endpoint_types[topic].add(msg_type)
         node, aka = resolve_node(member, fqn, model_nodes)
         if node is None:
             refusals[
@@ -565,19 +626,24 @@ def main():
     emitted_endpoints = set()
     for topic, sides in by_topic.items():
         fact = facts.get(topic) or {}
-        msg_type = fact.get("type")
+        msg_type, type_note = resolve_type(topic, endpoint_types, fact)
         if not msg_type:
             refusals[
-                "topics whose message type is not on disk -- the type is read by "
-                "introspection off a message that FLOWED, so an endpoint created "
-                "but never exercised has none, and the grammar requires `type:` on "
-                "every topic. Fill these in by hand (`ros2 topic info -v`), or "
-                "re-run exercising them"
+                "topics whose message type is nowhere on disk -- since issue "
+                "#0047 the type is recorded per ENDPOINT, off the type support "
+                "the init hook holds, so this is no longer the "
+                "created-but-never-exercised case. It is either a bundle "
+                "recorded before that change (a five-column endpoints.tsv, "
+                "whose only type source is the traffic-keyed summaries) or an "
+                "endpoint whose type support introspection could not read. "
+                "Fill these in by hand (`ros2 topic info -v`), or re-record"
             ].add(
                 f"{topic}  ({len(sides['pub'])} pub, {len(sides['sub'])} sub)"
             )
             continue
         comments = []
+        if type_note:
+            comments.append(type_note)
         if fact.get("pub_count") is not None:
             comments.append(
                 f"observed: {fact.get('pub_count', 0)} published, "

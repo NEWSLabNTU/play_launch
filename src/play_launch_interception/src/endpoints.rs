@@ -24,12 +24,23 @@
 //! Format, tab-separated:
 //!
 //! ```text
-//! <model key>\t<pid>\t<node FQN>\t<pub|sub>\t<topic FQN>
+//! <model key>\t<pid>\t<node FQN>\t<pub|sub>\t<topic FQN>\t<pkg/msg/Name>
 //! ```
 //!
 //! The model key travels alongside the real FQN for the reason issue #0017
 //! gives: for a node the launch file did not name they are different strings,
 //! and the model can only be joined on the first.
+//!
+//! The type (issue #0047) is read off the `type_support` the init hook already
+//! holds, by the same [`crate::introspection::find_type_identity`] the
+//! publish/take path uses. It is the only place a type reaches disk for an
+//! endpoint that never carried a message — the summaries are keyed by traffic,
+//! and `type:` is mandatory in the manifest grammar, so without it a
+//! created-but-silent endpoint cannot be described at all. Where introspection
+//! cannot answer (neither the C nor the C++ identifier resolves) the field is
+//! written EMPTY rather than omitted: a reader must be able to tell "unknown"
+//! from "malformed", and a row that sometimes has five columns and sometimes
+//! six cannot be parsed by column count.
 
 use std::{
     collections::HashSet,
@@ -67,11 +78,12 @@ fn sink() -> Option<&'static Sink> {
 }
 
 /// Record that this process created `direction` endpoint on `topic`, from the
-/// node at `node_fqn`.
+/// node at `node_fqn`, carrying messages of `msg_type` (`pkg/msg/Name`, empty
+/// when introspection could not resolve it).
 ///
 /// Cheap and idempotent: after the first call for a given
 /// `(node, direction, topic)` it is a hash-set lookup.
-pub fn observe(node_fqn: &str, direction: &str, topic: &str) {
+pub fn observe(node_fqn: &str, direction: &str, topic: &str, msg_type: &str) {
     let Some(sink) = sink() else {
         return;
     };
@@ -90,7 +102,13 @@ pub fn observe(node_fqn: &str, direction: &str, topic: &str) {
         }
     }
 
-    let line = format!("{}\t{}\t{}\n", sink.member, std::process::id(), key);
+    let line = format!(
+        "{}\t{}\t{}\t{}\n",
+        sink.member,
+        std::process::id(),
+        key,
+        msg_type
+    );
     let mut file = match sink.file.lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),

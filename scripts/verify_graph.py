@@ -65,20 +65,30 @@ def is_infra(topic):
 def load_endpoints(path):
     """Raw `(member, node FQN, direction, topic)` rows a run CREATED.
 
-    Each line is `member<TAB>pid<TAB>node FQN<TAB>pub|sub<TAB>topic`. The
-    member is the model key play_launch spawned the process under; the node FQN
-    is the name the process registered. For a node the launch file did not name
-    these differ (issue #0017), and under an isolated container every forked
-    composable inherits the CONTAINER's member -- so neither alone identifies
-    the node, and which one joins to the model is decided per row.
+    Each line is `member<TAB>pid<TAB>node FQN<TAB>pub|sub<TAB>topic` and, since
+    issue #0047, a sixth `<pkg/msg/Name>` field. The member is the model key
+    play_launch spawned the process under; the node FQN is the name the process
+    registered. For a node the launch file did not name these differ (issue
+    #0017), and under an isolated container every forked composable inherits the
+    CONTAINER's member -- so neither alone identifies the node, and which one
+    joins to the model is decided per row.
+
+    Both widths are read. The file has no header and never gained one: a header
+    would be a format change of its own -- every reader in and out of this tree
+    would have to learn to skip it, and a file appended to by dozens of
+    concurrently starting processes has no place to put one reliably. The
+    COLUMN COUNT is the discriminator instead, which works because the sixth
+    field is always written, empty when introspection could not answer. Five
+    columns is a pre-#0047 bundle; six is current. This function does not use
+    the type -- it grades WIRING -- so it only has to not choke on it.
     """
     rows = set()
     with open(path) as f:
         for line in f:
             parts = line.rstrip("\n").split("\t")
-            if len(parts) != 5:
+            if len(parts) not in (5, 6):
                 continue
-            member, _pid, fqn, direction, topic = parts
+            member, _pid, fqn, direction, topic = parts[:5]
             if direction in ("pub", "sub"):
                 rows.add((member, fqn, direction, topic))
     return rows

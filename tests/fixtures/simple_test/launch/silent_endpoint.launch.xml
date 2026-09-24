@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!--
+  A launch whose interesting endpoints never carry a message (issue #0047).
+
+  `silent_publisher.py` creates a publisher on `/silent_topic` and a
+  subscription on `/silent_input` and sends nothing through either. Neither
+  topic can appear in `stats_summary.json` or `frontier_summary.json`, which
+  are keyed by TRAFFIC — so before #0047 neither had a message type anywhere on
+  disk, and `scripts/capture_manifest.py` could not emit them at all. The type
+  is now read off the `type_support` the init hook already holds.
+
+  The talker beside it does publish, so one run carries both cases and a test
+  can tell "the type was read at the init hook" from "the type came from the
+  summaries".
+
+  The silent node is an `<executable>` rather than a `<node>` because it is a
+  plain script in no ROS package; that costs it a tidy model key and nothing
+  else — the endpoint record does not go through the model.
+-->
+<launch>
+  <executable cmd="python3 $(dirname)/../scripts/silent_publisher.py" output="screen"/>
+
+  <node pkg="demo_nodes_cpp" exec="talker" name="talker" namespace="/silent_test" output="screen"/>
+</launch>
