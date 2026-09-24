@@ -17,6 +17,13 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0055** -- an action's `server:`/`client:` refs go through
+`qualify_endpoint_ref` and never consult the launch dump's identity map, so
+they are scope-qualified with no reconciliation at all. Worse than #0048,
+which at least looked the name up first: here the right answer is available
+and nothing reads it, and #0048's new diagnostic cannot fire because the site
+never calls the function that emits it. See `0055-*`.
+
 **#0054** -- four `manifest_check` tests fail against a current binary: three
 assert that a `miss:` declaration reaches the model as `deadline_policy` (it
 does not -- which re-opens the nano-ros seam phase 68 W5 closed, since they
