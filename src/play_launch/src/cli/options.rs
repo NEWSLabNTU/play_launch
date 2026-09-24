@@ -758,6 +758,11 @@ pub struct ContractOptions {
     /// a non-`off` mode warns; under `strict` it is an error before the
     /// first spawn, because a gate with no event source is green for the
     /// wrong reason.
+    ///
+    /// NOT AVAILABLE ON `run` (issue #0045): contracts are keyed by launch
+    /// file and `run` names a package and an executable, so none can
+    /// resolve. Writing any mode but `off` there is an error rather than a
+    /// flag that is accepted and then ignored.
     #[arg(long, value_enum, default_value = "warn")]
     pub enforce_rules: EnforceMode,
 

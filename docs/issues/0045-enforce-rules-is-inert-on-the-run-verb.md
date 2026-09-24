@@ -1,7 +1,8 @@
 ---
 id: 45
 title: "`--enforce-rules` is accepted by `run` and does nothing — `run` never builds a RuleEngine"
-status: open
+status: resolved
+resolved_in: fix(#0045) on main, 2026-09-24
 type: correctness
 severity: medium
 ---
@@ -62,6 +63,50 @@ Either make it work or make it say it does not:
 
 `docs/guide/runtime-enforcement.md` states the inertness under Limits, so a
 reader who finds the guide is not misled today. The flag itself still is.
+
+## Fix
+
+**Refused**, because the awkward part turned out to be the whole question and
+it has a structural answer. A contract is LOCATED by launch file —
+`<overlay>/<pkg>/launch/<stem>.contract.yaml`, or the sidecar beside the
+launch file (`manifest_loader::ContractChannel`, and there are only those
+two) — and `run` names a package and an executable, so neither channel has a
+key to look one up with. `run` resolves no `ContractView` today and could not
+be given one without inventing a third channel that `check`, `resolve` and
+`contract eject` know nothing about: a contract enforceable at runtime and
+unverifiable statically. `run --check` already prints this same fact about
+its own contract step.
+
+So `commands/run.rs` refuses an EXPLICIT non-`off` mode before anything is
+created — ahead of `create_log_dir`, so a refusal leaves no half-written
+bundle and no moved `latest` (issue #0023), the placement phase 79 chose for
+the same reason. The message names the mode as the CLI spells it, the reason,
+and the two ways out (a one-node launch file under `launch`/`up`, or
+`--enforce-rules off`).
+
+Explicit is the load-bearing word: `enforce_rules` defaults to `Warn`, so
+refusing the VALUE would reject every plain `play_launch run`. The question
+"did the user type it?" is put to clap (`ValueSource` from a re-parse of the
+same argv), not to a scan of `std::env::args()` — after a `--`, `run pkg exe
+-- --enforce-rules strict` passes those tokens to the NODE, and a textual
+scan would refuse a command that never addressed play_launch. (Without the
+`--`, clap takes the flag for itself even when it follows the executable;
+measured, and pinned by a test.)
+
+Pinned by `commands::run::enforcement_refusal_tests` (4, the predicate and
+the message) and `tests/tests/run_enforce.rs` (6): the issue's own
+invocation exits non-zero having created no `play_log`, all three enforcing
+modes and the `=` spelling are refused, and a plain run, an explicit `off`
+and a flag passed through to the node are not.
+
+Two corrections to this report. `check_enforcement_has_event_source` does not
+exist under that name — phase 79's precondition is an inline block in
+`up::play` (`up.rs:297-375`) with no separate function, which is why it has
+one call site. And `run` does not merely skip the interception half of
+`load_runtime_config`: it never reads `runtime_config.interception` at all,
+so `--interception on` is inert there too. That one is left open on purpose —
+interception needs no contract, so wiring it into `run` would ADD a
+capability rather than remove a false claim, and is a separate change.
 
 ## Provenance
 

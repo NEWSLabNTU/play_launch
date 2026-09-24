@@ -28,8 +28,96 @@ const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from
 /// Interval for polling child process status during shutdown
 const SHUTDOWN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// Issue #0045 — `--enforce-rules` used to be accepted here and do nothing.
+///
+/// The flag lives on `CommonOptions`, so every verb parses it, but only the
+/// launch-tree verbs can act on it: a contract is LOCATED by launch file
+/// (`<overlay>/<pkg>/launch/<stem>.contract.yaml`, or the sidecar beside the
+/// launch file — `manifest_loader::ContractChannel`), and `run` names a
+/// package and an executable, so no channel has a key to look one up with.
+/// Same structural fact `run --check` already prints out loud.
+///
+/// So this is a refusal rather than a wiring job: with no contract there is
+/// no `ContractView`, hence no rule with anything to say, and a strict run
+/// that measures nothing would exit 0 for the wrong reason — the shape phase
+/// 79 spent three waves removing from `launch`/`up`.
+///
+/// Only an EXPLICIT mode is refused. `enforce_rules` defaults to `Warn`, so
+/// refusing the value alone would reject every plain `play_launch run`.
+fn refuse_unsupported_enforcement(args: &cli::options::RunArgs) -> eyre::Result<()> {
+    let mode = args.common.contract_opts.enforce_rules;
+    if !enforcement_is_refused(mode, enforce_rules_given_on_argv(mode)) {
+        if !matches!(mode, cli::options::EnforceMode::Off) {
+            debug!(
+                "--enforce-rules {mode:?} (default): `run` resolves no contract, so no runtime \
+                 rule is evaluated"
+            );
+        }
+        return Ok(());
+    }
+    Err(eyre::eyre!("{}", enforcement_refusal(mode)))
+}
+
+/// The predicate, apart from where its inputs come from.
+fn enforcement_is_refused(mode: cli::options::EnforceMode, explicit: bool) -> bool {
+    explicit && !matches!(mode, cli::options::EnforceMode::Off)
+}
+
+/// Did the user type `--enforce-rules`, or is this clap's default?
+///
+/// Asked of clap rather than of `std::env::args()` directly, because `run`'s
+/// node arguments are `trailing_var_arg`: in `run pkg exe -- --enforce-rules
+/// strict` those two tokens belong to the NODE, and a textual scan would
+/// refuse a command that never addressed play_launch at all. (Without the
+/// `--`, clap takes the flag for itself — measured, not assumed.) Re-parsing
+/// the same argv the process already parsed successfully is cheap and gives
+/// the exact answer.
+fn enforce_rules_given_on_argv(mode: cli::options::EnforceMode) -> bool {
+    use clap::{CommandFactory, parser::ValueSource};
+
+    match cli::options::Options::command().try_get_matches_from(std::env::args_os()) {
+        Ok(matches) => matches
+            .subcommand_matches("run")
+            .and_then(|m| m.value_source("enforce_rules"))
+            .is_some_and(|source| source != ValueSource::DefaultValue),
+        // Unreachable in practice (this argv already parsed once). Fall back
+        // to the one thing that needs no parser: a value that is not the
+        // default cannot have come from anywhere but the command line. Erring
+        // this way keeps a plain `run` working, which erring the other way
+        // would not.
+        Err(_) => mode != cli::options::EnforceMode::Warn,
+    }
+}
+
+fn enforcement_refusal(mode: cli::options::EnforceMode) -> String {
+    use clap::ValueEnum;
+    // The mode as the user must SPELL it (`record-only`, not `RecordOnly`),
+    // taken from clap so a rename cannot leave this message behind.
+    let spelling = mode
+        .to_possible_value()
+        .map(|v| v.get_name().to_string())
+        .unwrap_or_else(|| format!("{mode:?}").to_lowercase());
+    format!(
+        "--enforce-rules {} is not available on `run`: a contract is located by launch file \
+         (<pkg>/launch/<stem>.contract.yaml, in the --contracts overlay or shipped beside the \
+         launch file) and `run` names a package and an executable, so no contract can resolve, \
+         no rule engine is built and no runtime rule can fire. A run that measures nothing must \
+         not report a pass.\n\
+         \n\
+         To enforce contracts on this node, put it in a one-node launch file and use \
+         `play_launch launch` (or `resolve` then `up`), which resolve contracts and enforce \
+         them. To run it unenforced, pass `--enforce-rules off`.",
+        spelling,
+    )
+}
+
 pub fn handle_run(args: &cli::options::RunArgs) -> eyre::Result<()> {
     use ros_launch_resolve::ros::launch_dump::{LaunchDump, NodeRecord};
+
+    // Before anything is created: a refusal must leave no half-written
+    // bundle and no moved `latest` (issue #0023), the same reason phase 79
+    // judges its own precondition ahead of `create_log_dir`.
+    refuse_unsupported_enforcement(args)?;
 
     info!("Running single node: {} {}", args.package, args.executable);
 
@@ -730,4 +818,59 @@ async fn handle_shutdown_simple(
     }
 
     result
+}
+
+#[cfg(test)]
+mod enforcement_refusal_tests {
+    //! Issue #0045. The flag is on `CommonOptions`, so `run` parses it
+    //! whatever it can do with it; these pin WHICH invocations it refuses.
+
+    use super::*;
+    use cli::options::EnforceMode;
+
+    /// The default (`warn`, not typed) must never refuse — every plain
+    /// `play_launch run` carries it.
+    #[test]
+    fn default_mode_is_not_refused() {
+        assert!(!enforcement_is_refused(EnforceMode::Warn, false));
+        assert!(!enforcement_is_refused(EnforceMode::Strict, false));
+    }
+
+    /// `--enforce-rules off` is the documented way to say "run it
+    /// unenforced", so typing it must not be an error.
+    #[test]
+    fn explicit_off_is_not_refused() {
+        assert!(!enforcement_is_refused(EnforceMode::Off, true));
+    }
+
+    #[test]
+    fn every_other_explicit_mode_is_refused() {
+        for mode in [
+            EnforceMode::Warn,
+            EnforceMode::Strict,
+            EnforceMode::RecordOnly,
+        ] {
+            assert!(
+                enforcement_is_refused(mode, true),
+                "{mode:?} was accepted and would then be ignored"
+            );
+        }
+    }
+
+    /// The message has to name the mode as the user spelled it, say why no
+    /// contract can resolve, and name the way out — a refusal that only says
+    /// "no" sends the reader to the source.
+    #[test]
+    fn the_refusal_names_the_mode_the_reason_and_the_alternative() {
+        let msg = enforcement_refusal(EnforceMode::Strict);
+        assert!(msg.contains("--enforce-rules strict"), "{msg}");
+        assert!(msg.contains("launch file"), "{msg}");
+        assert!(msg.contains("play_launch launch"), "{msg}");
+        assert!(msg.contains("--enforce-rules off"), "{msg}");
+        assert!(
+            enforcement_refusal(EnforceMode::RecordOnly).contains("--enforce-rules record-only"),
+            "the mode must be spelled the way the CLI takes it, not the way \
+             Rust names the variant"
+        );
+    }
 }
