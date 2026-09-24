@@ -1,7 +1,9 @@
 # Linux Scheduling Apply-Layer — Design
 
 **Date:** 2026-07-06
-**Status:** Implemented (38.1–38.8) + composable scheduling (38.9) — see `docs/roadmap/phase-38-linux_rt_scheduling.md`. NOTE: the "no composable-node scheduling" non-goal below was v1-only; 38.9 lifted it (composables are scheduled in `isolated` mode via `ComponentEvent.pid`).
+**Status:** **SUPERSEDED** — a record of what was decided on 2026-07-06, kept unedited below. Implemented at the time (38.1–38.8) + composable scheduling (38.9); see `docs/roadmap/phase-38-linux_rt_scheduling.md`. NOTE: the "no composable-node scheduling" non-goal below was v1-only; 38.9 lifted it (composables are scheduled in `isolated` mode via `ComponentEvent.pid`).
+**Superseded by:** `2026-08-10-linux-sched-feature-surface-design.md` (the apply mechanisms) and `2026-07-16-rt-config-v2-design.md` (the config surface it applies).
+**Do not read this as current.** Phase 60 reversed every mechanism claim below: the syscall is `sched_setattr(2)`, not `libc::sched_setscheduler` (§Mechanisms, §Non-goals, §the `Fifo`/`Rr` apply path); `SCHED_DEADLINE` IS derived and applied under `reservations: required`, with `SCHED_FLAG_RESET_ON_FORK` and a cgroup v2 cpuset partition precondition; and `record.json`, which this design's plan-building reads, was hard-removed in phase 47 (the artifact is `system_model.yaml`). Current user-facing documentation: `docs/guide/rt-scheduling.md` §1.2.2 and §2.
 **Repo:** `play_launch` (Linux)
 **Builds on:** `ros-launch-manifest-sched` crate + `check --sched` (validate-now).
 Design of record for the spec itself:

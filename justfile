@@ -1092,6 +1092,80 @@ check:
     echo "=== Contract field census (nothing new went unread) ==="
     just check-field-census
 
+    echo ""
+    echo "=== RT scheduling doc drift (issue #0036) ==="
+    just check-rt-docs
+
+# Issue #0036: fail when the user-facing docs or help text drift back to the
+# phase-38 world. Same shape as the #0015 gate in `commands/cap_status.rs`
+# (which greps its own runtime messages for a recommendation they must never
+# make): a claim that is FALSE is worse than one that is missing, because a
+# reader acts on it — they `sudo` when `play_launch setcap` was the answer, or
+# they never try a reservation because a guide told them it does not exist.
+#
+# Scope is deliberately narrow: what a USER reads. `docs/guide/` plus the two
+# CLIs' clap definitions. Roadmap entries and dated specs are excluded on
+# purpose — they are records of what was decided then, and stamping them
+# superseded is the right fix there, not rewriting them.
+#
+# Each pattern is tight rather than clever. A loose "needs root" would fire on
+# `scripts/provision_rt_cpuset.sh`, which genuinely does need root, and a gate
+# that cries wolf gets deleted.
+check-rt-docs:
+    #!/usr/bin/env bash
+    set -uo pipefail
+
+    scope=(docs/guide src/play_launch/src/cli src/ros-launch-resolve/cli/src)
+    fail=0
+
+    # $4 (optional) exempts lines that match it. Explaining why a mechanism was
+    # REPLACED is the opposite of drifting back to it, and a gate that forbids
+    # naming the old thing forbids the explanation too.
+    check() {
+        local label="$1" pattern="$2" why="$3" exempt="${4:-}"
+        local hits
+        hits=$(grep -rniE "$pattern" "${scope[@]}" 2>/dev/null || true)
+        if [ -n "$hits" ] && [ -n "$exempt" ]; then
+            hits=$(printf '%s\n' "$hits" | grep -viE "$exempt" || true)
+        fi
+        if [ -n "$hits" ]; then
+            echo "FAIL: $label"
+            echo "$hits" | sed 's/^/    /'
+            echo "  why: $why"
+            echo ""
+            fail=1
+        fi
+    }
+
+    # The apply layer is sched_setattr(2) (src/play_launch/src/sched.rs:11-13).
+    # sched_setscheduler(2) cannot express SCHED_DEADLINE, uclamp, or any
+    # sched_flags value -- which is the whole reason the syscall was changed.
+    check "the apply layer does not call sched_setscheduler(2)" \
+        'sched_setscheduler' \
+        "the policy syscall is sched_setattr(2); see docs/guide/rt-scheduling.md 2.4" \
+        'sched_setattr|(not|never|rather than|instead of) .{0,20}sched_setscheduler'
+
+    # RT scheduling is applied through play_launch_rt_helper (CAP_SYS_NICE),
+    # granted by `play_launch setcap`. Root is only the fallback when no helper
+    # is capped. This pattern requires the claim to be adjacent -- "not root"
+    # and "no root/sudo needed" are the truthful phrasings and must still pass.
+    check "RT scheduling is not claimed to need root" \
+        '(\brt\b|real-?time|--sched|scheduling|SCHED_)[^.]{0,60}(needs|requires|need|require) (root|sudo)' \
+        "RT applies through the capped play_launch_rt_helper; root is the fallback"
+
+    # Phase 60 shipped SCHED_DEADLINE (SchedPolicy::Deadline + Reservation
+    # { runtime, deadline, period }), under `reservations: required`.
+    check "SCHED_DEADLINE is not claimed to be unapplied" \
+        'SCHED_DEADLINE[^.]{0,40}(is )?(not|never)( yet)? (applied|implemented|supported|available)|no SCHED_DEADLINE|SCHED_DEADLINE[^.]{0,30}(deferred|not yet)' \
+        "phase 60 derives and applies it; see docs/guide/rt-scheduling.md 1.2.2"
+
+    if [ "$fail" -ne 0 ]; then
+        echo "RT scheduling documentation has drifted from the code (issue #0036)."
+        echo "Fix the text, or -- if the CODE changed -- update this gate with it."
+        exit 1
+    fi
+    echo "  ok: 3 claims checked across ${#scope[@]} paths"
+
 # Phase 70: fail when a contract field becomes one that NOTHING reads.
 #
 # The grammar table says which keys are legal. It cannot say which are acted

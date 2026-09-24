@@ -1,10 +1,70 @@
 ---
 id: 36
 title: "help text and guides still describe the phase-38 apply layer and never mention the runtime monitor"
-status: open
+status: resolved
 type: tech-debt
 severity: low
 ---
+
+## Resolution (2026-09-25)
+
+All seven items fixed, and a gate added so the drift fails a build rather than
+waiting to be re-found by hand.
+
+- **1** (`setcap --help`): now names both capabilities it grants and says RT is
+  applied THROUGH the capped helper, with root as the fallback when none is.
+- **2** (§2.4): `sched_setattr(2)` / `sched_setaffinity(2)`, plus a bullet on
+  why the older call cannot carry `SCHED_DEADLINE`, uclamp or
+  `SCHED_FLAG_RESET_ON_FORK`.
+- **3** (§2.5): the false claim is replaced by what is true, and a new **§1.2.2
+  `reservations:`** documents the whole feature — `runtime`/`deadline`/`period`
+  derivation, the container and per-thread exemptions, the cgroup v2 cpuset
+  partition `execution/cpuset.rs` refuses without, and phase 60 W8's measured
+  verdict that reservations LOSE to `SCHED_FIFO` on vanilla `rclcpp`. (The
+  issue said §1 already documented `reservations: required`; it did not — the
+  word appeared nowhere in the guide.)
+- **4** (07-01, 07-06): status lines stamped SUPERSEDED, naming 2026-07-16
+  (authoring model) and 2026-08-10 (apply mechanisms), and listing which body
+  claims are reversed. Bodies unedited — a spec is a record of what was decided
+  then.
+- **5** (07-16): status flipped to Implemented; `replay` → `launch`/`run`, with
+  an as-built note that `up` does not consult the channels at all.
+- **6/7**: covered by 4 and 5. `docs/roadmap/README.md`'s phase-38 entry now
+  marks "`SCHED_DEADLINE` deferred" as phase-38 history.
+- **Item 4 of the symptom list** (`--enforce-rules` guide) was done earlier:
+  `docs/guide/runtime-enforcement.md`.
+
+**The gate: `just check-rt-docs`**, wired into `just check` after
+`check-field-census`. It greps `docs/guide/`, `src/play_launch/src/cli/` and
+`src/ros-launch-resolve/cli/src/` — what a USER reads — for three claims, and
+fails naming the file, line and why:
+
+1. `sched_setscheduler` (exempting lines that say it is *not* what is used, so
+   the explanation stays legal),
+2. a scheduling-adjacent `(needs|requires) (root|sudo)`,
+3. `SCHED_DEADLINE` described as not applied / deferred.
+
+Roadmap entries and dated specs are deliberately OUT of scope: stamping them
+superseded is the right fix there, not rewriting them. Verified in both
+directions — appending each original stale sentence to the guide makes the gate
+fail with that sentence quoted.
+
+**Found beyond the issue's list** (all fixed in the guide): the §1.3 `--explain`
+example showed two 100 Hz nodes at *unequal* priorities, which is the
+pre-`v0.1.38` behaviour — the simple mappers now collapse an exact tie into one
+tier at one priority, with `SCHED_RR` or an unmitigated-tie warning deciding
+what a tie means (§1.1 now states this, and the `rr_timeslice` fact it reads);
+the same example ranked `filter_component` by a rate `rate_monotonic` has not
+ranked by since Phase 78; and every `ros-launch-manifest` doc link pointed at
+`v0.1.35` while `Cargo.toml` pins `v0.1.43`, with `scheduling.md#toml-schema` a
+dead anchor (the heading is `Legacy v1 Schema (system.toml)`).
+
+**Left alone, outside this task's scope** — two internal comments in
+`src/ros-launch-resolve/` still describe the phase-38 world:
+`resolve/src/config.rs:23` ("ACTUALLY applying it is `sched_setscheduler`") and
+`resolve/src/ros/sched_loader.rs:4` ("do not (yet) apply
+`sched_setscheduler`/affinity"), the latter in the very file that now derives
+reservations. Not user-visible, so the gate does not cover them.
 
 # 0036 - what `--help` and `docs/guide` say about scheduling and enforcement is one or two phases behind the code
 

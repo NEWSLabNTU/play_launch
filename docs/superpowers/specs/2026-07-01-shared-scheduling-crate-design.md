@@ -1,7 +1,9 @@
 # Shared Scheduling Crate — Design
 
 **Date:** 2026-07-01
-**Status:** Implemented (Linux side) + merged to `main`. This doc is updated to reflect as-built where the implementation refined the original design (resolver signature, conflict semantics).
+**Status:** **SUPERSEDED** — a record of what was decided on 2026-07-01, kept unedited below. Implemented (Linux side) + merged to `main` at the time, and updated then to reflect as-built where the implementation refined the original design (resolver signature, conflict semantics).
+**Superseded by:** `2026-07-16-rt-config-v2-design.md` (the authoring model: a named mapper DERIVES priorities; TOML tiers survive only as the legacy `manual` bridge) and `2026-08-10-linux-sched-feature-surface-design.md` (the apply mechanisms: the syscall is `sched_setattr(2)`, and `SCHED_DEADLINE`/uclamp/`sched_flags` are expressible).
+**Do not read this as current.** Three things below are no longer true: phase 2 applies via `sched_setattr(2)`, not `sched_setscheduler(2)`; `record.json` was hard-removed in phase 47 (the artifact is `system_model.yaml`); and hand-written TOML tiers are the deprecated `manual` bridge, not the authoring model. Current user-facing documentation: `docs/guide/rt-scheduling.md`.
 **Repos:** `play_launch` (Linux) + `nano-ros` (RTOS)
 
 ## Goal

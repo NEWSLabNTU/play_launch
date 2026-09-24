@@ -1,7 +1,7 @@
 # RT Config v2 — Derived Scheduling — Design
 
 **Date:** 2026-07-16
-**Status:** Approved (design), pending implementation
+**Status:** **Implemented** — shipped in Phase 41 (`docs/roadmap/phase-41-rt_config_v2.md`); this remains the design of record for the AUTHORING model (mapper + `resources:` + `overrides:`, and the provider/overlay/explicit channels). The APPLY mechanisms it assumed were later widened by `2026-08-10-linux-sched-feature-surface-design.md` (phase 60): `sched_setattr(2)` rather than `sched_setscheduler(2)`, plus `SCHED_DEADLINE` reservations, uclamp and typed placement. User-facing documentation: `docs/guide/rt-scheduling.md`.
 **Repo:** `play_launch` (+ `src/ros-launch-manifest` sched crate; nano-ros consumes the crate)
 **Supersedes-in-part:** `2026-07-01-shared-scheduling-crate-design.md` (tier authoring model), Phase 38 config surface (apply layer itself unchanged).
 
@@ -116,7 +116,10 @@ codegen passes its board target). Overlay overrides provider only for the
 same target — a user Zephyr file never shadows a provider POSIX file.
 
 **Auto-apply at launch (decision 2026-07-16):** when `--sched` is absent,
-launch/replay resolve the platform file through the channels and APPLY it.
+`launch`/`run` resolve the platform file through the channels and APPLY it.
+[As-built correction: `replay` was renamed `up` in 0.9.0, and `up` does NOT
+consult the channels — it applies the tiers already baked into the model at
+resolve time. The channel-resolving run verbs are `launch` and `run`.]
 The provider sidecar is the vendor's shipped default and is trusted — RT
 works out of the box on installed systems. The overlay exists to fill gaps
 (vendor ships no config, or none for your target/board) and to tweak vendor

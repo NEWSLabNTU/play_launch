@@ -1,9 +1,11 @@
 # Real-Time Scheduling Guide
 
 `play_launch` can apply Linux real-time scheduling — `SCHED_FIFO`/`SCHED_RR`
-policy, RT priority, and CPU affinity — to every process it launches, driven
-by a portable scheduling spec. It works **without root**: the privileged
-syscalls are delegated to a small capability-holding helper.
+policy, RT priority, CPU affinity, utilization clamps, and (since phase 60)
+`SCHED_DEADLINE` reservations — to every process it launches, driven by a
+portable scheduling spec. It works **without root**: the privileged syscalls
+(`sched_setattr(2)`, `sched_setaffinity(2)`) are delegated to a small
+capability-holding helper, granted by `play_launch setcap`.
 
 Since Phase 41, the recommended model is **derive + override**: a named
 mapper derives priorities from your launch file + contract's declared rates
@@ -153,11 +155,42 @@ end-to-end budget you state gets `scope-budget` /
 declared, `chain_aware` degrades to exactly the criticality-RM/DM fallback
 (§1.7) — it's a safe default even before you've stated a budget.
 
-All derived mappers spread ranked nodes linearly across
+All derived mappers spread the ranking linearly across
 `resources.rt_priority_band`; a node with no matching fact (no timer path
 for `rate_monotonic`, no declared path for `deadline_monotonic`, not on a
 chain and fact-less for `chain_aware`) falls into the **default tier** —
 `SCHED_OTHER`, unscheduled, reported as such by `--explain`.
+
+**The band is spread over distinct FACTS, not over nodes** (the tie-collapse
+rule; since manifest `v0.1.38` this is how the simple mappers behave too).
+Nodes whose ranking fact is *exactly* equal — two 100 Hz timers, two 20 ms
+deadlines — collapse into **one tier at one priority**, named after the fact
+they share (`rate_hz=100`) rather than after one member. Four nodes at two
+rates therefore take two levels of the band, not four. Equality is exact and on
+the value as declared: 30 Hz and 30.000001 Hz do not tie, and nothing is
+rounded into one — the collapse states a fact the contract already carries, and
+a tolerance would invent one it does not. The earlier behaviour spread equal
+periods to *unequal* priorities broken by node name, which is an ordering
+rate-monotonic theory does not license and the contract never stated.
+
+A tier holding more than one node then needs an answer to what a tie *means*
+under Linux. Under `SCHED_FIFO` equal priority means one node can starve the
+others, so a tied tier takes `SCHED_RR` where the host's global timeslice is
+actually shorter than the tied nodes' shortest period — and where it is not, it
+stays `SCHED_FIFO` and `check` warns, naming both numbers and why round-robin
+was declined. The slice is a platform fact you declare, because on Linux it is
+a global sysctl (`/proc/sys/kernel/sched_rr_timeslice_ms`) that no per-task
+field can express:
+
+```yaml
+resources:
+  rr_timeslice: 100ms       # absent means UNKNOWN — RR is then not derived at all
+```
+
+Absent is read as unknown rather than as the 100 ms default, deliberately: at
+100 ms two tied 10 Hz nodes get a slice as long as their whole period, so RR
+degenerates to FIFO while looking like it fixed the starvation. Break a tie you
+care about with an `overrides:` pin (§1.2), which always wins.
 
 Add a per-node `criticality: high | medium | low` hint to the **contract**
 (not the platform file) if you want to record which nodes matter most — it's
@@ -250,6 +283,89 @@ Paths that could not be measured are listed with the reason rather than left
 out, because a missing path reads as a path that costs nothing. Timer-triggered
 paths are the common case: they have no input take to measure from.
 
+### 1.2.2 `reservations:` — `SCHED_DEADLINE`, and why you probably don't want it
+
+Phase 60 made the reservation policy real: with `reservations: required` beside
+`mapper:` in the platform file, the resolver turns the real-time band's tiers
+into `SCHED_DEADLINE` reservations instead of fixed priorities.
+
+```yaml
+target: posix
+mapper: chain_aware
+reservations: required          # default: off
+resources:
+  rt_priority_band: { min: 10, max: 40 }
+overrides:
+  obstacle_detector: { budget_us: 8081 }     # the runtime — measured, §1.2.1
+```
+
+The three parameters are derived, not written:
+
+| parameter | derived from |
+|---|---|
+| `runtime` | the node's declared `budget_us` — the **only** legitimate source. A deadline is not a cost |
+| `period` | `1/rate_hz`, propagated along the node's chain from that chain's source |
+| `deadline` | the declared deadline, else the period |
+
+`reservations:` sits beside `mapper:` rather than in `resources:` because it is
+**policy, not a platform fact**, and it is opt-in because reservations are
+all-or-nothing within a band: a reserved thread preempts every fixed-priority
+thread regardless of priority, so a band holding both loses the ordering the
+mapper just computed. A node in the RT band that carries a timing fact but no
+`budget_us` is therefore an error under `required`, naming the nodes — not a
+silent fallback.
+
+Two exemptions and one refusal, all deliberate:
+
+- **Containers are exempt** and keep `SCHED_FIFO`. `--container-mode isolated`
+  is the default, so without this nearly every real system would hard-error on
+  a container shell that has no timing facts of its own.
+- **A reservation is per-thread.** `play_launch` reserves the thread-group
+  leader and leaves siblings on `SCHED_FIFO`; sweeping an 8 ms/100 ms budget
+  across a ROS node's ~11 threads would ask admission control for 88 % of a
+  CPU. This is unsound for a node whose paths genuinely run concurrently, and
+  it is refused where that is detectable (`concurrency:` in the contract).
+- **A CPU pin and a reservation are mutually exclusive.** `SCHED_DEADLINE`
+  refuses an affinity mask narrower than its root domain, so a derived
+  reservation drops any `core:`/`cpus:` pin, with a warning.
+
+**The cpuset precondition — `play_launch` creates nothing.** Because of that
+same affinity rule, confining reserved nodes to a CPU subset requires a
+restricted *root domain*: an exclusive cgroup v2 cpuset **partition**, which
+validates only as a **top-level** cgroup, and which nothing can migrate into
+(cgroup v2's common-ancestor rule) — a process must be *started* inside one.
+`src/play_launch/src/execution/cpuset.rs` is read-only: it walks this process's
+cgroup ancestors, checks the partition **by reading `cpuset.cpus.partition`
+back** (writing `root` can succeed and read back `root invalid`, leaving a task
+on the full root domain with no isolation at all), and refuses with a message
+naming the reason when there is none. `play_launch verify` reports the state.
+Provisioning is an operator job, done out of band — and because nothing can
+migrate *into* a partition, the script is a **launcher**: it creates the
+top-level partition and starts your command inside it.
+
+```bash
+sudo scripts/provision_rt_cpuset.sh --cpus 2,3 --user "$SUDO_USER" -- \
+    play_launch up system_model.yaml
+```
+
+An exclusive partition removes those CPUs from every other cgroup on the
+machine for as long as it exists — on a shared host, pick CPUs nobody else
+depends on, or test inside a container.
+
+> **Measured, and the opposite of what you would expect: reservations LOSE.**
+> Phase 60 W8 ran three arms of `examples/rt_av_demo/` on one CPU against a
+> 60 ms deadline — RT off **217/1013** frames missed, `SCHED_FIFO` **9/1030**,
+> `SCHED_DEADLINE` **42/1038** — while costing best-effort throughput −16 %
+> (FIFO) versus −5 % (DEADLINE). Reservations return most of the throughput and
+> give up most of the determinism. "The budgets are too small" was tested and
+> rejected: larger budgets were *worse*. The cause is a model mismatch — CBS
+> assumes a sporadic release, and an `rclcpp::spin()` event loop is not one. So
+> `reservations: off` (the default) with `SCHED_FIFO` is the recommended
+> configuration on vanilla `rclcpp`; reserve only when you have measured your
+> own workload and it says otherwise. Full result:
+> [`docs/reports/rt-mixed-criticality/reservations-result.md`](../reports/rt-mixed-criticality/reservations-result.md).
+> Reproduce with `sudo -E just ab3` in `examples/rt_av_demo/`.
+
 ### 1.3 `--explain` — the merged view
 
 ```bash
@@ -257,15 +373,26 @@ play_launch check --sched launch/bringup.system.posix.yaml --explain \
     rt_demo bringup.launch.xml
 ```
 
+Shape of the output (this one under `mapper: rate_monotonic`; §1.7 step 4 shows
+the committed `chain_aware` run):
+
 ```
 FQN                               CLASS        PRIO  CORE  PROVENANCE
-/perception/filter_component      SCHED_FIFO     25     -  derived(rate_monotonic: 100 Hz → prio 25)
+/perception/sensor_node           SCHED_FIFO     40     -  derived(rate_monotonic: 100 Hz → prio 40)
 /control/control_node             SCHED_FIFO     20     0  override(control_node)
-/perception/sensor_node           SCHED_FIFO     10     -  derived(rate_monotonic: 100 Hz → prio 10)
+/perception/filter_component      SCHED_OTHER     0     -  default (no timing facts)
 /perception/perception_container  SCHED_OTHER     0     -  default (no timing facts)
 system file: explicit(launch/bringup.system.posix.yaml)
 contract[scope 0, rt_demo/bringup.launch.xml]: provider(.../launch/bringup.contract.yaml)
 ```
+
+Two things this shows that surprise people. `filter_component` is *not* ranked
+by `rate_monotonic`: its path is `trigger: { input: [...] }` with no timer of
+its own, and since Phase 78 a topic's `rate_hz` or a publisher's `min_rate_hz`
+is a promise the runtime monitors read, never a rate this mapper ranks by —
+that is what `chain_aware` is for (§1.7). And had a second node declared a
+100 Hz timer, it would appear on the **same** priority as `sensor_node`, not one
+step below it (§1.1's tie-collapse rule).
 
 Every row's `PROVENANCE` column is one of:
 
@@ -434,7 +561,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
 1. **Declare node paths with explicit triggers.** Every node path the
    route will run through needs a `trigger:` — `timer`, `input`, `once`,
-   or `spontaneous` (§[Path triggers](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.35/docs/launch-manifest.md#path-triggers-trigger)
+   or `spontaneous` (§[Path triggers](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/launch-manifest.md#path-triggers-trigger)
    in the manifest format reference) — and an `output:`. A path with a
    budget of its own declares `max_latency:` (units on the value: `5ms`,
    never a `_ms` suffix in the name). This is `rt_workspace`'s contract,
@@ -471,7 +598,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    `paths:` entry in the root contract (or your overlay) names the topic
    where the requirement starts, the topic where it ends, and the budget.
    Topic names are absolute, because the nodes usually sit in different
-   namespaces (§[Cross-scope end-to-end budgets](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.35/docs/launch-manifest.md#cross-scope-end-to-end-budgets-scope-paths)):
+   namespaces (§[Cross-scope end-to-end budgets](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/launch-manifest.md#cross-scope-end-to-end-budgets-scope-paths)):
 
    ```yaml
    paths:
@@ -488,7 +615,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
    `max_jitter` is falsifiable — `play_launch measure` prints the observed
    floor for you), and `miss:` (what a missed deadline costs and what to do
    about it). The full key list is the manifest crate's generated
-   [format reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.35/docs/format-reference.md).
+   [format reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/format-reference.md).
 
 3. **`check`.** The same command validates the scope path alongside
    everything else — no path-specific flag:
@@ -521,7 +648,7 @@ mapper design](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md).
 
    The rules that grade a scope path, all cross-scope, all reported under
    `── Cross-scope diagnostics ──` (severities in the [manifest format
-   reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.35/docs/launch-manifest.md#static-validation)):
+   reference](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/launch-manifest.md#static-validation)):
 
    | rule | severity | fires when |
    |---|---|---|
@@ -691,8 +818,17 @@ play_launch  (uncapped, links ROS, runs as you)
     │  ApplySched{pid, tier}   — pipe IPC, once per process at spawn/load
     ▼
 play_launch_rt_helper  (ROS-free, holds CAP_SYS_NICE only)
-    → sched_setscheduler / sched_setaffinity on every thread of that pid
+    → sched_setattr(2) / sched_setaffinity(2) on every thread of that pid
 ```
+
+- **The policy syscall is `sched_setattr(2)`** (`src/play_launch/src/sched.rs`),
+  not `sched_setscheduler(2)`. The older call cannot express `SCHED_DEADLINE`,
+  cannot carry a utilization clamp, and has no `sched_flags` field at all — so
+  it could not set `SCHED_FLAG_RESET_ON_FORK`, which a `SCHED_DEADLINE` thread
+  must have before the kernel will let it `fork(2)`. `libc` exposes neither the
+  function nor `SYS_sched_setattr` on x86_64-gnu, so both — and the 56-byte
+  `sched_attr` (`SCHED_ATTR_SIZE_VER1`) layout — are declared in that module,
+  with a unit test pinning every field offset.
 
 - `play_launch setcap` grants `cap_sys_nice+ep` to the helper (and
   `cap_sys_ptrace+ep` to the I/O-monitoring helper). This is the supported
@@ -768,7 +904,23 @@ Kernel-level notes:
 - On kernels with `CONFIG_RT_GROUP_SCHED`, a cgroup with `rt_runtime = 0` can
   still refuse RT even with the capability — you'll see `EPERM` despite a
   correct setup.
-- `SCHED_DEADLINE` is not applied on Linux yet.
+- **`SCHED_DEADLINE` is applied** (phase 60), under `reservations: required` —
+  see §1.2.2 for how `runtime`/`deadline`/`period` are derived, the cgroup v2
+  cpuset partition it requires (and refuses clearly without), and the measured
+  result, which says fixed priority is the better trade on vanilla `rclcpp`.
+  For a reserved node the kernel ends up with: policy `SCHED_DEADLINE`,
+  `sched_runtime`/`sched_deadline`/`sched_period` in nanoseconds,
+  `SCHED_FLAG_RESET_ON_FORK` set (the kernel refuses to `fork(2)` from a
+  deadline thread without it), no affinity mask, and its sibling threads on
+  `SCHED_FIFO`.
+- `SCHED_FLAG_RESET_ON_FORK` is set **only** for `SCHED_DEADLINE`, never for
+  `SCHED_FIFO`/`SCHED_RR`: the kernel resets scheduling in `sched_fork()`,
+  which runs for *thread* creation too, so setting it on a FIFO node would undo
+  the per-thread sweep that §2.3 exists to perform. Measured, and locked by a
+  test.
+- A `uclamp_min` on an RT policy is a **no-op** — `SCHED_FIFO`/`SCHED_RR`
+  already default to 1024/1024. `check` warns rather than silently doing
+  nothing.
 
 ---
 
@@ -824,7 +976,7 @@ play_launch launch rt_demo bringup.launch.xml --sched system.toml --sched-apply 
 ```
 
 Full schema reference (tiers, placement, binding selectors, validation
-rules): [`ros-launch-manifest/docs/scheduling.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.35/docs/scheduling.md#toml-schema).
+rules): [`ros-launch-manifest/docs/scheduling.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/scheduling.md#legacy-v1-schema-systemtoml).
 
 **This path is deprecated but fully supported** — it is not going away until
 `nano-ros` migrates to the v2 schema (Phase 41.6, not yet scheduled). New
@@ -855,9 +1007,16 @@ here changes existing behavior.
 ## 6. Related documents
 
 - Design of record (v2, derived scheduling): [`docs/superpowers/specs/2026-07-16-rt-config-v2-design.md`](../superpowers/specs/2026-07-16-rt-config-v2-design.md)
-- Spec schema in depth (v1 + v2): [`ros-launch-manifest/docs/scheduling.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.35/docs/scheduling.md)
-- Design of record (apply-layer): [`docs/superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md`](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md)
+- Spec schema in depth (v1 + v2): [`ros-launch-manifest/docs/scheduling.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/scheduling.md)
+- Design of record (apply layer, current — the full Linux policy surface:
+  `sched_setattr(2)`, `SCHED_DEADLINE`, uclamp, typed placement):
+  [`docs/superpowers/specs/2026-08-10-linux-sched-feature-surface-design.md`](../superpowers/specs/2026-08-10-linux-sched-feature-surface-design.md) ·
+  Roadmap: [phase 60](../roadmap/phase-60-linux-sched-surface.md) ·
+  Measured result: [reservations vs fixed priority](../reports/rt-mixed-criticality/reservations-result.md)
+- Design of record (apply layer, **superseded** — phase 38's pre-`sched_setattr`
+  design, kept as a record of what was decided then; its status line says what
+  reversed it): [`docs/superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md`](../superpowers/specs/2026-07-06-linux-sched-apply-layer-design.md)
 - Design of record (RT helper, per-TID, capabilities): [`docs/superpowers/specs/2026-07-14-rt-helper-design.md`](../superpowers/specs/2026-07-14-rt-helper-design.md)
 - Design of record (scope paths and derived routes, §1.7): [contract primitives — facts and requirements, never consequences](../design/contract-primitives.md) · [chain-aware mapper](../superpowers/specs/2026-07-17-chain-aware-mapper-design.md) (the clock-segmented ranking; its authored-`chains:` input was superseded by the derived route) · Roadmap: [phase 67](../roadmap/phase-67-contract-primitives.md), [phase 68 §W4](../roadmap/phase-68-contract-consequences.md)
-- Manifest format reference (triggers, scope `paths:`, rule severities): [`ros-launch-manifest/docs/launch-manifest.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.35/docs/launch-manifest.md#cross-scope-end-to-end-budgets-scope-paths) · every accepted key, generated from the parser's own table: [`docs/format-reference.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.35/docs/format-reference.md)
+- Manifest format reference (triggers, scope `paths:`, rule severities): [`ros-launch-manifest/docs/launch-manifest.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/launch-manifest.md#cross-scope-end-to-end-budgets-scope-paths) · every accepted key, generated from the parser's own table: [`docs/format-reference.md`](https://github.com/NEWSLabNTU/ros-launch-manifest/blob/v0.1.43/docs/format-reference.md)
 - Roadmap and implementation history: [`docs/roadmap/phase-38-linux_rt_scheduling.md`](../roadmap/phase-38-linux_rt_scheduling.md), [`docs/roadmap/phase-41-rt_config_v2.md`](../roadmap/phase-41-rt_config_v2.md), [`docs/roadmap/phase-44-vocab_v2_chain_mapper.md`](../roadmap/phase-44-vocab_v2_chain_mapper.md)

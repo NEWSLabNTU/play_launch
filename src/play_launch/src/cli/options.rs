@@ -112,9 +112,14 @@ pub enum Command {
     Replay(UpArgs),
 
     /// Grant CAP_SYS_PTRACE to the I/O helper (for per-process I/O
-    /// monitoring). Requires sudo. NOTE: the main binary is deliberately NOT
-    /// capped — a file capability would put it in secure-execution mode and
-    /// break ROS library loading. RT scheduling (`--sched`) needs root.
+    /// monitoring) and CAP_SYS_NICE to the RT helper (for `--sched`).
+    /// Granting takes sudo once, and again after every rebuild — a file
+    /// capability is bound to the binary's exact contents. NOTE: the main
+    /// binary is deliberately NOT capped — a file capability would put it in
+    /// secure-execution mode and break ROS library loading. RT scheduling
+    /// (`--sched`) is applied THROUGH the capped helper, so the launch itself
+    /// runs unprivileged; running as root is only the fallback when no helper
+    /// is capped.
     #[command(name = "setcap")]
     Setcap,
 
