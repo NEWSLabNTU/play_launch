@@ -17,6 +17,14 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
+**#0056** -- phase 78 narrowed `MapperNode.rate_hz` to timer triggers, and
+`rate_priority_contradictions` filters on it -- so a contract stating its
+rates the way authors write them (`min_rate_hz` + topic `rate_hz`) now yields
+an empty scan, and the legacy `system.toml` bridge has reported no
+contradiction since 2026-09-22. Carries a design question: a contradiction
+check compares an author's stated intent against a hand-written table, which
+is not the ranking question phase 78 settled. See `0056-*`.
+
 **#0055** -- an action's `server:`/`client:` refs go through
 `qualify_endpoint_ref` and never consult the launch dump's identity map, so
 they are scope-qualified with no reconciliation at all. Worse than #0048,
