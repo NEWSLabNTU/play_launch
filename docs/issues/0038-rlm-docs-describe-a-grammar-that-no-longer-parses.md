@@ -1,7 +1,7 @@
 ---
 id: 38
 title: "rlm: the hand-written docs teach spellings that are parse errors at HEAD and rules that were deleted"
-status: open
+status: resolved
 type: tech-debt
 severity: low
 ---
@@ -113,3 +113,15 @@ they parse; the prose is what a newcomer reads.
 Brief A (`brief-A-rlm-grammar.md`, section 6), 2026-09-18, which has
 file:line for every item; each re-verified at rlm `origin/main` `ea5cbea`
 (worktree `rlm-gaps`) on 2026-09-21.
+
+## Resolved 2026-09-22/23 — rlm v0.1.38 and v0.1.39
+
+v0.1.38 corrected the examples and added the guard that matters:
+`sched/tests/docs_yaml.rs` parses every fenced yaml block in `README.md` and
+`docs/*.md` with the parser that owns it, so the prose cannot drift again.
+v0.1.39 then did the prose and the arithmetic, which that pass had left
+unverified — including two formulas that were stated backwards.
+
+The guard itself had a hole worth recording: it matched fences with
+`trim_end()` and no `trim_start()`, so every INDENTED fence was invisible and
+three existed. Fixed in v0.1.39; 40 blocks became 49.

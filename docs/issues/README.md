@@ -29,42 +29,20 @@ the traffic-keyed summaries, so a capture can only describe topics a run
 exercised -- 982 endpoints created versus 63 carrying a message, on one
 Autoware run. See `0047-*`.
 
-**#0045** -- `--enforce-rules` is on `CommonOptions`, so every verb accepts it,
-but `run` builds no `RuleEngine` and never checks the precondition: a strict
-`run` passes with nothing measured, which is the shape phase 79 removed from
-`launch` and `up`. See `0045-*`.
+**#0046** -- a subscriber's `max_age` cannot count toward the FDTI of a hazard
+declared `on: omission` (only the liveliness lease can), and `hazards.<h>.on`
+takes exactly one `FaultKind`, so a guard watched by both a lease and an age
+limit must drop one -- while omitting `on:` altogether counts both and buys
+slack. Filed as a design question: the partition may well be right. What is
+not in question is the `hazard-unguarded` message, which recommends `max_age`
+and `min_rate_hz` as detectors that cannot satisfy it. See `0046-*`.
 
-**#0044** -- the manifest spec documents a capture mode (`--save-manifest-dir`)
-that no binary accepts, which is the answer it gives to "how do I get a first
-contract for a system that has none". See `0044-*`.
-
-**#0041** -- `ThisLaunchFile()` in a `.launch.py` reaches the record, the model
-and the command line as the literal `$(this-launch-file)`, a token the host's
-substitution grammar does not know (it has only `dirname` and `filename`). Same
-family as the `$(dirname)` residual closed in `archived/0034-*`, and the
-parameter-file case has the same silent shape: an unresolved path is stored
-where the file's content belongs. Needs a decision first, since ROS 2's
-`ThisLaunchFile` is a full path and our `$(filename)` is a basename. See
-`0041-*`.
-
-**#0035** -- under `--container-mode observable|stock` a composable's derived
-tier is dropped at LOADED with no message; the co-location warning covers only
-two-plus chain members. See `0035-*`.
-
-**#0036** -- `setcap --help` says RT needs root, the guide says
-`sched_setscheduler` and "DEADLINE not applied", no user guide for
-`--enforce-rules`, two specs superseded without saying so. See `0036-*`.
-
-**#0037** -- rlm: in-crate `dangling-entity` ignores topic `external:`,
-`service-wiring` ignores service `external: server`, `consistency` is a
-registered no-op. See `0037-*`.
-
-**#0038** -- rlm: hand-written docs teach `max_drop_rate`, `_ms` spellings,
-scope `pub:/sub:` blocks and chain rules that are parse errors or deleted at
-HEAD. See `0038-*`.
-
-**#0039** -- rlm: `rate_monotonic` spreads equal periods to unequal priorities
-by name where `chain_aware` collapses the tie; design question. See `0039-*`.
+**#0036** -- PARTLY done. `docs/guide/runtime-enforcement.md` now exists and
+both CLIs' `--enforce-rules` help text is corrected. Still stale:
+`docs/guide/rt-scheduling.md` says `sched_setscheduler` where the apply layer
+is `sched_setattr(2)`, and says `SCHED_DEADLINE` "is not applied on Linux
+yet" where phase 60 shipped it; `setcap --help` says RT needs root; and two
+superseded specs carry no pointer forward. See `0036-*`.
 
 ## Resolved
 

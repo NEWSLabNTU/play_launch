@@ -1,7 +1,7 @@
 ---
 id: 39
 title: "rlm: `rate_monotonic` gives two 30 Hz nodes priorities 40 and 30, by name; `chain_aware` collapses the same tie"
-status: open
+status: resolved
 type: design-question
 severity: low
 ---
@@ -86,3 +86,21 @@ Brief A (`brief-A-rlm-grammar.md`, section 4.3) and brief C (section 2.3
 and "Facts for the deck": "equal-rate nodes do not get equal priorities"),
 2026-09-18; re-verified against rlm `origin/main` `ea5cbea` (worktree
 `rlm-gaps`) on 2026-09-21.
+
+## Resolved 2026-09-22 — rlm v0.1.38, option 2
+
+`rate_monotonic` and `deadline_monotonic` collapse an exact tie into ONE tier
+carrying its members, spread over the number of DISTINCT values, and take
+`chain_aware`'s `SCHED_RR`-if-the-slice-fits decision for the tied set.
+Renaming a node no longer changes who preempts whom.
+
+Two things the issue did not anticipate. `deadline_monotonic` had the
+identical test protected by the same omission and needed the same fix. And
+`rr_policy_for_ties` had to take a period CLOSURE rather than `&MapperInput`,
+because it read periods off `node.paths`, which the two simple mappers never
+populate — so they would have seen `None` on every tie and could never have
+derived RR.
+
+Band-compression ties take the same decision, deliberately: judging a
+mapper-created tie by a different rule than a derived one would be a third
+policy.

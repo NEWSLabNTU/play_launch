@@ -1,7 +1,7 @@
 ---
 id: 35
 title: "a composable's derived priority is silently not applied under `--container-mode observable|stock`"
-status: open
+status: resolved
 type: correctness
 severity: medium
 ---
@@ -108,3 +108,19 @@ re-parse fallback needed on either path". Two comments in one call chain
 contradicting each other is why an always-silent warning read as a working
 one. Planned as phase 80
 (`docs/roadmap/phase-80-the-plan-and-what-was-applied.md`).
+
+## Resolved 2026-09-22 — phase 80
+
+`composable_tiers_not_applied()` decides before spawning: under
+`--container-mode observable|stock` every tiered composable is named in a
+warning (node, tier, priority, container, mode, and `isolated` as the remedy),
+and under `--sched-apply strict` the run refuses at the start boundary. The
+late guard stays and logs at `debug`, naming the pre-spawn warning. The
+unapplied set is recorded in `run_info.json` so `measure` cannot attribute a
+priority that was never set.
+
+Verified while fixing that the existing co-location warning is not merely
+narrow but UNREACHABLE: `SchedPlan::from_model` is `up`'s only plan source
+since 47.B3 and leaves `chain_member_nodes` empty, so the loop walks an empty
+set on every user path — and a unit test had pinned that emptiness as
+acceptable degradation. See `docs/roadmap/phase-80-the-plan-and-what-was-applied.md`.

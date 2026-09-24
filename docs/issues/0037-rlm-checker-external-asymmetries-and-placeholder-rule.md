@@ -1,7 +1,7 @@
 ---
 id: 37
 title: "rlm: `dangling-entity` ignores topic `external:`, `service-wiring` ignores service `external:`, and `consistency` is a registered no-op"
-status: open
+status: resolved
 type: correctness
 severity: medium
 ---
@@ -103,3 +103,14 @@ doc that says "20 rules" and in the `--rule` filter surface.
 Brief A (`brief-A-rlm-grammar.md`, section 3.1, rule rows 9, 11 and 13),
 2026-09-18; re-verified against rlm `origin/main` at `ea5cbea` (worktree
 `rlm-gaps`) on 2026-09-21.
+
+## Resolved 2026-09-22 — rlm v0.1.38
+
+`dangling-entity` now reads a topic's `external:` the way it already read a
+service's (and consults `external_topics:`); `service-wiring` treats
+`external: server` as served; and the registered no-op `consistency` rule is
+removed, so the registry is 19. The id stays live because the real cross-scope
+rule is the consumer's, which emits it from seven sites.
+
+Eight tests including two negative controls; verified non-vacuous by stashing
+`check/src/rules` (6 of 8 fail, both controls pass).
