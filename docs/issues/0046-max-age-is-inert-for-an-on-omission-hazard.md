@@ -3,7 +3,7 @@ id: 46
 title: "`max_age` cannot count toward the FDTI of an `on: omission` hazard, and
   `hazards.<h>.on` takes exactly one fault kind -- so a guard with both a lease
   and an age limit must choose which of the two the budget is allowed to see"
-status: open
+status: resolved
 type: design-question
 severity: medium
 ---
@@ -260,3 +260,60 @@ phase6-W5 item 3). The five runs above were made against
 scratch directory and edited one line at a time, with the 0.10.0 binary at
 `install/play_launch/lib/play_launch/play_launch`. The fixture tree itself was
 not modified.
+
+## Ruled 2026-09-25 -- phase 82 W1-W3
+
+Settled by `docs/roadmap/phase-82-what-a-detector-may-see.md`, units W1, W2
+and W3, with the grammar half in `ros-launch-manifest` v0.1.43. All three
+fix-direction items are taken, and the incentive inversion is closed by a
+rule rather than by a choice about `max_age`.
+
+**The rule.** A fault-detection interval must cover EVERY fault class the
+hazard claims, so
+
+    FDTI = max over the hazard's classes of (min over that class's mechanisms)
+
+and a claimed class with no mechanism is `hazard-unguarded` for that class.
+An omitted `on:` claims every class the guard's detectors can observe
+(omission, late, loss -- never `reported`, which only the author can know)
+and takes the max over those some detector covers. Saying less therefore
+never buys slack.
+
+**Item 3, `on:` is a set (W1).** `on: omission` and `on: [omission, late]`
+both parse in rlm v0.1.43; `on: []` is a parse error ("state at least one
+fault class or omit the key"). The three spellings in the table above now
+agree on the L4 fixture: `on: omission`, `on: [omission, late]` and `on:`
+omitted all read `detection 30.00ms` and close the 70 ms budget with 0.00 ms
+of slack. The omitted spelling read 20.00 ms before.
+
+**Item 2, the question: an age limit is a mechanism for an omission exactly
+when something evaluates it (W3).** `max_age` counts toward `omission` if and
+only if the subscriber's `on_violation.mechanism` is `diagnostics` or
+`application`: the node evaluates the age of its newest sample on its own
+clock, so it notices silence. Under `qos`, the default, only DDS liveliness
+and deadline events fire, an age checked on arrival never fires while nothing
+arrives, and counting it would be the `min_rate_hz` mistake again. Both
+arguments in "The question" above were right, and `DetectMechanism` was the
+vocabulary that separates them. Run 4 with `mechanism: application` added
+reads `detection 20.00ms` with 10.00 ms of slack -- an honest 10 ms this
+time, bought by declaring a detector rather than by declaring less.
+
+**Item 1, the message (W2).** `hazard-unguarded` names only the mechanisms
+that count for the class it reports, and then every detector the reacting
+subscribers DO declare that this hazard cannot use. `min_rate_hz` is never
+listed. Run 4 now reads:
+
+```
+error[hazard-unguarded]: hazard 'hpc_loss' guards '/si/in/heartbeat' `on:
+omission`, but no subscriber of it that declares an `on_violation` reaction
+has a detector that counts for omission -- nothing would notice. What
+counts: a QoS `lease_duration` on the subscriber or the topic. `max_age:
+20ms` is declared on '/si_hpc_supervisor/heartbeat' but counts only for `on:
+late`: under `on_violation.mechanism: qos` nothing evaluates it while no
+message arrives
+```
+
+Pinned by `tests/fixtures/contract_fault_kinds` (one hazard per rule) and
+`a_hazard_is_timed_by_the_slowest_fault_class_it_claims` in
+`tests/tests/manifest_check.rs`, and by four unit tests beside
+`detector_interval_ms`.

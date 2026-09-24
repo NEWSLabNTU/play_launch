@@ -1,0 +1,154 @@
+# Phase 82 -- what a detector may see.
+#
+# One reaction route for every hazard: the detector's declare_* path (2ms),
+# then brake_controller/emergency_stop (5ms) and its settle (200ms), so every
+# verdict below reads `+ reaction 7.00ms ... + settle 200.00ms`. What varies
+# is detection, the FDTI, and each hazard pins one rule of it:
+#
+#   scan_classes      on: [omission, late]. /safety/scan has a 100ms lease
+#                     (omission) and a 40ms deadline (late). The interval must
+#                     cover BOTH classes, so it is the max, 100ms -- not the
+#                     40ms a min over every mechanism would give.
+#   scan_unnamed      the same guard with `on:` omitted: every class the
+#                     detectors observe, the same 100ms. Saying less about the
+#                     fault does not buy 60ms of slack.
+#   imu_age_under_qos on: omission; /safety/imu declares only `max_age: 30ms`
+#                     under the default `mechanism: qos`. Nothing evaluates an
+#                     age limit while no message arrives, so the omission is
+#                     unguarded, and the message says the age limit counts
+#                     only for `on: late`.
+#   odom_age_evaluated on: omission; /safety/odom declares the same 30ms age
+#                     limit under `mechanism: application`, where the node
+#                     evaluates the age on its own clock. It notices silence:
+#                     detection 30ms.
+version: 1
+
+hazards:
+  scan_classes:
+    severity: ASIL_D
+    guards: [/safety/scan]
+    on: [omission, late]
+    ftti: 500ms
+    reaction: safety.stop
+  scan_unnamed:
+    severity: ASIL_D
+    guards: [/safety/scan]
+    ftti: 500ms
+    reaction: safety.stop
+  imu_age_under_qos:
+    severity: ASIL_D
+    guards: [/safety/imu]
+    on: omission
+    ftti: 500ms
+    reaction: safety.stop
+  odom_age_evaluated:
+    severity: ASIL_D
+    guards: [/safety/odom]
+    on: omission
+    ftti: 500ms
+    reaction: safety.stop
+
+nodes:
+  lidar_driver:
+    pub:
+      scan: {}
+      imu: {}
+      odom: {}
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [scan, imu, odom]
+        max_latency: 2ms
+
+  obstacle_detector:
+    sub:
+      scan:
+        min_rate_hz: 50
+        qos: { liveliness: manual_by_topic, lease_duration: 100ms, deadline: 40ms }
+        on_violation:
+          on: [omission, late]
+          reaction: declare_scan_lost
+          within: 10ms
+      imu:
+        min_rate_hz: 50
+        max_age: 30ms
+        on_violation:
+          on: [omission]
+          reaction: declare_imu_lost
+          within: 10ms
+      odom:
+        min_rate_hz: 50
+        max_age: 30ms
+        on_violation:
+          on: [omission]
+          reaction: declare_odom_lost
+          within: 10ms
+          mechanism: application
+    pub:
+      obstacles: {}
+    paths:
+      detect:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 12ms
+      declare_scan_lost:
+        trigger: { input: [scan] }
+        output: [obstacles]
+        max_latency: 2ms
+      declare_imu_lost:
+        trigger: { input: [imu] }
+        output: [obstacles]
+        max_latency: 2ms
+      declare_odom_lost:
+        trigger: { input: [odom] }
+        output: [obstacles]
+        max_latency: 2ms
+
+  brake_controller:
+    sub:
+      obstacles:
+        max_age: 60ms
+        on_violation:
+          on: [late, omission]
+          reaction: emergency_stop
+          within: 20ms
+    pub:
+      brake_cmd: {}
+    paths:
+      brake:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 8ms
+      emergency_stop:
+        trigger: { input: [obstacles] }
+        output: [brake_cmd]
+        max_latency: 5ms
+        safe_state: { emits: brake_cmd, settle: 200ms }
+
+paths:
+  safety.stop:
+    trigger: { input: [/safety/scan] }
+    output: [/safety/brake_cmd]
+    max_latency: 100ms
+
+topics:
+  /safety/scan:
+    type: std_msgs/msg/String
+    pub: [lidar_driver/scan]
+    sub: [obstacle_detector/scan]
+  /safety/imu:
+    type: std_msgs/msg/String
+    pub: [lidar_driver/imu]
+    sub: [obstacle_detector/imu]
+  /safety/odom:
+    type: std_msgs/msg/String
+    pub: [lidar_driver/odom]
+    sub: [obstacle_detector/odom]
+  /safety/obstacles:
+    type: std_msgs/msg/String
+    pub: [obstacle_detector/obstacles]
+    sub: [brake_controller/obstacles]
+  /safety/brake_cmd:
+    type: std_msgs/msg/String
+    external: sub
+    pub: [brake_controller/brake_cmd]

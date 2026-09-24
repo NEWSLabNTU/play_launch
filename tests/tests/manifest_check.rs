@@ -1110,6 +1110,64 @@ fn a_server_that_latches_the_request_is_a_sampling_hop() {
     assert!(!out.contains("reaction-unreachable"), "{out}");
     // The trigger-driven service fixture is untouched: no clock in its route.
     assert!(!check_fixture("contract_fault_service").contains("sampling)"));
+/// Phase 82: a detector counts only for the fault classes it can see, and a
+/// hazard is timed by the SLOWEST class it claims. `contract_fault_kinds` is
+/// `contract_fault`'s chain with three guard topics into one detector; every
+/// hazard shares the 7ms route and 200ms settle, so only detection varies.
+///
+/// - `scan_classes`, `on: [omission, late]` over a 100ms lease and a 40ms
+///   deadline: 100ms, the max. Before phase 82 the list did not parse, and
+///   the omitted-key spelling read the 40ms minimum.
+/// - `scan_unnamed`, the same guard with `on:` omitted: the same 100ms, so
+///   saying less about the fault buys no slack.
+/// - `imu_age_under_qos`, `on: omission` with only `max_age` under the
+///   default `mechanism: qos`: unguarded, and the message neither
+///   recommends `max_age` nor lists `min_rate_hz`; it says the age limit is
+///   declared but counts only for `on: late` (issue #0046, run 4).
+/// - `odom_age_evaluated`, the same age limit under `mechanism:
+///   application`: the node evaluates it, so it notices silence in 30ms.
+#[test]
+fn a_hazard_is_timed_by_the_slowest_fault_class_it_claims() {
+    let out = check_fixture("contract_fault_kinds");
+    for needle in [
+        "hazard 'scan_classes': detection 100.00ms",
+        "the slowest of [omission 100.00ms, late 40.00ms]",
+        "hazard 'scan_unnamed': detection 100.00ms",
+        "= 307.00ms fits the fault-tolerant time interval 500.00ms",
+        "hazard 'odom_age_evaluated': detection 30.00ms",
+        "= 237.00ms fits",
+        "error[hazard-unguarded]: hazard 'imu_age_under_qos' guards '/safety/imu' `on: omission`",
+        "`max_age: 30ms` is declared on '/safety/obstacle_detector/imu' but counts only for \
+         `on: late`",
+    ] {
+        assert!(
+            out.contains(needle),
+            "expected `{needle}` on contract_fault_kinds:\n{out}"
+        );
+    }
+    let unguarded = out
+        .lines()
+        .find(|l| l.contains("error[hazard-unguarded]"))
+        .expect("the imu hazard is unguarded");
+    assert!(!unguarded.contains("min_rate_hz"), "{unguarded}");
+    // What it recommends is the lease alone; `max_age` appears only in the
+    // declared-in-vain clause after it.
+    let counts = unguarded
+        .split("What counts: ")
+        .nth(1)
+        .and_then(|r| r.split(". ").next())
+        .expect("the message names what counts");
+    assert!(counts.contains("lease_duration"), "{unguarded}");
+    assert!(!counts.contains("max_age"), "{unguarded}");
+    assert_eq!(
+        out.matches("error[hazard-unguarded]").count(),
+        1,
+        "only the imu hazard is unguarded:\n{out}"
+    );
+    assert!(
+        !out.contains("manifest-parse"),
+        "`on: [omission, late]` parses:\n{out}"
+    );
 }
 
 /// Phase 74: the contract's liveliness lease reaches the model as a

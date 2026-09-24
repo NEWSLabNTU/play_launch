@@ -176,6 +176,89 @@ RankedPlan {
         },
     ],
 }
+== contract_fault_kinds/launch/bringup.launch.xml
+RankedPlan {
+    items: [
+        RankItem {
+            node: "/safety/brake_controller",
+            path: "brake",
+            fine_group: 0,
+            coarse_group: Some(
+                "safety.stop",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: safety.stop segment drain 1/2)",
+        },
+        RankItem {
+            node: "/safety/obstacle_detector",
+            path: "detect",
+            fine_group: 0,
+            coarse_group: Some(
+                "safety.stop",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: safety.stop segment drain 2/2)",
+        },
+        RankItem {
+            node: "/safety/lidar_driver",
+            path: "sample",
+            fine_group: 1,
+            coarse_group: Some(
+                "safety.stop",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: safety.stop boundary RM period=20ms)",
+        },
+        RankItem {
+            node: "/safety/obstacle_detector",
+            path: "declare_imu_lost",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety/obstacle_detector",
+            path: "declare_odom_lost",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety/obstacle_detector",
+            path: "declare_scan_lost",
+            fine_group: 2,
+            coarse_group: None,
+            tie_group: Some(
+                2,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=2)",
+        },
+        RankItem {
+            node: "/safety/brake_controller",
+            path: "emergency_stop",
+            fine_group: 3,
+            coarse_group: None,
+            tie_group: Some(
+                3,
+            ),
+            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=5)",
+        },
+    ],
+    warnings: [
+        ChainFeasibleWithoutWcet {
+            chain: "safety.stop",
+            boundaries_without_wcet: [
+                "/safety/lidar_driver/sample",
+            ],
+        },
+    ],
+}
 == contract_fault_latch/launch/bringup.launch.xml
 RankedPlan {
     items: [

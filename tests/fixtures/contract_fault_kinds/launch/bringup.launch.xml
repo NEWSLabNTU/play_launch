@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<!-- Phase 82: which detector counts for which fault class, and how a hazard
+     that claims several classes is timed. contract_fault's chain, with three
+     more guard topics into the same detector. -->
+<launch>
+  <node pkg="demo_nodes_cpp" exec="talker"   name="lidar_driver"      namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="obstacle_detector" namespace="/safety"/>
+  <node pkg="demo_nodes_cpp" exec="listener" name="brake_controller"  namespace="/safety"/>
+</launch>

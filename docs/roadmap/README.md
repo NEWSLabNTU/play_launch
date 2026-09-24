@@ -284,6 +284,17 @@ Design: [docs/design/unified-system-model.md](../design/unified-system-model.md)
     cannot see a class of input reads as coverage, and its block count was
     five short. Issues #0042-#0045 filed.
     [phase-81-the-docs-describe-the-code.md](./phase-81-the-docs-describe-the-code.md).
+  - **Phase 82** - in progress: what a detector may see, and what a reaction
+    may cross (2026-09-25, rlm **v0.1.43**). On the WG's L4 design, omitting a
+    hazard's `on:` bought 10 ms of slack, because the FDTI took the MIN over
+    every mechanism of every wanted class. W1-W3 (landed together): `on:` is
+    a set, the FDTI is the max over the claimed classes of the min over each
+    class's mechanisms, `hazard-unguarded` names only what counts for the
+    class it reports plus the detectors declared in vain, and `max_age`
+    counts toward an omission only under `mechanism: diagnostics |
+    application`. Issue #0046 ruled. W4 (a sampling hop in the reaction walk)
+    is separate.
+    [phase-82-what-a-detector-may-see.md](./phase-82-what-a-detector-may-see.md).
   - **Phase 78** - complete (0.12.0): one derivation of the mapper input, two
     consumers (2026-09-21). The resolver lowers every non-input trigger to
     `input: []` and drops the rate, so nano-ros rebuilds a timer's rate from

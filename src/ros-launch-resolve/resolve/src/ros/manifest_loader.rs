@@ -1102,51 +1102,301 @@ fn check_sync_feasibility_on_derived_rates(index: &mut ManifestIndex) {
 // Phase 71 — fault detection and reaction
 // ---------------------------------------------------------------------------
 
-/// The slowest interval at which a subscriber would notice its assumption
-/// violated, in ms, from the detectors it declares — or `None` if it declares
-/// none. The subscriber detects when ANY of its mechanisms fires, so this is
-/// the minimum over them.
+/// The interval, in ms, at which a subscriber would notice ONE fault class
+/// (phase 82), from the detectors it declares that count for that class --
+/// or `None` if none does. The subscriber notices when ANY of those fires, so
+/// this is the minimum over them. A hazard claiming several classes takes the
+/// MAX of this over its classes (`hazard_fault_kinds`,
+/// `check_fault_reaction`): its interval must cover whichever fault occurs.
 ///
-/// `omission`/`late`/`loss` map onto middleware facts (lease, deadline,
-/// `max_age`, the rate floor's period, consecutive drops); `reported` is
-/// accounted for on the detector's output topic by the caller, not here.
+/// Which mechanism counts for which class:
+///
+/// - `omission`: the effective QoS `lease_duration`; and `max_age`, but only
+///   under `on_violation.mechanism: diagnostics | application`, where the node
+///   evaluates the age of its newest sample on its own clock and so notices
+///   when samples stop. Under `qos`, the default, only DDS liveliness and
+///   deadline events fire, and nothing evaluates an age limit while no message
+///   arrives (#0046).
+/// - `late`: the effective QoS `deadline` and `max_age`.
+/// - `loss`: `drop.max_consecutive x period` on the guard topic.
+/// - `reported` is accounted on the detector's OUTPUT topic by the caller,
+///   so it is `None` here.
+///
+/// `min_rate_hz` counts for nothing: it is a requirement, not a detector.
+/// Nothing fires when a period passes unless a QoS deadline or an
+/// application watchdog is declared; counting the period made a 50 Hz floor
+/// "detect" a dead lidar in 20ms while the real lease was 100ms.
 fn detector_interval_ms(
     props: &ros_launch_manifest_types::EndpointProps,
     topic_qos: Option<&ros_launch_manifest_types::QosDecl>,
     topic_drop: Option<&ros_launch_manifest_types::DropSpec>,
     topic_period_ms: Option<f64>,
-    kinds: &[ros_launch_manifest_types::FaultKind],
+    kind: ros_launch_manifest_types::FaultKind,
 ) -> Option<f64> {
     use ros_launch_manifest_types::{FaultKind as F, QosDecl};
     let qos = QosDecl::effective(topic_qos, props.qos.as_ref());
-    let mut best: Option<f64> = None;
-    let mut consider = |v: Option<f64>| {
-        if let Some(v) = v
-            && v > 0.0
-        {
-            best = Some(best.map_or(v, |b: f64| b.min(v)));
+    let ms = |d: Option<ros_launch_manifest_types::duration::Duration>| {
+        d.map(|d| d.as_millis_f64()).filter(|v| *v > 0.0)
+    };
+    let min = |a: Option<f64>, b: Option<f64>| match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    match kind {
+        F::Omission => {
+            let age = if max_age_evaluated(props) {
+                ms(props.max_age)
+            } else {
+                None
+            };
+            min(ms(qos.lease_duration), age)
+        }
+        F::Late => min(ms(qos.deadline), ms(props.max_age)),
+        F::Loss => match (topic_drop.and_then(|d| d.max_consecutive), topic_period_ms) {
+            (Some(n), Some(period)) => Some(n as f64 * period).filter(|v| *v > 0.0),
+            _ => None,
+        },
+        F::Reported => None,
+    }
+}
+
+/// Phase 82 W3: whether something evaluates this subscriber's `max_age` on
+/// its own clock. `diagnostics` and `application` mean the node does (a
+/// `diagnostic_updater` or its own watchdog reads the age of its newest
+/// sample periodically); `qos`, the default, means only middleware events
+/// fire, and an age limit checked on arrival never fires while nothing
+/// arrives.
+fn max_age_evaluated(props: &ros_launch_manifest_types::EndpointProps) -> bool {
+    use ros_launch_manifest_types::DetectMechanism as M;
+    matches!(
+        props.on_violation.as_ref().map(|ov| ov.mechanism),
+        Some(M::Diagnostics | M::Application)
+    )
+}
+
+/// The fault classes a hazard's FDTI must cover (phase 82), and whether the
+/// contract named them. An explicit `on:` is a claim about each class it
+/// names, so a class no detector counts for is `hazard-unguarded`. An
+/// omitted `on:` claims every class the guard's detectors can observe --
+/// omission, late and loss -- and the interval is the max over those that
+/// some detector covers, so omitting the key is never more lenient than
+/// naming the slowest of them. `reported` is never implied: it says the
+/// guard IS a detector's output, which only the author can know.
+fn hazard_fault_kinds(
+    on: &[ros_launch_manifest_types::FaultKind],
+) -> (Vec<ros_launch_manifest_types::FaultKind>, bool) {
+    use ros_launch_manifest_types::FaultKind as F;
+    if on.is_empty() {
+        (vec![F::Omission, F::Late, F::Loss], false)
+    } else {
+        (on.to_vec(), true)
+    }
+}
+
+/// A guard member's detection interval from its per-class intervals (phase
+/// 82): the MAX over the classes the hazard claims, because the interval must
+/// cover whichever fault occurs. With an explicit `on:`, a class with no
+/// interval is unguarded, and `Err` names every such class. With `on:`
+/// omitted the classes are those the detectors can observe, a class none
+/// covers is not claimed, and only an all-`None` set is unguarded.
+fn interval_over_kinds(
+    per_kind: &[(ros_launch_manifest_types::FaultKind, Option<f64>)],
+    explicit: bool,
+) -> Result<(ros_launch_manifest_types::FaultKind, f64), Vec<ros_launch_manifest_types::FaultKind>>
+{
+    let missing: Vec<_> = per_kind
+        .iter()
+        .filter(|(_, v)| v.is_none())
+        .map(|(k, _)| *k)
+        .collect();
+    let slowest = per_kind
+        .iter()
+        .filter_map(|(k, v)| v.map(|v| (*k, v)))
+        .reduce(|a, b| if b.1 > a.1 { b } else { a });
+    match slowest {
+        Some(s) if !explicit || missing.is_empty() => Ok(s),
+        _ => Err(missing),
+    }
+}
+
+fn fault_kind_name(kind: ros_launch_manifest_types::FaultKind) -> &'static str {
+    use ros_launch_manifest_types::FaultKind as F;
+    match kind {
+        F::Omission => "omission",
+        F::Late => "late",
+        F::Loss => "loss",
+        F::Reported => "reported",
+    }
+}
+
+/// What a contract can declare so that `kind` is detected on a guard, for
+/// the `hazard-unguarded` message (phase 82 W2). Only mechanisms that COUNT
+/// for this class are named, and `min_rate_hz` never is.
+fn detectors_that_count(kind: ros_launch_manifest_types::FaultKind) -> &'static str {
+    use ros_launch_manifest_types::FaultKind as F;
+    match kind {
+        F::Omission => "a QoS `lease_duration` on the subscriber or the topic",
+        F::Late => "a QoS `deadline`, or `max_age` on the subscriber",
+        F::Loss => "`drop.max_consecutive` on the guard topic, whose rate is known",
+        F::Reported => "a publisher of the guard topic whose rate is known",
+    }
+}
+
+/// The detectors a subscriber DOES declare that cannot count for `kind`, one
+/// clause each, for the `hazard-unguarded` message (phase 82 W2): the reader
+/// sees that the contract says something, and why it does not help here.
+fn declared_detectors_not_counting(
+    sub_ref: &str,
+    props: &ros_launch_manifest_types::EndpointProps,
+    topic_qos: Option<&ros_launch_manifest_types::QosDecl>,
+    kind: ros_launch_manifest_types::FaultKind,
+) -> Vec<String> {
+    use ros_launch_manifest_types::{FaultKind as F, QosDecl};
+    let qos = QosDecl::effective(topic_qos, props.qos.as_ref());
+    let ms = |d: ros_launch_manifest_types::duration::Duration| d.as_millis_f64();
+    let mut out = Vec::new();
+    if kind != F::Omission
+        && let Some(d) = qos.lease_duration
+    {
+        out.push(format!(
+            "`lease_duration: {}ms` is declared on '{sub_ref}' but counts only for `on: omission`",
+            ms(d)
+        ));
+    }
+    if kind != F::Late
+        && let Some(d) = qos.deadline
+    {
+        out.push(format!(
+            "`deadline: {}ms` is declared on '{sub_ref}' but counts only for `on: late`",
+            ms(d)
+        ));
+    }
+    if let Some(d) = props.max_age {
+        match kind {
+            F::Late => {}
+            F::Omission if max_age_evaluated(props) => {}
+            F::Omission => out.push(format!(
+                "`max_age: {}ms` is declared on '{sub_ref}' but counts only for `on: late`: under \
+                 `on_violation.mechanism: qos` nothing evaluates it while no message arrives",
+                ms(d)
+            )),
+            _ => out.push(format!(
+                "`max_age: {}ms` is declared on '{sub_ref}' but counts only for `on: late`",
+                ms(d)
+            )),
+        }
+    }
+    out
+}
+
+/// `hazard-unguarded` for one guard member (phase 82 W2). With no reacting
+/// subscriber at all there is one diagnostic, since every class fails for
+/// the same reason; otherwise one per class nothing counts for. Each names
+/// only the mechanisms that count for ITS class, then every detector the
+/// subscribers do declare that this hazard cannot use, and why.
+#[allow(clippy::too_many_arguments)]
+fn hazard_unguarded(
+    hazard: &str,
+    member: &str,
+    missing: &[ros_launch_manifest_types::FaultKind],
+    explicit: bool,
+    reacting: bool,
+    subs: &[(&String, &ros_launch_manifest_types::EndpointProps)],
+    topic_qos: Option<&ros_launch_manifest_types::QosDecl>,
+    path: &str,
+) -> Vec<Diagnostic> {
+    use ros_launch_manifest_types::QosDecl;
+    let on = |kinds: &[ros_launch_manifest_types::FaultKind]| {
+        let names: Vec<&str> = kinds.iter().map(|k| fault_kind_name(*k)).collect();
+        match names.as_slice() {
+            [one] => format!("`on: {one}`"),
+            many => format!("`on: [{}]`", many.join(", ")),
         }
     };
-    let wants = |k: F| kinds.is_empty() || kinds.contains(&k);
-    if wants(F::Omission) {
-        // The lease is the only omission MECHANISM. `min_rate_hz` is a
-        // requirement, not a detector: nothing fires when a period passes
-        // unless a QoS deadline (below) or an application watchdog is
-        // declared. Counting the period here made a 50 Hz floor "detect" a
-        // dead lidar in 20ms while the real lease was 100ms.
-        consider(qos.lease_duration.map(|d| d.as_millis_f64()));
+    let counts = |kinds: &[ros_launch_manifest_types::FaultKind]| {
+        kinds
+            .iter()
+            .map(|k| format!("for {}, {}", fault_kind_name(*k), detectors_that_count(*k)))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    let diag = |message: String| Diagnostic {
+        rule_id: "hazard-unguarded".to_string(),
+        severity: Severity::Error,
+        message,
+        path: path.to_string(),
+        span: None,
+    };
+    if !reacting {
+        // Detectors declared by subscribers that do not react: they notice
+        // and do nothing.
+        let idle: Vec<String> = subs
+            .iter()
+            .filter_map(|(sub_ref, props)| {
+                let qos = QosDecl::effective(topic_qos, props.qos.as_ref());
+                let mut d = Vec::new();
+                if let Some(v) = qos.lease_duration {
+                    d.push(format!("`lease_duration: {}ms`", v.as_millis_f64()));
+                }
+                if let Some(v) = qos.deadline {
+                    d.push(format!("`deadline: {}ms`", v.as_millis_f64()));
+                }
+                if let Some(v) = props.max_age {
+                    d.push(format!("`max_age: {}ms`", v.as_millis_f64()));
+                }
+                (!d.is_empty()).then(|| {
+                    format!(
+                        "'{sub_ref}' declares {} but no `on_violation`, so it would notice and \
+                         do nothing",
+                        d.join(" and ")
+                    )
+                })
+            })
+            .collect();
+        let claim = if explicit {
+            format!(" {}", on(missing))
+        } else {
+            String::new()
+        };
+        let mut message = format!(
+            "hazard '{hazard}' guards '{member}'{claim}, but no subscriber of it declares an \
+             `on_violation` reaction -- nothing would ever notice. A reacting subscriber needs \
+             a detector that counts: {}",
+            counts(missing)
+        );
+        if !idle.is_empty() {
+            message.push_str(&format!(". {}", idle.join("; ")));
+        }
+        return vec![diag(message)];
     }
-    if wants(F::Late) {
-        consider(qos.deadline.map(|d| d.as_millis_f64()));
-        consider(props.max_age.map(|d| d.as_millis_f64()));
-    }
-    if wants(F::Loss)
-        && let (Some(n), Some(period)) =
-            (topic_drop.and_then(|d| d.max_consecutive), topic_period_ms)
-    {
-        consider(Some(n as f64 * period));
-    }
-    best
+    missing
+        .iter()
+        .map(|&kind| {
+            let notes: Vec<String> = subs
+                .iter()
+                .filter(|(_, p)| p.on_violation.is_some())
+                .flat_map(|(sub_ref, props)| {
+                    declared_detectors_not_counting(sub_ref, props, topic_qos, kind)
+                })
+                .collect();
+            let claim = if explicit {
+                on(&[kind])
+            } else {
+                "with `on:` omitted".to_string()
+            };
+            let mut message = format!(
+                "hazard '{hazard}' guards '{member}' {claim}, but no subscriber of it that \
+                 declares an `on_violation` reaction has a detector that counts for {} -- \
+                 nothing would notice. What counts: {}",
+                fault_kind_name(kind),
+                detectors_that_count(kind)
+            );
+            if !notes.is_empty() {
+                message.push_str(&format!(". {}", notes.join("; ")));
+            }
+            diag(message)
+        })
+        .collect()
 }
 
 /// The reaction route a hazard actually runs (phase 71).
@@ -1697,7 +1947,9 @@ fn check_fault_reaction(
     // --- per hazard
     for h in &hazards {
         let at = format!("hazards.{}", h.name);
-        let kinds: Vec<FaultKind> = h.decl.on.into_iter().collect();
+        // Phase 82: the FDTI covers EVERY fault class the hazard claims --
+        // max over its classes of (min over that class's detectors).
+        let (kinds, kinds_explicit) = hazard_fault_kinds(&h.decl.on);
 
         // FDTI per guard group. A group is one fault; the hazard's budget
         // must hold for whichever group faults, so the worst group governs.
@@ -1723,74 +1975,113 @@ fn check_fault_reaction(
                     .or(topic.rate_hz)
                     .filter(|r| *r > 0.0)
                     .map(|r| 1000.0 / r);
-                let mut best: Option<(f64, String)> = None;
-                if kinds.contains(&FaultKind::Reported) {
-                    // The guard IS a detector's output. Detection = its
-                    // input period + its own path latency, both derived.
-                    for pub_ref in &topic.publishers {
-                        let Some((node_fqn, ep)) = split_endpoint_ref_for_check(pub_ref) else {
-                            continue;
-                        };
-                        let lat = node_paths
-                            .iter()
-                            .filter(|p| p.node_fqn == node_fqn && p.path.output.contains(&ep))
-                            .filter_map(|p| p.path.max_latency.map(|d| d.as_millis_f64()))
-                            .fold(0.0, f64::max);
-                        if let Some(period) = period_ms {
-                            let v = period + lat;
-                            if best.as_ref().is_none_or(|(b, _)| v < *b) {
-                                best = Some((
-                                    v,
-                                    format!("{pub_ref} reports every {period:.2}ms + {lat:.2}ms"),
-                                ));
+                // Every subscriber's props, reacting or not: the reacting
+                // ones detect, and the rest are named when the hazard is
+                // unguarded.
+                let subs: Vec<(&String, &ros_launch_manifest_types::EndpointProps)> = topic
+                    .subscribers
+                    .iter()
+                    .filter_map(|sub_ref| {
+                        let (node_fqn, ep) = split_endpoint_ref_for_check(sub_ref)?;
+                        let props = graph.nodes.get(&node_fqn)?.subscribers.get(&ep)?;
+                        Some((sub_ref, props))
+                    })
+                    .collect();
+                // Only a subscriber that REACTS counts as a detector: one
+                // that notices and does nothing has not detected anything the
+                // system can use.
+                let reacting = subs.iter().any(|(_, p)| p.on_violation.is_some());
+                let mut per_kind: Vec<(FaultKind, Option<(f64, String)>)> = Vec::new();
+                for &kind in &kinds {
+                    let mut best: Option<(f64, String)> = None;
+                    if kind == FaultKind::Reported {
+                        // The guard IS a detector's output. Detection = its
+                        // input period + its own path latency, both derived.
+                        for pub_ref in &topic.publishers {
+                            let Some((node_fqn, ep)) = split_endpoint_ref_for_check(pub_ref) else {
+                                continue;
+                            };
+                            let lat = node_paths
+                                .iter()
+                                .filter(|p| p.node_fqn == node_fqn && p.path.output.contains(&ep))
+                                .filter_map(|p| p.path.max_latency.map(|d| d.as_millis_f64()))
+                                .fold(0.0, f64::max);
+                            if let Some(period) = period_ms {
+                                let v = period + lat;
+                                if best.as_ref().is_none_or(|(b, _)| v < *b) {
+                                    best = Some((
+                                        v,
+                                        format!(
+                                            "{pub_ref} reports every {period:.2}ms + {lat:.2}ms"
+                                        ),
+                                    ));
+                                }
+                            }
+                        }
+                    } else {
+                        for (sub_ref, props) in &subs {
+                            if props.on_violation.is_none() {
+                                continue;
+                            }
+                            if let Some(v) = detector_interval_ms(
+                                props,
+                                topic.qos.as_ref(),
+                                topic.drop.as_ref(),
+                                period_ms,
+                                kind,
+                            ) && best.as_ref().is_none_or(|(b, _)| v < *b)
+                            {
+                                best = Some((v, format!("{sub_ref} detects within {v:.2}ms")));
                             }
                         }
                     }
-                } else {
-                    // Only a subscriber that REACTS counts as a detector:
-                    // one that notices and does nothing has not detected
-                    // anything the system can use.
-                    for sub_ref in &topic.subscribers {
-                        let Some((node_fqn, ep)) = split_endpoint_ref_for_check(sub_ref) else {
-                            continue;
-                        };
-                        let Some(props) = graph
-                            .nodes
-                            .get(&node_fqn)
-                            .and_then(|n| n.subscribers.get(&ep))
-                        else {
-                            continue;
-                        };
-                        if props.on_violation.is_none() {
-                            continue;
-                        }
-                        if let Some(v) = detector_interval_ms(
-                            props,
+                    per_kind.push((kind, best));
+                }
+                let intervals: Vec<(FaultKind, Option<f64>)> = per_kind
+                    .iter()
+                    .map(|(k, b)| (*k, b.as_ref().map(|(v, _)| *v)))
+                    .collect();
+                let kind = match interval_over_kinds(&intervals, kinds_explicit) {
+                    Ok((kind, _)) => kind,
+                    Err(missing) => {
+                        diags.extend(hazard_unguarded(
+                            &h.name,
+                            member,
+                            &missing,
+                            kinds_explicit,
+                            reacting,
+                            &subs,
                             topic.qos.as_ref(),
-                            topic.drop.as_ref(),
-                            period_ms,
-                            &kinds,
-                        ) && best.as_ref().is_none_or(|(b, _)| v < *b)
-                        {
-                            best = Some((v, format!("{sub_ref} detects within {v:.2}ms")));
-                        }
+                            &format!("{at}.guards"),
+                        ));
+                        continue;
                     }
-                }
-                match best {
-                    Some(b) => member_intervals.push(b),
-                    None => diags.push(Diagnostic {
-                        rule_id: "hazard-unguarded".to_string(),
-                        severity: Severity::Error,
-                        message: format!(
-                            "hazard '{}' guards '{member}', but no subscriber of it declares an \
-                             `on_violation` reaction with a detector (lease_duration, deadline, \
-                             max_age or min_rate_hz) — nothing would ever notice",
-                            h.name
-                        ),
-                        path: format!("{at}.guards"),
-                        span: None,
-                    }),
-                }
+                };
+                // The slowest class governs, and is named when there was
+                // more than one to choose from.
+                let covered: Vec<(FaultKind, f64)> = intervals
+                    .iter()
+                    .filter_map(|(k, v)| v.map(|v| (*k, v)))
+                    .collect();
+                let (v, why) = per_kind
+                    .iter()
+                    .find(|(k, _)| *k == kind)
+                    .and_then(|(_, b)| b.clone())
+                    .expect("the governing class has an interval");
+                let why = if covered.len() > 1 {
+                    let each = covered
+                        .iter()
+                        .map(|(k, v)| format!("{} {v:.2}ms", fault_kind_name(*k)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "{why} on {}, the slowest of [{each}]",
+                        fault_kind_name(kind)
+                    )
+                } else {
+                    why
+                };
+                member_intervals.push((v, why));
             }
             if member_intervals.is_empty() {
                 continue;
@@ -6099,6 +6390,163 @@ mod tests {
             qos_errors.iter().any(|d| d.message.contains("liveliness")),
             "expected a cross-scope liveliness mismatch, got: {qos_errors:?}"
         );
+    }
+
+    // -- Phase 82: what a detector may see --
+
+    /// The subscriber `n/s` of a one-node contract, for the FDTI rules.
+    fn fdti_sub(sub_yaml: &str) -> ros_launch_manifest_types::EndpointProps {
+        let yaml = format!("nodes:\n  n:\n    sub:\n      s:\n{sub_yaml}");
+        let m = ros_launch_manifest_types::parse::parse_manifest_str(&yaml).expect("parses");
+        m.nodes["n"].subscribers["s"].clone()
+    }
+
+    /// W1: the interval is PER CLASS, the min over that class's mechanisms
+    /// only. The L4 heartbeat's lease (30ms) is its omission detector and
+    /// its age limit (20ms) its late detector; neither leaks into the other.
+    #[test]
+    fn detector_interval_is_per_fault_class() {
+        use ros_launch_manifest_types::FaultKind as F;
+        let props = fdti_sub(
+            "        min_rate_hz: 100\n        max_age: 20ms\n        \
+             qos: { liveliness: manual_by_topic, lease_duration: 30ms, deadline: 25ms }\n        \
+             on_violation: { on: [omission], reaction: r }\n",
+        );
+        let at = |k| detector_interval_ms(&props, None, None, Some(10.0), k);
+        assert_eq!(at(F::Omission), Some(30.0));
+        // Late: min over the deadline and the age limit.
+        assert_eq!(at(F::Late), Some(20.0));
+        // No drop spec, so nothing counts for loss; `reported` is the
+        // caller's (publisher side). `min_rate_hz` counts for nothing.
+        assert_eq!(at(F::Loss), None);
+        assert_eq!(at(F::Reported), None);
+
+        let bare = fdti_sub("        min_rate_hz: 100\n        on_violation: { reaction: r }\n");
+        for k in [F::Omission, F::Late, F::Loss] {
+            assert_eq!(
+                detector_interval_ms(&bare, None, None, Some(10.0), k),
+                None,
+                "a rate floor is not a detector ({k:?})"
+            );
+        }
+    }
+
+    /// W3: `max_age` counts toward an omission only where the node
+    /// evaluates it on its own clock -- `diagnostics` or `application` --
+    /// and never under `qos`, the default.
+    #[test]
+    fn max_age_detects_an_omission_only_when_something_evaluates_it() {
+        use ros_launch_manifest_types::FaultKind as F;
+        let with = |mechanism: &str| {
+            fdti_sub(&format!(
+                "        max_age: 20ms\n        \
+                 on_violation: {{ on: [omission], reaction: r{mechanism} }}\n"
+            ))
+        };
+        let omission = |p: &ros_launch_manifest_types::EndpointProps| {
+            detector_interval_ms(p, None, None, None, F::Omission)
+        };
+        assert_eq!(omission(&with("")), None, "qos is the default");
+        assert_eq!(omission(&with(", mechanism: qos")), None);
+        assert_eq!(omission(&with(", mechanism: diagnostics")), Some(20.0));
+        assert_eq!(omission(&with(", mechanism: application")), Some(20.0));
+        // Late reads the age limit whatever the mechanism.
+        assert_eq!(
+            detector_interval_ms(&with(""), None, None, None, F::Late),
+            Some(20.0)
+        );
+        // Evaluated, the age limit and the lease race: the faster wins.
+        let both = fdti_sub(
+            "        max_age: 20ms\n        qos: { lease_duration: 30ms }\n        \
+             on_violation: { reaction: r, mechanism: application }\n",
+        );
+        assert_eq!(
+            detector_interval_ms(&both, None, None, None, F::Omission),
+            Some(20.0)
+        );
+    }
+
+    /// W1: across the classes a hazard claims, the MAX governs, and saying
+    /// less never buys slack. `on:` omitted claims omission, late and loss
+    /// and is timed by the slowest one some detector covers; an explicit
+    /// set is unguarded for each class nothing covers.
+    #[test]
+    fn a_hazard_is_timed_by_the_slowest_class_it_claims() {
+        use ros_launch_manifest_types::FaultKind as F;
+        assert_eq!(
+            hazard_fault_kinds(&[]),
+            (vec![F::Omission, F::Late, F::Loss], false)
+        );
+        assert_eq!(
+            hazard_fault_kinds(&[F::Omission, F::Reported]),
+            (vec![F::Omission, F::Reported], true)
+        );
+
+        // The L4 heartbeat: lease 30ms, age limit 20ms, no drop spec.
+        let l4 = [
+            (F::Omission, Some(30.0)),
+            (F::Late, Some(20.0)),
+            (F::Loss, None),
+        ];
+        // Omitted: 30ms, the max -- not the 20ms a min over every mechanism
+        // gave before phase 82.
+        assert_eq!(interval_over_kinds(&l4, false), Ok((F::Omission, 30.0)));
+        // `on: [omission, late]`: the same 30ms.
+        assert_eq!(interval_over_kinds(&l4[..2], true), Ok((F::Omission, 30.0)));
+        // `on: omission` alone: 30ms, so the three spellings agree.
+        assert_eq!(interval_over_kinds(&l4[..1], true), Ok((F::Omission, 30.0)));
+        // An explicit class nothing covers is unguarded, even when another
+        // claimed class is covered.
+        assert_eq!(interval_over_kinds(&l4, true), Err(vec![F::Loss]));
+        // Omitted, and nothing covers anything: unguarded for every class.
+        let none = [(F::Omission, None), (F::Late, None), (F::Loss, None)];
+        assert_eq!(
+            interval_over_kinds(&none, false),
+            Err(vec![F::Omission, F::Late, F::Loss])
+        );
+    }
+
+    /// W2: the unguarded message names what counts for THIS class and the
+    /// declared detectors it cannot use -- never `min_rate_hz`, and never
+    /// recommends the `max_age` the subscriber already declares.
+    #[test]
+    fn hazard_unguarded_names_what_counts_and_what_is_declared_in_vain() {
+        use ros_launch_manifest_types::FaultKind as F;
+        let props = fdti_sub(
+            "        min_rate_hz: 100\n        max_age: 20ms\n        \
+             on_violation: { on: [omission], reaction: r }\n",
+        );
+        let sub_ref = "/n/s".to_string();
+        let subs = vec![(&sub_ref, &props)];
+        let d = hazard_unguarded(
+            "h",
+            "/t",
+            &[F::Omission],
+            true,
+            true,
+            &subs,
+            None,
+            "hazards.h",
+        );
+        assert_eq!(d.len(), 1);
+        let m = &d[0].message;
+        assert!(
+            m.contains("`on: omission`") && m.contains("lease_duration"),
+            "{m}"
+        );
+        assert!(
+            m.contains("`max_age: 20ms` is declared on '/n/s' but counts only for `on: late`"),
+            "{m}"
+        );
+        assert!(!m.contains("min_rate_hz"), "{m}");
+        // `max_age` appears only in the declared-in-vain clause.
+        assert_eq!(m.matches("max_age").count(), 1, "{m}");
+
+        // Under `application` the age limit counts, so it is not in vain.
+        let evaluated = fdti_sub(
+            "        max_age: 20ms\n        on_violation: { reaction: r, mechanism: application }\n",
+        );
+        assert!(declared_detectors_not_counting("/n/s", &evaluated, None, F::Omission).is_empty());
     }
 
     // ── Phase 35.5: cross-scope rate hierarchy ──

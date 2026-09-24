@@ -17,16 +17,6 @@ tracker of its own. Name the repo in the issue body. `ros-launch-resolve` and
 
 ## Open
 
-**#0046** -- a subscriber's `max_age` cannot count toward the FDTI of a hazard
-declared `on: omission` (only the liveliness lease can), and `hazards.<h>.on`
-takes exactly one `FaultKind`, so a guard watched by both a lease and an age
-limit must drop one -- while omitting `on:` altogether counts both and buys
-slack. Measured on the WG's L4 design, whose section 8.1 gives every inbound
-signal an age limit. Filed as a design question: the partition may well be
-right. What is not in question is the `hazard-unguarded` message, which
-recommends `max_age` and `min_rate_hz` as detectors that cannot satisfy it.
-See `0046-*`.
-
 **#0048** -- a contract node key that matches nothing in the launch dump falls
 back to qualifying the bare name against the SCOPE's namespace, so it resolves
 to a plausible FQN that names no running node -- and `check` reports clean.
@@ -77,6 +67,15 @@ HEAD. See `0038-*`.
 by name where `chain_aware` collapses the tie; design question. See `0039-*`.
 
 ## Resolved
+
+**#0046** -- a subscriber's `max_age` could not count toward the FDTI of an
+`on: omission` hazard, `hazards.<h>.on` took exactly one class, and omitting
+`on:` bought slack because the FDTI took the MIN over every mechanism of every
+class. Ruled in phase 82 (rlm v0.1.43): `on:` is a set, the FDTI is the max
+over the claimed classes of the min over each class's mechanisms, `max_age`
+counts toward an omission only under `mechanism: diagnostics | application`,
+and `hazard-unguarded` names only what counts for its class plus the
+detectors declared in vain. See `0046-*`.
 
 **#0042** -- a subscriber's `max_transport` was legal grammar the checker
 honoured and the model could not carry, so the shared `derive` crate read the

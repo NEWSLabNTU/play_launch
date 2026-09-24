@@ -20,3 +20,4 @@ exclude = [
 [patch.crates-io]
 rclrs = { path = "src/vendor/ros2_rust/rclrs" }
 rosidl_runtime_rs = { path = "src/vendor/rosidl_runtime_rs/rosidl_runtime_rs" }
+

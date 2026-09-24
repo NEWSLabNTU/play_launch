@@ -1201,7 +1201,7 @@ pub fn build_system_model(
                         all_of: g.all_of,
                     })
                     .collect(),
-                on: h.decl.on.map(fault_kind),
+                on: h.decl.on.iter().map(|k| fault_kind(*k)).collect(),
                 ftti_ms: h.decl.ftti.map(|d| d.as_millis_f64()),
                 reaction: h
                     .decl
