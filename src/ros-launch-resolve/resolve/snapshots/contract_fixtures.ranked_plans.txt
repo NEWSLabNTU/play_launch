@@ -662,44 +662,61 @@ RankedPlan {
             node: "/w/guard",
             path: "check",
             fine_group: 0,
-            coarse_group: None,
-            tie_group: Some(
-                0,
+            coarse_group: Some(
+                "tick_to_out",
             ),
-            provenance: "derived(chain_aware: non-chain criticality=Some(High) budget_ms=8)",
+            tie_group: None,
+            provenance: "derived(chain_aware: tick_to_out segment drain 1/2)",
         },
         RankItem {
             node: "/w/rt",
             path: "pa",
-            fine_group: 1,
-            coarse_group: None,
-            tie_group: Some(
-                1,
+            fine_group: 0,
+            coarse_group: Some(
+                "tick_to_out",
             ),
-            provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
+            tie_group: None,
+            provenance: "derived(chain_aware: tick_to_out segment drain 2/2)",
+        },
+        RankItem {
+            node: "/w/src",
+            path: "sample",
+            fine_group: 1,
+            coarse_group: Some(
+                "tick_to_out",
+            ),
+            tie_group: None,
+            provenance: "derived(chain_aware: tick_to_out boundary RM period=20ms)",
         },
         RankItem {
             node: "/w/rt",
             path: "pb",
-            fine_group: 1,
+            fine_group: 2,
             coarse_group: None,
             tie_group: Some(
-                1,
+                2,
             ),
             provenance: "derived(chain_aware: non-chain criticality=None budget_ms=5)",
         },
         RankItem {
             node: "/w/slow",
             path: "record",
-            fine_group: 2,
+            fine_group: 3,
             coarse_group: None,
             tie_group: Some(
-                2,
+                3,
             ),
             provenance: "derived(chain_aware: non-chain criticality=None budget_ms=40)",
         },
     ],
-    warnings: [],
+    warnings: [
+        ChainFeasibleWithoutWcet {
+            chain: "tick_to_out",
+            boundaries_without_wcet: [
+                "/w/src/sample",
+            ],
+        },
+    ],
 }
 == rt_workspace/launch/bringup.launch.xml
 RankedPlan {

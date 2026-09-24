@@ -12,6 +12,9 @@
 //! - `index.manifests` (per-scope NodeDecl with paths and endpoint props)
 
 use super::manifest_loader::ManifestIndex;
+// The shared transport precedence, and the only reason this graph knows the
+// manifest crate's `derive` layer at all — see `build_global_graph`.
+use ros_launch_manifest_derive::TopicView;
 use ros_launch_manifest_types::PathDecl;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -303,11 +306,45 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
             .iter()
             .filter_map(|ep_ref| split_endpoint_ref(ep_ref))
             .collect();
-        let sub_node_eps: Vec<(String, String)> = topic
+        // The endpoint REF is kept beside the split halves: it is the key
+        // `TopicView::transport_ms` asks by, and reconstructing it from the
+        // halves per edge would be an allocation for something we already
+        // have.
+        let sub_node_eps: Vec<(&str, String, String)> = topic
             .subscribers
             .iter()
-            .filter_map(|ep_ref| split_endpoint_ref(ep_ref))
+            .filter_map(|ep_ref| {
+                split_endpoint_ref(ep_ref).map(|(node, ep)| (ep_ref.as_str(), node, ep))
+            })
             .collect();
+
+        // The transport precedence -- a subscriber's own `max_transport`
+        // first, the topic's as the fallback -- is the manifest crate's
+        // `TopicView::transport_ms`, and this builds the view it is a method
+        // on (play_launch issues #0042 and #0052). The resolver used to
+        // compute the same precedence inline, which made one rule two
+        // copies that agreed by discipline; the view needs no `SystemModel`
+        // (it is four declared facts), so a graph built at LOAD time from a
+        // `ManifestIndex` can call the same code the model-side derivation
+        // does. Gate: `tests/tests/endpoint_transport.rs`.
+        let topic_view = TopicView {
+            publishers: topic.publishers.clone(),
+            subscribers: topic.subscribers.clone(),
+            max_transport_ms: topic.max_transport_ms,
+            sub_max_transport_ms: sub_node_eps
+                .iter()
+                .filter_map(|(ep_ref, sub_node, sub_ep)| {
+                    let ms = graph
+                        .nodes
+                        .get(sub_node)?
+                        .subscribers
+                        .get(sub_ep)?
+                        .max_transport?
+                        .as_millis_f64();
+                    Some((ep_ref.to_string(), ms))
+                })
+                .collect(),
+        };
 
         // Index publishers/subscribers by topic for quick lookups.
         graph
@@ -319,34 +356,24 @@ pub fn build_global_graph(index: &ManifestIndex) -> GlobalDataflowGraph {
             .topic_subscribers
             .entry(topic_fqn.clone())
             .or_default()
-            .extend(sub_node_eps.iter().map(|(n, _)| n.clone()));
+            .extend(sub_node_eps.iter().map(|(_, n, _)| n.clone()));
 
         // Create one edge per (pub, sub) pair.
         for (pub_node, pub_ep) in &pub_node_eps {
-            for (sub_node, sub_ep) in &sub_node_eps {
+            for (sub_ref, sub_node, sub_ep) in &sub_node_eps {
                 let sub_props = graph
                     .nodes
                     .get(sub_node)
                     .and_then(|n| n.subscribers.get(sub_ep));
                 let is_state = sub_props.and_then(|p| p.state).unwrap_or(false);
-                // Per-subscriber transport latency override (Issue #44):
-                // the same ROS topic can have heterogeneous transport across
-                // subscribers (intra-process ~0ms vs cross-network ~10ms).
-                // Prefer the sub endpoint's value; fall back to the topic
-                // default; otherwise the edge contributes 0.
-                //
-                // SECOND COPY, deliberately (play_launch issue #0042): the
-                // same precedence lives in the manifest crate as
-                // `derive::view::TopicView::transport_ms`, and that is the
-                // one `derive` runs. It cannot be called from here — it is
-                // `pub(crate)` in `derive`, and it is built from a
-                // `SystemModel` while this graph is built from a
-                // `ManifestIndex`, before any model exists. So the two must
-                // be edited together; `tests/tests/endpoint_transport.rs`
-                // is the gate that fails when they disagree.
-                let max_transport_ms = sub_props
-                    .and_then(|p| p.max_transport.map(|d| d.as_millis_f64()))
-                    .or(topic.max_transport_ms);
+                // Issue #44's per-subscriber transport, applied by the one
+                // implementation of it (see `topic_view` above): the same
+                // ROS topic can have heterogeneous transport across
+                // subscribers (intra-process ~0ms vs cross-network ~10ms),
+                // so the subscriber's own value wins where it declared one
+                // and the topic's applies otherwise; an undeclared hop
+                // contributes 0 downstream.
+                let max_transport_ms = topic_view.transport_ms(sub_ref);
 
                 let edge = GlobalEdge {
                     from: pub_node.clone(),

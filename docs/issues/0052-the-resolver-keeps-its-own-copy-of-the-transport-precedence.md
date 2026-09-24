@@ -1,7 +1,7 @@
 ---
 id: 52
 title: "the resolver still computes the transport precedence itself, because the shared one is unreachable from where its graph is built"
-status: open
+status: resolved
 type: tech-debt
 severity: low
 ---
@@ -62,3 +62,39 @@ comments pointing at each other is a holding position, not a resting place.
 
 Established 2026-09-24 while implementing #0042 wave B; both obstacles were
 checked rather than assumed.
+
+## Resolved 2026-09-25 — rlm v0.1.44, shape (a)
+
+`TopicView` and its fields are `pub` and re-exported at rlm's crate root; the
+resolver builds one from its `ManifestIndex` and calls `transport_ms` per
+edge. The inline precedence expression is gone from `manifest_graph.rs`, and
+so is the fourteen-line "SECOND COPY, deliberately" comment that named the
+other site — `grep -rn 'SECOND COPY'` now returns nothing.
+
+**The second obstacle dissolved rather than being worked around.** Both held
+when checked: the type was `pub(crate)`, and `build_global_graph` does run at
+load time with no `SystemModel`. But the obstacle belonged to
+`ModelView::from_model`, not to `TopicView` — the view is four declared facts
+(publishers, subscribers, the topic's transport, the per-subscriber
+overrides) and holds no model reference, so a consumer with only a
+`ManifestIndex` can build one. The resolver never gets a model.
+
+Shape (b) — a two-argument `transport_ms(sub, topic)` helper — was rejected
+because it makes the rule single while leaving the view private, so design
+issue #55's step 2 (a per-edge transport class derived from placement) would
+have to be plumbed as a second argument list rather than as a field on the
+shared type, and the resolver would keep assembling the inputs itself, which
+is where the precedence was hiding in the first place.
+
+One consequence recorded for whoever touches the gate next:
+`tests/tests/endpoint_transport.rs` asserts BOTH that the two consumers agree
+on a route and what that route absolutely is. Now that they call one function,
+the equality half can no longer catch a wrong precedence — both sides move
+together. What caught the sabotage (`transport_ms` returning the topic value
+unconditionally) was the absolute `EXPECTED_ROUTE`/`EXPECTED_TOTAL`
+constants, which flipped to the `producer → fast → sink = 45.00ms` branch the
+fixture documents. Those constants are the live half of that test and must not
+be traded for the equality check.
+
+rlm 566 passed; resolver 226 passed; `endpoint_transport` 2 passed at the
+v0.1.44 pin.
