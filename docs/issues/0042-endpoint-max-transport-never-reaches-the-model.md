@@ -91,3 +91,45 @@ reported that `derive` and the resolver disagreed about the source of an
 edge's transport. Both sites, the field table and `model::SubContract` were
 read at the versions above to confirm it is a model gap rather than a coding
 slip in `derive`.
+
+## Ruling 2026-09-24 — what the number is
+
+The project owner settled the modelling question the report left open:
+
+> The ability to ensure the guarantee depends on the practical construction.
+> A pub/sub on the same host can be managed; a topic connecting two machines
+> cannot.
+
+So transport latency is mostly a CONSEQUENCE of placement, and placement is a
+fact the launch file already states. Three classes, and they differ in whether
+a bound is a promise or an assumption:
+
+- **same process** (one container, `use_intra_process_comms`) — a pointer
+  handoff; the bound is structural;
+- **same host, different process** — an RMW hop, MANAGED: play_launch places
+  the processes and sets their priorities, cgroups and container membership,
+  so a bound is something the toolchain can be held to;
+- **different hosts** — the network, managed by nothing here. A number written
+  there is an assumption about the environment, not a promise the system
+  makes, and belongs with `external:` and phase 71's reaction vocabulary
+  rather than with budgets.
+
+That does not change this issue's fix, but it changes what the fix is FOR, so
+the staging is now:
+
+1. **This issue**: carry the declared endpoint value onto the model, have
+   `derive` read it with the resolver's precedence, then delete the precedence
+   from `manifest_graph.rs` so one copy remains. Gate: a fixture declaring
+   endpoint-level `max_transport` on a two-subscriber topic, asserting both
+   consumers produce the same total. Unblocked, and independent of the rest.
+2. Derive the class from the model's placement facts; the per-class figure
+   becomes a PLATFORM fact beside `rr_timeslice`, so a declared
+   `max_transport` is a requirement on a link rather than an estimate of one.
+3. Falsify by measurement — `InterceptionEvent` carries the topic, the header
+   stamp and `monotonic_ns` at both hooks, so the delta for one message is the
+   transport. `CLOCK_MONOTONIC` is comparable across processes on a host and
+   not across hosts, so the class that cannot be managed is also the one that
+   cannot be measured this way.
+
+Recorded as design issue #55 in the manifest repository's
+`docs/design-issues.md`, which is where the reasoning lives.

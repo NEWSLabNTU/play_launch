@@ -26,11 +26,6 @@ but `run` builds no `RuleEngine` and never checks the precondition: a strict
 that no binary accepts, which is the answer it gives to "how do I get a first
 contract for a system that has none". See `0044-*`.
 
-**#0043** -- rlm: an `include:` cannot carry a condition in either spelling --
-`IncludeDecl` has no field for one and `filter_manifest` never filters
-includes -- while the prose said carrying per-child conditions is what the
-include entry is for. See `0043-*`.
-
 **#0042** -- a subscriber's `max_transport` is legal grammar and the checker
 honours it (preferring it over the topic's, for the intra-process vs
 cross-network case Issue #44 added it for), but `model::SubContract` has no
@@ -67,6 +62,14 @@ HEAD. See `0038-*`.
 by name where `chain_aware` collapses the tie; design question. See `0039-*`.
 
 ## Resolved
+
+**#0043** -- rlm: an `include:` could not carry a condition in either spelling,
+though the spec said carrying per-child conditions was what the entry was for.
+Ruled implement-not-retire (the contract mirrors the launch file, and a
+`<group>` is what an author writes `if=` on); shipped in rlm v0.1.41 with the
+filter recursing into inline includes, which closed a pre-existing gap where a
+conditional node inside a group survived with its condition still set. See
+`0043-*`.
 
 **#0032** -- `--enforce-rules strict` tripped on the first violation of ANY
 severity, so the `graph-deviation-runtime` WARNING every node's `/rosout`

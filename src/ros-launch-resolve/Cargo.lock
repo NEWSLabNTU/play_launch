@@ -1030,8 +1030,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "ros-launch-manifest-check"
-version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.40#773751735215444ec9f4fe484aa761009087771d"
+version = "0.1.5"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.41#aa6752c7b5f714247c0fcd1f84f8a936275d724f"
 dependencies = [
  "codespan-reporting",
  "petgraph",
@@ -1042,8 +1042,8 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-derive"
-version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.40#773751735215444ec9f4fe484aa761009087771d"
+version = "0.1.5"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.41#aa6752c7b5f714247c0fcd1f84f8a936275d724f"
 dependencies = [
  "ros-launch-manifest-model",
  "ros-launch-manifest-sched",
@@ -1051,8 +1051,8 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-model"
-version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.40#773751735215444ec9f4fe484aa761009087771d"
+version = "0.1.5"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.41#aa6752c7b5f714247c0fcd1f84f8a936275d724f"
 dependencies = [
  "indexmap",
  "ros-launch-manifest-sched",
@@ -1064,8 +1064,8 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-sched"
-version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.40#773751735215444ec9f4fe484aa761009087771d"
+version = "0.1.5"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.41#aa6752c7b5f714247c0fcd1f84f8a936275d724f"
 dependencies = [
  "ros-launch-manifest-types",
  "serde",
@@ -1076,8 +1076,8 @@ dependencies = [
 
 [[package]]
 name = "ros-launch-manifest-types"
-version = "0.1.4"
-source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.40#773751735215444ec9f4fe484aa761009087771d"
+version = "0.1.5"
+source = "git+https://github.com/NEWSLabNTU/ros-launch-manifest.git?tag=v0.1.41#aa6752c7b5f714247c0fcd1f84f8a936275d724f"
 dependencies = [
  "serde",
  "serde_json",
