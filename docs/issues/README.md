@@ -27,6 +27,18 @@ right. What is not in question is the `hazard-unguarded` message, which
 recommends `max_age` and `min_rate_hz` as detectors that cannot satisfy it.
 See `0046-*`.
 
+**#0048** -- a contract node key that matches nothing in the launch dump falls
+back to qualifying the bare name against the SCOPE's namespace, so it resolves
+to a plausible FQN that names no running node -- and `check` reports clean.
+Every requirement on that node is then verified against a vertex nothing runs.
+See `0048-*`.
+
+**#0047** -- `endpoints.tsv` records no message type, though the type is in
+scope at the init hook that writes the record. Types reach disk only through
+the traffic-keyed summaries, so a capture can only describe topics a run
+exercised -- 982 endpoints created versus 63 carrying a message, on one
+Autoware run. See `0047-*`.
+
 **#0045** -- `--enforce-rules` is on `CommonOptions`, so every verb accepts it,
 but `run` builds no `RuleEngine` and never checks the precondition: a strict
 `run` passes with nothing measured, which is the shape phase 79 removed from
