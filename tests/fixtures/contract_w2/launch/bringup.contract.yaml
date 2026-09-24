@@ -1,9 +1,37 @@
+# Phase 68 W2's fixture, migrated for phase 78 (2026-09-25, issue #0054).
+#
+# Phase 78 ruled that `MapperNode.rate_hz` is the fastest TIMER trigger among a
+# node's paths and NOTHING else — "a promise as a fallback rate is the reading
+# this phase exists to remove". This file used to declare no timer at all:
+# every path was `trigger: { input: [...] }` and every rate fact was a
+# `min_rate_hz: 50` promise. After 78 that leaves the mapper with no rate to
+# rank by, `rt` and `guard` land on priority 0 outside the band, nothing is
+# real-time, and `SCHED_DEADLINE` — which needs a PERIOD, taken from
+# `1/rate_hz` propagated from the chain's source — is never derived. The three
+# refusals this fixture exists to exercise then never fire.
+#
+# So the chain got the real source it always implied: `src` samples on a 50 Hz
+# timer and publishes `/w/tick`, in place of the `external: pub` + declared
+# `rate_hz: 50` that stood in for it. The scope path `tick_to_out` names the
+# two ends so a chain forms and the 20ms period propagates to `rt` and
+# `guard`. Everything below the timer is a CONSEQUENCE (phase 70 W3): the
+# per-topic `rate_hz` copies and the publishers' `min_rate_hz` promises are
+# gone, the subscribers keep theirs because a requirement is theirs to state.
 version: 1
 
 nodes:
+  # The chain's source clock. A boundary path carries a period and no latency
+  # budget — "no invented WCETs" — so it ranks nowhere and stays best-effort.
+  src:
+    pub: { tick: {} }
+    paths:
+      sample:
+        trigger: { timer: { rate_hz: 50 } }
+        output: [tick]
+
   rt:
     sub: { tick: { min_rate_hz: 50 } }
-    pub: { a: { min_rate_hz: 50 }, b: { min_rate_hz: 50 } }
+    pub: { a: {}, b: {} }
     # Claims its two callbacks may run concurrently -> a per-thread
     # reservation cannot cover them (phase 60 F2).
     concurrency:
@@ -16,7 +44,7 @@ nodes:
 
   guard:
     sub: { a: { min_rate_hz: 50 } }
-    pub: { out: { min_rate_hz: 50 } }
+    pub: { out: {} }
     criticality: high
     paths:
       check:
@@ -31,7 +59,7 @@ nodes:
 
   slow:
     sub: { b: { min_rate_hz: 50 } }
-    pub: { log: { min_rate_hz: 50 } }
+    pub: { log: {} }
     paths:
       record:
         trigger: { input: [b] }
@@ -41,9 +69,20 @@ nodes:
         # best-effort, where no jitter bound is achievable.
         max_jitter: 2ms
 
+# The end-to-end requirement, two ends and a budget; the route between them is
+# derived (phases 67/68). It is also what carries the timer's period from `src`
+# to `rt` and `guard`, which is what makes a reservation derivable at all.
+# 40ms holds the honest total: 20ms sampling_cost (the 50 Hz period) + 13ms
+# event segment (rt 5 + guard 8) = 33ms.
+paths:
+  tick_to_out:
+    trigger: { input: [/w/tick] }
+    output: [/w/out]
+    max_latency: 40ms
+
 topics:
-  /w/tick: { type: std_msgs/msg/String, external: pub, sub: [rt/tick], rate_hz: 50 }
-  /w/a:    { type: std_msgs/msg/String, pub: [rt/a], sub: [guard/a], rate_hz: 50 }
-  /w/b:    { type: std_msgs/msg/String, pub: [rt/b], sub: [slow/b], rate_hz: 50 }
-  /w/out:  { type: std_msgs/msg/String, external: sub, pub: [guard/out], rate_hz: 50 }
-  /w/log:  { type: std_msgs/msg/String, external: sub, pub: [slow/log], rate_hz: 50 }
+  /w/tick: { type: std_msgs/msg/String, pub: [src/tick], sub: [rt/tick] }
+  /w/a:    { type: std_msgs/msg/String, pub: [rt/a], sub: [guard/a] }
+  /w/b:    { type: std_msgs/msg/String, pub: [rt/b], sub: [slow/b] }
+  /w/out:  { type: std_msgs/msg/String, external: sub, pub: [guard/out] }
+  /w/log:  { type: std_msgs/msg/String, external: sub, pub: [slow/log] }

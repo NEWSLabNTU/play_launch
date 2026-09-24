@@ -1,7 +1,15 @@
 # Reservations required, so `rt` and `guard` are reservation candidates and
 # the concurrency refusal is reachable.
+#
+# `deadline_monotonic`, not `rate_monotonic` (phase 78, issue #0054): the only
+# rate fact in this system is the source timer, so `rate_monotonic` would rank
+# `src` alone and drop every node this fixture is about onto the default tier.
+# The facts these three nodes actually declare are DEADLINES (5ms, 8ms, 40ms),
+# so the mapper that reads them is the one to use. `src` declares no latency
+# budget, so it ranks nowhere and stays best-effort — which is why it needs no
+# `budget_us` under `reservations: required`.
 target: posix
-mapper: rate_monotonic
+mapper: deadline_monotonic
 reservations: required
 
 resources:
