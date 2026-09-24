@@ -1,9 +1,20 @@
 # Phase 82 - what a detector is allowed to see, and what a reaction is allowed to cross
 
-Status: **proposed** (2026-09-25). Follows phase 81 (the docs describe the
-code) and the service-edge fix on `main` (`c1474126`, a fault reaction crosses
-a service). Ships as `ros-launch-manifest` **v0.1.43** for the one grammar
-change, pinned here.
+Status: **complete** (2026-09-25). W4 landed as `81bed6ac`, W1 to W3 as
+`1c27ba5c`; the grammar change shipped as `ros-launch-manifest` **v0.1.43**
+(workspace 0.1.6, an API break: `HazardDecl.on` is a `Vec<FaultKind>`) and
+is pinned here. Follows phase 81 (the docs describe the code) and the
+service-edge fix `c1474126`.
+
+One ruling differs from the proposal below and is the one in force: an
+omitted `on:` means the three detectable classes {omission, late, loss},
+timed by the slowest class SOME detector covers, and is unguarded only when
+no class is covered; an explicit list is unguarded for each class it names
+that nothing covers. Taking "all kinds" literally would have made the L4
+fixture unguarded on `loss` (it declares no drop spec) and `reported` cannot
+be implied at all. The property that matters holds either way: saying less
+never buys slack. Verified on the fixture: `on:` omitted reads 30.00 ms, the
+same as `on: omission`, not the 20.00 ms it read before.
 
 ## Why
 
